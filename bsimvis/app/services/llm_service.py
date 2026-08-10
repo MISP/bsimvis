@@ -12,7 +12,7 @@ class LLMService:
         self.model = config_service.get("llm.model", "qwen3.6:35b")
         self.default_prompt = config_service.get(
             "llm.prompt",
-            "Act as a senior reverse engineer. Provide a structured, keyword-focused summary of this function. **SUMMARY**: [One-line summary of functionality] **KEYWORDS**: [List 5-10 key technical terms, API calls, or algorithm names] **IMPACT**: [Side-effects, security implications, or critical dependencies] **LOGIC**: [Brief description of data transformation or logic path]",
+            "Act as a senior malware reverse engineer. Provide a concise, rapid-triage summary of this function. **TLDR**: [Maximum 2 sentences explaining the core purpose and intent] **KEY_EVIDENCE**: [Comma-separated list of ONLY the most critical Windows APIs, syscalls, or magic constants. Leave blank if none.]",
         )
 
     def summarize_function(self, function_name, code, custom_prompt=None):
@@ -48,26 +48,25 @@ class LLMService:
         self._load_config()
         prompt = custom_prompt or self.default_prompt
 
+        # The core namespace strategy is always active
+        base_rule = (
+            "Then, on a final line starting with 'TAGS:', list at most 3 namespace tags summarizing the function. "
+            "Format each tag strictly as `llm:<risk>:<capability>`. "
+            "<risk> MUST be one of: benign, suspicious, malicious. "
+            "<capability> MUST be one of: init, string, memory, math, file_io, anti_debug, anti_vm, obfuscation, packer, crypto, encoding, compression, parser, c2, download, network_io, p2p, persistence, privesc, injection, shell, registry, spyware, ransomware, ddos, exfil, destruction."
+        )
+
         if vocabulary:
             tag_rule = (
-                "Then, on a final line starting with 'TAGS:', list the tags from "
-                "this list that apply to the function, comma separated. Use ONLY "
-                f"tags from this list, and no others: {', '.join(vocabulary)}. "
-                "If none apply, write 'TAGS: none'."
+                f"{base_rule}\n"
+                f"Additionally, you MAY include these specific custom tags if highly relevant: {', '.join(vocabulary)}. "
+                "Example: TAGS: llm:suspicious:crypto, custom_tag_name"
             )
         else:
-            # Free-form drifts: an open-ended range reads as a quota to fill, and
-            # the model invents near-synonyms (big-int / bigint / biginteger).
-            # Ask for restraint explicitly and give the shape of a good tag.
             tag_rule = (
-                "Then, on a final line starting with 'TAGS:', list at most 3 "
-                "short lowercase keyword tags naming what the function does "
-                "(e.g. crypto, network, parser), comma separated. "
-                "Fewer is better: tag only what is clearly true of this "
-                "function, omit anything you are guessing at, and write "
-                "'TAGS: none' when nothing applies. Prefer one common word per "
-                "concept -- never a near-synonym or a hyphenated variant of a "
-                "tag that means the same thing."
+                f"{base_rule}\n"
+                "Example: TAGS: llm:suspicious:crypto, llm:malicious:injection. "
+                "If the function is trivial, write 'TAGS: llm:benign:init'."
             )
 
         full_prompt = (
@@ -124,8 +123,16 @@ class LLMService:
             tags.append(t)
 
         if vocabulary:
+            import re
             allowed = {v.lower(): v for v in vocabulary}
-            tags = [allowed[t] for t in tags if t in allowed]
+            
+            def is_allowed(t):
+                # Always allow valid namespace tags, otherwise check vocabulary
+                if re.match(r"^llm:(benign|suspicious|malicious):[a-z_]+$", t):
+                    return True
+                return t in allowed
+
+            tags = [allowed.get(t, t) for t in tags if is_allowed(t)]
 
         # Dedupe, preserve order.
         seen = set()
@@ -336,9 +343,9 @@ def _selfcheck():
     split = LLMService._split_summary_tags
 
     # Tags line parsed off the end, summary kept intact.
-    s, t = split("**SUMMARY**: does aes\nmore text\nTAGS: crypto, network")
-    assert s == "**SUMMARY**: does aes\nmore text", s
-    assert t == ["crypto", "network"], t
+    s, t = split("**TLDR**: does aes\nmore text\nTAGS: llm:suspicious:crypto, llm:malicious:network")
+    assert s == "**TLDR**: does aes\nmore text", s
+    assert t == ["llm:suspicious:crypto", "llm:malicious:network"], t
 
     # No TAGS line: whole text is the summary, no tags.
     s, t = split("just a summary")
@@ -346,14 +353,14 @@ def _selfcheck():
 
     # 'none' and decorations are dropped; duplicates collapse.
     assert split("x\nTAGS: none")[1] == []
-    assert split("x\n**TAGS:** `Crypto`, crypto, [parser]")[1] == ["crypto", "parser"]
+    assert split("x\n**TAGS:** `llm:malicious:crypto`, llm:malicious:crypto, [llm:suspicious:parser]")[1] == ["llm:malicious:crypto", "llm:suspicious:parser"]
 
     # Vocabulary constrains output and restores the canonical casing.
-    s, t = split("x\nTAGS: Crypto, invented", ["crypto", "network"])
-    assert t == ["crypto"], t
+    s, t = split("x\nTAGS: llm:suspicious:Crypto, invented", ["llm:suspicious:crypto", "llm:malicious:network"])
+    assert t == ["llm:suspicious:crypto"], t
 
     # Only the last TAGS line counts (models sometimes echo the instruction).
-    assert split("TAGS: ignored\nbody\nTAGS: net")[1] == ["net"]
+    assert split("TAGS: ignored\nbody\nTAGS: llm:suspicious:net")[1] == ["llm:suspicious:net"]
 
     print("ok")
 

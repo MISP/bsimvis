@@ -2678,6 +2678,119 @@ def test_search_filters_and_sorting():
 
 
 # ---------------------------------------------------------------------------
+# Step 3c-bis – /api/bin_sim/diff paging is cacheable
+#
+# get_bin_sim() keeps the hydrated diff doc in a process-local cache, because
+# hydrating it costs ~2 kvrocks round trips per function and the UI re-requests
+# the same pair on every filter/sort change. Two properties have to hold:
+#   - a repeated request returns the IDENTICAL page, so nothing downstream
+#     (paging, sorting) mutates the cached doc;
+#   - swapping md5_a/md5_b returns the swapped orientation, even though the
+#     first orientation is already cached — the doc is re-oriented in place by
+#     _flip_diff_sides, so a shared cache entry would serve the wrong side.
+# Runs after step 3c, which is what builds the collection's bin_sim docs.
+# ---------------------------------------------------------------------------
+# "all" is the union view the UI actually opens on, and the only one whose rows
+# get a per-row `sid` written into them — the write that must not reach the cache.
+DIFF_TABLES = ("all", "matched", "unique_to_a", "unique_to_b")
+
+
+def _diff_page(md5_a, md5_b, table):
+    """One page of /api/bin_sim/diff, or None if the request failed."""
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/api/bin_sim/diff",
+            params={
+                "collection": COLLECTION,
+                "md5_a": md5_a,
+                "md5_b": md5_b,
+                "table": table,
+                "sort_col": "similarity",
+                "limit": 50,
+            },
+            timeout=60,
+        )
+        if resp.status_code != 200:
+            vprint(f"     diff {table} -> HTTP {resp.status_code}")
+            return None
+        return resp.json()
+    except Exception as exc:
+        vprint(f"     diff {table} error: {exc}")
+        return None
+
+
+def _meta_md5(meta):
+    """md5 out of a file_metadata_* block, whatever it calls the field."""
+    if not isinstance(meta, dict):
+        return None
+    return meta.get("file_md5") or meta.get("md5") or meta.get("md5_a")
+
+
+def test_bin_sim_diff_cache():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-bis – bin_sim diff caching / orientation", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – diff cache checks skipped.", YELLOW))
+        return
+
+    first = {t: _diff_page(file_md5, file_md5_2, t) for t in DIFF_TABLES}
+    if not check(
+        "diff cache: pair is served",
+        any(p is not None for p in first.values()),
+        "no /api/bin_sim/diff page returned for the uploaded pair",
+    ):
+        return
+
+    # A vacuous comparison of two empty pages would pass no matter what.
+    check(
+        "diff cache: pair has rows to compare",
+        any((p or {}).get("total") for p in first.values()),
+        ", ".join(f"{t}={(first[t] or {}).get('total')}" for t in DIFF_TABLES),
+    )
+
+    second = {t: _diff_page(file_md5, file_md5_2, t) for t in DIFF_TABLES}
+    differing = [
+        t
+        for t in DIFF_TABLES
+        if first[t] is not None
+        and (
+            second[t] is None
+            or first[t].get("total") != second[t].get("total")
+            or first[t].get("items") != second[t].get("items")
+        )
+    ]
+    check(
+        "diff cache: second request returns an identical page",
+        not differing,
+        f"differing tables: {differing}",
+    )
+
+    # Now the swapped orientation, with the first one already cached.
+    flipped = _diff_page(file_md5_2, file_md5, "matched")
+    check(
+        "diff cache: swapped md5_a/md5_b returns side A = requested md5_a",
+        _meta_md5((flipped or {}).get("file_metadata_a")) == file_md5_2,
+        f"got {_meta_md5((flipped or {}).get('file_metadata_a'))}, want {file_md5_2}",
+    )
+    check(
+        "diff cache: swapped md5_a/md5_b returns side B = requested md5_b",
+        _meta_md5((flipped or {}).get("file_metadata_b")) == file_md5,
+        f"got {_meta_md5((flipped or {}).get('file_metadata_b'))}, want {file_md5}",
+    )
+
+    # The flipped request must not have re-oriented the cached original.
+    again = _diff_page(file_md5, file_md5_2, "matched")
+    check(
+        "diff cache: original orientation survives a flipped request",
+        _meta_md5((again or {}).get("file_metadata_a")) == file_md5
+        and (again or {}).get("items") == (first["matched"] or {}).get("items"),
+        f"got {_meta_md5((again or {}).get('file_metadata_a'))}, want {file_md5}",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Step 3d – Pool/collection equivalence (absorbed from test_pools.py)
 #
 # The invariant: how binaries are grouped must not change the analysis. Two
@@ -3817,6 +3930,7 @@ if __name__ == "__main__":
     test_pool_annotation_propagation()
     test_search_filters_and_sorting()
     test_tag_vocabulary_and_llm_batch()
+    test_bin_sim_diff_cache()
     test_pool_collection_equivalence()
     test_archive_upload()
     test_unpack_upload()

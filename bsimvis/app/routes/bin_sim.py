@@ -1,7 +1,9 @@
 import logging
 import math
 import re
-from collections import defaultdict
+import threading
+import time
+from collections import defaultdict, OrderedDict
 from flask import request
 from flask_restx import abort
 from bsimvis.app.services.job_service import JobService, JobType
@@ -305,65 +307,13 @@ def _flip_diff_sides(diff_data):
         _swap_side_keys(row)
 
 
-def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=None):
-    """Retrieve binary similarity diff for a pair."""
-    if collection is None:
-        collection = request.args.get("collection", "main")
-    algo = request.args.get("algo", "unweighted_cosine")
-    if md5_a is None:
-        md5_a = request.args.get("md5_a")
-    if md5_b is None:
-        md5_b = request.args.get("md5_b")
-    if coll_b is None:
-        coll_b = request.args.get("coll_b", collection)
-    if pool_id is None:
-        pool_id = request.args.get("pool_id") or request.args.get("pool")
+def _hydrate_diff(r, data_raw, coll_a, md5_a, coll_b, md5_b, pool_id, algo):
+    """Parse a stored bin_sim doc and attach file metadata, function metadata and
+    live cluster columns, oriented so "_a" is the caller's A side.
 
-    if not md5_a or not md5_b:
-        abort(400, "Both md5_a and md5_b are required")
-
-    r = get_redis()
-    coll_a = collection
-    # What the caller asked for. Lookup below may reorder these to reach the
-    # stored doc; the response must still come back in the caller's order.
-    req_coll_a, req_md5_a, req_coll_b, req_md5_b = coll_a, md5_a, coll_b, md5_b
-
-    if pool_id:
-        # For pool pairs, look up the SID via the 'involves' index to avoid
-        # guessing the ordering used at storage time.
-        involves_a = f"global:pool:{pool_id}:bin_sim:involves:{coll_a}:{md5_a}"
-        involves_b = f"global:pool:{pool_id}:bin_sim:involves:{coll_b}:{md5_b}"
-        pipe = r.pipeline(transaction=False)
-        pipe.smembers(involves_a)
-        pipe.smembers(involves_b)
-        res_a, res_b = pipe.execute()
-
-        sids_a = {s.decode() if isinstance(s, bytes) else s for s in (res_a or set())}
-        sids_b = {s.decode() if isinstance(s, bytes) else s for s in (res_b or set())}
-        common = sids_a & sids_b
-
-        if not common:
-            return {
-                "status": "not_found",
-                "message": "Similarity not calculated for this pair",
-            }, 404
-
-        sid = next(iter(common))
-    else:
-        # Non-pool: canonical ordering md5_a < md5_b
-        if md5_a > md5_b:
-            md5_a, md5_b = md5_b, md5_a
-            coll_a, coll_b = coll_b, coll_a
-        sid = f"{collection}:bin_sim:{algo}:{md5_a}::{md5_b}"
-
-    data_raw = r.get(sid)
-
-    if not data_raw:
-        return {
-            "status": "not_found",
-            "message": "Similarity not calculated for this pair",
-        }, 404
-
+    coll_a/md5_a/coll_b/md5_b are the REQUESTED pair: get_bin_sim may reorder its
+    own locals to reach the stored doc, so it passes the req_* values here.
+    """
     diff_data = json.loads(data_raw) if not isinstance(data_raw, dict) else data_raw
 
     # A pair is stored once, in whatever order it was built (canonical md5 sort for
@@ -371,9 +321,8 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     # order so every "_a"/"_b" — file metadata, unique_to_b, func_b — describes the
     # binary the caller called A/B.
     stored_a = diff_data.get("md5_a")
-    if stored_a and stored_a != req_md5_a:
+    if stored_a and stored_a != md5_a:
         _flip_diff_sides(diff_data)
-    coll_a, md5_a, coll_b, md5_b = req_coll_a, req_md5_a, req_coll_b, req_md5_b
 
     # Extract all unique function IDs
     fids = set()
@@ -487,6 +436,123 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
         diff_data["files_metadata"] = _files_metadata(r, coll_a, coll_b, diff)
     else:
         _enrich_diff_clusters(r, diff, coll_a, pool_id, algo)
+    return diff_data
+
+
+# Hydrating one diff costs ~2 kvrocks round trips per function (meta + clusters),
+# so a 30k-function pair costs seconds — and the UI re-requests the same pair on
+# every filter, sort and tree-node expansion. Cache the hydrated doc so only the
+# first request pays. The requested A/B orientation is part of the key because
+# _flip_diff_sides rewrites the doc in place.
+# ponytail: TTL, not invalidation — a tag edit or a bin_sim rebuild shows up
+# within _DIFF_TTL. Add explicit invalidation on the rebuild/tag-write paths if
+# 60s of staleness turns out to matter.
+# ponytail: entries are capped by count, not by bytes. A hydrated 30k-function
+# doc is hundreds of MB and the app is one process, so the cap is deliberately
+# small — two entries is one pair held in both A/B orientations, which is the
+# working set of someone reading a diff. Measure bytes and cap on those if a
+# bigger window is ever wanted.
+_DIFF_TTL = 60
+_DIFF_CACHE_MAX = 2
+_DIFF_CACHE = OrderedDict()  # key -> (stored_at, diff_data)
+# app.run() is threaded, so request threads share this dict: one thread can drop
+# an expired entry while another is between its lookup and its move_to_end.
+_DIFF_CACHE_LOCK = threading.Lock()
+
+
+def _diff_cache_get(key):
+    with _DIFF_CACHE_LOCK:
+        entry = _DIFF_CACHE.get(key)
+        if not entry:
+            return None
+        stored_at, doc = entry
+        if time.time() - stored_at > _DIFF_TTL:
+            _DIFF_CACHE.pop(key, None)
+            return None
+        _DIFF_CACHE.move_to_end(key)
+        return doc
+
+
+def _diff_cache_put(key, doc):
+    with _DIFF_CACHE_LOCK:
+        _DIFF_CACHE[key] = (time.time(), doc)
+        _DIFF_CACHE.move_to_end(key)
+        while len(_DIFF_CACHE) > _DIFF_CACHE_MAX:
+            _DIFF_CACHE.popitem(last=False)
+
+
+def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=None):
+    """Retrieve binary similarity diff for a pair."""
+    if collection is None:
+        collection = request.args.get("collection", "main")
+    algo = request.args.get("algo", "unweighted_cosine")
+    if md5_a is None:
+        md5_a = request.args.get("md5_a")
+    if md5_b is None:
+        md5_b = request.args.get("md5_b")
+    if coll_b is None:
+        coll_b = request.args.get("coll_b", collection)
+    if pool_id is None:
+        pool_id = request.args.get("pool_id") or request.args.get("pool")
+
+    if not md5_a or not md5_b:
+        abort(400, "Both md5_a and md5_b are required")
+
+    r = get_redis()
+    coll_a = collection
+    # What the caller asked for. Lookup below may reorder these to reach the
+    # stored doc; the response must still come back in the caller's order.
+    req_coll_a, req_md5_a, req_coll_b, req_md5_b = coll_a, md5_a, coll_b, md5_b
+
+    if pool_id:
+        # For pool pairs, look up the SID via the 'involves' index to avoid
+        # guessing the ordering used at storage time.
+        involves_a = f"global:pool:{pool_id}:bin_sim:involves:{coll_a}:{md5_a}"
+        involves_b = f"global:pool:{pool_id}:bin_sim:involves:{coll_b}:{md5_b}"
+        pipe = r.pipeline(transaction=False)
+        pipe.smembers(involves_a)
+        pipe.smembers(involves_b)
+        res_a, res_b = pipe.execute()
+
+        sids_a = {s.decode() if isinstance(s, bytes) else s for s in (res_a or set())}
+        sids_b = {s.decode() if isinstance(s, bytes) else s for s in (res_b or set())}
+        common = sids_a & sids_b
+
+        if not common:
+            return {
+                "status": "not_found",
+                "message": "Similarity not calculated for this pair",
+            }, 404
+
+        sid = next(iter(common))
+    else:
+        # Non-pool: canonical ordering md5_a < md5_b
+        if md5_a > md5_b:
+            md5_a, md5_b = md5_b, md5_a
+            coll_a, coll_b = coll_b, coll_a
+        sid = f"{collection}:bin_sim:{algo}:{md5_a}::{md5_b}"
+
+    key = (sid, req_md5_a, req_coll_a, req_coll_b, algo, pool_id)
+    diff_data = _diff_cache_get(key)
+    if diff_data is None:
+        data_raw = r.get(sid)
+
+        if not data_raw:
+            return {
+                "status": "not_found",
+                "message": "Similarity not calculated for this pair",
+            }, 404
+
+        # The lookup above may have reordered coll_a/md5_a to reach the stored doc;
+        # hydration works in the order the caller asked for.
+        diff_data = _hydrate_diff(
+            r, data_raw, req_coll_a, req_md5_a, req_coll_b, req_md5_b, pool_id, algo
+        )
+        _diff_cache_put(key, diff_data)
+
+    # The canonical-md5 lookup above may have swapped these; everything below
+    # answers in the order the caller asked for.
+    coll_a, md5_a, coll_b, md5_b = req_coll_a, req_md5_a, req_coll_b, req_md5_b
 
     # Change 4: when a table is requested, filter/sort/paginate server-side and return
     # only the page (+ its function metadata). Absent `table` → full doc (back-compat).

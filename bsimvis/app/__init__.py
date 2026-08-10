@@ -40,9 +40,27 @@ def create_app():
     lua_manager.init_app(app)
 
     # 2. Performance Hooks
+    from .services.timer_service import (
+        Timer,
+        get_active_timer,
+        set_active_timer,
+        clear_active_timer,
+    )
+
+    # Off by default: recording appends a dict per redis command, and a bin_sim
+    # diff issues tens of thousands of them. Set BSIMVIS_TIMING=1 to get a
+    # Server-Timing header splitting db from python time on every response.
+    timing_on = os.environ.get("BSIMVIS_TIMING") == "1"
+
     @app.before_request
     def start_timer():
         g.start_time = time.time()
+        if timing_on:
+            set_active_timer(Timer())
+
+    @app.teardown_request
+    def stop_timer(exc=None):
+        clear_active_timer()
 
     @app.before_request
     def normalize_pool_params():
@@ -85,6 +103,16 @@ def create_app():
         )
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+
+        timer = get_active_timer()
+        if timer is not None:
+            t = timer.finalize()  # seconds; Server-Timing wants milliseconds
+            db_ms = (t["db_time"] + t["lua_time"]) * 1000
+            response.headers["Server-Timing"] = (
+                f"total;dur={t['total_time'] * 1000:.1f}, "
+                f"db;dur={db_ms:.1f}, "
+                f"py;dur={t['python_time'] * 1000:.1f}"
+            )
 
         if hasattr(g, "start_time"):
             elapsed = (time.time() - g.start_time) * 1000

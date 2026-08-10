@@ -113,6 +113,14 @@ _kv_pool = None
 _kv_raw_pool = None
 _redis_pool = None
 
+# TimedRedis records a dict per command, so it is opt-in behind the same flag
+# that turns on the Server-Timing response header (see app/__init__.py).
+_TIMING = os.getenv("BSIMVIS_TIMING") == "1"
+
+
+def _client(pool):
+    return (TimedRedis if _TIMING else redis.Redis)(connection_pool=pool)
+
 
 def init_redis(host=None, kv_port=None, redis_port=None):
     if host:
@@ -129,8 +137,7 @@ def get_redis():
     global _kv_pool
     if _kv_pool is None:
         _kv_pool = redis.ConnectionPool(**KV_CONFIG)
-    # ponytail: Bypass TimedRedis wrapper to remove performance timing overhead
-    return redis.Redis(connection_pool=_kv_pool)
+    return _client(_kv_pool)
 
 
 def get_raw_redis():
@@ -141,8 +148,7 @@ def get_raw_redis():
         raw_config = KV_CONFIG.copy()
         raw_config["decode_responses"] = False
         _kv_raw_pool = redis.ConnectionPool(**raw_config)
-    # ponytail: Bypass TimedRedis wrapper to remove performance timing overhead
-    return redis.Redis(connection_pool=_kv_raw_pool)
+    return _client(_kv_raw_pool)
 
 
 def get_queue_redis():
@@ -150,8 +156,7 @@ def get_queue_redis():
     global _redis_pool
     if _redis_pool is None:
         _redis_pool = redis.ConnectionPool(**REDIS_CONFIG)
-    # ponytail: Bypass TimedRedis wrapper to remove performance timing overhead
-    return redis.Redis(connection_pool=_redis_pool)
+    return _client(_redis_pool)
 
 
 def get_batch_meta(collection, batch_uuid):

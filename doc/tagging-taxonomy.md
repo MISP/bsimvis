@@ -203,6 +203,28 @@ View: [ Severity  x  Behavior  v ]
 
 Single-axis mode drops the second column.
 
+The first axis is not the graph's alone: it is the axis the **function tag
+tree** reads, so it also scopes the tables and the Summary rollup. Each axis
+gets its own tree, and each is built from that axis's own summary rows:
+
+- **Origin** — three levels the tree adds above the rows: group (Libraries,
+  Bundles, Original, Other) / library / version.
+- **Behavior** — the rollup the backend already stores: `category:network` over
+  its leaves `c2`, `dns`, ....
+- **Severity** — flat, ordered high → none rather than by mass.
+- **User** — flat, or `user:<slug>` over its leaves.
+
+A node id is a tag id, so selecting one scopes every pane by tag prefix exactly
+the way selecting `libc` always did. The graph folds where the tree folds, but
+only as deep as the joint is keyed (the display parent), which is why a
+behaviour group is not drillable in the graph the way a library is.
+
+**Empty axes are not offered.** A pair whose functions were never sent to the
+LLM has no severity and no behaviour rows, and one nobody has tagged has no user
+rows; those axes are dropped from both pickers, and with a single axis left the
+pickers disappear. Selecting an axis that later turns out empty falls back to
+one that has rows rather than blanking the view.
+
 Re-tagging is still answered by a resplit rather than a rebuild: the pair score
 is the matched edges alone, and tagging only changes how that score is broken
 down. Switching axes in the UI is cheaper still — see below, it is a pure

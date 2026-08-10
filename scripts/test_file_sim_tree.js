@@ -12,14 +12,20 @@ const slice = (from, to) => src.slice(src.indexOf(from), src.indexOf(to));
 // graph folds exactly where the tree does.
 const body = slice('const FILESIM_GROUPS', 'function fileSimTreeRoot')
     + slice('// The chain of tree nodes a tag id belongs to', '// A tag row\'s four masses');
-const { fileSimTree, fileSimFrontierNode, setOpen } = new Function(
+const M = new Function(
     body + `
     ; return {
         fileSimTree,
-        fileSimFrontierNode,
+        fileSimFrontier,
         setOpen: (ids) => { fileSimTreeOpen = new Set(ids); },
     };`
 )();
+// Every axis has a tree; this suite is the origin one, whose shape is its own
+// (group / library / version). The other axes' trees are covered by
+// test_filesim_sankey.js, where they are read straight off the summary rows.
+const fileSimTree = (rows) => M.fileSimTree(rows, 'origin');
+const fileSimFrontierNode = (tagId, root) => M.fileSimFrontier(tagId, root).node;
+const setOpen = M.setOpen;
 
 // A: 2 libc, 2 openssl, 2 mirai_xor. B: 4 libc, 0 openssl, 2 mirai_xor.
 const tag = (type, name, a, b, extra) => Object.assign({

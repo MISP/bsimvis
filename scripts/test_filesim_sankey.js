@@ -23,16 +23,22 @@ const load = new Function('window', 'document', 'd3', `
     ${src}
     return {
         fileSimSankeyGroups,
-        fileSimNsPath,
         fileSimJointMarginal,
+        fileSimTree,
+        fileSimAvailableAxes,
+        fileSimAxisKey,
         renderFileSimSankey,
         // Folding is the tree's state now, not a private frontier of the graph.
         setOpen: (ids) => { fileSimTreeOpen = new Set(ids); },
         setScale: (s) => { fileSimScale = s; },
         // Which axis is on each side; '' on B is a single-axis view.
         setAxis: (a, b) => { fileSimAxisA = a; fileSimAxisB = b; },
-        // The tree is derived from the cached tag summary, so grouping needs it.
-        setRows: (rows) => { binSimDataCache = { tags_summary: rows, functions_metadata: {} }; },
+        // Every axis has a tree, and each is built from that axis's own summary
+        // rows in the cache -- so grouping needs whichever summaries are in play.
+        setRows: (rows, extra) => {
+            binSimDataCache = Object.assign(
+                { tags_summary: rows, functions_metadata: {} }, extra || {});
+        },
     };
 `);
 
@@ -283,12 +289,14 @@ captured.nodes.filter(n => n.id.startsWith('fsk_fl_')).forEach(n => {
 });
 
 // ---- Single-axis modes over the other three axes -------------------------
-// A non-origin axis has no tree above it: its rows are already at their display
-// parent, so each row is its own node and the label drops the namespace.
+// Every axis has its own tree. A non-origin axis's rows are already at their
+// display parent, so each row is a top-level node labelled by its leaf segment,
+// with whatever `children` the backend nested under it below.
 const sevRows = [
     row('severity:high', { bins: { '19': [5, 50, 4, 40] }, weight_a: 50, weight_b: 40, unique_count_a: 1, unique_weight_a: 10 }),
     row('severity:low', { bins: { '10': [2, 20, 2, 20] }, weight_a: 20, weight_b: 20 }),
 ];
+M.setRows(rows, { severity_summary: sevRows });
 M.setAxis('severity', '');
 const sg = by(M.fileSimSankeyGroups(sevRows, 'count'));
 assert.deepStrictEqual(Object.keys(sg).sort(), ['severity:high', 'severity:low']);
@@ -308,6 +316,43 @@ M.renderFileSimSankey({
 // Reading the severity axis must not fall back to the origin rows.
 assert.ok(captured.nodes.some(n => /severity|high/.test(n.name)), 'severity axis must draw severity rows');
 assert.ok(!captured.nodes.some(n => /libc/.test(n.name)), 'origin rows must not leak into the severity axis');
+
+// ---- The tree each axis gets --------------------------------------------
+// Behaviour rows arrive rolled up to their group with the leaves nested, so the
+// tree is that nesting read straight off the rows: `network` over `c2` / `dns`.
+const catRows = [
+    row('category:network', {
+        bins: { '19': [6, 60, 5, 50] }, weight_a: 60, weight_b: 50,
+        children: [
+            // Leaves sort by composition, the same measure the tree shows.
+            row('category:network:c2', { bins: { '19': [4, 40, 4, 40] } }),
+            row('category:network:dns', { bins: { '19': [2, 20, 1, 10] } }),
+        ],
+    }),
+    row('category:util', { bins: { '10': [1, 10, 1, 10] } }),
+];
+const catTree = M.fileSimTree(catRows, 'category');
+assert.deepStrictEqual(catTree.children.map(n => n.label), ['network', 'util']);
+assert.deepStrictEqual(catTree.children[0].children.map(n => n.label), ['c2', 'dns']);
+// A node id is the tag id, which is what scopes the table and the flow.
+assert.strictEqual(catTree.children[0].children[0].id, 'category:network:c2');
+assert.strictEqual(catTree.children[0].a, 6);
+
+// Severity is ordinal: its tree reads worst-first, not biggest-first.
+const sevTree = M.fileSimTree([
+    row('severity:low', { bins: { '10': [9, 90, 9, 90] } }),
+    row('severity:high', { bins: { '19': [1, 10, 1, 10] } }),
+], 'severity');
+assert.deepStrictEqual(sevTree.children.map(n => n.label), ['high', 'low']);
+
+// An axis this pair carries no tags on is offered nowhere, and selecting one
+// anyway falls back to an axis that has rows instead of blanking the view.
+M.setRows(rows, { severity_summary: sevRows });
+assert.deepStrictEqual(M.fileSimAvailableAxes(), ['origin', 'severity']);
+M.setAxis('category', '');
+assert.strictEqual(M.fileSimAxisKey(), 'origin', 'an empty axis falls back');
+M.setAxis('severity', '');
+assert.strictEqual(M.fileSimAxisKey(), 'severity');
 
 // Crossing an axis with itself is meaningless and reads as a single-axis view.
 M.setAxis('severity', 'severity');

@@ -166,7 +166,7 @@ class LLMBatchService:
             if overwrite:
                 _remove_llm_tags(collection, func_id)
             for t in tags:
-                marked = f"{LLM_TAG_PREFIX}{t}"
+                marked = t if t.startswith(LLM_TAG_PREFIX) else f"{LLM_TAG_PREFIX}{t}"
                 if tag_service.add_user_tag(collection, "function", func_id, marked):
                     applied.append(marked)
             _mark_enriched(self.r, collection, func_id, "tags")

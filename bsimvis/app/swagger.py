@@ -2084,6 +2084,16 @@ class BinSimRebuild(Resource):
         return rebuild_bin_sim()
 
 
+@ns_bin_sim.route("/resplit")
+class BinSimResplit(Resource):
+    @ns_bin_sim.expect(bin_sim_clear_model)
+    def post(self):
+        """Recomputes the tag split of stored pairs (cheap; no rebuild)."""
+        from bsimvis.app.routes.bin_sim import resplit_bin_sim
+
+        return resplit_bin_sim()
+
+
 @ns_bin_sim.route("/clear")
 class BinSimClear(Resource):
     @ns_bin_sim.expect(bin_sim_clear_model)

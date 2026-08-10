@@ -110,6 +110,7 @@ function renderBinarySimilarityView(params) {
                                 <button class="view-btn ${fileSimScale === 'features' ? 'active' : ''}" id="bsim-filesim-scale-btn-features" onclick="setFileSimScale('features')" title="Scale flow by BSim feature sum">Features</button>
                             </div>
                             <span style="font-size:0.68rem; color:var(--dim); font-family:sans-serif;">follows the tree's folding · click a node to drill in</span>
+                            <span id="bin-sim-resplit-slot"></span>
                         </div>
                         <div id="bin-sim-filesim-sankey-card" style="position:relative; width:100%; flex:0 0 auto; height:440px; border:1px solid var(--border); background:var(--bg); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
                             <div id="bin-sim-filesim-sankey" style="flex:1; width:100%; min-height:0; overflow:auto; position:relative;"></div>
@@ -396,6 +397,9 @@ function initResizableCards() {
             file_metadata_a: data.file_metadata_a,
             file_metadata_b: data.file_metadata_b,
             tags_summary: data.tags_summary || [],
+            flags_summary: data.flags_summary || [],
+            flag_matrix: data.flag_matrix || {},
+            tags_stale: !!data.tags_stale,
             counts,
             functions_metadata: {},
         };
@@ -1350,6 +1354,17 @@ function renderFileSim(data) {
 // Function graph tab's job. Depth is a namespace frontier over the tag ids
 // (`lib:libc:2.31`), so a whole namespace or a whole library folds to one node.
 
+// Flags come from a different axis than the tag tree, so they get their own
+// colour rather than the composition scale: a flag is a finding, not a degree
+// of agreement between the two binaries.
+const FILESIM_FLAG_COLOR = '#fd971f';
+
+// `flag:suspicious:c2` reads as "suspicious c2"; a legacy `llm:crypto` as "crypto".
+function fileSimFlagLabel(flagId) {
+    const parts = String(flagId).split(':');
+    return (parts.length > 1 ? parts.slice(1) : parts).join(' ');
+}
+
 // Synthetic buckets have no namespace structure; everything else is type:name:version.
 function fileSimNsPath(tagId) {
     if (!tagId) return ['unknown'];
@@ -1413,9 +1428,12 @@ function fileSimRowMass(row, scale) {
 // Fold the tag rows onto the tree's current frontier. The Sankey used to keep
 // its own namespace-depth override, which meant the graph and the tree could
 // disagree about what "libc" currently means; it now reads the shared state.
-function fileSimSankeyGroups(rows, scale) {
+function fileSimSankeyGroups(rows, scale, matrix) {
     const groups = new Map();
     const root = fileSimTreeRoot();
+    // Cells are [w_shared_a, w_shared_b, w_uniq_a, w_uniq_b, then the same four
+    // as function counts], so the metric toggle is a 4-slot offset.
+    const off = scale === 'features' ? 0 : 4;
     (rows || []).forEach(row => {
         const node = fileSimFrontierNode(row.tag_id, root);
         if (!node) return;
@@ -1426,6 +1444,8 @@ function fileSimSankeyGroups(rows, scale) {
                 key, label: node.label, depth: 1,
                 sharedA: 0, sharedB: 0, uniqA: 0, uniqB: 0,
                 cohNum: 0, cohDen: 0, tags: 0,
+                // flag id -> [shared A, shared B] of this provenance node's mass.
+                flags: new Map(), flagA: 0, flagB: 0,
                 expandable: (node.children || []).length > 0,
             };
             groups.set(key, g);
@@ -1435,6 +1455,16 @@ function fileSimSankeyGroups(rows, scale) {
         g.cohNum += (row.score || 0) * (row.matched_weight || 0);
         g.cohDen += row.matched_weight || 0;
         g.tags += 1;
+        // The other axis, folded onto the same node: how much of this tag's
+        // matched mass someone flagged. Rows fold, so their cells fold with them.
+        Object.entries((matrix || {})[row.tag_id] || {}).forEach(([flag, cell]) => {
+            const cur = g.flags.get(flag) || [0, 0];
+            cur[0] += cell[off] || 0;
+            cur[1] += cell[off + 1] || 0;
+            g.flags.set(flag, cur);
+            g.flagA += cell[off] || 0;
+            g.flagB += cell[off + 1] || 0;
+        });
     });
     return [...groups.values()]
         .filter(g => g.sharedA + g.sharedB + g.uniqA + g.uniqB > 0)
@@ -1448,13 +1478,58 @@ window.toggleFileSimNs = function(key) {
     window.toggleFileSimNode(key);
 };
 
+// Tagging changes the split, never the score, so a stale split is an offer to
+// recompute rather than a reason to invalidate the pair.
+function renderFileSimResplit(stale) {
+    const slot = document.getElementById('bin-sim-resplit-slot');
+    if (!slot) return;
+    slot.innerHTML = stale
+        ? `<button class="view-btn" id="bin-sim-resplit-btn" onclick="resplitBinSimTags()"
+             title="Tags changed since this pair was split. The score is unaffected; only its breakdown by tag is.">&#8635; Tags changed &mdash; refresh split</button>`
+        : '';
+}
+
+window.resplitBinSimTags = async function() {
+    const btn = document.getElementById('bin-sim-resplit-btn');
+    if (!binSimCtx) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Resplitting...'; }
+    try {
+        const res = await fetch('/api/bin_sim/resplit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                collection: binSimCtx.collection,
+                algo: new URLSearchParams(location.search).get('algo') || 'unweighted_cosine',
+            }),
+        });
+        const out = await res.json();
+        if (out.status === 'success') {
+            showToast('Tag resplit queued — reopen the pair when the job finishes', 'info');
+        } else {
+            showToast(out.message || 'Resplit failed', 'error');
+            if (btn) { btn.disabled = false; }
+        }
+    } catch (e) {
+        showToast('Resplit failed: ' + e, 'error');
+        if (btn) { btn.disabled = false; }
+    }
+};
+
 function renderFileSimSankey(data) {
+    renderFileSimResplit(data.tags_stale);
     const container = document.getElementById('bin-sim-filesim-sankey');
     if (!container) return;
     container.innerHTML = '';
 
     // Same scope as every other pane: select libc on the left, see libc's flow.
-    const groups = fileSimSankeyGroups(fileSimScopeRows(data.tags_summary || []), fileSimScale);
+    const groups = fileSimSankeyGroups(fileSimScopeRows(data.tags_summary || []), fileSimScale, data.flag_matrix);
+    // The flag stage is drawn only when something is flagged, so an untagged
+    // pair keeps exactly the three columns it has always had.
+    const hasFlags = groups.some(g => g.flagA + g.flagB > 0);
+    const COL_A = 0;
+    const COL_MID = hasFlags ? 2 : 1;
+    const COL_B = hasFlags ? 4 : 2;
+    const COLUMNS = hasFlags ? [0, 1, 2, 3, 4] : [0, 1, 2];
     if (!groups.length) {
         container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">No tag data for this scope.</div>';
         return;
@@ -1491,40 +1566,81 @@ function renderFileSimSankey(data) {
 
         if (g.sharedA > 0 || g.sharedB > 0) {
             const mid = addNode(`fsk_s_${i}`, `${g.label} shared (${fmt(Math.max(g.sharedA, g.sharedB))} ${suffix})`, sColor, {
-                align: 1, tagIdx: i, sort: i * 10,
+                align: COL_MID, tagIdx: i, sort: i * 10,
                 tip: `${g.label} · shared\n${filenameA}: ${fmt(g.sharedA)} ${suffix}\n${filenameB}: ${fmt(g.sharedB)} ${suffix}\nMatch quality: ${(score * 100).toFixed(0)}%`,
             });
+
+            // The second axis, as a stage: this tag's matched mass, split by what
+            // was flagged on it. Provenance says whose code matched, the flag
+            // column says what that code does -- "30% matched, and it is
+            // suspicious" is one path through both. Unflagged mass is the
+            // remainder, never a stored bucket, so the two cannot drift apart.
+            const flagStage = (fromIdx, toIdx, side) => {
+                const total = side === 'a' ? g.sharedA : g.sharedB;
+                if (!hasFlags || total <= 0) {
+                    if (total > 0) links.push({ source: fromIdx, target: toIdx, value: total });
+                    return;
+                }
+                const align = side === 'a' ? 1 : 3;
+                let k = 0, flagged = 0;
+                [...g.flags.entries()]
+                    .map(([id, v]) => [id, side === 'a' ? v[0] : v[1]])
+                    .filter(([, v]) => v > 0)
+                    .sort((x, y) => y[1] - x[1])
+                    .forEach(([flagId, value]) => {
+                        flagged += value;
+                        const n = addNode(`fsk_fl_${side}_${i}_${k}`, `${fileSimFlagLabel(flagId)} (${fmt(value)} ${suffix})`, FILESIM_FLAG_COLOR, {
+                            align, tagIdx: i, sort: i * 10 + k * 0.01,
+                            tip: `${g.label} · ${fileSimFlagLabel(flagId)}\n${fmt(value)} of ${fmt(total)} matched ${suffix}`,
+                        });
+                        links.push({ source: fromIdx, target: n.index, value });
+                        links.push({ source: n.index, target: toIdx, value });
+                        k += 1;
+                    });
+                // Cells can undershoot their row when confidences are fractional
+                // (see AxisSplit._cross), so the remainder is clamped.
+                const rest = Math.max(0, total - flagged);
+                if (rest > 0) {
+                    const n = addNode(`fsk_fl_${side}_${i}_rest`, `unflagged (${fmt(rest)} ${suffix})`, 'var(--dim)', {
+                        align, tagIdx: i, sort: i * 10 + 9,
+                        tip: `${g.label} · no flag raised\n${fmt(rest)} of ${fmt(total)} matched ${suffix}`,
+                    });
+                    links.push({ source: fromIdx, target: n.index, value: rest });
+                    links.push({ source: n.index, target: toIdx, value: rest });
+                }
+            };
+
             if (g.sharedA > 0) {
                 const n = addNode(`fsk_as_${i}`, `${g.label}${marker} shared (${fmt(g.sharedA)} ${suffix})`, tagColor, {
-                    align: 0, tagIdx: i, sort: i * 10, tagKey: g.key, expandable: g.expandable,
+                    align: COL_A, tagIdx: i, sort: i * 10, tagKey: g.key, expandable: g.expandable,
                     tip: `${filenameA} · ${g.label} — matched\n${fmt(g.sharedA)} of ${fmt(totalA)} ${suffix}\n${stat}`,
                 });
-                links.push({ source: n.index, target: mid.index, value: g.sharedA });
+                flagStage(n.index, mid.index, 'a');
             }
             if (g.sharedB > 0) {
                 const n = addNode(`fsk_bs_${i}`, `${g.label}${marker} shared (${fmt(g.sharedB)} ${suffix})`, tagColor, {
-                    align: 2, tagIdx: i, sort: i * 10, tagKey: g.key, expandable: g.expandable,
+                    align: COL_B, tagIdx: i, sort: i * 10, tagKey: g.key, expandable: g.expandable,
                     tip: `${filenameB} · ${g.label} — matched\n${fmt(g.sharedB)} of ${fmt(totalB)} ${suffix}\n${stat}`,
                 });
-                links.push({ source: mid.index, target: n.index, value: g.sharedB });
+                flagStage(mid.index, n.index, 'b');
             }
         }
         if (g.uniqA > 0) {
             const mid = addNode(`fsk_ua_${i}`, `${g.label} only in ${filenameA} (${fmt(g.uniqA)} ${suffix})`, '#f92672', {
-                align: 1, tagIdx: i, sort: i * 10 + 1, tip: `${g.label}\nUnique to ${filenameA}: ${fmt(g.uniqA)} ${suffix}`,
+                align: COL_MID, tagIdx: i, sort: i * 10 + 1, tip: `${g.label}\nUnique to ${filenameA}: ${fmt(g.uniqA)} ${suffix}`,
             });
             const n = addNode(`fsk_au_${i}`, `${g.label}${marker} unmatched (${fmt(g.uniqA)} ${suffix})`, '#f92672', {
-                align: 0, tagIdx: i, sort: i * 10 + 1, tagKey: g.key, expandable: g.expandable,
+                align: COL_A, tagIdx: i, sort: i * 10 + 1, tagKey: g.key, expandable: g.expandable,
                 tip: `${filenameA} · ${g.label} — unmatched\n${fmt(g.uniqA)} of ${fmt(totalA)} ${suffix}\n${stat}`,
             });
             links.push({ source: n.index, target: mid.index, value: g.uniqA });
         }
         if (g.uniqB > 0) {
             const mid = addNode(`fsk_ub_${i}`, `${g.label} only in ${filenameB} (${fmt(g.uniqB)} ${suffix})`, '#66d9ef', {
-                align: 1, tagIdx: i, sort: i * 10 + 2, tip: `${g.label}\nUnique to ${filenameB}: ${fmt(g.uniqB)} ${suffix}`,
+                align: COL_MID, tagIdx: i, sort: i * 10 + 2, tip: `${g.label}\nUnique to ${filenameB}: ${fmt(g.uniqB)} ${suffix}`,
             });
             const n = addNode(`fsk_bu_${i}`, `${g.label}${marker} unmatched (${fmt(g.uniqB)} ${suffix})`, '#66d9ef', {
-                align: 2, tagIdx: i, sort: i * 10 + 2, tagKey: g.key, expandable: g.expandable,
+                align: COL_B, tagIdx: i, sort: i * 10 + 2, tagKey: g.key, expandable: g.expandable,
                 tip: `${filenameB} · ${g.label} — unmatched\n${fmt(g.uniqB)} of ${fmt(totalB)} ${suffix}\n${stat}`,
             });
             links.push({ source: mid.index, target: n.index, value: g.uniqB });
@@ -1538,7 +1654,7 @@ function renderFileSimSankey(data) {
 
     // Every column now carries up to 2-3 nodes per tag, so the height budget comes
     // from the fullest column, not from the tag count.
-    const perColumn = [0, 1, 2].map(a => nodes.filter(n => n.align === a).length);
+    const perColumn = COLUMNS.map(a => nodes.filter(n => n.align === a).length);
     const maxNodesInColumn = Math.max(...perColumn, 6);
     const width = container.clientWidth || 800;
     const padding = maxNodesInColumn > 30 ? 3 : 10;
@@ -1575,7 +1691,7 @@ function renderFileSimSankey(data) {
     // still split by category. Heights are untouched, and every link spans a whole
     // node face, so nothing needs re-linking. Dropping gaps only shrinks a column,
     // so this can never overflow the extent.
-    [0, 1, 2].forEach(col => {
+    COLUMNS.forEach(col => {
         const colNodes = graph.nodes.filter(n => n.align === col).sort((a, b) => a.y0 - b.y0);
         let y = 10;
         colNodes.forEach((n, k) => {

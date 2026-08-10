@@ -7,8 +7,14 @@ be filtered and undone without touching human work:
 
 - notes are stored with ``owner="llm"``, which the existing `note_owners`
   index already makes searchable;
-- tags are applied as ``llm:<tag>`` user tags, so the whole run can be found
-  and bulk-removed by prefix.
+- tags are applied in the ``flag:`` namespace, which the binary-similarity
+  split routes to its flags axis: an LLM finding shows up next to the score
+  without competing with Function ID for what counts as original code.
+
+Undo targets the LLM tag *vocabulary* rather than the ``flag:`` prefix, because
+that prefix is shared with tags a human raised by hand and a rerun must not
+delete those. Free-form output is registered in the vocabulary as it is written,
+so it stays undoable too.
 """
 
 import json
@@ -23,7 +29,10 @@ from bsimvis.app.services.tag_service import tag_service
 from bsimvis.app.services.redis_client import get_redis
 
 LLM_NOTE_OWNER = "llm"
-LLM_TAG_PREFIX = "llm:"
+LLM_TAG_PREFIX = "flag:"
+# Tags written before the `flag:` namespace existed; still recognised so an old
+# run can be detected and cleaned up.
+LEGACY_LLM_TAG_PREFIX = "llm:"
 
 DEFAULT_MAX_BATCH = 1000
 DEFAULT_CONCURRENCY = 2
@@ -71,21 +80,31 @@ def _has_llm_note(collection, func_id):
     )
 
 
-def _has_llm_tags(collection, func_id):
+def _machine_tags(collection, func_id):
+    """The tags on this function that an LLM run put there.
+
+    Anything in the collection's LLM vocabulary, plus anything left by a run
+    that predates the `flag:` namespace. A `flag:` tag a human added by hand is
+    not in the vocabulary and is left alone.
+    """
+    vocab = {t.lower() for t in tag_service.get_llm_vocabulary(collection)}
     doc_id = tag_service._resolve_doc_id(collection, "function", func_id)
     doc = tag_service._get_doc(doc_id) or {}
-    return any(
-        isinstance(t, str) and t.startswith(LLM_TAG_PREFIX)
+    return [
+        t
         for t in doc.get("user_tags") or []
-    )
+        if isinstance(t, str)
+        and (t.lower() in vocab or t.startswith(LEGACY_LLM_TAG_PREFIX))
+    ]
+
+
+def _has_llm_tags(collection, func_id):
+    return bool(_machine_tags(collection, func_id))
 
 
 def _remove_llm_tags(collection, func_id):
-    doc_id = tag_service._resolve_doc_id(collection, "function", func_id)
-    doc = tag_service._get_doc(doc_id) or {}
-    for t in list(doc.get("user_tags") or []):
-        if isinstance(t, str) and t.startswith(LLM_TAG_PREFIX):
-            tag_service.remove_user_tag(collection, "function", func_id, t)
+    for t in _machine_tags(collection, func_id):
+        tag_service.remove_user_tag(collection, "function", func_id, t)
 
 
 def _remove_llm_notes(collection, func_id):
@@ -97,6 +116,10 @@ def _remove_llm_notes(collection, func_id):
 class LLMBatchService:
     def __init__(self, r=None):
         self.r = r or get_redis()
+        # Tag ids already known to be in the LLM vocabulary, for the run in
+        # flight. Free-form output is registered once per run instead of once
+        # per function, which is a redis write per function otherwise.
+        self._vocab_seen = set()
 
     # --- per-function result bookkeeping -------------------------------
 
@@ -165,8 +188,14 @@ class LLMBatchService:
         if do_tags:
             if overwrite:
                 _remove_llm_tags(collection, func_id)
+            known = self._vocab_seen
             for t in tags:
                 marked = t if t.startswith(LLM_TAG_PREFIX) else f"{LLM_TAG_PREFIX}{t}"
+                # Free-form output is registered as it is written, so the next
+                # overwrite can find and remove it by vocabulary.
+                if marked.lower() not in known:
+                    tag_service.create_tag(collection, marked, llm=True)
+                    known.add(marked.lower())
                 if tag_service.add_user_tag(collection, "function", func_id, marked):
                     applied.append(marked)
             _mark_enriched(self.r, collection, func_id, "tags")
@@ -201,6 +230,7 @@ class LLMBatchService:
 
         if vocabulary is None and "tags" in actions:
             vocabulary = tag_service.get_llm_vocabulary(collection)
+        self._vocab_seen = {t.lower() for t in vocabulary or ()}
 
         if "tags" in actions and not vocabulary:
             # Silent free-form is how a collection ends up with 60 one-off tags:
@@ -293,7 +323,7 @@ def _selfcheck():
     svc.r = FakeRedis()
     svc._record = lambda *a, **k: None
 
-    notes, tags, calls = [], [], []
+    notes, tags, calls, registered = [], [], [], []
 
     class FakeJobs:
         def __init__(self, cancel_after=None):
@@ -316,6 +346,7 @@ def _selfcheck():
         notes.clear()
         tags.clear()
         calls.clear()
+        registered.clear()
         svc.r = FakeRedis()
         mod._already_enriched = lambda r, c, f, action: f in existing
         mod._remove_llm_notes = lambda c, f: notes.append(("del", f))
@@ -333,6 +364,9 @@ def _selfcheck():
                     lambda c, e, f, t: tags.append((f, t)) or True
                 ),
                 "get_llm_vocabulary": staticmethod(lambda c: ["crypto"]),
+                "create_tag": staticmethod(
+                    lambda c, t, **kw: registered.append(t) or True
+                ),
             },
         )
         mod.llm_service = type(
@@ -367,8 +401,11 @@ def _selfcheck():
     jobs = FakeJobs()
     assert run(["f1", "f2"], jobs) is True
     assert notes == [("f1", LLM_NOTE_OWNER), ("f2", LLM_NOTE_OWNER)], notes
-    assert tags == [("f1", "llm:crypto"), ("f2", "llm:crypto")], tags
+    assert tags == [("f1", "flag:crypto"), ("f2", "flag:crypto")], tags
     assert jobs.progress[-1] == 100, jobs.progress
+    # A vocabulary tag arrives bare and is namespaced on write; registering it
+    # once is what makes the next overwrite able to take it back off.
+    assert registered == ["flag:crypto"], registered
 
     # Already enriched functions are skipped -- a rerun stays cheap.
     jobs = FakeJobs()

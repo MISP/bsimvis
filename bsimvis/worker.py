@@ -697,6 +697,15 @@ class Worker:
                 job_id=job_id,
             )
 
+        elif jtype == JobType.RESPLIT_BIN_SIM.value:
+            return bin_sim_service.resplit_bin_sim(
+                collection,
+                algo=payload.get("algo", "unweighted_cosine"),
+                md5=payload.get("md5"),
+                job_service=self.job_service,
+                job_id=job_id,
+            )
+
         elif jtype == JobType.REINDEX_BIN_SIM.value:
             algo = payload.get("algo", "unweighted_cosine")
             pool_id = payload.get("pool_id")

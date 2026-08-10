@@ -2195,7 +2195,12 @@ class SimilarityService:
         import math
         import time
         from collections import defaultdict
-        from bsimvis.app.services.bin_sim_tags import TagSplit, normalize_tags, load_tag_meta
+        from bsimvis.app.services.bin_sim_tags import (
+            AxisSplit,
+            merge_tag_fields,
+            load_tag_meta,
+            read_tags_rev,
+        )
 
         pool = pool_service.get_pool(pool_id)
         if not pool:
@@ -2395,11 +2400,12 @@ class SimilarityService:
         # Normalize each function's tags once here, not once per matched edge.
         fid_tags = {}
         for fid, m in func_meta_cache.items():
-            tags = normalize_tags(m.get("tags"))
+            tags = merge_tag_fields(m)
             if tags:
                 fid_tags[fid] = tags
 
         tag_meta_cache = load_tag_meta(r, f"global:pool:{pool_id}") if fid_tags else {}
+        tags_rev = read_tags_rev(r, f"global:pool:{pool_id}")
 
         # 3. Generate Pairs (all combinations cross-collection/in pool)
         pairs = []
@@ -2535,7 +2541,7 @@ class SimilarityService:
             sum_weighted_cohesion = 0.0
             sum_weights = 0.0
 
-            tag_split = TagSplit(fid_tags)
+            tag_split = AxisSplit(fid_tags, tag_meta_cache)
 
             for fid_a, fid_b, score in edges:
                 if fid_a not in assigned_a and fid_b not in assigned_b:
@@ -2589,10 +2595,10 @@ class SimilarityService:
             total_weight_a = sum(unique_feat[(coll_a, f)] for f in all_funcs_a_total)
             total_weight_b = sum(unique_feat[(coll_b, f)] for f in all_funcs_b_total)
 
-            tags_summary = (
-                tag_split.summary(total_weight_a, total_weight_b, tag_meta_cache)
+            tag_fields = (
+                tag_split.summaries(total_weight_a, total_weight_b, tag_meta_cache)
                 if fid_tags
-                else []
+                else {"tags_summary": [], "flags_summary": [], "flag_matrix": {}}
             )
 
             # `algo` is a provenance tag, not a choice of file score: the score is
@@ -2632,7 +2638,8 @@ class SimilarityService:
                 "unclustered_a": len(unique_to_a),
                 "unclustered_b": len(unique_to_b),
                 "computed_at": now,
-                "tags_summary": tags_summary,
+                "tags_rev": tags_rev,
+                **tag_fields,
                 "diff": {
                     "matched": diff_matched,
                     "unique_to_a": unique_to_a,

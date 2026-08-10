@@ -5,7 +5,12 @@ import math
 from collections import defaultdict
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services import lineage_service
-from bsimvis.app.services.bin_sim_tags import TagSplit, normalize_tags, load_tag_meta
+from bsimvis.app.services.bin_sim_tags import (
+    AxisSplit,
+    merge_tag_fields,
+    load_tag_meta,
+    read_tags_rev,
+)
 
 
 def _index_bin_sim_pair(pipe, collection, sid, doc, file_meta_a=None, file_meta_b=None):
@@ -321,11 +326,12 @@ class BinSimService:
         # Normalize each function's tags once here, not once per matched edge.
         fid_tags = {}
         for fid, m in func_meta_cache.items():
-            tags = normalize_tags(m.get("tags"))
+            tags = merge_tag_fields(m)
             if tags:
                 fid_tags[fid] = tags
 
         tag_meta_cache = load_tag_meta(r, collection) if fid_tags else {}
+        tags_rev = read_tags_rev(r, collection)
 
         # 4. Generate Pairs
         pairs = []
@@ -436,7 +442,7 @@ class BinSimService:
             sum_weighted_cohesion = 0.0
             sum_weights = 0.0
 
-            tag_split = TagSplit(fid_tags)
+            tag_split = AxisSplit(fid_tags, tag_meta_cache)
 
             # Match greedily
             for fid_a, fid_b, score in edges:
@@ -531,14 +537,14 @@ class BinSimService:
                     for f in fids
                 )
 
-            tags_summary = (
-                tag_split.summary(
+            tag_fields = (
+                tag_split.summaries(
                     _total_weight(all_funcs_a_total),
                     _total_weight(all_funcs_b_total),
                     tag_meta_cache,
                 )
                 if fid_tags
-                else []
+                else {"tags_summary": [], "flags_summary": [], "flag_matrix": {}}
             )
 
             sid = f"{collection}:bin_sim:{algo}:{m_a}::{m_b}"
@@ -561,7 +567,10 @@ class BinSimService:
                 "unclustered_a": len(unique_to_a),
                 "unclustered_b": len(unique_to_b),
                 "computed_at": int(time.time() * 1000),
-                "tags_summary": tags_summary,
+                # Bumped by every tag write, so a stored split can be told apart
+                # from the tag state it was computed against without rebuilding.
+                "tags_rev": tags_rev,
+                **tag_fields,
                 "diff": {
                     "matched": diff_matched,
                     "unique_to_a": unique_to_a,
@@ -796,6 +805,128 @@ class BinSimService:
             job_service.update_progress(
                 job_id, 100, f"Reindexed {total} bin_sim pairs."
             )
+        return True
+
+
+    def resplit_bin_sim(
+        self,
+        collection,
+        algo="unweighted_cosine",
+        md5=None,
+        job_service=None,
+        job_id=None,
+    ):
+        """Recompute the tag split of stored pairs from their persisted diff.
+
+        Tags never enter the pair score -- only its split -- so re-tagging does
+        not need the build pipeline (BSim queries, greedy matching, clustering)
+        run again. Everything `AxisSplit` consumes is already in the doc: the
+        matched edges, the leftovers, and the function ids to read tags from.
+        This is what the "refresh split" button behind LLM tagging calls.
+        """
+        r = self.r
+        built_key = f"{collection}:bin_sim:built:{algo}"
+        sids = [s.decode() if isinstance(s, bytes) else s for s in r.smembers(built_key)]
+        if md5:
+            sids = [s for s in sids if md5 in s]
+        total = len(sids)
+        if not total:
+            if job_service and job_id:
+                job_service.update_progress(job_id, 100, "No bin_sim docs to resplit.")
+            return True
+
+        if job_service and job_id:
+            job_service.add_log(job_id, f"[*] Resplitting {total} bin_sim pairs")
+
+        tag_meta = load_tag_meta(r, collection)
+        rev = read_tags_rev(r, collection)
+        # fid -> tags, kept across pairs: the same libc function shows up in
+        # every pair of the collection and is worth reading once.
+        fid_tags = {}
+        feat = {}
+        done = 0
+
+        for start in range(0, total, 200):
+            chunk = sids[start : start + 200]
+            pipe = r.pipeline(transaction=False)
+            for sid in chunk:
+                pipe.get(sid)
+            docs = []
+            for sid, raw in zip(chunk, pipe.execute()):
+                if not raw:
+                    continue
+                doc = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+                if isinstance(doc, str):
+                    doc = json.loads(doc)
+                if isinstance(doc, dict):
+                    docs.append((sid, doc))
+
+            wanted = set()
+            for _, doc in docs:
+                diff = doc.get("diff") or {}
+                for m in diff.get("matched") or []:
+                    wanted.add(m.get("func_a"))
+                    wanted.add(m.get("func_b"))
+                for u in (diff.get("unique_to_a") or []) + (
+                    diff.get("unique_to_b") or []
+                ):
+                    wanted.add(u.get("func_id"))
+            missing = [f for f in wanted if f and f not in feat]
+            if missing:
+                pipe = r.pipeline(transaction=False)
+                for fid in missing:
+                    pipe.get(f"{fid}:meta")
+                for fid, res in zip(missing, pipe.execute()):
+                    m = {}
+                    if res:
+                        m = json.loads(res.decode() if isinstance(res, bytes) else res)
+                        if isinstance(m, str):
+                            try:
+                                m = json.loads(m)
+                            except ValueError:
+                                m = {}
+                    m = m if isinstance(m, dict) else {}
+                    try:
+                        feat[fid] = float(m.get("bsim_features_count", 1.0) or 1.0)
+                    except (TypeError, ValueError):
+                        feat[fid] = 1.0
+                    tags = merge_tag_fields(m)
+                    if tags:
+                        fid_tags[fid] = tags
+
+            pipe = r.pipeline(transaction=False)
+            for sid, doc in docs:
+                diff = doc.get("diff") or {}
+                split = AxisSplit(fid_tags, tag_meta)
+                total_a = total_b = 0.0
+                for m in diff.get("matched") or []:
+                    fa, fb = m.get("func_a"), m.get("func_b")
+                    wa, wb = feat.get(fa, 1.0), feat.get(fb, 1.0)
+                    split.add_match(fa, fb, m.get("similarity", 0.0), wa, wb)
+                    total_a += wa
+                    total_b += wb
+                for side, rows in (
+                    ("a", diff.get("unique_to_a") or []),
+                    ("b", diff.get("unique_to_b") or []),
+                ):
+                    for u in rows:
+                        w = feat.get(u.get("func_id"), 1.0) or 1.0
+                        split.add_unique(u.get("func_id"), w, side)
+                        if side == "a":
+                            total_a += w
+                        else:
+                            total_b += w
+                doc.update(split.summaries(total_a, total_b, tag_meta))
+                doc["tags_rev"] = rev
+                pipe.set(sid, json.dumps(doc))
+            pipe.execute()
+
+            done += len(chunk)
+            if job_service and job_id:
+                job_service.update_progress(job_id, int(done / total * 100))
+
+        if job_service and job_id:
+            job_service.update_progress(job_id, 100, f"Resplit {total} bin_sim pairs.")
         return True
 
 

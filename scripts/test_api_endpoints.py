@@ -1533,12 +1533,29 @@ def run_all_tests():
                 "Fields: tag_id, score, contribution_pct, coverage_pct_a/b, bins",
             )
 
+        # The flags axis rides alongside the provenance split: separate rows,
+        # separate mass, plus the matrix that crosses the two.
+        check(
+            "Binary similarity doc carries the flags axis",
+            isinstance(first_pair.get("flags_summary", []), list)
+            and isinstance(first_pair.get("flag_matrix", {}), dict),
+            "Checking for flags_summary list + flag_matrix dict",
+        )
+
     if file_md5:
         test_endpoint(
             "GET",
             "/api/bin_sim/list",
             params={"collection": COLLECTION, "md5": file_md5},
         )
+
+    # Tagging changes only the split, so it gets a job that replays it over the
+    # stored diff instead of a rebuild.
+    test_endpoint(
+        "POST",
+        "/api/bin_sim/resplit",
+        data={"collection": COLLECTION},
+    )
 
     # ── Binary Clusters ────────────────────────────────────────────────────
     print(_color("\n  [Binary Clusters]", BOLD))

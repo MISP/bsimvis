@@ -179,4 +179,71 @@ assert.ok(nodeById[`fsk_as_${idx}`].sort < nodeById[`fsk_au_${idx}`].sort);
     });
 });
 
-console.log('OK: file sim sankey grouping + graph shape + tag blocks');
+// ---- Flag stage ---------------------------------------------------------
+// The second axis: provenance says whose code matched, flags say what that code
+// does. The stage only appears when something is flagged, and it must conserve
+// mass -- every unit leaving a provenance node arrives at the shared node.
+// Cells: [w_shared_a, w_shared_b, w_uniq_a, w_uniq_b, then the same as counts].
+const flagMatrix = {
+    'lib:libc:2.31': { 'flag:suspicious': [40, 30, 0, 0, 4, 3, 0, 0] },
+};
+
+M.setOpen(['libraries', 'libraries/libc']);
+M.setScale('count');
+const fgroups = M.fileSimSankeyGroups(rows, 'count', flagMatrix);
+const fi = fgroups.findIndex(x => x.key === 'lib:libc:2.31');
+assert.strictEqual(fgroups[fi].flagA, 4);
+assert.strictEqual(fgroups[fi].flagB, 3);
+// A group nobody flagged carries no cells at all.
+assert.strictEqual(fgroups.find(x => x.key === 'original').flagA, 0);
+
+captured = null;
+M.renderFileSimSankey({
+    tags_summary: rows,
+    flag_matrix: flagMatrix,
+    file_metadata_a: { file_name: 'a.elf' },
+    file_metadata_b: { file_name: 'b.elf' },
+});
+const fNodes = Object.fromEntries(captured.nodes.map(n => [n.id, n]));
+const fLink = (from, to) => captured.links.find(l => l.source.id === from && l.target.id === to).value;
+
+// Five columns now, with the tag columns pushed to the outside.
+assert.strictEqual(fNodes[`fsk_as_${fi}`].align, 0);
+assert.strictEqual(fNodes[`fsk_s_${fi}`].align, 2);
+assert.strictEqual(fNodes[`fsk_bs_${fi}`].align, 4);
+assert.strictEqual(fNodes[`fsk_fl_a_${fi}_0`].align, 1);
+assert.strictEqual(fNodes[`fsk_fl_b_${fi}_0`].align, 3);
+
+// 4 of libc's 10 shared functions on A are flagged; the other 6 are not, and
+// unflagged is a remainder rather than anything the backend stored.
+assert.strictEqual(fLink(`fsk_as_${fi}`, `fsk_fl_a_${fi}_0`), 4);
+assert.strictEqual(fLink(`fsk_as_${fi}`, `fsk_fl_a_${fi}_rest`), 6);
+assert.strictEqual(fLink(`fsk_fl_a_${fi}_0`, `fsk_s_${fi}`), 4);
+assert.strictEqual(fLink(`fsk_fl_a_${fi}_rest`, `fsk_s_${fi}`), 6);
+assert.strictEqual(fLink(`fsk_fl_b_${fi}_0`, `fsk_bs_${fi}`), 3);
+assert.strictEqual(fLink(`fsk_s_${fi}`, `fsk_fl_b_${fi}_rest`), 6);
+
+// An unflagged tag skips the stage instead of drawing an empty column for it.
+const oi = fgroups.findIndex(x => x.key === 'original');
+assert.strictEqual(fLink(`fsk_as_${oi}`, `fsk_fl_a_${oi}_rest`), 7);
+assert.ok(!fNodes[`fsk_fl_a_${oi}_0`], 'no flag node where nothing was flagged');
+
+// Mass in equals mass out at every flag node.
+captured.nodes.filter(n => n.id.startsWith('fsk_fl_')).forEach(n => {
+    const into = captured.links.filter(l => l.target.id === n.id).reduce((s, l) => s + l.value, 0);
+    const outOf = captured.links.filter(l => l.source.id === n.id).reduce((s, l) => s + l.value, 0);
+    assert.strictEqual(into, outOf, `${n.id} must conserve mass`);
+});
+
+// With no flags anywhere, the chart keeps the three columns it always had.
+captured = null;
+M.renderFileSimSankey({
+    tags_summary: rows,
+    flag_matrix: {},
+    file_metadata_a: { file_name: 'a.elf' },
+    file_metadata_b: { file_name: 'b.elf' },
+});
+assert.ok(!captured.nodes.some(n => n.id.startsWith('fsk_fl_')));
+assert.deepStrictEqual([...new Set(captured.nodes.map(n => n.align))].sort(), [0, 1, 2]);
+
+console.log('OK: file sim sankey grouping + graph shape + tag blocks + flag stage');

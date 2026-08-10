@@ -18,9 +18,15 @@ from flask import Flask  # noqa: E402
 from bsimvis.app.services.bin_sim_tags import (  # noqa: E402
     TAG_MISMATCH,
     TAG_UNTAGGED,
+    AXIS_FLAGS,
+    AXIS_PROVENANCE,
+    AxisSplit,
     TagSplit,
+    merge_tag_fields,
     normalize_tags,
     parse_tag_id,
+    split_axes,
+    tag_axis,
     tag_parent,
 )
 from bsimvis.app.routes.bin_sim import _page_diff, _sim_pair_sid  # noqa: E402
@@ -383,6 +389,209 @@ def test_similarity_tag_exclude():
     # 7 rows total, one of which carries `crypto`.
     assert tag_page("sim_tags_not=crypto")["total"] == 6
     assert tag_page("sim_tags=crypto&sim_tags_not=bookmark")["total"] == 0
+
+
+# --- axes -----------------------------------------------------------------
+# A tag answers one of two questions -- whose code is this, or what does it do
+# -- and the two must not share one pool of mass. These pin that separation.
+
+
+def test_axis_routing_and_parents():
+    assert tag_axis("lib:libc:2.31") == AXIS_PROVENANCE
+    assert tag_axis("bundle:mirai") == AXIS_PROVENANCE
+    assert tag_axis("flag:suspicious:c2") == AXIS_FLAGS
+    assert tag_axis("llm:crypto") == AXIS_FLAGS, "legacy LLM prefix stays a flag"
+    # An unrecognised tag must not be able to empty original_code.
+    assert tag_axis("mirai") == AXIS_FLAGS
+    # Provenance rolls up at version, flags at the behaviour they refine.
+    assert tag_parent("flag:suspicious:c2") == "flag:suspicious"
+    assert tag_parent("lib:libc:2.31:memcpy") == "lib:libc:2.31"
+
+
+def test_provenance_resolves_by_priority():
+    tags = {"lib:libc:2.31": 1.0, "bundle:mirai": 1.0, "flag:suspicious": 1.0}
+    axes = split_axes(tags)
+    # Function ID matched actual bytes; the bundle tag labelled a whole binary.
+    assert axes[AXIS_PROVENANCE] == {"lib:libc:2.31": 1.0}
+    assert axes[AXIS_FLAGS] == {"flag:suspicious": 1.0}
+
+    # An explicit priority overrides the namespace default...
+    meta = {"bundle:mirai": {"priority": 500}}
+    assert set(split_axes(tags, meta)[AXIS_PROVENANCE]) == {"bundle:mirai"}
+    # ...and a genuine tie keeps the even split, which is the honest answer.
+    meta = {"bundle:mirai": {"priority": 100}}
+    assert set(split_axes(tags, meta)[AXIS_PROVENANCE]) == {
+        "lib:libc:2.31",
+        "bundle:mirai",
+    }
+
+
+def test_flag_does_not_dilute_provenance():
+    """The regression this whole split exists to prevent.
+
+    Under one flat tag space, flagging a function halved its library's mass and
+    evicted genuinely original code from `original_code` -- that bucket only
+    fills when a function carries no tag at all.
+    """
+    plain = AxisSplit({"a1": {"lib:libc:2.31": 1.0}, "b1": {"lib:libc:2.31": 1.0}})
+    plain.add_match("a1", "b1", 1.0, 10.0, 10.0)
+    plain.add_unique("a2", 10.0, "a")
+    base = by_id(plain.summaries(20.0, 10.0)["tags_summary"])
+
+    flagged = AxisSplit(
+        {
+            "a1": {"lib:libc:2.31": 1.0, "flag:suspicious:c2": 1.0},
+            "b1": {"lib:libc:2.31": 1.0},
+            "a2": {"flag:suspicious:c2": 1.0},
+        }
+    )
+    flagged.add_match("a1", "b1", 1.0, 10.0, 10.0)
+    flagged.add_unique("a2", 10.0, "a")
+    out = flagged.summaries(20.0, 10.0)
+    rows = by_id(out["tags_summary"])
+
+    assert rows["lib:libc:2.31"]["weight_a"] == base["lib:libc:2.31"]["weight_a"]
+    # a2 is flagged but still nobody's library code, so it stays original.
+    assert rows[TAG_UNTAGGED]["unique_weight_a"] == 10.0
+
+    flags = by_id(out["flags_summary"])
+    assert set(flags) == {"flag:suspicious"}
+    # Flags overlay: the flag claims its functions whole, on top of provenance.
+    assert flags["flag:suspicious"]["weight_a"] == 10.0
+    assert flags["flag:suspicious"]["unique_weight_a"] == 10.0
+    # "No flag raised" is the absence of a finding, not a row competing with one.
+    assert TAG_UNTAGGED not in flags
+
+
+def test_flag_matrix_crosses_the_two_axes():
+    """The Sankey's third stage: which part of libc's match is flagged."""
+    split = AxisSplit(
+        {
+            "a1": {"lib:libc:2.31": 1.0, "flag:suspicious:c2": 1.0},
+            "b1": {"lib:libc:2.31": 1.0},
+            "a2": {"lib:libc:2.31": 1.0},
+            "b2": {"lib:libc:2.31": 1.0},
+        }
+    )
+    split.add_match("a1", "b1", 1.0, 10.0, 10.0)
+    split.add_match("a2", "b2", 1.0, 30.0, 30.0)
+    out = split.summaries(40.0, 40.0)
+
+    cell = out["flag_matrix"]["lib:libc:2.31"]["flag:suspicious"]
+    assert cell[0] == 10.0, "A-side matched mass that is both libc and flagged"
+    assert cell[1] == 0.0, "B never carried the flag"
+    assert cell[4] == 1.0, "one function"
+
+    # Unflagged mass is the row minus its cells, so nothing has to be stored for
+    # it and the two can never drift apart.
+    row = by_id(out["tags_summary"])["lib:libc:2.31"]
+    assert row["weight_a"] - cell[0] == 30.0
+
+
+def test_merge_tag_fields_reads_both_fields():
+    meta = {"tags": ["lib:libc:2.31"], "user_tags": ["flag:suspicious", "lib:libc:2.31"]}
+    merged = merge_tag_fields(meta)
+    assert merged == {"lib:libc:2.31": 1.0, "flag:suspicious": 1.0}
+    assert merge_tag_fields({}) == {}
+
+
+class FakeRedis:
+    """Just enough redis for the resplit path: string get/set, one set, pipelines."""
+
+    def __init__(self, values=None, members=()):
+        self.values = dict(values or {})
+        self.members = set(members)
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def set(self, key, value):
+        self.values[key] = value
+
+    def smembers(self, key):
+        return set(self.members) if key.endswith(":built:uc") else set()
+
+    def hgetall(self, key):
+        return {}
+
+    def pipeline(self, transaction=False):
+        outer = self
+
+        class Pipe:
+            def __init__(self):
+                self.ops = []
+
+            def get(self, key):
+                self.ops.append(("get", key))
+
+            def set(self, key, value):
+                self.ops.append(("set", key, value))
+
+            def execute(self):
+                out = []
+                for op in self.ops:
+                    if op[0] == "get":
+                        out.append(outer.get(op[1]))
+                    else:
+                        outer.set(op[1], op[2])
+                        out.append(True)
+                self.ops = []
+                return out
+
+        return Pipe()
+
+
+def test_resplit_replays_the_split_from_the_stored_diff():
+    """Re-tagging must not need a rebuild.
+
+    The score comes from the matched edges alone, so it has to survive the
+    resplit untouched while the split under it changes.
+    """
+    from bsimvis.app.services.bin_sim_service import bin_sim_service
+
+    sid = "main:bin_sim:uc:aaa::bbb"
+    stored = {
+        "md5_a": "aaa",
+        "md5_b": "bbb",
+        "score": 0.75,
+        "tags_summary": [],
+        "diff": {
+            "matched": [{"func_a": "fa1", "func_b": "fb1", "similarity": 0.9}],
+            "unique_to_a": [{"func_id": "fa2"}],
+            "unique_to_b": [],
+        },
+    }
+    meta = {
+        "fa1": {"bsim_features_count": 10, "tags": ["lib:libc:2.31"],
+                "user_tags": ["flag:suspicious:c2"]},
+        "fb1": {"bsim_features_count": 10, "tags": ["lib:libc:2.31"]},
+        "fa2": {"bsim_features_count": 5},
+    }
+    values = {sid: json.dumps(stored), "main:tags_rev": "7"}
+    for fid, m in meta.items():
+        values[f"{fid}:meta"] = json.dumps(m)
+
+    fake = FakeRedis(values, members=[sid])
+    old_r = bin_sim_service.r
+    bin_sim_service.r = fake
+    try:
+        assert bin_sim_service.resplit_bin_sim("main", algo="uc") is True
+    finally:
+        bin_sim_service.r = old_r
+
+    out = json.loads(fake.values[sid])
+    assert out["score"] == 0.75, "resplitting must not touch the score"
+    assert out["tags_rev"] == 7
+
+    rows = by_id(out["tags_summary"])
+    # The flagged function is still wholly libc's, and the untagged leftover is
+    # still original code.
+    assert rows["lib:libc:2.31"]["weight_a"] == 10.0
+    assert rows[TAG_UNTAGGED]["unique_weight_a"] == 5.0
+
+    flags = by_id(out["flags_summary"])
+    assert flags["flag:suspicious"]["weight_a"] == 10.0
+    assert out["flag_matrix"]["lib:libc:2.31"]["flag:suspicious"][0] == 10.0
 
 
 if __name__ == "__main__":

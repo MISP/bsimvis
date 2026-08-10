@@ -1,4 +1,6 @@
 import json
+
+from bsimvis.app.services.bin_sim_tags import bump_tags_rev
 import random
 import logging
 from .redis_client import get_redis
@@ -136,6 +138,23 @@ class TagService:
     def _set_doc(self, doc_id, doc):
         self.r.set(doc_id, json.dumps(doc))
 
+    def _bump_tag_rev(self, collection):
+        """Mark this collection's tag state as changed, and every pool holding it.
+
+        Bumped up front, before the write is attempted: a bump that follows a
+        failed write costs one needless "split is stale" badge, while a missed
+        bump leaves a wrong split looking current. A pool keeps its own revision
+        because its bin_sim docs are split against the pool's tag metadata.
+        """
+        bump_tags_rev(self.r, collection)
+        try:
+            pools = self.r.smembers(f"{collection}:pools") or []
+        except Exception:
+            return
+        for p_id in pools:
+            p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+            bump_tags_rev(self.r, f"global:pool:{p_id}")
+
     def add_user_tag(self, collection, entity_type, entity_id, tag):
         """
         Adds a user tag to an entity (file, function, or similarity).
@@ -145,6 +164,7 @@ class TagService:
         tag = tag.strip()
         if not tag:
             return False
+        self._bump_tag_rev(collection)
 
         try:
             doc_id = self._resolve_doc_id(collection, entity_type, entity_id)
@@ -207,6 +227,7 @@ class TagService:
         collection = _normalize_collection(collection, entity_id)
         r = self.r
         tag = tag.strip()
+        self._bump_tag_rev(collection)
         try:
             doc_id = self._resolve_doc_id(collection, entity_type, entity_id)
 
@@ -274,6 +295,7 @@ class TagService:
         tag = tag.strip()
         if not tag:
             return False
+        self._bump_tag_rev(collection)
 
         try:
             tag_lower = tag.lower()
@@ -331,6 +353,7 @@ class TagService:
         )
         r = self.r
         tag = tag.strip()
+        self._bump_tag_rev(collection)
         try:
             tag_lower = tag.lower()
             lvl = (
@@ -539,6 +562,7 @@ class TagService:
         if not tag:
             return None
 
+        self._bump_tag_rev(collection)
         removed = {"function": 0, "file": 0, "similarity": 0}
         for lvl, etype in self.LVL_TO_ETYPE.items():
             user_ids = self._tagged_ids(collection, lvl, "user_tags", tag)
@@ -600,6 +624,9 @@ class TagService:
         raw = self.r.hget(meta_key, tag)
         meta = json.loads(raw) if raw else {"color": "#66d9ef"}
         meta["priority"] = int(priority)
+        # Priority decides which origin wins on a multi-tagged function, so it
+        # changes the split without any function document being touched.
+        self._bump_tag_rev(collection)
         self.r.hset(meta_key, tag, json.dumps(meta))
 
         # Propagate to pools

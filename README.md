@@ -42,7 +42,7 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 
 ### Analyst Notes & AI Insights
 - Analyst notes system for files and functions
-- Local LLM assistant for file and function summaries
+- LLM assistant for file and function summaries (local or remote via Ollama)
 
 ### API
 - REST API with Swagger documentation
@@ -74,7 +74,7 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 - Ghidra and pyghidra install
 - Redis and Kvrocks databases
 - Function ID databases in the Ghidra install (see below) — without them, function library tags stay empty
-
+- Ollama (optional) for LLM analyst insights and function summaries. Can be run locally (default port `11434`) or remotely (configurable via `ollama_url` in `bsimvis_config.toml`).
 # Installation
 
 Copy the example configuration files and customize them:

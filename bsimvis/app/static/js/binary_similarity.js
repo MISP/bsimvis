@@ -1022,7 +1022,7 @@ function fileSimRowHtml(row, depth, groupId) {
     if (key && fileSimOpenFolds.has(key)) {
         const rows = fileSimFoldRows[key];
         if (!rows) {
-            out.push(`<tr><td colspan="5" style="padding:8px 0 8px ${28 + depth * 22}px; color:var(--dim); font-size:0.75rem;">Loading copies…</td></tr>`);
+            out.push(`<tr><td colspan="7" style="padding:8px 0 8px ${28 + depth * 22}px; color:var(--dim); font-size:0.75rem;">Loading copies…</td></tr>`);
         } else {
             rows.forEach(r => {
                 // The representative is already shown above it.
@@ -1043,6 +1043,8 @@ function fileSimTableHeadHtml() {
     return `
         <tr>
             <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable" onclick="setBinSimSort('matched','similarity')">Similarity <small>${icon('similarity')}</small></th>
+            <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:80px;" class="sortable" onclick="setBinSimSort('matched','avg_features')" title="BSim feature count (A / B for a match)">Features <small>${icon('avg_features')}</small></th>
+            <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:150px;" class="sortable" onclick="setBinSimSort('matched','cluster_name')">Cluster <small>${icon('cluster_name')}</small></th>
             <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">${escapeHtml(nameA)}</th>
             <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:50px;">Notes</th>
             <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">${escapeHtml(nameB)}</th>
@@ -1061,6 +1063,14 @@ function fileSimTableHeadHtml() {
                            onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bsim-sim', 'sim_tag', val, false, false); this.value=''; binSimFilterChange(true); })">
                 </div>
             </div></th>
+            <th><div style="display:flex; align-items:center; gap:2px;" onclick="event.stopPropagation()">
+                <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-feat-min" placeholder="Min..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
+                <span class="dim" style="font-size:0.6rem">-</span>
+                <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-feat-max" placeholder="Max..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
+            </div></th>
+            <th><div onclick="event.stopPropagation()">
+                <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-cl-q" placeholder="Cluster name..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
+            </div></th>
             <th colspan="4"><div onclick="event.stopPropagation()">
                 <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-q" placeholder="Search name / tag / addr..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
             </div></th>
@@ -1072,10 +1082,10 @@ function fileSimMoreRowHtml(key, st, indent) {
     // Keyed so Enter can be pressed on it again and again: the row comes back at a
     // new index after each page, and the focus has to follow it there.
     return `
-        <tr data-rowkey="more:${escapeAttr(key)}"><td colspan="5" style="padding:8px 10px 8px ${indent}px; background:var(--bg);">
-            <span class="bsim-fold-pill" onclick="loadMoreFileSimRows(${escapeAttr(jsString(key))})">
-                ▼ Load ${Math.min(BINSIM_LIMIT, st.total - st.items.length)} more
-            </span>
+        <tr data-rowkey="more:${escapeAttr(key)}"><td colspan="7" style="padding:8px 10px 8px ${indent}px; background:var(--bg);">
+            <button class="btn-primary" style="padding:6px 16px; font-size:0.78rem;" onclick="loadMoreFileSimRows(${escapeAttr(jsString(key))})">
+                Load More Results (${st.total - st.items.length} remaining)
+            </button>
             <span style="color:var(--dim); font-size:0.72rem; margin-left:8px;">showing ${st.items.length} of ${st.total} names</span>
         </td></tr>`;
 }
@@ -1088,7 +1098,7 @@ function fileSimGroupRows(nodes, depth, out) {
         const hasKids = (node.children || []).length > 0;
         out.push(`
             <tr class="bsim-grp-row" data-rowkey="${escapeAttr(node.id)}" onclick="toggleFileSimNode(${escapeAttr(jsString(node.id))})">
-                <td colspan="5" style="padding-left:${10 + depth * 18}px;">
+                <td colspan="7" style="padding-left:${10 + depth * 18}px;">
                     <div style="display:flex; align-items:center; gap:10px;">
                         <span style="color:var(--subtle); width:12px;">${open ? '▼' : '▶'}</span>
                         <span style="font-weight:600;">${escapeHtml(node.label)}</span>
@@ -1106,15 +1116,15 @@ function fileSimGroupRows(nodes, depth, out) {
         if (!st || (!st.loaded && !st.loading)) {
             // Opened but never fetched: kick it off, render a placeholder now.
             loadFileSimRows(node.id, fileSimNodePrefixes(node));
-            out.push(`<tr><td colspan="5" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">Loading…</td></tr>`);
+            out.push(`<tr><td colspan="7" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">Loading…</td></tr>`);
             return;
         }
         if (st.loading && !st.items.length) {
-            out.push(`<tr><td colspan="5" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">Loading…</td></tr>`);
+            out.push(`<tr><td colspan="7" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">Loading…</td></tr>`);
             return;
         }
         if (!st.items.length) {
-            out.push(`<tr><td colspan="5" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">No functions match this scope.</td></tr>`);
+            out.push(`<tr><td colspan="7" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">No functions match this scope.</td></tr>`);
             return;
         }
         st.items.forEach(row => out.push(fileSimRowHtml(row, depth + 1, node.id)));
@@ -1142,9 +1152,9 @@ function renderFileSimTable() {
         const st = fileSimRowState('');
         if (!st.loaded && !st.loading) loadFileSimRows('', fileSimScopePrefixes());
         if (st.loading && !st.items.length) {
-            out.push('<tr><td colspan="5" style="padding:30px; text-align:center; color:var(--dim);">Loading…</td></tr>');
+            out.push('<tr><td colspan="7" style="padding:30px; text-align:center; color:var(--dim);">Loading…</td></tr>');
         } else if (!st.items.length) {
-            out.push('<tr><td colspan="5" style="padding:30px; text-align:center; color:var(--dim);">No functions match this scope.</td></tr>');
+            out.push('<tr><td colspan="7" style="padding:30px; text-align:center; color:var(--dim);">No functions match this scope.</td></tr>');
         } else {
             st.items.forEach(row => out.push(fileSimRowHtml(row, 0, null)));
             out.push(fileSimMoreRowHtml('', st, 20));
@@ -1655,7 +1665,7 @@ function setBinSimSort(table, col) {
 // Per-column filters refine the current tab; the chip bar carries the scope.
 // Values are stashed so a re-render of the header does not lose what was typed.
 function binSimFilterChange(shouldApply = false) {
-    ['q', 'coh-min', 'coh-max', 'feat-min', 'feat-max', 'rar-min', 'rar-max', 'note-a', 'note-b'].forEach(k => {
+    ['q', 'cl-q', 'coh-min', 'coh-max', 'feat-min', 'feat-max', 'rar-min', 'rar-max', 'note-a', 'note-b'].forEach(k => {
         const el = document.getElementById(`bsim-flt-matched-${k}`);
         if (el) window[`bsim-flt-matched-${k}-val`] = el.value;
     });
@@ -1665,7 +1675,7 @@ function binSimFilterChange(shouldApply = false) {
 }
 
 function restoreFileSimFilters() {
-    ['q', 'coh-min', 'coh-max', 'feat-min', 'feat-max', 'rar-min', 'rar-max', 'note-a', 'note-b'].forEach(k => {
+    ['q', 'cl-q', 'coh-min', 'coh-max', 'feat-min', 'feat-max', 'rar-min', 'rar-max', 'note-a', 'note-b'].forEach(k => {
         const el = document.getElementById(`bsim-flt-matched-${k}`);
         const v = window[`bsim-flt-matched-${k}-val`];
         if (el && v) el.value = v;
@@ -1731,6 +1741,45 @@ function renderFuncBadge(fid) {
                 ${tagsHtml}
             </div>
         </div>`;
+}
+
+// Feature counts come from the per-function metadata when it is on the page, so a
+// match shows both sides; `avg_features` (what the sort and the min/max filter run
+// on) is the fallback and the tooltip.
+function fileSimFeatCell(m, fA, fB) {
+    const avg = Math.round(m.avg_features || 0);
+    const one = (f) => (f && f.bsim_features_count) || 0;
+    let text = String(avg);
+    if (fA && fB) text = `${one(fA)} / ${one(fB)}`;
+    else if (fA || fB) text = String(one(fA || fB) || avg);
+    return `<span class="mono dim" style="font-size:0.72rem;" title="avg ${avg} BSim features">${text}</span>`;
+}
+
+// The cluster the row's function(s) belong to, as the same card the cluster views
+// use. Samples ride on the row so the tooltip works for cross-collection and pool
+// diffs, where fetching members by collection would fail.
+function fileSimClusterCell(m) {
+    if (!m.cluster_uuid && !m.cluster_name) return '';
+    if (window.clusterTooltipMockCache && m.cluster_uuid && (m.cluster_sample_functions || []).length) {
+        window.clusterTooltipMockCache.set(m.cluster_uuid, { data: {
+            uuid: m.cluster_uuid, name: m.cluster_name,
+            size: Number(m.cluster_member_count || 0), stability: Number(m.cluster_stability || 0),
+            cohesion: Number(m.cohesion || 0), avg_features: Number(m.cluster_avg_features || 0),
+            runtime_members: m.cluster_sample_functions, scrollOffset: 0
+        }});
+    }
+    const card = (typeof renderClusterCards === 'function') ? renderClusterCards([{
+        cluster_id: m.cluster_id,
+        cluster_uuid: m.cluster_uuid,
+        cluster_name: m.cluster_name,
+        cohesion_score: m.cohesion || 0,
+        member_count: m.cluster_member_count || 0,
+        cluster_stability: m.cluster_stability || 0,
+        avg_features: m.cluster_avg_features || 0,
+    }]) : '';
+    // Below the cohesion threshold the card renderer draws nothing, but the row is
+    // still in that cluster and the filter still matches it, so name it plainly.
+    return card || `<span class="dim" style="font-size:0.68rem;">${escapeHtml(m.cluster_name || '')}</span>`;
 }
 
 function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
@@ -1813,6 +1862,12 @@ function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
             <td style="padding:10px; padding-left:${12 + depth * 22}px;">
                 ${similarityHtml}
             </td>
+            <td style="padding:8px; text-align:center; vertical-align:top;">
+                ${fileSimFeatCell(m, fA, fB)}
+            </td>
+            <td style="padding:6px; text-align:center; vertical-align:top;">
+                ${fileSimClusterCell(m)}
+            </td>
             <td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">
                 ${col2}
             </td>
@@ -1859,6 +1914,9 @@ function binSimFilterParams(prefix) {
     const p = {};
     const q = val(`bsim-flt-${prefix}-q`);
     if (q) p.q = q;
+    // Cluster membership is a row column on every state, so its filter is too.
+    const clq = val(`bsim-flt-${prefix}-cl-q`);
+    if (clq) p.cl_q = clq;
     if (prefix === 'matched') {
         const simTags = readFileSimSimTags();
         const inc = simTags.filter(t => !t.exclude).map(t => t.value);
@@ -1871,7 +1929,6 @@ function binSimFilterParams(prefix) {
         const smax = val('bsim-flt-matched-coh-max'); if (smax) p.sim_max = smax;
     } else {
         const n = val(`bsim-flt-${prefix}-note`); if (n) p.note = n;
-        const clq = val(`bsim-flt-${prefix}-cl-q`); if (clq) p.cl_q = clq;
     }
     const fmin = val(`bsim-flt-${prefix}-feat-min`); if (fmin) p.feat_min = fmin;
     const fmax = val(`bsim-flt-${prefix}-feat-max`); if (fmax) p.feat_max = fmax;

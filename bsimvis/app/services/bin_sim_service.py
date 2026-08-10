@@ -827,8 +827,13 @@ class BinSimService:
         r = self.r
         built_key = f"{collection}:bin_sim:built:{algo}"
         sids = [s.decode() if isinstance(s, bytes) else s for s in r.smembers(built_key)]
-        if md5:
-            sids = [s for s in sids if md5 in s]
+        # Tagging touches the functions of particular binaries, so only pairs
+        # naming one of them can change; everything else would be rewritten to
+        # an identical value. `md5` takes one or several -- the pair view sends
+        # both of its sides. Omit it and the whole collection is resplit.
+        wanted = [md5] if isinstance(md5, str) else list(md5 or ())
+        if wanted:
+            sids = [s for s in sids if any(m and m in s for m in wanted)]
         total = len(sids)
         if not total:
             if job_service and job_id:

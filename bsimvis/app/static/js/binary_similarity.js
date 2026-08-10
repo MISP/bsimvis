@@ -1500,11 +1500,14 @@ window.resplitBinSimTags = async function() {
             body: JSON.stringify({
                 collection: binSimCtx.collection,
                 algo: new URLSearchParams(location.search).get('algo') || 'unweighted_cosine',
+                // Only pairs naming these two can have changed. Resplitting the
+                // whole collection would rewrite thousands of identical docs.
+                md5: [binSimCtx.md5a, binSimCtx.md5b],
             }),
         });
         const out = await res.json();
         if (out.status === 'success') {
-            showToast('Tag resplit queued — reopen the pair when the job finishes', 'info');
+            showToast('Tag resplit queued for these two binaries — reopen the pair when the job finishes', 'info');
         } else {
             showToast(out.message || 'Resplit failed', 'error');
             if (btn) { btn.disabled = false; }

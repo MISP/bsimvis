@@ -449,7 +449,11 @@ class GhidraService:
                                         "lib",
                                         lib_name,
                                         lib_ver,
-                                        None if func_name.startswith("FUN_") else func_name,
+                                        (
+                                            None
+                                            if func_name.startswith("FUN_")
+                                            else func_name
+                                        ),
                                     )
                                 )
         except Exception:
@@ -464,7 +468,7 @@ class GhidraService:
                 while instr_iter.hasNext():
                     instr_iter.next()
                     instr_count += 1
-                
+
                 if instr_count < 10:
                     return list(fid_tags)
 
@@ -481,7 +485,7 @@ class GhidraService:
                                 hash_quad.getSpecificHash()
                             )
                         )
-                    
+
                     is_multiple_match = len(records) > 5
                     lib_to_names = {}
                     for r in records:
@@ -502,9 +506,7 @@ class GhidraService:
                             else list(names)[0]
                         )
                         fid_tags.add(
-                            tag_taxonomy.origin_tag(
-                                "lib", lib_name, lib_ver, func_name
-                            )
+                            tag_taxonomy.origin_tag("lib", lib_name, lib_ver, func_name)
                         )
             except Exception as e:
                 logging.debug(f"FID query failed for {func.getName()}: {e}")
@@ -721,6 +723,13 @@ class GhidraService:
             for ft in fid_tags:
                 if ft not in func_tags:
                     func_tags.append(ft)
+
+            # Insert Capa tags based on function address
+            addr_hex = hex(func.getEntryPoint().getOffset())
+            capa_tags = options.get("capa_tags", {})
+            for ctag in capa_tags.get(addr_hex, []):
+                if ctag not in func_tags:
+                    func_tags.append(ctag)
 
             entry_symbols = symbol_table.getSymbols(entry_point)
             labels = [s.getName() for s in entry_symbols]

@@ -116,6 +116,29 @@ else
     echo "UPX already installed in bin/"
 fi
 
+echo "--- Installing capa ---"
+CAPA_VERSION="9.4.0"
+if [ ! -f "${BIN_DIR}/capa" ]; then
+    case "$(uname -m)" in
+        x86_64)  CAPA_ASSET="capa-v${CAPA_VERSION}-linux.zip" ;;
+        aarch64) CAPA_ASSET="capa-v${CAPA_VERSION}-linux-arm64.zip" ;;
+        *)       CAPA_ASSET="" ;;
+    esac
+    if [ -z "$CAPA_ASSET" ]; then
+        echo "Warning: no capa build for $(uname -m)."
+    elif ! (
+        cd "${SCRATCH_DIR}" \
+        && curl -fsSL "https://github.com/mandiant/capa/releases/download/v${CAPA_VERSION}/${CAPA_ASSET}" -o capa.zip \
+        && unzip -q -o capa.zip \
+        && cp capa "${BIN_DIR}/capa" \
+        && chmod +x "${BIN_DIR}/capa"
+    ); then
+        echo "Warning: capa download failed."
+    fi
+else
+    echo "capa already installed in bin/"
+fi
+
 echo "--- Installing Ghidra ---"
 ./scripts/install_ghidra.sh
 

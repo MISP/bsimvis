@@ -74,6 +74,17 @@ def upx_path():
     return which("upx")
 
 
+def capa_path():
+    """Path to the capa executable, or None when it is not installed."""
+    explicit = os.environ.get("CAPA_BIN")
+    if explicit:
+        return explicit if os.path.exists(explicit) else None
+    local = Path(__file__).resolve().parents[3] / "bin" / "capa"
+    if local.exists():
+        return str(local)
+    return which("capa")
+
+
 def _is_upx(raw_bytes, file_name=""):
     # UPX writes its magic into the stub header near the start and into the
     # pack header at the very end, so scanning both ends avoids walking a

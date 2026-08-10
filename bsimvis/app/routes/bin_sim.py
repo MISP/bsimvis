@@ -10,12 +10,15 @@ from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import normalize_tags
 from bsimvis.app.services.bin_sim_tags import (
+    AXIS_ORIGIN,
     EMPTY_SUMMARIES,
     SPLIT_SCHEMA,
     SUMMARY_FIELDS,
     TAG_UNTAGGED,
+    merge_tag_fields,
     normalize_tags as tag_ids,
     read_tags_rev,
+    tag_axis,
 )
 from bsimvis.app.services.cluster_utils import (
     pick_best_shared_cluster,
@@ -820,16 +823,24 @@ def _diff_rows(diff_data, table):
 def _row_tags(item, fmeta):
     """Tag ids attributed to a row, unioned over whichever sides it has.
 
-    Each side falls back to `original_code` on its own, matching how the tag
-    split attributes mass (bin_sim_tags.py:121): a match between a tagged and an
-    untagged function belongs to both buckets, not to neither.
+    Both tag fields count, exactly as the split does (`merge_tag_fields`): the
+    severity/category/user axes are written to `user_tags` by the LLM and by
+    humans, so reading only `tags` made every non-origin tree node filter down to
+    nothing.
+
+    `original_code` is an origin-axis answer, so a side falls back to it when it
+    has no *origin* tag -- not when it has no tag at all. Otherwise a function
+    carrying only `category:...` would vanish from the Original Code node the
+    split still counts it under (bin_sim_tags.py:540).
     """
     tags = set()
     for fid in (item.get("func_a"), item.get("func_b"), item.get("func_id")):
         if not fid:
             continue
-        own = set(tag_ids((fmeta.get(fid) or {}).get("tags")))
-        tags |= own or {TAG_UNTAGGED}
+        own = set(merge_tag_fields(fmeta.get(fid) or {}))
+        if not any(tag_axis(t) == AXIS_ORIGIN for t in own):
+            own.add(TAG_UNTAGGED)
+        tags |= own
     return tags
 
 

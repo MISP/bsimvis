@@ -291,6 +291,44 @@ def test_tag_scope_is_a_prefix_match():
     assert page("tags=origin:lib:libc:2")["total"] == 0
 
 
+def test_tag_scope_reads_user_tags():
+    """Non-origin axes live in `user_tags`, and the table must scope by them.
+
+    The LLM and the tag box write severity/category/user tags to `user_tags`,
+    never to `tags`, so a table that read only `tags` came back empty for every
+    node of those three trees while the tree itself showed counts.
+    """
+    diff = {
+        "diff": {
+            "matched": [{"func_a": "ua", "func_b": "ub", "similarity": 0.9}],
+            "unique_to_a": [{"func_id": "ua2"}],
+            "unique_to_b": [],
+        },
+        "functions_metadata": {
+            "ua": {"name": "f1", "tags": [], "user_tags": ["category:file:read_write"]},
+            "ub": {"name": "f2", "tags": [], "user_tags": ["severity:low"]},
+            "ua2": {
+                "name": "f3",
+                "tags": ["origin:lib:libc:2.31:memcpy"],
+                "user_tags": ["category:util:init"],
+            },
+        },
+    }
+
+    def upage(qs=""):
+        with _APP.test_request_context("/?" + qs):
+            return _page_diff(diff, "all")
+
+    assert upage()["total"] == 2
+    assert upage("tags=category")["total"] == 2
+    assert upage("tags=category:file")["total"] == 1
+    assert upage("tags=severity:low")["total"] == 1
+    # `original_code` answers the origin question only: a function carrying just
+    # a category tag is still origin-untagged, exactly as the split counts it.
+    assert upage("tags=original_code")["total"] == 1
+    assert upage("tags=origin:lib")["total"] == 1
+
+
 def test_fold_by_name_pages_over_names():
     """Copies of a name fold into one row so a page can never split them."""
     r = page("collapse=name")

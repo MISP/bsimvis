@@ -529,8 +529,21 @@ class GhidraService:
         # `container:apk`, `packer:upx` & co. describe the upload, not the code:
         # copying them onto every function made them look like library evidence
         # and gave the binary-similarity tag split a `container:apk` category.
+        #
+        # `yara:` rides along for the same reason but from the other direction:
+        # ghidra_job puts every matched rule on the file so a match is never
+        # lost, while the per-function `yara_tags` map below carries the ones
+        # that actually resolved to an address. Copying the file set onto every
+        # function would put every rule on every function and flatten that
+        # distinction -- and with it the yara axis of the bin-sim tag split.
+        # Not folded into FILE_SCOPE_TAG_PREFIXES: that tuple is derived from
+        # the unpack handlers and asserted exact in unpack_service.demo().
         func_scope_tags = [
-            t for t in tags if not str(t).startswith(FILE_SCOPE_TAG_PREFIXES)
+            t
+            for t in tags
+            if not str(t).startswith(
+                FILE_SCOPE_TAG_PREFIXES + (tag_taxonomy.YARA_NAMESPACE + ":",)
+            )
         ]
         related_md5 = options.get("related_md5", [])
         min_func_len = options.get("min_func_len", 10)

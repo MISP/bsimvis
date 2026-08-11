@@ -220,12 +220,33 @@ def yara_rule_hits(matches):
     """
     hits = {}
     for match in matches:
-        meta = getattr(match, "meta", None) or {}
-        tag = yara_tag(meta.get("category"), meta.get("malware"), match.rule)
+        tag = _match_tag(match)
         for string_match in getattr(match, "strings", None) or []:
             for instance in getattr(string_match, "instances", None) or []:
                 hits.setdefault(instance.offset, set()).add(tag)
     return hits
+
+
+def _match_tag(match):
+    meta = getattr(match, "meta", None) or {}
+    return yara_tag(meta.get("category"), meta.get("malware"), match.rule)
+
+
+def yara_file_tags(matches):
+    """yara-python `Rules.match()` result -> `{tag, ...}` for the whole file.
+
+    `yara_rule_hits()` keys on string instances, and every one of those can
+    still be lost downstream: an offset Ghidra never mapped, or one that maps
+    into no function and no referencing function either. A condition-only rule
+    (`uint16(0) == 0x5a4d and filesize < 100KB`) has no string instances at
+    all, so it never appears there in the first place.
+
+    In all of those cases the *file* matched the rule, which is what this
+    returns. Function-level attribution is a refinement on top of this, never
+    the record of the match itself -- so a rule that resolves to no function
+    is still visible on the file rather than silently dropped.
+    """
+    return {_match_tag(m) for m in matches}
 
 
 SEVERITY_TAGS = tuple(severity_tag(s) for s in SEVERITY_LEVELS)
@@ -502,6 +523,8 @@ def demo():
                [[0x1000], [0x2000, 0x2500]]),
         # No meta at all -- an older or hand-written rule -- still tags, at unknown depth.
         _Match("homebrew_rule", {}, [[0x3000]]),
+        # Condition-only rule: matched the file, names no string offset at all.
+        _Match("Win32_Packer_Themida", {"category": "Packer"}, []),
     ]
     hits = yara_rule_hits(matches)
     assert hits == {
@@ -511,6 +534,17 @@ def demo():
         0x3000: {"yara:unknown:unknown:homebrew_rule"},
     }, hits
     assert yara_rule_hits([]) == {}
+
+    # The file-level set is not a rollup of the offset map: the condition-only
+    # rule is in it and is absent from every value in `hits`.
+    file_tags = yara_file_tags(matches)
+    assert file_tags == {
+        "yara:ransomware:lockbit:Win32_Ransomware_LockBit",
+        "yara:unknown:unknown:homebrew_rule",
+        "yara:packer:unknown:Win32_Packer_Themida",
+    }, file_tags
+    assert "yara:packer:unknown:Win32_Packer_Themida" not in set().union(*hits.values())
+    assert yara_file_tags([]) == set()
 
     rules = prompt_rules()
     assert "severity:<level>" in rules and "key_exchange" in rules

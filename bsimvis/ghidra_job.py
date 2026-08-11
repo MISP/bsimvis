@@ -170,6 +170,13 @@ class GhidraAnalyzer:
         error). From there this is the same fan-out `_capa_tags_for_program`
         does: an offset can land inside several functions' worth of matched
         strings, and each resolves through the function containing it.
+
+        Unlike capa, though, most YARA offsets are *not* code. A rule matches
+        string literals, which live in `.rodata` and are inside no function
+        body at all, so `getFunctionContaining` alone drops the common case on
+        the floor. Those fall through to the functions that reference the
+        data (`_funcs_referencing`). Whatever still resolves to nothing is not
+        lost either -- the caller tags the file with every matched rule.
         """
         from bsimvis.app.services.tag_taxonomy import yara_rule_hits
 
@@ -186,10 +193,38 @@ class GhidraAnalyzer:
                 continue
             for addr in addrs:
                 func = func_manager.getFunctionContaining(addr)
-                if func:
-                    key = hex(func.getEntryPoint().getOffset())
+                funcs = [func] if func else self._funcs_referencing(addr, program)
+                for f in funcs:
+                    key = hex(f.getEntryPoint().getOffset())
                     tags_by_addr.setdefault(key, set()).update(ytags)
         return tags_by_addr
+
+    def _funcs_referencing(self, addr, program):
+        """Functions with a reference to the data item containing `addr`.
+
+        A YARA string is usually a substring of the literal it matched, so the
+        match address lands in the *middle* of the data item while every xref
+        points at the item's start -- asking for references to `addr` itself
+        finds nothing. `getDataContaining` walks back to the start first,
+        which is the whole reason this works on real `.rodata` hits.
+
+        One hop only: a function that references the string, not its callers.
+        A string reached through a table or a computed offset has no direct
+        reference to follow and stays a file-level tag.
+        """
+        func_manager = program.getFunctionManager()
+        try:
+            data = program.getListing().getDataContaining(addr)
+            start = data.getMinAddress() if data else addr
+            refs = program.getReferenceManager().getReferencesTo(start)
+        except Exception:
+            return []
+        funcs = []
+        for ref in refs:
+            func = func_manager.getFunctionContaining(ref.getFromAddress())
+            if func:
+                funcs.append(func)
+        return funcs
 
     def _stream_program_chunks(
         self, program, payload, hosts, job_id, splice_into_parent=True
@@ -581,14 +616,28 @@ class GhidraAnalyzer:
                             # by starting it any sooner.
                             try:
                                 from bsimvis.app.services.yara_service import scan_file
+                                from bsimvis.app.services.tag_taxonomy import (
+                                    yara_file_tags,
+                                )
 
                                 matches = scan_file(temp_path)
                                 yara_tags_by_addr = self._yara_tags_for_program(
                                     matches, program
                                 )
+                                # The match is a fact about the file; which
+                                # function it belongs to is an attribution that
+                                # can fail (unmapped offset, data with no xref).
+                                # Record the fact first, unconditionally, so a
+                                # rule can never match and leave no trace.
+                                file_tags = yara_file_tags(matches)
+                                if file_tags:
+                                    payload["tags"] = sorted(
+                                        set(payload.get("tags") or []) | file_tags
+                                    )
                                 self.job_service.add_log(
                                     job_id,
-                                    f"yara tagged {len(yara_tags_by_addr)} functions.",
+                                    f"yara matched {len(file_tags)} rules, "
+                                    f"tagged {len(yara_tags_by_addr)} functions.",
                                 )
                             except Exception as e:
                                 self.job_service.add_log(job_id, f"yara scan failed: {e}")

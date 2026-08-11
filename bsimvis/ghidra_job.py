@@ -114,6 +114,51 @@ class GhidraAnalyzer:
             resp.raise_for_status()
             return resp.json()
 
+    def _capa_tags_for_program(self, capa_json_path, program, returncode=0):
+        """capa's JSON -> `{function entry point hex: {capa tag, ...}}`.
+
+        Two things sit between a capa match and a Ghidra function, and getting
+        either wrong yields an empty capa axis rather than an error:
+
+        * capa and Ghidra load a PIE image at different bases (0x2000000 against
+          Ghidra's 0x100000 for a static-pie ELF), so a capa address means
+          nothing until it is re-expressed as an offset from the base capa
+          recorded and re-based onto Ghidra's.
+        * most rules match at instruction or basic-block scope, so the address
+          lands inside a function body rather than on it. Tags hang off entry
+          points downstream, so every hit is resolved through the function
+          containing it -- keying on the raw address would drop every rule that
+          is not function-scoped.
+        """
+        if returncode:
+            raise RuntimeError(f"capa exited {returncode}")
+        if not os.path.exists(capa_json_path) or not os.path.getsize(capa_json_path):
+            raise RuntimeError("capa wrote no output")
+
+        from bsimvis.app.services.tag_taxonomy import capa_rule_hits
+
+        with open(capa_json_path) as f:
+            capa_base, hits = capa_rule_hits(json.load(f))
+
+        rebase = program.getImageBase().getOffset() - capa_base
+        func_manager = program.getFunctionManager()
+        space = program.getAddressFactory().getDefaultAddressSpace()
+
+        tags_by_addr = {}
+        for virtual_addr, ctags in hits.items():
+            try:
+                func = func_manager.getFunctionContaining(
+                    space.getAddress(virtual_addr + rebase)
+                )
+            except Exception:
+                # capa seeing a section Ghidra never loaded is not a reason to
+                # drop the hits that do land.
+                continue
+            if func:
+                key = hex(func.getEntryPoint().getOffset())
+                tags_by_addr.setdefault(key, set()).update(ctags)
+        return tags_by_addr
+
     def _stream_program_chunks(
         self, program, payload, hosts, job_id, splice_into_parent=True
     ):
@@ -227,6 +272,12 @@ class GhidraAnalyzer:
             capa_proc = None
             capa_out = None
             capa_json_path = os.path.join(temp_dir, "capa.json")
+            if not capa:
+                # Otherwise an install with no capa binary looks exactly like a
+                # sample with no capabilities.
+                self.job_service.add_log(
+                    job_id, "capa not installed; skipping capability tags."
+                )
             if capa and not temp_path.endswith(".gpr.zip"):
                 capa_out = open(capa_json_path, "w")
                 capa_proc = subprocess.Popen(
@@ -410,72 +461,25 @@ class GhidraAnalyzer:
                             capa_proc.wait()
                             if capa_out:
                                 capa_out.close()
-                            if os.path.exists(capa_json_path):
-                                try:
-                                    import json
+                            try:
+                                capa_tags_by_addr = self._capa_tags_for_program(
+                                    capa_json_path, program, capa_proc.returncode
+                                )
+                            except Exception as e:
+                                self.job_service.add_log(
+                                    job_id, f"capa parse failed: {e}"
+                                )
+                            self.job_service.add_log(
+                                job_id,
+                                f"capa tagged {len(capa_tags_by_addr)} functions.",
+                            )
 
-                                    with open(capa_json_path) as f:
-                                        cdata = json.load(f)
-                                    from bsimvis.app.services.tag_taxonomy import (
-                                        capa_tag,
-                                    )
-
-                                    for rule_name, rule_match in cdata.get(
-                                        "rules", {}
-                                    ).items():
-                                        namespace = rule_match.get("meta", {}).get(
-                                            "namespace"
-                                        )
-                                        if not namespace:
-                                            continue
-                                        ctag = capa_tag(namespace)
-                                        if not ctag:
-                                            continue
-                                        for match in rule_match.get("matches", []):
-                                            locations = match.get("locations", [])
-                                            # some versions of capa have single location
-                                            # others have a list or tuple
-                                            if not isinstance(locations, list):
-                                                # fallbacks if structure is different
-                                                if match.get("location"):
-                                                    locations = [match.get("location")]
-                                                else:
-                                                    locations = []
-                                            for loc in locations:
-                                                if isinstance(loc, dict) and loc.get(
-                                                    "type"
-                                                ) in (
-                                                    "absolute",
-                                                    "virtual",
-                                                    "no address",
-                                                ):
-                                                    if "value" in loc:
-                                                        addr = hex(loc["value"])
-                                                        if (
-                                                            addr
-                                                            not in capa_tags_by_addr
-                                                        ):
-                                                            capa_tags_by_addr[addr] = (
-                                                                set()
-                                                            )
-                                                        capa_tags_by_addr[addr].add(
-                                                            ctag
-                                                        )
-                                                    elif (
-                                                        loc.get("type") == "no address"
-                                                    ):
-                                                        # file-scope rules could be added to file tags, but for now we skip or add to a special bucket
-                                                        pass
-                                except Exception as e:
-                                    self.job_service.add_log(
-                                        job_id, f"capa parse failed: {e}"
-                                    )
-
-                        # attach to payload for _stream_program_chunks? No, we can just pass it via extra payload field
+                        # stream_bsim_data() reads this straight off the payload it
+                        # is handed as `options`, and hangs the tags on the function
+                        # whose entry point matches the key.
                         if capa_tags_by_addr:
-                            # convert sets to lists
                             payload["capa_tags"] = {
-                                k: list(v) for k, v in capa_tags_by_addr.items()
+                                k: sorted(v) for k, v in capa_tags_by_addr.items()
                             }
 
                         self._stream_program_chunks(program, payload, hosts, job_id)

@@ -60,9 +60,20 @@ ORIGIN_NO_VERSION = "unknown"
 FILE_SCOPE_NAMESPACES = ("container", "packer")
 
 
+# Written by capa, recorded verbatim from the matched rule's namespace:
+# `capa:host-interaction:file-system:write`. Externally standardised, so it is
+# never remapped into `category:` -- matching what capa emits is the whole value.
+CAPA_NAMESPACE = "capa"
+
 # The namespaces a tag id may lead with. Anything else is human-typed and gets
 # moved under `user:` -- an unnamespaced tag must never land on an analysis axis.
-KNOWN_NAMESPACES = ("origin", "severity", "category", "user") + FILE_SCOPE_NAMESPACES
+KNOWN_NAMESPACES = (
+    "origin",
+    "severity",
+    "category",
+    "user",
+    CAPA_NAMESPACE,
+) + FILE_SCOPE_NAMESPACES
 
 
 def namespaced(tag_id):
@@ -109,6 +120,56 @@ def severity_tag(level):
 
 def category_tag(group, leaf):
     return f"category:{group}:{leaf}"
+
+
+def capa_tag(rule_namespace):
+    """capa rule namespace -> `capa:` tag id, or None when the rule has none.
+
+    `host-interaction/file-system/write` -> `capa:host-interaction:file-system:write`.
+    capa's own separator is `/`, but every axis in this vocabulary rolls up by
+    splitting on `:`, so the path is re-punctuated on the way in rather than
+    teaching the split engine a second separator.
+
+    Rules with no namespace are capa's building blocks (`lib: true` and the
+    nursery), not capabilities; they return None and are dropped by the caller.
+    """
+    ns = str(rule_namespace or "").strip().strip("/")
+    if not ns:
+        return None
+    return "capa:" + ":".join(p for p in ns.split("/") if p)
+
+
+def capa_rule_hits(cdata):
+    """capa `-j` document -> `(base_address, {virtual_address: {tag, ...}})`.
+
+    Each entry of `rules[name]["matches"]` is a two-element `[address, result]`
+    pair, *not* a dict -- reading it as one finds no matches at all. Only the
+    address half is used: the result tree underneath says why the rule fired,
+    which is not something this vocabulary records.
+
+    The addresses are capa's own, relative to `meta.analysis.base_address`. capa
+    and Ghidra pick different load bases for the same PIE image, so a caller must
+    rebase them onto the disassembler's base before they name anything.
+    """
+    base = cdata.get("meta", {}).get("analysis", {}).get("base_address")
+    base = base.get("value", 0) if isinstance(base, dict) else 0
+
+    hits = {}
+    for rule in cdata.get("rules", {}).values():
+        ctag = capa_tag(rule.get("meta", {}).get("namespace"))
+        if not ctag:
+            continue
+        for match in rule.get("matches", []):
+            if not isinstance(match, (list, tuple)) or not match:
+                continue
+            addr = match[0]
+            # "absolute" is the only kind a static run emits. File-scope rules
+            # carry "no address" and have no function to hang a tag on.
+            if not isinstance(addr, dict) or addr.get("type") != "absolute":
+                continue
+            if "value" in addr:
+                hits.setdefault(addr["value"], set()).add(ctag)
+    return base, hits
 
 
 SEVERITY_TAGS = tuple(severity_tag(s) for s in SEVERITY_LEVELS)
@@ -207,7 +268,7 @@ def migrate_tag(tag_id):
     parts = raw.split(":")
     head = parts[0].lower()
 
-    if head in ("origin", "severity", "category", "user"):
+    if head in ("origin", "severity", "category", "user", CAPA_NAMESPACE):
         # `user:flag:...` is a legacy id `namespaced()` buried under `user:`
         # after the split, not a human's word. Unbury it and migrate for real.
         if head == "user" and len(parts) > 1 and parts[1].lower() in LEGACY_PREFIXES:
@@ -310,6 +371,50 @@ def demo():
 
     assert namespaced("mytag") == "user:mytag"
     assert namespaced("category:network:c2") == "category:network:c2"
+
+    # capa ids are recorded verbatim, never remapped into `category:`.
+    assert capa_tag("host-interaction/file-system/write") == (
+        "capa:host-interaction:file-system:write")
+    assert capa_tag("communication/http/client") == "capa:communication:http:client"
+    assert capa_tag(None) is None and capa_tag("") is None and capa_tag("/") is None
+    assert namespaced("capa:communication:http") == "capa:communication:http", (
+        "a capa tag must not be buried under user:")
+    assert migrate_tag("capa:communication:http") == ["capa:communication:http"]
+    assert not is_taxonomy_tag("capa:communication:http"), (
+        "the model must not be able to invent capa findings")
+
+    # A capa document, shaped exactly as `capa -j` writes it: `matches` holds
+    # [address, result] pairs. Reading it as a list of dicts is what silently
+    # produced zero capa tags, so this is the assert that has to fail if the
+    # pair-unpacking is ever "simplified" back.
+    doc = {
+        "meta": {"analysis": {"base_address": {"type": "absolute", "value": 0x2000000}}},
+        "rules": {
+            "encrypt data using RC4": {
+                "meta": {"namespace": "data-manipulation/encryption/rc4"},
+                "matches": [
+                    [{"type": "absolute", "value": 0x2002715}, {"success": True}],
+                    [{"type": "absolute", "value": 0x2002715}, {"success": True}],
+                    [{"type": "absolute", "value": 0x2014000}, {"success": True}],
+                ],
+            },
+            # No namespace -> a capa building block, never a capability tag.
+            "create or open file": {"meta": {}, "matches": [
+                [{"type": "absolute", "value": 0x2003000}, {"success": True}]]},
+            # File-scope rules have nowhere to land.
+            "packed with UPX": {
+                "meta": {"namespace": "anti-analysis/packer/upx"},
+                "matches": [[{"type": "no address"}, {"success": True}]],
+            },
+        },
+    }
+    base, hits = capa_rule_hits(doc)
+    assert base == 0x2000000, base
+    assert hits == {
+        0x2002715: {"capa:data-manipulation:encryption:rc4"},
+        0x2014000: {"capa:data-manipulation:encryption:rc4"},
+    }, hits
+    assert capa_rule_hits({}) == (0, {})
 
     rules = prompt_rules()
     assert "severity:<level>" in rules and "key_exchange" in rules

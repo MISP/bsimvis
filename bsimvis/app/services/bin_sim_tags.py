@@ -11,12 +11,13 @@ summary then rolls children up under their `origin:lib:libc:2.31` parent, so the
 score is as precise as the Function ID analyzer made it while the UI still shows
 one row per library version.
 
-Tags come from four sources -- Function ID, a vendored-code bundle, a human, and
-the LLM -- answering four unrelated questions, so they are split onto four axes
-(see AXIS_ORIGIN / AXIS_SEVERITY / AXIS_CATEGORY / AXIS_USER below) and crossed
-by `AxisSplit` into one joint table. Every Sankey view -- any single axis, or any
-pair of them -- is a marginal of that one table (`joint_marginal`), so switching
-what the graph shows costs no backend work at all.
+Tags come from five sources -- Function ID, a vendored-code bundle, a human, the
+LLM, and capa -- answering five unrelated questions, so they are split onto five
+axes (see AXIS_ORIGIN / AXIS_SEVERITY / AXIS_CATEGORY / AXIS_USER / AXIS_CAPA
+below) and crossed by `AxisSplit` into one joint table. Every Sankey view -- any
+single axis, or any pair of them -- is a marginal of that one table
+(`joint_marginal`), so switching what the graph shows costs no backend work at
+all.
 
 Nothing here touches the pair score: the score is the matched edges alone, and
 tagging only changes how it is broken down. That is why re-tagging is answered by
@@ -35,7 +36,7 @@ TAG_UNTAGGED = "original_code"
 TAG_MISMATCH = "tag_mismatch"
 
 # --- Axes ------------------------------------------------------------------
-# Tags answer four unrelated questions and must not share one pool of mass:
+# Tags answer five unrelated questions and must not share one pool of mass:
 #
 #   origin   -- "whose code is this": libc, a vendored bundle, or nobody's
 #               (original_code). Mutually exclusive, rows partition the pair.
@@ -44,6 +45,11 @@ TAG_MISMATCH = "tag_mismatch"
 #               can carry several, and carrying one says nothing about where the
 #               code came from or how bad it is.
 #   user     -- "what did a human mark on it": bookmark, ignore, free-form.
+#   capa     -- "what does capa say it does": the same question as category, but
+#               answered by a rule engine instead of a model, so the two are kept
+#               apart and can be crossed against each other. Coverage is partial
+#               by architecture (see capa_service), which is why an empty capa
+#               axis never means "no capabilities".
 #
 # Splitting one flat tag space by `conf / len(tags)` mixed them: a single
 # behaviour tag on a libc function used to halve libc's mass, and the same tag on
@@ -59,9 +65,10 @@ AXIS_ORIGIN = "origin"
 AXIS_SEVERITY = "severity"
 AXIS_CATEGORY = "category"
 AXIS_USER = "user"
+AXIS_CAPA = "capa"
 
 # Every axis, in the order the UI offers them.
-AXES = (AXIS_ORIGIN, AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER)
+AXES = (AXIS_ORIGIN, AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER, AXIS_CAPA)
 
 # namespace prefix -> axis. Priority is resolved separately (ORIGIN_PRIORITY),
 # because for `origin:` it depends on the *second* segment, not the first.
@@ -70,6 +77,7 @@ TAG_NAMESPACES = {
     "severity": AXIS_SEVERITY,
     "category": AXIS_CATEGORY,
     "user": AXIS_USER,
+    "capa": AXIS_CAPA,
 }
 
 # Priority only matters inside origin, where a function must resolve to one
@@ -96,7 +104,7 @@ DEFAULT_AXIS = AXIS_USER
 # schema is stale no matter what its `tags_rev` says -- without this, a doc
 # written by the two-axis code and one written here are indistinguishable, and
 # the UI silently renders an axis that was never computed.
-SPLIT_SCHEMA = 2
+SPLIT_SCHEMA = 3
 
 # Similarity is bucketed into fixed 5% bins so the UI can re-aggregate to any of
 # its 5/10/20/25% split settings without the backend knowing which is selected.
@@ -176,7 +184,18 @@ def tag_priority(tag_id, tag_meta=None):
 # none), rather than needing a per-kind depth. The other axes keep
 # `namespace:name`, so `category:network:c2` and `category:network:dns` nest
 # under the behaviour group they refine.
-_PARENT_DEPTH = {AXIS_ORIGIN: 4, AXIS_SEVERITY: 2, AXIS_CATEGORY: 2, AXIS_USER: 2}
+# `capa:` ids mirror a capa rule namespace (`capa:host-interaction:file-system`),
+# which is 2-3 segments deep. Depth 2 rolls them up to capa's ~12 top-level
+# namespaces, which is both the readable Sankey grouping and what keeps the joint
+# key small: a function matching eight capa rules contributes one or two parents
+# to its combo, not eight rule names.
+_PARENT_DEPTH = {
+    AXIS_ORIGIN: 4,
+    AXIS_SEVERITY: 2,
+    AXIS_CATEGORY: 2,
+    AXIS_USER: 2,
+    AXIS_CAPA: 2,
+}
 
 
 def tag_parent(tag_id):
@@ -461,7 +480,10 @@ TAG_COMBO_SEP = " + "
 AXIS_SEP = "\x1f"
 
 # Order of the axes packed into the inner joint key. Origin is the outer key.
-JOINT_INNER_AXES = (AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER)
+# Appending an axis here is the whole cost of adding one to the joint -- every
+# Sankey mode is a marginal of this one table, so N axes cost N+1 key segments
+# rather than N*(N-1)/2 stored matrices.
+JOINT_INNER_AXES = (AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER, AXIS_CAPA)
 
 
 def tag_combo(tags):
@@ -475,9 +497,13 @@ MATRIX_SLOTS = ("w_shared_a", "w_shared_b", "w_uniq_a", "w_uniq_b",
                 "n_shared_a", "n_shared_b", "n_uniq_a", "n_uniq_b")
 
 
-def joint_key(severity, category, user):
-    """Pack three per-axis combo names into one joint inner key."""
-    return AXIS_SEP.join((severity, category, user))
+def joint_key(*combos):
+    """Pack one combo name per JOINT_INNER_AXES entry into a joint inner key.
+
+    Variadic so adding an axis is a one-line change to JOINT_INNER_AXES rather
+    than a signature edit here and at the call site.
+    """
+    return AXIS_SEP.join(combos)
 
 
 def joint_marginal(joint, axis_a, axis_b=None):
@@ -625,6 +651,7 @@ SUMMARY_FIELDS = (
     "severity_summary",
     "category_summary",
     "user_summary",
+    "capa_summary",
 )
 
 # Everything `summaries()` writes, so callers that must produce an empty split do

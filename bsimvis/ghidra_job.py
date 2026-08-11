@@ -24,6 +24,7 @@ import logging
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -372,6 +373,10 @@ class GhidraAnalyzer:
                     stdout=capa_out,
                     stderr=capa_err,
                 )
+                capa_started = time.perf_counter()
+                self.job_service.add_log(
+                    job_id, "capa started in background alongside Ghidra analysis."
+                )
 
             # 3. Run Analysis & Stream Chunks directly to API
             app_host = os.getenv("APP_HOST", "localhost")
@@ -538,20 +543,40 @@ class GhidraAnalyzer:
                         else:
                             program = project.importProgram(Path(temp_path))
 
+                        analysis_started = time.perf_counter()
                         ghidra_service.run_profile_analysis(
                             program,
                             payload.get("profile", "fast"),
                             force_reanalysis=True,
                             disable_function_id=skip_function_id,
                         )
+                        analysis_secs = time.perf_counter() - analysis_started
+                        self.job_service.add_log(
+                            job_id,
+                            f"Ghidra analysis took {analysis_secs:.1f}s "
+                            f"(profile {payload.get('profile', 'fast')}).",
+                        )
 
                         capa_tags_by_addr = {}
                         if capa_proc:
+                            # Two numbers, and only the second one is a cost:
+                            # capa's own runtime overlaps the Ghidra analysis
+                            # above, so what the job actually pays is whatever
+                            # is left to wait for once analysis is done.
+                            wait_started = time.perf_counter()
                             capa_proc.wait()
+                            capa_blocked_secs = time.perf_counter() - wait_started
+                            capa_secs = time.perf_counter() - capa_started
                             for handle in (capa_out, capa_err):
                                 if handle:
                                     handle.close()
                             returncode = capa_proc.returncode
+                            self.job_service.add_log(
+                                job_id,
+                                f"capa ran {capa_secs:.1f}s, of which "
+                                f"{capa_blocked_secs:.1f}s blocked the job after "
+                                f"analysis finished.",
+                            )
 
                             # capa refusing to guess the OS is recoverable for an
                             # ELF, and this is the only sample it costs a second
@@ -568,6 +593,7 @@ class GhidraAnalyzer:
                                     f"capa could not detect the OS; retrying as "
                                     f"{fallback_os}.",
                                 )
+                                retry_started = time.perf_counter()
                                 with open(capa_json_path, "w") as out, open(
                                     capa_err_path, "w"
                                 ) as err:
@@ -576,6 +602,13 @@ class GhidraAnalyzer:
                                         stdout=out,
                                         stderr=err,
                                     )
+                                # Unlike the first pass this one overlaps
+                                # nothing, so every second of it is job time.
+                                self.job_service.add_log(
+                                    job_id,
+                                    f"capa --os {fallback_os} retry took "
+                                    f"{time.perf_counter() - retry_started:.1f}s.",
+                                )
 
                             if returncode:
                                 self.job_service.add_log(
@@ -584,6 +617,7 @@ class GhidraAnalyzer:
                                     + capa_failure_reason(capa_err_path, returncode),
                                 )
                             else:
+                                parse_started = time.perf_counter()
                                 try:
                                     capa_tags_by_addr = self._capa_tags_for_program(
                                         capa_json_path, program
@@ -594,7 +628,8 @@ class GhidraAnalyzer:
                                     )
                                 self.job_service.add_log(
                                     job_id,
-                                    f"capa tagged {len(capa_tags_by_addr)} functions.",
+                                    f"capa tagged {len(capa_tags_by_addr)} functions "
+                                    f"in {time.perf_counter() - parse_started:.2f}s.",
                                 )
 
                         # stream_bsim_data() reads this straight off the payload it
@@ -615,15 +650,46 @@ class GhidraAnalyzer:
                             # there is nothing to overlap with Ghidra's analysis
                             # by starting it any sooner.
                             try:
-                                from bsimvis.app.services.yara_service import scan_file
+                                from bsimvis.app.services.yara_service import (
+                                    compiled_rules,
+                                    scan_file,
+                                )
                                 from bsimvis.app.services.tag_taxonomy import (
                                     yara_file_tags,
                                 )
 
+                                # compiled_rules() is cached for the life of the
+                                # worker, so this is the whole compile cost on
+                                # the first job and ~0 on every one after. Doing
+                                # it here rather than inside scan_file() is what
+                                # separates the two in the log; scan_file's own
+                                # call below then hits the cache.
+                                compile_started = time.perf_counter()
+                                rules = compiled_rules()
+                                compile_secs = time.perf_counter() - compile_started
+                                if rules is None:
+                                    # Otherwise an unvendored ruleset reads as a
+                                    # sample that simply matched nothing.
+                                    self.job_service.add_log(
+                                        job_id,
+                                        "yara has no rules loaded; skipping "
+                                        "rule tags.",
+                                    )
+                                elif compile_secs > 0.05:
+                                    self.job_service.add_log(
+                                        job_id,
+                                        f"yara compiled its ruleset in "
+                                        f"{compile_secs:.2f}s (once per worker).",
+                                    )
+
+                                scan_started = time.perf_counter()
                                 matches = scan_file(temp_path)
+                                scan_secs = time.perf_counter() - scan_started
+                                attrib_started = time.perf_counter()
                                 yara_tags_by_addr = self._yara_tags_for_program(
                                     matches, program
                                 )
+                                attrib_secs = time.perf_counter() - attrib_started
                                 # The match is a fact about the file; which
                                 # function it belongs to is an attribution that
                                 # can fail (unmapped offset, data with no xref).
@@ -637,7 +703,9 @@ class GhidraAnalyzer:
                                 self.job_service.add_log(
                                     job_id,
                                     f"yara matched {len(file_tags)} rules, "
-                                    f"tagged {len(yara_tags_by_addr)} functions.",
+                                    f"tagged {len(yara_tags_by_addr)} functions "
+                                    f"(scan {scan_secs:.2f}s, xref attribution "
+                                    f"{attrib_secs:.2f}s).",
                                 )
                             except Exception as e:
                                 self.job_service.add_log(job_id, f"yara scan failed: {e}")

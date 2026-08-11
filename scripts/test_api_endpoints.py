@@ -4123,11 +4123,11 @@ def test_skip_modules_payload():
             "batch_name": "skip modules test",
             "skip_sim": "true",
             "enqueue": "false",
-            "skip": ["FunctionID", "capa"],
+            "skip": ["FunctionID", "capa", "yara"],
         },
         raw_body=raw,
         headers={"Content-Type": "application/octet-stream"},
-        label="POST /api/file/upload?skip=FunctionID&skip=capa",
+        label="POST /api/file/upload?skip=FunctionID&skip=capa&skip=yara",
     )
     if not body:
         return
@@ -4145,6 +4145,11 @@ def test_skip_modules_payload():
     check(
         "skip=capa sets skip_capa on the queued job",
         payload.get("skip_capa") is True,
+        f"payload: {payload}",
+    )
+    check(
+        "skip=yara sets skip_yara on the queued job",
+        payload.get("skip_yara") is True,
         f"payload: {payload}",
     )
 

@@ -92,8 +92,11 @@ function renderUploadView(params) {
                             <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; margin-bottom: 6px; cursor: pointer;">
                                 <input type="checkbox" id="upload-skip-functionid"> Skip FunctionID tagging (library ID, on by default)
                             </label>
-                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; cursor: pointer;">
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; margin-bottom: 6px; cursor: pointer;">
                                 <input type="checkbox" id="upload-skip-capa"> Skip capa tagging
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; cursor: pointer;">
+                                <input type="checkbox" id="upload-skip-yara"> Skip YARA tagging
                             </label>
                         </div>
 
@@ -416,6 +419,7 @@ async function startBatchUpload() {
     const skipModules = [];
     if (document.getElementById('upload-skip-functionid').checked) skipModules.push('FunctionID');
     if (document.getElementById('upload-skip-capa').checked) skipModules.push('capa');
+    if (document.getElementById('upload-skip-yara').checked) skipModules.push('yara');
 
     let currentBatchUuid = null;
 

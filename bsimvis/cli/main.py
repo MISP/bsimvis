@@ -522,6 +522,14 @@ def main():
         help="Force a specific Ghidra Compiler Spec ID (e.g., 'gcc')",
         default=None,
     )
+    decomp_args.add_argument(
+        "--skip",
+        action="append",
+        choices=["FunctionID", "capa"],
+        metavar="MODULE",
+        default=[],
+        help="Skip an analysis module (repeatable): FunctionID (library tagging), capa",
+    )
 
     jvm_options = upload_parser.add_argument_group("JVM Options")
     jvm_options.add_argument("--max-ram-percent", type=float, default=60.0)

@@ -87,6 +87,15 @@ function renderUploadView(params) {
                             <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Related MD5s</label>
                             <input type="text" id="upload-related-md5" placeholder="Comma-separated MD5s" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                         </div>
+                        <div class="form-group" style="margin-bottom: 20px;">
+                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Skip Analysis Modules</label>
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; margin-bottom: 6px; cursor: pointer;">
+                                <input type="checkbox" id="upload-skip-functionid"> Skip FunctionID tagging (library ID, on by default)
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; cursor: pointer;">
+                                <input type="checkbox" id="upload-skip-capa"> Skip capa tagging
+                            </label>
+                        </div>
 
                         <div style="padding-top: 15px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px;">
                             <button id="start-upload-btn" onclick="startBatchUpload()" class="btn-primary" style="width: 100%; height: 40px; justify-content: center; display: flex; align-items: center; gap: 10px;">
@@ -404,7 +413,10 @@ async function startBatchUpload() {
     const tags = document.getElementById('upload-tags').value.split(',').map(t => t.trim()).filter(t => t);
     const relatedMd5s = document.getElementById('upload-related-md5').value.split(',').map(m => m.trim()).filter(m => m);
     const archivePassword = document.getElementById('upload-archive-password').value;
-    
+    const skipModules = [];
+    if (document.getElementById('upload-skip-functionid').checked) skipModules.push('FunctionID');
+    if (document.getElementById('upload-skip-capa').checked) skipModules.push('capa');
+
     let currentBatchUuid = null;
 
     document.getElementById('upload-progress-container').style.display = 'block';
@@ -453,6 +465,7 @@ async function startBatchUpload() {
             if (archivePassword) url.searchParams.set('archive_password', archivePassword);
             tags.forEach(t => url.searchParams.append('tags', t));
             relatedMd5s.forEach(m => url.searchParams.append('related_md5', m));
+            skipModules.forEach(m => url.searchParams.append('skip', m));
 
             const response = await fetch(url, {
                 method: 'POST',

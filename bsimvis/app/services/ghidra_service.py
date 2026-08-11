@@ -674,15 +674,18 @@ class GhidraService:
                 lambda x: (x["entrypoint"], x["name"], x["is_external"]),
             )
 
+        skip_function_id = bool(options.get("skip_function_id"))
+
         fid_service = None
         fid_query_service = None
-        try:
-            from ghidra.feature.fid.service import FidService
+        if not skip_function_id:
+            try:
+                from ghidra.feature.fid.service import FidService
 
-            fid_service = FidService()
-            fid_query_service = fid_service.openFidQueryService(language, False)
-        except Exception as e:
-            logging.debug(f"FID service unavailable: {e}")
+                fid_service = FidService()
+                fid_query_service = fid_service.openFidQueryService(language, False)
+            except Exception as e:
+                logging.debug(f"FID service unavailable: {e}")
 
         chunk = []
         decompiled_count = 0
@@ -717,8 +720,12 @@ class GhidraService:
             parameters = [p.getDataType().getName() for p in func.getParameters()]
 
             func_tags = list(func_scope_tags)
-            fid_tags = self._extract_fid_tags_for_function(
-                func, program, fid_query_service, fid_service
+            fid_tags = (
+                []
+                if skip_function_id
+                else self._extract_fid_tags_for_function(
+                    func, program, fid_query_service, fid_service
+                )
             )
             for ft in fid_tags:
                 if ft not in func_tags:
@@ -852,7 +859,9 @@ class GhidraService:
 
         decomp_interface.dispose()
 
-    def run_profile_analysis(self, program, profile_name, force_reanalysis=False):
+    def run_profile_analysis(
+        self, program, profile_name, force_reanalysis=False, disable_function_id=False
+    ):
         from ghidra.app.plugin.core.analysis import AutoAnalysisManager
         from ghidra.util.task import ConsoleTaskMonitor
 
@@ -867,6 +876,10 @@ class GhidraService:
             )
             tx_id = program.startTransaction("Default Analysis")
             try:
+                if disable_function_id:
+                    options = program.getOptions("Analyzers")
+                    if options.contains("Function ID"):
+                        options.setBoolean("Function ID", False)
                 if force_reanalysis:
                     mgr.reAnalyzeAll(None)
                 mgr.startAnalysis(monitor)
@@ -892,7 +905,10 @@ class GhidraService:
                 else:
                     logging.warning(f"Analyzer '{name}' not found.")
 
-            if options.contains("Function ID.Always Apply FID Labels"):
+            if disable_function_id:
+                if options.contains("Function ID"):
+                    options.setBoolean("Function ID", False)
+            elif options.contains("Function ID.Always Apply FID Labels"):
                 options.setBoolean("Function ID.Always Apply FID Labels", True)
 
             if force_reanalysis:

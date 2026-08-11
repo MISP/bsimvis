@@ -430,6 +430,11 @@ def _ingest_raw_binary(
             val.lower() in ("true", "1") if isinstance(val, str) else bool(val)
         )
 
+    skip_modules = set(request.args.getlist("skip"))
+    if skip_modules:
+        analysis_payload["skip_capa"] = "capa" in skip_modules
+        analysis_payload["skip_function_id"] = "FunctionID" in skip_modules
+
     extra_meta = {}
     if "file_metadata_extra" in request.args:
         extra_meta = json.loads(request.args.get("file_metadata_extra"))

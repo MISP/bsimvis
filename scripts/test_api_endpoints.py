@@ -4091,6 +4091,64 @@ def test_lib_tag_rollup():
             r.delete(*keys)
 
 
+def test_skip_modules_payload():
+    """--skip FunctionID / --skip capa must reach the queued GHIDRA_ANALYZE job.
+
+    A real upload rarely has FID/capa matches in this corpus (see
+    test_lib_tag_rollup), so asserting on resulting tags would prove nothing.
+    What can be checked without a live Ghidra/capa run is that the flag
+    actually threads from the query string into the job payload the worker
+    will read.
+    """
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 4d – --skip FunctionID/capa reach the job payload", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not os.path.isfile(TEST_BINARY):
+        print(_color("\n[SKIP] No test binary.", YELLOW))
+        return
+
+    with open(TEST_BINARY, "rb") as fh:
+        # enqueue=false means this never reaches a worker, so the bytes never
+        # need to parse as a real binary -- only their md5 has to be new, since
+        # the server dedupes uploads by content hash regardless of file_name.
+        raw = fh.read() + uuid.uuid4().bytes
+
+    body = test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={
+            "collection": COLLECTION,
+            "file_name": "skip_modules_test_bin",
+            "batch_name": "skip modules test",
+            "skip_sim": "true",
+            "enqueue": "false",
+            "skip": ["FunctionID", "capa"],
+        },
+        raw_body=raw,
+        headers={"Content-Type": "application/octet-stream"},
+        label="POST /api/file/upload?skip=FunctionID&skip=capa",
+    )
+    if not body:
+        return
+
+    job = requests.get(f"{BASE_URL}/api/jobs/{body.get('pipeline_id')}", timeout=10).json()
+    ghidra_task = next(
+        (t for t in job.get("sub_tasks", []) if t.get("type") == "ghidra_analyze"), None
+    )
+    payload = json.loads(ghidra_task["payload"]) if ghidra_task and ghidra_task.get("payload") else {}
+    check(
+        "skip=FunctionID sets skip_function_id on the queued job",
+        payload.get("skip_function_id") is True,
+        f"payload: {payload}",
+    )
+    check(
+        "skip=capa sets skip_capa on the queued job",
+        payload.get("skip_capa") is True,
+        f"payload: {payload}",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Step 5 – Print summary
 # ---------------------------------------------------------------------------
@@ -4145,6 +4203,7 @@ if __name__ == "__main__":
         test_lineage,
         test_container_similarity,
         test_lib_tag_rollup,
+        test_skip_modules_payload,
         run_all_tests,
     ]
 

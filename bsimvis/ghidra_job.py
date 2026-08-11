@@ -271,13 +271,17 @@ class GhidraAnalyzer:
                 capa_fallback_os,
                 capa_path,
             )
-            capa = capa_path()
+            skip_capa = bool(payload.get("skip_capa"))
+            skip_function_id = bool(payload.get("skip_function_id"))
+            capa = None if skip_capa else capa_path()
             capa_proc = None
             capa_out = None
             capa_err = None
             capa_json_path = os.path.join(temp_dir, "capa.json")
             capa_err_path = os.path.join(temp_dir, "capa.err")
-            if not capa:
+            if skip_capa:
+                self.job_service.add_log(job_id, "capa skipped by request.")
+            elif not capa:
                 # Otherwise an install with no capa binary looks exactly like a
                 # sample with no capabilities.
                 self.job_service.add_log(
@@ -381,6 +385,7 @@ class GhidraAnalyzer:
                                 program,
                                 payload.get("profile", "fast"),
                                 force_reanalysis=False,
+                                disable_function_id=skip_function_id,
                             )
                             # The programs inside a project never pass through
                             # the upload route, so this is the only place their
@@ -467,6 +472,7 @@ class GhidraAnalyzer:
                             program,
                             payload.get("profile", "fast"),
                             force_reanalysis=True,
+                            disable_function_id=skip_function_id,
                         )
 
                         capa_tags_by_addr = {}

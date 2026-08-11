@@ -281,6 +281,8 @@ def _perform_raw_upload(raw_bytes, file_name, args):
                 params["algo"] = args.algo
             if getattr(args, "skip_sim", False):
                 params["skip_sim"] = True
+            if getattr(args, "skip", None):
+                params["skip"] = args.skip
             if getattr(args, "archive_password", None) is not None:
                 params["archive_password"] = args.archive_password
 
@@ -889,6 +891,14 @@ def cli_main():
         dest="cspec",
         help="Force a specific Ghidra Compiler Spec ID (e.g., 'gcc')",
         default=None,
+    )
+    decomp_args.add_argument(
+        "--skip",
+        action="append",
+        choices=["FunctionID", "capa"],
+        metavar="MODULE",
+        default=[],
+        help="Skip an analysis module (repeatable): FunctionID (library tagging), capa",
     )
 
     jvm_options = parser.add_argument_group("JVM Options")

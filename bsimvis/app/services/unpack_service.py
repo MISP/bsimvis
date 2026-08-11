@@ -22,6 +22,7 @@ entry in HANDLERS -- not a new branch in the route.
 import io
 import logging
 import os
+import re
 import struct
 import subprocess
 import tempfile
@@ -83,6 +84,73 @@ def capa_path():
     if local.exists():
         return str(local)
     return which("capa")
+
+
+# capa's exit codes for the two refusals a mixed-architecture corpus hits
+# constantly (capa.main.E_INVALID_FILE_ARCH / E_INVALID_FILE_OS). Anything else
+# is a real error and is reported with whatever capa put on stderr.
+CAPA_E_INVALID_FILE_ARCH = 17
+CAPA_E_INVALID_FILE_OS = 18
+
+# capa renders stderr for a terminal: SGR colour, plus OSC-8 hyperlinks wrapping
+# the source location it appends to every log line.
+_CAPA_ANSI = re.compile(
+    r"\x1b\[[0-9;]*m|\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)|\]8;[^\\]*\\"
+)
+
+# ELF e_ident[EI_OSABI]: 0 is SysV, which is what a Linux toolchain almost always
+# writes, and 3 is an explicit Linux. Anything else names a system capa has no
+# rules for, so it is left alone rather than mislabelled as Linux.
+_ELF_OSABI_LINUX = (0, 3)
+
+
+def capa_fallback_os(raw_bytes):
+    """The `--os` to retry capa with, or None to accept its refusal.
+
+    capa will not guess the OS of a stripped, statically linked ELF -- there is
+    no ABI note and no interpreter to read -- which describes most of an IoT
+    botnet corpus. Of the three systems `--os` accepts (linux/macos/windows)
+    only linux is ever an ELF: macOS is Mach-O and Windows is PE. So an ELF whose
+    OS capa could not infer is either Linux or something capa cannot analyze at
+    all, which is why this answers with linux rather than guessing per-sample.
+
+    It deliberately never overrides a detection capa *did* make -- capa's own
+    sniffing is the only thing that recognises an Android ELF, and `--os` has no
+    spelling for that. This answers only the case where capa said it could not
+    tell.
+    """
+    if len(raw_bytes) < 8 or raw_bytes[:4] != b"\x7fELF":
+        return None
+    return "linux" if raw_bytes[7] in _ELF_OSABI_LINUX else None
+
+
+def capa_failure_reason(err_path, returncode):
+    """Why capa refused a sample, in one line fit for a job log.
+
+    The two codes a mixed corpus actually hits are named here rather than read
+    off stderr: capa renders errors through rich, which hard-wraps them to 80
+    columns even into a pipe, so the message arrives as fragments split across
+    lines. Reassembling that is not worth it for two known outcomes. Anything
+    else falls back to the first readable stderr line, truncation and all.
+    """
+    if returncode == CAPA_E_INVALID_FILE_ARCH:
+        return "unsupported architecture (capa only reads x86/x86-64)"
+    if returncode == CAPA_E_INVALID_FILE_OS:
+        return "could not detect the target OS"
+    try:
+        with open(err_path, errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return f"exit {returncode}"
+    for line in lines:
+        # Every capa log line is "LEVEL capa: <body>  <source>.py:<line>", and
+        # the banner rules around a message are runs of dashes saying nothing.
+        body = _CAPA_ANSI.sub("", line).strip()
+        body = body.split("capa:", 1)[1].strip() if "capa:" in body else ""
+        body = re.sub(r"\s*\S+\.py:\d+$", "", body).strip()
+        if body and set(body) != {"-"}:
+            return body
+    return f"exit {returncode}"
 
 
 def _is_upx(raw_bytes, file_name=""):
@@ -302,6 +370,47 @@ def unpack(raw_bytes, file_name="", options=None):
 
 def demo():
     import tarfile
+
+    # -- capa OS fallback --------------------------------------------------
+    # ELF header: magic, 64-bit, LE, version, then EI_OSABI at byte 7.
+    elf_sysv = b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 8
+    elf_linux = b"\x7fELF\x02\x01\x01\x03" + b"\x00" * 8
+    elf_freebsd = b"\x7fELF\x02\x01\x01\x09" + b"\x00" * 8
+    assert capa_fallback_os(elf_sysv) == "linux"
+    assert capa_fallback_os(elf_linux) == "linux"
+    # capa has no rules for FreeBSD; calling it Linux would invent findings.
+    assert capa_fallback_os(elf_freebsd) is None
+    # A PE is Windows and capa detects that itself, so there is nothing to add.
+    assert capa_fallback_os(b"MZ\x90\x00" + b"\x00" * 8) is None
+    assert capa_fallback_os(b"") is None and capa_fallback_os(b"\x7fELF") is None
+
+    # -- capa failure reporting --------------------------------------------
+    # The two known refusals are named without reading stderr at all.
+    assert "x86" in capa_failure_reason("/nonexistent", CAPA_E_INVALID_FILE_ARCH)
+    assert capa_failure_reason("/nonexistent", CAPA_E_INVALID_FILE_OS) == (
+        "could not detect the target OS")
+    assert capa_failure_reason("/nonexistent", 1) == "exit 1"
+    with tempfile.NamedTemporaryFile("w", suffix=".err", delete=False) as fh:
+        # Real capa stderr, byte for byte: OSC-8 hyperlinks around the source
+        # location, and a wrapped dash banner on its own continuation lines.
+        fh.write(
+            "ERROR    capa:   \x1b]8;id=1;file://capa/helpers.py\x1b\\helpers.py"
+            "\x1b]8;;\x1b\\:\x1b]8;id=2;file://capa/helpers.py#325\x1b\\325"
+            "\x1b]8;;\x1b\\\n"
+            "         ----------------------------           \n"
+            "ERROR    capa:  vivisect failed to load the input file"
+            "   \x1b]8;id=3;file://capa/main.py\x1b\\main.py\x1b]8;;\x1b\\:"
+            "\x1b]8;id=4;file://capa/main.py#99\x1b\\99\x1b]8;;\x1b\\\n"
+        )
+        err_path = fh.name
+    try:
+        # The first line is only a source ref, the second only a banner rule;
+        # both must be skipped to reach the sentence that says anything.
+        assert capa_failure_reason(err_path, 1) == (
+            "vivisect failed to load the input file"
+        ), capa_failure_reason(err_path, 1)
+    finally:
+        os.unlink(err_path)
 
     # -- file-scope tag namespaces ----------------------------------------
     assert FILE_SCOPE_TAG_PREFIXES == ("container:", "packer:")

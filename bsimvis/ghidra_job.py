@@ -114,7 +114,7 @@ class GhidraAnalyzer:
             resp.raise_for_status()
             return resp.json()
 
-    def _capa_tags_for_program(self, capa_json_path, program, returncode=0):
+    def _capa_tags_for_program(self, capa_json_path, program):
         """capa's JSON -> `{function entry point hex: {capa tag, ...}}`.
 
         Two things sit between a capa match and a Ghidra function, and getting
@@ -130,8 +130,6 @@ class GhidraAnalyzer:
           containing it -- keying on the raw address would drop every rule that
           is not function-scoped.
         """
-        if returncode:
-            raise RuntimeError(f"capa exited {returncode}")
         if not os.path.exists(capa_json_path) or not os.path.getsize(capa_json_path):
             raise RuntimeError("capa wrote no output")
 
@@ -267,11 +265,18 @@ class GhidraAnalyzer:
                 f.write(raw_bytes)
 
             import subprocess
-            from bsimvis.app.services.unpack_service import capa_path
+            from bsimvis.app.services.unpack_service import (
+                CAPA_E_INVALID_FILE_OS,
+                capa_failure_reason,
+                capa_fallback_os,
+                capa_path,
+            )
             capa = capa_path()
             capa_proc = None
             capa_out = None
+            capa_err = None
             capa_json_path = os.path.join(temp_dir, "capa.json")
+            capa_err_path = os.path.join(temp_dir, "capa.err")
             if not capa:
                 # Otherwise an install with no capa binary looks exactly like a
                 # sample with no capabilities.
@@ -280,10 +285,18 @@ class GhidraAnalyzer:
                 )
             if capa and not temp_path.endswith(".gpr.zip"):
                 capa_out = open(capa_json_path, "w")
+                # capa says on stderr *why* it refused a sample -- unsupported
+                # architecture, undetectable OS. Discarding that was why an
+                # unanalyzable sample and a clean one looked identical.
+                capa_err = open(capa_err_path, "w")
+                # No --os here on purpose: capa's own detection is better than
+                # anything guessable from the header, and it is the only thing
+                # that recognises an Android ELF. The fallback below runs only
+                # if capa says it could not tell.
                 capa_proc = subprocess.Popen(
                     [capa, "-j", temp_path],
                     stdout=capa_out,
-                    stderr=subprocess.DEVNULL
+                    stderr=capa_err,
                 )
 
             # 3. Run Analysis & Stream Chunks directly to API
@@ -459,20 +472,54 @@ class GhidraAnalyzer:
                         capa_tags_by_addr = {}
                         if capa_proc:
                             capa_proc.wait()
-                            if capa_out:
-                                capa_out.close()
-                            try:
-                                capa_tags_by_addr = self._capa_tags_for_program(
-                                    capa_json_path, program, capa_proc.returncode
-                                )
-                            except Exception as e:
-                                self.job_service.add_log(
-                                    job_id, f"capa parse failed: {e}"
-                                )
-                            self.job_service.add_log(
-                                job_id,
-                                f"capa tagged {len(capa_tags_by_addr)} functions.",
+                            for handle in (capa_out, capa_err):
+                                if handle:
+                                    handle.close()
+                            returncode = capa_proc.returncode
+
+                            # capa refusing to guess the OS is recoverable for an
+                            # ELF, and this is the only sample it costs a second
+                            # pass -- the first one ran alongside the Ghidra
+                            # analysis and is already paid for.
+                            fallback_os = (
+                                capa_fallback_os(raw_bytes)
+                                if returncode == CAPA_E_INVALID_FILE_OS
+                                else None
                             )
+                            if fallback_os:
+                                self.job_service.add_log(
+                                    job_id,
+                                    f"capa could not detect the OS; retrying as "
+                                    f"{fallback_os}.",
+                                )
+                                with open(capa_json_path, "w") as out, open(
+                                    capa_err_path, "w"
+                                ) as err:
+                                    returncode = subprocess.call(
+                                        [capa, "-j", "--os", fallback_os, temp_path],
+                                        stdout=out,
+                                        stderr=err,
+                                    )
+
+                            if returncode:
+                                self.job_service.add_log(
+                                    job_id,
+                                    "capa skipped this sample: "
+                                    + capa_failure_reason(capa_err_path, returncode),
+                                )
+                            else:
+                                try:
+                                    capa_tags_by_addr = self._capa_tags_for_program(
+                                        capa_json_path, program
+                                    )
+                                except Exception as e:
+                                    self.job_service.add_log(
+                                        job_id, f"capa parse failed: {e}"
+                                    )
+                                self.job_service.add_log(
+                                    job_id,
+                                    f"capa tagged {len(capa_tags_by_addr)} functions.",
+                                )
 
                         # stream_bsim_data() reads this straight off the payload it
                         # is handed as `options`, and hangs the tags on the function

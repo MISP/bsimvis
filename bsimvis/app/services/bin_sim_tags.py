@@ -11,11 +11,11 @@ summary then rolls children up under their `origin:lib:libc:2.31` parent, so the
 score is as precise as the Function ID analyzer made it while the UI still shows
 one row per library version.
 
-Tags come from five sources -- Function ID, a vendored-code bundle, a human, the
-LLM, and capa -- answering five unrelated questions, so they are split onto five
-axes (see AXIS_ORIGIN / AXIS_SEVERITY / AXIS_CATEGORY / AXIS_USER / AXIS_CAPA
-below) and crossed by `AxisSplit` into one joint table. Every Sankey view -- any
-single axis, or any pair of them -- is a marginal of that one table
+Tags come from several sources -- Function ID, a vendored-code bundle, a human,
+the LLM, capa, and (once wired up) MITRE ATT&CK and the Malware Behavior Catalog
+-- answering unrelated questions, so they are split onto separate axes (see
+AXES below) and crossed by `AxisSplit` into one joint table. Every Sankey view
+-- any single axis, or any pair of them -- is a marginal of that one table
 (`joint_marginal`), so switching what the graph shows costs no backend work at
 all.
 
@@ -36,7 +36,7 @@ TAG_UNTAGGED = "original_code"
 TAG_MISMATCH = "tag_mismatch"
 
 # --- Axes ------------------------------------------------------------------
-# Tags answer five unrelated questions and must not share one pool of mass:
+# Tags answer unrelated questions and must not share one pool of mass:
 #
 #   origin   -- "whose code is this": libc, a vendored bundle, or nobody's
 #               (original_code). Mutually exclusive, rows partition the pair.
@@ -50,6 +50,11 @@ TAG_MISMATCH = "tag_mismatch"
 #               apart and can be crossed against each other. Coverage is partial
 #               by architecture (see capa_service), which is why an empty capa
 #               axis never means "no capabilities".
+#   mitre    -- which ATT&CK technique, verbatim from whatever writes `mitre:`
+#               tags. No producer yet; the axis exists so one can start writing
+#               `mitre:<tactic>:<technique>` tags without a second migration.
+#   mbc      -- which Malware Behavior Catalog entry, same story as mitre under
+#               `mbc:<objective>:<behavior>`.
 #
 # Splitting one flat tag space by `conf / len(tags)` mixed them: a single
 # behaviour tag on a libc function used to halve libc's mass, and the same tag on
@@ -66,9 +71,14 @@ AXIS_SEVERITY = "severity"
 AXIS_CATEGORY = "category"
 AXIS_USER = "user"
 AXIS_CAPA = "capa"
+AXIS_MITRE = "mitre"
+AXIS_MBC = "mbc"
 
 # Every axis, in the order the UI offers them.
-AXES = (AXIS_ORIGIN, AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER, AXIS_CAPA)
+AXES = (
+    AXIS_ORIGIN, AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER, AXIS_CAPA,
+    AXIS_MITRE, AXIS_MBC,
+)
 
 # namespace prefix -> axis. Priority is resolved separately (ORIGIN_PRIORITY),
 # because for `origin:` it depends on the *second* segment, not the first.
@@ -78,6 +88,8 @@ TAG_NAMESPACES = {
     "category": AXIS_CATEGORY,
     "user": AXIS_USER,
     "capa": AXIS_CAPA,
+    "mitre": AXIS_MITRE,
+    "mbc": AXIS_MBC,
 }
 
 # Priority only matters inside origin, where a function must resolve to one
@@ -104,7 +116,7 @@ DEFAULT_AXIS = AXIS_USER
 # schema is stale no matter what its `tags_rev` says -- without this, a doc
 # written by the two-axis code and one written here are indistinguishable, and
 # the UI silently renders an axis that was never computed.
-SPLIT_SCHEMA = 3
+SPLIT_SCHEMA = 4
 
 # Similarity is bucketed into fixed 5% bins so the UI can re-aggregate to any of
 # its 5/10/20/25% split settings without the backend knowing which is selected.
@@ -195,6 +207,8 @@ _PARENT_DEPTH = {
     AXIS_CATEGORY: 2,
     AXIS_USER: 2,
     AXIS_CAPA: 2,
+    AXIS_MITRE: 2,
+    AXIS_MBC: 2,
 }
 
 
@@ -483,7 +497,9 @@ AXIS_SEP = "\x1f"
 # Appending an axis here is the whole cost of adding one to the joint -- every
 # Sankey mode is a marginal of this one table, so N axes cost N+1 key segments
 # rather than N*(N-1)/2 stored matrices.
-JOINT_INNER_AXES = (AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER, AXIS_CAPA)
+JOINT_INNER_AXES = (
+    AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER, AXIS_CAPA, AXIS_MITRE, AXIS_MBC,
+)
 
 
 def tag_combo(tags):
@@ -652,6 +668,8 @@ SUMMARY_FIELDS = (
     "category_summary",
     "user_summary",
     "capa_summary",
+    "mitre_summary",
+    "mbc_summary",
 )
 
 # Everything `summaries()` writes, so callers that must produce an empty split do

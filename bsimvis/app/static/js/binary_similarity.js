@@ -1498,23 +1498,26 @@ function renderFileSim(data) {
 // finding, not a degree of agreement between the two binaries.
 const FILESIM_FLAG_COLOR = '#fd971f';
 
-// The four axes the graph can draw, and the doc field each reads. `tags_summary`
-// is the origin axis under its historical name.
+// The axes the graph can draw, and the doc field each reads. `tags_summary` is
+// the origin axis under its historical name. Must mirror bin_sim_tags.AXES.
 const FILESIM_AXES = {
     origin: { field: 'tags_summary', label: 'Origin' },
     severity: { field: 'severity_summary', label: 'Severity' },
     category: { field: 'category_summary', label: 'Behavior' },
     user: { field: 'user_summary', label: 'User' },
+    capa: { field: 'capa_summary', label: 'Capa' },
+    mitre: { field: 'mitre_summary', label: 'MITRE ATT&CK' },
+    mbc: { field: 'mbc_summary', label: 'MBC' },
 };
 // Which axis is on each side. An empty B is a single-axis view.
 let fileSimAxisA = 'origin';
 let fileSimAxisB = 'category';
 
-// Key layout of the stored joint table, mirroring bin_sim_tags: origin is the
-// outer key, the other three are packed into the inner key in this order.
+// Key layout of the stored joint table, mirroring bin_sim_tags.JOINT_INNER_AXES:
+// origin is the outer key, the rest are packed into the inner key in this order.
 const FILESIM_AXIS_SEP = '\u001f';
 const FILESIM_COMBO_SEP = ' + ';
-const FILESIM_JOINT_INNER = ['severity', 'category', 'user'];
+const FILESIM_JOINT_INNER = ['severity', 'category', 'user', 'capa', 'mitre', 'mbc'];
 
 // `category:network:c2` reads as "network c2"; `severity:high` as "high". A
 // combo of several keeps them joined.

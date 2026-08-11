@@ -12,10 +12,10 @@ live in `bin_sim_tags.py`):
     category:<group>:<leaf>                   what does it do
     user:<slug>                               what did a human mark on it
 
-`capa:`, `mitre:`, `kill-chain:` and the MAEC namespaces are reserved. They are
-externally standardised, so when they arrive they are recorded verbatim rather
-than remapped into `category:` -- matching what other tools emit is their whole
-value.
+`capa:`, `mitre:` and `mbc:` are externally standardised namespaces, recorded
+verbatim rather than remapped into `category:` -- matching what the tool that
+wrote them emits is their whole value. `kill-chain:` and the MAEC namespaces are
+reserved for the same treatment but have no producer yet.
 """
 
 # --- Severity ---------------------------------------------------------------
@@ -65,6 +65,11 @@ FILE_SCOPE_NAMESPACES = ("container", "packer")
 # never remapped into `category:` -- matching what capa emits is the whole value.
 CAPA_NAMESPACE = "capa"
 
+# Reserved the same way as capa, ahead of a producer: `mitre:<tactic>:<technique>`
+# and `mbc:<objective>:<behavior>`, recorded verbatim once something writes them.
+MITRE_NAMESPACE = "mitre"
+MBC_NAMESPACE = "mbc"
+
 # The namespaces a tag id may lead with. Anything else is human-typed and gets
 # moved under `user:` -- an unnamespaced tag must never land on an analysis axis.
 KNOWN_NAMESPACES = (
@@ -73,6 +78,8 @@ KNOWN_NAMESPACES = (
     "category",
     "user",
     CAPA_NAMESPACE,
+    MITRE_NAMESPACE,
+    MBC_NAMESPACE,
 ) + FILE_SCOPE_NAMESPACES
 
 

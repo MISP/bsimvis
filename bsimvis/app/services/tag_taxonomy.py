@@ -229,7 +229,17 @@ def yara_rule_hits(matches):
 
 def _match_tag(match):
     meta = getattr(match, "meta", None) or {}
-    return yara_tag(meta.get("category"), meta.get("malware"), match.rule)
+    category, family = meta.get("category"), meta.get("malware")
+    if not category and not family:
+        # Elastic's ruleset carries neither field, but its `threat_name` is
+        # already `<os>.<category>.<family>` ("Linux.Trojan.Mirai"), so the two
+        # segments it needs are read off that instead. Reading the field beats
+        # rewriting 273 vendored files, which would have to be re-done by hand
+        # on every re-vendor.
+        parts = str(meta.get("threat_name") or "").split(".")
+        if len(parts) == 3:
+            category, family = parts[1], parts[2]
+    return yara_tag(category, family, match.rule)
 
 
 def yara_file_tags(matches):
@@ -525,6 +535,12 @@ def demo():
         _Match("homebrew_rule", {}, [[0x3000]]),
         # Condition-only rule: matched the file, names no string offset at all.
         _Match("Win32_Packer_Themida", {"category": "Packer"}, []),
+        # Elastic: no category/malware, but `threat_name` carries both.
+        _Match("Linux_Trojan_Mirai_268aac0b", {"threat_name": "Linux.Trojan.Mirai"},
+               [[0x4000]]),
+        # A threat_name that is not <os>.<category>.<family> stays at unknown depth
+        # rather than being sliced into the wrong two segments.
+        _Match("odd_shape_rule", {"threat_name": "Linux.Trojan"}, [[0x5000]]),
     ]
     hits = yara_rule_hits(matches)
     assert hits == {
@@ -532,6 +548,8 @@ def demo():
         0x2000: {"yara:ransomware:lockbit:Win32_Ransomware_LockBit"},
         0x2500: {"yara:ransomware:lockbit:Win32_Ransomware_LockBit"},
         0x3000: {"yara:unknown:unknown:homebrew_rule"},
+        0x4000: {"yara:trojan:mirai:Linux_Trojan_Mirai_268aac0b"},
+        0x5000: {"yara:unknown:unknown:odd_shape_rule"},
     }, hits
     assert yara_rule_hits([]) == {}
 
@@ -542,6 +560,8 @@ def demo():
         "yara:ransomware:lockbit:Win32_Ransomware_LockBit",
         "yara:unknown:unknown:homebrew_rule",
         "yara:packer:unknown:Win32_Packer_Themida",
+        "yara:trojan:mirai:Linux_Trojan_Mirai_268aac0b",
+        "yara:unknown:unknown:odd_shape_rule",
     }, file_tags
     assert "yara:packer:unknown:Win32_Packer_Themida" not in set().union(*hits.values())
     assert yara_file_tags([]) == set()

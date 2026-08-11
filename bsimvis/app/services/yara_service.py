@@ -3,9 +3,9 @@
 Mirrors unpack_service.capa_path(): an env var override, else a vendored
 default, so a deployment can point at its own ruleset without a code change.
 Unlike capa this is an in-process library, not a subprocess -- compiling the
-~300 vendored rules takes well under a second, so a cached compile per worker
-process is enough; there is no reason to shell out or write a project file for
-it.
+~590 vendored rule files takes well under a second (0.58s measured), so a
+cached compile per worker process is enough; there is no reason to shell out or
+write a project file for it.
 """
 
 import os

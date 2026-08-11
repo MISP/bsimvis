@@ -895,10 +895,10 @@ def cli_main():
     decomp_args.add_argument(
         "--skip",
         action="append",
-        choices=["FunctionID", "capa"],
+        choices=["FunctionID", "capa", "yara"],
         metavar="MODULE",
         default=[],
-        help="Skip an analysis module (repeatable): FunctionID (library tagging), capa",
+        help="Skip an analysis module (repeatable): FunctionID (library tagging), capa, yara",
     )
 
     jvm_options = parser.add_argument_group("JVM Options")

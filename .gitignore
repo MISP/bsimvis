@@ -16,6 +16,7 @@ data/*
 !data/bench/
 !data/.gitkeep
 !data/test/
+!data/yara_rules/
 
 # Legacy (remove once migrated)
 data/kvrocks/

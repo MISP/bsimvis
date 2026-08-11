@@ -433,6 +433,7 @@ def _ingest_raw_binary(
     skip_modules = set(request.args.getlist("skip"))
     if skip_modules:
         analysis_payload["skip_capa"] = "capa" in skip_modules
+        analysis_payload["skip_yara"] = "yara" in skip_modules
         analysis_payload["skip_function_id"] = "FunctionID" in skip_modules
 
     extra_meta = {}

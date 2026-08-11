@@ -20,6 +20,7 @@ dependencies = [
     "ollama>=0.6.2",
     "matplotlib>=3.11.0",
     "pyzipper>=0.4.0",
+    "yara-python>=4.5.0",
 ]
 
 [project.scripts]

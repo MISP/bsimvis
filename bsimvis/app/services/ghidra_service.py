@@ -738,6 +738,12 @@ class GhidraService:
                 if ctag not in func_tags:
                     func_tags.append(ctag)
 
+            # Insert YARA tags based on function address
+            yara_tags = options.get("yara_tags", {})
+            for ytag in yara_tags.get(addr_hex, []):
+                if ytag not in func_tags:
+                    func_tags.append(ytag)
+
             entry_symbols = symbol_table.getSymbols(entry_point)
             labels = [s.getName() for s in entry_symbols]
             if not labels:

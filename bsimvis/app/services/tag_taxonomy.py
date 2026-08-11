@@ -70,6 +70,12 @@ CAPA_NAMESPACE = "capa"
 MITRE_NAMESPACE = "mitre"
 MBC_NAMESPACE = "mbc"
 
+# Written by the vendored YARA ruleset. Unlike capa/mitre/mbc this one is not
+# recorded verbatim -- a YARA rule has no built-in namespace, so the id is built
+# from the rule's own `category`/`malware` meta fields instead:
+# `yara:<category>:<family>:<rule_name>`.
+YARA_NAMESPACE = "yara"
+
 # The namespaces a tag id may lead with. Anything else is human-typed and gets
 # moved under `user:` -- an unnamespaced tag must never land on an analysis axis.
 KNOWN_NAMESPACES = (
@@ -80,6 +86,7 @@ KNOWN_NAMESPACES = (
     CAPA_NAMESPACE,
     MITRE_NAMESPACE,
     MBC_NAMESPACE,
+    YARA_NAMESPACE,
 ) + FILE_SCOPE_NAMESPACES
 
 
@@ -179,6 +186,48 @@ def capa_rule_hits(cdata):
     return base, hits
 
 
+def yara_tag(category, family, rule_name):
+    """A matched YARA rule -> `yara:<category>:<family>:<rule_name>` tag id.
+
+    A YARA rule carries no built-in namespace the way a capa rule does, so the
+    id is assembled from the vendored ruleset's own `meta.category` and
+    `meta.malware` fields (e.g. `category: "ransomware"`, `malware: "LOCKBIT"`).
+    Either can be missing on a rule that predates that convention; `unknown`
+    keeps the id at a fixed four-segment depth rather than needing a per-rule
+    rule for how many segments it has.
+    """
+    cat = str(category or "unknown").strip().lower() or "unknown"
+    fam = str(family or "unknown").strip().lower() or "unknown"
+    return f"yara:{cat}:{fam}:{rule_name}"
+
+
+def yara_rule_hits(matches):
+    """yara-python `Rules.match()` result -> `{file_offset: {tag, ...}}`.
+
+    A capa rule match names one address; a YARA rule match names every string
+    it matched on, each with its own file offset, and the RL ruleset's
+    `all of ($x_*)` conditions routinely span several unrelated functions (a
+    resource-enumeration string here, a file-encryption string there) under one
+    rule. So every instance of every matched string gets the rule's tag --
+    dropping to one address per rule would silently keep only the smaller
+    function.
+
+    Offsets are raw file offsets, not addresses: a YARA scan reads the file on
+    disk, not a loaded image. Turning a file offset into a Ghidra address needs
+    Ghidra's own section layout (`Memory.locateAddressesForFileOffset`), so
+    that step is the caller's job, not this one's -- this module stays free of
+    any Ghidra import so its demo can run without a JVM.
+    """
+    hits = {}
+    for match in matches:
+        meta = getattr(match, "meta", None) or {}
+        tag = yara_tag(meta.get("category"), meta.get("malware"), match.rule)
+        for string_match in getattr(match, "strings", None) or []:
+            for instance in getattr(string_match, "instances", None) or []:
+                hits.setdefault(instance.offset, set()).add(tag)
+    return hits
+
+
 SEVERITY_TAGS = tuple(severity_tag(s) for s in SEVERITY_LEVELS)
 CATEGORY_TAGS = tuple(
     category_tag(g, leaf) for g, leaves in CATEGORIES.items() for leaf in leaves
@@ -275,7 +324,8 @@ def migrate_tag(tag_id):
     parts = raw.split(":")
     head = parts[0].lower()
 
-    if head in ("origin", "severity", "category", "user", CAPA_NAMESPACE):
+    if head in ("origin", "severity", "category", "user", CAPA_NAMESPACE,
+                MITRE_NAMESPACE, MBC_NAMESPACE, YARA_NAMESPACE):
         # `user:flag:...` is a legacy id `namespaced()` buried under `user:`
         # after the split, not a human's word. Unbury it and migrate for real.
         if head == "user" and len(parts) > 1 and parts[1].lower() in LEGACY_PREFIXES:
@@ -422,6 +472,45 @@ def demo():
         0x2014000: {"capa:data-manipulation:encryption:rc4"},
     }, hits
     assert capa_rule_hits({}) == (0, {})
+
+    assert yara_tag("Ransomware", "LOCKBIT", "Win32_Ransomware_LockBit") == (
+        "yara:ransomware:lockbit:Win32_Ransomware_LockBit")
+    assert yara_tag(None, None, "no_meta_rule") == "yara:unknown:unknown:no_meta_rule"
+    assert namespaced("yara:ransomware:lockbit:x") == "yara:ransomware:lockbit:x", (
+        "a yara tag must not be buried under user:")
+
+    # Shaped like yara-python's own Match/StringMatch/StringMatchInstance, not a
+    # dict -- `.strings[i].instances[j].offset` is the real access path, and
+    # this is the assert that has to fail if that walk is ever "simplified"
+    # into reading `match.strings` as flat offsets.
+    class _Instance:
+        def __init__(self, offset):
+            self.offset = offset
+
+    class _StringMatch:
+        def __init__(self, offsets):
+            self.instances = [_Instance(o) for o in offsets]
+
+    class _Match:
+        def __init__(self, rule, meta, offsets_by_string):
+            self.rule = rule
+            self.meta = meta
+            self.strings = [_StringMatch(o) for o in offsets_by_string]
+
+    matches = [
+        _Match("Win32_Ransomware_LockBit", {"category": "Ransomware", "malware": "LOCKBIT"},
+               [[0x1000], [0x2000, 0x2500]]),
+        # No meta at all -- an older or hand-written rule -- still tags, at unknown depth.
+        _Match("homebrew_rule", {}, [[0x3000]]),
+    ]
+    hits = yara_rule_hits(matches)
+    assert hits == {
+        0x1000: {"yara:ransomware:lockbit:Win32_Ransomware_LockBit"},
+        0x2000: {"yara:ransomware:lockbit:Win32_Ransomware_LockBit"},
+        0x2500: {"yara:ransomware:lockbit:Win32_Ransomware_LockBit"},
+        0x3000: {"yara:unknown:unknown:homebrew_rule"},
+    }, hits
+    assert yara_rule_hits([]) == {}
 
     rules = prompt_rules()
     assert "severity:<level>" in rules and "key_exchange" in rules

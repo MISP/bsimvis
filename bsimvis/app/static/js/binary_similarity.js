@@ -416,6 +416,7 @@ function initResizableCards() {
             capa_summary: data.capa_summary || [],
             mitre_summary: data.mitre_summary || [],
             mbc_summary: data.mbc_summary || [],
+            yara_summary: data.yara_summary || [],
             joint: data.joint || {},
             tags_stale: !!data.tags_stale,
             counts,
@@ -1511,6 +1512,7 @@ const FILESIM_AXES = {
     capa: { field: 'capa_summary', label: 'Capa' },
     mitre: { field: 'mitre_summary', label: 'MITRE ATT&CK' },
     mbc: { field: 'mbc_summary', label: 'MBC' },
+    yara: { field: 'yara_summary', label: 'Yara' },
 };
 // Which axis is on each side. An empty B is a single-axis view.
 let fileSimAxisA = 'origin';
@@ -1520,7 +1522,7 @@ let fileSimAxisB = 'category';
 // origin is the outer key, the rest are packed into the inner key in this order.
 const FILESIM_AXIS_SEP = '\u001f';
 const FILESIM_COMBO_SEP = ' + ';
-const FILESIM_JOINT_INNER = ['severity', 'category', 'user', 'capa', 'mitre', 'mbc'];
+const FILESIM_JOINT_INNER = ['severity', 'category', 'user', 'capa', 'mitre', 'mbc', 'yara'];
 
 // `category:network:c2` reads as "network c2"; `severity:high` as "high". A
 // combo of several keeps them joined.

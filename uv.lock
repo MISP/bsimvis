@@ -105,6 +105,7 @@ dependencies = [
     { name = "requests" },
     { name = "scikit-learn" },
     { name = "tqdm" },
+    { name = "yara-python" },
 ]
 
 [package.metadata]
@@ -124,6 +125,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.33.1" },
     { name = "scikit-learn", specifier = ">=1.6.0" },
     { name = "tqdm", specifier = ">=4.67.3" },
+    { name = "yara-python", specifier = ">=4.5.0" },
 ]
 
 [[package]]
@@ -1444,4 +1446,24 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/61/f1/ee81806690a87dab5f5653c1f146c92bc066d7f4cebc603ef88eb9e13957/werkzeug-3.1.6.tar.gz", hash = "sha256:210c6bede5a420a913956b4791a7f4d6843a43b6fcee4dfa08a65e93007d0d25", size = 864736, upload-time = "2026-02-19T15:17:18.884Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4d/ec/d58832f89ede95652fd01f4f24236af7d32b70cab2196dfcc2d2fd13c5c2/werkzeug-3.1.6-py3-none-any.whl", hash = "sha256:7ddf3357bb9564e407607f988f683d72038551200c704012bb9a4c523d42f131", size = 225166, upload-time = "2026-02-19T15:17:17.475Z" },
+]
+
+[[package]]
+name = "yara-python"
+version = "4.5.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/51/38/347d1fcde4edabd338d5872ca5759ccfb95ff1cf5207dafded981fd08c4f/yara_python-4.5.4.tar.gz", hash = "sha256:4c682170f3d5cb3a73aa1bd0dc9ab1c0957437b937b7a83ff6d7ffd366415b9c", size = 551142, upload-time = "2025-05-27T14:15:49.035Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/74/7f/9bf4864fee85f86302d78d373c93793419c080222b5e18badadebb959263/yara_python-4.5.4-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:fe8ad189843c729eae74be3b8447a4753fac2cebe705e5e2a7280badfcc7e3b4", size = 2471811, upload-time = "2025-05-27T14:15:07.55Z" },
+    { url = "https://files.pythonhosted.org/packages/44/58/dca36144c44b0613dbc39c70cc32ee0fc9db1ba9e5fa15f55657183f4229/yara_python-4.5.4-cp313-cp313-macosx_14_0_x86_64.whl", hash = "sha256:94e290d5035be23059d0475bff3eac8228acd51145bf0cabe355b1ddabab742b", size = 209044, upload-time = "2025-05-27T14:15:09.142Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/4c/997be6898cdda211cb601ae2af40a2dbd89a48ba9889168ddd3993636e97/yara_python-4.5.4-cp313-cp313-macosx_15_0_arm64.whl", hash = "sha256:4537f8499d166d22a54739f440fb306f65b0438be2c6c4ecb2352ecb5adb5f1c", size = 2478416, upload-time = "2025-05-27T14:15:10.58Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/29/91d5911d6decdd8a96bb891cacd8922569480ff1d4b47e7947b5dfc7f1d6/yara_python-4.5.4-cp313-cp313-macosx_15_0_x86_64.whl", hash = "sha256:ab5133a16e466db6fe9c1a08d1b171013507896175010fb85fc1b92da32e558c", size = 209441, upload-time = "2025-05-27T14:15:12.173Z" },
+    { url = "https://files.pythonhosted.org/packages/87/9b/e21f534f33062f2e5f6dceec3cb4918f4923264b1609652adc0c83fe2bde/yara_python-4.5.4-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:93f5f5aba88e2ed2aaebfbb697433a0c8020c6a6c6a711e900a29e9b512d5c3a", size = 2245135, upload-time = "2025-05-27T14:15:13.569Z" },
+    { url = "https://files.pythonhosted.org/packages/70/8e/3618d2473f1e97f3f91d13af5b1ed26381c74444f6cdebb849eb855b21ca/yara_python-4.5.4-cp313-cp313-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:473c52b53c39d5daedc1912bd8a82a1c88702a3e393688879d77f9ff5f396543", size = 2326864, upload-time = "2025-05-27T14:15:15.321Z" },
+    { url = "https://files.pythonhosted.org/packages/99/ee/21477d4c83e7f267ff7d61a518eb1b2d3eb7877031c5c07bd1dc0a54eb95/yara_python-4.5.4-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9d9a58b7dc87411a2443d2e0382a111bd892aef9f6db2a1ebb4a9215eef0db71", size = 2331976, upload-time = "2025-05-27T14:15:17.138Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/5d/2680831aa43d181a0cc023ba89132ff6f03a0532f220cde27bccd60d54e2/yara_python-4.5.4-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:0b9de86fbe8a646c0644df9e1396d6941dc6ed0f89be2807e6c52ab39161fd9f", size = 2949066, upload-time = "2025-05-27T14:15:18.822Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/76/e89ec354731b1872462fa9cfdfc6d4751c272b3f43fa55523a8f0fcdd48a/yara_python-4.5.4-cp313-cp313-musllinux_1_2_i686.whl", hash = "sha256:973f0bc24470ac86b6009baf2800ad3eadfa4ab653b6546ba5c65e9239850f47", size = 2420758, upload-time = "2025-05-27T14:15:20.505Z" },
+    { url = "https://files.pythonhosted.org/packages/0c/28/9499649cb2cb42592c13ca6a15163e0cbf132c2974394de171aa5f8b49e4/yara_python-4.5.4-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:cb0f0e7183165426b09e2b1235e70909e540ac18e2c6be96070dfe17d7db4d78", size = 2639628, upload-time = "2025-05-27T14:15:22.142Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/37/e8f2b9a2287070f39fa6a5afbcf1ed6762f60ab3b1fb08018732838ccc25/yara_python-4.5.4-cp313-cp313-win32.whl", hash = "sha256:7707b144c8fcdb30c069ea57b94799cd7601f694ba01b696bbd1832721f37fd0", size = 1447395, upload-time = "2025-05-27T14:15:25.237Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/a0/40b0291c8b24d13daf0e26538c9f3a0d843c38c6446dd17f36335bdd5b5f/yara_python-4.5.4-cp313-cp313-win_amd64.whl", hash = "sha256:5f1288448991d63c1f6351c9f6d112916b0177ceefaa27d1419427a6ff09f829", size = 1825779, upload-time = "2025-05-27T14:15:26.802Z" },
 ]

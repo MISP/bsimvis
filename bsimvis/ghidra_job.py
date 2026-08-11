@@ -157,6 +157,40 @@ class GhidraAnalyzer:
                 tags_by_addr.setdefault(key, set()).update(ctags)
         return tags_by_addr
 
+    def _yara_tags_for_program(self, matches, program):
+        """yara-python matches -> `{function entry point hex: {yara tag, ...}}`.
+
+        A YARA match offset is a raw file offset -- the scan reads the file on
+        disk, not a loaded image -- so it needs no rebase constant the way a
+        capa virtual address does. What it needs instead is Ghidra's own file
+        layout: `Memory.locateAddressesForFileOffset` is Ghidra's built-in
+        answer to "which loaded address did this file byte end up at", and
+        handles every section/segment gap itself, including the file offset
+        landing in something Ghidra never mapped (an empty result, not an
+        error). From there this is the same fan-out `_capa_tags_for_program`
+        does: an offset can land inside several functions' worth of matched
+        strings, and each resolves through the function containing it.
+        """
+        from bsimvis.app.services.tag_taxonomy import yara_rule_hits
+
+        hits = yara_rule_hits(matches)
+
+        func_manager = program.getFunctionManager()
+        memory = program.getMemory()
+
+        tags_by_addr = {}
+        for file_offset, ytags in hits.items():
+            try:
+                addrs = memory.locateAddressesForFileOffset(file_offset)
+            except Exception:
+                continue
+            for addr in addrs:
+                func = func_manager.getFunctionContaining(addr)
+                if func:
+                    key = hex(func.getEntryPoint().getOffset())
+                    tags_by_addr.setdefault(key, set()).update(ytags)
+        return tags_by_addr
+
     def _stream_program_chunks(
         self, program, payload, hosts, job_id, splice_into_parent=True
     ):
@@ -272,6 +306,7 @@ class GhidraAnalyzer:
                 capa_path,
             )
             skip_capa = bool(payload.get("skip_capa"))
+            skip_yara = bool(payload.get("skip_yara"))
             skip_function_id = bool(payload.get("skip_function_id"))
             capa = None if skip_capa else capa_path()
             capa_proc = None
@@ -533,6 +568,33 @@ class GhidraAnalyzer:
                         if capa_tags_by_addr:
                             payload["capa_tags"] = {
                                 k: sorted(v) for k, v in capa_tags_by_addr.items()
+                            }
+
+                        yara_tags_by_addr = {}
+                        if skip_yara:
+                            self.job_service.add_log(job_id, "yara skipped by request.")
+                        else:
+                            # Unlike capa this runs in-process rather than as a
+                            # subprocess kicked off earlier -- compiling and
+                            # matching the vendored ruleset is sub-second, so
+                            # there is nothing to overlap with Ghidra's analysis
+                            # by starting it any sooner.
+                            try:
+                                from bsimvis.app.services.yara_service import scan_file
+
+                                matches = scan_file(temp_path)
+                                yara_tags_by_addr = self._yara_tags_for_program(
+                                    matches, program
+                                )
+                                self.job_service.add_log(
+                                    job_id,
+                                    f"yara tagged {len(yara_tags_by_addr)} functions.",
+                                )
+                            except Exception as e:
+                                self.job_service.add_log(job_id, f"yara scan failed: {e}")
+                        if yara_tags_by_addr:
+                            payload["yara_tags"] = {
+                                k: sorted(v) for k, v in yara_tags_by_addr.items()
                             }
 
                         self._stream_program_chunks(program, payload, hosts, job_id)

@@ -55,6 +55,10 @@ TAG_MISMATCH = "tag_mismatch"
 #               `mitre:<tactic>:<technique>` tags without a second migration.
 #   mbc      -- which Malware Behavior Catalog entry, same story as mitre under
 #               `mbc:<objective>:<behavior>`.
+#   yara     -- which vendored YARA rule matched, under
+#               `yara:<category>:<family>:<rule_name>` -- another rule engine
+#               answering the same question as capa/category, kept on its own
+#               axis for the same reason.
 #
 # Splitting one flat tag space by `conf / len(tags)` mixed them: a single
 # behaviour tag on a libc function used to halve libc's mass, and the same tag on
@@ -73,11 +77,12 @@ AXIS_USER = "user"
 AXIS_CAPA = "capa"
 AXIS_MITRE = "mitre"
 AXIS_MBC = "mbc"
+AXIS_YARA = "yara"
 
 # Every axis, in the order the UI offers them.
 AXES = (
     AXIS_ORIGIN, AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER, AXIS_CAPA,
-    AXIS_MITRE, AXIS_MBC,
+    AXIS_MITRE, AXIS_MBC, AXIS_YARA,
 )
 
 # namespace prefix -> axis. Priority is resolved separately (ORIGIN_PRIORITY),
@@ -90,6 +95,7 @@ TAG_NAMESPACES = {
     "capa": AXIS_CAPA,
     "mitre": AXIS_MITRE,
     "mbc": AXIS_MBC,
+    "yara": AXIS_YARA,
 }
 
 # Priority only matters inside origin, where a function must resolve to one
@@ -209,6 +215,7 @@ _PARENT_DEPTH = {
     AXIS_CAPA: 2,
     AXIS_MITRE: 2,
     AXIS_MBC: 2,
+    AXIS_YARA: 2,
 }
 
 
@@ -499,6 +506,7 @@ AXIS_SEP = "\x1f"
 # rather than N*(N-1)/2 stored matrices.
 JOINT_INNER_AXES = (
     AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER, AXIS_CAPA, AXIS_MITRE, AXIS_MBC,
+    AXIS_YARA,
 )
 
 
@@ -670,6 +678,7 @@ SUMMARY_FIELDS = (
     "capa_summary",
     "mitre_summary",
     "mbc_summary",
+    "yara_summary",
 )
 
 # Everything `summaries()` writes, so callers that must produce an empty split do

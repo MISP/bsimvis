@@ -342,6 +342,7 @@ class GhidraAnalyzer:
             )
             skip_capa = bool(payload.get("skip_capa"))
             skip_yara = bool(payload.get("skip_yara"))
+            skip_rulezet = bool(payload.get("skip_rulezet"))
             skip_function_id = bool(payload.get("skip_function_id"))
             capa = None if skip_capa else capa_path()
             capa_proc = None
@@ -606,7 +607,7 @@ class GhidraAnalyzer:
                             }
 
                         yara_tags_by_addr = {}
-                        if skip_yara:
+                        if skip_yara and skip_rulezet:
                             self.job_service.add_log(job_id, "yara skipped by request.")
                         else:
                             # Unlike capa this runs in-process rather than as a
@@ -620,7 +621,11 @@ class GhidraAnalyzer:
                                     yara_file_tags,
                                 )
 
-                                matches, extra_tags = scan_file(temp_path)
+                                matches, extra_tags = scan_file(
+                                    temp_path,
+                                    vendored=not skip_yara,
+                                    mirror=not skip_rulezet,
+                                )
                                 yara_tags_by_addr = self._yara_tags_for_program(
                                     matches, program, extra_tags
                                 )

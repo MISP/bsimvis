@@ -2,6 +2,78 @@
 
 let selectedFiles = [];
 
+// Analysis modules are opt-in: each one costs more than the rest of the job on
+// a typical sample, so nothing runs unless it is ticked here.
+//
+// ponytail: `cost` is an order-of-magnitude model, not a promise. FunctionID is
+// anchored on doc/bench-fid-cost.md (866s on an 847 KB binary, quadratic
+// because FidQueryService falls back to an unindexed full table scan per
+// function); capa on its vivisect re-disassembly cost (~510s on a 1.2 MB
+// binary); yara/rulezet on the yara_service module docstring. Re-fit the
+// constants if those measurements move.
+const ANALYSIS_MODULES = [
+    { id: 'FunctionID', label: 'Function ID', hint: 'library tagging', cost: mb => Math.max(5, 1200 * mb * mb) },
+    { id: 'capa', label: 'Capa', hint: 'capability tags', cost: mb => 8 + 420 * mb },
+    { id: 'yara', label: 'Yara', hint: 'vendored rules', cost: mb => 1 + 0.3 * mb },
+    { id: 'rulezet', label: 'Rulezet', hint: 'mirrored rules', cost: mb => 1 + 0.5 * mb },
+];
+
+// What to price when the list is empty, so the estimates are never blank.
+const TYPICAL_FILE_MB = 0.5;
+
+function formatDuration(seconds) {
+    if (seconds < 60) return `${Math.max(1, Math.round(seconds))} sec`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+    const h = Math.floor(seconds / 3600);
+    return `${h}h ${Math.round((seconds - h * 3600) / 60)}m`;
+}
+
+/** Per-module estimate over the current file list, in seconds. */
+function estimateModuleCost(module) {
+    const sizesMb = selectedFiles.length
+        ? selectedFiles.map(f => f.size / (1024 * 1024))
+        : [TYPICAL_FILE_MB];
+    return sizesMb.reduce((total, mb) => total + module.cost(mb), 0);
+}
+
+function updateModuleEstimates() {
+    ANALYSIS_MODULES.forEach(m => {
+        const el = document.getElementById(`module-est-${m.id}`);
+        if (el) el.innerText = `~${formatDuration(estimateModuleCost(m))}`;
+    });
+    const note = document.getElementById('module-estimate-note');
+    if (note) {
+        note.innerText = selectedFiles.length
+            ? `Estimated for ${selectedFiles.length} selected file(s)`
+            : `Estimated for one ${TYPICAL_FILE_MB * 1024} KB file`;
+    }
+}
+
+function renderAnalysisModules() {
+    return `
+        <div class="form-group" style="margin-bottom: 20px;">
+            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 8px;">Analysis Modules</label>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+                ${ANALYSIS_MODULES.map(m => `
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 0.8rem; cursor: pointer;">
+                        <input type="checkbox" id="module-${m.id}" value="${m.id}" style="cursor: pointer;">
+                        <span style="color: var(--text);">${m.label}</span>
+                        <span style="color: var(--dim); font-size: 0.7rem;">${m.hint}</span>
+                        <span id="module-est-${m.id}" style="margin-left: auto; color: var(--subtle); font-size: 0.7rem; font-variant-numeric: tabular-nums;"></span>
+                    </label>
+                `).join('')}
+            </div>
+            <div id="module-estimate-note" style="margin-top: 8px; font-size: 0.65rem; color: var(--dim);"></div>
+        </div>
+    `;
+}
+
+function selectedModules() {
+    return ANALYSIS_MODULES
+        .filter(m => document.getElementById(`module-${m.id}`)?.checked)
+        .map(m => m.id);
+}
+
 function renderUploadView(params) {
     const container = document.getElementById('upload-view-container');
     const collection = params.get('collection') || '';
@@ -87,15 +159,7 @@ function renderUploadView(params) {
                             <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Related MD5s</label>
                             <input type="text" id="upload-related-md5" placeholder="Comma-separated MD5s" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                         </div>
-                        <div class="form-group" style="margin-bottom: 20px;">
-                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Skip Analysis Modules</label>
-                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; margin-bottom: 6px; cursor: pointer;">
-                                <input type="checkbox" id="upload-skip-functionid"> Skip FunctionID tagging (library ID, on by default)
-                            </label>
-                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; cursor: pointer;">
-                                <input type="checkbox" id="upload-skip-capa"> Skip capa tagging
-                            </label>
-                        </div>
+                        ${renderAnalysisModules()}
 
                         <div style="padding-top: 15px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px;">
                             <button id="start-upload-btn" onclick="startBatchUpload()" class="btn-primary" style="width: 100%; height: 40px; justify-content: center; display: flex; align-items: center; gap: 10px;">
@@ -355,7 +419,11 @@ function updateFileList() {
     const list = document.getElementById('upload-file-list');
     const container = document.getElementById('upload-file-list-container');
     const badge = document.getElementById('file-count-badge');
-    
+
+    // Before the guard below: the estimates live outside the file-list
+    // container and still need refreshing when the list empties out.
+    updateModuleEstimates();
+
     if (!list || !container) return;
 
     if (selectedFiles.length === 0) {
@@ -413,9 +481,7 @@ async function startBatchUpload() {
     const tags = document.getElementById('upload-tags').value.split(',').map(t => t.trim()).filter(t => t);
     const relatedMd5s = document.getElementById('upload-related-md5').value.split(',').map(m => m.trim()).filter(m => m);
     const archivePassword = document.getElementById('upload-archive-password').value;
-    const skipModules = [];
-    if (document.getElementById('upload-skip-functionid').checked) skipModules.push('FunctionID');
-    if (document.getElementById('upload-skip-capa').checked) skipModules.push('capa');
+    const enabledModules = selectedModules();
 
     let currentBatchUuid = null;
 
@@ -465,7 +531,7 @@ async function startBatchUpload() {
             if (archivePassword) url.searchParams.set('archive_password', archivePassword);
             tags.forEach(t => url.searchParams.append('tags', t));
             relatedMd5s.forEach(m => url.searchParams.append('related_md5', m));
-            skipModules.forEach(m => url.searchParams.append('skip', m));
+            enabledModules.forEach(m => url.searchParams.append('enable', m));
 
             const response = await fetch(url, {
                 method: 'POST',

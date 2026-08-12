@@ -430,11 +430,15 @@ def _ingest_raw_binary(
             val.lower() in ("true", "1") if isinstance(val, str) else bool(val)
         )
 
-    skip_modules = set(request.args.getlist("skip"))
-    if skip_modules:
-        analysis_payload["skip_capa"] = "capa" in skip_modules
-        analysis_payload["skip_yara"] = "yara" in skip_modules
-        analysis_payload["skip_function_id"] = "FunctionID" in skip_modules
+    # Analysis modules are opt-in: every one of them costs more than the whole
+    # rest of the job on a typical sample (doc/bench-fid-cost.md), so an upload
+    # that names none of them runs none of them. The worker still speaks
+    # `skip_*`, so the inversion happens here and nowhere else.
+    enabled = set(request.args.getlist("enable"))
+    analysis_payload["skip_function_id"] = "FunctionID" not in enabled
+    analysis_payload["skip_capa"] = "capa" not in enabled
+    analysis_payload["skip_yara"] = "yara" not in enabled
+    analysis_payload["skip_rulezet"] = "rulezet" not in enabled
 
     extra_meta = {}
     if "file_metadata_extra" in request.args:

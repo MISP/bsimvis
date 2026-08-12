@@ -4092,16 +4092,17 @@ def test_lib_tag_rollup():
 
 
 def test_skip_modules_payload():
-    """--skip FunctionID / --skip capa must reach the queued GHIDRA_ANALYZE job.
+    """`enable=` must reach the queued GHIDRA_ANALYZE job, in both directions.
 
     A real upload rarely has FID/capa matches in this corpus (see
     test_lib_tag_rollup), so asserting on resulting tags would prove nothing.
     What can be checked without a live Ghidra/capa run is that the flag
     actually threads from the query string into the job payload the worker
-    will read.
+    will read -- and, since modules are opt-in, that the ones left unnamed come
+    back skipped rather than silently running.
     """
     print(_color(f"\n{'='*60}", CYAN))
-    print(_color(" STEP 4d – --skip FunctionID/capa reach the job payload", BOLD))
+    print(_color(" STEP 4d – enable=capa/rulezet reach the job payload", BOLD))
     print(_color(f"{'='*60}", CYAN))
 
     if not os.path.isfile(TEST_BINARY):
@@ -4123,11 +4124,11 @@ def test_skip_modules_payload():
             "batch_name": "skip modules test",
             "skip_sim": "true",
             "enqueue": "false",
-            "skip": ["FunctionID", "capa"],
+            "enable": ["capa", "rulezet"],
         },
         raw_body=raw,
         headers={"Content-Type": "application/octet-stream"},
-        label="POST /api/file/upload?skip=FunctionID&skip=capa",
+        label="POST /api/file/upload?enable=capa&enable=rulezet",
     )
     if not body:
         return
@@ -4138,13 +4139,23 @@ def test_skip_modules_payload():
     )
     payload = json.loads(ghidra_task["payload"]) if ghidra_task and ghidra_task.get("payload") else {}
     check(
-        "skip=FunctionID sets skip_function_id on the queued job",
+        "enable=capa clears skip_capa on the queued job",
+        payload.get("skip_capa") is False,
+        f"payload: {payload}",
+    )
+    check(
+        "enable=rulezet clears skip_rulezet on the queued job",
+        payload.get("skip_rulezet") is False,
+        f"payload: {payload}",
+    )
+    check(
+        "unnamed FunctionID stays skipped (modules are opt-in)",
         payload.get("skip_function_id") is True,
         f"payload: {payload}",
     )
     check(
-        "skip=capa sets skip_capa on the queued job",
-        payload.get("skip_capa") is True,
+        "unnamed yara stays skipped (modules are opt-in)",
+        payload.get("skip_yara") is True,
         f"payload: {payload}",
     )
 

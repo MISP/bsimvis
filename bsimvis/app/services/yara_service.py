@@ -93,18 +93,25 @@ def mirror_tags():
         return {}
 
 
-def scan_file(path):
+def scan_file(path, vendored=True, mirror=True):
     """YARA matches for one file, or `[]` when no ruleset is loaded.
 
     Returns `(matches, extra_tags)`: the mirror's tags cannot be read off a
     match the way the vendored set's are (they live in a sidecar keyed by the
     uuid YARA carries as the match namespace), so they travel alongside for
     `tag_taxonomy.yara_file_tags`/`yara_rule_hits` to fold in.
+
+    The two rulesets are selectable independently because they cost
+    differently: the vendored set is cached and effectively free after the
+    first call, the mirror pays ~0.8s and ~330 MB on every single scan.
     """
     matches = []
-    rules = compiled_rules()
+    rules = compiled_rules() if vendored else None
     if rules is not None:
         matches.extend(rules.match(filepath=path))
+
+    if not mirror:
+        return matches, {}
 
     from bsimvis.app.services.rulezet_service import paths
 
@@ -177,6 +184,16 @@ def demo():
             tags = yara_file_tags(matches, extra)
             assert "yara:trojan:canary:Sidecar_Canary" in tags, tags
             assert {"mitre:t1027", "cve:cve-2021-44228"} <= tags, tags
+
+            # The two rulesets are separately switchable -- an upload can ask
+            # for the cheap vendored set without paying the mirror's load.
+            only_vendored, extra_v = scan_file(str(sample), mirror=False)
+            assert not [m for m in only_vendored if m.rule == "Sidecar_Canary"]
+            assert extra_v == {}, extra_v
+
+            only_mirror, extra_m = scan_file(str(sample), vendored=False)
+            assert [m for m in only_mirror if m.rule == "Sidecar_Canary"]
+            assert extra_m, "mirror tags lost when the vendored set is off"
         finally:
             rulezet_service.mirror_dir = original
 

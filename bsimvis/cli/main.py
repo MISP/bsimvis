@@ -524,12 +524,14 @@ def main():
         default=None,
     )
     decomp_args.add_argument(
-        "--skip",
+        "--enable",
         action="append",
-        choices=["FunctionID", "capa", "yara"],
+        choices=["FunctionID", "capa", "yara", "rulezet"],
         metavar="MODULE",
         default=[],
-        help="Skip an analysis module (repeatable): FunctionID (library tagging), capa, yara",
+        help="Enable an analysis module (repeatable, all off by default): "
+        "FunctionID (library tagging), capa, yara (vendored rules), "
+        "rulezet (mirrored rules)",
     )
 
     jvm_options = upload_parser.add_argument_group("JVM Options")

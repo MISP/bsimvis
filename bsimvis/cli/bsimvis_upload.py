@@ -281,8 +281,8 @@ def _perform_raw_upload(raw_bytes, file_name, args):
                 params["algo"] = args.algo
             if getattr(args, "skip_sim", False):
                 params["skip_sim"] = True
-            if getattr(args, "skip", None):
-                params["skip"] = args.skip
+            if getattr(args, "enable", None):
+                params["enable"] = args.enable
             if getattr(args, "archive_password", None) is not None:
                 params["archive_password"] = args.archive_password
 
@@ -893,12 +893,14 @@ def cli_main():
         default=None,
     )
     decomp_args.add_argument(
-        "--skip",
+        "--enable",
         action="append",
-        choices=["FunctionID", "capa", "yara"],
+        choices=["FunctionID", "capa", "yara", "rulezet"],
         metavar="MODULE",
         default=[],
-        help="Skip an analysis module (repeatable): FunctionID (library tagging), capa, yara",
+        help="Enable an analysis module (repeatable, all off by default): "
+        "FunctionID (library tagging), capa, yara (vendored rules), "
+        "rulezet (mirrored rules)",
     )
 
     jvm_options = parser.add_argument_group("JVM Options")

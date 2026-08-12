@@ -128,7 +128,15 @@ def fetch_rules(since=None, limit=None, log=print):
         if since:
             body["updated_after"] = since
         log(f"dumpRules (incremental since {since})" if since else "dumpRules (full)")
-        doc = _post(f"{base}/api/rule/private/dumpRules", body, api_key)
+        try:
+            doc = _post(f"{base}/api/rule/private/dumpRules", body, api_key)
+        except urllib.error.HTTPError as e:
+            # An incremental sync with nothing new answers 404 "No rules found
+            # to dump." That is the ordinary quiet case, not a failure -- every
+            # re-run between updates would otherwise raise.
+            if e.code == 404:
+                return []
+            raise
         rules = (doc.get("data", {}).get("rules_by_format", {}) or {}).get("yara", [])
         return rules[:limit] if limit else rules
 

@@ -72,6 +72,7 @@ def union_buckets(r, keys):
             out.add(t.decode() if isinstance(t, bytes) else str(t))
     return out
 
+
 _GLOB_META = "\\*?[]^"
 
 
@@ -163,9 +164,7 @@ def parse_filter_value(field, raw, default_kind="exact"):
     return MatchSpec(kind="exact", value=value, quoted=quoted)
 
 
-def resolve_targets(
-    r, col, level, field, raw, max_targets=None, default_kind="exact"
-):
+def resolve_targets(r, col, level, field, raw, max_targets=None, default_kind="exact"):
     """Bucket values matching one filter value.
 
     Returns (targets, truncated, spec). `targets` are bucket suffixes — the part
@@ -233,4 +232,6 @@ def _drop_covered(field, targets):
     if len(targets) < 2:
         return targets
     present = set(targets)
-    return [t for t in targets if not any(a in present for a in tag_ancestors(field, t))]
+    return [
+        t for t in targets if not any(a in present for a in tag_ancestors(field, t))
+    ]

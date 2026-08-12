@@ -160,7 +160,7 @@ def demo():
         root = Path(tmp)
         (root / "rules").mkdir()
         (root / "rules" / f"{uuid}.yara").write_text(
-            'rule Sidecar_Canary {\n'
+            "rule Sidecar_Canary {\n"
             '  meta:\n    category = "trojan"\n    malware = "canary"\n'
             '  strings:\n    $a = "bsimvis-sidecar-canary"\n'
             "  condition:\n    $a\n}\n"

@@ -413,9 +413,7 @@ def similarity_search():
             t_lua_prep = time.perf_counter()
             groups_raw = []
 
-            def get_group_targets(
-                lvl, val, allowed_fields=None, default_kind="exact"
-            ):
+            def get_group_targets(lvl, val, allowed_fields=None, default_kind="exact"):
                 """
                 Resolves a filter into raw identity base-keys
                 using the standardized registry->bucket hierarchy.

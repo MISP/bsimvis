@@ -192,7 +192,11 @@ def _migrate_tags_metadata(r, collection, dry_run):
         old = _s(k)
         val = _s(v)
         try:
-            meta = json.loads(val) if isinstance(val, str) and val.startswith("{") else {"color": val}
+            meta = (
+                json.loads(val)
+                if isinstance(val, str) and val.startswith("{")
+                else {"color": val}
+            )
         except ValueError:
             meta = {"color": val}
         if not isinstance(meta, dict):
@@ -203,7 +207,9 @@ def _migrate_tags_metadata(r, collection, dry_run):
             else:
                 merged[new] = dict(meta)
 
-    if merged == {_s(k): json.loads(_s(v)) for k, v in raw.items() if _s(v).startswith("{")}:
+    if merged == {
+        _s(k): json.loads(_s(v)) for k, v in raw.items() if _s(v).startswith("{")
+    }:
         return 0
     if dry_run:
         return len(merged)
@@ -279,14 +285,20 @@ def demo():
     ]
     # Two old tags folding onto one new id must not duplicate it.
     assert migrate_tag_list(["flag:benign:init", "llm:benign:string"]) == [
-        "severity:none", "category:util:init", "category:util:string",
+        "severity:none",
+        "category:util:init",
+        "category:util:string",
     ]
     # Confidence mapping: a split tag carries its confidence to both halves.
     assert migrate_tag_list({"flag:malicious:c2": 0.8}) == {
-        "severity:high": 0.8, "category:network:c2": 0.8,
+        "severity:high": 0.8,
+        "category:network:c2": 0.8,
     }
     # The legacy comma-separated string shape still found on old docs.
-    assert migrate_tag_list("lib:libc, mirai") == ["origin:lib:libc:unknown", "user:mirai"]
+    assert migrate_tag_list("lib:libc, mirai") == [
+        "origin:lib:libc:unknown",
+        "user:mirai",
+    ]
     # Idempotent -- a second run is a no-op.
     once = migrate_tag_list(["lib:libc:2.31", "flag:suspicious:c2", "bookmark"])
     assert migrate_tag_list(once) == once, once

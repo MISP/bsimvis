@@ -340,6 +340,7 @@ class GhidraAnalyzer:
                 capa_fallback_os,
                 capa_path,
             )
+
             skip_capa = bool(payload.get("skip_capa"))
             skip_yara = bool(payload.get("skip_yara"))
             skip_rulezet = bool(payload.get("skip_rulezet"))
@@ -569,9 +570,10 @@ class GhidraAnalyzer:
                                     f"capa could not detect the OS; retrying as "
                                     f"{fallback_os}.",
                                 )
-                                with open(capa_json_path, "w") as out, open(
-                                    capa_err_path, "w"
-                                ) as err:
+                                with (
+                                    open(capa_json_path, "w") as out,
+                                    open(capa_err_path, "w") as err,
+                                ):
                                     returncode = subprocess.call(
                                         [capa, "-j", "--os", fallback_os, temp_path],
                                         stdout=out,
@@ -645,7 +647,9 @@ class GhidraAnalyzer:
                                     f"tagged {len(yara_tags_by_addr)} functions.",
                                 )
                             except Exception as e:
-                                self.job_service.add_log(job_id, f"yara scan failed: {e}")
+                                self.job_service.add_log(
+                                    job_id, f"yara scan failed: {e}"
+                                )
                         if yara_tags_by_addr:
                             payload["yara_tags"] = {
                                 k: sorted(v) for k, v in yara_tags_by_addr.items()

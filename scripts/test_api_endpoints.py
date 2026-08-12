@@ -2531,9 +2531,7 @@ def _sweep_bin_sim_pair_filters(ns, label):
     def sides(row):
         return _num(row.get("functions_count_a")), _num(row.get("functions_count_b"))
 
-    vals = sorted(
-        v for row in baseline for v in sides(row) if v is not None
-    )
+    vals = sorted(v for row in baseline for v in sides(row) if v is not None)
     if vals and vals[0] != vals[-1]:
         threshold = vals[len(vals) // 2]
         sent = int(threshold) if float(threshold).is_integer() else threshold
@@ -2954,7 +2952,12 @@ def _check_diff_cache_expiry():
     try:
         from bsimvis.app.routes import bin_sim as bs
     except ImportError as exc:
-        print(_color(f"\n[SKIP] bsimvis not importable ({exc}) – expiry checks skipped.", YELLOW))
+        print(
+            _color(
+                f"\n[SKIP] bsimvis not importable ({exc}) – expiry checks skipped.",
+                YELLOW,
+            )
+        )
         return
 
     def seed(key, age, idle):
@@ -3311,9 +3314,7 @@ def test_tag_vocabulary_and_llm_batch():
         "/api/llm/batch",
         data={
             "collection": COLLECTION,
-            "func_ids": [
-                f"{COLLECTION}:func:{file_md5}:{i:08x}" for i in range(over)
-            ],
+            "func_ids": [f"{COLLECTION}:func:{file_md5}:{i:08x}" for i in range(over)],
             "actions": ["notes"],
         },
         label="POST /api/llm/batch (explicit selection over cap)",
@@ -3750,12 +3751,19 @@ def test_container_similarity():
             label=f"POST /api/file/upload ({name})",
         )
         pipelines += (body or {}).get("pipeline_ids") or (
-            [body.get("pipeline_id")] if isinstance(body, dict) and body.get("pipeline_id") else []
+            [body.get("pipeline_id")]
+            if isinstance(body, dict) and body.get("pipeline_id")
+            else []
         )
 
     ok = True
     for pid in pipelines:
-        ok = wait_for_pipeline(pid, banner=" STEP 4b2 – Wait for container member analysis") and ok
+        ok = (
+            wait_for_pipeline(
+                pid, banner=" STEP 4b2 – Wait for container member analysis"
+            )
+            and ok
+        )
     if not ok:
         check("container members analysed", False, "pipeline did not complete")
         return
@@ -3777,14 +3785,13 @@ def test_container_similarity():
             label=f"GET /api/bin_sim/list (md5={md5[:8]}{' grouped' if params else ''})",
         )
         rows = (body or {}).get("results") or []
-        return next(
-            (
-                row
-                for row in rows
-                if other in (row.get("md5_a"), row.get("md5_b"))
+        return (
+            next(
+                (row for row in rows if other in (row.get("md5_a"), row.get("md5_b"))),
+                None,
             ),
-            None,
-        ), rows
+            rows,
+        )
 
     child, _ = pair_with(bin_a, bin_b)
     check(
@@ -3814,11 +3821,16 @@ def test_container_similarity():
     )
 
     def side(row, md5, field):
-        return row.get(f"{field}_a") if row.get("md5_a") == md5 else row.get(f"{field}_b")
+        return (
+            row.get(f"{field}_a") if row.get("md5_a") == md5 else row.get(f"{field}_b")
+        )
 
     check(
         "container coverage is its child's coverage when the child is all it holds",
-        abs((side(container, apk_a, "coverage") or 0) - (side(child, bin_a, "coverage") or 0))
+        abs(
+            (side(container, apk_a, "coverage") or 0)
+            - (side(child, bin_a, "coverage") or 0)
+        )
         < 1e-6,
         f"container={side(container, apk_a, 'coverage')} child={side(child, bin_a, 'coverage')}",
     )
@@ -4188,11 +4200,17 @@ def test_skip_modules_payload():
     if not body:
         return
 
-    job = requests.get(f"{BASE_URL}/api/jobs/{body.get('pipeline_id')}", timeout=10).json()
+    job = requests.get(
+        f"{BASE_URL}/api/jobs/{body.get('pipeline_id')}", timeout=10
+    ).json()
     ghidra_task = next(
         (t for t in job.get("sub_tasks", []) if t.get("type") == "ghidra_analyze"), None
     )
-    payload = json.loads(ghidra_task["payload"]) if ghidra_task and ghidra_task.get("payload") else {}
+    payload = (
+        json.loads(ghidra_task["payload"])
+        if ghidra_task and ghidra_task.get("payload")
+        else {}
+    )
     check(
         "enable=capa clears skip_capa on the queued job",
         payload.get("skip_capa") is False,
@@ -4302,7 +4320,9 @@ if __name__ == "__main__":
 
         # Declaration order, so run_all_tests still deletes the collection last.
         steps = [s for s in STEPS if s.__name__ in picked]
-        print(_color(f"  --only {ONLY!r} → {', '.join(s.__name__ for s in steps)}", CYAN))
+        print(
+            _color(f"  --only {ONLY!r} → {', '.join(s.__name__ for s in steps)}", CYAN)
+        )
 
     uploaded = upload_and_start()
     if uploaded:

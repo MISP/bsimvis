@@ -51,8 +51,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("sample_dir")
     ap.add_argument("--rules", default=None, help="default: the vendored ruleset")
-    ap.add_argument("--fp", action="append", default=[],
-                    help="directory of benign files; repeatable")
+    ap.add_argument(
+        "--fp",
+        action="append",
+        default=[],
+        help="directory of benign files; repeatable",
+    )
     args = ap.parse_args()
 
     base = pathlib.Path(args.rules) if args.rules else rules_dir()
@@ -61,8 +65,10 @@ def main():
 
     hits = scan(rules, args.sample_dir)
     tagged = {k: v for k, v in hits.items() if v}
-    print(f"tagged {len(tagged)}/{len(hits)} "
-          f"({len(tagged) / max(len(hits), 1) * 100:.1f}%)")
+    print(
+        f"tagged {len(tagged)}/{len(hits)} "
+        f"({len(tagged) / max(len(hits), 1) * 100:.1f}%)"
+    )
     counts = collections.Counter(r for v in tagged.values() for r in v)
     for rule, c in counts.most_common(15):
         print(f"  {c:5d}  {rule}")

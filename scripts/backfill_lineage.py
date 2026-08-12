@@ -176,9 +176,7 @@ def main():
         ap.error("pass --collection NAME (repeatable) or --all")
 
     for c in collections:
-        backfill(
-            c, dry_run=args.dry_run, create_missing=not args.no_create_missing
-        )
+        backfill(c, dry_run=args.dry_run, create_missing=not args.no_create_missing)
 
 
 if __name__ == "__main__":

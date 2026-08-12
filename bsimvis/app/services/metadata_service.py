@@ -17,7 +17,6 @@ from bsimvis.app.services.bin_sim_service import (
 )
 from bsimvis.app.services.config_service import config_service
 
-
 # `upload --metadata` matches CSV rows by md5, but unpacking only happens on the
 # server: the md5 of an archive member or a UPX-unpacked payload does not exist
 # until after the upload. So the whole map is staged once per batch and each blob

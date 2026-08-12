@@ -341,11 +341,7 @@ def _collection_page(r, collection, algo, f, is_pool=False):
             candidates = set(
                 _dec(x) for x in r.smembers(f"{collection}:bin_sim:built:{algo}")
             )
-        cand = [
-            s
-            for s in candidates
-            if algo_marker in s and (keep is None or keep(s))
-        ]
+        cand = [s for s in candidates if algo_marker in s and (keep is None or keep(s))]
         total = len(cand)
         pipe = r.pipeline(transaction=False)
         for s in cand:

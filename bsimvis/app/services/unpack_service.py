@@ -388,7 +388,8 @@ def demo():
     # The two known refusals are named without reading stderr at all.
     assert "x86" in capa_failure_reason("/nonexistent", CAPA_E_INVALID_FILE_ARCH)
     assert capa_failure_reason("/nonexistent", CAPA_E_INVALID_FILE_OS) == (
-        "could not detect the target OS")
+        "could not detect the target OS"
+    )
     assert capa_failure_reason("/nonexistent", 1) == "exit 1"
     with tempfile.NamedTemporaryFile("w", suffix=".err", delete=False) as fh:
         # Real capa stderr, byte for byte: OSC-8 hyperlinks around the source

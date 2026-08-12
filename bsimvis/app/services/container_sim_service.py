@@ -280,9 +280,7 @@ def build_container_sims(
         return sides[md5]
 
     scored_by_pair = {
-        pair: [
-            (a, b, scores.get(_canonical(a, b), 0.0), sid) for a, b, sid in edges
-        ]
+        pair: [(a, b, scores.get(_canonical(a, b), 0.0), sid) for a, b, sid in edges]
         for pair, edges in edges_by_pair.items()
     }
 
@@ -458,9 +456,7 @@ def _child_paths(collection, scored_by_pair, containers, r):
     return out
 
 
-def _build_doc(
-    algo, p, q, agg, funcs_p, funcs_q, meta, sizes, paths, containers
-):
+def _build_doc(algo, p, q, agg, funcs_p, funcs_q, meta, sizes, paths, containers):
     meta_p = meta.get(p, {})
     meta_q = meta.get(q, {})
 

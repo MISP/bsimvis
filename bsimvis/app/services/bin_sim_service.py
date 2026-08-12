@@ -808,7 +808,6 @@ class BinSimService:
             )
         return True
 
-
     def resplit_bin_sim(
         self,
         collection,
@@ -827,7 +826,9 @@ class BinSimService:
         """
         r = self.r
         built_key = f"{collection}:bin_sim:built:{algo}"
-        sids = [s.decode() if isinstance(s, bytes) else s for s in r.smembers(built_key)]
+        sids = [
+            s.decode() if isinstance(s, bytes) else s for s in r.smembers(built_key)
+        ]
         # Tagging touches the functions of particular binaries, so only pairs
         # naming one of them can change; everything else would be rewritten to
         # an identical value. `md5` takes one or several -- the pair view sends

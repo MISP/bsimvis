@@ -43,7 +43,14 @@ CATEGORIES = {
     "file": ("read_write", "path", "archive", "tempfile"),
     "process": ("exec", "inject", "thread", "shell", "ipc", "privesc"),
     "persistence": ("autostart", "service", "cron", "bootloader", "registry"),
-    "evasion": ("anti_debug", "anti_vm", "obfuscation", "packer", "rootkit", "log_clear"),
+    "evasion": (
+        "anti_debug",
+        "anti_vm",
+        "obfuscation",
+        "packer",
+        "rootkit",
+        "log_clear",
+    ),
     "recon": ("sysinfo", "proclist", "filesearch", "creds", "env"),
     # `spyware` overlaps keylog/screencap on purpose: it is the fallback when the
     # model cannot tell which, and it makes the legacy `spyware` capability map
@@ -104,17 +111,21 @@ VULN_NAMESPACES = ("cve", "ghsa", "pysec")
 # The namespaces a tag id may lead with. Anything else is human-typed and gets
 # moved under `user:` -- an unnamespaced tag must never land on an analysis axis.
 KNOWN_NAMESPACES = (
-    "origin",
-    "severity",
-    "category",
-    "user",
-    CAPA_NAMESPACE,
-    MITRE_NAMESPACE,
-    MBC_NAMESPACE,
-    YARA_NAMESPACE,
-    MISP_NAMESPACE,
-    RULEZET_NAMESPACE,
-) + VULN_NAMESPACES + FILE_SCOPE_NAMESPACES
+    (
+        "origin",
+        "severity",
+        "category",
+        "user",
+        CAPA_NAMESPACE,
+        MITRE_NAMESPACE,
+        MBC_NAMESPACE,
+        YARA_NAMESPACE,
+        MISP_NAMESPACE,
+        RULEZET_NAMESPACE,
+    )
+    + VULN_NAMESPACES
+    + FILE_SCOPE_NAMESPACES
+)
 
 
 def namespaced(tag_id):
@@ -265,9 +276,19 @@ def _match_tags(match, extra=None):
     index there and simply miss, which is what should happen -- they have no
     sidecar entry.
     """
+    import uuid
+
     tags = {_match_tag(match)}
+    ns = getattr(match, "namespace", None)
     if extra:
-        tags.update(extra.get(getattr(match, "namespace", None)) or ())
+        tags.update(extra.get(ns) or ())
+
+    if ns:
+        try:
+            uuid.UUID(str(ns))
+            tags.add(f"rulezet:{match.rule}")
+        except ValueError:
+            pass
     return tags
 
 
@@ -386,7 +407,7 @@ def route_source_tag(raw, tag_map=None, drops=None):
         return None
 
     literal = str(key).split("*", 1)[0].rstrip(":")
-    rest = namespace[len(literal):].strip(":") if literal else namespace
+    rest = namespace[len(literal) :].strip(":") if literal else namespace
 
     if str(target).split(":")[0] == MITRE_NAMESPACE:
         found = _MITRE_ID.search(value)
@@ -493,8 +514,16 @@ def migrate_tag(tag_id):
     parts = raw.split(":")
     head = parts[0].lower()
 
-    if head in ("origin", "severity", "category", "user", CAPA_NAMESPACE,
-                MITRE_NAMESPACE, MBC_NAMESPACE, YARA_NAMESPACE):
+    if head in (
+        "origin",
+        "severity",
+        "category",
+        "user",
+        CAPA_NAMESPACE,
+        MITRE_NAMESPACE,
+        MBC_NAMESPACE,
+        YARA_NAMESPACE,
+    ):
         # `user:flag:...` is a legacy id `namespaced()` buried under `user:`
         # after the split, not a human's word. Unbury it and migrate for real.
         if head == "user" and len(parts) > 1 and parts[1].lower() in LEGACY_PREFIXES:
@@ -550,9 +579,13 @@ def migrate_origin(tag_id):
 
 def demo():
     assert migrate_tag("flag:suspicious:crypto") == [
-        "severity:medium", "category:crypto:cipher"], migrate_tag("flag:suspicious:crypto")
+        "severity:medium",
+        "category:crypto:cipher",
+    ], migrate_tag("flag:suspicious:crypto")
     assert migrate_tag("llm:malicious:injection") == [
-        "severity:high", "category:process:inject"]
+        "severity:high",
+        "category:process:inject",
+    ]
     assert migrate_tag("flag:benign:init") == ["severity:none", "category:util:init"]
     # Bare vocabulary tag the batch writer had prefixed, with no risk segment.
     assert migrate_tag("flag:crypto") == ["category:crypto:cipher"]
@@ -560,16 +593,23 @@ def demo():
     assert migrate_tag("flag:suspicious:invented") == ["severity:medium"]
     assert migrate_tag("flag:nonsense") == ["user:flag:nonsense"]
     # Double-prefixed by the old writer disagreement.
-    assert migrate_tag("flag:llm:benign:init") == ["severity:none", "category:util:init"]
+    assert migrate_tag("flag:llm:benign:init") == [
+        "severity:none",
+        "category:util:init",
+    ]
     # ... and the same id after `namespaced()` buried it under `user:`.
     assert migrate_tag("user:flag:llm:benign:init") == [
-        "severity:none", "category:util:init"]
+        "severity:none",
+        "category:util:init",
+    ]
     assert migrate_tag("user:flag:nonsense") == ["user:flag:nonsense"]
 
     assert migrate_tag("lib:libc:2.31:memcpy") == ["origin:lib:libc:2.31:memcpy"]
     assert migrate_tag("lib:uclibc") == ["origin:lib:uclibc:unknown"]
     assert migrate_tag("bundle:mirai") == ["origin:bundle:mirai:unknown"]
-    assert migrate_tag("bundle:mirai:scanner") == ["origin:bundle:mirai:unknown:scanner"]
+    assert migrate_tag("bundle:mirai:scanner") == [
+        "origin:bundle:mirai:unknown:scanner"
+    ]
     assert migrate_tag("stdlib:musl:1.2.4") == ["origin:stdlib:musl:1.2.4"]
 
     # File-scope namespaces are left exactly as they are.
@@ -588,9 +628,15 @@ def demo():
 
     assert origin_tag("lib", "libc", "2.31", "memcpy") == "origin:lib:libc:2.31:memcpy"
     assert origin_tag("lib", "libc") == "origin:lib:libc:unknown"
-    assert origin_tag("bundle", "mirai", None, "scanner") == "origin:bundle:mirai:unknown:scanner"
+    assert (
+        origin_tag("bundle", "mirai", None, "scanner")
+        == "origin:bundle:mirai:unknown:scanner"
+    )
     # A tag the analyzer builds must roll up the way the split engine expects.
-    assert origin_parent("origin:lib:uclibc:0.9.30.1:xdrmem_getint32") == "origin:lib:uclibc"
+    assert (
+        origin_parent("origin:lib:uclibc:0.9.30.1:xdrmem_getint32")
+        == "origin:lib:uclibc"
+    )
     assert origin_parent("origin:bundle:mirai:unknown") == "origin:bundle:mirai"
     assert origin_parent("severity:high") is None
     assert origin_parent("") is None
@@ -600,21 +646,26 @@ def demo():
 
     # capa ids are recorded verbatim, never remapped into `category:`.
     assert capa_tag("host-interaction/file-system/write") == (
-        "capa:host-interaction:file-system:write")
+        "capa:host-interaction:file-system:write"
+    )
     assert capa_tag("communication/http/client") == "capa:communication:http:client"
     assert capa_tag(None) is None and capa_tag("") is None and capa_tag("/") is None
-    assert namespaced("capa:communication:http") == "capa:communication:http", (
-        "a capa tag must not be buried under user:")
+    assert (
+        namespaced("capa:communication:http") == "capa:communication:http"
+    ), "a capa tag must not be buried under user:"
     assert migrate_tag("capa:communication:http") == ["capa:communication:http"]
-    assert not is_taxonomy_tag("capa:communication:http"), (
-        "the model must not be able to invent capa findings")
+    assert not is_taxonomy_tag(
+        "capa:communication:http"
+    ), "the model must not be able to invent capa findings"
 
     # A capa document, shaped exactly as `capa -j` writes it: `matches` holds
     # [address, result] pairs. Reading it as a list of dicts is what silently
     # produced zero capa tags, so this is the assert that has to fail if the
     # pair-unpacking is ever "simplified" back.
     doc = {
-        "meta": {"analysis": {"base_address": {"type": "absolute", "value": 0x2000000}}},
+        "meta": {
+            "analysis": {"base_address": {"type": "absolute", "value": 0x2000000}}
+        },
         "rules": {
             "encrypt data using RC4": {
                 "meta": {"namespace": "data-manipulation/encryption/rc4"},
@@ -625,8 +676,12 @@ def demo():
                 ],
             },
             # No namespace -> a capa building block, never a capability tag.
-            "create or open file": {"meta": {}, "matches": [
-                [{"type": "absolute", "value": 0x2003000}, {"success": True}]]},
+            "create or open file": {
+                "meta": {},
+                "matches": [
+                    [{"type": "absolute", "value": 0x2003000}, {"success": True}]
+                ],
+            },
             # File-scope rules have nowhere to land.
             "packed with UPX": {
                 "meta": {"namespace": "anti-analysis/packer/upx"},
@@ -643,10 +698,12 @@ def demo():
     assert capa_rule_hits({}) == (0, {})
 
     assert yara_tag("Ransomware", "LOCKBIT", "Win32_Ransomware_LockBit") == (
-        "yara:ransomware:lockbit:Win32_Ransomware_LockBit")
+        "yara:ransomware:lockbit:Win32_Ransomware_LockBit"
+    )
     assert yara_tag(None, None, "no_meta_rule") == "yara:unknown:unknown:no_meta_rule"
-    assert namespaced("yara:ransomware:lockbit:x") == "yara:ransomware:lockbit:x", (
-        "a yara tag must not be buried under user:")
+    assert (
+        namespaced("yara:ransomware:lockbit:x") == "yara:ransomware:lockbit:x"
+    ), "a yara tag must not be buried under user:"
 
     # Shaped like yara-python's own Match/StringMatch/StringMatchInstance, not a
     # dict -- `.strings[i].instances[j].offset` is the real access path, and
@@ -667,15 +724,21 @@ def demo():
             self.strings = [_StringMatch(o) for o in offsets_by_string]
 
     matches = [
-        _Match("Win32_Ransomware_LockBit", {"category": "Ransomware", "malware": "LOCKBIT"},
-               [[0x1000], [0x2000, 0x2500]]),
+        _Match(
+            "Win32_Ransomware_LockBit",
+            {"category": "Ransomware", "malware": "LOCKBIT"},
+            [[0x1000], [0x2000, 0x2500]],
+        ),
         # No meta at all -- an older or hand-written rule -- still tags, at unknown depth.
         _Match("homebrew_rule", {}, [[0x3000]]),
         # Condition-only rule: matched the file, names no string offset at all.
         _Match("Win32_Packer_Themida", {"category": "Packer"}, []),
         # Elastic: no category/malware, but `threat_name` carries both.
-        _Match("Linux_Trojan_Mirai_268aac0b", {"threat_name": "Linux.Trojan.Mirai"},
-               [[0x4000]]),
+        _Match(
+            "Linux_Trojan_Mirai_268aac0b",
+            {"threat_name": "Linux.Trojan.Mirai"},
+            [[0x4000]],
+        ),
         # A threat_name that is not <os>.<category>.<family> stays at unknown depth
         # rather than being sliced into the wrong two segments.
         _Match("odd_shape_rule", {"threat_name": "Linux.Trojan"}, [[0x5000]]),
@@ -713,17 +776,38 @@ def demo():
             super().__init__(rule, meta, offsets)
             self.namespace = namespace
 
-    mirrored = [_NsMatch("Some_Rule", {"category": "trojan", "malware": "mirai"},
-                         [[0x7000]], "abc-uuid")]
-    sidecar = {"abc-uuid": ["mitre:t1027", "cve:cve-2021-44228"]}
+    uuid_str = "12345678-1234-5678-1234-567812345678"
+    mirrored = [
+        _NsMatch(
+            "Some_Rule",
+            {"category": "trojan", "malware": "mirai"},
+            [[0x7000]],
+            uuid_str,
+        )
+    ]
+    sidecar = {uuid_str: ["mitre:t1027", "cve:cve-2021-44228"]}
     assert yara_file_tags(mirrored, sidecar) == {
-        "yara:trojan:mirai:Some_Rule", "mitre:t1027", "cve:cve-2021-44228"}
+        "yara:trojan:mirai:Some_Rule",
+        "mitre:t1027",
+        "cve:cve-2021-44228",
+        "rulezet:Some_Rule",
+    }
     assert yara_rule_hits(mirrored, sidecar) == {
-        0x7000: {"yara:trojan:mirai:Some_Rule", "mitre:t1027", "cve:cve-2021-44228"}}
+        0x7000: {
+            "yara:trojan:mirai:Some_Rule",
+            "mitre:t1027",
+            "cve:cve-2021-44228",
+            "rulezet:Some_Rule",
+        }
+    }
     # No sidecar entry, and matches with no namespace at all, still work.
-    assert yara_file_tags(mirrored, {"other": ["x"]}) == {"yara:trojan:mirai:Some_Rule"}
+    assert yara_file_tags(mirrored, {"other": ["x"]}) == {
+        "yara:trojan:mirai:Some_Rule",
+        "rulezet:Some_Rule",
+    }
     assert yara_file_tags(matches[:1], sidecar) == {
-        "yara:ransomware:lockbit:Win32_Ransomware_LockBit"}
+        "yara:ransomware:lockbit:Win32_Ransomware_LockBit"
+    }
 
     # --- Source tag routing -------------------------------------------------
     r = route_source_tag
@@ -731,9 +815,11 @@ def demo():
     assert r('misp-galaxy:ransomware="LockBit"') == "misp:ransomware:lockbit"
     # A specific galaxy beats the wildcard no matter the dict order.
     assert r('misp-galaxy:mitre-attack-pattern="Obfuscated Files - T1027"') == (
-        "mitre:t1027")
+        "mitre:t1027"
+    )
     assert r('misp-galaxy:mitre-attack-pattern="Indicator Removal - T1027.005"') == (
-        "mitre:t1027.005")
+        "mitre:t1027.005"
+    )
     # An attack-pattern cluster with no technique id is not an ATT&CK fact.
     assert r('misp-galaxy:mitre-attack-pattern="Some Prose"') is None
     # Unrouted namespaces are kept, not lost -- the whole source path survives.
@@ -742,9 +828,11 @@ def demo():
     # stays: `malware-type` and `malware-platform` are different questions, and
     # the family tree nests on that segment rather than flattening to the leaf.
     assert r('ms-caro-malware-full:malware-type="Trojan"') == (
-        "rulezet:ms-caro-malware-full:malware-type:trojan")
+        "rulezet:ms-caro-malware-full:malware-type:trojan"
+    )
     assert r('ms-caro-malware-full:malware-platform="Linux"') == (
-        "rulezet:ms-caro-malware-full:malware-platform:linux")
+        "rulezet:ms-caro-malware-full:malware-platform:linux"
+    )
     assert r("cve:CVE-2021-44228") == "cve:cve-2021-44228"
     assert r("ghsa:GHSA-j8v8-6h6r-m6pq") == "ghsa:ghsa-j8v8-6h6r-m6pq"
     # Distribution markers: the family and a single value.

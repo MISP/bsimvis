@@ -25,6 +25,7 @@ from bsimvis.app.services.bin_sim_tags import (  # noqa: E402
     AXIS_SEVERITY,
     AXIS_USER,
     AXIS_VULN,
+    AXIS_RULEZET,
     SPLIT_SCHEMA,
     AxisSplit,
     TagSplit,
@@ -45,7 +46,9 @@ def by_id(rows):
 
 def test_normalize_and_parse():
     assert normalize_tags(["origin:lib:libc:2.31"]) == {"origin:lib:libc:2.31": 1.0}
-    assert normalize_tags({"origin:lib:libc:unknown": 0.5}) == {"origin:lib:libc:unknown": 0.5}
+    assert normalize_tags({"origin:lib:libc:unknown": 0.5}) == {
+        "origin:lib:libc:unknown": 0.5
+    }
     assert normalize_tags(None) == {}
     assert normalize_tags("nonsense") == {}
 
@@ -387,7 +390,9 @@ class _FakeRedis:
 # fa1 < fb1, and the key puts the larger fid first (similarity_service.py:1061).
 _PAIR_DOCS = {
     "main:sim:uc:fb1::fa1": json.dumps({"tags": ["crypto"], "user_tags": ["bookmark"]}),
-    "main:sim:uc:fb2::fa2": json.dumps({"tags": [], "user_tags": ["origin:lib:libc:review"]}),
+    "main:sim:uc:fb2::fa2": json.dumps(
+        {"tags": [], "user_tags": ["origin:lib:libc:review"]}
+    ),
     # fb3::fa3 deliberately absent: a pair with no doc must still page fine.
 }
 
@@ -458,44 +463,62 @@ def test_axis_routing_and_parents():
     assert tag_parent("category:network:c2") == "category:network"
     assert tag_parent("origin:lib:libc:2.31:memcpy") == "origin:lib:libc:2.31"
     # A bundle carries a placeholder version precisely so this depth is uniform.
-    assert tag_parent("origin:bundle:mirai:unknown:scan") == "origin:bundle:mirai:unknown"
+    assert (
+        tag_parent("origin:bundle:mirai:unknown:scan") == "origin:bundle:mirai:unknown"
+    )
     # Severity is one segment deep and is already its own parent.
     assert tag_parent("severity:high") == "severity:high"
 
     # Rulezet writes six namespaces; before family/vuln existed, five of them
     # fell through to the user axis and buried Cobalt Strike among a human's
     # bookmarks. An axis is a question, so several sources share one.
-    assert tag_axis('misp:tool:cobalt-strike') == AXIS_FAMILY
-    assert tag_axis('rulezet:runtime-packer:pe:upx') == AXIS_FAMILY
-    assert tag_axis('cve:cve-2021-44228') == AXIS_VULN
-    assert tag_axis('ghsa:ghsa-j8v8-6h6r-m6pq') == AXIS_VULN
-    assert tag_axis('mitre:t1027') == AXIS_MITRE
+    assert tag_axis("misp:tool:cobalt-strike") == AXIS_FAMILY
+    assert tag_axis("rulezet:runtime-packer:pe:upx") == AXIS_RULEZET
+    assert tag_axis("cve:cve-2021-44228") == AXIS_VULN
+    assert tag_axis("ghsa:ghsa-j8v8-6h6r-m6pq") == AXIS_VULN
+    assert tag_axis("mitre:t1027") == AXIS_MITRE
     # The named axes do not roll up: the useful node is the family itself, and
     # its ids are not all the same depth.
-    for t in ('misp:tool:cobalt-strike', 'rulezet:runtime-packer:pe:upx',
-              'misp:ransomware:lockbit', 'cve:cve-2021-44228'):
+    for t in (
+        "misp:tool:cobalt-strike",
+        "rulezet:runtime-packer:pe:upx",
+        "misp:ransomware:lockbit",
+        "cve:cve-2021-44228",
+    ):
         assert tag_parent(t) == t, t
     # ...so the name is the last segment, not the second, whatever the depth.
-    assert parse_tag_id('misp:tool:cobalt-strike') == ('tool', 'cobalt-strike', '')
-    assert parse_tag_id('rulezet:runtime-packer:pe:upx') == ('runtime-packer', 'upx', '')
-    assert parse_tag_id('cve:cve-2021-44228') == ('cve', 'cve-2021-44228', '')
+    assert parse_tag_id("misp:tool:cobalt-strike") == ("tool", "cobalt-strike", "")
+    assert parse_tag_id("rulezet:runtime-packer:pe:upx") == (
+        "runtime-packer",
+        "upx",
+        "",
+    )
+    assert parse_tag_id("cve:cve-2021-44228") == ("cve", "cve-2021-44228", "")
 
     # Every axis is reachable from the joint, including the two new ones -- the
     # inner key is positional, so a mismatch between AXES and JOINT_INNER_AXES
     # silently reads the wrong column rather than failing.
     fid_tags = {
-        "a": {"origin:lib:libc:2.31": 1.0, "misp:tool:cobalt-strike": 1.0,
-              "cve:cve-2021-44228": 1.0},
+        "a": {
+            "origin:lib:libc:2.31": 1.0,
+            "misp:tool:cobalt-strike": 1.0,
+            "cve:cve-2021-44228": 1.0,
+        },
     }
     split = AxisSplit(fid_tags)
     split.add_unique("a", 10.0, "a")
     out = split.summaries(10.0, 0.0)
-    assert by_id(out["family_summary"])["misp:tool:cobalt-strike"]["unique_weight_a"] == 10.0
+    assert (
+        by_id(out["family_summary"])["misp:tool:cobalt-strike"]["unique_weight_a"]
+        == 10.0
+    )
     assert by_id(out["vuln_summary"])["cve:cve-2021-44228"]["unique_weight_a"] == 10.0
-    assert joint_marginal(out["joint"], AXIS_FAMILY) == {"misp:tool:cobalt-strike":
-                                                         {"": [0, 0, 10.0, 0, 0, 0, 1.0, 0]}}
-    assert joint_marginal(out["joint"], AXIS_VULN) == {"cve:cve-2021-44228":
-                                                       {"": [0, 0, 10.0, 0, 0, 0, 1.0, 0]}}
+    assert joint_marginal(out["joint"], AXIS_FAMILY) == {
+        "misp:tool:cobalt-strike": {"": [0, 0, 10.0, 0, 0, 0, 1.0, 0]}
+    }
+    assert joint_marginal(out["joint"], AXIS_VULN) == {
+        "cve:cve-2021-44228": {"": [0, 0, 10.0, 0, 0, 0, 1.0, 0]}
+    }
 
 
 def test_origin_resolves_by_priority():
@@ -528,7 +551,9 @@ def test_analysis_tag_does_not_dilute_origin():
     library's mass and evicted genuinely original code from `original_code` --
     that bucket only fills when a function carries no tag at all.
     """
-    plain = AxisSplit({"a1": {"origin:lib:libc:2.31": 1.0}, "b1": {"origin:lib:libc:2.31": 1.0}})
+    plain = AxisSplit(
+        {"a1": {"origin:lib:libc:2.31": 1.0}, "b1": {"origin:lib:libc:2.31": 1.0}}
+    )
     plain.add_match("a1", "b1", 1.0, 10.0, 10.0)
     plain.add_unique("a2", 10.0, "a")
     base = by_id(plain.summaries(20.0, 10.0)["tags_summary"])
@@ -545,7 +570,10 @@ def test_analysis_tag_does_not_dilute_origin():
     out = tagged.summaries(20.0, 10.0)
     rows = by_id(out["tags_summary"])
 
-    assert rows["origin:lib:libc:2.31"]["weight_a"] == base["origin:lib:libc:2.31"]["weight_a"]
+    assert (
+        rows["origin:lib:libc:2.31"]["weight_a"]
+        == base["origin:lib:libc:2.31"]["weight_a"]
+    )
     # a2 has a behaviour but is still nobody's library code, so it stays original.
     assert rows[TAG_UNTAGGED]["unique_weight_a"] == 10.0
 
@@ -622,7 +650,10 @@ def test_joint_serves_every_axis_mode():
 
 
 def test_merge_tag_fields_reads_both_fields():
-    meta = {"tags": ["origin:lib:libc:2.31"], "user_tags": ["severity:high", "origin:lib:libc:2.31"]}
+    meta = {
+        "tags": ["origin:lib:libc:2.31"],
+        "user_tags": ["severity:high", "origin:lib:libc:2.31"],
+    }
     merged = merge_tag_fields(meta)
     assert merged == {"origin:lib:libc:2.31": 1.0, "severity:high": 1.0}
     assert merge_tag_fields({}) == {}
@@ -695,8 +726,11 @@ def test_resplit_replays_the_split_from_the_stored_diff():
         },
     }
     meta = {
-        "fa1": {"bsim_features_count": 10, "tags": ["origin:lib:libc:2.31"],
-                "user_tags": ["severity:high", "category:network:c2"]},
+        "fa1": {
+            "bsim_features_count": 10,
+            "tags": ["origin:lib:libc:2.31"],
+            "user_tags": ["severity:high", "category:network:c2"],
+        },
         "fb1": {"bsim_features_count": 10, "tags": ["origin:lib:libc:2.31"]},
         "fa2": {"bsim_features_count": 5},
     }

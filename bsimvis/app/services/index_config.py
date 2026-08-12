@@ -274,6 +274,7 @@ def tag_ancestors(field: str, value: str) -> list[str]:
         prefix += parts[i] + parts[i + 1]
     return ancestors
 
+
 # Fields that are auto-analysis artifacts of clustering. Clustering runs per
 # namespace (a collection OR a pool), so these indexes belong to whichever
 # namespace produced them and must never be merged from member collections into

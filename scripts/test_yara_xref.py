@@ -19,6 +19,7 @@ stops proving anything.
 Needs gcc and Ghidra; skips (exit 0) with a note if either is missing, so it
 stays safe to call from a suite that runs where neither exists.
 """
+
 import os
 import shutil
 import subprocess

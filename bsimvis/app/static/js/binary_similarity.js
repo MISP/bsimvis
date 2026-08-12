@@ -418,6 +418,7 @@ function initResizableCards() {
             yara_summary: data.yara_summary || [],
             family_summary: data.family_summary || [],
             vuln_summary: data.vuln_summary || [],
+            rulezet_summary: data.rulezet_summary || [],
             joint: data.joint || {},
             tags_stale: !!data.tags_stale,
             counts,
@@ -523,8 +524,8 @@ function fileSimSim(a, b) {
     return Math.max(a, b) > 0 ? Math.min(a, b) / Math.max(a, b) : 0;
 }
 
-// The namespaces feeding the family and vuln axes, i.e. bin_sim_tags's
-// TAG_NAMESPACES entries pointing at AXIS_FAMILY / AXIS_VULN.
+// The namespaces feeding the family, vuln, and rulezet axes, i.e. bin_sim_tags's
+// TAG_NAMESPACES entries pointing at AXIS_FAMILY / AXIS_VULN / AXIS_RULEZET.
 const FILESIM_NAMED_NAMESPACES = new Set(['misp', 'rulezet', 'cve', 'ghsa', 'pysec']);
 
 // type / name / version, from the row if the backend set them and from the tag
@@ -747,7 +748,7 @@ function fileSimOriginNodes(rows) {
 // frontier all work the same whichever axis is being read.
 function fileSimTree(rows, axis) {
     const live = axis === 'origin' ? fileSimOriginNodes(rows)
-               : (axis === 'family' || axis === 'vuln') ? fileSimNestedNodes(rows)
+               : (axis === 'family' || axis === 'vuln' || axis === 'rulezet') ? fileSimNestedNodes(rows)
                : fileSimAxisNodes(rows, axis);
     return {
         id: 'root', label: 'All', prefix: null, children: live, drift: {},
@@ -1588,10 +1589,11 @@ const FILESIM_AXES = {
     category: { field: 'category_summary', label: 'Behavior' },
     user: { field: 'user_summary', label: 'User' },
     capa: { field: 'capa_summary', label: 'Capa' },
-    mitre: { field: 'mitre_summary', label: 'MITRE ATT&CK' },
-    yara: { field: 'yara_summary', label: 'Yara' },
+    mitre: { field: 'mitre_summary', label: 'ATT&CK' },
+    yara: { field: 'yara_summary', label: 'YARA' },
     family: { field: 'family_summary', label: 'Family' },
     vuln: { field: 'vuln_summary', label: 'Vulnerability' },
+    rulezet: { field: 'rulezet_summary', label: 'Rulezet' },
 };
 // Which axis is on each side. An empty B is a single-axis view.
 let fileSimAxisA = 'origin';
@@ -1601,8 +1603,8 @@ let fileSimAxisB = 'category';
 // origin is the outer key, the rest are packed into the inner key in this order.
 const FILESIM_AXIS_SEP = '\u001f';
 const FILESIM_COMBO_SEP = ' + ';
-const FILESIM_JOINT_INNER = ['severity', 'category', 'user', 'capa', 'mitre', 'yara',
-                             'family', 'vuln'];
+const FILESIM_JOINT_INNER = ['severity', 'category', 'user', 'capa', 'mitre',
+                             'yara', 'family', 'vuln', 'rulezet'];
 
 // `category:network:c2` reads as "network c2"; `severity:high` as "high". A
 // combo of several keeps them joined.

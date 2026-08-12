@@ -87,11 +87,20 @@ AXIS_MITRE = "mitre"
 AXIS_YARA = "yara"
 AXIS_FAMILY = "family"
 AXIS_VULN = "vuln"
+AXIS_RULEZET = "rulezet"
 
 # Every axis, in the order the UI offers them.
 AXES = (
-    AXIS_ORIGIN, AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER, AXIS_CAPA,
-    AXIS_MITRE, AXIS_YARA, AXIS_FAMILY, AXIS_VULN,
+    AXIS_ORIGIN,
+    AXIS_SEVERITY,
+    AXIS_CATEGORY,
+    AXIS_USER,
+    AXIS_CAPA,
+    AXIS_MITRE,
+    AXIS_YARA,
+    AXIS_FAMILY,
+    AXIS_VULN,
+    AXIS_RULEZET,
 )
 
 # namespace prefix -> axis. Priority is resolved separately (ORIGIN_PRIORITY),
@@ -108,7 +117,7 @@ TAG_NAMESPACES = {
     "mitre": AXIS_MITRE,
     "yara": AXIS_YARA,
     "misp": AXIS_FAMILY,
-    "rulezet": AXIS_FAMILY,
+    "rulezet": AXIS_RULEZET,
     "cve": AXIS_VULN,
     "ghsa": AXIS_VULN,
     "pysec": AXIS_VULN,
@@ -240,6 +249,7 @@ _PARENT_DEPTH = {
     AXIS_YARA: 2,
     AXIS_FAMILY: None,
     AXIS_VULN: None,
+    AXIS_RULEZET: None,
 }
 
 
@@ -306,7 +316,7 @@ def parse_tag_id(tag_id):
         name = parts[2] if len(parts) > 2 else kind
         version = parts[3] if len(parts) > 3 else ""
         return (kind, name, "" if version == ORIGIN_NO_VERSION else version)
-    if tag_axis(tag_id) in (AXIS_FAMILY, AXIS_VULN):
+    if tag_axis(tag_id) in (AXIS_FAMILY, AXIS_VULN, AXIS_RULEZET):
         return (parts[1] if len(parts) > 2 else parts[0], parts[-1], "")
     return (parts[0], parts[1], parts[2] if len(parts) > 2 else "")
 
@@ -537,8 +547,15 @@ AXIS_SEP = "\x1f"
 # Sankey mode is a marginal of this one table, so N axes cost N+1 key segments
 # rather than N*(N-1)/2 stored matrices.
 JOINT_INNER_AXES = (
-    AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER, AXIS_CAPA, AXIS_MITRE,
-    AXIS_YARA, AXIS_FAMILY, AXIS_VULN,
+    AXIS_SEVERITY,
+    AXIS_CATEGORY,
+    AXIS_USER,
+    AXIS_CAPA,
+    AXIS_MITRE,
+    AXIS_YARA,
+    AXIS_FAMILY,
+    AXIS_VULN,
+    AXIS_RULEZET,
 )
 
 
@@ -549,8 +566,16 @@ def tag_combo(tags):
 
 # Joint cell layout, mirroring what a Sankey column needs on each side:
 # matched and unmatched mass, in features and in function counts.
-MATRIX_SLOTS = ("w_shared_a", "w_shared_b", "w_uniq_a", "w_uniq_b",
-                "n_shared_a", "n_shared_b", "n_uniq_a", "n_uniq_b")
+MATRIX_SLOTS = (
+    "w_shared_a",
+    "w_shared_b",
+    "w_uniq_a",
+    "w_uniq_b",
+    "n_shared_a",
+    "n_shared_b",
+    "n_uniq_a",
+    "n_uniq_b",
+)
 
 
 def joint_key(*combos):
@@ -574,6 +599,7 @@ def joint_marginal(joint, axis_a, axis_b=None):
     Returns `{a_label: {b_label: [8 slots]}}`. With `axis_b` omitted the inner
     dict has the single key `""`, so a single-axis view reads the same shape.
     """
+
     def label(outer, inner_parts, axis):
         if axis == AXIS_ORIGIN:
             return outer
@@ -712,6 +738,7 @@ SUMMARY_FIELDS = (
     "yara_summary",
     "family_summary",
     "vuln_summary",
+    "rulezet_summary",
 )
 
 # Everything `summaries()` writes, so callers that must produce an empty split do

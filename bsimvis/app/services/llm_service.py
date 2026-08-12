@@ -341,7 +341,9 @@ def _selfcheck():
     split = LLMService._split_summary_tags
 
     # Tags line parsed off the end, summary kept intact.
-    s, t = split("**TLDR**: does aes\nmore text\nTAGS: severity:medium, category:crypto:cipher")
+    s, t = split(
+        "**TLDR**: does aes\nmore text\nTAGS: severity:medium, category:crypto:cipher"
+    )
     assert s == "**TLDR**: does aes\nmore text", s
     assert t == ["severity:medium", "category:crypto:cipher"], t
 
@@ -351,8 +353,9 @@ def _selfcheck():
 
     # 'none' and decorations are dropped; duplicates collapse.
     assert split("x\nTAGS: none")[1] == []
-    assert split("x\n**TAGS:** `category:crypto:cipher`, category:crypto:cipher, [category:util:parser]")[1] == [
-        "category:crypto:cipher", "category:util:parser"]
+    assert split(
+        "x\n**TAGS:** `category:crypto:cipher`, category:crypto:cipher, [category:util:parser]"
+    )[1] == ["category:crypto:cipher", "category:util:parser"]
 
     # A vocabulary constrains *custom* tags but never the fixed taxonomy, and it
     # restores the collection's canonical casing for its own entries.

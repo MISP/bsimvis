@@ -128,8 +128,10 @@ def fetch_rules(since=None, limit=None, log=print):
     # endpoint instead, which really does stop early. Otherwise `--limit 2000`
     # would still cost the full ~2 minute download to then throw 128k rules away.
     if api_key and limit:
-        log(f"--limit {limit}: paging the public endpoint "
-            f"(dumpRules cannot fetch a subset)")
+        log(
+            f"--limit {limit}: paging the public endpoint "
+            f"(dumpRules cannot fetch a subset)"
+        )
         api_key = None
 
     if api_key:
@@ -137,9 +139,10 @@ def fetch_rules(since=None, limit=None, log=print):
         if since:
             body["updated_after"] = since
         log(
-            f"dumpRules (incremental since {since})" if since
+            f"dumpRules (incremental since {since})"
+            if since
             else "dumpRules (full): ~130k rules, 128 MB, ~2 min before "
-                 "anything is written"
+            "anything is written"
         )
         try:
             doc = _post(f"{base}/api/rule/private/dumpRules", body, api_key)
@@ -162,8 +165,10 @@ def fetch_rules(since=None, limit=None, log=print):
         doc = _get(url)
         out.extend(doc.get("results") or [])
         if page == 1:
-            log(f"{doc.get('total_rules_found', 0)} yara rules available, "
-                f"paging at 100/request ({doc.get('total_pages', 0)} pages)")
+            log(
+                f"{doc.get('total_rules_found', 0)} yara rules available, "
+                f"paging at 100/request ({doc.get('total_pages', 0)} pages)"
+            )
         if limit and len(out) >= limit:
             return out[:limit]
         if not (doc.get("pagination") or {}).get("next_page"):
@@ -211,7 +216,9 @@ def _vulns(rule):
         text = " ".join(str(x) for x in raw)
     else:
         text = str(raw)
-    return sorted({m.group(0).upper().replace("–", "-") for m in VULN_RE.finditer(text)})
+    return sorted(
+        {m.group(0).upper().replace("–", "-") for m in VULN_RE.finditer(text)}
+    )
 
 
 def platform_tags(rule, tag_config):
@@ -275,8 +282,10 @@ def _write_rules(rules, tag_config, log=print):
         if routed:
             tags[uuid] = routed
 
-    log(f"  {written} rule files written, {skipped} skipped "
-        f"(license/empty), {len(tags)} carry tags")
+    log(
+        f"  {written} rule files written, {skipped} skipped "
+        f"(license/empty), {len(tags)} carry tags"
+    )
     return tags
 
 
@@ -328,16 +337,20 @@ def compile_mirror(log=print, validate=True):
     for f in bad:
         f.unlink()
     if validate:
-        log(f"  validated {len(files)} rules, dropped {len(bad)} unparseable "
-            f"({time.time() - t0:.0f}s)")
+        log(
+            f"  validated {len(files)} rules, dropped {len(bad)} unparseable "
+            f"({time.time() - t0:.0f}s)"
+        )
 
     if not files:
         return None
     t0 = time.time()
     rules = yara.compile(filepaths=files)
     rules.save(str(p["compiled"]))
-    log(f"  compiled + saved in {time.time() - t0:.0f}s "
-        f"({p['compiled'].stat().st_size / 1e6:.0f} MB)")
+    log(
+        f"  compiled + saved in {time.time() - t0:.0f}s "
+        f"({p['compiled'].stat().st_size / 1e6:.0f} MB)"
+    )
     return rules
 
 
@@ -373,7 +386,8 @@ def gate(rules, log=print):
     released = set()
     if p["released"].exists():
         released = {
-            l.strip() for l in p["released"].read_text().splitlines()
+            l.strip()
+            for l in p["released"].read_text().splitlines()
             if l.strip() and not l.startswith("#")
         }
 
@@ -411,8 +425,10 @@ def gate(rules, log=print):
             "# uuid\trule\thits\texamples\n"
         )
         p["quarantine_log"].write_text(header + "\n".join(lines) + "\n")
-    log(f"  gate: {len(files)} clean binaries scanned, "
-        f"{len(hits)} rules quarantined")
+    log(
+        f"  gate: {len(files)} clean binaries scanned, "
+        f"{len(hits)} rules quarantined"
+    )
     return hits
 
 
@@ -557,16 +573,27 @@ def sync(full=False, limit=None, log=print):
 def demo():
     """Self-check for the parts that are pure logic."""
     assert _vulns({"cve_id": '["CVE-2021-44228", "GHSA-j8v8-6h6r-m6pq"]'}) == [
-        "CVE-2021-44228", "GHSA-J8V8-6H6R-M6PQ"]
+        "CVE-2021-44228",
+        "GHSA-J8V8-6H6R-M6PQ",
+    ]
     assert _vulns({"cve_id": "CVE-2025-53521"}) == ["CVE-2025-53521"]
     assert _vulns({"cve_id": None}) == [] and _vulns({}) == []
 
-    cfgs = [(re.compile(r"\bupx\b", re.I), 'runtime-packer:pe="upx"'),
-            (re.compile(r"\bransom(ware)?\b", re.I),
-             'ms-caro-malware-full:malware-type="Ransom"')]
+    cfgs = [
+        (re.compile(r"\bupx\b", re.I), 'runtime-packer:pe="upx"'),
+        (
+            re.compile(r"\bransom(ware)?\b", re.I),
+            'ms-caro-malware-full:malware-type="Ransom"',
+        ),
+    ]
     tags = platform_tags(
-        {"title": "Win32_Ransomware_LockBit", "description": "packed with UPX",
-         "cve_id": "CVE-2021-44228"}, cfgs)
+        {
+            "title": "Win32_Ransomware_LockBit",
+            "description": "packed with UPX",
+            "cve_id": "CVE-2021-44228",
+        },
+        cfgs,
+    )
     assert 'runtime-packer:pe="upx"' in tags, tags
     # From the title alone, which only works because `_` is normalised away --
     # this is the assert that fails if that ever gets "simplified" out.

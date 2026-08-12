@@ -19,9 +19,12 @@ from bsimvis.app.services.bin_sim_tags import (  # noqa: E402
     TAG_MISMATCH,
     TAG_UNTAGGED,
     AXIS_CATEGORY,
+    AXIS_FAMILY,
+    AXIS_MITRE,
     AXIS_ORIGIN,
     AXIS_SEVERITY,
     AXIS_USER,
+    AXIS_VULN,
     SPLIT_SCHEMA,
     AxisSplit,
     TagSplit,
@@ -458,6 +461,41 @@ def test_axis_routing_and_parents():
     assert tag_parent("origin:bundle:mirai:unknown:scan") == "origin:bundle:mirai:unknown"
     # Severity is one segment deep and is already its own parent.
     assert tag_parent("severity:high") == "severity:high"
+
+    # Rulezet writes six namespaces; before family/vuln existed, five of them
+    # fell through to the user axis and buried Cobalt Strike among a human's
+    # bookmarks. An axis is a question, so several sources share one.
+    assert tag_axis('misp:tool:cobalt-strike') == AXIS_FAMILY
+    assert tag_axis('rulezet:runtime-packer:pe:upx') == AXIS_FAMILY
+    assert tag_axis('cve:cve-2021-44228') == AXIS_VULN
+    assert tag_axis('ghsa:ghsa-j8v8-6h6r-m6pq') == AXIS_VULN
+    assert tag_axis('mitre:t1027') == AXIS_MITRE
+    # The named axes do not roll up: the useful node is the family itself, and
+    # its ids are not all the same depth.
+    for t in ('misp:tool:cobalt-strike', 'rulezet:runtime-packer:pe:upx',
+              'misp:ransomware:lockbit', 'cve:cve-2021-44228'):
+        assert tag_parent(t) == t, t
+    # ...so the name is the last segment, not the second, whatever the depth.
+    assert parse_tag_id('misp:tool:cobalt-strike') == ('tool', 'cobalt-strike', '')
+    assert parse_tag_id('rulezet:runtime-packer:pe:upx') == ('runtime-packer', 'upx', '')
+    assert parse_tag_id('cve:cve-2021-44228') == ('cve', 'cve-2021-44228', '')
+
+    # Every axis is reachable from the joint, including the two new ones -- the
+    # inner key is positional, so a mismatch between AXES and JOINT_INNER_AXES
+    # silently reads the wrong column rather than failing.
+    fid_tags = {
+        "a": {"origin:lib:libc:2.31": 1.0, "misp:tool:cobalt-strike": 1.0,
+              "cve:cve-2021-44228": 1.0},
+    }
+    split = AxisSplit(fid_tags)
+    split.add_unique("a", 10.0, "a")
+    out = split.summaries(10.0, 0.0)
+    assert by_id(out["family_summary"])["misp:tool:cobalt-strike"]["unique_weight_a"] == 10.0
+    assert by_id(out["vuln_summary"])["cve:cve-2021-44228"]["unique_weight_a"] == 10.0
+    assert joint_marginal(out["joint"], AXIS_FAMILY) == {"misp:tool:cobalt-strike":
+                                                         {"": [0, 0, 10.0, 0, 0, 0, 1.0, 0]}}
+    assert joint_marginal(out["joint"], AXIS_VULN) == {"cve:cve-2021-44228":
+                                                       {"": [0, 0, 10.0, 0, 0, 0, 1.0, 0]}}
 
 
 def test_origin_resolves_by_priority():

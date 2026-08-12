@@ -51,14 +51,22 @@ TAG_MISMATCH = "tag_mismatch"
 #               by architecture (see capa_service), which is why an empty capa
 #               axis never means "no capabilities".
 #   mitre    -- which ATT&CK technique, verbatim from whatever writes `mitre:`
-#               tags. No producer yet; the axis exists so one can start writing
-#               `mitre:<tactic>:<technique>` tags without a second migration.
-#   mbc      -- which Malware Behavior Catalog entry, same story as mitre under
-#               `mbc:<objective>:<behavior>`.
+#               tags (`rulezet_service`, off the MISP attack-pattern galaxy).
 #   yara     -- which vendored YARA rule matched, under
 #               `yara:<category>:<family>:<rule_name>` -- another rule engine
 #               answering the same question as capa/category, kept on its own
 #               axis for the same reason.
+#   family   -- "which named thing is this": Cobalt Strike, LockBit, UPX. Fed by
+#               the `misp:` and `rulezet:` namespaces of the mirrored rules. A
+#               different question from `category` (what the code does) and from
+#               `origin` (whose code it is): a function can be original code
+#               that does networking and belong to Mirai.
+#   vuln     -- "which vulnerability is in play", `cve:`/`ghsa:`/`pysec:`. Kept
+#               off `family` because a CVE names a bug in someone else's
+#               software, not the thing the rule is looking for.
+#
+# `mbc:` had an axis here that nothing ever wrote. The namespace stays reserved
+# in tag_taxonomy; the axis comes back when a producer does.
 #
 # Splitting one flat tag space by `conf / len(tags)` mixed them: a single
 # behaviour tag on a libc function used to halve libc's mass, and the same tag on
@@ -76,17 +84,21 @@ AXIS_CATEGORY = "category"
 AXIS_USER = "user"
 AXIS_CAPA = "capa"
 AXIS_MITRE = "mitre"
-AXIS_MBC = "mbc"
 AXIS_YARA = "yara"
+AXIS_FAMILY = "family"
+AXIS_VULN = "vuln"
 
 # Every axis, in the order the UI offers them.
 AXES = (
     AXIS_ORIGIN, AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER, AXIS_CAPA,
-    AXIS_MITRE, AXIS_MBC, AXIS_YARA,
+    AXIS_MITRE, AXIS_YARA, AXIS_FAMILY, AXIS_VULN,
 )
 
 # namespace prefix -> axis. Priority is resolved separately (ORIGIN_PRIORITY),
 # because for `origin:` it depends on the *second* segment, not the first.
+# Several namespaces share `family` and `vuln`: an axis is a question, and
+# `misp:tool:cobalt-strike` and `rulezet:runtime-packer:pe:upx` answer the same
+# one whatever taxonomy they came out of.
 TAG_NAMESPACES = {
     "origin": AXIS_ORIGIN,
     "severity": AXIS_SEVERITY,
@@ -94,8 +106,12 @@ TAG_NAMESPACES = {
     "user": AXIS_USER,
     "capa": AXIS_CAPA,
     "mitre": AXIS_MITRE,
-    "mbc": AXIS_MBC,
     "yara": AXIS_YARA,
+    "misp": AXIS_FAMILY,
+    "rulezet": AXIS_FAMILY,
+    "cve": AXIS_VULN,
+    "ghsa": AXIS_VULN,
+    "pysec": AXIS_VULN,
 }
 
 # Priority only matters inside origin, where a function must resolve to one
@@ -122,7 +138,7 @@ DEFAULT_AXIS = AXIS_USER
 # schema is stale no matter what its `tags_rev` says -- without this, a doc
 # written by the two-axis code and one written here are indistinguishable, and
 # the UI silently renders an axis that was never computed.
-SPLIT_SCHEMA = 4
+SPLIT_SCHEMA = 5
 
 # Similarity is bucketed into fixed 5% bins so the UI can re-aggregate to any of
 # its 5/10/20/25% split settings without the backend knowing which is selected.
@@ -207,6 +223,10 @@ def tag_priority(tag_id, tag_meta=None):
 # namespaces, which is both the readable Sankey grouping and what keeps the joint
 # key small: a function matching eight capa rules contributes one or two parents
 # to its combo, not eight rule names.
+# `family` is the one axis where the leaf *is* the answer -- the useful node is
+# "Cobalt Strike", not "misp:tool" -- so its depth is set past the longest id it
+# carries (`rulezet:runtime-packer:pe:upx`) and every family is its own row.
+# `vuln` needs no depth for the same reason: a CVE id is already whole at 2.
 _PARENT_DEPTH = {
     AXIS_ORIGIN: 4,
     AXIS_SEVERITY: 2,
@@ -214,8 +234,9 @@ _PARENT_DEPTH = {
     AXIS_USER: 2,
     AXIS_CAPA: 2,
     AXIS_MITRE: 2,
-    AXIS_MBC: 2,
     AXIS_YARA: 2,
+    AXIS_FAMILY: 4,
+    AXIS_VULN: 2,
 }
 
 
@@ -263,6 +284,12 @@ def parse_tag_id(tag_id):
     type is that kind rather than the literal `origin`; the other axes use their
     namespace as the type. A bundle's placeholder `unknown` version reads as no
     version at all, which is what the UI should show.
+
+    Family and vuln ids name a thing rather than a group refined by a leaf, and
+    they are not all the same depth (`misp:tool:cobalt-strike`,
+    `rulezet:runtime-packer:pe:upx`, `cve:cve-2021-44228`), so the *last* segment
+    is the name. Reading them positionally like a `category:` id would label
+    Cobalt Strike "tool" and drop `upx` off the end of its id entirely.
     """
     if tag_id == TAG_UNTAGGED:
         return ("original_code", "Original Code", "")
@@ -276,6 +303,8 @@ def parse_tag_id(tag_id):
         name = parts[2] if len(parts) > 2 else kind
         version = parts[3] if len(parts) > 3 else ""
         return (kind, name, "" if version == ORIGIN_NO_VERSION else version)
+    if tag_axis(tag_id) in (AXIS_FAMILY, AXIS_VULN):
+        return (parts[1] if len(parts) > 2 else parts[0], parts[-1], "")
     return (parts[0], parts[1], parts[2] if len(parts) > 2 else "")
 
 
@@ -505,8 +534,8 @@ AXIS_SEP = "\x1f"
 # Sankey mode is a marginal of this one table, so N axes cost N+1 key segments
 # rather than N*(N-1)/2 stored matrices.
 JOINT_INNER_AXES = (
-    AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER, AXIS_CAPA, AXIS_MITRE, AXIS_MBC,
-    AXIS_YARA,
+    AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER, AXIS_CAPA, AXIS_MITRE,
+    AXIS_YARA, AXIS_FAMILY, AXIS_VULN,
 )
 
 
@@ -677,8 +706,9 @@ SUMMARY_FIELDS = (
     "user_summary",
     "capa_summary",
     "mitre_summary",
-    "mbc_summary",
     "yara_summary",
+    "family_summary",
+    "vuln_summary",
 )
 
 # Everything `summaries()` writes, so callers that must produce an empty split do

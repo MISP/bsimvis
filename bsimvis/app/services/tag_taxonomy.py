@@ -19,7 +19,9 @@ reserved for the same treatment but have no producer yet.
 
 `misp:`, `rulezet:` and the vulnerability namespaces (`cve:`, `ghsa:`, `pysec:`)
 are written by `rulezet_service` for mirrored rules; `route_source_tag()` is how
-a MISP-style source tag becomes one of them.
+a MISP-style source tag becomes one of them. The first two feed the `family`
+axis and the last three the `vuln` axis -- namespaces are sources, axes are
+questions, and several sources can answer one question.
 """
 
 import fnmatch
@@ -320,7 +322,12 @@ DEFAULT_TAG_MAP = {
     "pysec": "pysec",
     "*": RULEZET_NAMESPACE,
 }
-DEFAULT_DROPS = ("tlp:*", "pap:*")
+# `ms-caro-malware-full` is dropped for volume, not for being wrong: it is
+# 126079 of the 130147 tags in the mirror's sidecar (97%), because Rulezet
+# auto-applies it to every bulk GitHub import. A tag nearly every rule carries
+# separates nothing, and on the `family` axis it would draw one node holding
+# almost the whole corpus. Remove this glob to get it back.
+DEFAULT_DROPS = ("tlp:*", "pap:*", "ms-caro-malware-full:*")
 
 # ATT&CK ids arrive welded onto the cluster name MISP uses:
 # `Obfuscated Files or Information - T1027`. The id is the identity; the prose
@@ -736,7 +743,10 @@ def demo():
     assert r('misp-galaxy:mitre-attack-pattern="Some Prose"') is None
     # Unrouted namespaces are kept, not lost -- the whole source path survives.
     assert r('runtime-packer:pe="upx"') == "rulezet:runtime-packer:pe:upx"
-    assert r('ms-caro-malware-full:malware-type="Trojan"') == (
+    # Dropped by volume (97% of the sidecar), so it must not reach the family
+    # axis -- but only by default: a config that asks for it still gets it.
+    assert r('ms-caro-malware-full:malware-type="Trojan"') is None
+    assert r('ms-caro-malware-full:malware-type="Trojan"', drops=()) == (
         "rulezet:ms-caro-malware-full:malware-type:trojan")
     assert r("cve:CVE-2021-44228") == "cve:cve-2021-44228"
     assert r("ghsa:GHSA-j8v8-6h6r-m6pq") == "ghsa:ghsa-j8v8-6h6r-m6pq"

@@ -415,8 +415,9 @@ function initResizableCards() {
             user_summary: data.user_summary || [],
             capa_summary: data.capa_summary || [],
             mitre_summary: data.mitre_summary || [],
-            mbc_summary: data.mbc_summary || [],
             yara_summary: data.yara_summary || [],
+            family_summary: data.family_summary || [],
+            vuln_summary: data.vuln_summary || [],
             joint: data.joint || {},
             tags_stale: !!data.tags_stale,
             counts,
@@ -522,6 +523,10 @@ function fileSimSim(a, b) {
     return Math.max(a, b) > 0 ? Math.min(a, b) / Math.max(a, b) : 0;
 }
 
+// The namespaces feeding the family and vuln axes, i.e. bin_sim_tags's
+// TAG_NAMESPACES entries pointing at AXIS_FAMILY / AXIS_VULN.
+const FILESIM_NAMED_NAMESPACES = new Set(['misp', 'rulezet', 'cve', 'ghsa', 'pysec']);
+
 // type / name / version, from the row if the backend set them and from the tag
 // id otherwise. Same decomposition as parse_tag_id (bin_sim_tags.py), so a row
 // carrying only an id still lands in the right place instead of in Other.
@@ -539,6 +544,18 @@ function fileSimTagParts(row) {
             type: row.type || parts[1],
             name: row.name || parts[2] || parts[1],
             version: row.version || (version === 'unknown' ? '' : version),
+        };
+    }
+    // Family and vuln ids name a thing rather than a group refined by a leaf,
+    // and vary in depth (`misp:tool:cobalt-strike`, `rulezet:runtime-packer:pe:upx`,
+    // `cve:cve-2021-44228`), so the last segment is the name -- mirroring the
+    // same branch in parse_tag_id.
+    if (FILESIM_NAMED_NAMESPACES.has(parts[0])) {
+        return {
+            tagId,
+            type: row.type || (parts.length > 2 ? parts[1] : parts[0]),
+            name: row.name || parts[parts.length - 1],
+            version: '',
         };
     }
     return {
@@ -1511,8 +1528,9 @@ const FILESIM_AXES = {
     user: { field: 'user_summary', label: 'User' },
     capa: { field: 'capa_summary', label: 'Capa' },
     mitre: { field: 'mitre_summary', label: 'MITRE ATT&CK' },
-    mbc: { field: 'mbc_summary', label: 'MBC' },
     yara: { field: 'yara_summary', label: 'Yara' },
+    family: { field: 'family_summary', label: 'Family' },
+    vuln: { field: 'vuln_summary', label: 'Vulnerability' },
 };
 // Which axis is on each side. An empty B is a single-axis view.
 let fileSimAxisA = 'origin';
@@ -1522,7 +1540,8 @@ let fileSimAxisB = 'category';
 // origin is the outer key, the rest are packed into the inner key in this order.
 const FILESIM_AXIS_SEP = '\u001f';
 const FILESIM_COMBO_SEP = ' + ';
-const FILESIM_JOINT_INNER = ['severity', 'category', 'user', 'capa', 'mitre', 'mbc', 'yara'];
+const FILESIM_JOINT_INNER = ['severity', 'category', 'user', 'capa', 'mitre', 'yara',
+                             'family', 'vuln'];
 
 // `category:network:c2` reads as "network c2"; `severity:high` as "high". A
 // combo of several keeps them joined.

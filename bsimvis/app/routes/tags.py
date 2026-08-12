@@ -196,18 +196,18 @@ def get_tag_provenance():
         return {"error": "Missing parameters"}, 400
 
     from bsimvis.app.services.tag_provenance import tag_rules, _row_from_id, rule_url
-    
+
     out = {}
     for tag in tags:
         _, rules = tag_rules(tag)
-        
+
         if not rules and tag.startswith("capa:"):
             ns = tag.split("capa:", 1)[1].replace(":", "/")
             rid = "capa:" + ns
             row = _row_from_id(rid)
             row["url"] = rule_url(rid, row)
             rules = {rid: row}
-            
+
         res = []
         for rid, row in rules.items():
             if "id" not in row:
@@ -227,12 +227,13 @@ def get_match_provenance():
         return {"error": "Missing parameters"}, 400
 
     from bsimvis.app.services.tag_provenance import match_provenance
+
     out, rules = match_provenance(collection, entity_ids)
-    
+
     for rid, row in rules.items():
         if "id" not in row:
             row["id"] = rid
-            
+
     return {"hits": out, "rules": rules}
 
 

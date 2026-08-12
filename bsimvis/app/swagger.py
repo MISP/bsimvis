@@ -1494,7 +1494,9 @@ class TagMatchProvenance(Resource):
             "TagMatchProvenance",
             {
                 "collection": fields.String(required=True, example="main"),
-                "entity_ids": fields.List(fields.String, required=True, example=["main:file:1234"]),
+                "entity_ids": fields.List(
+                    fields.String, required=True, example=["main:file:1234"]
+                ),
             },
         )
     )

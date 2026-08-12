@@ -114,8 +114,7 @@ def rulezet_url(title):
     from bsimvis.app.services.rulezet_service import DEFAULT_URL, cfg
 
     base = (cfg("url") or DEFAULT_URL).rstrip("/")
-    query = urlencode({"search": title, "search_field": "title",
-                       "exact_match": "true"})
+    query = urlencode({"search": title, "search_field": "title", "exact_match": "true"})
     return f"{base}/rule/rules_list?{query}"
 
 
@@ -174,6 +173,13 @@ def match_rows(matches, extra=None):
         if _is_mirror_rule(ns):
             tags = set(extra.get(ns) or ()) if extra else set()
             tags.add(own_tag)
+            import uuid
+
+            try:
+                uuid.UUID(ns)
+                tags.add(f"rulezet:{match.rule}")
+            except ValueError:
+                pass
             rows[ns] = {
                 "source": "rulezet",
                 "name": match.rule,
@@ -210,8 +216,12 @@ def capa_rows(cdata):
             continue
         row = rows.setdefault(
             capa_rule_id(meta.get("namespace")),
-            {"source": "capa", "name": meta.get("namespace"), "tags": [tag],
-             "rules": []},
+            {
+                "source": "capa",
+                "name": meta.get("namespace"),
+                "tags": [tag],
+                "rules": [],
+            },
         )
         name = meta.get("name")
         if name and name not in row["rules"]:
@@ -380,9 +390,9 @@ def tag_rules(tag, offset=0, limit=50, r=None):
     if not total:
         return 0, {}
 
-    ids = sorted(
-        i.decode() if isinstance(i, bytes) else i for i in r.smembers(key)
-    )[offset:offset + limit]
+    ids = sorted(i.decode() if isinstance(i, bytes) else i for i in r.smembers(key))[
+        offset : offset + limit
+    ]
     return total, rule_meta(ids, r)
 
 
@@ -431,8 +441,7 @@ def demo():
     put_rules_bulk(
         {
             uuid: rulezet_row(
-                {"title": "Some Rule Title", "author": "someone",
-                 "license": "MIT"},
+                {"title": "Some Rule Title", "author": "someone", "license": "MIT"},
                 tags=["rulezet:platform:linux", "yara:trojan:x:Mirror_Rule"],
             )
         },
@@ -453,8 +462,16 @@ def demo():
     assert vid == "yara:/rules/elastic/a.yar#R", vid
     assert rows[vid]["author"] == "Elastic", rows[vid]
     crows = capa_rows(
-        {"rules": {"x": {"meta": {"namespace": "host-interaction/file-system",
-                                  "name": "write file"}}}}
+        {
+            "rules": {
+                "x": {
+                    "meta": {
+                        "namespace": "host-interaction/file-system",
+                        "name": "write file",
+                    }
+                }
+            }
+        }
     )
     assert "capa:host-interaction/file-system" in crows, crows
 
@@ -481,13 +498,16 @@ def demo():
     ), cmeta
 
     # An id in a hit list with no row still answers.
-    assert rule_meta(["capa:nursery/thing"], r)["capa:nursery/thing"]["source"] \
-        == "capa"
+    assert (
+        rule_meta(["capa:nursery/thing"], r)["capa:nursery/thing"]["source"] == "capa"
+    )
 
     # Paging: the count is the answer for a broad tag, not the id list.
     put_rules_bulk(
-        {f"u{i}": {"source": "rulezet", "tags": ["rulezet:platform:linux"]}
-         for i in range(120)},
+        {
+            f"u{i}": {"source": "rulezet", "tags": ["rulezet:platform:linux"]}
+            for i in range(120)
+        },
         r,
     )
     total, page = tag_rules("rulezet:platform:linux", offset=0, limit=10, r=r)

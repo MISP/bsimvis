@@ -639,6 +639,13 @@ class GhidraAnalyzer:
                                     payload["tags"] = sorted(
                                         set(payload.get("tags") or []) | file_tags
                                     )
+                                    # Which of the file's tags a scanner derived
+                                    # rather than a human supplied. ghidra_service
+                                    # subtracts these before tagging functions --
+                                    # see func_scope(). Kept as the set itself,
+                                    # not a prefix: the mirror's sidecar tags land
+                                    # in whatever namespace rulezet used.
+                                    payload["yara_file_tags"] = sorted(file_tags)
                                 self.job_service.add_log(
                                     job_id,
                                     f"yara matched {len(file_tags)} rules, "

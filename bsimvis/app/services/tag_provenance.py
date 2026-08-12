@@ -123,6 +123,18 @@ def _vendored_path(ns):
         return ns
 
 
+def _is_mirror_rule(ns):
+    """Is this namespace a mirrored rule's uuid rather than a vendored path?"""
+    if not ns or "/" in ns:
+        return False
+    from bsimvis.app.services.rulezet_service import paths
+
+    try:
+        return (paths()["rules"] / f"{ns}.yara").exists()
+    except OSError:
+        return False
+
+
 def _match_record(match, mirror_meta):
     """One YARA match -> its provenance record.
 
@@ -134,18 +146,27 @@ def _match_record(match, mirror_meta):
     ns = str(getattr(match, "namespace", "") or "")
     meta = getattr(match, "meta", None) or {}
 
+    # A mirror rule is identified by its uuid file existing, not by the sidecar
+    # having an entry: mirrors synced before `rules_meta.json` existed have the
+    # rules but no metadata, and calling those a vendored file path would put a
+    # bare uuid in the UI's "File" row.
     entry = mirror_meta.get(ns)
-    if entry:
-        title = entry.get("title") or match.rule
+    if entry is None and _is_mirror_rule(ns):
+        entry = {}
+    if entry is not None:
+        title = entry.get("title")
         return {
             "source": "rulezet",
             "id": ns,
             "name": match.rule,
-            "title": title,
+            "title": title or match.rule,
             "author": entry.get("author") or meta.get("author"),
             "license": entry.get("license"),
             "upstream": entry.get("github_path"),
-            "url": rulezet_url(title),
+            # No title means a mirror synced before the sidecar existed. The
+            # uuid still identifies the rule, but rulezet's only single-rule
+            # deep link is by exact title, so there is no honest link to give.
+            "url": rulezet_url(title) if title else None,
         }
 
     return {
@@ -262,6 +283,26 @@ def demo():
     assert rec["source"] == "yara", rec
     assert rec["path"] == "/data/yara_rules/apt/x.yar", rec
     assert rec["author"] == "florian", rec
+
+    # A mirror synced before the sidecar existed: still a rulezet rule (the
+    # uuid file is there), just with no title to build a deep link from.
+    import tempfile
+    from pathlib import Path
+
+    from bsimvis.app.services import rulezet_service
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "rules").mkdir()
+        (root / "rules" / f"{uuid}.yara").write_text("rule X { condition: true }")
+        original = rulezet_service.mirror_dir
+        rulezet_service.mirror_dir = lambda: root
+        try:
+            rec = _match_record(M("Mirror_Rule", uuid), {})
+            assert rec["source"] == "rulezet" and rec["id"] == uuid, rec
+            assert rec["url"] is None, rec
+        finally:
+            rulezet_service.mirror_dir = original
 
     # A capa tag needs no store at all -- the id is the path.
     d = derived("capa:host-interaction:file-system:write")

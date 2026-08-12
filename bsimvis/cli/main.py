@@ -624,6 +624,11 @@ def main():
     rz_sync.add_argument(
         "--limit", type=int, help="Stop after N rules (for a trial run)"
     )
+    rz_sync.add_argument(
+        "--meta-only",
+        action="store_true",
+        help="Backfill metadata for a previously-synced mirror",
+    )
 
     rz_index = rulezet_actions.add_parser(
         "index-tags",

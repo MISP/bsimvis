@@ -37,6 +37,9 @@ from pathlib import Path
 
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.tag_taxonomy import route_source_tag
+# Safe at import time: tag_provenance's own imports are stdlib, and it reaches
+# back into this module lazily inside functions.
+from bsimvis.app.services.tag_provenance import rulezet_row
 
 DEFAULT_URL = "https://rulezet.org"
 
@@ -81,7 +84,6 @@ def paths():
         "quarantine": d / "quarantine",
         "compiled": d / "rules.compiled",
         "tags": d / "tags.json",
-        "rules_meta": d / "rules_meta.json",
         "quarantine_log": d / "quarantine.txt",
         "released": d / "released.txt",
         "state": d / "state.json",
@@ -252,12 +254,21 @@ def route_tags(raw_tags):
 # --- Mirror on disk ---------------------------------------------------------
 
 
-def _write_rules(rules, tag_config, log=print):
-    """Rule text to `rules/<uuid>.yara`, tags to the sidecar. Returns the sidecar."""
+def _write_rules(rules, tag_config, log=print, write_files=True):
+    """Rule text to `rules/<uuid>.yara`, tags to the sidecar.
+
+    Returns `(sidecar tags, provenance rows)`. The rows are built here rather
+    than in a second pass because they need the same routed tags the sidecar
+    does, and routing 214k rules through the regex table twice is the only
+    other way to get them.
+
+    `write_files=False` is the `--meta-only` backfill: the rule files are
+    already on disk from an earlier sync, only the metadata is missing.
+    """
     p = paths()
     p["rules"].mkdir(parents=True, exist_ok=True)
     quarantined = {f.stem for f in p["quarantine"].glob("*.yara")}
-    tags, meta, written, skipped = {}, {}, 0, 0
+    tags, rows, written, skipped = {}, {}, 0, 0
 
     allow = [x.lower() for x in (cfg("allow_licenses") or [])]
     for rule in rules:
@@ -269,44 +280,42 @@ def _write_rules(rules, tag_config, log=print):
         if allow and str(rule.get("license") or "").strip().lower() not in allow:
             skipped += 1
             continue
-        if uuid not in quarantined:
+        if write_files and uuid not in quarantined:
             (p["rules"] / f"{uuid}.yara").write_text(text)
             written += 1
         routed = route_tags(platform_tags(rule, tag_config))
         if routed:
             tags[uuid] = routed
 
-        # Everything a user needs to get back to this rule on rulezet.org, kept
-        # while the API response is still in hand -- after the sync all that is
-        # left on disk is `<uuid>.yara`, and no read endpoint takes a uuid.
-        meta[uuid] = {
-            k: v
-            for k, v in (
-                ("title", rule.get("title")),
-                ("author", rule.get("author")),
-                ("license", rule.get("license")),
-                ("github_path", rule.get("github_path")),
-            )
-            if v
-        }
+        # Everything a user needs to get back to this rule on rulezet.org,
+        # taken while the API response is still in hand: after a sync all that
+        # is left on disk is `<uuid>.yara`, and no read endpoint takes a uuid.
+        rows[uuid] = rulezet_row(rule, tags=routed)
 
-    _merge_json(p["rules_meta"], meta)
     log(f"  {written} rule files written, {skipped} skipped "
         f"(license/empty), {len(tags)} carry tags")
-    return tags
+    return tags, rows
 
 
-def _merge_json(path, new):
-    """Fold `new` into a `{key: value}` JSON file, keeping unseen keys."""
-    old = {}
-    if path.exists():
-        try:
-            old = json.loads(path.read_text())
-        except (ValueError, OSError):
-            old = {}
-    old.update(new)
-    path.write_text(json.dumps(old))
-    return old
+def _store_rows(rows, log=print, chunk=5000):
+    """Provenance rows into the database, one row per rule.
+
+    Chunked because a full mirror is ~214k rules and a single pipeline of that
+    many commands is a spike in both the client's and kvrocks' memory for no
+    gain -- the write is not atomic in any useful sense anyway.
+
+    Note what is *not* indexed here: a mirrored rule's own `yara:` tag depends
+    on `meta.category`/`meta.malware` inside the rule text, which this module
+    deliberately never parses. That tag joins the index the first time the rule
+    actually fires (`tag_provenance.match_rows`).
+    """
+    from bsimvis.app.services.tag_provenance import put_rules_bulk
+
+    ids = list(rows)
+    for i in range(0, len(ids), chunk):
+        put_rules_bulk({k: rows[k] for k in ids[i:i + chunk]})
+    log(f"  {len(rows)} provenance rows stored")
+    return len(rows)
 
 
 def _merge_tags(new_tags):
@@ -542,12 +551,17 @@ def index_tags(galaxies, log=print, limit=None):
 # --- Orchestration ----------------------------------------------------------
 
 
-def sync(full=False, limit=None, log=print):
-    """Mirror, tag, compile, gate. Safe to re-run; incremental with an API key."""
+def sync(full=False, limit=None, log=print, meta_only=False):
+    """Mirror, tag, compile, gate. Safe to re-run; incremental with an API key.
+
+    `meta_only` is the backfill for mirrors synced before provenance existed:
+    fetch every rule, store its metadata, touch nothing else. It ignores the
+    last-sync date by definition -- the rules it is describing are the old ones.
+    """
     p = paths()
     p["root"].mkdir(parents=True, exist_ok=True)
     state = {}
-    if p["state"].exists() and not full:
+    if p["state"].exists() and not (full or meta_only):
         try:
             state = json.loads(p["state"].read_text())
         except ValueError:
@@ -561,7 +575,14 @@ def sync(full=False, limit=None, log=print):
         return
 
     tag_config = load_tag_config(log=log)
-    _merge_tags(_write_rules(rules, tag_config, log=log))
+    tags, rows = _write_rules(rules, tag_config, log=log, write_files=not meta_only)
+    _merge_tags(tags)
+    _store_rows(rows, log=log)
+
+    if meta_only:
+        log(f"meta-only sync done in {time.time() - t0:.0f}s")
+        return
+
     compiled = compile_mirror(log=log)
     if gate(compiled, log=log):
         # Quarantined rules are gone from the directory but still in the

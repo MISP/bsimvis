@@ -1487,6 +1487,24 @@ class TagProvenance(Resource):
         return get_tag_provenance()
 
 
+@ns_tags.route("/match_provenance")
+class TagMatchProvenance(Resource):
+    @ns_tags.expect(
+        api.model(
+            "TagMatchProvenance",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "entity_ids": fields.List(fields.String, required=True, example=["main:file:1234"]),
+            },
+        )
+    )
+    def post(self):
+        """Returns match metadata (rules) for a list of entities."""
+        from bsimvis.app.routes.tags import get_match_provenance
+
+        return get_match_provenance()
+
+
 @ns_tags.route("/add")
 class TagAdd(Resource):
     @ns_tags.expect(

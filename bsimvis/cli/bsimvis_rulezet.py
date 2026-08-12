@@ -42,7 +42,11 @@ def _release(names):
 def run_rulezet(host, port, args):
     action = args.action
     if action == "sync":
-        rz.sync(full=getattr(args, "full", False), limit=getattr(args, "limit", None))
+        rz.sync(
+            full=getattr(args, "full", False),
+            limit=getattr(args, "limit", None),
+            meta_only=getattr(args, "meta_only", False),
+        )
     elif action == "index-tags":
         rz.index_tags(args.galaxy, limit=getattr(args, "limit", None))
     elif action == "quarantine":

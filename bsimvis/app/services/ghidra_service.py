@@ -14,7 +14,6 @@ from pyghidra.launcher import HeadlessPyGhidraLauncher
 import tomllib
 
 from bsimvis.app.services import tag_taxonomy
-from bsimvis.app.services.unpack_service import FILE_SCOPE_TAG_PREFIXES
 
 GHIDRA_DECOMP_MAX_TIMEOUT = 10
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
@@ -521,25 +520,6 @@ class GhidraService:
         batch_uuid = options.get("batch_uuid")
         batch_name = options.get("batch_name", "Ghidra Batch")
         tags = options.get("tags", [])
-        # `container:apk`, `packer:upx` & co. describe the upload, not the code:
-        # copying them onto every function made them look like library evidence
-        # and gave the binary-similarity tag split a `container:apk` category.
-        #
-        # `yara:` rides along for the same reason but from the other direction:
-        # ghidra_job puts every matched rule on the file so a match is never
-        # lost, while the per-function `yara_tags` map below carries the ones
-        # that actually resolved to an address. Copying the file set onto every
-        # function would put every rule on every function and flatten that
-        # distinction -- and with it the yara axis of the bin-sim tag split.
-        # Not folded into FILE_SCOPE_TAG_PREFIXES: that tuple is derived from
-        # the unpack handlers and asserted exact in unpack_service.demo().
-        func_scope_tags = [
-            t
-            for t in tags
-            if not str(t).startswith(
-                FILE_SCOPE_TAG_PREFIXES + (tag_taxonomy.YARA_NAMESPACE + ":",)
-            )
-        ]
         related_md5 = options.get("related_md5", [])
         min_func_len = options.get("min_func_len", 10)
         batch_order = options.get("batch_order", 0)
@@ -740,7 +720,21 @@ class GhidraService:
                 except Exception:
                     pass
 
-            func_tags = list(func_scope_tags)
+            # A function's `tags` are evidence about *that function*: Function
+            # ID matched its bytes, capa matched its instructions, a YARA string
+            # resolved to its body or to data it references. The file's own tags
+            # never come down here.
+            #
+            # They used to. A file tag is true of the file, not of each of its
+            # functions, so copying the set gave every function in a binary the
+            # same marks: `container:apk` looked like library evidence, and one
+            # Mirai string in .rodata marked uclibc's `fcntl64` a linux backdoor
+            # via the rulezet sidecar. Nothing is lost by dropping it -- the
+            # index already carries the file's tags on every function document
+            # as `file_tags`/`file_user_tags` (index_config.resolve_target_field),
+            # which is where a question about the *file* belongs. That is also
+            # what keeps the two fields from being byte-identical copies.
+            func_tags = []
             fid_tags = (
                 []
                 if skip_function_id

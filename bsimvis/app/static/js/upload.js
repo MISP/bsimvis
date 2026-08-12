@@ -144,80 +144,98 @@ function renderUploadView(params) {
             </div>
 
             <div class="upload-grid" style="display: grid; grid-template-columns: 1fr 1.2fr; gap: 40px;">
-                <div class="upload-settings-panel">
-                    <div style="background: var(--hover); border: 1px solid var(--border); border-radius: 8px; padding: 20px;">
-                        <h3 style="font-size: 0.9rem; text-transform: uppercase; color: var(--accent); margin: 0 0 20px 0; letter-spacing: 1px;">Pipeline Settings</h3>
-                        
-                        <div class="form-group" style="margin-bottom: 15px;">
-                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Collection</label>
-                            <select id="upload-collection" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer; margin-bottom: 8px;">
-                                <option value="${collection}">${collection}</option>
-                            </select>
-                            <input type="text" id="upload-new-collection" placeholder="New Collection Name..." style="display: none; width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
-                        </div>
-
-                        <div class="form-group" style="margin-bottom: 15px;">
-                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Batch Name</label>
-                            <input type="text" id="upload-batch-name" placeholder="e.g. Firmware v1.2" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
-                        </div>
-
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
-                            <div class="form-group">
-                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Analysis Profile</label>
-                                <select id="upload-profile" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">
-                                    <option value="fast">Fast</option>
-                                    <option value="balanced" selected>Balanced</option>
-                                    <option value="deep">Deep</option>
+                <div class="upload-settings-panel" style="display: flex; flex-direction: column; gap: 10px;">
+                    <details open style="background: var(--hover); border: 1px solid var(--border); border-radius: 8px;">
+                        <summary style="padding: 15px 20px; font-weight: bold; cursor: pointer; color: var(--accent); user-select: none; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px;">Collection</summary>
+                        <div style="padding: 0 20px 20px 20px;">
+                            <div class="form-group" style="margin-bottom: 15px;">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Collection</label>
+                                <select id="upload-collection" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer; margin-bottom: 8px;">
+                                    <option value="${collection}">${collection}</option>
                                 </select>
+                                <input type="text" id="upload-new-collection" placeholder="New Collection Name..." style="display: none; width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                             </div>
-                            <div class="form-group">
-                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Min Func Len</label>
-                                <input type="number" id="upload-min-func-len" value="0" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+
+                            <div class="form-group" style="margin-bottom: 15px;">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Batch Name</label>
+                                <input type="text" id="upload-batch-name" placeholder="e.g. Firmware v1.2" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                            </div>
+
+                            <div class="form-group" style="margin-bottom: 15px;">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Tags (Global)</label>
+                                <input type="text" id="upload-tags" placeholder="Malware, Linux, MIPS..." style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                             </div>
                         </div>
+                    </details>
 
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
-                            <div class="form-group">
-                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Processor</label>
-                                <div style="position: relative;">
-                                    <input type="text" id="upload-processor-search" autocomplete="off" placeholder="Auto-detect — click to browse" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
-                                    <input type="hidden" id="upload-processor" value="">
-                                    <div id="upload-processor-list" style="display: none; position: absolute; z-index: 50; top: 100%; left: 0; right: 0; max-height: 260px; overflow-y: auto; background: var(--window-tray); border: 1px solid var(--border); border-radius: 4px; margin-top: 2px; "></div>
+                    <details style="background: var(--hover); border: 1px solid var(--border); border-radius: 8px;">
+                        <summary style="padding: 15px 20px; font-weight: bold; cursor: pointer; color: var(--accent); user-select: none; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px;">File relations</summary>
+                        <div style="padding: 0 20px 20px 20px;">
+                            <div class="form-group" style="margin-bottom: 15px;">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Related MD5s</label>
+                                <input type="text" id="upload-related-md5" placeholder="Comma-separated MD5s" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 5px;">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Archive Password</label>
+                                <input type="text" id="upload-archive-password" value="infected" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                                <div style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px;">Zip/tar uploads are unpacked and every member analyzed.</div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <details style="background: var(--hover); border: 1px solid var(--border); border-radius: 8px;">
+                        <summary style="padding: 15px 20px; font-weight: bold; cursor: pointer; color: var(--accent); user-select: none; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px;">Analysis profile and params</summary>
+                        <div style="padding: 0 20px 20px 20px;">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                                <div class="form-group">
+                                    <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Analysis Profile</label>
+                                    <select id="upload-profile" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">
+                                        <option value="fast">Fast</option>
+                                        <option value="balanced" selected>Balanced</option>
+                                        <option value="deep">Deep</option>
+                                    </select>
                                 </div>
-                                <div id="upload-processor-hint" style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px; min-height: 1em;"></div>
+                                <div class="form-group">
+                                    <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Min Func Len</label>
+                                    <input type="number" id="upload-min-func-len" value="0" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                                </div>
                             </div>
-                            <div class="form-group">
-                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Compiler Spec</label>
-                                <select id="upload-cspec" disabled style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">
-                                    <option value="">Default</option>
-                                </select>
-                                <div id="upload-cspec-hint" style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px; min-height: 1em;"></div>
+
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 5px;">
+                                <div class="form-group">
+                                    <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Processor</label>
+                                    <div style="position: relative;">
+                                        <input type="text" id="upload-processor-search" autocomplete="off" placeholder="Auto-detect — click to browse" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                                        <input type="hidden" id="upload-processor" value="">
+                                        <div id="upload-processor-list" style="display: none; position: absolute; z-index: 50; top: 100%; left: 0; right: 0; max-height: 260px; overflow-y: auto; background: var(--window-tray); border: 1px solid var(--border); border-radius: 4px; margin-top: 2px; "></div>
+                                    </div>
+                                    <div id="upload-processor-hint" style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px; min-height: 1em;"></div>
+                                </div>
+                                <div class="form-group">
+                                    <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Compiler Spec</label>
+                                    <select id="upload-cspec" disabled style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">
+                                        <option value="">Default</option>
+                                    </select>
+                                    <div id="upload-cspec-hint" style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px; min-height: 1em;"></div>
+                                </div>
                             </div>
                         </div>
+                    </details>
 
-                        <div class="form-group" style="margin-bottom: 20px;">
-                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Tags (Global)</label>
-                            <input type="text" id="upload-tags" placeholder="Malware, Linux, MIPS..." style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                    <details style="background: var(--hover); border: 1px solid var(--border); border-radius: 8px;">
+                        <summary style="padding: 15px 20px; font-weight: bold; cursor: pointer; color: var(--accent); user-select: none; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px;">Analysis modules</summary>
+                        <div style="padding: 0 20px 20px 20px;">
+                            ${renderAnalysisModules()}
                         </div>
-                        <div class="form-group" style="margin-bottom: 20px;">
-                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Archive Password</label>
-                            <input type="text" id="upload-archive-password" value="infected" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
-                            <div style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px;">Zip/tar uploads are unpacked and every member analyzed.</div>
-                        </div>
-                        <div class="form-group" style="margin-bottom: 20px;">
-                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Related MD5s</label>
-                            <input type="text" id="upload-related-md5" placeholder="Comma-separated MD5s" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
-                        </div>
-                        ${renderAnalysisModules()}
+                    </details>
 
-                        <div style="padding-top: 15px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px;">
-                            <button id="start-upload-btn" onclick="startBatchUpload()" class="btn-primary" style="width: 100%; height: 40px; justify-content: center; display: flex; align-items: center; gap: 10px;">
-                                <i class="fa-solid fa-play"></i> Start Analysis
-                            </button>
-                            <button onclick="clearUploadList()" class="top-action-btn danger-btn" style="width: 100%; height: 35px; justify-content: center;">
-                                <i class="fa-solid fa-trash"></i> Clear List
-                            </button>
-                        </div>
+                    <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
+                        <button id="start-upload-btn" onclick="startBatchUpload()" class="btn-primary" style="width: 100%; height: 50px; justify-content: center; display: flex; align-items: center; gap: 10px; font-size: 1.1rem; font-weight: bold; box-shadow: 0 4px 15px rgba(102, 217, 239, 0.2); border-radius: 6px; transition: all 0.2s;">
+                            <i class="fa-solid fa-play" style="font-size: 1.2rem;"></i> Start Batch Analysis
+                        </button>
+                        <button onclick="clearUploadList()" class="top-action-btn danger-btn" style="width: 100%; height: 35px; justify-content: center;">
+                            <i class="fa-solid fa-trash"></i> Clear List
+                        </button>
                     </div>
                 </div>
 

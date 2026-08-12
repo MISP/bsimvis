@@ -123,11 +123,24 @@ def fetch_rules(since=None, limit=None, log=print):
     base = (cfg("url") or DEFAULT_URL).rstrip("/")
     api_key = cfg("api_key") or os.environ.get("RULEZET_API_KEY")
 
+    # `dumpRules` has no size parameter -- it is all-or-nothing, ~130k rules and
+    # 128 MB before the first byte is usable. So a trial run pages the public
+    # endpoint instead, which really does stop early. Otherwise `--limit 2000`
+    # would still cost the full ~2 minute download to then throw 128k rules away.
+    if api_key and limit:
+        log(f"--limit {limit}: paging the public endpoint "
+            f"(dumpRules cannot fetch a subset)")
+        api_key = None
+
     if api_key:
         body = {"format_name": "yara"}
         if since:
             body["updated_after"] = since
-        log(f"dumpRules (incremental since {since})" if since else "dumpRules (full)")
+        log(
+            f"dumpRules (incremental since {since})" if since
+            else "dumpRules (full): ~130k rules, 128 MB, ~2 min before "
+                 "anything is written"
+        )
         try:
             doc = _post(f"{base}/api/rule/private/dumpRules", body, api_key)
         except urllib.error.HTTPError as e:
@@ -149,8 +162,8 @@ def fetch_rules(since=None, limit=None, log=print):
         doc = _get(url)
         out.extend(doc.get("results") or [])
         if page == 1:
-            log(f"{doc.get('total_rules_found', 0)} yara rules, "
-                f"{doc.get('total_pages', 0)} pages (no api_key: paging)")
+            log(f"{doc.get('total_rules_found', 0)} yara rules available, "
+                f"paging at 100/request ({doc.get('total_pages', 0)} pages)")
         if limit and len(out) >= limit:
             return out[:limit]
         if not (doc.get("pagination") or {}).get("next_page"):

@@ -157,7 +157,7 @@ class GhidraAnalyzer:
                 tags_by_addr.setdefault(key, set()).update(ctags)
         return tags_by_addr
 
-    def _yara_tags_for_program(self, matches, program):
+    def _yara_tags_for_program(self, matches, program, extra_tags=None):
         """yara-python matches -> `{function entry point hex: {yara tag, ...}}`.
 
         A YARA match offset is a raw file offset -- the scan reads the file on
@@ -180,7 +180,7 @@ class GhidraAnalyzer:
         """
         from bsimvis.app.services.tag_taxonomy import yara_rule_hits
 
-        hits = yara_rule_hits(matches)
+        hits = yara_rule_hits(matches, extra_tags)
 
         func_manager = program.getFunctionManager()
         memory = program.getMemory()
@@ -620,16 +620,16 @@ class GhidraAnalyzer:
                                     yara_file_tags,
                                 )
 
-                                matches = scan_file(temp_path)
+                                matches, extra_tags = scan_file(temp_path)
                                 yara_tags_by_addr = self._yara_tags_for_program(
-                                    matches, program
+                                    matches, program, extra_tags
                                 )
                                 # The match is a fact about the file; which
                                 # function it belongs to is an attribution that
                                 # can fail (unmapped offset, data with no xref).
                                 # Record the fact first, unconditionally, so a
                                 # rule can never match and leave no trace.
-                                file_tags = yara_file_tags(matches)
+                                file_tags = yara_file_tags(matches, extra_tags)
                                 if file_tags:
                                     payload["tags"] = sorted(
                                         set(payload.get("tags") or []) | file_tags

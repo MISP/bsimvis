@@ -74,6 +74,42 @@
         "-XX:MaxHeapFreeRatio=30",
     ]
 
+[rulezet]
+# Mirror of rulezet.org's YARA rules, built by `bsimvis rulezet sync`.
+# Everything under data/ is gitignored, so the mirror is a build artifact.
+url = "https://rulezet.org"
+# Optional. Without one the sync pages the public API (~1300 requests for the
+# full ~130k rules) and no curated MISP tags are reachable at all -- rulezet
+# exposes tag *filtering* but never returns a rule's tags. With one, the sync is
+# a single dumpRules call and `rulezet index-tags` can recover them.
+api_key = ""
+# Skip rules whose license is not listed. Empty list = keep everything;
+# rulezet rules are per-rule licensed and plenty are "NOASSERTION".
+allow_licenses = []
+
+# Known-clean binaries every mirrored rule must stay silent on. A rule that
+# fires here is quarantined automatically -- measured on a random 3k slice of
+# the mirror, 103 of 150 clean /bin binaries matched a Windows malware rule.
+baseline_dirs = ["/usr/bin"]
+baseline_max_files = 300
+
+# Source tags to drop entirely. Globs, matched against the raw tag: "tlp:*"
+# kills the family, "tlp:white" kills the single value. Distribution markers
+# say who may read a rule, not anything about the code it matches.
+drop = ["tlp:*", "pap:*"]
+
+# Which source tag namespace lands in which BSimVis namespace. Routing is by
+# namespace, never per tag: name a source namespace and every value under it
+# follows. Longest match wins, "*" is the catch-all, and `false` drops a
+# namespace outright. Anything unrouted still lands under `rulezet:`, so no tag
+# is silently lost.
+[rulezet.tags]
+"misp-galaxy:mitre-attack-pattern" = "mitre"   # -> mitre:t1027
+"misp-galaxy:*" = "misp"                       # -> misp:tool:cobalt-strike
+"cve" = "cve"                                  # -> cve:cve-2021-44228
+"ghsa" = "ghsa"
+"*" = "rulezet"                                # -> rulezet:runtime-packer:pe:upx
+
 [search]
 # Maximum index buckets one wildcard/substring filter may resolve to. Exact
 # filters ignore it — they touch a single bucket. Results are still correct

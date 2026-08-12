@@ -16,7 +16,14 @@ live in `bin_sim_tags.py`):
 verbatim rather than remapped into `category:` -- matching what the tool that
 wrote them emits is their whole value. `kill-chain:` and the MAEC namespaces are
 reserved for the same treatment but have no producer yet.
+
+`misp:`, `rulezet:` and the vulnerability namespaces (`cve:`, `ghsa:`, `pysec:`)
+are written by `rulezet_service` for mirrored rules; `route_source_tag()` is how
+a MISP-style source tag becomes one of them.
 """
+
+import fnmatch
+import re
 
 # --- Severity ---------------------------------------------------------------
 # Ordinal, so the UI can colour-ramp it. Four levels rather than five because a
@@ -65,8 +72,11 @@ FILE_SCOPE_NAMESPACES = ("container", "packer")
 # never remapped into `category:` -- matching what capa emits is the whole value.
 CAPA_NAMESPACE = "capa"
 
-# Reserved the same way as capa, ahead of a producer: `mitre:<tactic>:<technique>`
-# and `mbc:<objective>:<behavior>`, recorded verbatim once something writes them.
+# `mitre:<technique>` (`mitre:t1027`), written by `rulezet_service` from the
+# `misp-galaxy:mitre-attack-pattern` tags it recovers. Flat rather than the
+# `mitre:<tactic>:<technique>` once reserved here: a technique belongs to several
+# tactics at once, so a tactic segment would have to pick one arbitrarily.
+# `mbc:<objective>:<behavior>` is still reserved, with no producer yet.
 MITRE_NAMESPACE = "mitre"
 MBC_NAMESPACE = "mbc"
 
@@ -75,6 +85,19 @@ MBC_NAMESPACE = "mbc"
 # from the rule's own `category`/`malware` meta fields instead:
 # `yara:<category>:<family>:<rule_name>`.
 YARA_NAMESPACE = "yara"
+
+# Written by `rulezet_service` from the MISP-style tags it produces for mirrored
+# rules. `misp:` keeps a galaxy's own shape (`misp:tool:cobalt-strike`), and
+# `rulezet:` is the catch-all for source namespaces the config did not route
+# anywhere in particular -- so an unmapped tag is still recorded rather than
+# silently lost.
+MISP_NAMESPACE = "misp"
+RULEZET_NAMESPACE = "rulezet"
+
+# Vulnerability ids, flat: `cve:cve-2021-44228`, `ghsa:ghsa-j8v8-6h6r-m6pq`.
+# Flat because an id is already the whole identity -- there is no second segment
+# to roll up on.
+VULN_NAMESPACES = ("cve", "ghsa", "pysec")
 
 # The namespaces a tag id may lead with. Anything else is human-typed and gets
 # moved under `user:` -- an unnamespaced tag must never land on an analysis axis.
@@ -87,7 +110,9 @@ KNOWN_NAMESPACES = (
     MITRE_NAMESPACE,
     MBC_NAMESPACE,
     YARA_NAMESPACE,
-) + FILE_SCOPE_NAMESPACES
+    MISP_NAMESPACE,
+    RULEZET_NAMESPACE,
+) + VULN_NAMESPACES + FILE_SCOPE_NAMESPACES
 
 
 def namespaced(tag_id):
@@ -201,8 +226,11 @@ def yara_tag(category, family, rule_name):
     return f"yara:{cat}:{fam}:{rule_name}"
 
 
-def yara_rule_hits(matches):
+def yara_rule_hits(matches, extra=None):
     """yara-python `Rules.match()` result -> `{file_offset: {tag, ...}}`.
+
+    `extra` is the mirrored ruleset's tag sidecar, `{rule uuid: [tag, ...]}`;
+    those tags land on exactly the offsets the rule's own tag does.
 
     A capa rule match names one address; a YARA rule match names every string
     it matched on, each with its own file offset, and the RL ruleset's
@@ -220,11 +248,25 @@ def yara_rule_hits(matches):
     """
     hits = {}
     for match in matches:
-        tag = _match_tag(match)
+        tags = _match_tags(match, extra)
         for string_match in getattr(match, "strings", None) or []:
             for instance in getattr(string_match, "instances", None) or []:
-                hits.setdefault(instance.offset, set()).add(tag)
+                hits.setdefault(instance.offset, set()).update(tags)
     return hits
+
+
+def _match_tags(match, extra=None):
+    """Every tag one match carries: its own `yara:` id, plus any sidecar tags.
+
+    Mirrored rules are compiled with their uuid as the YARA namespace, so
+    `match.namespace` is the key into the sidecar. Vendored rules use a file
+    index there and simply miss, which is what should happen -- they have no
+    sidecar entry.
+    """
+    tags = {_match_tag(match)}
+    if extra:
+        tags.update(extra.get(getattr(match, "namespace", None)) or ())
+    return tags
 
 
 def _match_tag(match):
@@ -242,7 +284,7 @@ def _match_tag(match):
     return yara_tag(category, family, match.rule)
 
 
-def yara_file_tags(matches):
+def yara_file_tags(matches, extra=None):
     """yara-python `Rules.match()` result -> `{tag, ...}` for the whole file.
 
     `yara_rule_hits()` keys on string instances, and every one of those can
@@ -256,7 +298,101 @@ def yara_file_tags(matches):
     the record of the match itself -- so a rule that resolves to no function
     is still visible on the file rather than silently dropped.
     """
-    return {_match_tag(m) for m in matches}
+    return {t for m in matches for t in _match_tags(m, extra)}
+
+
+# --- Routing MISP-style source tags into this vocabulary --------------------
+# Rulezet tags rules the way MISP does: `misp-galaxy:tool="Cobalt Strike"`,
+# `tlp:clear`. Those ids are not this vocabulary's, and there are far too many of
+# them to enumerate by hand, so the config routes them by *namespace* -- name a
+# source namespace, say which BSimVis namespace it lands in, and every value
+# under it follows. `drop` globs remove whole families (`tlp:*`) or single values
+# (`tlp:white`) without needing an entry per tag.
+
+# Used when the config says nothing. Keeps everything (unrouted namespaces land
+# under `rulezet:`) and drops only the distribution markers, which say who may
+# read a rule, not anything about the code it matches.
+DEFAULT_TAG_MAP = {
+    "misp-galaxy:mitre-attack-pattern": MITRE_NAMESPACE,
+    "misp-galaxy:*": MISP_NAMESPACE,
+    "cve": "cve",
+    "ghsa": "ghsa",
+    "pysec": "pysec",
+    "*": RULEZET_NAMESPACE,
+}
+DEFAULT_DROPS = ("tlp:*", "pap:*")
+
+# ATT&CK ids arrive welded onto the cluster name MISP uses:
+# `Obfuscated Files or Information - T1027`. The id is the identity; the prose
+# is not, and the tactic is not in the string at all (it is many-to-one per
+# technique), so the tag stays flat at `mitre:t1027`.
+_MITRE_ID = re.compile(r"\bT\d{4}(?:\.\d{3})?\b")
+
+
+def tag_slug(text):
+    """Free text -> a tag segment: `Cobalt Strike` -> `cobalt-strike`."""
+    return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-")
+
+
+def _split_source_tag(raw):
+    """`ns:pred="value"` or `ns:value` -> `(namespace, value)`."""
+    raw = str(raw).strip()
+    m = re.match(r'^([^:=]+):([^:=]+)=\s*"?(.*?)"?$', raw)
+    if m:
+        return f"{m.group(1).strip()}:{m.group(2).strip()}", m.group(3).strip()
+    ns, _, value = raw.partition(":")
+    return ns.strip(), value.strip()
+
+
+def route_source_tag(raw, tag_map=None, drops=None):
+    """A MISP-style source tag -> a BSimVis tag id, or None when dropped.
+
+    The mapped target replaces the part of the source namespace the config
+    matched; anything more specific is kept, so one `misp-galaxy:*` entry still
+    tells `tool` apart from `ransomware`:
+
+        misp-galaxy:tool="Cobalt Strike"  + {"misp-galaxy:*": "misp"}
+            -> misp:tool:cobalt-strike
+        misp-galaxy:mitre-attack-pattern="Obfuscated ... - T1027"
+            -> mitre:t1027
+    """
+    raw = str(raw or "").strip()
+    if not raw:
+        return None
+    tag_map = tag_map or DEFAULT_TAG_MAP
+    drops = DEFAULT_DROPS if drops is None else drops
+
+    low = raw.lower()
+    if any(fnmatch.fnmatch(low, str(d).lower()) for d in drops):
+        return None
+
+    namespace, value = _split_source_tag(raw)
+    if not value:
+        return None
+
+    # Longest matching key wins, so a specific galaxy beats `misp-galaxy:*`
+    # beats `*`, whatever order the config happens to list them in.
+    key = max(
+        (k for k in tag_map if fnmatch.fnmatch(namespace.lower(), str(k).lower())),
+        key=len,
+        default=None,
+    )
+    if key is None:
+        return None
+    target = tag_map[key]
+    if not target:  # `"tlp" = false` reads as "drop this namespace"
+        return None
+
+    literal = str(key).split("*", 1)[0].rstrip(":")
+    rest = namespace[len(literal):].strip(":") if literal else namespace
+
+    if str(target).split(":")[0] == MITRE_NAMESPACE:
+        found = _MITRE_ID.search(value)
+        return f"{MITRE_NAMESPACE}:{found.group(0).lower()}" if found else None
+
+    parts = [str(target)] + [tag_slug(p) for p in rest.split(":") if p]
+    parts.append(tag_slug(value))
+    return namespaced(":".join(p for p in parts if p))
 
 
 SEVERITY_TAGS = tuple(severity_tag(s) for s in SEVERITY_LEVELS)
@@ -565,6 +701,57 @@ def demo():
     }, file_tags
     assert "yara:packer:unknown:Win32_Packer_Themida" not in set().union(*hits.values())
     assert yara_file_tags([]) == set()
+
+    # The mirrored ruleset's tags ride in a sidecar keyed by the uuid YARA
+    # reports as the match namespace, because rule *names* collide freely across
+    # 130k rules from different repos. Vendored matches carry a file index there
+    # and must miss the sidecar cleanly.
+    class _NsMatch(_Match):
+        def __init__(self, rule, meta, offsets, namespace):
+            super().__init__(rule, meta, offsets)
+            self.namespace = namespace
+
+    mirrored = [_NsMatch("Some_Rule", {"category": "trojan", "malware": "mirai"},
+                         [[0x7000]], "abc-uuid")]
+    sidecar = {"abc-uuid": ["mitre:t1027", "cve:cve-2021-44228"]}
+    assert yara_file_tags(mirrored, sidecar) == {
+        "yara:trojan:mirai:Some_Rule", "mitre:t1027", "cve:cve-2021-44228"}
+    assert yara_rule_hits(mirrored, sidecar) == {
+        0x7000: {"yara:trojan:mirai:Some_Rule", "mitre:t1027", "cve:cve-2021-44228"}}
+    # No sidecar entry, and matches with no namespace at all, still work.
+    assert yara_file_tags(mirrored, {"other": ["x"]}) == {"yara:trojan:mirai:Some_Rule"}
+    assert yara_file_tags(matches[:1], sidecar) == {
+        "yara:ransomware:lockbit:Win32_Ransomware_LockBit"}
+
+    # --- Source tag routing -------------------------------------------------
+    r = route_source_tag
+    assert r('misp-galaxy:tool="Cobalt Strike"') == "misp:tool:cobalt-strike"
+    assert r('misp-galaxy:ransomware="LockBit"') == "misp:ransomware:lockbit"
+    # A specific galaxy beats the wildcard no matter the dict order.
+    assert r('misp-galaxy:mitre-attack-pattern="Obfuscated Files - T1027"') == (
+        "mitre:t1027")
+    assert r('misp-galaxy:mitre-attack-pattern="Indicator Removal - T1027.005"') == (
+        "mitre:t1027.005")
+    # An attack-pattern cluster with no technique id is not an ATT&CK fact.
+    assert r('misp-galaxy:mitre-attack-pattern="Some Prose"') is None
+    # Unrouted namespaces are kept, not lost -- the whole source path survives.
+    assert r('runtime-packer:pe="upx"') == "rulezet:runtime-packer:pe:upx"
+    assert r('ms-caro-malware-full:malware-type="Trojan"') == (
+        "rulezet:ms-caro-malware-full:malware-type:trojan")
+    assert r("cve:CVE-2021-44228") == "cve:cve-2021-44228"
+    assert r("ghsa:GHSA-j8v8-6h6r-m6pq") == "ghsa:ghsa-j8v8-6h6r-m6pq"
+    # Distribution markers: the family and a single value.
+    assert r("tlp:clear") is None and r("tlp:white") is None and r("pap:clear") is None
+    assert r("tlp:red", drops=["tlp:white"]) == "rulezet:tlp:red"
+    # `false` as a target reads as "drop this namespace".
+    assert r('misp-galaxy:tool="Netcat"', {"misp-galaxy:*": False}) is None
+    # No catch-all configured -> an unrouted tag is dropped rather than guessed.
+    assert r('runtime-packer:pe="upx"', {"cve": "cve"}) is None
+    assert r("") is None and r(None) is None
+    # A routed tag must never end up buried under `user:`.
+    for src in ('misp-galaxy:tool="X"', "cve:CVE-2021-1", 'misp-galaxy:x="y"'):
+        assert not route_source_tag(src).startswith("user:"), src
+    assert tag_slug("Cobalt Strike 4.0!") == "cobalt-strike-4-0"
 
     rules = prompt_rules()
     assert "severity:<level>" in rules and "key_exchange" in rules

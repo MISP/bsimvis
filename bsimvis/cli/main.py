@@ -16,6 +16,7 @@ from bsimvis.cli import (
     bsimvis_binsim,
     bsimvis_collection,
     bsimvis_metadata,
+    bsimvis_rulezet,
 )
 
 
@@ -605,6 +606,46 @@ def main():
         "-c", "--collection", required=True, help="Target collection name"
     )
 
+    rulezet_parser = subparsers.add_parser(
+        "rulezet", help="Mirror YARA rules from rulezet.org"
+    )
+    rulezet_actions = rulezet_parser.add_subparsers(dest="action", required=True)
+
+    rz_sync = rulezet_actions.add_parser(
+        "sync", help="Fetch, tag, compile and gate the mirror"
+    )
+    rz_sync.add_argument(
+        "--full",
+        action="store_true",
+        help="Ignore the last sync date and refetch everything",
+    )
+    rz_sync.add_argument(
+        "--limit", type=int, help="Stop after N rules (for a trial run)"
+    )
+
+    rz_index = rulezet_actions.add_parser(
+        "index-tags",
+        help="Recover curated MISP-galaxy tags (needs rulezet.api_key)",
+    )
+    rz_index.add_argument(
+        "galaxy",
+        nargs="+",
+        help="misp-galaxy cluster names, e.g. mitre-attack-pattern",
+    )
+    rz_index.add_argument(
+        "--limit", type=int, help="Only query the first N tags of each galaxy"
+    )
+
+    rz_quar = rulezet_actions.add_parser(
+        "quarantine", help="Show or release rules the gate pulled"
+    )
+    rz_quar.add_argument(
+        "--release",
+        nargs="+",
+        metavar="UUID",
+        help="Return these rules to the mirror and remember it",
+    )
+
     # Parse and Resolve Host
     args = parser.parse_args()
 
@@ -679,6 +720,8 @@ def main():
             bsimvis_collection.run_collection(g_host, int(g_port), args)
         elif args.subcommand == "metadata":
             bsimvis_metadata.run_metadata(g_host, int(g_port), args)
+        elif args.subcommand == "rulezet":
+            bsimvis_rulezet.run_rulezet(g_host, int(g_port), args)
 
     except Exception as e:
         import traceback

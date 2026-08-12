@@ -1469,6 +1469,42 @@ class TagList(Resource):
         return get_tags()
 
 
+@ns_tags.route("/provenance")
+class TagProvenance(Resource):
+    @ns_tags.doc(
+        params={
+            "tag": {
+                "description": "Tag id; repeat for several, or pass a comma-separated `tags`",
+                "required": True,
+                "example": "yara:trojan:mirai:Linux_Trojan_Mirai",
+            }
+        }
+    )
+    def get(self):
+        """Returns the rule each tag came from, with a link to its source."""
+        from bsimvis.app.routes.tags import get_tag_provenance
+
+        return get_tag_provenance()
+
+
+@ns_tags.route("/match_provenance")
+class TagMatchProvenance(Resource):
+    @ns_tags.expect(
+        api.model(
+            "TagMatchProvenance",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "entity_ids": fields.List(fields.String, required=True, example=["main:file:1234"]),
+            },
+        )
+    )
+    def post(self):
+        """Returns match metadata (rules) for a list of entities."""
+        from bsimvis.app.routes.tags import get_match_provenance
+
+        return get_match_provenance()
+
+
 @ns_tags.route("/add")
 class TagAdd(Resource):
     @ns_tags.expect(

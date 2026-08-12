@@ -1452,8 +1452,45 @@ def run_all_tests():
 
     # ── Tags ───────────────────────────────────────────────────────────────
     print(_color("\n  [Tags]", BOLD))
-    test_endpoint("GET", "/api/tags", params={"collection": COLLECTION})
+    all_tags = test_endpoint("GET", "/api/tags", params={"collection": COLLECTION})
     test_endpoint("GET", "/api/tags/metadata", params={"collection": COLLECTION})
+
+    # Tag provenance: the rule behind an analysis tag. Derived for `capa:`
+    # (the tag id *is* the capa-rules path), stored at scan time for `yara:`.
+    test_endpoint(
+        "GET",
+        "/api/tags/provenance",
+        expected_ok=False,
+        label="GET /api/tags/provenance (no tag, expect 400)",
+    )
+    capa_tag = "capa:host-interaction:file-system:write"
+    prov = test_endpoint(
+        "GET", "/api/tags/provenance", params={"tag": capa_tag}
+    )
+    capa_rec = ((prov or {}).get("provenance") or {}).get(capa_tag) or []
+    check(
+        "provenance: capa tag resolves to its capa-rules directory",
+        capa_rec
+        and capa_rec[0].get("url", "").endswith(
+            "/host-interaction/file-system/write"
+        ),
+        str(capa_rec)[:200],
+    )
+
+    yara_tags = [t for t in (all_tags or {}) if str(t).startswith("yara:")]
+    if yara_tags:
+        prov = test_endpoint(
+            "GET",
+            "/api/tags/provenance",
+            params={"tag": yara_tags[0]},
+            label="GET /api/tags/provenance (yara tag)",
+        )
+        recs = ((prov or {}).get("provenance") or {}).get(yara_tags[0]) or []
+        check(
+            "provenance: yara tag names the rule file or the rulezet rule",
+            recs and all(r.get("path") or r.get("id") for r in recs),
+            f"{yara_tags[0]} -> {str(recs)[:200]}",
+        )
     # Add a test tag to a file entity
     if file_md5:
         file_entity_id = f"{COLLECTION}:file:{file_md5}"

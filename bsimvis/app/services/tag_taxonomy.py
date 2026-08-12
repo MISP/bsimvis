@@ -307,6 +307,12 @@ def _match_tag(match):
     return yara_tag(category, family, match.rule)
 
 
+# `tag_provenance` maps a match back to the rule that minted its tag, and has to
+# agree with this module on which tag that is -- re-deriving the category/family
+# fallback there would be a second source of truth for tag identity.
+tag_for_match = _match_tag
+
+
 def yara_file_tags(matches, extra=None):
     """yara-python `Rules.match()` result -> `{tag, ...}` for the whole file.
 

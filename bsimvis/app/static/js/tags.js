@@ -404,7 +404,7 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
 
     const addOnClick = `startAddTag(event, ${jsString(etype)}, ${jsString(eid)})`;
 
-    const analysisHtml = tagsList.map(t => `<span class="analysis-tag-badge" title="Analysis Tag: ${escapeAttr(t)}">${escapeHtml(t)}</span>`).join('');
+    const analysisHtml = tagsList.map(t => `<span class="analysis-tag-badge" style="cursor:pointer;" title="Analysis Tag: ${escapeAttr(t)} (click for source)">${escapeHtml(t)}</span>`).join('');
 
     const userHtml = userTagsList.map(t => {
         if (t === 'bookmark' || t === 'ignore') return '';
@@ -1301,4 +1301,86 @@ window.addEventListener('message', (event) => {
     });
 
     if (typeof refreshAllRowColors === 'function') refreshAllRowColors();
+});
+
+// --- Tag provenance ---------------------------------------------------------
+// Which rule minted an analysis tag, and where that rule lives. Deliberately
+// click-only and fetched on demand: the tag lists, the search filters and the
+// chips themselves stay flat strings, so nothing on the render path pays for
+// this. Delegated off document rather than wired per badge, so every place
+// that renders an .analysis-tag-badge gets it without knowing about it.
+
+window.showTagProvenance = (e, tag) => {
+    let el = document.getElementById('tag-provenance-popup');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'tag-provenance-popup';
+        el.style.cssText = "position:fixed; z-index:20015; background:var(--card-bg); border:1px solid var(--border); padding:12px 14px; border-radius:8px; display:none; font-size:0.78rem; color:var(--text); max-width:420px; box-shadow:0 8px 24px rgba(0,0,0,0.35);";
+        document.body.appendChild(el);
+    }
+
+    const row = (label, value) => value
+        ? `<div style="display:grid; grid-template-columns:70px 1fr; gap:4px 10px; margin-top:3px;">
+               <span style="color:var(--dim)">${label}</span>
+               <span style="word-break:break-all;">${escapeHtml(String(value))}</span>
+           </div>`
+        : '';
+
+    el.innerHTML = `<div style="color:var(--dim)">Looking up <b>${escapeHtml(tag)}</b>...</div>`;
+    el.style.display = 'block';
+
+    let x = e.clientX + 12, y = e.clientY + 12;
+    if (x + 440 > window.innerWidth) x = Math.max(10, window.innerWidth - 450);
+    if (y + 220 > window.innerHeight) y = Math.max(10, window.innerHeight - 230);
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+
+    fetch(`/api/tags/provenance?tag=${encodeURIComponent(tag)}`)
+        .then(res => res.json())
+        .then(data => {
+            const records = (data && data.provenance && data.provenance[tag]) || [];
+            const header = `
+                <div style="font-weight:bold; margin-bottom:8px; border-bottom:1px solid var(--border); padding-bottom:6px; display:flex; justify-content:space-between; gap:10px;">
+                    <span>${escapeHtml(tag)}</span>
+                    <span id="tag-prov-close" style="color:var(--dim); cursor:pointer;">&times;</span>
+                </div>`;
+
+            if (!records.length) {
+                el.innerHTML = header + `<div style="color:var(--dim); font-style:italic;">No source recorded for this tag.</div>`;
+            } else {
+                el.innerHTML = header + records.map(r => `
+                    <div style="padding:6px 0; border-bottom:1px solid var(--border);">
+                        <div style="color:var(--accent); font-weight:bold;">${escapeHtml(r.name || r.title || r.source || '')}</div>
+                        ${row('Source', r.source)}
+                        ${row('Rule id', r.id)}
+                        ${row('File', r.path)}
+                        ${row('Author', r.author)}
+                        ${row('License', r.license)}
+                        ${row('Upstream', r.upstream)}
+                        ${r.url ? `<div style="margin-top:6px;"><a href="${escapeAttr(r.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Open source &nearr;</a></div>` : ''}
+                    </div>`).join('');
+            }
+            const close = document.getElementById('tag-prov-close');
+            if (close) close.onclick = () => { el.style.display = 'none'; };
+        })
+        .catch(() => {
+            el.innerHTML = `<div style="color:var(--dim)">Could not load provenance for ${escapeHtml(tag)}.</div>`;
+        });
+};
+
+document.addEventListener('click', (e) => {
+    const badge = e.target.closest && e.target.closest('.analysis-tag-badge');
+    const popup = document.getElementById('tag-provenance-popup');
+    if (badge) {
+        e.stopPropagation();
+        showTagProvenance(e, badge.textContent.trim());
+    } else if (popup && !e.target.closest('#tag-provenance-popup')) {
+        popup.style.display = 'none';
+    }
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const popup = document.getElementById('tag-provenance-popup');
+    if (popup) popup.style.display = 'none';
 });

@@ -177,6 +177,65 @@ def get_tags():
     return tags
 
 
+def get_tag_provenance():
+    """Returns `{tag: [source record, ...]}` for the requested tags.
+
+    Deliberately its own endpoint rather than a field on the tag list: this is
+    what a click on a tag asks for, and folding it into `/api/tags/` would put
+    a Redis read per tag on the path of every page that renders a tag chip.
+
+    No collection parameter -- which rule file a tag came from is a fact about
+    the ruleset, not about a collection.
+    """
+    raw = request.args.getlist("tag") or []
+    if not raw:
+        raw = (request.args.get("tags") or "").split(",")
+    tags = [t.strip() for t in raw if t and t.strip()]
+
+    if not tags:
+        return {"error": "Missing parameters"}, 400
+
+    from bsimvis.app.services.tag_provenance import tag_rules, _row_from_id, rule_url
+    
+    out = {}
+    for tag in tags:
+        _, rules = tag_rules(tag)
+        
+        if not rules and tag.startswith("capa:"):
+            ns = tag.split("capa:", 1)[1].replace(":", "/")
+            rid = "capa:" + ns
+            row = _row_from_id(rid)
+            row["url"] = rule_url(rid, row)
+            rules = {rid: row}
+            
+        res = []
+        for rid, row in rules.items():
+            if "id" not in row:
+                row["id"] = rid
+            res.append(row)
+        out[tag] = res
+
+    return {"provenance": out}
+
+
+def get_match_provenance():
+    """Returns {entity_id: {tag: [rule_id, ...]}} for given entities."""
+    data = request.json or {}
+    collection = _collection_of(data)
+    entity_ids = data.get("entity_ids", [])
+    if not collection or not entity_ids:
+        return {"error": "Missing parameters"}, 400
+
+    from bsimvis.app.services.tag_provenance import match_provenance
+    out, rules = match_provenance(collection, entity_ids)
+    
+    for rid, row in rules.items():
+        if "id" not in row:
+            row["id"] = rid
+            
+    return {"hits": out, "rules": rules}
+
+
 def set_color():
     """Sets a custom color for a tag."""
     data = request.json or {}

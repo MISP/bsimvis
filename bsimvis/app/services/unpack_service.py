@@ -330,10 +330,10 @@ HANDLERS = [
 ]
 
 # Namespaces a handler tag can live in. These describe how the *upload* was
-# wrapped, which says nothing about any single function inside it, so they stay
-# on the file document and are stripped before function tagging (see
-# ghidra_service.stream_bsim_data). Derived from HANDLERS so a new handler
-# cannot start leaking into function tags by accident.
+# wrapped, which says nothing about any single function inside it -- they stay on
+# the file document. Nothing strips them before function tagging any more,
+# because no file tag reaches a function at all (see ghidra_service, `func_tags`);
+# the tuple survives as the vocabulary of handler tags itself.
 FILE_SCOPE_TAG_PREFIXES = tuple(sorted({h.tag.split(":")[0] + ":" for h in HANDLERS}))
 
 
@@ -415,15 +415,14 @@ def demo():
     # -- file-scope tag namespaces ----------------------------------------
     assert FILE_SCOPE_TAG_PREFIXES == ("container:", "packer:")
     assert all(h.tag.startswith(FILE_SCOPE_TAG_PREFIXES) for h in HANDLERS)
-    # What ghidra_service strips before tagging functions. These namespaces stay
-    # file-scope on purpose: they describe the wrapper, not any function in it.
-    # A wrapper fact that genuinely belongs on a function goes in as
-    # `origin:packer:<name>:<version>` rather than as a raw tag.
-    assert [
-        t
-        for t in ["container:apk", "packer:upx", "mirai", "origin:lib:libc:2.31"]
-        if not t.startswith(FILE_SCOPE_TAG_PREFIXES)
-    ] == ["mirai", "origin:lib:libc:2.31"]
+    # These namespaces are file-scope on purpose: they describe the wrapper, not
+    # any function in it. A wrapper fact that genuinely belongs on a function
+    # goes in as `origin:packer:<name>:<version>`, written per function by
+    # whatever established it -- never as the file's raw tag copied downwards.
+    assert not any(
+        t.startswith(FILE_SCOPE_TAG_PREFIXES)
+        for t in ["mirai", "origin:lib:libc:2.31", "origin:packer:upx:3.96"]
+    )
 
     # -- registry dispatch ------------------------------------------------
     buf = io.BytesIO()

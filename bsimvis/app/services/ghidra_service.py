@@ -14,7 +14,6 @@ from pyghidra.launcher import HeadlessPyGhidraLauncher
 import tomllib
 
 from bsimvis.app.services import tag_taxonomy
-from bsimvis.app.services.unpack_service import FILE_SCOPE_TAG_PREFIXES
 
 GHIDRA_DECOMP_MAX_TIMEOUT = 10
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
@@ -29,39 +28,6 @@ DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
 #
 # The library line is `LibraryRecord.toString()` -- family, version, variant.
 _FID_LIBRARY_RE = re.compile(r"^Library:[ \t]*(\S+)(?:[ \t]+(\S+))?", re.MULTILINE)
-
-
-def func_scope(tags, yara_file_tags=None):
-    """The file's tags that are also evidence about each of its functions.
-
-    A file tag reaches every function in the file, so the only ones that may
-    ride along are the ones that are true of every function. Two kinds are not:
-
-    * **The upload's shape.** `container:apk`, `packer:upx` describe the
-      wrapper, not the code -- copying them made them look like library
-      evidence and gave the bin-sim tag split a `container:apk` category.
-    * **What a scanner found somewhere in the file.** `ghidra_job` puts every
-      matched YARA rule on the file so a match is never lost, and the mirror's
-      sidecar tags (`rulezet:`, `mitre:`, `cve:`, ...) ride in on the same set.
-      Attribution to a function is the `yara_tags` map keyed by entry point,
-      built from the offsets that actually resolved. Broadcasting the file set
-      would put every rule on every function and flatten that distinction --
-      one Mirai string in .rodata would mark uclibc's `fcntl64` a backdoor.
-
-    Everything else stays: a `--tag lib:openssl` on a reference-collection
-    upload *is* a fact about each function in it, and is the whole mechanism
-    behind `stdlib-ref`.
-
-    The yara set is passed in rather than prefix-matched because its sidecar
-    tags carry arbitrary namespaces -- there is no prefix that catches them,
-    and a new one appearing in the mirror must not silently start broadcasting.
-    """
-    derived = set(yara_file_tags or ())
-    return [
-        t
-        for t in tags
-        if t not in derived and not str(t).startswith(FILE_SCOPE_TAG_PREFIXES)
-    ]
 
 
 def fid_tags_from_plate_comment(comment, func_name):
@@ -554,7 +520,6 @@ class GhidraService:
         batch_uuid = options.get("batch_uuid")
         batch_name = options.get("batch_name", "Ghidra Batch")
         tags = options.get("tags", [])
-        func_scope_tags = func_scope(tags, options.get("yara_file_tags"))
         related_md5 = options.get("related_md5", [])
         min_func_len = options.get("min_func_len", 10)
         batch_order = options.get("batch_order", 0)
@@ -755,7 +720,21 @@ class GhidraService:
                 except Exception:
                     pass
 
-            func_tags = list(func_scope_tags)
+            # A function's `tags` are evidence about *that function*: Function
+            # ID matched its bytes, capa matched its instructions, a YARA string
+            # resolved to its body or to data it references. The file's own tags
+            # never come down here.
+            #
+            # They used to. A file tag is true of the file, not of each of its
+            # functions, so copying the set gave every function in a binary the
+            # same marks: `container:apk` looked like library evidence, and one
+            # Mirai string in .rodata marked uclibc's `fcntl64` a linux backdoor
+            # via the rulezet sidecar. Nothing is lost by dropping it -- the
+            # index already carries the file's tags on every function document
+            # as `file_tags`/`file_user_tags` (index_config.resolve_target_field),
+            # which is where a question about the *file* belongs. That is also
+            # what keeps the two fields from being byte-identical copies.
+            func_tags = []
             fid_tags = (
                 []
                 if skip_function_id
@@ -1045,35 +1024,6 @@ ghidra_service = GhidraService()
 
 
 if __name__ == "__main__":  # ponytail: one runnable check, no framework
-    # A real stdlib-ref upload's tags, a real unpack handler's, and a real
-    # rulezet hit's -- only the first kind is evidence about a function.
-    _FILE_TAGS = [
-        "stdlib",
-        "lib:openssl",
-        "ver:OpenSSL_1_1_1w",
-        "variant:x86_64-O1",
-        "packer:upx",
-        "container:apk",
-        "yara:backdoor:mirai:Backdoor_Linux_Mirai_AN_xp",
-        "rulezet:ms-caro-malware-full:malware-type:backdoor",
-        "rulezet:ms-caro-malware-full:malware-platform:linux",
-        "mitre:t1027",
-    ]
-    _YARA_DERIVED = _FILE_TAGS[6:]
-    assert func_scope(_FILE_TAGS, _YARA_DERIVED) == [
-        "stdlib",
-        "lib:openssl",
-        "ver:OpenSSL_1_1_1w",
-        "variant:x86_64-O1",
-    ]
-    # The sidecar namespaces are the regression: prefix-stripping `yara:` alone
-    # left `rulezet:`/`mitre:` to land on every function in the binary.
-    assert not [t for t in func_scope(_FILE_TAGS, _YARA_DERIVED) if ":" in t and
-                t.split(":")[0] in ("rulezet", "mitre", "yara")]
-    # No scan ran (yara skipped, or nothing matched) -> nothing extra to drop.
-    assert func_scope(["stdlib", "packer:upx"], None) == ["stdlib"]
-    assert func_scope([], []) == []
-
     _PLATE = "Library Function - Single Match\n strcpy\nLibrary: libc 2.31 default"
 
     assert fid_tags_from_plate_comment(_PLATE, "strcpy") == [

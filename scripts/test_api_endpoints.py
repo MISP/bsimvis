@@ -198,6 +198,12 @@ def test_endpoint(
     return body
 
 
+# Applied at upload time, so it reaches the ingest the way `bsimvis upload
+# --tag` does -- unlike FILE_TAG/FUNC_TAG, which are added later through the
+# tag API and exercise a different code path.
+UPLOAD_TAG = "upload_scope_tag"
+
+
 # ---------------------------------------------------------------------------
 # Step 1 – Upload the binary and get pipeline_id / file_md5
 # ---------------------------------------------------------------------------
@@ -232,6 +238,9 @@ def upload_and_start():
         "profile": "fast",
         "min_func_len": 10,
         "skip_sim": "false",
+        # Checked by the [File-scope tags] block in STEP 4: an upload tag is a
+        # fact about the file and must not be copied onto its functions.
+        "tags": [UPLOAD_TAG],
     }
 
     body = test_endpoint(
@@ -1285,6 +1294,52 @@ def run_all_tests():
         },
         label="GET /api/function/search (sort by features)",
     )
+    if file_md5:
+        print(_color("\n  [File-scope tags]", BOLD))
+        # A file tag is true of the file, not of each function in it. It reaches
+        # function documents as `file_tags` (searchable, enriched from the file
+        # doc) and must never be copied into the function's own `tags`, which
+        # hold per-function evidence only: Function ID, capa, and the YARA
+        # offsets that resolved to this function. Copying the set is what put
+        # `rulezet:...:malware-type:backdoor` on uclibc's `fcntl64`.
+        frows = _search_rows(
+            "/api/function/search",
+            {"collection": COLLECTION, "file_md5": file_md5, "limit": 100},
+            "functions",
+        )
+        check(
+            "upload tag reaches functions as file_tags",
+            frows and all(UPLOAD_TAG in _tags_of(r, "file_tags") for r in frows),
+            f"{len(frows)} function(s)",
+        )
+        leaked = [r for r in frows if UPLOAD_TAG in _tags_of(r, "tags")]
+        check(
+            "upload tag is NOT copied into function tags",
+            not leaked,
+            f"{len(leaked)} of {len(frows)} function(s) carry it in `tags`",
+        )
+        # The two fields being identical is the symptom that the copy is back.
+        same = [
+            r
+            for r in frows
+            if _tags_of(r, "tags") and _tags_of(r, "tags") == _tags_of(r, "file_tags")
+        ]
+        check(
+            "function tags are not a copy of file_tags",
+            not same,
+            f"{len(same)} function(s) with tags == file_tags",
+        )
+        drows = _search_rows(
+            "/api/file/search",
+            {"collection": COLLECTION, "file_md5": file_md5, "limit": 5},
+            "files",
+        )
+        check(
+            "the file itself keeps the upload tag",
+            drows and UPLOAD_TAG in _tags_of(drows[0], "tags", "user_tags"),
+            f"file tags={drows[0].get('tags') if drows else None}",
+        )
+
     if func_id1:
         test_endpoint("GET", "/api/function/code", params={"id": func_id1})
         test_endpoint("GET", "/api/function/features", params={"id": func_id1})

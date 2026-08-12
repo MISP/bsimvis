@@ -24,6 +24,21 @@ const ANALYSIS_MODULES = [
     { id: 'rulezet', label: 'Rulezet', hint: 'mirrored rules', cost: mb => 1 + 0.5 * mb },
 ];
 
+// Ghidra's own auto-analysis + decompile/extract pass. Not a module and not
+// switchable -- it is the job every upload pays before any module runs, so the
+// total below is meaningless without it.
+//
+// ponytail: from the `baseline` column of both doc/bench-fid-cost.md tables, at
+// profile `fast`. The looser fit of the four: the real driver is function
+// count, not file size, and that corpus spans 334-1647 functions/MB, so this
+// lands within ~0.6x-2.9x of measured. Good enough to size a batch, not to
+// promise one. Balanced/deep profiles are not measured and will run longer.
+const BASE_ANALYSIS = {
+    label: 'Ghidra analysis',
+    hint: 'always runs',
+    cost: mb => 1 + 250 * mb,
+};
+
 // What to price when the list is empty, so the estimates are never blank.
 const TYPICAL_FILE_MB = 0.5;
 
@@ -34,12 +49,16 @@ function formatDuration(seconds) {
     return `${h}h ${Math.round((seconds - h * 3600) / 60)}m`;
 }
 
-/** Per-module estimate over the current file list, in seconds. */
-function estimateModuleCost(module) {
-    const sizesMb = selectedFiles.length
+/** Sizes in MB the estimate prices, falling back to one typical file. */
+function estimateSizesMb() {
+    return selectedFiles.length
         ? selectedFiles.map(f => f.size / (1024 * 1024))
         : [TYPICAL_FILE_MB];
-    return sizesMb.reduce((total, mb) => total + module.cost(mb), 0);
+}
+
+/** Per-module estimate over the current file list, in seconds. */
+function estimateModuleCost(module) {
+    return estimateSizesMb().reduce((total, mb) => total + module.cost(mb), 0);
 }
 
 function updateModuleEstimates() {
@@ -47,6 +66,20 @@ function updateModuleEstimates() {
         const el = document.getElementById(`module-est-${m.id}`);
         if (el) el.innerText = `~${formatDuration(estimateModuleCost(m))}`;
     });
+
+    const baseEl = document.getElementById('module-est-base');
+    if (baseEl) baseEl.innerText = `~${formatDuration(estimateModuleCost(BASE_ANALYSIS))}`;
+
+    // Only the ticked modules count -- untouched ones cost nothing.
+    const totalEl = document.getElementById('module-est-total');
+    if (totalEl) {
+        const enabled = new Set(selectedModules());
+        const total = ANALYSIS_MODULES
+            .filter(m => enabled.has(m.id))
+            .reduce((sum, m) => sum + estimateModuleCost(m), estimateModuleCost(BASE_ANALYSIS));
+        totalEl.innerText = `~${formatDuration(total)}`;
+    }
+
     const note = document.getElementById('module-estimate-note');
     if (note) {
         note.innerText = selectedFiles.length
@@ -60,14 +93,24 @@ function renderAnalysisModules() {
         <div class="form-group" style="margin-bottom: 20px;">
             <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 8px;">Analysis Modules</label>
             <div style="display: flex; flex-direction: column; gap: 6px;">
+                <div style="display: flex; align-items: center; gap: 8px; font-size: 0.8rem;">
+                    <i class="fa-solid fa-lock" style="color: var(--dim); font-size: 0.65rem; width: 13px; text-align: center;"></i>
+                    <span style="color: var(--text);">${BASE_ANALYSIS.label}</span>
+                    <span style="color: var(--dim); font-size: 0.7rem;">${BASE_ANALYSIS.hint}</span>
+                    <span id="module-est-base" style="margin-left: auto; color: var(--subtle); font-size: 0.7rem; font-variant-numeric: tabular-nums;"></span>
+                </div>
                 ${ANALYSIS_MODULES.map(m => `
                     <label style="display: flex; align-items: center; gap: 8px; font-size: 0.8rem; cursor: pointer;">
-                        <input type="checkbox" id="module-${m.id}" value="${m.id}" style="cursor: pointer;">
+                        <input type="checkbox" id="module-${m.id}" value="${m.id}" onchange="updateModuleEstimates()" style="cursor: pointer;">
                         <span style="color: var(--text);">${m.label}</span>
                         <span style="color: var(--dim); font-size: 0.7rem;">${m.hint}</span>
                         <span id="module-est-${m.id}" style="margin-left: auto; color: var(--subtle); font-size: 0.7rem; font-variant-numeric: tabular-nums;"></span>
                     </label>
                 `).join('')}
+                <div style="display: flex; align-items: center; gap: 8px; font-size: 0.8rem; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border);">
+                    <span style="color: var(--text); font-weight: bold;">Estimated total</span>
+                    <span id="module-est-total" style="margin-left: auto; color: var(--accent); font-size: 0.75rem; font-weight: bold; font-variant-numeric: tabular-nums;"></span>
+                </div>
             </div>
             <div id="module-estimate-note" style="margin-top: 8px; font-size: 0.65rem; color: var(--dim);"></div>
         </div>

@@ -322,12 +322,7 @@ DEFAULT_TAG_MAP = {
     "pysec": "pysec",
     "*": RULEZET_NAMESPACE,
 }
-# `ms-caro-malware-full` is dropped for volume, not for being wrong: it is
-# 126079 of the 130147 tags in the mirror's sidecar (97%), because Rulezet
-# auto-applies it to every bulk GitHub import. A tag nearly every rule carries
-# separates nothing, and on the `family` axis it would draw one node holding
-# almost the whole corpus. Remove this glob to get it back.
-DEFAULT_DROPS = ("tlp:*", "pap:*", "ms-caro-malware-full:*")
+DEFAULT_DROPS = ("tlp:*", "pap:*")
 
 # ATT&CK ids arrive welded onto the cluster name MISP uses:
 # `Obfuscated Files or Information - T1027`. The id is the identity; the prose
@@ -743,11 +738,13 @@ def demo():
     assert r('misp-galaxy:mitre-attack-pattern="Some Prose"') is None
     # Unrouted namespaces are kept, not lost -- the whole source path survives.
     assert r('runtime-packer:pe="upx"') == "rulezet:runtime-packer:pe:upx"
-    # Dropped by volume (97% of the sidecar), so it must not reach the family
-    # axis -- but only by default: a config that asks for it still gets it.
-    assert r('ms-caro-malware-full:malware-type="Trojan"') is None
-    assert r('ms-caro-malware-full:malware-type="Trojan"', drops=()) == (
+    # ms-caro is 97% of the sidecar, and its two predicates are the reason it
+    # stays: `malware-type` and `malware-platform` are different questions, and
+    # the family tree nests on that segment rather than flattening to the leaf.
+    assert r('ms-caro-malware-full:malware-type="Trojan"') == (
         "rulezet:ms-caro-malware-full:malware-type:trojan")
+    assert r('ms-caro-malware-full:malware-platform="Linux"') == (
+        "rulezet:ms-caro-malware-full:malware-platform:linux")
     assert r("cve:CVE-2021-44228") == "cve:cve-2021-44228"
     assert r("ghsa:GHSA-j8v8-6h6r-m6pq") == "ghsa:ghsa-j8v8-6h6r-m6pq"
     # Distribution markers: the family and a single value.

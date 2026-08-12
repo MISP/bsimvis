@@ -613,6 +613,65 @@ function fileSimAxisNodes(rows, axis) {
     return nodes.sort((x, y) => (y.a + y.b) - (x.a + x.b));
 }
 
+// Family and vuln ids are a path, not a group refined by a leaf:
+// `rulezet:ms-caro-malware-full:malware-platform:linux` is namespace, taxonomy,
+// predicate, value, and every one of those is a level someone wants to fold at
+// -- reading it as one node labelled `linux` throws away that it is a platform
+// rather than a malware type. So their tree is a trie over the id's segments,
+// which is also why the backend leaves these axes unrolled (_PARENT_DEPTH).
+// Depth is whatever the ids have, so `cve:` gets two levels and `rulezet:` four
+// with no per-namespace table anywhere.
+function fileSimNestedNodes(rows) {
+    const root = { children: new Map() };
+    (rows || []).forEach(row => {
+        const [a, b] = tagSideCounts(row);
+        // A tag with no functions on either side is not evidence of
+        // dissimilarity, so it must not drag its parent's mean down.
+        if (a === 0 && b === 0) return;
+        const parts = String(row.tag_id).split(':');
+        let node = root;
+        parts.forEach((seg, i) => {
+            const prefix = parts.slice(0, i + 1).join(':');
+            let next = node.children.get(seg);
+            if (!next) {
+                next = {
+                    id: prefix, label: seg, prefix, a: 0, b: 0,
+                    children: new Map(), drift: {}, tagIds: [],
+                };
+                node.children.set(seg, next);
+            }
+            // A branch carries the sum of the ids beneath it. A function tagged
+            // both `...:malware-type:trojan` and `...:malware-platform:linux`
+            // therefore counts once under each, and twice under the taxonomy
+            // above them -- the same double-count the category axis already has
+            // wherever one function carries two tags of one group.
+            next.a += a; next.b += b;
+            next.tagIds.push(row.tag_id);
+            Object.entries(row.drift || {}).forEach(([partner, w]) => {
+                next.drift[partner] = (next.drift[partner] || 0) + w;
+            });
+            node = next;
+        });
+    });
+    return fileSimNestedFinish(root).children;
+}
+
+// Map of children -> sorted array, and a similarity for every node. Depth is
+// unbounded, so this recurses rather than unrolling levels the way origin does.
+function fileSimNestedFinish(node) {
+    const kids = [...node.children.values()]
+        .map(fileSimNestedFinish)
+        .sort((x, y) => y.sim - x.sim);
+    node.children = kids;
+    // A leaf scores on its own counts; a branch is the mean of what is under it,
+    // so one absent family still shows instead of being averaged away by the
+    // mass of its siblings. Same rule the origin groups use.
+    node.sim = kids.length
+        ? kids.reduce((s, c) => s + c.sim, 0) / kids.length
+        : fileSimSim(node.a, node.b);
+    return node;
+}
+
 // tags_summary rows are already rolled up to `lib:libc:2.31`. The tree adds two
 // levels above that: the group (Libraries) and the library name (libc), so a
 // whole library folds to one row when reading the pair as a whole.
@@ -687,7 +746,9 @@ function fileSimOriginNodes(rows) {
 // tag id (or a synthetic origin group), so scoping, folding and the graph's
 // frontier all work the same whichever axis is being read.
 function fileSimTree(rows, axis) {
-    const live = axis === 'origin' ? fileSimOriginNodes(rows) : fileSimAxisNodes(rows, axis);
+    const live = axis === 'origin' ? fileSimOriginNodes(rows)
+               : (axis === 'family' || axis === 'vuln') ? fileSimNestedNodes(rows)
+               : fileSimAxisNodes(rows, axis);
     return {
         id: 'root', label: 'All', prefix: null, children: live, drift: {},
         a: live.reduce((s, g) => s + g.a, 0),

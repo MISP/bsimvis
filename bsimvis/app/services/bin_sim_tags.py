@@ -223,10 +223,13 @@ def tag_priority(tag_id, tag_meta=None):
 # namespaces, which is both the readable Sankey grouping and what keeps the joint
 # key small: a function matching eight capa rules contributes one or two parents
 # to its combo, not eight rule names.
-# `family` is the one axis where the leaf *is* the answer -- the useful node is
-# "Cobalt Strike", not "misp:tool" -- so its depth is set past the longest id it
-# carries (`rulezet:runtime-packer:pe:upx`) and every family is its own row.
-# `vuln` needs no depth for the same reason: a CVE id is already whole at 2.
+# `family` and `vuln` roll up at no depth at all (None). Their ids are a path
+# whose every segment is a level worth folding at --
+# `rulezet:ms-caro-malware-full:malware-platform:linux` is namespace, taxonomy,
+# predicate, value -- and they are not all the same length (`cve:` is 2 deep,
+# `misp:` 3, `rulezet:` 4). Any single depth here would either flatten the path
+# to one node or truncate the ids that are deeper than it, so the rows stay at
+# full id and the UI builds the hierarchy by splitting them (fileSimNestedNodes).
 _PARENT_DEPTH = {
     AXIS_ORIGIN: 4,
     AXIS_SEVERITY: 2,
@@ -235,8 +238,8 @@ _PARENT_DEPTH = {
     AXIS_CAPA: 2,
     AXIS_MITRE: 2,
     AXIS_YARA: 2,
-    AXIS_FAMILY: 4,
-    AXIS_VULN: 2,
+    AXIS_FAMILY: None,
+    AXIS_VULN: None,
 }
 
 
@@ -244,14 +247,14 @@ def tag_parent(tag_id):
     """Display parent of a tag: `origin:lib:libc:2.31:memcpy` ->
     `origin:lib:libc:2.31`, `category:network:c2` -> `category:network`.
 
-    Matching uses the full id; only the summary rolls up. Synthetic buckets and
-    already-short ids are their own parent.
+    Matching uses the full id; only the summary rolls up. Synthetic buckets,
+    already-short ids, and the axes with no depth at all are their own parent.
     """
     if tag_id in (TAG_UNTAGGED, TAG_MISMATCH):
         return tag_id
     parts = str(tag_id).split(":")
     depth = _PARENT_DEPTH[tag_axis(tag_id)]
-    if len(parts) > depth:
+    if depth and len(parts) > depth:
         return ":".join(parts[:depth])
     return tag_id
 

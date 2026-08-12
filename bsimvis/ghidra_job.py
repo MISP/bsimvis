@@ -620,6 +620,7 @@ class GhidraAnalyzer:
                                 from bsimvis.app.services.tag_taxonomy import (
                                     yara_file_tags,
                                 )
+                                from bsimvis.app.services import tag_provenance
 
                                 matches, extra_tags = scan_file(
                                     temp_path,
@@ -639,6 +640,14 @@ class GhidraAnalyzer:
                                     payload["tags"] = sorted(
                                         set(payload.get("tags") or []) | file_tags
                                     )
+                                # The match object is the only place the rule's
+                                # file path / rulezet uuid exists; downstream
+                                # everything is the flat tag string. Record it
+                                # here or it is unrecoverable.
+                                tag_provenance.record(
+                                    tag_provenance.yara_provenance(matches),
+                                    self.r_data,
+                                )
                                 self.job_service.add_log(
                                     job_id,
                                     f"yara matched {len(file_tags)} rules, "

@@ -177,6 +177,29 @@ def get_tags():
     return tags
 
 
+def get_tag_provenance():
+    """Returns `{tag: [source record, ...]}` for the requested tags.
+
+    Deliberately its own endpoint rather than a field on the tag list: this is
+    what a click on a tag asks for, and folding it into `/api/tags/` would put
+    a Redis read per tag on the path of every page that renders a tag chip.
+
+    No collection parameter -- which rule file a tag came from is a fact about
+    the ruleset, not about a collection.
+    """
+    raw = request.args.getlist("tag") or []
+    if not raw:
+        raw = (request.args.get("tags") or "").split(",")
+    tags = [t.strip() for t in raw if t and t.strip()]
+
+    if not tags:
+        return {"error": "Missing parameters"}, 400
+
+    from bsimvis.app.services.tag_provenance import lookup
+
+    return {"provenance": lookup(tags)}
+
+
 def set_color():
     """Sets a custom color for a tag."""
     data = request.json or {}

@@ -63,9 +63,11 @@ def compiled_rules():
     import yara
 
     # yara.compile's `filepaths` is namespace -> path; the namespace only has
-    # to be unique among the inputs, so the file's own index keeps two rule
-    # files that happen to define a same-named rule from colliding.
-    filepaths = {str(i): str(p) for i, p in enumerate(files)}
+    # to be unique among the inputs, and the path already is -- which keeps two
+    # rule files that define a same-named rule from colliding *and* leaves
+    # `match.namespace` naming the file the rule came from, which is the only
+    # record of that a match carries (`tag_provenance._match_record`).
+    filepaths = {str(p): str(p) for p in files}
     _compiled = yara.compile(filepaths=filepaths)
     _compiled_dir = base
     return _compiled

@@ -81,6 +81,7 @@ def paths():
         "quarantine": d / "quarantine",
         "compiled": d / "rules.compiled",
         "tags": d / "tags.json",
+        "rules_meta": d / "rules_meta.json",
         "quarantine_log": d / "quarantine.txt",
         "released": d / "released.txt",
         "state": d / "state.json",
@@ -256,7 +257,7 @@ def _write_rules(rules, tag_config, log=print):
     p = paths()
     p["rules"].mkdir(parents=True, exist_ok=True)
     quarantined = {f.stem for f in p["quarantine"].glob("*.yara")}
-    tags, written, skipped = {}, 0, 0
+    tags, meta, written, skipped = {}, {}, 0, 0
 
     allow = [x.lower() for x in (cfg("allow_licenses") or [])]
     for rule in rules:
@@ -275,9 +276,37 @@ def _write_rules(rules, tag_config, log=print):
         if routed:
             tags[uuid] = routed
 
+        # Everything a user needs to get back to this rule on rulezet.org, kept
+        # while the API response is still in hand -- after the sync all that is
+        # left on disk is `<uuid>.yara`, and no read endpoint takes a uuid.
+        meta[uuid] = {
+            k: v
+            for k, v in (
+                ("title", rule.get("title")),
+                ("author", rule.get("author")),
+                ("license", rule.get("license")),
+                ("github_path", rule.get("github_path")),
+            )
+            if v
+        }
+
+    _merge_json(p["rules_meta"], meta)
     log(f"  {written} rule files written, {skipped} skipped "
         f"(license/empty), {len(tags)} carry tags")
     return tags
+
+
+def _merge_json(path, new):
+    """Fold `new` into a `{key: value}` JSON file, keeping unseen keys."""
+    old = {}
+    if path.exists():
+        try:
+            old = json.loads(path.read_text())
+        except (ValueError, OSError):
+            old = {}
+    old.update(new)
+    path.write_text(json.dumps(old))
+    return old
 
 
 def _merge_tags(new_tags):

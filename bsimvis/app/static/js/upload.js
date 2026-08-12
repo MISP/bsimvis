@@ -5,14 +5,20 @@ let selectedFiles = [];
 // Analysis modules are opt-in: each one costs more than the rest of the job on
 // a typical sample, so nothing runs unless it is ticked here.
 //
-// ponytail: `cost` is an order-of-magnitude model, not a promise. FunctionID is
-// anchored on doc/bench-fid-cost.md (866s on an 847 KB binary, quadratic
-// because FidQueryService falls back to an unindexed full table scan per
-// function); capa on its vivisect re-disassembly cost (~510s on a 1.2 MB
-// binary); yara/rulezet on the yara_service module docstring. Re-fit the
-// constants if those measurements move.
+// ponytail: `cost` is an order-of-magnitude model, not a promise.
+//
+// FunctionID uses doc/bench-fid-cost.md's *"After"* table (2026-08-11), not the
+// pre-fix one above it: dropping the unindexed `findFunctionsBySpecificHash`
+// scan took the static sample's hash query from 2607s to 28s, and every FID
+// total is now inside run-to-run noise. The surviving term is the full-hash
+// query, +28.4s on a dense 785 KB / 1005-function static binary -- ~37 s/MB at
+// that function density, and lower on dynamically-linked samples. Reading the
+// pre-fix table instead overstates this by ~100x.
+//
+// capa is the expensive one: its vivisect re-disassembly measured ~510s on a
+// 1.2 MB binary. yara/rulezet come from the yara_service module docstring.
 const ANALYSIS_MODULES = [
-    { id: 'FunctionID', label: 'Function ID', hint: 'library tagging', cost: mb => Math.max(5, 1200 * mb * mb) },
+    { id: 'FunctionID', label: 'Function ID', hint: 'library tagging', cost: mb => 1 + 30 * mb },
     { id: 'capa', label: 'Capa', hint: 'capability tags', cost: mb => 8 + 420 * mb },
     { id: 'yara', label: 'Yara', hint: 'vendored rules', cost: mb => 1 + 0.3 * mb },
     { id: 'rulezet', label: 'Rulezet', hint: 'mirrored rules', cost: mb => 1 + 0.5 * mb },

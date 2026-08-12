@@ -286,12 +286,16 @@ def _merge_tags(new_tags):
     return old
 
 
-def compile_mirror(log=print):
+def compile_mirror(log=print, validate=True):
     """Validate every rule file, compile the survivors, save the ruleset.
 
     Per-file validation first: one bad rule fails the whole bulk compile, and at
-    this scale there is always a bad rule. Measured ~11s for 3k files, which is
-    the price of not having a single syntax error cost you the entire sync.
+    this scale there is always a bad rule. Measured ~7ms a file, so ~15 min at
+    130k -- the price of not having a single syntax error cost you the sync.
+
+    `validate=False` skips it, for the rebuild after the gate: those same files
+    were just validated, and quarantining moves files out rather than changing
+    any, so a second pass can only reach the same verdict at full price.
     """
     import yara
 
@@ -299,18 +303,20 @@ def compile_mirror(log=print):
     files, bad = {}, []
     t0 = time.time()
     for f in sorted(p["rules"].glob("*.yara")):
-        try:
-            yara.compile(filepath=str(f))
-        except yara.Error:
-            bad.append(f)
-            continue
+        if validate:
+            try:
+                yara.compile(filepath=str(f))
+            except yara.Error:
+                bad.append(f)
+                continue
         # The uuid *is* the namespace, which is what makes the tag sidecar join
         # exact -- rule names collide across 130k rules from different repos.
         files[f.stem] = str(f)
     for f in bad:
         f.unlink()
-    log(f"  validated {len(files)} rules, dropped {len(bad)} unparseable "
-        f"({time.time() - t0:.0f}s)")
+    if validate:
+        log(f"  validated {len(files)} rules, dropped {len(bad)} unparseable "
+            f"({time.time() - t0:.0f}s)")
 
     if not files:
         return None
@@ -518,7 +524,7 @@ def sync(full=False, limit=None, log=print):
     if gate(compiled, log=log):
         # Quarantined rules are gone from the directory but still in the
         # compiled ruleset, so it has to be rebuilt from what survived.
-        compile_mirror(log=log)
+        compile_mirror(log=log, validate=False)
     report_vendored(log=log)
 
     p["state"].write_text(json.dumps({"last_sync": time.strftime("%Y-%m-%d %H:%M")}))

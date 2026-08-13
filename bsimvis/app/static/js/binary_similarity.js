@@ -1863,10 +1863,10 @@ function renderFileSimSankey(data) {
         // unmatched mass are separate side nodes. One node fanning out into both
         // reads as "all of original_code is shared AND unique", which it is not.
         const stat = `Composition: ${(comp * 100).toFixed(0)}%  ·  Match quality: ${(score * 100).toFixed(0)}%\n${g.tags} tag${g.tags === 1 ? '' : 's'} folded`;
-        // The matched node in the middle is the same tag as the two ends, so it
-        // takes their colour: one unbroken band of a tag's colour across the
-        // graph, with the crossed axis as the only colour change in between.
-        const sColor = tagColor;
+        // Single axis: the middle node is the same tag as the two ends, so it
+        // takes their colour -- one unbroken band across the graph. Crossed: the
+        // middle column IS the crossing, so it wears the crossed axis's colour
+        // and the A / B ends stay the main axis's.
 
         if (g.sharedA > 0 || g.sharedB > 0) {
             const unionKeys = new Set([...g.flags.keys()]);
@@ -1906,7 +1906,7 @@ function renderFileSimSankey(data) {
                     : 'var(--dim)';
 
                 // A single mid node for THIS specific flag combination, separating the flows completely
-                const mid = addNode(`fsk_s_${i}_${k}`, `${g.label}${suffixLbl} shared (${fmt(Math.max(valA, valB))} ${suffix})`, sColor, {
+                const mid = addNode(`fsk_s_${i}_${k}`, `${g.label}${suffixLbl} shared (${fmt(Math.max(valA, valB))} ${suffix})`, hasFlags ? flagColor : tagColor, {
                     align: COL_MID, tagIdx: i, sort: i * 10 + k * 0.01,
                     tip: `${g.label}${suffixLbl} · shared\n${filenameA}: ${fmt(valA)} ${suffix}\n${filenameB}: ${fmt(valB)} ${suffix}\nMatch quality: ${(score * 100).toFixed(0)}%`,
                 });
@@ -1965,8 +1965,12 @@ function renderFileSimSankey(data) {
             });
         }
         if (g.uniqA > 0) {
+            // Unmatched mass has no crossed-axis cell to pass through, so it ends
+            // in the column right next to its own side. Sending it to the middle
+            // instead made its link span two columns and run underneath the
+            // crossed nodes -- the superposition that made the crossed view unreadable.
             const mid = addNode(`fsk_ua_${i}`, `${g.label} only in ${filenameA} (${fmt(g.uniqA)} ${suffix})`, unmatchedColor, {
-                align: COL_MID, tagIdx: i, sort: i * 10 + 1, tip: `${g.label}\nUnique to ${filenameA}: ${fmt(g.uniqA)} ${suffix}`,
+                align: COL_A + 1, tagIdx: i, sort: i * 10 + 1, tip: `${g.label}\nUnique to ${filenameA}: ${fmt(g.uniqA)} ${suffix}`,
             });
             const n = addNode(`fsk_au_${i}`, `${g.label}${marker} unmatched (${fmt(g.uniqA)} ${suffix})`, tagColor, {
                 align: COL_A, tagIdx: i, sort: i * 10 + 1, tagKey: g.key, expandable: g.expandable,
@@ -1976,7 +1980,7 @@ function renderFileSimSankey(data) {
         }
         if (g.uniqB > 0) {
             const mid = addNode(`fsk_ub_${i}`, `${g.label} only in ${filenameB} (${fmt(g.uniqB)} ${suffix})`, unmatchedColor, {
-                align: COL_MID, tagIdx: i, sort: i * 10 + 2, tip: `${g.label}\nUnique to ${filenameB}: ${fmt(g.uniqB)} ${suffix}`,
+                align: COL_B - 1, tagIdx: i, sort: i * 10 + 2, tip: `${g.label}\nUnique to ${filenameB}: ${fmt(g.uniqB)} ${suffix}`,
             });
             const n = addNode(`fsk_bu_${i}`, `${g.label}${marker} unmatched (${fmt(g.uniqB)} ${suffix})`, tagColor, {
                 align: COL_B, tagIdx: i, sort: i * 10 + 2, tagKey: g.key, expandable: g.expandable,

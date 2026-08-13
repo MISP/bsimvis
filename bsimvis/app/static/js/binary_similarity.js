@@ -228,8 +228,9 @@ function renderBinarySimilarityView(params) {
             .bsim-node .bsim-caret { width:12px; color:var(--subtle); flex-shrink:0; user-select:none; }
             /* A whole row in the tag's colour would drown the tree, so the list
                carries the colour as a dot and the graph carries it as area. */
-            .bsim-node .bsim-node-dot {
-                width:8px; height:8px; border-radius:50%; flex-shrink:0;
+            .bsim-node-dot {
+                display:inline-block; width:8px; height:8px; border-radius:50%; flex-shrink:0;
+                vertical-align:middle;
             }
             .bsim-node.bsim-drift .bsim-node-dot { display:none; }
             .bsim-node .bsim-node-label { flex:1; overflow:hidden; text-overflow:ellipsis; }
@@ -865,6 +866,12 @@ function onFileSimFoldChange() {
 
 // ---- Tree rendering ------------------------------------------------------
 
+// The tag's colour dot. The tree, the Summary rollup and the table's group rows
+// all name the same node, so they all paint it from the same id.
+function fileSimDotHtml(nodeId, style = '') {
+    return `<span class="bsim-node-dot" style="background:${TagColor.forTag(nodeId)};${style}"></span>`;
+}
+
 function fileSimNodeHtml(node, depth, out) {
     const hasKids = (node.children || []).length > 0;
     const open = fileSimTreeOpen.has(node.id);
@@ -879,7 +886,7 @@ function fileSimNodeHtml(node, depth, out) {
              title="A: ${Math.round(node.a)} · B: ${Math.round(node.b)}"
              onclick="selectFileSimNode(${escapeAttr(jsString(node.id))}, event)">
             ${caret}
-            <span class="bsim-node-dot" style="background:${TagColor.forTag(node.id)};"></span>
+            ${fileSimDotHtml(node.id)}
             <span class="bsim-node-label">${escapeHtml(node.label)}</span>
             <span class="bsim-node-count">${Math.round(node.a)}/${Math.round(node.b)}</span>
             <span class="bsim-node-pct">${pct}</span>
@@ -1028,7 +1035,7 @@ function fileSimSummaryRows(nodes, depth, out) {
         out.push(`
             <tr class="bsim-sum-row" style="cursor:pointer;"
                 onclick="selectFileSimNode(${escapeAttr(jsString(node.id))}, event)">
-                <td style="padding-left:${10 + depth * 18}px;">${caret}${escapeHtml(node.label)}</td>
+                <td style="padding-left:${10 + depth * 18}px;">${caret}${fileSimDotHtml(node.id, 'margin-right:6px;')}${escapeHtml(node.label)}</td>
                 <td style="text-align:right;">${Math.round(node.a)}</td>
                 <td style="text-align:right;">${Math.round(node.b)}</td>
                 <td style="text-align:right; color:var(--accent);">${(node.sim * 100).toFixed(0)}%</td>
@@ -1333,6 +1340,7 @@ function fileSimGroupRows(nodes, depth, out) {
                 <td colspan="7" style="padding-left:${10 + depth * 18}px;">
                     <div style="display:flex; align-items:center; gap:10px;">
                         <span style="color:var(--subtle); width:12px;">${open ? '▼' : '▶'}</span>
+                        ${fileSimDotHtml(node.id)}
                         <span style="font-weight:600;">${escapeHtml(node.label)}</span>
                         <div style="flex:1;"></div>
                         <span style="color:var(--subtle); font-size:0.74rem;">${Math.round(node.a)} A</span>
@@ -1570,6 +1578,9 @@ window.setFileSimView = function(view) {
 
 function renderFileSim(data) {
     if (!data) return;
+    // Colours come from a config fetch; without it every dot is grey, so draw
+    // again once it lands.
+    if (!TagColor.config()) TagColor.ready.then(() => renderFileSim(data));
     renderFileSimAxisPicker();
     renderFileSimTree();
     renderFileSimChips();

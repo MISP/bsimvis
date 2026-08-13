@@ -39,12 +39,15 @@ window.renderTagVocabulary = function (items) {
         // jsString() already returns a quoted JS literal -- it goes into the
         // handler bare, then the whole handler is attribute-escaped.
         const js = escapeAttr(jsString(t.tag));
+        // The swatch input needs a hex value, so it keeps the stored colour (or
+        // the neutral default) -- but the card shows what the tag actually looks
+        // like everywhere else, which for an untouched tag is derived.
         const color = safeCssColor(t.color);
-        const ink = window.tagInk ? window.tagInk(color) : color;
+        const ink = window.getTagMetadata ? window.getTagMetadata(t.tag).color : color;
         return `
         <tr data-id="${tag}">
             <td>
-                <span class="tag-card" style="background:${ink}22; border:1px solid ${ink}; color:${ink}; padding:2px 8px; border-radius:10px; font-size:0.75rem;">${tag}</span>
+                <span class="tag-card" style="background:${tagAlpha(ink, 13)}; border:1px solid ${ink}; color:${ink}; padding:2px 8px; border-radius:10px; font-size:0.75rem;">${tag}</span>
             </td>
             <td>
                 <input type="color" value="${color}" title="Tag color"

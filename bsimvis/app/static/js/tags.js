@@ -57,6 +57,14 @@ window.tagInk = function (color) {
     return '#' + rgb.map(c => Math.round(c * k).toString(16).padStart(2, '0')).join('');
 };
 
+// A tag colour at partial opacity, for the card borders and fills that used to
+// be written as `${color}44`. A derived colour is an `hsl()` with CSS variables
+// in it, not a hex string, so appending alpha digits to it produces nothing at
+// all -- `color-mix` takes any colour, including those.
+window.tagAlpha = function (color, pct) {
+    return `color-mix(in srgb, ${color} ${pct}%, transparent)`;
+};
+
 let isFetchingTagMetadata = false;
 let tagFetchPromise = null;
 
@@ -175,18 +183,18 @@ function updateTagUIElements(tag, color) {
     // Update .sim-tag-card (User Tags)
     document.querySelectorAll('.sim-tag-card').forEach(card => {
         if (card.textContent.replace('×', '').trim() === tag) {
-            card.style.borderColor = color + '66';
+            card.style.borderColor = tagAlpha(color, 40);
             card.style.color = color;
-            card.style.background = color + '11';
+            card.style.background = tagAlpha(color, 7);
         }
     });
 
     // Update .analysis-tag-badge (Analysis Tags)
     document.querySelectorAll('.analysis-tag-badge').forEach(badge => {
         if (badge.textContent.trim() === tag) {
-            badge.style.borderColor = color + '66';
+            badge.style.borderColor = tagAlpha(color, 40);
             badge.style.color = color;
-            badge.style.background = color + '11';
+            badge.style.background = tagAlpha(color, 7);
         }
     });
 
@@ -194,9 +202,9 @@ function updateTagUIElements(tag, color) {
     document.querySelectorAll('.cluster-card').forEach(card => {
         const nameSpan = card.querySelector('span');
         if (nameSpan && nameSpan.textContent.trim() === tag) {
-            card.style.borderColor = color + '44';
+            card.style.borderColor = tagAlpha(color, 27);
             card.style.color = color;
-            card.style.background = color + '11';
+            card.style.background = tagAlpha(color, 7);
         }
     });
 }
@@ -412,18 +420,24 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
     // The entity id rides on the badge so the provenance popup can ask "which
     // rule fired *here*" (match_provenance) before falling back to "which rules
     // can emit this tag at all" (tag_rules).
-    const analysisHtml = tagsList.map(t => `<span class="analysis-tag-badge" style="cursor:pointer;" data-eid="${escapeAttr(eid)}" title="Analysis Tag: ${escapeAttr(t)} (click for source)">${escapeHtml(t)}</span>`).join('');
+    // An analysis tag badge carries its tag's colour like every other card. It
+    // used to be the one place that did not: a class with a fixed palette, so
+    // `category:network` looked the same as `severity:high` in a table and
+    // different from the same tag in the graphs.
+    const analysisHtml = tagsList.map(t => {
+        const color = window.tagInk(window.getTagMetadata(t).color);
+        return `<span class="analysis-tag-badge" style="cursor:pointer; border-color:${tagAlpha(color, 40)}; color:${color}; background:${tagAlpha(color, 7)};" data-eid="${escapeAttr(eid)}" title="Analysis Tag: ${escapeAttr(t)} (click for source)">${escapeHtml(t)}</span>`;
+    }).join('');
 
     const userHtml = userTagsList.map(t => {
         if (t === 'bookmark' || t === 'ignore') return '';
-        const meta = tagMetadata[t] || { color: '#66d9ef' };
-        const color = window.tagInk(safeCssColor(meta.color));
+        const color = window.tagInk(window.getTagMetadata(t).color);
         const removeClick = `removeTag(event, ${jsString(etype)}, ${jsString(eid)}, ${jsString(t)})`;
         const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : '';
 
         return `
         <span class="sim-tag-card"
-              style="border-color:${color}44; color:${color}; background:${color}11; cursor:pointer;"
+              style="border-color:${tagAlpha(color, 27)}; color:${color}; background:${tagAlpha(color, 7)}; cursor:pointer;"
               onmouseenter="showTooltip(event, ${escapeAttr(jsString(t))}, ${escapeAttr(jsString(coll))})"
               onmouseleave="hideTooltip()"
               oncontextmenu="handleTagContextMenu(event, ${escapeAttr(jsString(t))})">
@@ -632,7 +646,7 @@ window.renderClusterCards = (clusters, isBinary = false) => {
               onmouseleave="hideClusterCardTooltip(event)"
               onmousemove="moveClusterCardTooltip(event)"
               onclick="applyClusterFilter(${escapeAttr(jsString(uuid))}, ${isBinary})"
-              style="border-color:${color}44; color:${color}; background:${color}11; align-items:center; gap:4px; padding:2px 6px 2px 8px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;">
+              style="border-color:${tagAlpha(color, 27)}; color:${color}; background:${tagAlpha(color, 7)}; align-items:center; gap:4px; padding:2px 6px 2px 8px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                  stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10"></circle>
@@ -830,7 +844,14 @@ function attachAutocomplete(input, level, field, onSelect) {
             div.className = 'tag-suggestion-item';
             div.style.display = 'flex';
             div.style.justifyContent = 'space-between';
-            div.innerHTML = `<span>${escapeHtml(item.value)}</span> <span class="dim" style="font-size:0.6rem; margin-left:10px;">${escapeHtml(item.count)}</span>`;
+            // On a tag field the suggestion carries the tag's colour, as a dot
+            // rather than coloured text: a whole dropdown of coloured rows is
+            // unreadable, and the dot is enough to tie the entry to the same
+            // tag in the tables and the graphs.
+            const dot = /tag/i.test(field)
+                ? `<span class="tag-color-dot" style="background:${window.getTagMetadata(item.value).color};"></span>`
+                : '';
+            div.innerHTML = `${dot}<span style="flex:1">${escapeHtml(item.value)}</span> <span class="dim" style="font-size:0.6rem; margin-left:10px;">${escapeHtml(item.count)}</span>`;
             div.onmousedown = (e) => {
                 e.preventDefault();
                 onSelect(item.value);
@@ -1139,9 +1160,9 @@ function updateUIForTagAdd(editors, tag) {
             if (!existing) {
                 const card = document.createElement('span');
                 card.className = 'sim-tag-card';
-                card.style.borderColor = color + '44';
+                card.style.borderColor = tagAlpha(color, 27);
                 card.style.color = color;
-                card.style.background = color + '11';
+                card.style.background = tagAlpha(color, 7);
                 card.style.cursor = 'pointer';
 
                 // Add event handlers for tooltip and context menu

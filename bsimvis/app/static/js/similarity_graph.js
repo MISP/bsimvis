@@ -585,10 +585,12 @@ class SimilarityGraph {
                         if (i > 0) {
                             el.append("tspan").text(", ").style("fill", "#75715e");
                         }
-                        let meta = window.tagMetadata ? window.tagMetadata[t] : null;
-                        if (t === 'bookmark') meta = { color: '#66d9ef' };
-                        if (t === 'ignore') meta = { color: '#f92672' };
-                        const color = (meta && meta.color) ? meta.color : '#66d9ef';
+                        // Through `getTagMetadata`, so a tag with no stored
+                        // colour gets its derived one instead of the same cyan
+                        // every other tag here was drawn in.
+                        const color = window.getTagMetadata
+                            ? window.getTagMetadata(t).color
+                            : '#66d9ef';
                         el.append("tspan")
                             .text(t)
                             .style("fill", color)
@@ -631,10 +633,12 @@ class SimilarityGraph {
                         if (i > 0) {
                             el.append("tspan").text(", ").style("fill", "#75715e");
                         }
-                        let meta = window.tagMetadata ? window.tagMetadata[t] : null;
-                        if (t === 'bookmark') meta = { color: '#66d9ef' };
-                        if (t === 'ignore') meta = { color: '#f92672' };
-                        const color = (meta && meta.color) ? meta.color : '#66d9ef';
+                        // Through `getTagMetadata`, so a tag with no stored
+                        // colour gets its derived one instead of the same cyan
+                        // every other tag here was drawn in.
+                        const color = window.getTagMetadata
+                            ? window.getTagMetadata(t).color
+                            : '#66d9ef';
                         el.append("tspan")
                             .text(t)
                             .style("fill", color)

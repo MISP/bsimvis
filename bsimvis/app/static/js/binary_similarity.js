@@ -1850,9 +1850,12 @@ function renderFileSimSankey(data) {
         const comp = Math.max(totalA, totalB) > 0 ? Math.min(totalA, totalB) / Math.max(totalA, totalB) : 0;
         const score = g.cohDen > 0 ? g.cohNum / g.cohDen : 0;
         const tagColor = TagColor.forTag(g.key);
-        // Unmatched mass is the one flow with nothing to say about a pairing, so
-        // it drops the hue and keeps only the shading -- still separable where
-        // several unmatched bands stack, never competing with the tag colours.
+        // An outer node is always its tag's colour, matched or not -- the two
+        // ends of the graph are the tag composition of each binary, and greying
+        // half of it hides which tag the unmatched mass belongs to. Only the
+        // middle greys: that column is about the pairing, and unmatched mass has
+        // no pairing to report. The link between them does the fade, so the flow
+        // reads as a tag draining into nothing.
         const unmatchedColor = TagColor.forTag(g.key, { gray: true });
         const marker = g.expandable ? ' ▸' : '';
 
@@ -1965,7 +1968,7 @@ function renderFileSimSankey(data) {
             const mid = addNode(`fsk_ua_${i}`, `${g.label} only in ${filenameA} (${fmt(g.uniqA)} ${suffix})`, unmatchedColor, {
                 align: COL_MID, tagIdx: i, sort: i * 10 + 1, tip: `${g.label}\nUnique to ${filenameA}: ${fmt(g.uniqA)} ${suffix}`,
             });
-            const n = addNode(`fsk_au_${i}`, `${g.label}${marker} unmatched (${fmt(g.uniqA)} ${suffix})`, unmatchedColor, {
+            const n = addNode(`fsk_au_${i}`, `${g.label}${marker} unmatched (${fmt(g.uniqA)} ${suffix})`, tagColor, {
                 align: COL_A, tagIdx: i, sort: i * 10 + 1, tagKey: g.key, expandable: g.expandable,
                 tip: `${filenameA} · ${g.label} — unmatched\n${fmt(g.uniqA)} of ${fmt(totalA)} ${suffix}\n${stat}`,
             });
@@ -1975,7 +1978,7 @@ function renderFileSimSankey(data) {
             const mid = addNode(`fsk_ub_${i}`, `${g.label} only in ${filenameB} (${fmt(g.uniqB)} ${suffix})`, unmatchedColor, {
                 align: COL_MID, tagIdx: i, sort: i * 10 + 2, tip: `${g.label}\nUnique to ${filenameB}: ${fmt(g.uniqB)} ${suffix}`,
             });
-            const n = addNode(`fsk_bu_${i}`, `${g.label}${marker} unmatched (${fmt(g.uniqB)} ${suffix})`, unmatchedColor, {
+            const n = addNode(`fsk_bu_${i}`, `${g.label}${marker} unmatched (${fmt(g.uniqB)} ${suffix})`, tagColor, {
                 align: COL_B, tagIdx: i, sort: i * 10 + 2, tagKey: g.key, expandable: g.expandable,
                 tip: `${filenameB} · ${g.label} — unmatched\n${fmt(g.uniqB)} of ${fmt(totalB)} ${suffix}\n${stat}`,
             });

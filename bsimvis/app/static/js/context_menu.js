@@ -255,7 +255,7 @@
                     }
                     const removeClick = `event.stopPropagation(); window.removeContextMenuTag(event, ${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))}, ${escapeAttr(jsString(tag))})`;
                     return `
-                    <span class="sim-tag-card" style="border-color:${color}44; color:${color}; background:${color}11; margin: 2px; padding: 1px 6px; font-size: 0.7rem; border-radius: 4px; display: inline-flex; align-items: center;">
+                    <span class="sim-tag-card" style="border-color:${tagAlpha(color, 27)}; color:${color}; background:${tagAlpha(color, 7)}; margin: 2px; padding: 1px 6px; font-size: 0.7rem; border-radius: 4px; display: inline-flex; align-items: center;">
                         ${escapeHtml(tag)}
                         <span onclick="${escapeAttr(removeClick)}" style="cursor: pointer; margin-left: 4px; opacity: 0.7; font-weight: bold;">×</span>
                     </span>`;

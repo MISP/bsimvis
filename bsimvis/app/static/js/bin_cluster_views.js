@@ -848,7 +848,7 @@ class BinClusterHierarchy {
                             else if (isIgnore) color = '#f92672';
                             else if (window.getTagMetadata) color = window.getTagMetadata(tag).color;
                             
-                            return `<span class="tag-card" style="border-color:${color}44; color:${color}; background:${color}11; font-size: 0.6rem; padding: 2px 6px; border-radius: 12px; display: inline-flex; align-items: center;">${tag}</span>`;
+                            return `<span class="tag-card" style="border-color:${tagAlpha(color, 27)}; color:${color}; background:${tagAlpha(color, 7)}; font-size: 0.6rem; padding: 2px 6px; border-radius: 12px; display: inline-flex; align-items: center;">${tag}</span>`;
                         }).join('')}
                     </div>
                 </div>

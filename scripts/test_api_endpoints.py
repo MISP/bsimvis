@@ -15,6 +15,8 @@ import sys
 import time
 import json
 import os
+import re
+
 import requests
 import uuid
 
@@ -1491,6 +1493,28 @@ def run_all_tests():
             recs and all(r.get("path") or r.get("id") for r in recs),
             f"{yara_tags[0]} -> {str(recs)[:200]}",
         )
+        # The popup's rule preview: the rule's own text, read off disk. A
+        # vendored rule id must return the one rule block, not the whole file.
+        rid = next((r.get("id") for r in recs if str(r.get("id", "")).startswith("yara:")), None)
+        if rid:
+            src = test_endpoint(
+                "GET",
+                "/api/tags/rule_source",
+                params={"id": rid},
+                label="GET /api/tags/rule_source (yara rule)",
+            )
+            text = (src or {}).get("text") or ""
+            check(
+                "rule_source: returns exactly the rule block that fired",
+                len(re.findall(r"^\s*rule\s", text, re.M)) == 1 and "condition:" in text,
+                f"{rid} -> {len(text)} bytes",
+            )
+    test_endpoint(
+        "GET",
+        "/api/tags/rule_source",
+        expected_ok=False,
+        label="GET /api/tags/rule_source (no id, expect 400)",
+    )
     # Add a test tag to a file entity
     if file_md5:
         file_entity_id = f"{COLLECTION}:file:{file_md5}"

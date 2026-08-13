@@ -96,43 +96,31 @@ MBC_NAMESPACE = "mbc"
 YARA_NAMESPACE = "yara"
 
 # Written by `rulezet_service` from the MISP-style tags it produces for mirrored
-# rules. `misp:` keeps a galaxy's own shape (`misp:tool:cobalt-strike`), and
-# `rulezet:` is the catch-all for source namespaces the config did not route
-# anywhere in particular -- so an unmapped tag is still recorded rather than
-# silently lost.
+# rules. `misp:` keeps a galaxy's own shape (`misp:tool:cobalt-strike`); a
+# source namespace the config did not route keeps its own name
+# (`runtime-packer:pe:upx`) rather than being folded under a catch-all, so an
+# unmapped tag is still recorded rather than silently lost. `rulezet:` is not a
+# catch-all: it holds mirrored rule *names* only (`rulezet:ELF_Toriilike_persist`,
+# written by `_match_tags`), which is the ruleset axis.
 MISP_NAMESPACE = "misp"
-RULEZET_NAMESPACE = "rulezet"
 
 # Vulnerability ids, flat: `cve:cve-2021-44228`, `ghsa:ghsa-j8v8-6h6r-m6pq`.
 # Flat because an id is already the whole identity -- there is no second segment
 # to roll up on.
 VULN_NAMESPACES = ("cve", "ghsa", "pysec")
 
-# The namespaces a tag id may lead with. Anything else is human-typed and gets
-# moved under `user:` -- an unnamespaced tag must never land on an analysis axis.
-KNOWN_NAMESPACES = (
-    (
-        "origin",
-        "severity",
-        "category",
-        "user",
-        CAPA_NAMESPACE,
-        MITRE_NAMESPACE,
-        MBC_NAMESPACE,
-        YARA_NAMESPACE,
-        MISP_NAMESPACE,
-        RULEZET_NAMESPACE,
-    )
-    + VULN_NAMESPACES
-    + FILE_SCOPE_NAMESPACES
-)
-
 
 def namespaced(tag_id):
-    """A tag id with a namespace guaranteed: bare `mytag` -> `user:mytag`."""
+    """A tag id with a namespace guaranteed: bare `mytag` -> `user:mytag`.
+
+    A colon is the whole test. A closed list of known namespaces would have to
+    grow every time the routing config names a new source taxonomy, and an
+    unlisted one would be buried under `user:` instead -- which is the bug that
+    put `runtime-packer:pe:upx` on the user axis. `migrate_tag` splits the same
+    way, so the two cannot disagree about what is already namespaced.
+    """
     raw = str(tag_id).strip()
-    head = raw.split(":", 1)[0].lower()
-    return raw if head in KNOWN_NAMESPACES else f"user:{raw}"
+    return raw if ":" in raw else f"user:{raw}"
 
 
 def origin_tag(kind, name, version=None, func=None):
@@ -347,7 +335,7 @@ DEFAULT_TAG_MAP = {
     "cve": "cve",
     "ghsa": "ghsa",
     "pysec": "pysec",
-    "*": RULEZET_NAMESPACE,
+    "*": "",
 }
 DEFAULT_DROPS = ("tlp:*", "pap:*")
 
@@ -409,17 +397,20 @@ def route_source_tag(raw, tag_map=None, drops=None):
     if key is None:
         return None
     target = tag_map[key]
-    if not target:  # `"tlp" = false` reads as "drop this namespace"
+    if (
+        target is False or target is None
+    ):  # `"tlp" = false` reads as "drop this namespace"
         return None
 
     literal = str(key).split("*", 1)[0].rstrip(":")
     rest = namespace[len(literal) :].strip(":") if literal else namespace
 
-    if str(target).split(":")[0] == MITRE_NAMESPACE:
+    if target and str(target).split(":")[0] == MITRE_NAMESPACE:
         found = _MITRE_ID.search(value)
         return f"{MITRE_NAMESPACE}:{found.group(0).lower()}" if found else None
 
-    parts = [str(target)] + [tag_slug(p) for p in rest.split(":") if p]
+    parts = [str(target)] if target else []
+    parts.extend([tag_slug(p) for p in rest.split(":") if p])
     parts.append(tag_slug(value))
     return namespaced(":".join(p for p in parts if p))
 
@@ -559,6 +550,22 @@ def migrate_tag(tag_id):
     if head in ORIGIN_KINDS:
         return [migrate_origin(raw)]
 
+    # `rulezet:` used to be the catch-all for every source namespace the routing
+    # config did not name, so the taxonomy it swallowed is still in the id:
+    # `rulezet:ms-caro-malware-full:malware-platform:linux` -> drop the prefix
+    # and the source namespace stands on its own. A two-segment id is a mirrored
+    # rule *name* (`rulezet:ELF_Toriilike_persist`), which is what `rulezet:`
+    # means now, so that one is already current.
+    if head == "rulezet" and len(parts) > 2:
+        return [":".join(parts[1:])]
+
+    # Any other namespaced id is a source taxonomy `route_source_tag` kept as
+    # its own (`runtime-packer:pe:upx`, `misp:tool:cobalt-strike`). Same test as
+    # `namespaced()`: one colon means someone already namespaced this, and
+    # burying it under `user:` is how it ends up on the wrong axis.
+    if len(parts) > 1:
+        return [raw]
+
     return [f"user:{raw}"]
 
 
@@ -626,6 +633,26 @@ def demo():
         assert migrate_tag(t) == [t], t
     # Human-typed, no namespace.
     assert migrate_tag("mirai") == ["user:mirai"]
+    # The old `rulezet:` catch-all comes off, and the source taxonomy it hid
+    # becomes the namespace -- the tag id `route_source_tag` writes today.
+    assert migrate_tag("rulezet:ms-caro-malware-full:malware-platform:linux") == [
+        "ms-caro-malware-full:malware-platform:linux"
+    ]
+    assert migrate_tag("rulezet:runtime-packer:pe:upx") == ["runtime-packer:pe:upx"]
+    # A two-segment `rulezet:` id is a mirrored rule name, which is current.
+    assert migrate_tag("rulezet:ELF_Toriilike_persist") == [
+        "rulezet:ELF_Toriilike_persist"
+    ]
+    # Namespaces this function never listed must not be buried under `user:`:
+    # that is how `misp:tool:cobalt-strike` would have left the family axis on
+    # the first migration run.
+    for t in (
+        "misp:tool:cobalt-strike",
+        "ms-caro-malware-full:malware-platform:linux",
+        "runtime-packer:pe:upx",
+        "cve:cve-2021-44228",
+    ):
+        assert migrate_tag(t) == [t], t
 
     assert is_taxonomy_tag("severity:high")
     assert is_taxonomy_tag("category:network:c2")
@@ -829,21 +856,21 @@ def demo():
     # An attack-pattern cluster with no technique id is not an ATT&CK fact.
     assert r('misp-galaxy:mitre-attack-pattern="Some Prose"') is None
     # Unrouted namespaces are kept, not lost -- the whole source path survives.
-    assert r('runtime-packer:pe="upx"') == "rulezet:runtime-packer:pe:upx"
+    assert r('runtime-packer:pe="upx"') == "runtime-packer:pe:upx"
     # ms-caro is 97% of the sidecar, and its two predicates are the reason it
     # stays: `malware-type` and `malware-platform` are different questions, and
     # the family tree nests on that segment rather than flattening to the leaf.
     assert r('ms-caro-malware-full:malware-type="Trojan"') == (
-        "rulezet:ms-caro-malware-full:malware-type:trojan"
+        "ms-caro-malware-full:malware-type:trojan"
     )
     assert r('ms-caro-malware-full:malware-platform="Linux"') == (
-        "rulezet:ms-caro-malware-full:malware-platform:linux"
+        "ms-caro-malware-full:malware-platform:linux"
     )
     assert r("cve:CVE-2021-44228") == "cve:cve-2021-44228"
     assert r("ghsa:GHSA-j8v8-6h6r-m6pq") == "ghsa:ghsa-j8v8-6h6r-m6pq"
     # Distribution markers: the family and a single value.
     assert r("tlp:clear") is None and r("tlp:white") is None and r("pap:clear") is None
-    assert r("tlp:red", drops=["tlp:white"]) == "rulezet:tlp:red"
+    assert r("tlp:red", drops=["tlp:white"]) == "tlp:red"
     # `false` as a target reads as "drop this namespace".
     assert r('misp-galaxy:tool="Netcat"', {"misp-galaxy:*": False}) is None
     # No catch-all configured -> an unrouted tag is dropped rather than guessed.

@@ -6,7 +6,7 @@ string and nothing else. Nothing here is on the search path, and nothing here
 changes what a tag is.
 
 The data is **normalised**, because it has to be: a tag like
-`rulezet:ms-caro-malware-full:malware-platform:linux` is carried by tens of
+`ms-caro-malware-full:malware-platform:linux` is carried by tens of
 thousands of rules, and a broad mirror is ~214k rules. So a rule's metadata is
 stored exactly once, and everything else refers to it by id:
 
@@ -32,7 +32,9 @@ A future FunctionID/SPDX source adds a prefix here and nothing else changes.
 """
 
 import json
-from urllib.parse import urlencode
+import re
+from pathlib import Path
+from urllib.parse import quote, urlencode
 
 RULE_META_KEY = "global:rule_meta"
 TAG_RULES_PREFIX = "global:tag_rules:"
@@ -102,18 +104,22 @@ def _is_mirror_rule(ns):
 # --- Metadata rows ----------------------------------------------------------
 
 
-def rulezet_url(title):
-    """Deep link to one rule on rulezet.org.
+def rulezet_url(uuid, title=None):
+    """Permalink to one rule on rulezet.org.
 
-    rulezet has **no per-rule permalink** -- its rule list is a JS table over
-    `get_rules_page_filter` and no `/rule/<uuid>` route exists (checked against
-    rulezet-core's own blueprint). The exact-title filter is the closest thing
-    that resolves to a single rule, and `rules_list` forwards its whole query
-    string into that filter, so this is a real deep link.
+    `/rule/detail_rule/<uuid>` is a real route in rulezet-core's rule blueprint
+    (it takes the uuid as a string; the sibling int route takes the numeric id),
+    and the mirror stores every rule under its uuid, so the id we already hold
+    *is* the permalink. Falls back to the exact-title filter on `rules_list`
+    only when there is no uuid to link.
     """
     from bsimvis.app.services.rulezet_service import DEFAULT_URL, cfg
 
     base = (cfg("url") or DEFAULT_URL).rstrip("/")
+    if uuid:
+        return f"{base}/rule/detail_rule/{quote(str(uuid))}"
+    if not title:
+        return None
     query = urlencode({"search": title, "search_field": "title", "exact_match": "true"})
     return f"{base}/rule/rules_list?{query}"
 
@@ -128,10 +134,9 @@ def rule_url(rid, row):
     if source == "capa":
         return f"{CAPA_RULES_REPO}/" + rid.split(":", 1)[1]
     if source == "rulezet":
-        title = row.get("title")
-        # Without a title there is no honest link: rulezet's only single-rule
-        # URL is by exact title. The uuid still identifies the rule.
-        return rulezet_url(title) if title else None
+        # The rid *is* the rulezet uuid for a mirrored rule, so this is a
+        # permalink; title is only the fallback for a row with no usable id.
+        return rulezet_url(rid, row.get("title"))
     return row.get("upstream") or None
 
 
@@ -153,6 +158,31 @@ def rulezet_row(rule, tags=None):
     if tags:
         row["tags"] = sorted(tags)
     return {k: v for k, v in row.items() if v}
+
+
+def match_rule_id(match):
+    """The rule id one match is stored under -- mirror uuid, or vendored id."""
+    ns = str(getattr(match, "namespace", "") or "")
+    if _is_mirror_rule(ns):
+        return ns
+    return yara_rule_id(_vendored_path(ns), match.rule)
+
+
+def match_offsets(matches):
+    """`{file offset: {rule id, ...}}` -- which rules fired at each offset.
+
+    Attributing an offset to a function needs Ghidra's memory map, so that stays
+    the caller's job (`_funcs_by_offset`). This only carries the ids, and it
+    keys them the way `match_rows` keys its rows, so a function's hit list can
+    never name a rule the table cannot describe.
+    """
+    out = {}
+    for match in matches:
+        rid = match_rule_id(match)
+        for string_match in getattr(match, "strings", None) or []:
+            for instance in getattr(string_match, "instances", None) or []:
+                out.setdefault(instance.offset, set()).add(rid)
+    return out
 
 
 def match_rows(matches, extra=None):
@@ -188,7 +218,7 @@ def match_rows(matches, extra=None):
             }
         else:
             path = _vendored_path(ns)
-            rows[yara_rule_id(path, match.rule)] = {
+            rows[match_rule_id(match)] = {
                 "source": "yara",
                 "name": match.rule,
                 "path": path,
@@ -247,9 +277,22 @@ def put_rules(rows, r=None):
 
     written = 0
     for rid, current in zip(ids, existing):
-        if current:
-            continue
         row = rows[rid]
+        if current:
+            try:
+                stored = json.loads(current)
+            except ValueError:
+                stored = {}
+            old_tags = set(stored.get("tags") or [])
+            new_tags = set(row.get("tags") or [])
+            if new_tags - old_tags:
+                stored["tags"] = sorted(old_tags | new_tags)
+                r.hset(RULE_META_KEY, rid, json.dumps(stored))
+                for tag in new_tags - old_tags:
+                    r.sadd(TAG_RULES_PREFIX + tag, rid)
+                written += 1
+            continue
+
         r.hset(RULE_META_KEY, rid, json.dumps(row))
         for tag in row.get("tags") or []:
             r.sadd(TAG_RULES_PREFIX + tag, rid)
@@ -396,6 +439,66 @@ def tag_rules(tag, offset=0, limit=50, r=None):
     return total, rule_meta(ids, r)
 
 
+def rule_text(rid, max_bytes=20000):
+    """The rule's own source text, read from disk on demand.
+
+    Never stored: the mirror already has every rule as `rules/<uuid>.yara` and
+    the vendored ruleset is a checkout, so the text is one file read away. capa
+    rules live in the upstream repo only -- those get a link, not a preview.
+    """
+    if not rid:
+        return None
+    if rid.startswith("capa:"):
+        return None
+
+    if rid.startswith("yara:"):
+        from bsimvis.app.services.yara_service import rules_dir
+
+        path, _, name = rid.split(":", 1)[1].partition("#")
+        p = Path(rules_dir()) / path
+        # A vendored file holds many rules; show only the one that fired.
+        return _one_rule(_read(p, max_bytes), name)
+
+    from bsimvis.app.services.rulezet_service import paths
+
+    p = paths()
+    for d in (p["rules"], p["quarantine"]):
+        text = _read(d / f"{rid}.yara", max_bytes)
+        if text:
+            return text
+    return None
+
+
+def _read(path, max_bytes):
+    try:
+        if not path.is_file():
+            return None
+        return path.read_text(errors="replace")[:max_bytes]
+    except OSError:
+        return None
+
+
+def _one_rule(text, name):
+    """The `rule <name> { ... }` block out of a multi-rule file."""
+    if not text or not name:
+        return text
+    m = re.search(rf"^\s*(?:private\s+|global\s+)*rule\s+{re.escape(name)}\b", text, re.M)
+    if not m:
+        return text
+    start = m.start()
+    depth, i = 0, text.index("{", m.end() - 1) if "{" in text[m.end() - 1 :] else -1
+    if i < 0:
+        return text[start:]
+    for j in range(i, len(text)):
+        if text[j] == "{":
+            depth += 1
+        elif text[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : j + 1]
+    return text[start:]
+
+
 def demo():
     """Cover the joins that only fail for real: id shape, grouping, paging."""
 
@@ -442,14 +545,16 @@ def demo():
         {
             uuid: rulezet_row(
                 {"title": "Some Rule Title", "author": "someone", "license": "MIT"},
-                tags=["rulezet:platform:linux", "yara:trojan:x:Mirror_Rule"],
+                tags=["platform:linux", "rulezet:Mirror_Rule", "yara:trojan:x:Mirror_Rule"],
             )
         },
         r,
     )
-    total, rules = tag_rules("rulezet:platform:linux", r=r)
+    total, rules = tag_rules("platform:linux", r=r)
     assert total == 1 and uuid in rules, (total, rules)
-    assert "search=Some+Rule+Title" in rules[uuid]["url"], rules[uuid]
+    # The uuid is the permalink; the title filter is only the no-uuid fallback.
+    assert rules[uuid]["url"].endswith(f"/rule/detail_rule/{uuid}"), rules[uuid]
+    assert "search=Some+Rule+Title" in rulezet_url(None, "Some Rule Title")
     assert "content" not in rules[uuid] and "url" not in r.h[RULE_META_KEY][uuid]
 
     # A scan-time row must not clobber what the sync knows.
@@ -459,6 +564,27 @@ def demo():
     # Vendored ids carry file *and* rule name; capa ids are the namespace.
     rows = match_rows([M("R", "/rules/elastic/a.yar", {"author": "Elastic"})])
     (vid,) = rows
+
+    # Per-offset ids use the *same* keys as the rows, or a function's hit list
+    # names rules the table cannot describe. Two rules on one offset is the
+    # normal case, not an edge case.
+    class S:
+        def __init__(self, *offsets):
+            self.instances = [type("I", (), {"offset": o})() for o in offsets]
+
+    m1 = M("R", "/rules/elastic/a.yar")
+    m1.strings = [S(0x100, 0x200)]
+    m2 = M("Q", "/rules/elastic/b.yar")
+    m2.strings = [S(0x200)]
+    offsets = match_offsets([m1, m2])
+    assert offsets == {
+        0x100: {"yara:/rules/elastic/a.yar#R"},
+        0x200: {"yara:/rules/elastic/a.yar#R", "yara:/rules/elastic/b.yar#Q"},
+    }, offsets
+    assert match_rule_id(m1) in rows, (match_rule_id(m1), list(rows))
+    # A condition-only rule has no string instances: file level or nothing.
+    assert match_offsets([M("C", "/rules/x.yar")]) == {}
+
     assert vid == "yara:/rules/elastic/a.yar#R", vid
     assert rows[vid]["author"] == "Elastic", rows[vid]
     crows = capa_rows(
@@ -486,7 +612,7 @@ def demo():
     )
     by_entity, table = match_provenance("coll", ["f1", "f2", "f3"], r)
     assert set(by_entity) == {"f1", "f2"}, by_entity
-    assert by_entity["f1"]["rulezet:platform:linux"] == [uuid], by_entity["f1"]
+    assert by_entity["f1"]["platform:linux"] == [uuid], by_entity["f1"]
     assert by_entity["f2"] == {"yara:unknown:unknown:R": [vid]}, by_entity["f2"]
     assert set(table) == {uuid, vid}, table
     assert table[vid]["path"] == "/rules/elastic/a.yar", table[vid]
@@ -505,12 +631,12 @@ def demo():
     # Paging: the count is the answer for a broad tag, not the id list.
     put_rules_bulk(
         {
-            f"u{i}": {"source": "rulezet", "tags": ["rulezet:platform:linux"]}
+            f"u{i}": {"source": "rulezet", "tags": ["platform:linux"]}
             for i in range(120)
         },
         r,
     )
-    total, page = tag_rules("rulezet:platform:linux", offset=0, limit=10, r=r)
+    total, page = tag_rules("platform:linux", offset=0, limit=10, r=r)
     assert total == 121 and len(page) == 10, (total, len(page))
 
     print("tag_provenance demo OK")

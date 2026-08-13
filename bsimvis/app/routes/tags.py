@@ -197,9 +197,11 @@ def get_tag_provenance():
 
     from bsimvis.app.services.tag_provenance import tag_rules, _row_from_id, rule_url
 
-    out = {}
+    out, counts = {}, {}
     for tag in tags:
-        _, rules = tag_rules(tag)
+        # `tag_rules` is paged, and for a broad mirror tag the count *is* the
+        # answer -- 50 rows out of 21k must not read as "these are the rules".
+        total, rules = tag_rules(tag)
 
         if not rules and tag.startswith("capa:"):
             ns = tag.split("capa:", 1)[1].replace(":", "/")
@@ -214,8 +216,25 @@ def get_tag_provenance():
                 row["id"] = rid
             res.append(row)
         out[tag] = res
+        counts[tag] = total or len(res)
 
-    return {"provenance": out}
+    return {"provenance": out, "counts": counts}
+
+
+def get_rule_source():
+    """Returns `{id, text}` for one rule -- its source, read on demand.
+
+    Its own endpoint rather than a field on `/provenance`: a provenance answer
+    can carry 50 rules and nobody reads 50 rule bodies, so the text is fetched
+    only for the one the popup is actually showing.
+    """
+    rid = (request.args.get("id") or "").strip()
+    if not rid:
+        return {"error": "Missing parameters"}, 400
+
+    from bsimvis.app.services.tag_provenance import rule_text
+
+    return {"id": rid, "text": rule_text(rid)}
 
 
 def get_match_provenance():

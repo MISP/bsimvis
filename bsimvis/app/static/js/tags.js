@@ -404,7 +404,10 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
 
     const addOnClick = `startAddTag(event, ${jsString(etype)}, ${jsString(eid)})`;
 
-    const analysisHtml = tagsList.map(t => `<span class="analysis-tag-badge" style="cursor:pointer;" title="Analysis Tag: ${escapeAttr(t)} (click for source)">${escapeHtml(t)}</span>`).join('');
+    // The entity id rides on the badge so the provenance popup can ask "which
+    // rule fired *here*" (match_provenance) before falling back to "which rules
+    // can emit this tag at all" (tag_rules).
+    const analysisHtml = tagsList.map(t => `<span class="analysis-tag-badge" style="cursor:pointer;" data-eid="${escapeAttr(eid)}" title="Analysis Tag: ${escapeAttr(t)} (click for source)">${escapeHtml(t)}</span>`).join('');
 
     const userHtml = userTagsList.map(t => {
         if (t === 'bookmark' || t === 'ignore') return '';
@@ -1310,77 +1313,226 @@ window.addEventListener('message', (event) => {
 // this. Delegated off document rather than wired per badge, so every place
 // that renders an .analysis-tag-badge gets it without knowing about it.
 
-window.showTagProvenance = (e, tag) => {
+// `<coll>:file:<md5>` / `<coll>:func:<md5>:<addr>` -> the collection. Pool
+// collections are themselves prefixed (`global:pool:x:file:...`), so the split
+// is on the entity kind rather than on the first colon.
+const provEntityCollection = (eid) => String(eid || '').replace(/:(file|func):.*$/, '');
+
+// Rule text is fetched per rule id, once. A mirror rule body is a few KB and a
+// popup gets reopened constantly, so the cache is worth its one line.
+const provSourceCache = {};
+
+const provRuleSource = (rid) => {
+    if (rid in provSourceCache) return Promise.resolve(provSourceCache[rid]);
+    return fetch(`/api/tags/rule_source?id=${encodeURIComponent(rid)}`)
+        .then((res) => res.json())
+        .then((data) => (provSourceCache[rid] = (data && data.text) || null))
+        .catch(() => null);
+};
+
+window.showTagProvenance = (e, tag, eid) => {
     let el = document.getElementById('tag-provenance-popup');
     if (!el) {
         el = document.createElement('div');
         el.id = 'tag-provenance-popup';
-        el.style.cssText = "position:fixed; z-index:20015; background:var(--card-bg); border:1px solid var(--border); padding:12px 14px; border-radius:8px; display:none; font-size:0.78rem; color:var(--text); max-width:420px; box-shadow:0 8px 24px rgba(0,0,0,0.35);";
+        el.style.cssText = "position:fixed; z-index:20015; background:var(--card-bg); border:1px solid var(--border); padding:0; border-radius:8px; display:none; font-size:0.78rem; color:var(--text); width:520px; max-width:92vw; box-shadow:0 8px 24px rgba(0,0,0,0.35);";
         document.body.appendChild(el);
+        // Hoverable: the pointer leaving the badge must be able to land in the
+        // popup without it closing, so both ends cancel the pending close.
+        el.addEventListener('mouseenter', () => window.cancelTagProvenanceClose());
+        el.addEventListener('mouseleave', () => window.hideTagProvenance(400));
     }
 
     const row = (label, value) => value
-        ? `<div style="display:grid; grid-template-columns:70px 1fr; gap:4px 10px; margin-top:3px;">
+        ? `<div style="display:grid; grid-template-columns:78px 1fr; gap:4px 10px; margin-top:3px;">
                <span style="color:var(--dim)">${label}</span>
                <span style="word-break:break-all;">${escapeHtml(String(value))}</span>
            </div>`
         : '';
 
-    el.innerHTML = `<div style="color:var(--dim)">Looking up <b>${escapeHtml(tag)}</b>...</div>`;
+    const chips = (tags) => (tags && tags.length)
+        ? `<div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:6px;">` +
+          tags.map(t => `<span style="background:var(--hover); border:1px solid var(--border); border-radius:10px; padding:1px 7px; font-size:0.7rem;">${escapeHtml(String(t))}</span>`).join('') +
+          `</div>`
+        : '';
+
+    el.innerHTML = `<div style="padding:12px 14px; color:var(--dim)">Looking up <b>${escapeHtml(tag)}</b>...</div>`;
     el.style.display = 'block';
 
     let x = e.clientX + 12, y = e.clientY + 12;
-    if (x + 440 > window.innerWidth) x = Math.max(10, window.innerWidth - 450);
-    if (y + 220 > window.innerHeight) y = Math.max(10, window.innerHeight - 230);
+    if (x + 540 > window.innerWidth) x = Math.max(10, window.innerWidth - 550);
+    if (y + 380 > window.innerHeight) y = Math.max(10, window.innerHeight - 390);
     el.style.left = x + 'px';
     el.style.top = y + 'px';
 
-    fetch(`/api/tags/provenance?tag=${encodeURIComponent(tag)}`)
+    const header = (note) => `
+        <div style="padding:10px 14px 8px; border-bottom:1px solid var(--border); background:var(--hover); border-radius:8px 8px 0 0;">
+            <div style="font-weight:bold; display:flex; justify-content:space-between; gap:10px; align-items:center;">
+                <span style="word-break:break-all;">${escapeHtml(tag)}</span>
+                <span id="tag-prov-close" style="color:var(--dim); cursor:pointer; font-size:1rem;">&times;</span>
+            </div>
+            ${note ? `<div style="color:var(--dim); margin-top:4px;">${escapeHtml(note)}</div>` : ''}
+        </div>`;
+
+    // One card per rule. The rule text is the expensive half, so it loads for
+    // the first card only and the rest load when their toggle is clicked.
+    const card = (r, i) => `
+        <div style="padding:8px 14px; border-bottom:1px solid var(--border);">
+            <div style="color:var(--accent); font-weight:bold; word-break:break-all;">${escapeHtml(r.title || r.name || r.source || r.id || '')}</div>
+            ${row('Origin', r.source)}
+            ${row('Rule id', r.id)}
+            ${row('Rule name', r.title && r.name ? r.name : '')}
+            ${row('File', r.path)}
+            ${row('Format', r.format)}
+            ${row('Author', r.author)}
+            ${row('License', r.license)}
+            ${row('Upstream', r.upstream)}
+            ${chips(r.tags)}
+            <div style="margin-top:7px; display:flex; gap:12px;">
+                ${r.id ? `<span class="tag-prov-toggle" data-rid="${escapeAttr(r.id)}" data-idx="${i}" style="color:var(--accent); cursor:pointer;">Rule text</span>` : ''}
+                ${r.url ? `<a href="${escapeAttr(r.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Open source &nearr;</a>` : ''}
+            </div>
+            <pre id="tag-prov-src-${i}" style="display:none; margin:7px 0 0; padding:8px; background:var(--hover); border:1px solid var(--border); border-radius:6px; max-height:220px; overflow:auto; white-space:pre; font-size:0.72rem; line-height:1.35;"></pre>
+        </div>`;
+
+    const loadInto = (rid, pre) => {
+        pre.style.display = 'block';
+        pre.textContent = 'Loading rule...';
+        provRuleSource(rid).then((text) => {
+            pre.textContent = text || 'Rule text not available locally (see Open source).';
+        });
+    };
+
+    const paint = (records, note) => {
+        const body = records.length
+            ? records.map(card).join('')
+            : `<div style="padding:10px 14px; color:var(--dim); font-style:italic;">No source recorded for this tag.</div>`;
+        // Scrolls as one list: many rules stay reachable without the popup
+        // growing past the viewport, and each rule body scrolls inside its own
+        // box so the outer scroll position does not jump when one expands.
+        el.innerHTML = header(note) +
+            `<div style="max-height:min(60vh, 520px); overflow-y:auto;">${body}</div>`;
+
+        const close = el.querySelector('#tag-prov-close');
+        if (close) close.onclick = () => window.hideTagProvenance(0);
+
+        el.querySelectorAll('.tag-prov-toggle').forEach((t) => {
+            t.onclick = () => {
+                const pre = el.querySelector(`#tag-prov-src-${t.dataset.idx}`);
+                if (!pre) return;
+                if (pre.style.display === 'block') { pre.style.display = 'none'; return; }
+                loadInto(t.dataset.rid, pre);
+            };
+        });
+
+        if (records.length && records[0].id) {
+            const first = el.querySelector('#tag-prov-src-0');
+            if (first) loadInto(records[0].id, first);
+        }
+    };
+
+    // Endpoint B: the whole ruleset, not this entity. Paged, so the count is
+    // half the answer -- without it 50 rows read as "these are the rules".
+    const showRuleset = () => fetch(`/api/tags/provenance?tag=${encodeURIComponent(tag)}`)
         .then(res => res.json())
         .then(data => {
             const records = (data && data.provenance && data.provenance[tag]) || [];
-            const header = `
-                <div style="font-weight:bold; margin-bottom:8px; border-bottom:1px solid var(--border); padding-bottom:6px; display:flex; justify-content:space-between; gap:10px;">
-                    <span>${escapeHtml(tag)}</span>
-                    <span id="tag-prov-close" style="color:var(--dim); cursor:pointer;">&times;</span>
-                </div>`;
-
-            if (!records.length) {
-                el.innerHTML = header + `<div style="color:var(--dim); font-style:italic;">No source recorded for this tag.</div>`;
-            } else {
-                el.innerHTML = header + records.map(r => `
-                    <div style="padding:6px 0; border-bottom:1px solid var(--border);">
-                        <div style="color:var(--accent); font-weight:bold;">${escapeHtml(r.name || r.title || r.source || '')}</div>
-                        ${row('Source', r.source)}
-                        ${row('Rule id', r.id)}
-                        ${row('File', r.path)}
-                        ${row('Author', r.author)}
-                        ${row('License', r.license)}
-                        ${row('Upstream', r.upstream)}
-                        ${r.url ? `<div style="margin-top:6px;"><a href="${escapeAttr(r.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Open source &nearr;</a></div>` : ''}
-                    </div>`).join('');
-            }
-            const close = document.getElementById('tag-prov-close');
-            if (close) close.onclick = () => { el.style.display = 'none'; };
-        })
-        .catch(() => {
-            el.innerHTML = `<div style="color:var(--dim)">Could not load provenance for ${escapeHtml(tag)}.</div>`;
+            const total = (data && data.counts && data.counts[tag]) || records.length;
+            const note = !records.length
+                ? ''
+                : records.length < total
+                    ? `Ruleset-wide: showing ${records.length} of ${total} rules that can emit this tag.`
+                    : `Ruleset-wide: ${total} rule${total === 1 ? '' : 's'} can emit this tag.`;
+            paint(records, note);
         });
+
+    // Endpoint A: the rules that actually fired on this entity. Recorded for
+    // the file and for every function a match resolved into; a function whose
+    // tag came from an offset that resolved nowhere has no entry and falls
+    // through to B, which is the honest answer for it.
+    const collection = provEntityCollection(eid);
+    const request = (eid && collection)
+        ? fetch('/api/tags/match_provenance', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ collection, entity_ids: [eid] }),
+          })
+              .then(res => res.json())
+              .then(data => {
+                  const ids = (((data && data.hits) || {})[eid] || {})[tag] || [];
+                  if (!ids.length) return showRuleset();
+                  const rules = (data && data.rules) || {};
+                  const where = eid.includes(':func:') ? 'function' : 'file';
+                  paint(
+                      ids.map(id => Object.assign({ id }, rules[id] || {})),
+                      `Matched here: ${ids.length} rule${ids.length === 1 ? '' : 's'} fired on this ${where}.`,
+                  );
+              })
+        : showRuleset();
+
+    request.catch(() => {
+        el.innerHTML = `<div style="color:var(--dim)">Could not load provenance for ${escapeHtml(tag)}.</div>`;
+    });
 };
+
+// A popup that is *entered* by the pointer cannot close on the badge's
+// mouseleave, so closing is always deferred and any re-entry cancels it.
+let provCloseTimer = null;
+let provOpenTimer = null;
+let provOpenFor = '';
+
+window.cancelTagProvenanceClose = () => {
+    if (provCloseTimer) { clearTimeout(provCloseTimer); provCloseTimer = null; }
+};
+
+window.hideTagProvenance = (delay) => {
+    window.cancelTagProvenanceClose();
+    const hide = () => {
+        const popup = document.getElementById('tag-provenance-popup');
+        if (popup) popup.style.display = 'none';
+        provOpenFor = '';
+    };
+    if (!delay) return hide();
+    provCloseTimer = setTimeout(hide, delay);
+};
+
+const provKey = (badge) => `${badge.textContent.trim()}|${badge.dataset.eid || ''}`;
+
+document.addEventListener('mouseover', (e) => {
+    const badge = e.target.closest && e.target.closest('.analysis-tag-badge');
+    if (!badge) return;
+    window.cancelTagProvenanceClose();
+    if (provKey(badge) === provOpenFor) return;
+    // Delayed so sweeping the pointer across a row of chips does not fire a
+    // request per chip.
+    clearTimeout(provOpenTimer);
+    provOpenTimer = setTimeout(() => {
+        provOpenFor = provKey(badge);
+        showTagProvenance(e, badge.textContent.trim(), badge.dataset.eid || '');
+    }, 250);
+});
+
+document.addEventListener('mouseout', (e) => {
+    const badge = e.target.closest && e.target.closest('.analysis-tag-badge');
+    if (!badge) return;
+    clearTimeout(provOpenTimer);
+    window.hideTagProvenance(400);
+});
 
 document.addEventListener('click', (e) => {
     const badge = e.target.closest && e.target.closest('.analysis-tag-badge');
     const popup = document.getElementById('tag-provenance-popup');
     if (badge) {
         e.stopPropagation();
-        showTagProvenance(e, badge.textContent.trim());
+        clearTimeout(provOpenTimer);
+        window.cancelTagProvenanceClose();
+        provOpenFor = provKey(badge);
+        showTagProvenance(e, badge.textContent.trim(), badge.dataset.eid || '');
     } else if (popup && !e.target.closest('#tag-provenance-popup')) {
-        popup.style.display = 'none';
+        window.hideTagProvenance(0);
     }
 });
 
 document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    const popup = document.getElementById('tag-provenance-popup');
-    if (popup) popup.style.display = 'none';
+    if (e.key === 'Escape') window.hideTagProvenance(0);
 });

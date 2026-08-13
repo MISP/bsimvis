@@ -41,6 +41,17 @@
     --color-s-low: 85%;
     --color-l-low: 60%;
     --color-l-dim: 50%;
+
+    /* Tag colour tones. A derived tag colour fixes only its hue; these carry
+       the rest, so the same tag stays itself in both themes. The three tones
+       are what tells two tags apart when their hues land close -- one lib reads
+       as cyan, its neighbour as deep blue. */
+    --tagc-s0: 65%;
+    --tagc-l0: 42%;
+    --tagc-s1: 80%;
+    --tagc-l1: 58%;
+    --tagc-s2: 45%;
+    --tagc-l2: 70%;
 }
 
 html.light-theme {
@@ -86,6 +97,15 @@ html.light-theme {
     --color-s-low: 75%;
     --color-l-low: 45%;
     --color-l-dim: 35%;
+
+    /* Same three tones, darkened: on white the depth steps have to lighten from
+       a floor low enough that the deepest shade is still readable. */
+    --tagc-s0: 70%;
+    --tagc-l0: 32%;
+    --tagc-s1: 85%;
+    --tagc-l1: 42%;
+    --tagc-s2: 50%;
+    --tagc-l2: 52%;
 }
 
 /* ── Breadcrumb ───────────────────────────────────────────── */

@@ -256,6 +256,17 @@ def get_match_provenance():
     return {"hits": out, "rules": rules}
 
 
+def get_color_config():
+    """The parameters the UI needs to derive a tag's colour from its id.
+
+    The rule lives in `tag_taxonomy`; only its parameters travel, because the
+    browser colours folded ids the backend never sees.
+    """
+    from bsimvis.app.services.tag_taxonomy import color_config
+
+    return color_config()
+
+
 def set_color():
     """Sets a custom color for a tag."""
     data = request.json or {}

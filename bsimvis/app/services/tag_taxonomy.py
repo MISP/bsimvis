@@ -109,6 +109,160 @@ MISP_NAMESPACE = "misp"
 # to roll up on.
 VULN_NAMESPACES = ("cve", "ghsa", "pysec")
 
+# --- Colour -----------------------------------------------------------------
+# A tag's colour is derived from its id, never assigned: a new namespace, a new
+# library, a new capa rule all get a stable colour the day they first appear,
+# with no table to update. One rule, two overrides.
+#
+# The rule is hue-interval subdivision. Start with the whole circle; each
+# segment of the id hashes to a narrower sub-interval of the one its parent
+# picked. So siblings land near each other and cousins land far: every `lib:` is
+# in one arc of the wheel, `openssl` and `libc` are distinguishable corners of
+# that arc, and `bundle:mirai` is nowhere near either. Segments past
+# `HUE_DEPTH` stop moving the hue and step the lightness/saturation instead --
+# `category:network:c2` is a shade of `category:network`, not a new colour.
+#
+# The two overrides: `severity:` is ordinal, so it gets the conventional ramp
+# rather than a hash, and a colour a human stored on a tag always wins (the UI
+# applies that one -- it is per-collection state, not vocabulary).
+SEVERITY_HUES = {"none": 120, "low": 55, "medium": 30, "high": 0}
+
+# How many segments *after* the namespace still move the hue; everything past
+# them shades instead. The namespace itself is always the first band, so one
+# means "namespace, then the tag's own group" -- `category:network` gets a hue
+# and `category:network:c2` gets a shade of it. Two is for namespaces whose
+# second segment is a kind rather than a thing: `origin:lib:libc` needs `lib`
+# for the family arc *and* `libc` for its own colour.
+HUE_DEPTH_DEFAULT = 1
+HUE_DEPTH = {
+    "origin": 2,
+    "capa": 2,
+    "yara": 2,
+    "misp": 2,
+}
+
+# What separates a namespace's segments, where it is not a colon. ATT&CK is the
+# case that forces this: a sub-technique is written `mitre:t1027.005` because
+# that is how ATT&CK writes it, so its second level hides behind a dot. Splitting
+# on it here gives sub-techniques their parent's hue for free, with no id change
+# and no migration.
+HUE_SPLIT = {"mitre": r"[:.]"}
+HUE_SPLIT_DEFAULT = r":"
+
+# Each subdivision keeps this fraction of the interval its parent picked, per
+# level. The first is narrow so unrelated groups land far apart; the second is
+# wide because it is subdividing an already-small arc, and `libc` still has to
+# be told from `openssl` inside it.
+HUE_SHRINK = (0.3, 0.55)
+
+# Positions within a level are quantised to slots rather than placed anywhere in
+# the interval. Hashing to a continuous position means two siblings can land a
+# degree apart by chance -- which they did, on the first pair anyone looks at.
+# Slots make the separation a floor instead of luck: two tags are either the
+# same slot or a whole slot apart.
+HUE_SLOTS = 12
+
+# Hue alone is not enough. Hashing places hues independently, so nothing stops
+# three groups landing within ten degrees of each other -- and inside a family
+# the interval is narrow by design, which is exactly where telling libc from
+# openssl matters most. So a second hashed dimension: a tone, indexing the
+# `--tagc-s{n}` / `--tagc-l{n}` pairs, which is what makes one lib read as cyan
+# and its neighbour as dark blue. Taken from a different part of the hash than
+# the hue so the two do not move together.
+#
+# ponytail: pure hash, no reserved table. Two tags can still collide outright;
+# if a pair you look at often does, pin those hues in a table here rather than
+# tuning the hash.
+TONES = 3
+
+# How far past HUE_DEPTH the shading goes before it stops getting lighter --
+# `origin:lib:libc:2.31:memcpy` must still read as libc.
+MAX_STEP = 3
+
+# Lightness added per step past HUE_DEPTH, in percentage points.
+STEP_LUM = 7
+
+
+# The ids both `demo()` and `scripts/test_tag_colors.js` pin, so the Python rule
+# and its JS mirror cannot drift into disagreeing about a tag's colour.
+COLOR_VECTORS = (
+    "severity:high",
+    "severity:low",
+    "origin:lib:libc",
+    "origin:lib:libc:2.31:memcpy",
+    "category:network",
+    "capa:host-interaction:file-system:write",
+    "mitre:t1027.005",
+    "cve:cve-2021-44228",
+)
+
+
+def _hash32(text):
+    """FNV-1a over UTF-16 code units.
+
+    Code units rather than UTF-8 bytes so the JS side can produce the same
+    number with `charCodeAt` -- the colour has to be identical in both, and the
+    ids in play are ASCII anyway.
+    """
+    h = 0x811C9DC5
+    for ch in str(text):
+        h = ((h ^ (ord(ch) & 0xFFFF)) * 0x01000193) & 0xFFFFFFFF
+    return h
+
+
+def tag_style(tag_id):
+    """`(hue, tone, step)` for a tag id.
+
+    Hue in degrees, tone indexing the S/L pairs, step how far the shade is
+    lightened past the tag's own colour. `hue` is None for an id with nothing to
+    hash (a bare namespace), which the UI draws grey.
+    """
+    tag_id = namespaced(tag_id)
+    ns = tag_id.split(":", 1)[0]
+    segs = [s for s in re.split(HUE_SPLIT.get(ns, HUE_SPLIT_DEFAULT), tag_id) if s]
+    rest = segs[1:]
+    if not rest:
+        return None, 0, 0
+
+    depth = HUE_DEPTH.get(ns, HUE_DEPTH_DEFAULT)
+    step = min(max(0, len(rest) - depth), MAX_STEP)
+    # Severity is ordinal, so it keeps the conventional ramp and one flat tone;
+    # its leaves would otherwise be four hashes with no order to read.
+    if ns == "severity" and rest[0] in SEVERITY_HUES:
+        return SEVERITY_HUES[rest[0]], 1, step
+
+    lo, span, h = 0.0, 360.0, 0
+    for i in range(min(depth, len(rest))):
+        # The whole prefix, not the segment alone: it salts the hash with the
+        # namespace, so two namespaces spread over the circle differently
+        # instead of putting `lib` and `network` on the same hue.
+        h = _hash32(":".join(segs[: i + 2]))
+        width = span * HUE_SHRINK[min(i, len(HUE_SHRINK) - 1)]
+        lo += (h % HUE_SLOTS) * (span - width) / (HUE_SLOTS - 1)
+        span = width
+    return round(lo + span / 2, 2), (h >> 20) % TONES, step
+
+
+def color_config():
+    """The rule's parameters, for the UI to apply the same rule client-side.
+
+    Shipped rather than a colour per tag because the UI invents ids the backend
+    never sees -- folding `origin:lib:libc:2.31` up to `origin:lib:libc` happens
+    in the browser, and that folded node still needs its colour.
+    """
+    return {
+        "severity_hues": SEVERITY_HUES,
+        "hue_depth": HUE_DEPTH,
+        "hue_depth_default": HUE_DEPTH_DEFAULT,
+        "hue_split": HUE_SPLIT,
+        "hue_split_default": HUE_SPLIT_DEFAULT,
+        "hue_shrink": list(HUE_SHRINK),
+        "hue_slots": HUE_SLOTS,
+        "tones": TONES,
+        "max_step": MAX_STEP,
+        "step_lum": STEP_LUM,
+    }
+
 
 def namespaced(tag_id):
     """A tag id with a namespace guaranteed: bare `mytag` -> `user:mytag`.
@@ -880,6 +1034,52 @@ def demo():
     for src in ('misp-galaxy:tool="X"', "cve:CVE-2021-1", 'misp-galaxy:x="y"'):
         assert not route_source_tag(src).startswith("user:"), src
     assert tag_slug("Cobalt Strike 4.0!") == "cobalt-strike-4-0"
+
+    # --- Colour -------------------------------------------------------------
+    # Severity keeps the ordinal ramp rather than a hash, and one flat tone so
+    # the four levels differ only in the way that carries the order.
+    assert tag_style("severity:high")[0] == 0
+    assert tag_style("severity:none")[0] == 120
+    assert len({tag_style(f"severity:{lv}")[1] for lv in SEVERITY_LEVELS}) == 1
+    # A family shares an arc: every lib sits closer to another lib than to the
+    # stdlib arc, because `origin:lib` picks the interval they all subdivide.
+    libs = [tag_style(f"origin:lib:{n}")[0] for n in ("libc", "openssl", "zlib")]
+    other = tag_style("origin:stdlib:libstdc++")[0]
+    assert max(libs) - min(libs) < min(abs(other - h) for h in libs), (libs, other)
+    # ...and are still told apart inside it, by slot or by tone.
+    assert len({tag_style(f"origin:lib:{n}")[:2] for n in ("libc", "openssl")}) == 2
+    # Past HUE_DEPTH the hue stops moving and the shade steps: a leaf is a shade
+    # of its group, and a version is a shade of its library.
+    assert tag_style("category:network:c2")[0] == tag_style("category:network")[0]
+    assert tag_style("category:network:c2")[2] == 1
+    assert tag_style("origin:lib:libc:2.31:memcpy")[2] == 2
+    assert tag_style("origin:lib:libc:2.31:memcpy:x:y:z")[2] == MAX_STEP
+    # ATT&CK splits on the dot, so a sub-technique is a shade of its technique.
+    assert tag_style("mitre:t1027.005")[0] == tag_style("mitre:t1027")[0]
+    assert tag_style("mitre:t1027.005")[2] == 1
+    assert tag_style("mitre:t1027")[0] != tag_style("mitre:t1059")[0]
+    # A flat namespace has no family to group by: one colour per id, no shade.
+    assert tag_style("cve:cve-2021-44228")[2] == 0
+    assert tag_style("cve:cve-2021-44228")[:2] != tag_style("cve:cve-2021-1")[:2]
+    # Same id, same colour, every run -- the whole point of deriving it.
+    assert tag_style("capa:host-interaction:file-system:write") == tag_style(
+        "capa:host-interaction:file-system:write"
+    )
+    # A bare tag is a user tag, and a bare namespace has nothing to hash.
+    assert tag_style("bookmark") == tag_style("user:bookmark")
+    assert tag_style("user:") == (None, 0, 0)
+    # The vectors `scripts/test_tag_colors.js` asserts the JS mirror against.
+    # Both sides must agree exactly or the same tag is two colours.
+    assert [tag_style(t) for t in COLOR_VECTORS] == [
+        (0, 1, 0),
+        (55, 1, 0),
+        (75.52, 0, 0),
+        (75.52, 0, 2),
+        (76.91, 0, 0),
+        (120.52, 0, 1),
+        (237.27, 0, 1),
+        (99.82, 0, 0),
+    ], [tag_style(t) for t in COLOR_VECTORS]
 
     rules = prompt_rules()
     assert "severity:<level>" in rules and "key_exchange" in rules

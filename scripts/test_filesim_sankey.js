@@ -19,7 +19,7 @@ const src = fs.readFileSync(
 // The file is browser-global script, not a module: run it with stubs and hand
 // back the pure grouping helpers plus the renderer (whose d3 calls are stubbed
 // so the built nodes/links can be inspected without a DOM).
-const load = new Function('window', 'document', 'd3', `
+const load = new Function('window', 'document', 'd3', 'TagColor', `
     ${src}
     return {
         fileSimSankeyGroups,
@@ -66,10 +66,18 @@ const d3Stub = {
     },
 };
 const container = { innerHTML: '', clientWidth: 900, clientHeight: 500 };
+// Colours are a tag's identity now, so the graph asks `TagColor` for them. The
+// real derivation is checked in `test_tag_colors.js`; here a legible stub keeps
+// the assertions about *which* tag a node was coloured for.
+const tagColorStub = {
+    config: () => ({}),
+    forTag: (id, o) => ((o && o.gray) ? `gray(${id})` : `color(${id})`),
+};
 const M = load(
     { addEventListener() {} },
     { getElementById: (id) => (id === 'bin-sim-filesim-sankey' ? container : null) },
-    d3Stub
+    d3Stub,
+    tagColorStub
 );
 
 // bins: {binIdx: [count_a, weight_a, count_b, weight_b]}

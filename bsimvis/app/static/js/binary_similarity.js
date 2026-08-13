@@ -226,6 +226,12 @@ function renderBinarySimilarityView(params) {
             .bsim-node:hover { background:var(--hover); }
             .bsim-node.selected { background:var(--hover); border-left-color:var(--accent); }
             .bsim-node .bsim-caret { width:12px; color:var(--subtle); flex-shrink:0; user-select:none; }
+            /* A whole row in the tag's colour would drown the tree, so the list
+               carries the colour as a dot and the graph carries it as area. */
+            .bsim-node .bsim-node-dot {
+                width:8px; height:8px; border-radius:50%; flex-shrink:0;
+            }
+            .bsim-node.bsim-drift .bsim-node-dot { display:none; }
             .bsim-node .bsim-node-label { flex:1; overflow:hidden; text-overflow:ellipsis; }
             .bsim-node .bsim-node-count { font-size:0.68rem; color:var(--dim); font-family:'Consolas',monospace; }
             .bsim-node .bsim-node-pct { font-size:0.72rem; color:var(--accent); font-family:'Consolas',monospace; width:40px; text-align:right; }
@@ -873,6 +879,7 @@ function fileSimNodeHtml(node, depth, out) {
              title="A: ${Math.round(node.a)} · B: ${Math.round(node.b)}"
              onclick="selectFileSimNode(${escapeAttr(jsString(node.id))}, event)">
             ${caret}
+            <span class="bsim-node-dot" style="background:${TagColor.forTag(node.id)};"></span>
             <span class="bsim-node-label">${escapeHtml(node.label)}</span>
             <span class="bsim-node-count">${Math.round(node.a)}/${Math.round(node.b)}</span>
             <span class="bsim-node-pct">${pct}</span>
@@ -1576,10 +1583,10 @@ function renderFileSim(data) {
 // Function graph tab's job. Depth is a namespace frontier over the tag ids
 // (`lib:libc:2.31`), so a whole namespace or a whole library folds to one node.
 
-// The crossed axis is a different question than the one the tag tree answers,
-// so it gets its own colour rather than the composition scale: a behaviour is a
-// finding, not a degree of agreement between the two binaries.
-const FILESIM_FLAG_COLOR = '#fd971f';
+// Colour here means "which tag", never "how well it matched". Match quality is
+// a number in the tooltip; hue is spent on the one thing the eye can track
+// across five columns and two axes, which is a tag's identity. `TagColor`
+// derives it from the tag id, so a node keeps its colour between views.
 
 // The axes the graph can draw, and the doc field each reads. `tags_summary` is
 // the origin axis under its historical name. Must mirror bin_sim_tags.AXES.
@@ -1792,6 +1799,12 @@ function renderFileSimSankey(data) {
     renderFileSimResplit(data.tags_stale);
     const container = document.getElementById('bin-sim-filesim-sankey');
     if (!container) return;
+    // Colours come from a config the page fetches once. Drawing before it lands
+    // would paint the whole graph grey, so the first render waits for it.
+    if (!TagColor.config()) {
+        TagColor.ready.then(() => renderFileSimSankey(data));
+        return;
+    }
     container.innerHTML = '';
 
     // Rows come from whichever axis is on the left, scoped by that axis's own
@@ -1836,14 +1849,21 @@ function renderFileSimSankey(data) {
         // mass is carried by both binaries.
         const comp = Math.max(totalA, totalB) > 0 ? Math.min(totalA, totalB) / Math.max(totalA, totalB) : 0;
         const score = g.cohDen > 0 ? g.cohNum / g.cohDen : 0;
-        const tagColor = `hsl(${comp * 120}, var(--color-s-med), var(--color-l-dim))`;
+        const tagColor = TagColor.forTag(g.key);
+        // Unmatched mass is the one flow with nothing to say about a pairing, so
+        // it drops the hue and keeps only the shading -- still separable where
+        // several unmatched bands stack, never competing with the tag colours.
+        const unmatchedColor = TagColor.forTag(g.key, { gray: true });
         const marker = g.expandable ? ' ▸' : '';
 
         // Each side is split by category at the source: a tag's shared mass and its
         // unmatched mass are separate side nodes. One node fanning out into both
         // reads as "all of original_code is shared AND unique", which it is not.
         const stat = `Composition: ${(comp * 100).toFixed(0)}%  ·  Match quality: ${(score * 100).toFixed(0)}%\n${g.tags} tag${g.tags === 1 ? '' : 's'} folded`;
-        const sColor = `hsl(${score * 120}, var(--color-s-med), var(--color-l-dim))`;
+        // The matched node in the middle is the same tag as the two ends, so it
+        // takes their colour: one unbroken band of a tag's colour across the
+        // graph, with the crossed axis as the only colour change in between.
+        const sColor = tagColor;
 
         if (g.sharedA > 0 || g.sharedB > 0) {
             const unionKeys = new Set([...g.flags.keys()]);
@@ -1874,6 +1894,13 @@ function renderFileSimSankey(data) {
 
                 const lbl = flagId ? fileSimFlagLabel(flagId) : 'unflagged';
                 const suffixLbl = hasFlags ? ` · ${lbl}` : '';
+                // A crossed node belongs to the other axis, so it wears that
+                // axis's tag colour -- the colour change mid-graph is the
+                // crossing. A combo is drawn as its first tag: the node is one
+                // rectangle and its label already names the rest.
+                const flagColor = flagId
+                    ? TagColor.forTag(String(flagId).split(FILESIM_COMBO_SEP)[0])
+                    : 'var(--dim)';
 
                 // A single mid node for THIS specific flag combination, separating the flows completely
                 const mid = addNode(`fsk_s_${i}_${k}`, `${g.label}${suffixLbl} shared (${fmt(Math.max(valA, valB))} ${suffix})`, sColor, {
@@ -1896,7 +1923,7 @@ function renderFileSimSankey(data) {
                         links.push({ source: outerA.index, target: mid.index, value: valA });
                     } else {
                         const flagA = addNode(`fsk_fl_a_${i}_${k}`, `${lbl} (${fmt(valA)} ${suffix})`,
-                            flagId ? FILESIM_FLAG_COLOR : 'var(--dim)', {
+                            flagColor, {
                                 align: 1, tagIdx: i, sort: i * 10 + k * 0.01,
                                 tip: flagId
                                     ? `${g.label} · ${lbl}\n${fmt(valA)} of ${fmt(g.sharedA)} matched ${suffix}`
@@ -1922,7 +1949,7 @@ function renderFileSimSankey(data) {
                         links.push({ source: mid.index, target: outerB.index, value: valB });
                     } else {
                         const flagB = addNode(`fsk_fl_b_${i}_${k}`, `${lbl} (${fmt(valB)} ${suffix})`,
-                            flagId ? FILESIM_FLAG_COLOR : 'var(--dim)', {
+                            flagColor, {
                                 align: 3, tagIdx: i, sort: i * 10 + k * 0.01,
                                 tip: flagId
                                     ? `${g.label} · ${lbl}\n${fmt(valB)} of ${fmt(g.sharedB)} matched ${suffix}`
@@ -1935,20 +1962,20 @@ function renderFileSimSankey(data) {
             });
         }
         if (g.uniqA > 0) {
-            const mid = addNode(`fsk_ua_${i}`, `${g.label} only in ${filenameA} (${fmt(g.uniqA)} ${suffix})`, '#f92672', {
+            const mid = addNode(`fsk_ua_${i}`, `${g.label} only in ${filenameA} (${fmt(g.uniqA)} ${suffix})`, unmatchedColor, {
                 align: COL_MID, tagIdx: i, sort: i * 10 + 1, tip: `${g.label}\nUnique to ${filenameA}: ${fmt(g.uniqA)} ${suffix}`,
             });
-            const n = addNode(`fsk_au_${i}`, `${g.label}${marker} unmatched (${fmt(g.uniqA)} ${suffix})`, '#f92672', {
+            const n = addNode(`fsk_au_${i}`, `${g.label}${marker} unmatched (${fmt(g.uniqA)} ${suffix})`, unmatchedColor, {
                 align: COL_A, tagIdx: i, sort: i * 10 + 1, tagKey: g.key, expandable: g.expandable,
                 tip: `${filenameA} · ${g.label} — unmatched\n${fmt(g.uniqA)} of ${fmt(totalA)} ${suffix}\n${stat}`,
             });
             links.push({ source: n.index, target: mid.index, value: g.uniqA });
         }
         if (g.uniqB > 0) {
-            const mid = addNode(`fsk_ub_${i}`, `${g.label} only in ${filenameB} (${fmt(g.uniqB)} ${suffix})`, '#66d9ef', {
+            const mid = addNode(`fsk_ub_${i}`, `${g.label} only in ${filenameB} (${fmt(g.uniqB)} ${suffix})`, unmatchedColor, {
                 align: COL_MID, tagIdx: i, sort: i * 10 + 2, tip: `${g.label}\nUnique to ${filenameB}: ${fmt(g.uniqB)} ${suffix}`,
             });
-            const n = addNode(`fsk_bu_${i}`, `${g.label}${marker} unmatched (${fmt(g.uniqB)} ${suffix})`, '#66d9ef', {
+            const n = addNode(`fsk_bu_${i}`, `${g.label}${marker} unmatched (${fmt(g.uniqB)} ${suffix})`, unmatchedColor, {
                 align: COL_B, tagIdx: i, sort: i * 10 + 2, tagKey: g.key, expandable: g.expandable,
                 tip: `${filenameB} · ${g.label} — unmatched\n${fmt(g.uniqB)} of ${fmt(totalB)} ${suffix}\n${stat}`,
             });
@@ -2012,6 +2039,24 @@ function renderFileSimSankey(data) {
         });
     });
 
+    // A link between two differently coloured nodes is a crossing between two
+    // axes, so it fades from one tag's colour to the other's rather than picking
+    // a side. Same colour at both ends needs no gradient.
+    const defs = svg.append('defs');
+    const linkFill = (d, i) => {
+        const from = d.source.color || 'var(--text)';
+        const to = d.target.color || 'var(--text)';
+        if (from === to) return from;
+        const id = `fsk-grad-${i}`;
+        const grad = defs.append('linearGradient')
+            .attr('id', id)
+            .attr('gradientUnits', 'userSpaceOnUse')
+            .attr('x1', d.source.x1).attr('x2', d.target.x0);
+        grad.append('stop').attr('offset', '0%').attr('stop-color', from);
+        grad.append('stop').attr('offset', '100%').attr('stop-color', to);
+        return `url(#${id})`;
+    };
+
     zoomG.append('g').selectAll('path')
         .data(graph.links)
         .enter().append('path')
@@ -2024,7 +2069,7 @@ function renderFileSimSankey(data) {
                     C ${x3},${d.target.y1} ${x2},${d.source.y1} ${x0},${d.source.y1}
                     Z`;
         })
-        .attr('fill', d => d.target.color || 'var(--text)')
+        .attr('fill', linkFill)
         .style('fill-opacity', 0.4)
         .on('mouseenter', function () { d3.select(this).style('fill-opacity', 0.75); })
         .on('mouseleave', function () { d3.select(this).style('fill-opacity', 0.4); })

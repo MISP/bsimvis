@@ -101,7 +101,9 @@ function getRawTagColor(analysisTags, userTags = []) {
         let meta = tagMetadata[t];
         if (t === 'bookmark') meta = { color: '#66d9ef', priority: 1000 };
         if (t === 'ignore') meta = { color: '#f92672', priority: 900 };
-        const color = safeCssColor((meta && meta.color) ? meta.color : '#66d9ef');
+        const color = (meta && meta.color)
+            ? safeCssColor(meta.color)
+            : TagColor.css(t);
         const priority = (meta && meta.priority !== undefined) ? meta.priority : 0;
 
         if (priority >= maxPrio) {
@@ -253,9 +255,12 @@ window.getTagMetadata = (tag) => {
     if (tag === 'ignore') return { color: window.tagInk('#f92672'), priority: 900 };
     const m = tagMetadata[tag] || (window.parent && window.parent.tagMetadata && window.parent.tagMetadata[tag]);
     if (m) return { ...m, color: window.tagInk(safeCssColor(m.color)) };
-    const palette = ["#FF5555", "#50FA7B", "#F1FA8C", "#BD93F9", "#FF79C6", "#8BE9FD", "#FFB86C", "#A6E22E", "#66D9EF", "#FFD700", "#FF69B4", "#7B68EE", "#48D1CC", "#00FF7F", "#F4A460"];
-    let hash = 0; for (let i = 0; i < tag.length; i++) hash = tag.charCodeAt(i) + ((hash << 5) - hash);
-    return { color: window.tagInk(palette[Math.abs(hash) % palette.length]), priority: 0 };
+    // No stored colour: derive one from the tag id. A fixed palette indexed by a
+    // hash of the whole name gave `category:network` and `category:crypto` two
+    // unrelated colours and `network` a third; `TagColor` keeps a namespace's
+    // tags in one arc and a leaf a shade of its group, and matches what the
+    // graphs paint for the same tag.
+    return { color: TagColor.css(tag), priority: 0 };
 };
 
 window.hideTooltip = () => {
@@ -698,7 +703,9 @@ function attachTagAutocomplete(input, onSelect) {
         tags.forEach(t => {
             const item = document.createElement('div');
             item.className = 'tag-suggestion-item';
-            const meta = tagMetadata[t] || { color: '#66d9ef', count: 0, priority: 0 };
+            // Through `getTagMetadata` so a suggestion's dot is the colour the
+            // tag will actually have once applied, derived or hand-picked.
+            const meta = { ...(tagMetadata[t] || { count: 0 }), ...window.getTagMetadata(t) };
             const isBookmark = (t === 'bookmark');
             const isIgnore = (t === 'ignore');
             item.innerHTML = `

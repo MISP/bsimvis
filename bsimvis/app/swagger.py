@@ -1627,6 +1627,15 @@ class TagStats(Resource):
         return get_tag_stats()
 
 
+@ns_tags.route("/colors")
+class TagColorConfig(Resource):
+    def get(self):
+        """Returns the parameters tag colours are derived from."""
+        from bsimvis.app.routes.tags import get_color_config
+
+        return get_color_config()
+
+
 @ns_tags.route("/color")
 class TagSetColor(Resource):
     @ns_tags.expect(

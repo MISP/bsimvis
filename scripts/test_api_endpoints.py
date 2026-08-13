@@ -1457,6 +1457,28 @@ def run_all_tests():
     all_tags = test_endpoint("GET", "/api/tags", params={"collection": COLLECTION})
     test_endpoint("GET", "/api/tags/metadata", params={"collection": COLLECTION})
 
+    # The parameters the UI derives tag colours from. Every field is load-bearing
+    # -- a missing one silently turns the graphs grey rather than erroring.
+    colors = test_endpoint("GET", "/api/tags/colors")
+    if colors:
+        missing = [
+            k
+            for k in (
+                "severity_hues",
+                "hue_depth",
+                "hue_depth_default",
+                "hue_split",
+                "hue_split_default",
+                "hue_shrink",
+                "hue_slots",
+                "tones",
+                "max_step",
+                "step_lum",
+            )
+            if k not in colors
+        ]
+        check("tags: colour config is complete", not missing, str(missing))
+
     # Tag provenance: the rule behind an analysis tag. Derived for `capa:`
     # (the tag id *is* the capa-rules path), stored at scan time for `yara:`.
     test_endpoint(

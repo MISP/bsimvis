@@ -32,7 +32,9 @@ A future FunctionID/SPDX source adds a prefix here and nothing else changes.
 """
 
 import json
-from urllib.parse import urlencode
+import re
+from pathlib import Path
+from urllib.parse import quote, urlencode
 
 RULE_META_KEY = "global:rule_meta"
 TAG_RULES_PREFIX = "global:tag_rules:"
@@ -102,18 +104,22 @@ def _is_mirror_rule(ns):
 # --- Metadata rows ----------------------------------------------------------
 
 
-def rulezet_url(title):
-    """Deep link to one rule on rulezet.org.
+def rulezet_url(uuid, title=None):
+    """Permalink to one rule on rulezet.org.
 
-    rulezet has **no per-rule permalink** -- its rule list is a JS table over
-    `get_rules_page_filter` and no `/rule/<uuid>` route exists (checked against
-    rulezet-core's own blueprint). The exact-title filter is the closest thing
-    that resolves to a single rule, and `rules_list` forwards its whole query
-    string into that filter, so this is a real deep link.
+    `/rule/detail_rule/<uuid>` is a real route in rulezet-core's rule blueprint
+    (it takes the uuid as a string; the sibling int route takes the numeric id),
+    and the mirror stores every rule under its uuid, so the id we already hold
+    *is* the permalink. Falls back to the exact-title filter on `rules_list`
+    only when there is no uuid to link.
     """
     from bsimvis.app.services.rulezet_service import DEFAULT_URL, cfg
 
     base = (cfg("url") or DEFAULT_URL).rstrip("/")
+    if uuid:
+        return f"{base}/rule/detail_rule/{quote(str(uuid))}"
+    if not title:
+        return None
     query = urlencode({"search": title, "search_field": "title", "exact_match": "true"})
     return f"{base}/rule/rules_list?{query}"
 
@@ -128,10 +134,9 @@ def rule_url(rid, row):
     if source == "capa":
         return f"{CAPA_RULES_REPO}/" + rid.split(":", 1)[1]
     if source == "rulezet":
-        title = row.get("title")
-        # Without a title there is no honest link: rulezet's only single-rule
-        # URL is by exact title. The uuid still identifies the rule.
-        return rulezet_url(title) if title else None
+        # The rid *is* the rulezet uuid for a mirrored rule, so this is a
+        # permalink; title is only the fallback for a row with no usable id.
+        return rulezet_url(rid, row.get("title"))
     return row.get("upstream") or None
 
 
@@ -434,6 +439,66 @@ def tag_rules(tag, offset=0, limit=50, r=None):
     return total, rule_meta(ids, r)
 
 
+def rule_text(rid, max_bytes=20000):
+    """The rule's own source text, read from disk on demand.
+
+    Never stored: the mirror already has every rule as `rules/<uuid>.yara` and
+    the vendored ruleset is a checkout, so the text is one file read away. capa
+    rules live in the upstream repo only -- those get a link, not a preview.
+    """
+    if not rid:
+        return None
+    if rid.startswith("capa:"):
+        return None
+
+    if rid.startswith("yara:"):
+        from bsimvis.app.services.yara_service import rules_dir
+
+        path, _, name = rid.split(":", 1)[1].partition("#")
+        p = Path(rules_dir()) / path
+        # A vendored file holds many rules; show only the one that fired.
+        return _one_rule(_read(p, max_bytes), name)
+
+    from bsimvis.app.services.rulezet_service import paths
+
+    p = paths()
+    for d in (p["rules"], p["quarantine"]):
+        text = _read(d / f"{rid}.yara", max_bytes)
+        if text:
+            return text
+    return None
+
+
+def _read(path, max_bytes):
+    try:
+        if not path.is_file():
+            return None
+        return path.read_text(errors="replace")[:max_bytes]
+    except OSError:
+        return None
+
+
+def _one_rule(text, name):
+    """The `rule <name> { ... }` block out of a multi-rule file."""
+    if not text or not name:
+        return text
+    m = re.search(rf"^\s*(?:private\s+|global\s+)*rule\s+{re.escape(name)}\b", text, re.M)
+    if not m:
+        return text
+    start = m.start()
+    depth, i = 0, text.index("{", m.end() - 1) if "{" in text[m.end() - 1 :] else -1
+    if i < 0:
+        return text[start:]
+    for j in range(i, len(text)):
+        if text[j] == "{":
+            depth += 1
+        elif text[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : j + 1]
+    return text[start:]
+
+
 def demo():
     """Cover the joins that only fail for real: id shape, grouping, paging."""
 
@@ -487,7 +552,9 @@ def demo():
     )
     total, rules = tag_rules("platform:linux", r=r)
     assert total == 1 and uuid in rules, (total, rules)
-    assert "search=Some+Rule+Title" in rules[uuid]["url"], rules[uuid]
+    # The uuid is the permalink; the title filter is only the no-uuid fallback.
+    assert rules[uuid]["url"].endswith(f"/rule/detail_rule/{uuid}"), rules[uuid]
+    assert "search=Some+Rule+Title" in rulezet_url(None, "Some Rule Title")
     assert "content" not in rules[uuid] and "url" not in r.h[RULE_META_KEY][uuid]
 
     # A scan-time row must not clobber what the sync knows.

@@ -15,6 +15,8 @@ import sys
 import time
 import json
 import os
+import re
+
 import requests
 import uuid
 
@@ -1495,6 +1497,32 @@ def run_all_tests():
             counts.get(yara_tags[0], 0) >= len(recs) > 0,
             f"counts={counts.get(yara_tags[0])} rows={len(recs)}",
         )
+        # The popup's rule preview: the rule's own text, read off disk. A
+        # vendored rule id must return the one rule block, not the whole file.
+        rid = next(
+            (r.get("id") for r in recs if str(r.get("id", "")).startswith("yara:")),
+            None,
+        )
+        if rid:
+            src = test_endpoint(
+                "GET",
+                "/api/tags/rule_source",
+                params={"id": rid},
+                label="GET /api/tags/rule_source (yara rule)",
+            )
+            text = (src or {}).get("text") or ""
+            check(
+                "rule_source: returns exactly the rule block that fired",
+                len(re.findall(r"^\s*rule\s", text, re.M)) == 1
+                and "condition:" in text,
+                f"{rid} -> {len(text)} bytes",
+            )
+    test_endpoint(
+        "GET",
+        "/api/tags/rule_source",
+        expected_ok=False,
+        label="GET /api/tags/rule_source (no id, expect 400)",
+    )
 
     # match_provenance: which rules actually fired on this file, as opposed to
     # every rule in the ruleset that carries the tag. Recorded at scan time, so

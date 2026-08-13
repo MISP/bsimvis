@@ -1487,6 +1487,24 @@ class TagProvenance(Resource):
         return get_tag_provenance()
 
 
+@ns_tags.route("/rule_source")
+class TagRuleSource(Resource):
+    @ns_tags.doc(
+        params={
+            "id": {
+                "description": "Rule id as returned by /tags/provenance",
+                "required": True,
+                "example": "000067b2-3e11-4ac7-889a-0dc05e0efe91",
+            }
+        }
+    )
+    def get(self):
+        """Returns one rule's own source text, read from the ruleset on disk."""
+        from bsimvis.app.routes.tags import get_rule_source
+
+        return get_rule_source()
+
+
 @ns_tags.route("/match_provenance")
 class TagMatchProvenance(Resource):
     @ns_tags.expect(

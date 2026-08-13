@@ -2,6 +2,9 @@
 # Prep + launch + test a git worktree in isolation, then tear down.
 #
 # Run from inside a linked worktree:  ./scripts/wt-test.sh
+# To run specific tests:              ./scripts/wt-test.sh --only <substring>
+# For UI-only changes:                Do not run this script. Use `node --check <file>` instead.
+#
 # Thin wrapper: wt-setup.sh brings the isolated stack up, the API suite
 # runs against it, wt-teardown.sh kills it again.
 set -uo pipefail

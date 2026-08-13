@@ -6,7 +6,7 @@ string and nothing else. Nothing here is on the search path, and nothing here
 changes what a tag is.
 
 The data is **normalised**, because it has to be: a tag like
-`rulezet:ms-caro-malware-full:malware-platform:linux` is carried by tens of
+`ms-caro-malware-full:malware-platform:linux` is carried by tens of
 thousands of rules, and a broad mirror is ~214k rules. So a rule's metadata is
 stored exactly once, and everything else refers to it by id:
 
@@ -155,6 +155,31 @@ def rulezet_row(rule, tags=None):
     return {k: v for k, v in row.items() if v}
 
 
+def match_rule_id(match):
+    """The rule id one match is stored under -- mirror uuid, or vendored id."""
+    ns = str(getattr(match, "namespace", "") or "")
+    if _is_mirror_rule(ns):
+        return ns
+    return yara_rule_id(_vendored_path(ns), match.rule)
+
+
+def match_offsets(matches):
+    """`{file offset: {rule id, ...}}` -- which rules fired at each offset.
+
+    Attributing an offset to a function needs Ghidra's memory map, so that stays
+    the caller's job (`_funcs_by_offset`). This only carries the ids, and it
+    keys them the way `match_rows` keys its rows, so a function's hit list can
+    never name a rule the table cannot describe.
+    """
+    out = {}
+    for match in matches:
+        rid = match_rule_id(match)
+        for string_match in getattr(match, "strings", None) or []:
+            for instance in getattr(string_match, "instances", None) or []:
+                out.setdefault(instance.offset, set()).add(rid)
+    return out
+
+
 def match_rows(matches, extra=None):
     """yara-python matches -> `{rule id: row}` for the rules that fired.
 
@@ -188,7 +213,7 @@ def match_rows(matches, extra=None):
             }
         else:
             path = _vendored_path(ns)
-            rows[yara_rule_id(path, match.rule)] = {
+            rows[match_rule_id(match)] = {
                 "source": "yara",
                 "name": match.rule,
                 "path": path,
@@ -247,9 +272,22 @@ def put_rules(rows, r=None):
 
     written = 0
     for rid, current in zip(ids, existing):
-        if current:
-            continue
         row = rows[rid]
+        if current:
+            try:
+                stored = json.loads(current)
+            except ValueError:
+                stored = {}
+            old_tags = set(stored.get("tags") or [])
+            new_tags = set(row.get("tags") or [])
+            if new_tags - old_tags:
+                stored["tags"] = sorted(old_tags | new_tags)
+                r.hset(RULE_META_KEY, rid, json.dumps(stored))
+                for tag in new_tags - old_tags:
+                    r.sadd(TAG_RULES_PREFIX + tag, rid)
+                written += 1
+            continue
+
         r.hset(RULE_META_KEY, rid, json.dumps(row))
         for tag in row.get("tags") or []:
             r.sadd(TAG_RULES_PREFIX + tag, rid)
@@ -442,12 +480,12 @@ def demo():
         {
             uuid: rulezet_row(
                 {"title": "Some Rule Title", "author": "someone", "license": "MIT"},
-                tags=["rulezet:platform:linux", "yara:trojan:x:Mirror_Rule"],
+                tags=["platform:linux", "rulezet:Mirror_Rule", "yara:trojan:x:Mirror_Rule"],
             )
         },
         r,
     )
-    total, rules = tag_rules("rulezet:platform:linux", r=r)
+    total, rules = tag_rules("platform:linux", r=r)
     assert total == 1 and uuid in rules, (total, rules)
     assert "search=Some+Rule+Title" in rules[uuid]["url"], rules[uuid]
     assert "content" not in rules[uuid] and "url" not in r.h[RULE_META_KEY][uuid]
@@ -459,6 +497,27 @@ def demo():
     # Vendored ids carry file *and* rule name; capa ids are the namespace.
     rows = match_rows([M("R", "/rules/elastic/a.yar", {"author": "Elastic"})])
     (vid,) = rows
+
+    # Per-offset ids use the *same* keys as the rows, or a function's hit list
+    # names rules the table cannot describe. Two rules on one offset is the
+    # normal case, not an edge case.
+    class S:
+        def __init__(self, *offsets):
+            self.instances = [type("I", (), {"offset": o})() for o in offsets]
+
+    m1 = M("R", "/rules/elastic/a.yar")
+    m1.strings = [S(0x100, 0x200)]
+    m2 = M("Q", "/rules/elastic/b.yar")
+    m2.strings = [S(0x200)]
+    offsets = match_offsets([m1, m2])
+    assert offsets == {
+        0x100: {"yara:/rules/elastic/a.yar#R"},
+        0x200: {"yara:/rules/elastic/a.yar#R", "yara:/rules/elastic/b.yar#Q"},
+    }, offsets
+    assert match_rule_id(m1) in rows, (match_rule_id(m1), list(rows))
+    # A condition-only rule has no string instances: file level or nothing.
+    assert match_offsets([M("C", "/rules/x.yar")]) == {}
+
     assert vid == "yara:/rules/elastic/a.yar#R", vid
     assert rows[vid]["author"] == "Elastic", rows[vid]
     crows = capa_rows(
@@ -486,7 +545,7 @@ def demo():
     )
     by_entity, table = match_provenance("coll", ["f1", "f2", "f3"], r)
     assert set(by_entity) == {"f1", "f2"}, by_entity
-    assert by_entity["f1"]["rulezet:platform:linux"] == [uuid], by_entity["f1"]
+    assert by_entity["f1"]["platform:linux"] == [uuid], by_entity["f1"]
     assert by_entity["f2"] == {"yara:unknown:unknown:R": [vid]}, by_entity["f2"]
     assert set(table) == {uuid, vid}, table
     assert table[vid]["path"] == "/rules/elastic/a.yar", table[vid]
@@ -505,12 +564,12 @@ def demo():
     # Paging: the count is the answer for a broad tag, not the id list.
     put_rules_bulk(
         {
-            f"u{i}": {"source": "rulezet", "tags": ["rulezet:platform:linux"]}
+            f"u{i}": {"source": "rulezet", "tags": ["platform:linux"]}
             for i in range(120)
         },
         r,
     )
-    total, page = tag_rules("rulezet:platform:linux", offset=0, limit=10, r=r)
+    total, page = tag_rules("platform:linux", offset=0, limit=10, r=r)
     assert total == 121 and len(page) == 10, (total, len(page))
 
     print("tag_provenance demo OK")

@@ -25,7 +25,7 @@ from bsimvis.app.services.bin_sim_tags import (  # noqa: E402
     AXIS_SEVERITY,
     AXIS_USER,
     AXIS_VULN,
-    AXIS_RULEZET,
+    AXIS_RULESET,
     SPLIT_SCHEMA,
     AxisSplit,
     TagSplit,
@@ -473,7 +473,10 @@ def test_axis_routing_and_parents():
     # fell through to the user axis and buried Cobalt Strike among a human's
     # bookmarks. An axis is a question, so several sources share one.
     assert tag_axis("misp:tool:cobalt-strike") == AXIS_FAMILY
-    assert tag_axis("rulezet:runtime-packer:pe:upx") == AXIS_RULEZET
+    assert tag_axis("runtime-packer:pe:upx") == AXIS_FAMILY
+    assert tag_axis("ms-caro-malware-full:malware-platform:linux") == AXIS_FAMILY
+    # A mirrored rule name is the ruleset axis; only rule names live there.
+    assert tag_axis("rulezet:ELF_Toriilike_persist") == AXIS_RULESET
     assert tag_axis("cve:cve-2021-44228") == AXIS_VULN
     assert tag_axis("ghsa:ghsa-j8v8-6h6r-m6pq") == AXIS_VULN
     assert tag_axis("mitre:t1027") == AXIS_MITRE
@@ -481,18 +484,14 @@ def test_axis_routing_and_parents():
     # its ids are not all the same depth.
     for t in (
         "misp:tool:cobalt-strike",
-        "rulezet:runtime-packer:pe:upx",
+        "runtime-packer:pe:upx",
         "misp:ransomware:lockbit",
         "cve:cve-2021-44228",
     ):
         assert tag_parent(t) == t, t
     # ...so the name is the last segment, not the second, whatever the depth.
     assert parse_tag_id("misp:tool:cobalt-strike") == ("tool", "cobalt-strike", "")
-    assert parse_tag_id("rulezet:runtime-packer:pe:upx") == (
-        "runtime-packer",
-        "upx",
-        "",
-    )
+    assert parse_tag_id("runtime-packer:pe:upx") == ("pe", "upx", "")
     assert parse_tag_id("cve:cve-2021-44228") == ("cve", "cve-2021-44228", "")
 
     # Every axis is reachable from the joint, including the two new ones -- the

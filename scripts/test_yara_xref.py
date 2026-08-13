@@ -118,10 +118,35 @@ def main():
                 for k, v in tags.items()
             }
 
+            # Same resolution, but carrying rule ids instead of tags: this is
+            # what makes a function's tag chip name the one rule that put the
+            # tag there rather than every rule in the ruleset carrying it.
+            from bsimvis.app.services.tag_provenance import match_offsets
+
+            rule_hits = analyzer._funcs_by_offset(
+                match_offsets(matches),
+                program,
+                lambda f: str(f.getEntryPoint()).split(":")[-1],
+            )
+            named_rules = {
+                str(fm.getFunctionAt(factory.getAddress(k)) or k): sorted(v)
+                for k, v in rule_hits.items()
+            }
+            # The key has to be the address form function entity ids are built
+            # from (`Address.toString()`), not `hex()` -- a `0x`-prefixed key
+            # would record hits under an id no page ever asks for.
+            addr_keys = list(rule_hits)
+
         assert named.get("referenced_me") == [CANARY], named
         assert "unrelated_func" not in named, f"tag leaked: {named}"
         assert "main" not in named, f"tag leaked: {named}"
-        print(f"yara xref test OK -> {named}")
+        assert list(named_rules) == ["referenced_me"], named_rules
+        (rid,) = named_rules["referenced_me"]
+        assert rid.startswith("yara:") and rid.endswith("#Test_Xref_Canary"), rid
+        assert all(
+            k == k.lower() and not k.startswith("0x") and int(k, 16) for k in addr_keys
+        ), addr_keys
+        print(f"yara xref test OK -> {named}, rules -> {named_rules}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

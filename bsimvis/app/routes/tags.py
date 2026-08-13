@@ -197,9 +197,11 @@ def get_tag_provenance():
 
     from bsimvis.app.services.tag_provenance import tag_rules, _row_from_id, rule_url
 
-    out = {}
+    out, counts = {}, {}
     for tag in tags:
-        _, rules = tag_rules(tag)
+        # `tag_rules` is paged, and for a broad mirror tag the count *is* the
+        # answer -- 50 rows out of 21k must not read as "these are the rules".
+        total, rules = tag_rules(tag)
 
         if not rules and tag.startswith("capa:"):
             ns = tag.split("capa:", 1)[1].replace(":", "/")
@@ -214,8 +216,9 @@ def get_tag_provenance():
                 row["id"] = rid
             res.append(row)
         out[tag] = res
+        counts[tag] = total or len(res)
 
-    return {"provenance": out}
+    return {"provenance": out, "counts": counts}
 
 
 def get_match_provenance():

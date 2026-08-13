@@ -180,13 +180,25 @@ class GhidraAnalyzer:
         """
         from bsimvis.app.services.tag_taxonomy import yara_rule_hits
 
-        hits = yara_rule_hits(matches, extra_tags)
+        # `stream_bsim_data` looks these up by `hex(entry point)`.
+        return self._funcs_by_offset(
+            yara_rule_hits(matches, extra_tags),
+            program,
+            lambda f: hex(f.getEntryPoint().getOffset()),
+        )
 
+    def _funcs_by_offset(self, hits, program, key):
+        """`{file offset: set}` -> `{key(function): union of the sets it covers}`.
+
+        Shared by the two things a YARA match feeds: the tags a function ends up
+        carrying, and the rule ids that put them there. One resolution pass, so
+        a function's provenance can never name a different function's rule.
+        """
         func_manager = program.getFunctionManager()
         memory = program.getMemory()
 
-        tags_by_addr = {}
-        for file_offset, ytags in hits.items():
+        out = {}
+        for file_offset, values in hits.items():
             try:
                 addrs = memory.locateAddressesForFileOffset(file_offset)
             except Exception:
@@ -195,9 +207,8 @@ class GhidraAnalyzer:
                 func = func_manager.getFunctionContaining(addr)
                 funcs = [func] if func else self._funcs_referencing(addr, program)
                 for f in funcs:
-                    key = hex(f.getEntryPoint().getOffset())
-                    tags_by_addr.setdefault(key, set()).update(ytags)
-        return tags_by_addr
+                    out.setdefault(key(f), set()).update(values)
+        return out
 
     def _funcs_referencing(self, addr, program):
         """Functions with a reference to the data item containing `addr`.
@@ -646,10 +657,36 @@ class GhidraAnalyzer:
                                 # file path / rulezet uuid exists; downstream
                                 # everything is the flat tag string. Record it
                                 # here or it is unrecoverable.
-                                tag_provenance.record(
-                                    tag_provenance.yara_provenance(matches),
-                                    self.r_data,
-                                )
+                                rows = tag_provenance.match_rows(matches, extra_tags)
+                                tag_provenance.put_rules(rows, self.r_data)
+                                collection = payload.get("collection", "main")
+                                if file_md5 and rows:
+                                    # Keyed by the same ids the UI renders tags
+                                    # against, so a tag chip asks for its own
+                                    # hits without a second lookup. The file
+                                    # entry is every rule that fired; a function
+                                    # entry is only the rules whose strings
+                                    # resolved to that function, which is the
+                                    # whole point -- 4 rules instead of the
+                                    # ~5k the tag carries ruleset-wide.
+                                    hits = {
+                                        f"{collection}:file:{file_md5}": list(rows)
+                                    }
+                                    for addr, ids in self._funcs_by_offset(
+                                        tag_provenance.match_offsets(matches),
+                                        program,
+                                        # `<coll>:func:<md5>:<addr>`, the entry
+                                        # point formatted the way
+                                        # `stream_bsim_data` builds function ids
+                                        # (`Address.toString()`, not `hex()`).
+                                        lambda f: str(f.getEntryPoint()).split(":")[-1],
+                                    ).items():
+                                        hits[f"{collection}:func:{file_md5}:{addr}"] = (
+                                            sorted(ids)
+                                        )
+                                    tag_provenance.record_hits_bulk(
+                                        collection, hits, self.r_data
+                                    )
                                 self.job_service.add_log(
                                     job_id,
                                     f"yara matched {len(file_tags)} rules, "

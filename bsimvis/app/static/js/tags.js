@@ -404,7 +404,10 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
 
     const addOnClick = `startAddTag(event, ${jsString(etype)}, ${jsString(eid)})`;
 
-    const analysisHtml = tagsList.map(t => `<span class="analysis-tag-badge" style="cursor:pointer;" title="Analysis Tag: ${escapeAttr(t)} (click for source)">${escapeHtml(t)}</span>`).join('');
+    // The entity id rides on the badge so the provenance popup can ask "which
+    // rule fired *here*" (match_provenance) before falling back to "which rules
+    // can emit this tag at all" (tag_rules).
+    const analysisHtml = tagsList.map(t => `<span class="analysis-tag-badge" style="cursor:pointer;" data-eid="${escapeAttr(eid)}" title="Analysis Tag: ${escapeAttr(t)} (click for source)">${escapeHtml(t)}</span>`).join('');
 
     const userHtml = userTagsList.map(t => {
         if (t === 'bookmark' || t === 'ignore') return '';
@@ -1310,7 +1313,12 @@ window.addEventListener('message', (event) => {
 // this. Delegated off document rather than wired per badge, so every place
 // that renders an .analysis-tag-badge gets it without knowing about it.
 
-window.showTagProvenance = (e, tag) => {
+// `<coll>:file:<md5>` / `<coll>:func:<md5>:<addr>` -> the collection. Pool
+// collections are themselves prefixed (`global:pool:x:file:...`), so the split
+// is on the entity kind rather than on the first colon.
+const provEntityCollection = (eid) => String(eid || '').replace(/:(file|func):.*$/, '');
+
+window.showTagProvenance = (e, tag, eid) => {
     let el = document.getElementById('tag-provenance-popup');
     if (!el) {
         el = document.createElement('div');
@@ -1335,37 +1343,76 @@ window.showTagProvenance = (e, tag) => {
     el.style.left = x + 'px';
     el.style.top = y + 'px';
 
-    fetch(`/api/tags/provenance?tag=${encodeURIComponent(tag)}`)
+    const header = `
+        <div style="font-weight:bold; margin-bottom:8px; border-bottom:1px solid var(--border); padding-bottom:6px; display:flex; justify-content:space-between; gap:10px;">
+            <span>${escapeHtml(tag)}</span>
+            <span id="tag-prov-close" style="color:var(--dim); cursor:pointer;">&times;</span>
+        </div>`;
+
+    const paint = (records, note) => {
+        const noteHtml = note
+            ? `<div style="color:var(--dim); margin-bottom:6px;">${escapeHtml(note)}</div>`
+            : '';
+        const body = records.length
+            ? records.map(r => `
+                <div style="padding:6px 0; border-bottom:1px solid var(--border);">
+                    <div style="color:var(--accent); font-weight:bold;">${escapeHtml(r.name || r.title || r.source || '')}</div>
+                    ${row('Source', r.source)}
+                    ${row('Rule id', r.id)}
+                    ${row('File', r.path)}
+                    ${row('Author', r.author)}
+                    ${row('License', r.license)}
+                    ${row('Upstream', r.upstream)}
+                    ${r.url ? `<div style="margin-top:6px;"><a href="${escapeAttr(r.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Open source &nearr;</a></div>` : ''}
+                </div>`).join('')
+            : `<div style="color:var(--dim); font-style:italic;">No source recorded for this tag.</div>`;
+        el.innerHTML = header + noteHtml + body;
+        const close = document.getElementById('tag-prov-close');
+        if (close) close.onclick = () => { el.style.display = 'none'; };
+    };
+
+    // Endpoint B: the whole ruleset, not this entity. Paged, so the count is
+    // half the answer -- without it 50 rows read as "these are the rules".
+    const showRuleset = () => fetch(`/api/tags/provenance?tag=${encodeURIComponent(tag)}`)
         .then(res => res.json())
         .then(data => {
             const records = (data && data.provenance && data.provenance[tag]) || [];
-            const header = `
-                <div style="font-weight:bold; margin-bottom:8px; border-bottom:1px solid var(--border); padding-bottom:6px; display:flex; justify-content:space-between; gap:10px;">
-                    <span>${escapeHtml(tag)}</span>
-                    <span id="tag-prov-close" style="color:var(--dim); cursor:pointer;">&times;</span>
-                </div>`;
-
-            if (!records.length) {
-                el.innerHTML = header + `<div style="color:var(--dim); font-style:italic;">No source recorded for this tag.</div>`;
-            } else {
-                el.innerHTML = header + records.map(r => `
-                    <div style="padding:6px 0; border-bottom:1px solid var(--border);">
-                        <div style="color:var(--accent); font-weight:bold;">${escapeHtml(r.name || r.title || r.source || '')}</div>
-                        ${row('Source', r.source)}
-                        ${row('Rule id', r.id)}
-                        ${row('File', r.path)}
-                        ${row('Author', r.author)}
-                        ${row('License', r.license)}
-                        ${row('Upstream', r.upstream)}
-                        ${r.url ? `<div style="margin-top:6px;"><a href="${escapeAttr(r.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Open source &nearr;</a></div>` : ''}
-                    </div>`).join('');
-            }
-            const close = document.getElementById('tag-prov-close');
-            if (close) close.onclick = () => { el.style.display = 'none'; };
-        })
-        .catch(() => {
-            el.innerHTML = `<div style="color:var(--dim)">Could not load provenance for ${escapeHtml(tag)}.</div>`;
+            const total = (data && data.counts && data.counts[tag]) || records.length;
+            const note = !records.length
+                ? ''
+                : records.length < total
+                    ? `Ruleset-wide: showing ${records.length} of ${total} rules that can emit this tag.`
+                    : `Ruleset-wide: ${total} rule${total === 1 ? '' : 's'} can emit this tag.`;
+            paint(records, note);
         });
+
+    // Endpoint A: the rules that actually fired on this entity. Recorded for
+    // the file and for every function a match resolved into; a function whose
+    // tag came from an offset that resolved nowhere has no entry and falls
+    // through to B, which is the honest answer for it.
+    const collection = provEntityCollection(eid);
+    const request = (eid && collection)
+        ? fetch('/api/tags/match_provenance', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ collection, entity_ids: [eid] }),
+          })
+              .then(res => res.json())
+              .then(data => {
+                  const ids = (((data && data.hits) || {})[eid] || {})[tag] || [];
+                  if (!ids.length) return showRuleset();
+                  const rules = (data && data.rules) || {};
+                  const where = eid.includes(':func:') ? 'function' : 'file';
+                  paint(
+                      ids.map(id => Object.assign({ id }, rules[id] || {})),
+                      `Matched here: ${ids.length} rule${ids.length === 1 ? '' : 's'} fired on this ${where}.`,
+                  );
+              })
+        : showRuleset();
+
+    request.catch(() => {
+        el.innerHTML = `<div style="color:var(--dim)">Could not load provenance for ${escapeHtml(tag)}.</div>`;
+    });
 };
 
 document.addEventListener('click', (e) => {
@@ -1373,7 +1420,7 @@ document.addEventListener('click', (e) => {
     const popup = document.getElementById('tag-provenance-popup');
     if (badge) {
         e.stopPropagation();
-        showTagProvenance(e, badge.textContent.trim());
+        showTagProvenance(e, badge.textContent.trim(), badge.dataset.eid || '');
     } else if (popup && !e.target.closest('#tag-provenance-popup')) {
         popup.style.display = 'none';
     }

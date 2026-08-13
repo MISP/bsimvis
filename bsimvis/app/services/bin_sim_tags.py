@@ -57,7 +57,8 @@ TAG_MISMATCH = "tag_mismatch"
 #               answering the same question as capa/category, kept on its own
 #               axis for the same reason.
 #   family   -- "which named thing is this": Cobalt Strike, LockBit, UPX. Fed by
-#               the `misp:` and `rulezet:` namespaces of the mirrored rules. A
+#               the `misp:`, `ms-caro-malware-full:` and `runtime-packer:` namespaces of
+#               the mirrored rules. A
 #               different question from `category` (what the code does) and from
 #               `origin` (whose code it is): a function can be original code
 #               that does networking and belong to Mirai.
@@ -87,7 +88,8 @@ AXIS_MITRE = "mitre"
 AXIS_YARA = "yara"
 AXIS_FAMILY = "family"
 AXIS_VULN = "vuln"
-AXIS_RULEZET = "rulezet"
+AXIS_RULESET = "ruleset"
+
 
 # Every axis, in the order the UI offers them.
 AXES = (
@@ -98,15 +100,15 @@ AXES = (
     AXIS_CAPA,
     AXIS_MITRE,
     AXIS_YARA,
+    AXIS_RULESET,
     AXIS_FAMILY,
     AXIS_VULN,
-    AXIS_RULEZET,
 )
 
 # namespace prefix -> axis. Priority is resolved separately (ORIGIN_PRIORITY),
 # because for `origin:` it depends on the *second* segment, not the first.
 # Several namespaces share `family` and `vuln`: an axis is a question, and
-# `misp:tool:cobalt-strike` and `rulezet:runtime-packer:pe:upx` answer the same
+# `misp:tool:cobalt-strike` and `runtime-packer:pe:upx` answer the same
 # one whatever taxonomy they came out of.
 TAG_NAMESPACES = {
     "origin": AXIS_ORIGIN,
@@ -116,8 +118,10 @@ TAG_NAMESPACES = {
     "capa": AXIS_CAPA,
     "mitre": AXIS_MITRE,
     "yara": AXIS_YARA,
+    "rulezet": AXIS_RULESET,
     "misp": AXIS_FAMILY,
-    "rulezet": AXIS_RULEZET,
+    "ms-caro-malware-full": AXIS_FAMILY,
+    "runtime-packer": AXIS_FAMILY,
     "cve": AXIS_VULN,
     "ghsa": AXIS_VULN,
     "pysec": AXIS_VULN,
@@ -234,9 +238,8 @@ def tag_priority(tag_id, tag_meta=None):
 # to its combo, not eight rule names.
 # `family` and `vuln` roll up at no depth at all (None). Their ids are a path
 # whose every segment is a level worth folding at --
-# `rulezet:ms-caro-malware-full:malware-platform:linux` is namespace, taxonomy,
-# predicate, value -- and they are not all the same length (`cve:` is 2 deep,
-# `misp:` 3, `rulezet:` 4). Any single depth here would either flatten the path
+# `ms-caro-malware-full:malware-platform:linux` is taxonomy, predicate, value --
+# and they are not all the same length (`cve:` is 2 deep, `misp:` 3, ms-caro 3). Any single depth here would either flatten the path
 # to one node or truncate the ids that are deeper than it, so the rows stay at
 # full id and the UI builds the hierarchy by splitting them (fileSimNestedNodes).
 _PARENT_DEPTH = {
@@ -247,9 +250,9 @@ _PARENT_DEPTH = {
     AXIS_CAPA: 2,
     AXIS_MITRE: 2,
     AXIS_YARA: 2,
+    AXIS_RULESET: 2,
     AXIS_FAMILY: None,
     AXIS_VULN: None,
-    AXIS_RULEZET: None,
 }
 
 
@@ -300,7 +303,7 @@ def parse_tag_id(tag_id):
 
     Family and vuln ids name a thing rather than a group refined by a leaf, and
     they are not all the same depth (`misp:tool:cobalt-strike`,
-    `rulezet:runtime-packer:pe:upx`, `cve:cve-2021-44228`), so the *last* segment
+    `runtime-packer:pe:upx`, `cve:cve-2021-44228`), so the *last* segment
     is the name. Reading them positionally like a `category:` id would label
     Cobalt Strike "tool" and drop `upx` off the end of its id entirely.
     """
@@ -316,7 +319,7 @@ def parse_tag_id(tag_id):
         name = parts[2] if len(parts) > 2 else kind
         version = parts[3] if len(parts) > 3 else ""
         return (kind, name, "" if version == ORIGIN_NO_VERSION else version)
-    if tag_axis(tag_id) in (AXIS_FAMILY, AXIS_VULN, AXIS_RULEZET):
+    if tag_axis(tag_id) in (AXIS_FAMILY, AXIS_VULN):
         return (parts[1] if len(parts) > 2 else parts[0], parts[-1], "")
     return (parts[0], parts[1], parts[2] if len(parts) > 2 else "")
 
@@ -553,9 +556,9 @@ JOINT_INNER_AXES = (
     AXIS_CAPA,
     AXIS_MITRE,
     AXIS_YARA,
+    AXIS_RULESET,
     AXIS_FAMILY,
     AXIS_VULN,
-    AXIS_RULEZET,
 )
 
 
@@ -738,7 +741,7 @@ SUMMARY_FIELDS = (
     "yara_summary",
     "family_summary",
     "vuln_summary",
-    "rulezet_summary",
+    "ruleset_summary",
 )
 
 # Everything `summaries()` writes, so callers that must produce an empty split do

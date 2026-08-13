@@ -1301,7 +1301,7 @@ def run_all_tests():
         # doc) and must never be copied into the function's own `tags`, which
         # hold per-function evidence only: Function ID, capa, and the YARA
         # offsets that resolved to this function. Copying the set is what put
-        # `rulezet:...:malware-type:backdoor` on uclibc's `fcntl64`.
+        # `ms-caro-malware-full:malware-type:backdoor` on uclibc's `fcntl64`.
         frows = _search_rows(
             "/api/function/search",
             {"collection": COLLECTION, "file_md5": file_md5, "limit": 100},
@@ -1464,16 +1464,12 @@ def run_all_tests():
         label="GET /api/tags/provenance (no tag, expect 400)",
     )
     capa_tag = "capa:host-interaction:file-system:write"
-    prov = test_endpoint(
-        "GET", "/api/tags/provenance", params={"tag": capa_tag}
-    )
+    prov = test_endpoint("GET", "/api/tags/provenance", params={"tag": capa_tag})
     capa_rec = ((prov or {}).get("provenance") or {}).get(capa_tag) or []
     check(
         "provenance: capa tag resolves to its capa-rules directory",
         capa_rec
-        and capa_rec[0].get("url", "").endswith(
-            "/host-interaction/file-system/write"
-        ),
+        and capa_rec[0].get("url", "").endswith("/host-interaction/file-system/write"),
         str(capa_rec)[:200],
     )
 
@@ -1490,6 +1486,37 @@ def run_all_tests():
             "provenance: yara tag names the rule file or the rulezet rule",
             recs and all(r.get("path") or r.get("id") for r in recs),
             f"{yara_tags[0]} -> {str(recs)[:200]}",
+        )
+        # The rule list is paged, so the count has to come back with it --
+        # otherwise a page of 50 out of 20k mirror rules reads as the answer.
+        counts = (prov or {}).get("counts") or {}
+        check(
+            "provenance: ruleset endpoint reports the full rule count",
+            counts.get(yara_tags[0], 0) >= len(recs) > 0,
+            f"counts={counts.get(yara_tags[0])} rows={len(recs)}",
+        )
+
+    # match_provenance: which rules actually fired on this file, as opposed to
+    # every rule in the ruleset that carries the tag. Recorded at scan time, so
+    # it is empty for a collection analysed with yara skipped.
+    if file_md5:
+        hits = test_endpoint(
+            "POST",
+            "/api/tags/match_provenance",
+            data={
+                "collection": COLLECTION,
+                "entity_ids": [f"{COLLECTION}:file:{file_md5}"],
+            },
+            label="POST /api/tags/match_provenance",
+        )
+        by_tag = ((hits or {}).get("hits") or {}).get(
+            f"{COLLECTION}:file:{file_md5}"
+        ) or {}
+        rules = (hits or {}).get("rules") or {}
+        check(
+            "match_provenance: every hit id is described in the rules table",
+            all(rid in rules for ids in by_tag.values() for rid in ids),
+            f"{len(by_tag)} tags, {len(rules)} rules",
         )
     # Add a test tag to a file entity
     if file_md5:

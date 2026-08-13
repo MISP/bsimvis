@@ -37,6 +37,7 @@ from pathlib import Path
 
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.tag_taxonomy import route_source_tag
+
 # Safe at import time: tag_provenance's own imports are stdlib, and it reaches
 # back into this module lazily inside functions.
 from bsimvis.app.services.tag_provenance import rulezet_row
@@ -322,7 +323,7 @@ def _store_rows(rows, log=print, chunk=5000):
 
     ids = list(rows)
     for i in range(0, len(ids), chunk):
-        put_rules_bulk({k: rows[k] for k in ids[i:i + chunk]})
+        put_rules_bulk({k: rows[k] for k in ids[i : i + chunk]})
     log(f"  {len(rows)} provenance rows stored")
     return len(rows)
 

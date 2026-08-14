@@ -98,6 +98,11 @@ ENABLE_MILVUS=${ENABLE_MILVUS:-false}
 DATA_BASE_DIR=${DATA_BASE_DIR:-"$(pwd)/data"}
 PROJECT_NAME=${PROJECT_NAME:-bsimvis}
 
+# Portable JDK installed by scripts/install_ghidra.sh
+if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    export PATH="$JAVA_HOME/bin:$PATH"
+fi
+
 # Optional screen cleanup (default off, enable with --clear or CLEAN_SCREEN=true)
 CLEAN_SCREEN=${CLEAN_SCREEN:-$CLEAR}
 

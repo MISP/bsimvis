@@ -71,6 +71,7 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 
 # Requirements
 
+- Java 21+ (Ghidra 12 requirement) — `install.sh` drops a portable Temurin JDK 21 into `bin/` and sets `JAVA_HOME` in `.env` if the system Java is missing or older
 - Ghidra and pyghidra install
 - Redis and Kvrocks databases
 - Function ID databases in the Ghidra install (see below) — without them, function library tags stay empty

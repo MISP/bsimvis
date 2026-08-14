@@ -184,13 +184,66 @@ arrays plus a fid→index intern table (~235 MB at 1.5M functions).
 the default is ~8 GB across the fleet. Lower it for small hosts; the code
 degrades to the old thrashing behaviour rather than failing.
 
-## 5. Expected effect
+## 5. Measured effect
 
-Per function: 1.61 s accumulate → 0.013 s, and 48–196x less DB traffic. The next
-bottleneck is the `_counts` `ZSCORE` fan-out over surviving candidates
-(batchable with `ZMSCORE`, also lossless). Projection is **10–25x, lossless**,
-versus 2x for the best zero-loss pruning. Not yet confirmed end to end — see
-caveats.
+An earlier draft of this document projected 10–25x from the 129x microbenchmark.
+**That projection was wrong and is corrected here by measurement.** The 129x
+applies to the accumulate loop alone; `_discover_find` also does per-candidate
+Python work (phase-1 filter, `kept` construction, `_counts`, the scoring loop)
+that the change does not touch, and vectorising added a new per-pair cost of its
+own — interning function ids into dense indices.
+
+### 5a. Scaling A/B, CPU-side (in-memory store, no network)
+
+Old vs new on synthetic corpora of the measured shape, 400 targets per corpus so
+posting lists are reused across targets the way a real `build_batch` reuses them.
+Results identical at every size.
+
+| corpus (functions) | pairs/target | baseline | new | speedup |
+|---|---|---|---|---|
+| 1,000 | 1,894 | 0.06 s | 0.05 s | 1.11x |
+| 5,000 | 9,342 | 0.32 s | 0.08 s | 3.96x |
+| 20,000 | 37,615 | 1.85 s | 0.24 s | 7.70x |
+| 60,000 | 113,259 | 6.93 s | 0.84 s | 8.23x |
+| 150,000 | 282,339 | 20.81 s | 2.55 s | 8.17x |
+
+**The win is scale-dependent and plateaus near 8x.** It is roughly nil on small
+corpora, because numpy's fixed overhead and the interning loop cancel the saving.
+
+### 5b. Pipeline benchmark on `data/bench` (5 binaries, 1,179 functions)
+
+| sub_task | baseline | new |
+|---|---|---|
+| `build_sim` | 1.478 s | 1.250 s (**1.18x**) |
+| `enrich_features` | 81.70 s | 75.74 s (untouched by this change) |
+| `grand_total` | 86.26 s | 79.80 s |
+| `func_similarities` | 2048 | 2048 (identical) |
+
+1.18x matches the 1.11x the scaling table predicts at that corpus size — two
+independent methods agreeing. At this scale the benchmark can only demonstrate
+**no regression and identical output**; it cannot show the win.
+
+### 5c. Read-only A/B against live `full_arbor` (1.5M functions)
+
+12 targets sampled at random, cold caches: **1.08x**, identical result counts.
+
+This is *not* a refutation of 5a — it measures a different bottleneck. Random
+targets across 1.5M functions share almost no features, so the posting-list cache
+never gets reused and the run is dominated by fetching ~95 MB per target from an
+already-saturated kvrocks. The CPU saving is real but is a minority of that wall
+clock. A per-binary sample (where a real build gets its reuse) is the meaningful
+end-to-end measurement and had not completed when this was written.
+
+### 5d. What this means
+
+- CPU-side, at production corpus size: **~8x on discovery**, results identical.
+- End-to-end gain depends on whether fetch or CPU dominates on your host. On a
+  saturated remote kvrocks with cold caches, expect much less than 8x.
+- The remaining hot spots, from profiling the new code: `_intern` (a per-pair
+  Python `dict.get` loop, 2.1M calls in the profiled run) and the per-candidate
+  scoring loop. **`_intern` is the next thing to optimise** — vectorising it, or
+  assigning stable integer function ids at ingest, would remove the one cost this
+  change added.
 
 ## 6. Known behavioural difference
 
@@ -204,10 +257,13 @@ effectively unbounded limit for this reason.
 
 ## 7. Caveats
 
-- Loop benchmarks are synthetic and ran on a dev CPU, not the server. The 129x
-  ratio should carry; absolute per-function timings will not.
-- 10–25x is a projection from the CPU/fetch split, not an end-to-end run.
-  Worth one binary A/B before trusting it.
+- Benchmarks ran on a dev CPU, not the server; ratios should carry, absolute
+  timings will not.
+- §5a uses an in-memory store, so it isolates CPU and excludes fetch entirely.
+  Real hosts sit somewhere between §5a and §5c.
+- The 8x plateau is specific to this feature-frequency shape and to 400 targets
+  of reuse. Fewer targets per posting list means less amortisation of `_intern`
+  and a lower number — at 25 targets the same corpora gave only 1.1–1.7x.
 - Sampling used `ZRANDMEMBER` with 80–2000 functions depending on the table;
   cost figures ±20%.
 - The Cauchy–Schwarz bound in §3b is derived for cosine. It does **not** carry

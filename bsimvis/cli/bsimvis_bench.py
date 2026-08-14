@@ -223,6 +223,12 @@ def run_single_file(
             data["algo"] = algo
         if skip_write:
             data["skip_write"] = True
+        # The exported JSONs in data/bench carry a batch_uuid in file_metadata, and
+        # upload_file_data defaults to enqueue=False for anything batch-tagged so a
+        # batch can be finalised as a unit. The benchmark uploads file-by-file and
+        # polls each pipeline, so it must ask for immediate execution or every job
+        # parks forever waiting on a batch_finalize this path never sends.
+        data.setdefault("enqueue", True)
         num_funcs_in_file = len(data.get("functions", []))
 
         print(f"\n[*] Processing {filename}")

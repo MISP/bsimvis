@@ -1127,7 +1127,7 @@ class SearchUnified(Resource):
             "q": {"description": "Free-text query", "required": True},
             "limit": "Max results per entity type (default: 5)",
             "collection": "Restrict to these collections (repeatable). Default: all",
-            "max_collections": "Cap on collections fanned out to (default: 25)",
+            "max_collections": "Cap on collections fanned out to (default: unlimited)",
         }
     )
     def get(self):

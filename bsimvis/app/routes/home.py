@@ -201,8 +201,11 @@ def unified_search():
         return {"query": "", "groups": []}
     limit = request.args.get("limit", 5, type=int)
     scope = request.args.getlist("collection") or [c["name"] for c in _collections()]
-    max_cols = request.args.get("max_collections", 25, type=int)
-    scope = scope[:max_cols]
+    scope_total = len(scope)
+    max_cols = request.args.get("max_collections", type=int)
+    truncated = bool(max_cols) and scope_total > max_cols
+    if max_cols:
+        scope = scope[:max_cols]
 
     from bsimvis.app.routes.bin_cluster import list_bin_clusters
     from bsimvis.app.routes.cluster import list_clusters
@@ -348,4 +351,10 @@ def unified_search():
             )
         )
 
-    return {"query": q, "scope": len(scope), "groups": [g for g in groups if g["items"]]}
+    return {
+        "query": q,
+        "scope": len(scope),
+        "scope_total": scope_total,
+        "truncated": truncated,
+        "groups": [g for g in groups if g["items"]],
+    }

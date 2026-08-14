@@ -4,6 +4,7 @@ import math
 import time
 import logging
 import hashlib
+import numpy as np
 from bsimvis.app.services.index_service import save_similarity
 from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.index_config import get_propagated_fields
@@ -34,28 +35,51 @@ class SimilarityService:
         # counts are all static during a build (they only change at ingestion),
         # so memoizing them turns the repeated cross-target reads the old Lua did
         # per target into one fetch each. Reset at every top-level build entry.
+        from bsimvis.app.services.config_service import config_service
+
+        # Posting lists are held column-wise as (int32 ids, float64 tfs) rather
+        # than list[(str, float)]. Measured on full_arbor: 186.7 -> 12 bytes per
+        # pair, which is what lets a whole binary's ~27M-pair working set stay
+        # resident instead of thrashing. See doc/build-sim-discovery-perf.md.
+        self._pl_budget = config_service.get(
+            "similarity.posting_cache_pairs", 30_000_000
+        )
+        self._reset_read_caches()
+
+    def _reset_read_caches(self):
+        """(Re)create the per-build read caches. Called at each top-level build
+        entry so a later build never sees posting lists/norms stale from a prior
+        ingestion, and from __init__ so both paths build the same structures."""
         from collections import OrderedDict
 
-        self._pl_cache = OrderedDict()  # feature key -> [(func_id, tf_float), ...]
+        self._pl_cache = OrderedDict()  # feature key -> (ids ndarray, tfs ndarray)
         self._pl_pairs = 0
-        # ponytail: LRU-bounded by total cached pairs (~hundreds of MB) so a huge
-        # collection can't OOM the cache. Raise/lower if RAM vs hit-rate needs it.
-        self._pl_budget = 5_000_000
+        # Function id <-> dense integer index, so accumulation can be a vectorised
+        # scatter-add (np.bincount) instead of a per-pair Python loop.
+        self._fid_to_idx = {}
+        self._idx_to_fid = []
         self._norm_cache = {}  # func_id -> vector norm (float)
         self._count_cache = {}  # (count_idx_key, func_id) -> feature count (float)
 
-    def _reset_read_caches(self):
-        """Drop per-build read caches (call at each top-level build entry so a
-        later build never sees posting lists/norms stale from a prior ingestion)."""
-        self._pl_cache.clear()
-        self._pl_pairs = 0
-        self._norm_cache.clear()
-        self._count_cache.clear()
+    def _intern(self, fids):
+        """Map function-id strings to dense int32 indices, assigning new ones as
+        they appear. The dense space is what makes np.bincount usable below."""
+        to_idx = self._fid_to_idx
+        rev = self._idx_to_fid
+        out = np.empty(len(fids), dtype=np.int32)
+        for i, fid in enumerate(fids):
+            idx = to_idx.get(fid)
+            if idx is None:
+                idx = len(rev)
+                to_idx[fid] = idx
+                rev.append(fid)
+            out[i] = idx
+        return out
 
     def _pl_warm(self, keys):
         """Pipeline-fetch any uncached feature posting lists in `keys` in one RTT
-        and memoize them. Order within a list is irrelevant to the callers (they
-        sum over it), so a plain ZRANGE is fine."""
+        and memoize them as (int32 ids, float64 tfs). Order within a list is
+        irrelevant to the callers (they sum over it), so a plain ZRANGE is fine."""
         c = self._pl_cache
         miss = [k for k in keys if k not in c]
         if not miss:
@@ -64,23 +88,30 @@ class SimilarityService:
         for k in miss:
             pipe.zrange(k, 0, -1, withscores=True)
         for k, raw in zip(miss, pipe.execute()):
-            pl = [(fid, float(tf)) for fid, tf in raw]
-            c[k] = pl
+            if raw:
+                ids = self._intern([fid for fid, _ in raw])
+                tfs = np.fromiter(
+                    (float(tf) for _, tf in raw), dtype=np.float64, count=len(raw)
+                )
+            else:
+                ids = np.empty(0, dtype=np.int32)
+                tfs = np.empty(0, dtype=np.float64)
+            c[k] = (ids, tfs)
             c.move_to_end(k)
-            self._pl_pairs += len(pl)
+            self._pl_pairs += len(ids)
         while self._pl_pairs > self._pl_budget and len(c) > 1:
-            _, ev = c.popitem(last=False)
-            self._pl_pairs -= len(ev)
+            _, (ev_ids, _) = c.popitem(last=False)
+            self._pl_pairs -= len(ev_ids)
 
     def _pl(self, key):
-        """Cached feature posting list [(func_id, tf_float), ...] for one feature."""
+        """Cached feature posting list as (int32 ids, float64 tfs) for one feature."""
         c = self._pl_cache
         pl = c.get(key)
         if pl is not None:
             c.move_to_end(key)
             return pl
         self._pl_warm([key])
-        return c.get(key, [])
+        return c.get(key, (np.empty(0, dtype=np.int32), np.empty(0, dtype=np.float64)))
 
     def _counts(self, count_idx, ids):
         """Cached feature counts (ZSCORE count_idx) for ids; pipeline the misses."""
@@ -341,61 +372,122 @@ class SimilarityService:
             key=lambda x: x["size"],
         )
 
-        # 2. Accumulate intersection (dot product / sum-min) with pruning bounds
-        intersection_counts = {}
-        shared_target_norm_sq = {}
+        # 2. Accumulate intersection (dot product / sum-min) with pruning bounds.
+        #
+        # Vectorised scatter-add. The per-pair Python loop this replaces measured
+        # 849 ns/pair on full_arbor (~1.6 s for a 1.9M-pair function, against ~2.5 s
+        # observed end-to-end); np.bincount does the same sum at ~7 ns/pair. Sums
+        # stay float64 and stay in feature order, so scores are unchanged.
+        # See doc/build-sim-discovery-perf.md.
         target_norm_sq = target_norm * target_norm
+
+        # The pruning bound reads only tf values, never posting-list contents, and
+        # remaining_* falls monotonically — so "can this feature still introduce a
+        # new candidate" is decidable up front, without fetching anything. Features
+        # split into an open prefix (may add candidates) and a closed suffix (may
+        # only top up candidates already found), exactly as the loop did.
+        open_feats, closed_feats = [], []
         processed_norm_sq = 0.0
         processed_total = 0.0
-        num_candidates = 0
-
         for feat in features_sorted:
-            remaining_norm_sq = target_norm_sq - processed_norm_sq
-            remaining_total = target_total - processed_total
-            can_add_new = True
             if algo == "unweighted_cosine":
-                if remaining_norm_sq < min_shared_norm_sq:
-                    can_add_new = False
+                can_add_new = (target_norm_sq - processed_norm_sq) >= min_shared_norm_sq
             elif algo == "jaccard":
-                if remaining_total < threshold * target_total:
-                    can_add_new = False
-            if not can_add_new and num_candidates == 0:
-                break
-
-            target_tf_sq = feat["tf"] * feat["tf"] if algo == "unweighted_cosine" else 0
-            # Cached across targets in this build (feature posting lists are static
-            # during a build). Order is irrelevant — we sum over the whole list.
-            for func_id, cand_tf in self._pl(feat["key"]):
-                if func_id == target_id:
-                    continue
-                is_existing = func_id in intersection_counts
-                if is_existing or can_add_new:
-                    if not is_existing:
-                        intersection_counts[func_id] = 0.0
-                        if algo == "unweighted_cosine":
-                            shared_target_norm_sq[func_id] = 0.0
-                        num_candidates += 1
-                    if algo == "jaccard":
-                        intersection_counts[func_id] += min(feat["tf"], cand_tf)
-                    elif algo == "unweighted_cosine":
-                        intersection_counts[func_id] += feat["tf"] * cand_tf
-                        shared_target_norm_sq[func_id] += target_tf_sq
-
+                can_add_new = (
+                    target_total - processed_total
+                ) >= threshold * target_total
+            else:
+                can_add_new = True
+            (open_feats if can_add_new else closed_feats).append(feat)
             processed_norm_sq += feat["tf"] * feat["tf"]
             processed_total += feat["tf"]
 
-        # 3. Phase-1 bound filter
-        kept = []
-        for cid, intersect in intersection_counts.items():
-            if algo == "jaccard":
-                if intersect < threshold * target_total:
-                    continue
-            elif algo == "unweighted_cosine":
-                if shared_target_norm_sq.get(cid, 0) < min_shared_norm_sq:
-                    continue
-            kept.append(cid)
-        if not kept:
+        # No open feature => the old loop broke on its first iteration.
+        if not open_feats:
             return []
+
+        self._pl_warm([f["key"] for f in open_feats])
+        n_idx = len(self._idx_to_fid)
+        if n_idx == 0:
+            return []
+
+        def _weights(feat, tfs):
+            if algo == "jaccard":
+                return np.minimum(feat["tf"], tfs)
+            return feat["tf"] * tfs
+
+        id_parts, w_parts, sn_parts = [], [], []
+        for feat in open_feats:
+            ids, tfs = self._pl(feat["key"])
+            if not len(ids):
+                continue
+            id_parts.append(ids)
+            w_parts.append(_weights(feat, tfs))
+            if algo == "unweighted_cosine":
+                sn_parts.append(np.full(len(ids), feat["tf"] * feat["tf"]))
+        if not id_parts:
+            return []
+
+        open_ids = np.concatenate(id_parts)
+        inter = np.bincount(open_ids, weights=np.concatenate(w_parts), minlength=n_idx)
+        seen = np.zeros(n_idx, dtype=bool)
+        seen[open_ids] = True
+        snorm = (
+            np.bincount(open_ids, weights=np.concatenate(sn_parts), minlength=n_idx)
+            if algo == "unweighted_cosine"
+            else None
+        )
+        del id_parts, w_parts, sn_parts, open_ids
+
+        # The target never counts as its own candidate.
+        self_idx = self._fid_to_idx.get(target_id)
+        if self_idx is not None and self_idx < n_idx:
+            seen[self_idx] = False
+            inter[self_idx] = 0.0
+            if snorm is not None:
+                snorm[self_idx] = 0.0
+
+        if not seen.any():
+            return []
+
+        # Closed features top up existing candidates only — mask, don't extend.
+        if closed_feats:
+            self._pl_warm([f["key"] for f in closed_feats])
+            for feat in closed_feats:
+                ids, tfs = self._pl(feat["key"])
+                if not len(ids):
+                    continue
+                # Warming these keys may have interned ids beyond the snapshot;
+                # such a function was never seen, so it cannot be a candidate.
+                fresh = ids < n_idx
+                if not fresh.all():
+                    ids, tfs = ids[fresh], tfs[fresh]
+                    if not len(ids):
+                        continue
+                m = seen[ids]
+                if not m.any():
+                    continue
+                # In-place: a zset member is unique per posting list, so `sub` has
+                # no repeats, and this avoids allocating an n_idx-wide temporary
+                # (12 MB at 1.5M functions) for every closed feature.
+                sub = ids[m]
+                np.add.at(inter, sub, _weights(feat, tfs[m]))
+                if snorm is not None:
+                    np.add.at(snorm, sub, feat["tf"] * feat["tf"])
+
+        # 3. Phase-1 bound filter
+        if algo == "jaccard":
+            keep_mask = seen & (inter >= threshold * target_total)
+        elif algo == "unweighted_cosine":
+            keep_mask = seen & (snorm >= min_shared_norm_sq)
+        else:
+            keep_mask = seen
+        kept_idx = np.flatnonzero(keep_mask)
+        if not len(kept_idx):
+            return []
+        rev = self._idx_to_fid
+        kept = [rev[i] for i in kept_idx]
+        intersection_counts = dict(zip(kept, inter[kept_idx].tolist()))
 
         # 4. Fetch candidate feature counts (cached; pipeline the misses)
         count_idx = f"{collection}:idx:func:bsim_features_count"
@@ -469,16 +561,35 @@ class SimilarityService:
 
         # 3. Dot product against candidates only. Posting lists cached across
         # targets (warm all misses for this target in one RTT first).
-        intersection_counts = {}
         keys = [f"{collection}:feature:{h}:functions" for h in target_features]
         self._pl_warm(keys)
+        # Same vectorised scatter-add as _discover_find, restricted to the LSH
+        # candidate set via a dense boolean mask instead of a per-pair `in` test.
+        cand_idx = self._intern(list(candidate_set))
+        n_idx = len(self._idx_to_fid)
+        is_cand = np.zeros(n_idx, dtype=bool)
+        is_cand[cand_idx] = True
+
+        id_parts, w_parts = [], []
         for f_hash, key in zip(target_features, keys):
-            target_tf = target_features[f_hash]
-            for func_id, cand_tf in self._pl(key):
-                if func_id in candidate_set:
-                    intersection_counts[func_id] = (
-                        intersection_counts.get(func_id, 0.0) + target_tf * cand_tf
-                    )
+            ids, tfs = self._pl(key)
+            if not len(ids):
+                continue
+            m = is_cand[ids]
+            if not m.any():
+                continue
+            id_parts.append(ids[m])
+            w_parts.append(target_features[f_hash] * tfs[m])
+        if not id_parts:
+            return []
+
+        hit_ids = np.concatenate(id_parts)
+        acc = np.bincount(hit_ids, weights=np.concatenate(w_parts), minlength=n_idx)
+        rev = self._idx_to_fid
+        hit_idx = np.flatnonzero(np.bincount(hit_ids, minlength=n_idx))
+        intersection_counts = dict(
+            zip((rev[i] for i in hit_idx), acc[hit_idx].tolist())
+        )
         if not intersection_counts:
             return []
 

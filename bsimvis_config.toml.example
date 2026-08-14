@@ -51,6 +51,14 @@
     # instead (BSim is false-positive-prone on tiny funcs). 10 = canonical default.
     min_features = 10
     algo = "unweighted_cosine"
+    # posting_cache_pairs: per-worker budget for the build_sim posting-list cache,
+    # counted in (function, tf) pairs at 12 bytes each -> 30M ~= 0.36 GB of arrays,
+    # plus a function-id intern table (~235 MB at 1.5M functions). A whole binary's
+    # working set measured ~27M pairs on full_arbor, so the default keeps it
+    # resident; below it the cache thrashes and refetches the big posting lists.
+    # Multiply by your worker count before raising it.
+    # See doc/build-sim-discovery-perf.md.
+    posting_cache_pairs = 30_000_000
 
 
 [llm]

@@ -235,8 +235,14 @@ def capa_rows(cdata):
     Keyed by namespace, not rule name: the tag is built from the namespace, so
     that is the thing a user clicking the tag is asking about. Several rules
     share one namespace, and their names are collected into the row.
+
+    The rest of the rule's metadata comes along too -- authors, scopes, ATT&CK
+    and MBC ids, examples, and capa's own `source` (the rule's YAML, which capa
+    already hands back in the document). capa rules live in an upstream repo
+    this deployment does not check out, so unlike a YARA rule there is no file
+    to read the text back off later: recorded here or unrecoverable.
     """
-    from bsimvis.app.services.tag_taxonomy import capa_tag
+    from bsimvis.app.services.tag_taxonomy import capa_meta_tags, capa_tag
 
     rows = {}
     for rule in (cdata or {}).get("rules", {}).values():
@@ -251,12 +257,44 @@ def capa_rows(cdata):
                 "name": meta.get("namespace"),
                 "tags": [tag],
                 "rules": [],
+                "authors": [],
+                "attack": [],
+                "mbc": [],
+                "examples": [],
+                "scopes": meta.get("scopes") or None,
+                "text": "",
             },
         )
         name = meta.get("name")
         if name and name not in row["rules"]:
             row["rules"].append(name)
-    return rows
+            text = rule.get("source")
+            if text:
+                row["text"] = (row["text"] + "\n\n" + text).strip()
+        row["tags"] = sorted(set(row["tags"]) | capa_meta_tags(meta))
+        for key, values in (
+            ("authors", meta.get("authors")),
+            ("examples", meta.get("examples")),
+            ("attack", [_capa_ref(e) for e in meta.get("attack") or ()]),
+            ("mbc", [_capa_ref(e) for e in meta.get("mbc") or ()]),
+        ):
+            for v in values or ():
+                if v and v not in row[key]:
+                    row[key].append(v)
+    return {rid: {k: v for k, v in row.items() if v} for rid, row in rows.items()}
+
+
+def _capa_ref(entry):
+    """One capa `attack`/`mbc` entry -> the display string its YAML uses.
+
+    `{"parts": ["Discovery", "System Information Discovery"], "id": "T1082"}`
+    -> `Discovery::System Information Discovery [T1082]`.
+    """
+    if not isinstance(entry, dict):
+        return str(entry or "").strip() or None
+    parts = "::".join(p for p in entry.get("parts") or () if p)
+    tid = entry.get("id")
+    return f"{parts} [{tid}]" if parts and tid else (parts or tid or None)
 
 
 # --- Writes -----------------------------------------------------------------
@@ -331,13 +369,29 @@ def record_hits(collection, entity_id, rule_ids, r=None):
 
 
 def record_hits_bulk(collection, hits, r=None):
-    """`{entity id: [rule id, ...]}` for a whole program, in one pipeline."""
+    """`{entity id: [rule id, ...]}` for a whole program, in one pipeline.
+
+    Merged with what is already stored, not replaced: two analysers (YARA and
+    capa) write hits for the same file and the same functions, one after the
+    other, and a plain overwrite would leave whichever ran last.
+    """
     hits = {k: v for k, v in (hits or {}).items() if v}
     if not (collection and hits):
         return 0
     r = r or _redis()
-    pipe = r.pipeline()
     key = hits_key(collection)
+    ids = list(hits)
+    for entity_id, stored in zip(ids, r.hmget(key, ids)):
+        if not stored:
+            continue
+        try:
+            # ponytail: union only, so a rule that stops matching keeps its old
+            # hit row until the entity is re-created. Track a per-analyser row
+            # if stale hits ever show up in the UI.
+            hits[entity_id] = list(set(hits[entity_id]) | set(json.loads(stored)))
+        except ValueError:
+            pass
+    pipe = r.pipeline()
     for entity_id, rule_ids in hits.items():
         pipe.hset(key, entity_id, json.dumps(sorted(set(rule_ids))))
     pipe.execute()
@@ -444,12 +498,15 @@ def rule_text(rid, max_bytes=20000):
 
     Never stored: the mirror already has every rule as `rules/<uuid>.yara` and
     the vendored ruleset is a checkout, so the text is one file read away. capa
-    rules live in the upstream repo only -- those get a link, not a preview.
+    rules live in the upstream repo only, so their YAML is the one body that
+    *is* stored -- capa hands it back with the match (`capa_rows`), and there is
+    no local file to re-read it from.
     """
     if not rid:
         return None
     if rid.startswith("capa:"):
-        return None
+        text = (rule_meta([rid]).get(rid) or {}).get("text")
+        return text[:max_bytes] if text else None
 
     if rid.startswith("yara:"):
         from bsimvis.app.services.yara_service import rules_dir
@@ -594,15 +651,48 @@ def demo():
                     "meta": {
                         "namespace": "host-interaction/file-system",
                         "name": "write file",
-                    }
+                        "authors": ["joakim@intezer.com"],
+                        "scopes": {"static": "instruction"},
+                        "attack": [
+                            {
+                                "parts": ["Discovery", "System Information Discovery"],
+                                "id": "T1082",
+                            }
+                        ],
+                        "mbc": [{"parts": ["File System", "Writes File"], "id": "C0052"}],
+                        "examples": ["7351f8:0x401E14"],
+                    },
+                    "source": "rule:\n  meta:\n    name: write file\n",
                 }
             }
         }
     )
-    assert "capa:host-interaction/file-system" in crows, crows
+    crow = crows["capa:host-interaction/file-system"]
+    assert crow["authors"] == ["joakim@intezer.com"], crow
+    assert crow["attack"] == ["Discovery::System Information Discovery [T1082]"], crow
+    assert crow["mbc"] == ["File System::Writes File [C0052]"], crow
+    assert crow["scopes"] == {"static": "instruction"} and crow["examples"], crow
+    # The rule's ATT&CK/MBC ids are tags of the rule, not just prose on it.
+    assert set(crow["tags"]) == {
+        "capa:host-interaction:file-system",
+        "mitre:t1082",
+        "mbc:file-system:writes-file",
+    }, crow
 
     put_rules(rows, r)
     put_rules(crows, r)
+
+    # capa rule text has no local file: it is served back from the stored row.
+    import bsimvis.app.services.tag_provenance as _tp
+
+    _saved, _tp._redis = _tp._redis, lambda: r
+    try:
+        assert rule_text("capa:host-interaction/file-system").startswith("rule:"), (
+            rule_text("capa:host-interaction/file-system")
+        )
+        assert rule_text("capa:nursery/thing") is None
+    finally:
+        _tp._redis = _saved
 
     # Endpoint A groups an entity's hits by tag, with one shared rule table.
     record_hits_bulk(

@@ -115,7 +115,7 @@ class GhidraAnalyzer:
             return resp.json()
 
     def _capa_tags_for_program(self, capa_json_path, program):
-        """capa's JSON -> `{function entry point hex: {capa tag, ...}}`.
+        """capa's JSON -> `(tags by entry point hex, rule ids by entry point, doc)`.
 
         Two things sit between a capa match and a Ghidra function, and getting
         either wrong yields an empty capa axis rather than an error:
@@ -129,20 +129,28 @@ class GhidraAnalyzer:
           points downstream, so every hit is resolved through the function
           containing it -- keying on the raw address would drop every rule that
           is not function-scoped.
+
+        The second and third returns are the provenance half: which capa rule
+        put a tag on which function, and capa's own document so the rule rows
+        (authors, ATT&CK/MBC, the rule YAML) can be recorded. Both come out of
+        the same resolution pass, so a function can never name a rule that fired
+        on a different function.
         """
         if not os.path.exists(capa_json_path) or not os.path.getsize(capa_json_path):
             raise RuntimeError("capa wrote no output")
 
+        from bsimvis.app.services.tag_provenance import capa_rule_id
         from bsimvis.app.services.tag_taxonomy import capa_rule_hits
 
         with open(capa_json_path) as f:
-            capa_base, hits = capa_rule_hits(json.load(f))
+            cdata = json.load(f)
+        capa_base, hits = capa_rule_hits(cdata)
 
         rebase = program.getImageBase().getOffset() - capa_base
         func_manager = program.getFunctionManager()
         space = program.getAddressFactory().getDefaultAddressSpace()
 
-        tags_by_addr = {}
+        tags_by_addr, rules_by_addr = {}, {}
         for virtual_addr, ctags in hits.items():
             try:
                 func = func_manager.getFunctionContaining(
@@ -153,9 +161,17 @@ class GhidraAnalyzer:
                 # drop the hits that do land.
                 continue
             if func:
-                key = hex(func.getEntryPoint().getOffset())
-                tags_by_addr.setdefault(key, set()).update(ctags)
-        return tags_by_addr
+                entry = func.getEntryPoint()
+                tags_by_addr.setdefault(hex(entry.getOffset()), set()).update(ctags)
+                # The rule id is the namespace the `capa:` tag was built from,
+                # so it is recoverable from the tag; the `mitre:`/`mbc:` tags
+                # riding along came from those same rules.
+                rules_by_addr.setdefault(str(entry).split(":")[-1], set()).update(
+                    capa_rule_id(t.split("capa:", 1)[1].replace(":", "/"))
+                    for t in ctags
+                    if t.startswith("capa:")
+                )
+        return tags_by_addr, rules_by_addr, cdata
 
     def _yara_tags_for_program(self, matches, program, extra_tags=None):
         """yara-python matches -> `{function entry point hex: {yara tag, ...}}`.
@@ -599,9 +615,33 @@ class GhidraAnalyzer:
                                 )
                             else:
                                 try:
-                                    capa_tags_by_addr = self._capa_tags_for_program(
+                                    (
+                                        capa_tags_by_addr,
+                                        capa_rules_by_addr,
+                                        capa_doc,
+                                    ) = self._capa_tags_for_program(
                                         capa_json_path, program
                                     )
+                                    # Same deal as the YARA path below: the rule
+                                    # metadata (authors, ATT&CK/MBC, the rule
+                                    # YAML) exists only in capa's document, and
+                                    # capa rules are not checked out locally, so
+                                    # it is recorded here or lost.
+                                    from bsimvis.app.services import tag_provenance
+
+                                    rows = tag_provenance.capa_rows(capa_doc)
+                                    tag_provenance.put_rules(rows, self.r_data)
+                                    if file_md5 and rows:
+                                        hits = {
+                                            f"{collection}:file:{file_md5}": list(rows)
+                                        }
+                                        for addr, ids in capa_rules_by_addr.items():
+                                            hits[
+                                                f"{collection}:func:{file_md5}:{addr}"
+                                            ] = sorted(ids)
+                                        tag_provenance.record_hits_bulk(
+                                            collection, hits, self.r_data
+                                        )
                                 except Exception as e:
                                     self.job_service.add_log(
                                         job_id, f"capa parse failed: {e}"

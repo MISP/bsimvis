@@ -333,6 +333,41 @@ def capa_tag(rule_namespace):
     return "capa:" + ":".join(p for p in ns.split("/") if p)
 
 
+def capa_meta_tags(meta):
+    """capa rule meta -> the `mitre:`/`mbc:` tags the rule itself declares.
+
+    capa rules carry their own ATT&CK and MBC mappings (`meta.attack`,
+    `meta.mbc`), each entry a dict with the id already split out
+    (`{"tactic": "Discovery", "technique": ..., "id": "T1082"}`). Those are the
+    same externally standardised ids `mitre:`/`mbc:` already reserve, so the
+    mapping is inherited rather than re-derived: capa is the producer this
+    vocabulary was missing.
+
+    `mitre:` stays flat (`mitre:t1082`) to match the rulezet producer. MBC has
+    no competing producer, so it keeps the reserved two-level shape,
+    `mbc:<objective>:<behavior>` -> `mbc:operating-system:environment-variable`.
+    """
+    out = set()
+    for entry in (meta or {}).get("attack") or ():
+        tid = (entry or {}).get("id") if isinstance(entry, dict) else None
+        if not tid:
+            m = _MITRE_ID.search(str(entry or ""))
+            tid = m.group(0) if m else None
+        if tid:
+            out.add(f"{MITRE_NAMESPACE}:{str(tid).strip().lower()}")
+    for entry in (meta or {}).get("mbc") or ():
+        if not isinstance(entry, dict):
+            continue
+        parts = list(entry.get("parts") or ())
+        objective = tag_slug(entry.get("objective") or (parts[0] if parts else ""))
+        behavior = tag_slug(
+            entry.get("behavior") or (parts[1] if len(parts) > 1 else "")
+        )
+        if objective and behavior:
+            out.add(f"{MBC_NAMESPACE}:{objective}:{behavior}")
+    return out
+
+
 def capa_rule_hits(cdata):
     """capa `-j` document -> `(base_address, {virtual_address: {tag, ...}})`.
 
@@ -350,9 +385,13 @@ def capa_rule_hits(cdata):
 
     hits = {}
     for rule in cdata.get("rules", {}).values():
-        ctag = capa_tag(rule.get("meta", {}).get("namespace"))
+        meta = rule.get("meta", {}) or {}
+        ctag = capa_tag(meta.get("namespace"))
         if not ctag:
             continue
+        # The rule's own ATT&CK/MBC mappings ride along with its capa tag, on
+        # the same addresses: they are claims about the same match.
+        ctags = {ctag} | capa_meta_tags(meta)
         for match in rule.get("matches", []):
             if not isinstance(match, (list, tuple)) or not match:
                 continue
@@ -362,7 +401,7 @@ def capa_rule_hits(cdata):
             if not isinstance(addr, dict) or addr.get("type") != "absolute":
                 continue
             if "value" in addr:
-                hits.setdefault(addr["value"], set()).add(ctag)
+                hits.setdefault(addr["value"], set()).update(ctags)
     return base, hits
 
 
@@ -883,6 +922,45 @@ def demo():
         0x2014000: {"capa:data-manipulation:encryption:rc4"},
     }, hits
     assert capa_rule_hits({}) == (0, {})
+
+    # capa's own ATT&CK/MBC mappings become tags, on the rule's own addresses.
+    cmeta = {
+        "namespace": "host-interaction/environment-variable",
+        "attack": [
+            {
+                "parts": ["Discovery", "System Information Discovery"],
+                "id": "T1082",
+            }
+        ],
+        "mbc": [
+            {"objective": "Operating System", "behavior": "Environment Variable"}
+        ],
+    }
+    assert capa_meta_tags(cmeta) == {
+        "mitre:t1082",
+        "mbc:operating-system:environment-variable",
+    }, capa_meta_tags(cmeta)
+    assert capa_meta_tags({}) == set()
+    # An entry that is a bare string (capa's YAML form) still yields the id.
+    assert capa_meta_tags(
+        {"attack": ["Discovery::System Information Discovery [T1082]"]}
+    ) == {"mitre:t1082"}
+    _, mhits = capa_rule_hits(
+        {
+            "meta": {"analysis": {"base_address": {"value": 0}}},
+            "rules": {
+                "get COMSPEC": {
+                    "meta": cmeta,
+                    "matches": [[{"type": "absolute", "value": 0x401880}, {}]],
+                }
+            },
+        }
+    )
+    assert mhits[0x401880] == {
+        "capa:host-interaction:environment-variable",
+        "mitre:t1082",
+        "mbc:operating-system:environment-variable",
+    }, mhits
 
     assert yara_tag("Ransomware", "LOCKBIT", "Win32_Ransomware_LockBit") == (
         "yara:ransomware:lockbit:Win32_Ransomware_LockBit"

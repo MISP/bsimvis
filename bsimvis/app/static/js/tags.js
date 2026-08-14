@@ -1412,7 +1412,12 @@ window.showTagProvenance = (e, tag, eid) => {
             ${row('Rule name', r.title && r.name ? r.name : '')}
             ${row('File', r.path)}
             ${row('Format', r.format)}
-            ${row('Author', r.author)}
+            ${row('Author', r.author || (r.authors || []).join(', '))}
+            ${row('Rules', (r.rules || []).join(', '))}
+            ${row('Scope', r.scopes ? Object.entries(r.scopes).map(([k, v]) => `${k}: ${v}`).join(', ') : '')}
+            ${row('ATT&CK', (r.attack || []).join(', '))}
+            ${row('MBC', (r.mbc || []).join(', '))}
+            ${row('Examples', (r.examples || []).join(', '))}
             ${row('License', r.license)}
             ${row('Upstream', r.upstream)}
             ${chips(r.tags)}

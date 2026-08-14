@@ -2347,3 +2347,106 @@ body.in-iframe main {
     width: 100%;
 }
 
+
+/* ---- Homepage ---------------------------------------------------------- */
+/* ponytail: plain classes, no component system. Homepage is the only user. */
+
+.home-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    transition: border-color 0.15s, transform 0.15s, background 0.15s;
+}
+a.home-card:hover,
+.home-card.is-clickable:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+}
+
+.home-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 36px;
+    padding: 0 18px;
+    box-sizing: border-box;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--hover);
+    color: var(--text);
+    font-size: 0.82rem;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.home-btn:hover { border-color: var(--accent); background: var(--border); }
+.home-btn:active { transform: translateY(1px); }
+.home-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.home-btn-primary {
+    height: 42px;
+    padding: 0 22px;
+    font-size: 0.9rem;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg, #1e1f1c);
+}
+.home-btn-primary:hover {
+    background: var(--accent);
+    filter: brightness(1.12);
+    border-color: var(--accent);
+}
+
+.home-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.8rem; }
+.home-table th {
+    padding: 8px 12px;
+    background: var(--hover);
+    color: var(--dim);
+    font-weight: 600;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--border);
+}
+.home-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.home-table tbody tr { transition: background 0.15s; }
+.home-table tbody tr:hover { background: var(--hover); }
+.home-table tbody tr:last-child td { border-bottom: none; }
+.home-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.home-table .ellip { max-width: 1px; width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-table a { color: inherit; text-decoration: none; }
+.home-table a:hover { color: var(--accent); }
+
+/* CSS-only hover hint: <span class="home-tip" data-tip="..."><i …></i></span> */
+.home-tip { position: relative; display: inline-flex; color: var(--dim); cursor: help; }
+.home-tip:hover { color: var(--accent); }
+.home-tip::after {
+    content: attr(data-tip);
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 8px);
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: 260px;
+    padding: 8px 10px;
+    background: var(--card-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+    font-size: 0.72rem;
+    font-weight: 400;
+    line-height: 1.45;
+    text-transform: none;
+    letter-spacing: normal;
+    white-space: normal;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.15s;
+    z-index: 60;
+    pointer-events: none;
+}
+.home-tip:hover::after,
+.home-tip:focus-visible::after { opacity: 1; visibility: visible; }

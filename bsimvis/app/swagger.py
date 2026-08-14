@@ -1137,6 +1137,23 @@ class SearchUnified(Resource):
         return unified_search()
 
 
+@ns_search.route("/unified/stream")
+class SearchUnifiedStream(Resource):
+    @ns_search.doc(
+        params={
+            "q": {"description": "Free-text query", "required": True},
+            "limit": "Max results per entity type (default: 5)",
+            "collection": "Restrict to these collections (repeatable). Default: all",
+            "max_collections": "Cap on collections fanned out to (default: unlimited)",
+        }
+    )
+    def get(self):
+        """Streams the same unified search as NDJSON, one group per line as it is found."""
+        from bsimvis.app.routes.home import unified_search_stream
+
+        return unified_search_stream()
+
+
 @ns_search.route("/autocomplete")
 class SearchAutocomplete(Resource):
     @ns_search.doc(

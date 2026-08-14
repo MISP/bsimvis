@@ -5,6 +5,7 @@ maintaining a second index. `_call` invokes a route function inside a synthetic
 request context so the existing `request.args` parsing is reused verbatim.
 """
 
+import json
 import logging
 import time
 
@@ -190,15 +191,9 @@ def _group(kind, items, mapper, limit):
     return {"kind": kind, "items": [mapper(i) for i in items[:limit]]}
 
 
-def unified_search():
-    """Fans a free-text query out over every searchable entity type.
-
-    Params: q (required), limit (per type, default 5),
-            collection (repeatable; default = every collection).
-    """
+def _search_params():
+    """Shared parsing for both the batch and streaming search endpoints."""
     q = (request.args.get("q") or "").strip()
-    if not q:
-        return {"query": "", "groups": []}
     limit = request.args.get("limit", 5, type=int)
     scope = request.args.getlist("collection") or [c["name"] for c in _collections()]
     scope_total = len(scope)
@@ -206,7 +201,15 @@ def unified_search():
     truncated = bool(max_cols) and scope_total > max_cols
     if max_cols:
         scope = scope[:max_cols]
+    return q, limit, scope, scope_total, truncated
 
+
+def _search_groups(q, limit, scope):
+    """Yields one result group at a time, cheapest entity types first.
+
+    A generator rather than a list so the streaming endpoint can flush each
+    group the moment it is found; `unified_search` just drains it.
+    """
     from bsimvis.app.routes.bin_cluster import list_bin_clusters
     from bsimvis.app.routes.cluster import list_clusters
     from bsimvis.app.routes.pools import list_pools
@@ -215,21 +218,17 @@ def unified_search():
     from bsimvis.app.routes.search_file import search_files
     from bsimvis.app.routes.search_function import search_functions
 
-    groups = []
-
     cols = _call(search_collections, q=q, limit=limit).get("collections", [])
     if cols:
-        groups.append(
-            _group(
-                "collections",
-                cols,
-                lambda c: {
-                    "title": c["name"],
-                    "subtitle": f"{c.get('total_files', 0)} files",
-                    "url": f"/collections/{c['name']}",
-                },
-                limit,
-            )
+        yield _group(
+            "collections",
+            cols,
+            lambda c: {
+                "title": c["name"],
+                "subtitle": f"{c.get('total_files', 0)} files",
+                "url": f"/collections/{c['name']}",
+            },
+            limit,
         )
 
     pools = _call(list_pools, limit=100000)
@@ -239,17 +238,35 @@ def unified_search():
         if q.lower() in str(p.get("name", "")).lower()
     ]
     if pool_items:
-        groups.append(
-            _group(
-                "pools",
-                pool_items,
-                lambda p: {
-                    "title": p.get("name"),
-                    "subtitle": f"{len(p.get('collections', []))} collections",
-                    "url": f"/pools/{p.get('id') or p.get('pool_id')}",
-                },
-                limit,
-            )
+        yield _group(
+            "pools",
+            pool_items,
+            lambda p: {
+                "title": p.get("name"),
+                "subtitle": f"{len(p.get('collections', []))} collections",
+                "url": f"/pools/{p.get('id') or p.get('pool_id')}",
+            },
+            limit,
+        )
+
+    # Tags have no search route: match names straight off the tag index.
+    tag_hits = []
+    for name in scope:
+        for t in tag_service.get_collection_tags(name):
+            if q.lower() in t.lower():
+                tag_hits.append({"tag": t, "collection": name})
+        if len(tag_hits) >= limit:
+            break
+    if tag_hits:
+        yield _group(
+            "tags",
+            tag_hits,
+            lambda t: {
+                "title": t["tag"],
+                "subtitle": t["collection"],
+                "url": f"/collections/{t['collection']}/files?tag={t['tag']}",
+            },
+            limit,
         )
 
     def fan(kind, fn, key, mapper, **extra):
@@ -262,99 +279,126 @@ def unified_search():
                 items.append(it)
             if len(items) >= limit:
                 break
-        if items:
-            groups.append(_group(kind, items, mapper, limit))
+        return _group(kind, items, mapper, limit) if items else None
 
-    fan(
-        "files",
-        search_files,
-        "files",
-        lambda f: {
-            "title": f.get("file_name") or f.get("md5"),
-            "subtitle": f"{f['_collection']} · {f.get('md5', '')[:12]}",
-            "url": f"/collections/{f['_collection']}/files/{f.get('md5')}",
-        },
-    )
-    fan(
-        "functions",
-        search_functions,
-        "functions",
-        lambda f: {
-            "title": f.get("function_name") or f.get("name"),
-            "subtitle": f"{f['_collection']} · {f.get('file_name', '')}",
-            "url": (
-                f"/collections/{f['_collection']}/files/{f.get('file_md5') or f.get('md5')}"
-                f"/functions/{f.get('address') or f.get('addr')}"
-            ),
-        },
-    )
-    fan(
-        "features",
-        search_features,
-        "features",
-        lambda f: {
-            "title": f.get("feature") or f.get("hash"),
-            "subtitle": f"{f['_collection']} · {f.get('count', '')}",
-            "url": f"/collections/{f['_collection']}/features/{f.get('hash') or f.get('feature_hash')}",
-        },
-    )
-    fan(
-        "function_clusters",
-        list_clusters,
-        "results",
-        lambda c: {
-            "title": c.get("cluster_name") or f"cluster {c.get('cluster_id')}",
-            "subtitle": f"{c['_collection']} · {c.get('member_count', 0)} members",
-            "url": f"/collections/{c['_collection']}/functions/clusters",
-        },
-    )
-    fan(
-        "binary_clusters",
-        list_bin_clusters,
-        "results",
-        lambda c: {
-            "title": c.get("cluster_name") or f"cluster {c.get('cluster_id')}",
-            "subtitle": f"{c['_collection']} · {c.get('member_count', 0)} files",
-            "url": f"/collections/{c['_collection']}/files/clusters",
-        },
-    )
-    fan(
-        "batches",
-        search_batches,
-        "batches",
-        lambda b: {
-            "title": b.get("batch_name") or b.get("batch_uuid"),
-            "subtitle": b["_collection"],
-            "url": f"/collections/{b['_collection']}/batches",
-        },
-    )
+    fans = [
+        (
+            "files",
+            search_files,
+            "files",
+            lambda f: {
+                "title": f.get("file_name") or f.get("md5"),
+                "subtitle": f"{f['_collection']} · {f.get('md5', '')[:12]}",
+                "url": f"/collections/{f['_collection']}/files/{f.get('md5')}",
+            },
+        ),
+        (
+            "functions",
+            search_functions,
+            "functions",
+            lambda f: {
+                "title": f.get("function_name") or f.get("name"),
+                "subtitle": f"{f['_collection']} · {f.get('file_name', '')}",
+                "url": (
+                    f"/collections/{f['_collection']}/files/{f.get('file_md5') or f.get('md5')}"
+                    f"/functions/{f.get('address') or f.get('addr')}"
+                ),
+            },
+        ),
+        (
+            "batches",
+            search_batches,
+            "batches",
+            lambda b: {
+                "title": b.get("batch_name") or b.get("batch_uuid"),
+                "subtitle": b["_collection"],
+                "url": f"/collections/{b['_collection']}/batches",
+            },
+        ),
+        (
+            "function_clusters",
+            list_clusters,
+            "results",
+            lambda c: {
+                "title": c.get("cluster_name") or f"cluster {c.get('cluster_id')}",
+                "subtitle": f"{c['_collection']} · {c.get('member_count', 0)} members",
+                "url": f"/collections/{c['_collection']}/functions/clusters",
+            },
+        ),
+        (
+            "binary_clusters",
+            list_bin_clusters,
+            "results",
+            lambda c: {
+                "title": c.get("cluster_name") or f"cluster {c.get('cluster_id')}",
+                "subtitle": f"{c['_collection']} · {c.get('member_count', 0)} files",
+                "url": f"/collections/{c['_collection']}/files/clusters",
+            },
+        ),
+        (
+            "features",
+            search_features,
+            "features",
+            lambda f: {
+                "title": f.get("feature") or f.get("hash"),
+                "subtitle": f"{f['_collection']} · {f.get('count', '')}",
+                "url": f"/collections/{f['_collection']}/features/{f.get('hash') or f.get('feature_hash')}",
+            },
+        ),
+    ]
+    for kind, fn, key, mapper in fans:
+        g = fan(kind, fn, key, mapper)
+        if g:
+            yield g
 
-    # Tags have no search route: match names straight off the tag index.
-    tag_hits = []
-    for name in scope:
-        for t in tag_service.get_collection_tags(name):
-            if q.lower() in t.lower():
-                tag_hits.append({"tag": t, "collection": name})
-        if len(tag_hits) >= limit:
-            break
-    if tag_hits:
-        groups.append(
-            _group(
-                "tags",
-                tag_hits,
-                lambda t: {
-                    "title": t["tag"],
-                    "subtitle": t["collection"],
-                    "url": f"/collections/{t['collection']}/files?tag={t['tag']}",
-                },
-                limit,
-            )
-        )
+
+def unified_search():
+    """Fans a free-text query out over every searchable entity type.
+
+    Params: q (required), limit (per type, default 5),
+            collection (repeatable; default = every collection).
+    """
+    q, limit, scope, scope_total, truncated = _search_params()
+    if not q:
+        return {"query": "", "groups": []}
 
     return {
         "query": q,
         "scope": len(scope),
         "scope_total": scope_total,
         "truncated": truncated,
-        "groups": [g for g in groups if g["items"]],
+        "groups": list(_search_groups(q, limit, scope)),
     }
+
+
+def unified_search_stream():
+    """Same fan-out as `unified_search`, streamed as NDJSON, group by group.
+
+    One JSON object per line: a `meta` line first, then one line per group as
+    it is found, then a `done` line. Lets the palette paint the cheap hits
+    (collections, pools, tags) without waiting on the per-collection scans.
+    """
+    from flask import Response, stream_with_context
+
+    q, limit, scope, scope_total, truncated = _search_params()
+
+    def lines():
+        head = {
+            "type": "meta",
+            "query": q,
+            "scope": len(scope),
+            "scope_total": scope_total,
+            "truncated": truncated,
+        }
+        yield json.dumps(head) + "\n"
+        if q:
+            for g in _search_groups(q, limit, scope):
+                yield json.dumps({"type": "group", **g}) + "\n"
+        yield json.dumps({"type": "done"}) + "\n"
+
+    return Response(
+        stream_with_context(lines()),
+        mimetype="application/x-ndjson",
+        # Chunks are useless if a proxy buffers them into one response.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

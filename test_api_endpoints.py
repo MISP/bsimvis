@@ -438,6 +438,37 @@ def resolve_ids():
             vprint(f"     cluster_uuid = {cluster_uuid}")
 
 
+def test_cluster_response_contract():
+    """Guards the response shape the unified search and homepage read.
+
+    The two-binary fixture never forms a cluster, so a cluster *hit* cannot be
+    asserted here. What can be asserted is the contract the fan-out depends on:
+    both cluster listings page under "results", and any row carries
+    `member_count` — not `count`. If either is renamed, this fails instead of
+    the homepage silently rendering an empty panel.
+    """
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" Cluster response contract", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    for path in ("/api/cluster/list", "/api/bin_cluster/list"):
+        body = test_endpoint(
+            "GET", path, params={"collection": COLLECTION, "limit": 5}
+        )
+        rows = body.get("results") if isinstance(body, dict) else None
+        check(
+            f"{path} pages under 'results'",
+            isinstance(rows, list),
+            f"keys={sorted(body) if isinstance(body, dict) else body}",
+        )
+        if rows:
+            check(
+                f"{path} rows carry member_count",
+                "member_count" in rows[0],
+                f"keys={sorted(rows[0])}",
+            )
+
+
 # ---------------------------------------------------------------------------
 # Step 4 – Full endpoint sweep
 # ---------------------------------------------------------------------------
@@ -454,6 +485,62 @@ def run_all_tests():
         "/api/index/status",
         params={"collection": COLLECTION, "details": "true"},
         label="GET /api/index/status?details=true",
+    )
+
+    home_stats = test_endpoint("GET", "/api/index/home/stats")
+    check(
+        "home stats counts the test collection",
+        isinstance(home_stats, dict)
+        and home_stats.get("totals", {}).get("collections", 0) >= 1
+        and home_stats.get("totals", {}).get("files", 0) >= 1,
+        str(home_stats.get("totals") if isinstance(home_stats, dict) else home_stats),
+    )
+    insights = test_endpoint("GET", "/api/index/home/insights", params={"refresh": "true"})
+    check(
+        "home insights returns its three panels",
+        isinstance(insights, dict)
+        and all(k in insights for k in ("tags", "biggest_clusters", "recent_batches")),
+        str(sorted(insights.keys()) if isinstance(insights, dict) else insights),
+    )
+
+    # ── Unified search ─────────────────────────────────────────────────────
+    print(_color("\n  [Unified search]", BOLD))
+    uni = test_endpoint(
+        "GET",
+        "/api/search/unified",
+        params={"q": COLLECTION, "limit": 3},
+        label="GET /api/search/unified?q=<collection>",
+    )
+    kinds = {g["kind"] for g in uni.get("groups", [])} if isinstance(uni, dict) else set()
+    check(
+        "unified search finds the collection by name",
+        "collections" in kinds,
+        f"kinds={sorted(kinds)}",
+    )
+    if file_md5:
+        uni_md5 = test_endpoint(
+            "GET",
+            "/api/search/unified",
+            params={"q": file_md5, "limit": 3, "collection": COLLECTION},
+            label="GET /api/search/unified?q=<md5>",
+        )
+        md5_kinds = (
+            {g["kind"] for g in uni_md5.get("groups", [])}
+            if isinstance(uni_md5, dict)
+            else set()
+        )
+        check(
+            "unified search finds a file by md5",
+            "files" in md5_kinds,
+            f"kinds={sorted(md5_kinds)}",
+        )
+    empty = test_endpoint(
+        "GET", "/api/search/unified", label="GET /api/search/unified (no query)"
+    )
+    check(
+        "unified search with no query returns nothing",
+        isinstance(empty, dict) and empty.get("groups") == [],
+        str(empty),
     )
 
     # ── Collections ────────────────────────────────────────────────────────
@@ -2334,6 +2421,7 @@ if __name__ == "__main__":
 
     resolve_ids()
     # Before run_all_tests(): that step deletes the collection on its way out.
+    test_cluster_response_contract()
     test_pool_annotation_propagation()
     test_search_filters_and_sorting()
     test_pool_collection_equivalence()

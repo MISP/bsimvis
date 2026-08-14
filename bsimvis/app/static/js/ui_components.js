@@ -58,11 +58,12 @@ window.UI = {
     Sidebar: {
         render: function() {
             const { viewKey, collection, pool } = getRoutingState();
-            if (!collection && !pool && viewKey !== 'collections' && viewKey !== 'pools' && viewKey !== 'jobs') {
+            if (!collection && !pool && viewKey !== 'home' && viewKey !== 'collections' && viewKey !== 'pools' && viewKey !== 'jobs') {
                 throw new Error("Navigation error: collection context is missing.");
             }
 
             const buildNavUrl = (view) => {
+                if (view === 'home') return '/';
                 if (view === 'collections') return '/collections';
                 if (view === 'pools') return '/pools';
 
@@ -113,6 +114,10 @@ window.UI = {
                             <span>BSimVis</span>
                         </a>
                     </h2>
+                    <div class="nav-section-content">
+                        <a href="/" id="nav-home" title="Home" class="${isActive('home')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-house"></i> <span>Home</span></a>
+                        <a href="#" id="nav-search" title="Search everything (Ctrl+K)" onclick="event.preventDefault(); SearchPalette.show();"><i class="fa-solid fa-magnifying-glass"></i> <span>Search</span></a>
+                    </div>
                     <div class="nav-section-title"><span>Binaries</span></div>
                     <div class="nav-section-content">
                         <a href="${buildNavUrl('batches')}" id="nav-batches" title="Batches" class="${isActive('batches')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-boxes-stacked"></i> <span>Batches</span></a>

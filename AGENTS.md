@@ -62,6 +62,19 @@ false-positive-prone on tiny functions. Both the collection and pool build paths
 Binary similarity diff tables are paged, filtered and sorted **server-side**
 (`_page_diff` in `routes/bin_sim.py`). Don't reintroduce full-table client loads.
 
+## Homepage and unified search
+
+`routes/home.py` backs the instance-wide homepage (`/`, view key `home`,
+`static/js/views/home_view.js`) and the Ctrl+K palette
+(`static/js/search_palette.js`). The collections table moved to `/collections`.
+
+Nothing here keeps its own index. `_call(fn, **args)` runs an existing route
+function inside a synthetic request context, so every search reuses that route's
+own `request.args` parsing — add a new entity to `unified_search` by calling its
+search route, never by writing a second query path. `/api/index/home/insights`
+(top tags, biggest clusters, recent batches) is the expensive half and is cached
+120s in-process; `/api/index/home/stats` stays cheap and uncached.
+
 ## Workers and Ghidra memory
 
 Each worker holds its own JVM, so heap limits multiply by worker count.

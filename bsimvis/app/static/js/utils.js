@@ -130,7 +130,7 @@ function parseRestfulPath() {
     };
 
     if (parts.length === 0) {
-        params.view = 'collections';
+        params.view = 'home';
         return params;
     }
 

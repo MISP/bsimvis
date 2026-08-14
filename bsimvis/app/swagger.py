@@ -341,6 +341,25 @@ class IndexStatus(Resource):
         return get_index_status()
 
 
+@ns_index.route("/home/stats")
+class HomeStats(Resource):
+    def get(self):
+        """Instance-wide counters (files, functions, collections, pools) plus job queue health."""
+        from bsimvis.app.routes.home import get_home_stats
+
+        return get_home_stats()
+
+
+@ns_index.route("/home/insights")
+class HomeInsights(Resource):
+    @ns_index.doc(params={"refresh": "true to bypass the 120s cache"})
+    def get(self):
+        """Heavier homepage panels: top tags, biggest binary clusters, recent batches (cached 120s)."""
+        from bsimvis.app.routes.home import get_home_insights
+
+        return get_home_insights()
+
+
 @ns_index.route("/config")
 class IndexConfig(Resource):
     def get(self):
@@ -981,6 +1000,23 @@ class FeatureDetails(Resource):
 
 
 # --- Search Namespace ---
+@ns_search.route("/unified")
+class SearchUnified(Resource):
+    @ns_search.doc(
+        params={
+            "q": {"description": "Free-text query", "required": True},
+            "limit": "Max results per entity type (default: 5)",
+            "collection": "Restrict to these collections (repeatable). Default: all",
+            "max_collections": "Cap on collections fanned out to (default: 25)",
+        }
+    )
+    def get(self):
+        """Searches batches, files, functions, clusters, tags, features, collections and pools at once."""
+        from bsimvis.app.routes.home import unified_search
+
+        return unified_search()
+
+
 @ns_search.route("/autocomplete")
 class SearchAutocomplete(Resource):
     @ns_search.doc(

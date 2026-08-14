@@ -4,7 +4,9 @@ import re
 import time
 
 from flask import request
+from bsimvis.app.services import lineage_service
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.query_syntax import resolve_targets, union_buckets
 from bsimvis.app.services.index_service import (
     query_ids,
     parse_timestamp,
@@ -73,11 +75,13 @@ def search_files():
             ("inferred_md5", "inferred_md5"),
             ("note_owner", "note_owners"),
             ("note_owners", "note_owners"),
+            # Every file extracted out of one upload, at any depth.
+            ("root_md5", "root_md5"),
         ]:
             val = request.args.get(arg)
             if val:
                 filters["fields"][field] = val.strip()
-                
+
         md5_val = request.args.get("md5") or request.args.get("file_md5")
         if md5_val:
             filters["fields"]["_any_md5"] = md5_val.strip()
@@ -165,6 +169,11 @@ def search_files():
                 pipe.smembers(f"pool:{pool_id}:file:{md5}:bin_clusters")
             else:
                 pipe.smembers(f"{doc_id}:bin_clusters")
+            # Whether this row can be expanded into a lineage subtree. Counted
+            # here rather than guessed from tags: a packed executable is not a
+            # container yet still holds children. SMEMBERS, not SCARD -- the
+            # set holds more than one spelling of the same edge.
+            pipe.smembers(f"{actual_col}:lineage:children:{md5}")
 
         results = pipe.execute()
         t2 = time.perf_counter()
@@ -174,9 +183,10 @@ def search_files():
         # First pass: collect results and unique cluster IDs
         raw_files_data = []
         for i, doc_id in enumerate(paged_ids):
-            res = results[3 * i]
-            func_count = results[3 * i + 1]
-            cluster_res = results[3 * i + 2]
+            res = results[4 * i]
+            func_count = results[4 * i + 1]
+            cluster_res = results[4 * i + 2]
+            child_count = lineage_service.count_members(results[4 * i + 3])
 
             if not res:
                 continue
@@ -185,7 +195,11 @@ def search_files():
             if isinstance(data, str):
                 data = json.loads(data)
 
-            data["function_count"] = func_count
+            # A container has no functions of its own; its stored count is the
+            # rolled-up subtree total that lineage_service restates.
+            if not data.get("is_container"):
+                data["function_count"] = func_count
+            data["child_count"] = child_count or 0
             data["file_id"] = doc_id
             cluster_ids = (
                 list(cluster_res) if isinstance(cluster_res, (list, set)) else []
@@ -389,7 +403,9 @@ def query_files_advanced(r, collection, filters):
     if seed_field:
         zset_key = f"{collection}:idx:file:{RANGE_FIELD_MAP[seed_field]}"
         is_min = seed_field.startswith("min_")
-        lo, hi = (fields[seed_field], "+inf") if is_min else ("-inf", fields[seed_field])
+        lo, hi = (
+            (fields[seed_field], "+inf") if is_min else ("-inf", fields[seed_field])
+        )
         candidates = {
             d.decode() if isinstance(d, bytes) else str(d)
             for d in r.zrange(zset_key, lo, hi, byscore=True)
@@ -400,36 +416,24 @@ def query_files_advanced(r, collection, filters):
             for d in r.smembers(f"{collection}:all_files")
         }
 
-    # Helper: Get all doc IDs matching a substring in a specific field registry
-    def get_field_matches(field_name, search_val, field_level="file"):
-        registry_key = f"{collection}:reg:{field_level}:{field_name}"
-        val_lower = search_val.lower()
-        matching_buckets = []
-        try:
-            for bucket in r.sscan_iter(
-                registry_key, match=f"*{val_lower}*", count=1000
-            ):
-                bucket_str = (
-                    bucket.decode() if isinstance(bucket, bytes) else str(bucket)
-                )
-                if val_lower in bucket_str.lower():
-                    matching_buckets.append(bucket_str)
-        except Exception as e:
-            logging.warning(f"Registry SSCAN failed for {registry_key}: {e}")
-
-        field_candidates = set()
-        if matching_buckets:
-            if len(matching_buckets) == 1:
-                field_candidates = {
-                    t.decode() if isinstance(t, bytes) else str(t)
-                    for t in r.smembers(matching_buckets[0])
-                }
-            else:
-                field_candidates = {
-                    t.decode() if isinstance(t, bytes) else str(t)
-                    for t in r.sunion(*matching_buckets)
-                }
-        return field_candidates
+    # Helper: Get all doc IDs matching one filter value in a field registry.
+    # Match mode (exact / wildcard / substring) comes from query_syntax so this
+    # route resolves a value identically to the function and similarity routes.
+    def get_field_matches(
+        field_name, search_val, field_level="file", default_kind="exact"
+    ):
+        bucket_values, _truncated, _spec = resolve_targets(
+            r,
+            collection,
+            field_level,
+            field_name,
+            search_val,
+            default_kind=default_kind,
+        )
+        if not bucket_values:
+            return set()
+        prefix = f"{collection}:idx:{field_level}:{field_name}:"
+        return union_buckets(r, [prefix + v for v in bucket_values])
 
     # Apply Metadata Filters
     for field, val in fields.items():
@@ -440,7 +444,10 @@ def query_files_advanced(r, collection, filters):
 
             for f_name, targets in INDEX_CONFIG.get("file", {}).items():
                 if "file" in targets:
-                    q_matches.update(get_field_matches(f_name, val))
+                    # Free-text box: a bare word stays a substring search.
+                    q_matches.update(
+                        get_field_matches(f_name, val, default_kind="substring")
+                    )
             candidates &= q_matches
         elif field == "_any_md5":
             candidates &= (
@@ -473,6 +480,7 @@ def query_files_advanced(r, collection, filters):
             "inferred_filename",
             "inferred_md5",
             "note_owners",
+            "root_md5",
         ]:
             candidates &= get_field_matches(field, val)
 
@@ -553,11 +561,13 @@ def get_file_details(collection, file_md5):
         pipe.get(f"{file_id}:meta")
         pipe.scard(f"{sub_collection}:idx:file:functions:{file_md5}")
         pipe.smembers(clusters_key)
+        pipe.smembers(f"{sub_collection}:lineage:children:{file_md5}")
         results = pipe.execute()
 
         res = results[0]
         func_count = results[1]
         cluster_res = results[2]
+        child_count = lineage_service.count_members(results[3])
 
         if not res:
             return {"error": "File not found"}, 404
@@ -566,7 +576,10 @@ def get_file_details(collection, file_md5):
         if isinstance(data, str):
             data = json.loads(data)
 
-        data["function_count"] = func_count
+        # See search_files(): a container's own count is the subtree roll-up.
+        if not data.get("is_container"):
+            data["function_count"] = func_count
+        data["child_count"] = child_count or 0
         data["file_id"] = f"{collection}:file:{file_md5}"
 
         if pool_id:

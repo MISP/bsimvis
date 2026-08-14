@@ -134,7 +134,9 @@ class PoolService:
             meta["total_func_clusters"] = int(meta["total_func_clusters"])
 
         # File similarities
-        file_algo = meta.get("file_sim_params", {}).get("algo", "unweighted_cosine")
+        # File bin_sim lives in the namespace of the function algo its clusters came
+        # from; there is no separate file algo.
+        file_algo = meta.get("algo", "unweighted_cosine")
         if "total_file_similarities" not in meta:
             total_file_sim = r.zcard(f"global:pool:{pool_id}:bin_sim:score:{file_algo}")
             meta["total_file_similarities"] = total_file_sim

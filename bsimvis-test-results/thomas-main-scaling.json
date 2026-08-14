@@ -1,0 +1,160 @@
+{
+  "cases": [
+    {
+      "comparisons": 4720640,
+      "compatible_score_product": true,
+      "functions": 4611,
+      "identical_ordered_candidate_ids": true,
+      "python_exact": {
+        "execution_policy": {},
+        "selected_edges": 4020,
+        "selection_sha256": "db4b1438920234a5b2dff761549344c8a7158da75fd2e2ab5990ff44d5486318",
+        "wall_seconds": 15.657726034000007
+      },
+      "python_over_drive": 0.9255415239907715,
+      "target_functions": 1024,
+      "variable_silicon_drive": {
+        "execution_policy": {
+          "gpu_available": false,
+          "gpu_blocks": 0,
+          "gpu_dispatches": 0,
+          "gpu_execution": {},
+          "gpu_maximum_pairs_per_dispatch": 8000000,
+          "gpu_minimum_pairs": 1500000,
+          "native_state": "unavailable",
+          "native_unavailable_reason": "rust_cpu backend is not installed; build native/bsimvis_similarity",
+          "physical_memory_bytes": 33044267008,
+          "python_blocks": 1,
+          "requested": "variable_silicon_drive",
+          "resident_buffers": false,
+          "rust_blocks": 0,
+          "rust_minimum_pairs": 200000,
+          "score_margin": 1e-05,
+          "tiers": [
+            "python_exact",
+            "rust_cpu",
+            "wgpu"
+          ],
+          "unified_memory_detected": false
+        },
+        "selected_edges": 4020,
+        "selection_sha256": "db4b1438920234a5b2dff761549344c8a7158da75fd2e2ab5990ff44d5486318",
+        "wall_seconds": 16.917367431000457
+      }
+    },
+    {
+      "comparisons": 10238976,
+      "compatible_score_product": true,
+      "functions": 10000,
+      "identical_ordered_candidate_ids": true,
+      "python_exact": {
+        "execution_policy": {},
+        "selected_edges": 8621,
+        "selection_sha256": "a95e6f37db280594b419dfc08e02f076f82a8ee035a417bcb46d13295f5376a3",
+        "wall_seconds": 37.568609693000326
+      },
+      "python_over_drive": 0.9481616802419791,
+      "target_functions": 1024,
+      "variable_silicon_drive": {
+        "execution_policy": {
+          "gpu_available": false,
+          "gpu_blocks": 0,
+          "gpu_dispatches": 0,
+          "gpu_execution": {},
+          "gpu_maximum_pairs_per_dispatch": 8000000,
+          "gpu_minimum_pairs": 1500000,
+          "native_state": "unavailable",
+          "native_unavailable_reason": "rust_cpu backend is not installed; build native/bsimvis_similarity",
+          "physical_memory_bytes": 33044267008,
+          "python_blocks": 2,
+          "requested": "variable_silicon_drive",
+          "resident_buffers": false,
+          "rust_blocks": 0,
+          "rust_minimum_pairs": 200000,
+          "score_margin": 1e-05,
+          "tiers": [
+            "python_exact",
+            "rust_cpu",
+            "wgpu"
+          ],
+          "unified_memory_detected": false
+        },
+        "selected_edges": 8621,
+        "selection_sha256": "a95e6f37db280594b419dfc08e02f076f82a8ee035a417bcb46d13295f5376a3",
+        "wall_seconds": 39.622577537000325
+      }
+    },
+    {
+      "comparisons": 20478976,
+      "compatible_score_product": true,
+      "functions": 20000,
+      "identical_ordered_candidate_ids": true,
+      "python_exact": {
+        "execution_policy": {},
+        "selected_edges": 13353,
+        "selection_sha256": "8f18739ef315b73db0ebaa2ff4e374458a63d66657d6cecaabff81186daa28c1",
+        "wall_seconds": 76.4877882740002
+      },
+      "python_over_drive": 0.9825553120815012,
+      "target_functions": 1024,
+      "variable_silicon_drive": {
+        "execution_policy": {
+          "gpu_available": false,
+          "gpu_blocks": 0,
+          "gpu_dispatches": 0,
+          "gpu_execution": {},
+          "gpu_maximum_pairs_per_dispatch": 8000000,
+          "gpu_minimum_pairs": 1500000,
+          "native_state": "unavailable",
+          "native_unavailable_reason": "rust_cpu backend is not installed; build native/bsimvis_similarity",
+          "physical_memory_bytes": 33044267008,
+          "python_blocks": 3,
+          "requested": "variable_silicon_drive",
+          "resident_buffers": false,
+          "rust_blocks": 0,
+          "rust_minimum_pairs": 200000,
+          "score_margin": 1e-05,
+          "tiers": [
+            "python_exact",
+            "rust_cpu",
+            "wgpu"
+          ],
+          "unified_memory_detected": false
+        },
+        "selected_edges": 13353,
+        "selection_sha256": "8f18739ef315b73db0ebaa2ff4e374458a63d66657d6cecaabff81186daa28c1",
+        "wall_seconds": 77.84578367599897
+      }
+    }
+  ],
+  "classification": "synthetic-scaled-selection-latency-payoff",
+  "configuration": {
+    "algorithm": "unweighted_cosine",
+    "min_score": 0.95,
+    "targets": 1024,
+    "top_k": 20,
+    "workers": 8
+  },
+  "created_at": "2026-07-27T11:58:19.415446+00:00",
+  "fixture": {
+    "path": "/home/thomas/projects/bsimvis-lca-maintainer-tests/fixtures/double-dragon-vectors.jsonl",
+    "sha256": "903b665736f1e3a9d8f78fccc240a1ca8c86d75f4315f85aa220b3c3d067fcec",
+    "source_functions": 4611
+  },
+  "git": {
+    "branch": "dev",
+    "commit": "c79e86b0523c27790ea2f0e88fbc3de4a403d7af",
+    "dirty": true
+  },
+  "machine": {
+    "platform": "Linux-6.17.0-1028-oem-x86_64-with-glibc2.39",
+    "processor": "x86_64"
+  },
+  "schema_version": 1,
+  "scope": {
+    "excluded": "Database reads, persistence, clustering, orchestration and metadata writes.",
+    "included": "Exact cosine scoring and global top-k selection for one target block.",
+    "scaling_method": "Deterministic cycling of the real 4,611-function vectors with a 1e-7 first-feature perturbation per generation. Sparsity and feature overlap are retained; the expanded corpora are synthetic and are not malware-analysis findings."
+  },
+  "status": "passed"
+}

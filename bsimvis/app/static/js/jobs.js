@@ -57,14 +57,14 @@ function getJobTargetLink(job) {
         if (activePool) {
             const prefix = window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools';
             const url = `/${prefix}/${encodeURIComponent(activePool)}/collections/${encodeURIComponent(ctx.collection)}/files/${encodeURIComponent(rawTarget)}`;
-            return `<a onclick="window.Nav && window.Nav.openPath('${url}');" class="job-target-link" title="View File in Pool ${activePool}"><i class="fa-solid fa-file-code"></i> <code class="job-target-text">${displayTarget}</code></a>`;
+            return `<a onclick="window.Nav && window.Nav.openPath(${escapeAttr(jsString(url))});" class="job-target-link" title="View File in Pool ${escapeAttr(activePool)}"><i class="fa-solid fa-file-code"></i> <code class="job-target-text">${escapeHtml(displayTarget)}</code></a>`;
         } else if (ctx.collection) {
             const url = `/collections/${encodeURIComponent(ctx.collection)}/files/${encodeURIComponent(rawTarget)}`;
-            return `<a onclick="window.Nav && window.Nav.openPath('${url}');" class="job-target-link" title="View File Details"><i class="fa-solid fa-file-code"></i> <code class="job-target-text">${displayTarget}</code></a>`;
+            return `<a onclick="window.Nav && window.Nav.openPath(${escapeAttr(jsString(url))});" class="job-target-link" title="View File Details"><i class="fa-solid fa-file-code"></i> <code class="job-target-text">${escapeHtml(displayTarget)}</code></a>`;
         }
     }
     
-    return `<code class="job-target-text" title="${rawTarget}">${displayTarget}</code>`;
+    return `<code class="job-target-text" title="${escapeAttr(rawTarget)}">${escapeHtml(displayTarget)}</code>`;
 }
 
 // Job Type to FontAwesome Icon mapping
@@ -334,17 +334,21 @@ function renderJobs(jobs, skipBackgroundFetch = false) {
         if (status === 'cancelled') statusIcon = 'fa-ban';
         if (status === 'pending') statusIcon = 'fa-clock';
 
-        const statusBadge = `<span class="job-status-badge status-${status}"><i class="fa-solid ${statusIcon}"></i> ${status.toUpperCase()}</span>`;
+        const statusBadge = `<span class="job-status-badge status-${status}"><i class="fa-solid ${statusIcon}"></i> ${status.toUpperCase()}</span>`
+            + (job.paused ? ' <span class="job-status-badge" title="Held back; other jobs keep running"><i class="fa-solid fa-pause"></i> PAUSED</span>' : '');
         const createdDate = new Date(job.created_at).toLocaleString();
 
         let actions = '<div class="job-actions">';
         if (status === 'pending' || status === 'running') {
-            actions += `<button class="job-btn-action danger" onclick="cancelJob('${job.id}')" title="Cancel Job"><i class="fa-solid fa-ban"></i></button>`;
+            actions += job.paused
+                ? `<button class="job-btn-action" onclick="resumeJob(${escapeAttr(jsString(job.id))})" title="Resume Job"><i class="fa-solid fa-play"></i></button>`
+                : `<button class="job-btn-action" onclick="pauseJob(${escapeAttr(jsString(job.id))})" title="Pause Job (other jobs keep running)"><i class="fa-solid fa-pause"></i></button>`;
+            actions += `<button class="job-btn-action danger" onclick="cancelJob(${escapeAttr(jsString(job.id))})" title="Cancel Job"><i class="fa-solid fa-ban"></i></button>`;
         }
         if (status === 'failed' || status === 'cancelled' || status === 'completed') {
-            actions += `<button class="job-btn-action" onclick="retryJob('${job.id}')" title="Retry/Resume Job"><i class="fa-solid fa-rotate-right"></i></button>`;
+            actions += `<button class="job-btn-action" onclick="retryJob(${escapeAttr(jsString(job.id))})" title="Retry/Resume Job"><i class="fa-solid fa-rotate-right"></i></button>`;
         }
-        actions += `<button class="job-btn-action info" onclick="showJobDetails('${job.id}')" title="View Logs & Details"><i class="fa-solid fa-circle-info"></i></button>`;
+        actions += `<button class="job-btn-action info" onclick="showJobDetails(${escapeAttr(jsString(job.id))})" title="View Logs & Details"><i class="fa-solid fa-circle-info"></i></button>`;
         actions += '</div>';
 
         const isCollapsed = isPipeline && collapsedPipelines.has(job.id);
@@ -361,7 +365,7 @@ function renderJobs(jobs, skipBackgroundFetch = false) {
         let chevronHtml = '';
         if (isPipeline) {
             const chevron = isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down';
-            chevronHtml = `<i class="fa-solid ${chevron} collapse-chevron" onclick="togglePipelineCollapse('${job.id}')" style="cursor: pointer; color: var(--accent); width: 14px; text-align: center; margin-right: 6px;"></i>`;
+            chevronHtml = `<i class="fa-solid ${chevron} collapse-chevron" onclick="togglePipelineCollapse(${escapeAttr(jsString(job.id))})" style="cursor: pointer; color: var(--accent); width: 14px; text-align: center; margin-right: 6px;"></i>`;
         } else {
             // Leaf nodes get a spacer so they align with pipeline labels
             chevronHtml = `<span style="width: 20px; display: inline-block;"></span>`;
@@ -399,9 +403,9 @@ function renderJobs(jobs, skipBackgroundFetch = false) {
             const ctx = parseCollectionContext(job.collection);
             if (ctx.pool) {
                 const displayName = job.pool_name || ctx.pool;
-                collectionDisplay = `<div class="job-collection-cell" style="cursor:pointer;" title="Pool UUID: ${ctx.pool}"><i class="fa-solid fa-sitemap"></i> <a onclick="window.Nav && window.Nav.openPath('/pools/${ctx.pool}');">${displayName}</a></div>`;
+                collectionDisplay = `<div class="job-collection-cell" style="cursor:pointer;" title="Pool UUID: ${escapeAttr(ctx.pool)}"><i class="fa-solid fa-sitemap"></i> <a onclick="window.Nav && window.Nav.openPath(${escapeAttr(jsString('/pools/' + encodeURIComponent(ctx.pool)))});">${escapeHtml(displayName)}</a></div>`;
             } else {
-                collectionDisplay = `<div class="job-collection-cell" style="cursor:pointer;"><i class="fa-solid fa-layer-group"></i> <a onclick="window.Nav && window.Nav.openPath(window.Nav.buildUIUrl('${job.collection}', []));">${job.collection}</a></div>`;
+                collectionDisplay = `<div class="job-collection-cell" style="cursor:pointer;"><i class="fa-solid fa-layer-group"></i> <a onclick="window.Nav && window.Nav.openPath(window.Nav.buildUIUrl(${escapeAttr(jsString(job.collection))}, []));">${escapeHtml(job.collection)}</a></div>`;
             }
         } else {
             collectionDisplay = '<span class="dim">-</span>';
@@ -449,6 +453,24 @@ function renderJobs(jobs, skipBackgroundFetch = false) {
 }
 
 window.renderJobs = renderJobs;
+
+async function setJobPaused(jobId, paused) {
+    try {
+        const resp = await fetch(`/api/jobs/${jobId}/pause`, { method: paused ? 'POST' : 'DELETE' });
+        if (resp.ok) {
+            if (window.refreshData) window.refreshData();
+        } else {
+            const data = await resp.json();
+            alert(`Failed to ${paused ? 'pause' : 'resume'} job: ` + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        console.error(e);
+        alert(`Error ${paused ? 'pausing' : 'resuming'} job`);
+    }
+}
+
+window.pauseJob = (jobId) => setJobPaused(jobId, true);
+window.resumeJob = (jobId) => setJobPaused(jobId, false);
 
 window.cancelJob = async function (jobId) {
     try {
@@ -508,7 +530,7 @@ async function refreshJobModal(jobId, isInitial = false) {
                     <h4 style="margin-bottom: 10px; font-size: 0.9rem; color: var(--accent);">Pipeline Sub-tasks</h4>
                     <table class="data-table" style="width:100%; font-size: 0.85rem;">
                         <thead>
-                            <tr style="background: rgba(255,255,255,0.03);">
+                            <tr style="background: var(--hover);">
                                 <th style="padding: 8px;">Type</th>
                                 <th style="padding: 8px;">Status</th>
                                 <th style="padding: 8px;">Progress</th>
@@ -528,7 +550,7 @@ async function refreshJobModal(jobId, isInitial = false) {
                         <td style="padding: 8px;">${st.type}</td>
                         <td style="padding: 8px;"><span style="color: ${sColor}">${(st.status || 'pending').toUpperCase()}</span></td>
                         <td style="padding: 8px;">
-                            <div style="background: rgba(255,255,255,0.05); height: 6px; width: 100%; border-radius:3px; overflow:hidden;">
+                            <div style="background: var(--hover); height: 6px; width: 100%; border-radius:3px; overflow:hidden;">
                                 <div style="background: var(--accent); width: ${st.progress || 0}%; height: 100%;"></div>
                             </div>
                         </td>
@@ -557,7 +579,7 @@ async function refreshJobModal(jobId, isInitial = false) {
                 } else {
                     htmlLine = log.replace(/</g, "&lt;").replace(/>/g, "&gt;");
                 }
-                logsInnerHtml += `<div style="margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.02); padding-bottom: 2px;">${htmlLine}</div>`;
+                logsInnerHtml += `<div style="margin-bottom: 4px; border-bottom: 1px solid var(--border); padding-bottom: 2px;">${htmlLine}</div>`;
             });
         } else {
             logsInnerHtml = '<div style="font-style: italic;">No logs available yet.</div>';
@@ -566,7 +588,7 @@ async function refreshJobModal(jobId, isInitial = false) {
         let logsHtml = `
             <div style="margin-top: 20px;">
                 <h4 style="margin-bottom: 10px; font-size: 0.9rem; color: var(--accent);">Execution Logs</h4>
-                <div id="${logContainerId}" style="background: #0a0a0a; color: #888; font-family: var(--mono); font-size: 0.75rem; padding: 15px; max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; line-height: 1.5;">
+                <div id="${logContainerId}" style="background: var(--bg); color: var(--subtle); font-family: var(--mono); font-size: 0.75rem; padding: 15px; max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; line-height: 1.5;">
                     ${logsInnerHtml}
                 </div>
             </div>`;
@@ -588,7 +610,7 @@ async function refreshJobModal(jobId, isInitial = false) {
             payloadHtml = `
                 <div style="margin-top: 20px;">
                     <h4 style="margin-bottom: 10px; font-size: 0.9rem; color: var(--accent);">Job Parameters & Metadata</h4>
-                    <div style="background: rgba(255,255,255,0.03); padding: 15px; border-radius: 6px; border: 1px solid var(--border); display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px;">
+                    <div style="background: var(--hover); padding: 15px; border-radius: 6px; border: 1px solid var(--border); display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px;">
             `;
 
             for (const [key, value] of Object.entries(job.payload)) {
@@ -597,15 +619,15 @@ async function refreshJobModal(jobId, isInitial = false) {
                 const isPoolValue = key === 'pool_id' && typeof value === 'string' && value !== '';
 
                 if (isNavigable) {
-                    displayValue = `<a style="cursor:pointer; color: var(--accent); font-size: 0.85rem;" onclick="window.Nav && window.Nav.openPath(window.Nav.buildUIUrl('${escapeHtml(value)}', []));">${value}</a>`;
+                    displayValue = `<a style="cursor:pointer; color: var(--accent); font-size: 0.85rem;" onclick="window.Nav && window.Nav.openPath(window.Nav.buildUIUrl(${escapeAttr(jsString(value))}, []));">${escapeHtml(value)}</a>`;
                 } else if (isPoolValue) {
-                    displayValue = `<a style="cursor:pointer; color: var(--accent); font-size: 0.85rem;" onclick="void(0); window.Nav && window.Nav.openPath('/pools/${value}');">${value}</a>`;
+                    displayValue = `<a style="cursor:pointer; color: var(--accent); font-size: 0.85rem;" onclick="void(0); window.Nav && window.Nav.openPath(${escapeAttr(jsString('/pools/' + encodeURIComponent(value)))});">${escapeHtml(value)}</a>`;
                 } else if (typeof value === 'object' && value !== null) {
-                    displayValue = `<code style="font-size: 0.7rem; color: var(--subtle);">${JSON.stringify(value)}</code>`;
+                    displayValue = `<code style="font-size: 0.7rem; color: var(--subtle);">${escapeHtml(JSON.stringify(value))}</code>`;
                 } else if (typeof value === 'string' && value.length > 30) {
                     displayValue = `<code title="${value}" style="font-size: 0.75rem;">${value.substring(0, 12)}...${value.substring(value.length - 8)}</code>`;
                 } else {
-                    displayValue = `<code style="font-size: 0.85rem; color: #eee;">${value}</code>`;
+                    displayValue = `<code style="font-size: 0.85rem; color: var(--meta-text);">${value}</code>`;
                 }
 
                 payloadHtml += `
@@ -625,7 +647,7 @@ async function refreshJobModal(jobId, isInitial = false) {
         const wasAtBottom = oldLogViewer ? (oldLogViewer.scrollHeight - oldLogViewer.scrollTop <= oldLogViewer.clientHeight + 10) : true;
 
         modalBody.innerHTML = `
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; background: rgba(255,255,255,0.02); padding: 15px; border-radius: 6px; border: 1px solid var(--border);">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; background: var(--hover); padding: 15px; border-radius: 6px; border: 1px solid var(--border);">
                 <div>
                     <div style="color: var(--dim); font-size: 0.75rem; text-transform: uppercase;">Job ID</div>
                     <div style="font-family: var(--mono); font-size: 0.85rem;">${job.id || ''}</div>
@@ -658,6 +680,43 @@ window.closeJobModal = function () {
     currentActiveJobId = null;
 };
 
+// Fleet-wide pause toggle (global, not per-job — the API has no per-job pause)
+let jobsPaused = null;
+
+window.refreshPauseButton = async function (state) {
+    const btn = document.getElementById('job-pause-toggle');
+    if (!btn) return;
+    if (state === undefined) {
+        try {
+            state = (await (await fetch('/api/jobs/pause')).json()).paused;
+        } catch (e) {
+            return;
+        }
+    }
+    // Always rewrite: the settings bar re-renders the button as a placeholder,
+    // so a memoised "unchanged" skip would leave it stuck blank.
+    jobsPaused = state;
+    btn.innerHTML = state
+        ? '<i class="fa-solid fa-play"></i> Resume Workers'
+        : '<i class="fa-solid fa-pause"></i> Pause Workers';
+    btn.classList.toggle('active', !!state);
+};
+
+window.toggleJobPause = async function () {
+    const btn = document.getElementById('job-pause-toggle');
+    if (btn) btn.disabled = true;
+    try {
+        const resp = await fetch('/api/jobs/pause', { method: jobsPaused ? 'DELETE' : 'POST' });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Unknown error');
+        refreshPauseButton(data.paused);
+    } catch (e) {
+        alert('Failed to toggle pause: ' + e.message);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+};
+
 // Modal and auto-refresh setups are completed below
 
 // Auto-refresh when in jobs view — skip when tab is hidden
@@ -666,6 +725,7 @@ setInterval(() => {
     const restful = (typeof parseRestfulPath === 'function') ? parseRestfulPath() : null;
     const isJobsView = (restful && restful.view === 'jobs') || window.location.pathname === '/jobs' || (window.location.hash && window.location.hash.split('?')[0] === '#jobs');
     if (isJobsView) {
+        refreshPauseButton();
         const modal = document.getElementById('job-details-modal');
         const isModalOpen = modal && modal.style.display !== 'none';
 

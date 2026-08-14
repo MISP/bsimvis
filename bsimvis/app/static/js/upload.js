@@ -2,6 +2,127 @@
 
 let selectedFiles = [];
 
+// Analysis modules are opt-in: each one costs more than the rest of the job on
+// a typical sample, so nothing runs unless it is ticked here.
+//
+// ponytail: `cost` is an order-of-magnitude model, not a promise.
+//
+// FunctionID uses doc/bench-fid-cost.md's *"After"* table (2026-08-11), not the
+// pre-fix one above it: dropping the unindexed `findFunctionsBySpecificHash`
+// scan took the static sample's hash query from 2607s to 28s, and every FID
+// total is now inside run-to-run noise. The surviving term is the full-hash
+// query, +28.4s on a dense 785 KB / 1005-function static binary -- ~37 s/MB at
+// that function density, and lower on dynamically-linked samples. Reading the
+// pre-fix table instead overstates this by ~100x.
+//
+// capa is the expensive one: its vivisect re-disassembly measured ~510s on a
+// 1.2 MB binary. yara/rulezet come from the yara_service module docstring.
+const ANALYSIS_MODULES = [
+    { id: 'FunctionID', label: 'Function ID', hint: 'library tagging', cost: mb => 1 + 30 * mb },
+    { id: 'capa', label: 'Capa', hint: 'capability tags', cost: mb => 8 + 420 * mb },
+    { id: 'yara', label: 'Yara', hint: 'vendored rules', cost: mb => 1 + 0.3 * mb },
+    { id: 'rulezet', label: 'Rulezet', hint: 'mirrored rules', cost: mb => 1 + 0.5 * mb },
+];
+
+// Ghidra's own auto-analysis + decompile/extract pass. Not a module and not
+// switchable -- it is the job every upload pays before any module runs, so the
+// total below is meaningless without it.
+//
+// ponytail: from the `baseline` column of both doc/bench-fid-cost.md tables, at
+// profile `fast`. The looser fit of the four: the real driver is function
+// count, not file size, and that corpus spans 334-1647 functions/MB, so this
+// lands within ~0.6x-2.9x of measured. Good enough to size a batch, not to
+// promise one. Balanced/deep profiles are not measured and will run longer.
+const BASE_ANALYSIS = {
+    label: 'Ghidra analysis',
+    hint: 'always runs',
+    cost: mb => 1 + 250 * mb,
+};
+
+// What to price when the list is empty, so the estimates are never blank.
+const TYPICAL_FILE_MB = 0.5;
+
+function formatDuration(seconds) {
+    if (seconds < 60) return `${Math.max(1, Math.round(seconds))} sec`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+    const h = Math.floor(seconds / 3600);
+    return `${h}h ${Math.round((seconds - h * 3600) / 60)}m`;
+}
+
+/** Sizes in MB the estimate prices, falling back to one typical file. */
+function estimateSizesMb() {
+    return selectedFiles.length
+        ? selectedFiles.map(f => f.size / (1024 * 1024))
+        : [TYPICAL_FILE_MB];
+}
+
+/** Per-module estimate over the current file list, in seconds. */
+function estimateModuleCost(module) {
+    return estimateSizesMb().reduce((total, mb) => total + module.cost(mb), 0);
+}
+
+function updateModuleEstimates() {
+    ANALYSIS_MODULES.forEach(m => {
+        const el = document.getElementById(`module-est-${m.id}`);
+        if (el) el.innerText = `~${formatDuration(estimateModuleCost(m))}`;
+    });
+
+    const baseEl = document.getElementById('module-est-base');
+    if (baseEl) baseEl.innerText = `~${formatDuration(estimateModuleCost(BASE_ANALYSIS))}`;
+
+    // Only the ticked modules count -- untouched ones cost nothing.
+    const totalEl = document.getElementById('module-est-total');
+    if (totalEl) {
+        const enabled = new Set(selectedModules());
+        const total = ANALYSIS_MODULES
+            .filter(m => enabled.has(m.id))
+            .reduce((sum, m) => sum + estimateModuleCost(m), estimateModuleCost(BASE_ANALYSIS));
+        totalEl.innerText = `~${formatDuration(total)}`;
+    }
+
+    const note = document.getElementById('module-estimate-note');
+    if (note) {
+        note.innerText = selectedFiles.length
+            ? `Estimated for ${selectedFiles.length} selected file(s)`
+            : `Estimated for one ${TYPICAL_FILE_MB * 1024} KB file`;
+    }
+}
+
+function renderAnalysisModules() {
+    return `
+        <div class="form-group" style="margin-bottom: 20px;">
+            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 8px;">Analysis Modules</label>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+                <div style="display: flex; align-items: center; gap: 8px; font-size: 0.8rem;">
+                    <i class="fa-solid fa-lock" style="color: var(--dim); font-size: 0.65rem; width: 13px; text-align: center;"></i>
+                    <span style="color: var(--text);">${BASE_ANALYSIS.label}</span>
+                    <span style="color: var(--dim); font-size: 0.7rem;">${BASE_ANALYSIS.hint}</span>
+                    <span id="module-est-base" style="margin-left: auto; color: var(--subtle); font-size: 0.7rem; font-variant-numeric: tabular-nums;"></span>
+                </div>
+                ${ANALYSIS_MODULES.map(m => `
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 0.8rem; cursor: pointer;">
+                        <input type="checkbox" id="module-${m.id}" value="${m.id}" onchange="updateModuleEstimates()" style="cursor: pointer;">
+                        <span style="color: var(--text);">${m.label}</span>
+                        <span style="color: var(--dim); font-size: 0.7rem;">${m.hint}</span>
+                        <span id="module-est-${m.id}" style="margin-left: auto; color: var(--subtle); font-size: 0.7rem; font-variant-numeric: tabular-nums;"></span>
+                    </label>
+                `).join('')}
+                <div style="display: flex; align-items: center; gap: 8px; font-size: 0.8rem; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border);">
+                    <span style="color: var(--text); font-weight: bold;">Estimated total</span>
+                    <span id="module-est-total" style="margin-left: auto; color: var(--accent); font-size: 0.75rem; font-weight: bold; font-variant-numeric: tabular-nums;"></span>
+                </div>
+            </div>
+            <div id="module-estimate-note" style="margin-top: 8px; font-size: 0.65rem; color: var(--dim);"></div>
+        </div>
+    `;
+}
+
+function selectedModules() {
+    return ANALYSIS_MODULES
+        .filter(m => document.getElementById(`module-${m.id}`)?.checked)
+        .map(m => m.id);
+}
+
 function renderUploadView(params) {
     const container = document.getElementById('upload-view-container');
     const collection = params.get('collection') || '';
@@ -23,62 +144,105 @@ function renderUploadView(params) {
             </div>
 
             <div class="upload-grid" style="display: grid; grid-template-columns: 1fr 1.2fr; gap: 40px;">
-                <div class="upload-settings-panel">
-                    <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 20px;">
-                        <h3 style="font-size: 0.9rem; text-transform: uppercase; color: var(--accent); margin: 0 0 20px 0; letter-spacing: 1px;">Pipeline Settings</h3>
-                        
-                        <div class="form-group" style="margin-bottom: 15px;">
-                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Collection</label>
-                            <select id="upload-collection" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer; margin-bottom: 8px;">
-                                <option value="${collection}">${collection}</option>
-                            </select>
-                            <input type="text" id="upload-new-collection" placeholder="New Collection Name..." style="display: none; width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
-                        </div>
-
-                        <div class="form-group" style="margin-bottom: 15px;">
-                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Batch Name</label>
-                            <input type="text" id="upload-batch-name" placeholder="e.g. Firmware v1.2" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
-                        </div>
-
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
-                            <div class="form-group">
-                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Analysis Profile</label>
-                                <select id="upload-profile" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">
-                                    <option value="fast">Fast</option>
-                                    <option value="balanced" selected>Balanced</option>
-                                    <option value="deep">Deep</option>
+                <div class="upload-settings-panel" style="display: flex; flex-direction: column; gap: 10px;">
+                    <details open style="background: var(--hover); border: 1px solid var(--border); border-radius: 8px;">
+                        <summary style="padding: 15px 20px; font-weight: bold; cursor: pointer; color: var(--accent); user-select: none; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px;">Collection</summary>
+                        <div style="padding: 0 20px 20px 20px;">
+                            <div class="form-group" style="margin-bottom: 15px;">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Collection</label>
+                                <select id="upload-collection" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer; margin-bottom: 8px;">
+                                    <option value="${collection}">${collection}</option>
                                 </select>
+                                <input type="text" id="upload-new-collection" placeholder="New Collection Name..." style="display: none; width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                             </div>
-                            <div class="form-group">
-                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Min Func Len</label>
-                                <input type="number" id="upload-min-func-len" value="0" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+
+                            <div class="form-group" style="margin-bottom: 15px;">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Batch Name</label>
+                                <input type="text" id="upload-batch-name" placeholder="e.g. Firmware v1.2" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                            </div>
+
+                            <div class="form-group" style="margin-bottom: 15px;">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Tags (Global)</label>
+                                <input type="text" id="upload-tags" placeholder="Malware, Linux, MIPS..." style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                             </div>
                         </div>
+                    </details>
 
-                        <div class="form-group" style="margin-bottom: 20px;">
-                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Tags (Global)</label>
-                            <input type="text" id="upload-tags" placeholder="Malware, Linux, MIPS..." style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                    <details style="background: var(--hover); border: 1px solid var(--border); border-radius: 8px;">
+                        <summary style="padding: 15px 20px; font-weight: bold; cursor: pointer; color: var(--accent); user-select: none; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px;">File relations</summary>
+                        <div style="padding: 0 20px 20px 20px;">
+                            <div class="form-group" style="margin-bottom: 15px;">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Related MD5s</label>
+                                <input type="text" id="upload-related-md5" placeholder="Comma-separated MD5s" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 5px;">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Archive Password</label>
+                                <input type="text" id="upload-archive-password" value="infected" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                                <div style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px;">Zip/tar uploads are unpacked and every member analyzed.</div>
+                            </div>
                         </div>
-                        <div class="form-group" style="margin-bottom: 20px;">
-                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Related MD5s</label>
-                            <input type="text" id="upload-related-md5" placeholder="Comma-separated MD5s" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
-                        </div>
+                    </details>
 
-                        <div style="padding-top: 15px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px;">
-                            <button id="start-upload-btn" onclick="startBatchUpload()" class="btn-primary" style="width: 100%; height: 40px; justify-content: center; display: flex; align-items: center; gap: 10px;">
-                                <i class="fa-solid fa-play"></i> Start Analysis
-                            </button>
-                            <button onclick="clearUploadList()" class="top-action-btn danger-btn" style="width: 100%; height: 35px; justify-content: center;">
-                                <i class="fa-solid fa-trash"></i> Clear List
-                            </button>
+                    <details style="background: var(--hover); border: 1px solid var(--border); border-radius: 8px;">
+                        <summary style="padding: 15px 20px; font-weight: bold; cursor: pointer; color: var(--accent); user-select: none; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px;">Analysis profile and params</summary>
+                        <div style="padding: 0 20px 20px 20px;">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                                <div class="form-group">
+                                    <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Analysis Profile</label>
+                                    <select id="upload-profile" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">
+                                        <option value="fast">Fast</option>
+                                        <option value="balanced" selected>Balanced</option>
+                                        <option value="deep">Deep</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Min Func Len</label>
+                                    <input type="number" id="upload-min-func-len" value="0" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                                </div>
+                            </div>
+
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 5px;">
+                                <div class="form-group">
+                                    <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Processor</label>
+                                    <div style="position: relative;">
+                                        <input type="text" id="upload-processor-search" autocomplete="off" placeholder="Auto-detect — click to browse" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                                        <input type="hidden" id="upload-processor" value="">
+                                        <div id="upload-processor-list" style="display: none; position: absolute; z-index: 50; top: 100%; left: 0; right: 0; max-height: 260px; overflow-y: auto; background: var(--window-tray); border: 1px solid var(--border); border-radius: 4px; margin-top: 2px; "></div>
+                                    </div>
+                                    <div id="upload-processor-hint" style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px; min-height: 1em;"></div>
+                                </div>
+                                <div class="form-group">
+                                    <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Compiler Spec</label>
+                                    <select id="upload-cspec" disabled style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">
+                                        <option value="">Default</option>
+                                    </select>
+                                    <div id="upload-cspec-hint" style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px; min-height: 1em;"></div>
+                                </div>
+                            </div>
                         </div>
+                    </details>
+
+                    <details style="background: var(--hover); border: 1px solid var(--border); border-radius: 8px;">
+                        <summary style="padding: 15px 20px; font-weight: bold; cursor: pointer; color: var(--accent); user-select: none; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px;">Analysis modules</summary>
+                        <div style="padding: 0 20px 20px 20px;">
+                            ${renderAnalysisModules()}
+                        </div>
+                    </details>
+
+                    <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
+                        <button id="start-upload-btn" onclick="startBatchUpload()" class="btn-primary" style="width: 100%; height: 50px; justify-content: center; display: flex; align-items: center; gap: 10px; font-size: 1.1rem; font-weight: bold; box-shadow: 0 4px 15px rgba(102, 217, 239, 0.2); border-radius: 6px; transition: all 0.2s;">
+                            <i class="fa-solid fa-play" style="font-size: 1.2rem;"></i> Start Batch Analysis
+                        </button>
+                        <button onclick="clearUploadList()" class="top-action-btn danger-btn" style="width: 100%; height: 35px; justify-content: center;">
+                            <i class="fa-solid fa-trash"></i> Clear List
+                        </button>
                     </div>
                 </div>
 
                 <div class="upload-drop-panel" style="display: flex; flex-direction: column; gap: 20px;">
-                    <div id="upload-drop-zone" style="border: 2px dashed var(--border); border-radius: 8px; padding: 50px 20px; text-align: center; cursor: pointer; transition: all 0.2s; background: rgba(255,255,255,0.01);">
+                    <div id="upload-drop-zone" style="border: 2px dashed var(--border); border-radius: 8px; padding: 50px 20px; text-align: center; cursor: pointer; transition: all 0.2s; background: var(--hover);">
                         <i class="fa-solid fa-cloud-arrow-up" style="font-size: 3.5rem; color: var(--accent); margin-bottom: 15px; opacity: 0.5;"></i>
-                        <div style="font-weight: bold; font-size: 1.1rem; margin-bottom: 8px; color: #fff;">Drop Binaries Here</div>
+                        <div style="font-weight: bold; font-size: 1.1rem; margin-bottom: 8px; color: var(--text);">Drop Binaries Here</div>
                         <div style="font-size: 0.85rem; color: var(--subtle);">or click to browse files</div>
                         <input type="file" id="upload-file-input" multiple style="display: none;">
                     </div>
@@ -87,13 +251,13 @@ function renderUploadView(params) {
                         <h4 style="font-size: 0.8rem; text-transform: uppercase; color: var(--subtle); margin: 0 0 10px 0; display: flex; justify-content: space-between;">
                             Selected Files <span id="file-count-badge" class="badge">0</span>
                         </h4>
-                        <div id="upload-file-list" style="flex: 1; overflow-y: auto; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 4px; padding: 5px;">
+                        <div id="upload-file-list" style="flex: 1; overflow-y: auto; background: var(--border); border: 1px solid var(--border); border-radius: 4px; padding: 5px;">
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div id="upload-progress-container" style="margin-top: 40px; display: none; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 8px; padding: 25px;">
+            <div id="upload-progress-container" style="margin-top: 40px; display: none; background: var(--border); border: 1px solid var(--border); border-radius: 8px; padding: 25px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <h3 style="color: var(--accent); font-size: 1rem; margin: 0; display: flex; align-items: center; gap: 10px;">
                         <div class="nav-job-spinner" id="global-upload-spinner" style="margin:0"></div>
@@ -101,7 +265,7 @@ function renderUploadView(params) {
                     </h3>
                     <div id="global-progress-text" style="font-size: 0.85rem; font-weight: bold; color: var(--accent);">0%</div>
                 </div>
-                <div class="job-progress-track" style="height: 10px; margin-bottom: 25px; background: rgba(255,255,255,0.05);">
+                <div class="job-progress-track" style="height: 10px; margin-bottom: 25px; background: var(--hover);">
                     <div id="global-progress-fill" class="job-progress-fill progress-running" style="width: 0%;"></div>
                 </div>
                 <div id="upload-progress-list" style="display: flex; flex-direction: column; gap: 12px; max-height: 400px; overflow-y: auto; padding-right: 10px;">
@@ -113,6 +277,133 @@ function renderUploadView(params) {
     setupUploadEvents();
     updateFileList();
     populateUploadCollectionDropdown(collection);
+    populateUploadLanguageDropdowns();
+}
+
+// ~170 languages, so the processor picker is a filterable combobox: the full
+// list is visible on click and narrows as you type. Compiler specs are valid
+// per-language, so the cspec <select> is rebuilt from the chosen processor.
+let uploadLanguages = [];
+
+async function populateUploadLanguageDropdowns() {
+    const search = document.getElementById('upload-processor-search');
+    const hidden = document.getElementById('upload-processor');
+    if (!search || !hidden) return;
+
+    try {
+        const res = await fetch('/api/index/languages');
+        if (res.ok) uploadLanguages = (await res.json()).languages || [];
+    } catch (e) {
+        console.warn('Failed to load Ghidra languages', e);
+    }
+
+    if (!uploadLanguages.length) {
+        search.disabled = true;
+        search.placeholder = 'Auto-detect';
+        search.title = 'Ghidra install not reachable from the API';
+        return;
+    }
+
+    search.placeholder = `Auto-detect \u2014 click to browse (${uploadLanguages.length})`;
+    search.onfocus = () => renderProcessorOptions();
+    search.oninput = () => {
+        // Typing invalidates the previous pick until a row is chosen again.
+        hidden.value = '';
+        refreshUploadCspecs();
+        renderProcessorOptions();
+    };
+    search.onkeydown = (e) => {
+        if (e.key === 'Escape') document.getElementById('upload-processor-list').style.display = 'none';
+    };
+
+    // Clicking outside closes the panel; mousedown on a row fires first.
+    document.addEventListener('click', (e) => {
+        const panel = document.getElementById('upload-processor-list');
+        if (!panel) return;
+        if (e.target !== search && !panel.contains(e.target)) panel.style.display = 'none';
+    });
+
+    renderProcessorOptions();
+}
+
+function escapeHtmlAttr(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+function renderProcessorOptions() {
+    const search = document.getElementById('upload-processor-search');
+    const panel = document.getElementById('upload-processor-list');
+    if (!search || !panel) return;
+
+    const q = search.value.trim().toLowerCase();
+    // Match id and description, so "arm" and "Intel" both find their languages.
+    const matches = uploadLanguages.filter(
+        l => !q || l.id.toLowerCase().includes(q) || (l.description || '').toLowerCase().includes(q)
+    );
+
+    panel.style.display = 'block';
+    if (!matches.length) {
+        panel.innerHTML = '<div style="padding: 8px; font-size: 0.8rem; color: var(--subtle);">No matching language</div>';
+        return;
+    }
+
+    panel.innerHTML =
+        '<div data-lang-id="" style="padding: 7px 9px; font-size: 0.8rem; color: var(--subtle); cursor: pointer; border-bottom: 1px solid var(--border);">Auto-detect</div>' +
+        matches
+            .map(
+                l => `<div data-lang-id="${escapeHtmlAttr(l.id)}" style="padding: 7px 9px; font-size: 0.8rem; cursor: pointer; border-bottom: 1px solid var(--border);">
+                        <div style="color: var(--text);">${escapeHtmlAttr(l.id)}</div>
+                        <div style="color: var(--subtle); font-size: 0.7rem;">${escapeHtmlAttr(l.description || '')}</div>
+                      </div>`
+            )
+            .join('');
+
+    for (const row of panel.querySelectorAll('[data-lang-id]')) {
+        row.onmouseenter = () => (row.style.background = 'var(--border)');
+        row.onmouseleave = () => (row.style.background = 'transparent');
+        row.onmousedown = () => {
+            selectUploadProcessor(row.getAttribute('data-lang-id'));
+            panel.style.display = 'none';
+        };
+    }
+}
+
+function selectUploadProcessor(langId) {
+    const search = document.getElementById('upload-processor-search');
+    const hidden = document.getElementById('upload-processor');
+    hidden.value = langId || '';
+    search.value = langId || '';
+    refreshUploadCspecs();
+}
+
+function refreshUploadCspecs() {
+    const hidden = document.getElementById('upload-processor');
+    const cspecSelect = document.getElementById('upload-cspec');
+    const procHint = document.getElementById('upload-processor-hint');
+    const cspecHint = document.getElementById('upload-cspec-hint');
+    if (!hidden || !cspecSelect) return;
+
+    const lang = uploadLanguages.find(l => l.id === hidden.value);
+
+    procHint.innerText = lang ? lang.description || '' : '';
+
+    // Changing or clearing the processor invalidates the selected cspec.
+    cspecSelect.innerHTML = '<option value="">Default</option>';
+    cspecSelect.disabled = !lang;
+    if (!lang) {
+        cspecHint.innerText = '';
+        return;
+    }
+
+    for (const c of lang.compilers) {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.innerText = c.name && c.name !== c.id ? `${c.id} (${c.name})` : c.id;
+        cspecSelect.appendChild(opt);
+    }
+    cspecHint.innerText = lang.compilers.length
+        ? `${lang.compilers.length} spec(s) available`
+        : 'No compiler specs for this language';
 }
 
 function setupUploadEvents() {
@@ -148,13 +439,13 @@ function setupUploadEvents() {
 
     dropZone.ondragleave = () => {
         dropZone.style.borderColor = 'var(--border)';
-        dropZone.style.background = 'rgba(255,255,255,0.01)';
+        dropZone.style.background = 'var(--border)';
     };
 
     dropZone.ondrop = (e) => {
         e.preventDefault();
         dropZone.style.borderColor = 'var(--border)';
-        dropZone.style.background = 'rgba(255,255,255,0.01)';
+        dropZone.style.background = 'var(--border)';
         handleFiles(e.dataTransfer.files);
     };
 }
@@ -195,7 +486,11 @@ function updateFileList() {
     const list = document.getElementById('upload-file-list');
     const container = document.getElementById('upload-file-list-container');
     const badge = document.getElementById('file-count-badge');
-    
+
+    // Before the guard below: the estimates live outside the file-list
+    // container and still need refreshing when the list empties out.
+    updateModuleEstimates();
+
     if (!list || !container) return;
 
     if (selectedFiles.length === 0) {
@@ -207,7 +502,7 @@ function updateFileList() {
     badge.innerText = selectedFiles.length;
 
     list.innerHTML = selectedFiles.map((file, i) => `
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.8rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 0.8rem;">
             <div style="display: flex; align-items: center; gap: 10px; overflow: hidden;">
                 <i class="fa-solid fa-file-binary" style="color: var(--subtle); flex-shrink: 0;"></i>
                 <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${file.name}">${file.name}</span>
@@ -237,9 +532,24 @@ async function startBatchUpload() {
     const batchName = document.getElementById('upload-batch-name').value || 'Manual Upload';
     const profile = document.getElementById('upload-profile').value;
     const minFuncLen = document.getElementById('upload-min-func-len').value;
+    const processor = document.getElementById('upload-processor').value.trim();
+    const cspec = document.getElementById('upload-cspec').value.trim();
+
+    // The API validates the pair too; this just avoids a round-trip per file.
+    const lang = uploadLanguages.find(l => l.id === processor);
+    if (processor && !lang) {
+        if (typeof showToast === 'function') showToast(`Unknown processor '${processor}'`, 'warning');
+        return;
+    }
+    if (cspec && lang && !lang.compilers.some(c => c.id === cspec)) {
+        if (typeof showToast === 'function') showToast(`'${cspec}' is not a valid compiler spec for ${processor}`, 'warning');
+        return;
+    }
     const tags = document.getElementById('upload-tags').value.split(',').map(t => t.trim()).filter(t => t);
     const relatedMd5s = document.getElementById('upload-related-md5').value.split(',').map(m => m.trim()).filter(m => m);
-    
+    const archivePassword = document.getElementById('upload-archive-password').value;
+    const enabledModules = selectedModules();
+
     let currentBatchUuid = null;
 
     document.getElementById('upload-progress-container').style.display = 'block';
@@ -260,7 +570,7 @@ async function startBatchUpload() {
                 <div style="font-size: 0.8rem; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; padding-right: 15px;">${file.name}</div>
                 <div id="file-status-${i}" style="font-size: 0.7rem; font-weight: bold; color: var(--subtle); flex-shrink: 0;">PREPARING</div>
             </div>
-            <div class="job-progress-track" style="height: 4px; background: rgba(255,255,255,0.05);">
+            <div class="job-progress-track" style="height: 4px; background: var(--hover);">
                 <div id="file-progress-${i}" class="job-progress-fill" style="width: 0%;"></div>
             </div>
         `;
@@ -283,8 +593,12 @@ async function startBatchUpload() {
             url.searchParams.set('batch_name', batchName);
             url.searchParams.set('profile', profile);
             url.searchParams.set('min_func_len', minFuncLen);
+            if (processor) url.searchParams.set('processor', processor);
+            if (processor && cspec) url.searchParams.set('cspec', cspec);
+            if (archivePassword) url.searchParams.set('archive_password', archivePassword);
             tags.forEach(t => url.searchParams.append('tags', t));
             relatedMd5s.forEach(m => url.searchParams.append('related_md5', m));
+            enabledModules.forEach(m => url.searchParams.append('enable', m));
 
             const response = await fetch(url, {
                 method: 'POST',
@@ -296,7 +610,7 @@ async function startBatchUpload() {
                 if (!currentBatchUuid && data.batch_uuid) {
                     currentBatchUuid = data.batch_uuid;
                 }
-                statusEl.innerText = 'QUEUED';
+                statusEl.innerText = data.file_count > 1 ? `QUEUED (${data.file_count} in archive)` : 'QUEUED';
                 statusEl.style.color = 'var(--success)';
                 progressEl.style.width = '100%';
                 results.push(data);
@@ -321,7 +635,8 @@ async function startBatchUpload() {
     if (results.length > 0) {
         try {
             document.getElementById('global-progress-text').innerText = 'Finalizing Batch...';
-            const pipelineIds = results.map(r => r.pipeline_id);
+            // An archive upload answers with one pipeline per extracted member.
+            const pipelineIds = results.flatMap(r => r.pipeline_ids || [r.pipeline_id]);
             const finalizeRes = await fetch('/api/file/upload/batch_finalize', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -334,7 +649,7 @@ async function startBatchUpload() {
             });
 
             if (finalizeRes.ok) {
-                if (typeof showToast === 'function') showToast(`Successfully queued master pipeline for ${results.length} binaries`, 'success');
+                if (typeof showToast === 'function') showToast(`Successfully queued master pipeline for ${pipelineIds.length} binaries`, 'success');
             } else {
                 console.error("Failed to finalize batch", await finalizeRes.text());
                 if (typeof showToast === 'function') showToast('Binaries uploaded, but master pipeline orchestration failed.', 'warning');
@@ -374,9 +689,9 @@ async function startBatchUpload() {
         goBtn.innerHTML = `
             <span style="font-size: 0.8rem; color: var(--subtle);">
                 <i class="fa-solid fa-layer-group" style="margin-right: 6px;"></i>
-                Uploaded to <b style="color: var(--text);">${collection}</b>
+                Uploaded to <b style="color: var(--text);">${escapeHtml(collection)}</b>
             </span>
-            <button id="go-to-collection-btn" onclick="Nav.openPath('${collectionUrl}')" class="btn-primary" style="height: 34px; padding: 0 16px; font-size: 0.8rem; display: flex; align-items: center; gap: 8px;">
+            <button id="go-to-collection-btn" onclick="Nav.openPath(${escapeAttr(jsString(collectionUrl))})" class="btn-primary" style="height: 34px; padding: 0 16px; font-size: 0.8rem; display: flex; align-items: center; gap: 8px;">
                 <i class="fa-solid fa-arrow-right"></i> Go to Collection
             </button>
         `;

@@ -5,8 +5,7 @@ import signal
 import os
 import json
 from dotenv import load_dotenv
-from bsimvis.app.services.redis_client import get_queue_redis
-from bsimvis.app.services.job_service import JobStatus, JobType
+from bsimvis.app.services.job_service import JobService
 
 # Load environment variables
 load_dotenv()
@@ -14,7 +13,7 @@ load_dotenv()
 
 def run_worker(host, port, args):
     if args.action == "start":
-        # 1. Reset all running jobs as requested
+        # 1. Recover anything a dead worker was holding
         rescue_jobs()
 
         # 2. Start the workers
@@ -22,49 +21,18 @@ def run_worker(host, port, args):
 
 
 def rescue_jobs():
-    """Moves jobs from 'processing' back to 'pending' if workers are being restarted."""
-    r = get_queue_redis()
-    processing_jobs = r.lrange("jobs:processing", 0, -1)
+    """Requeues jobs whose lease expired, i.e. whose worker died.
 
-    if not processing_jobs:
-        return
-
-    print(f"[*] Found {len(processing_jobs)} jobs in processing queue. Rescuing...")
-
-    for job_id in processing_jobs:
-        # 1. Update status to pending
-        timestamp = int(time.time() * 1000)
-        r.hset(
-            f"job:{job_id}",
-            mapping={"status": JobStatus.PENDING.value, "updated_at": timestamp},
+    This used to sweep everything in jobs:processing back to pending, including
+    jobs that live workers were still running -- which then executed twice. The
+    lease reaper can tell the two apart, so only genuinely stranded jobs move.
+    """
+    requeued, failed, cleaned = JobService().reap_expired()
+    if requeued or failed or cleaned:
+        print(
+            f"[*] Recovered: {requeued} requeued, {failed} failed (attempt limit), "
+            f"{cleaned} stale entries cleared."
         )
-
-        # 2. Add log entry
-        log_entry = f"[{timestamp}] Job rescued from stale worker processing queue and returned to pending."
-        r.lpush(f"job_log:{job_id}", log_entry)
-
-        # 3. Move back to appropriate pending queue
-        job = r.hgetall(f"job:{job_id}")
-        jtype = job.get("type") if job else None
-        high_priority_types = [
-            JobType.CLEAR_SIM.value,
-            JobType.CLEAR_FEATURES.value,
-            JobType.CLEAR_CLUSTER.value,
-            JobType.SYNC_MILVUS.value,
-        ]
-        target_queue = (
-            "jobs:pending:high" if jtype in high_priority_types else "jobs:pending"
-        )
-
-        # Use a transaction or pipeline for atomicity
-        pipe = r.pipeline()
-        pipe.lpush(target_queue, job_id)
-        pipe.lrem("jobs:processing", 1, job_id)
-        pipe.execute()
-
-        print(f"  [+] Rescued job: {job_id}")
-
-    print("[*] Job rescue complete.")
 
 
 def start_workers(count):

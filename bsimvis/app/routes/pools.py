@@ -107,7 +107,9 @@ def list_pools():
     name_filter = request.args.get("name", "").lower().strip()
     id_filter = request.args.get("id", "").lower().strip()
     status_filter = request.args.get("sync_status", "").lower().strip()
-    ranges = {f: lq.num_range(f) for f in ["created_at", "last_built_at"] + count_fields}
+    ranges = {
+        f: lq.num_range(f) for f in ["created_at", "last_built_at"] + count_fields
+    }
 
     def keep(p):
         colls = " ".join(p.get("collections", []))
@@ -132,7 +134,9 @@ def list_pools():
         "created_at": lambda p: int(p.get("created_at", 0) or 0),
         "last_built_at": lambda p: int(p.get("last_built_at", 0) or 0),
     }
-    key_fns.update({f: (lambda f: lambda p: int(p.get(f, 0) or 0))(f) for f in count_fields})
+    key_fns.update(
+        {f: (lambda f: lambda p: int(p.get(f, 0) or 0))(f) for f in count_fields}
+    )
 
     page, total = lq.sort_and_paginate(
         pools, offset, limit, "created_at", True, key_fns

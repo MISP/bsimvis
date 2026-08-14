@@ -1,13 +1,59 @@
 import math
+import os
+from collections import defaultdict
 import logging
 import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.milvus_service import milvus_service
 
 
+class _WriteBuffer:
+    """Merges one window of index_functions writes, keyed by feature hash."""
+
+    def __init__(self):
+        self.norms = {}  # norm key -> value
+        self.zadds = defaultdict(dict)  # f_hash -> {func_id: tf}
+        self.incrs = defaultdict(float)  # f_hash -> summed tf
+        self.metas = defaultdict(dict)  # f_hash -> {func_id: json}
+        self.indexed = []  # func_ids
+
+    def flush(self, pipe, collection):
+        if self.norms:
+            pipe.mset(self.norms)
+        for f_hash, members in self.zadds.items():
+            pipe.zadd(f"{collection}:feature:{f_hash}:functions", members)
+        for f_hash, amount in self.incrs.items():
+            pipe.zincrby(f"{collection}:features:by_tf", amount, f_hash)
+        for f_hash, fields in self.metas.items():
+            pipe.hset(f"{collection}:feature:{f_hash}:meta", mapping=fields)
+        if self.indexed:
+            pipe.sadd(f"{collection}:indexed:functions", *self.indexed)
+        self.__init__()
+
+
 class FeatureService:
     def __init__(self, r=None):
         self.r = r or get_redis()
+
+    READ_BATCH = 100
+
+    def _fetch_vec_batch(self, func_ids):
+        """GET :vec:meta + ZRANGE :vec:tf for a batch of functions in one round-trip."""
+        pipe = self.r.pipeline(transaction=False)
+        for fid in func_ids:
+            pipe.get(f"{fid}:vec:meta")
+            pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+        res = pipe.execute()
+
+        out = {}
+        for idx, fid in enumerate(func_ids):
+            raw_meta = res[idx * 2]
+            if raw_meta:
+                raw_meta = json.loads(raw_meta)
+                if isinstance(raw_meta, list) and len(raw_meta) == 1:
+                    raw_meta = raw_meta[0]
+            out[fid] = (raw_meta, res[idx * 2 + 1])
+        return out
 
     def index_functions(self, collection, function_ids, job_service=None, job_id=None):
         """
@@ -22,27 +68,32 @@ class FeatureService:
         indexed_features = set()
 
         pipe = self.r.pipeline(transaction=False)
+        batch = {}  # func_id -> (raw_meta, tf_data), refilled every READ_BATCH funcs
+        last_pct = -1
+        # The write fan-out (one ZADD/ZINCRBY/HSET per function *per feature*) is
+        # what actually dominates this job. Features repeat heavily across the
+        # functions of one file, so merge a window's writes per feature hash:
+        # ~40 commands per function collapse to ~1 per distinct feature.
+        acc = _WriteBuffer()
 
         for i, func_id in enumerate(function_ids):
-            # Update job progress if applicable
-            if job_service and job_id and (i % 10 == 0 or i == total - 1):
+            # Update job progress if applicable. update_progress is expensive (it
+            # re-aggregates the parent pipeline with one HGET per sibling task), so
+            # only fire it when the whole percent actually moves.
+            if job_service and job_id:
                 pct = int((i + 1) / total * 100)
-                job_service.update_progress(
-                    job_id, pct, f"Indexing features: {i+1}/{total}"
-                )
+                if pct != last_pct or i == total - 1:
+                    last_pct = pct
+                    job_service.update_progress(
+                        job_id, pct, f"Indexing features: {i+1}/{total}"
+                    )
 
-            meta_key = f"{func_id}:vec:meta"
-            tf_key = f"{func_id}:vec:tf"
+            # 1. Fetch metadata and vector data, one round-trip per READ_BATCH
+            # functions instead of two per function.
+            if func_id not in batch:
+                batch = self._fetch_vec_batch(function_ids[i : i + self.READ_BATCH])
 
-            # 1. Fetch metadata and vector data
-            # NOTE: Getting data can't be pipelined easily since it is needed inside loop
-            raw_meta = self.r.get(meta_key)
-            if raw_meta:
-                raw_meta = json.loads(raw_meta)
-                if isinstance(raw_meta, list) and len(raw_meta) == 1:
-                    raw_meta = raw_meta[0]
-
-            new_tf_data = self.r.zrange(tf_key, 0, -1, withscores=True)
+            raw_meta, new_tf_data = batch.pop(func_id)
             if not raw_meta or not new_tf_data:
                 logging.warning(
                     f"  [!] Skipping {func_id}: Missing metadata or vector data."
@@ -51,7 +102,7 @@ class FeatureService:
 
             # A. Recalculate L2 Norm
             sum_sq = sum(float(tf) ** 2 for _, tf in new_tf_data)
-            pipe.set(f"{func_id}:vec:norm", math.sqrt(sum_sq))
+            acc.norms[f"{func_id}:vec:norm"] = math.sqrt(sum_sq)
 
             # B. Build Reverse Index (ZSETs)
             tf_dict = {
@@ -62,9 +113,9 @@ class FeatureService:
             for f_hash, new_tf in tf_dict.items():
                 indexed_features.add(f_hash)
                 # Update function mapping for this feature
-                pipe.zadd(f"{collection}:feature:{f_hash}:functions", {func_id: new_tf})
+                acc.zadds[f_hash][func_id] = new_tf
                 # Update global TF counter for this feature
-                pipe.zincrby(f"{collection}:features:by_tf", float(new_tf), f_hash)
+                acc.incrs[f_hash] += float(new_tf)
 
             # Store feature metadata as a JSON string in a HASH keyed by function_id
             for feat_item in raw_meta:
@@ -74,17 +125,14 @@ class FeatureService:
                 meta_entry = dict(feat_item)
                 meta_entry["function_id"] = func_id
                 # Convention: {coll}:feature:{hash}:meta -> HASH (field=func_id, value=JSON)
-                pipe.hset(
-                    f"{collection}:feature:{f_hash}:meta",
-                    func_id,
-                    json.dumps(meta_entry),
-                )
+                acc.metas[f_hash][func_id] = json.dumps(meta_entry)
 
             # Mark as indexed (Base ID)
-            pipe.sadd(f"{collection}:indexed:functions", func_id)
+            acc.indexed.append(func_id)
 
             # Execute pipeline in chunks to reduce memory footprint and network overhead
             if (i + 1) % 100 == 0:
+                acc.flush(pipe, collection)
                 pipe.execute()
                 pipe = self.r.pipeline(transaction=False)
 
@@ -98,6 +146,7 @@ class FeatureService:
                         )
                     milvus_data = []
 
+        acc.flush(pipe, collection)
         pipe.execute()
 
         # Final Milvus Flush
@@ -349,11 +398,21 @@ class FeatureService:
         return results
 
     def index_global_features(
-        self, collection, feature_hashes, job_service=None, job_id=None
+        self,
+        collection,
+        feature_hashes,
+        job_service=None,
+        job_id=None,
+        progress_offset=0,
+        progress_total=None,
     ):
         """
         Computes global metadata (most common type/op pair, frequency, tf_score, decompiled context)
         for a list of feature hashes, and saves them to KV / secondary indexes.
+
+        `progress_offset`/`progress_total` let enrich_features call this once per
+        streamed batch while still reporting progress across the whole run.
+        When progress_total is set the caller owns the final 100% update.
         """
         if not feature_hashes:
             return
@@ -364,13 +423,36 @@ class FeatureService:
             f"[*] Starting global indexing for {len(feature_hashes)} features in {collection}"
         )
 
-        # Process in chunks to avoid blocking Kvrocks / Redis
-        chunk_size = 500
+        # Process in chunks to avoid blocking Kvrocks / Redis.
+        #
+        # This is the allocation that OOM-killed the fleet, found by measuring
+        # against stdlib-ref (419,617 pending features). Each chunk pipelines
+        # one HRANDFIELD-100-withvalues per feature and holds every response in
+        # memory at once, so peak scales with chunk_size -- NOT with the size of
+        # the pending set. At 500 the worker peaked over 3 GiB and was killed
+        # three times before the first batch ever committed. Streaming the
+        # pending set bounded the input list; this bounds the actual work.
+        # 50, not 100. Measured on 10k real stdlib-ref features, three runs per
+        # setting: peak tracks chunk size almost linearly (100 -> 2.07/2.40 GiB,
+        # 50 -> 1.60 GiB, 25 -> 1.38 GiB) while throughput stays flat inside
+        # noise (44-49 features/s at every setting). The round-trip cost the
+        # smaller chunk was expected to pay does not show up, so this is ~30%
+        # of the peak for free. 25 buys much less and is not worth the extra
+        # round-trips.
+        chunk_size = int(os.getenv("ENRICH_CHUNK_SIZE", 50))
+        denom = progress_total or len(feature_hashes)
         for i in range(0, len(feature_hashes), chunk_size):
             if job_service and job_id:
-                pct = int(i / len(feature_hashes) * 100)
+                done = progress_offset + i
+                # Clamped: features can be queued while the job runs, so `done`
+                # may overshoot the count we started with.
+                pct = min(99, int(done / denom * 100)) if denom else 0
                 job_service.update_progress(
-                    job_id, pct, f"Enriching global features: {i}/{len(feature_hashes)}"
+                    job_id,
+                    pct,
+                    f"Enriching global features: {done}/{denom}",
+                    processed=done,
+                    total=denom,
                 )
 
             chunk = feature_hashes[i : i + chunk_size]
@@ -395,6 +477,16 @@ class FeatureService:
             results = []
             pending_funcs = {}  # func_id → {func_id, line_idxs list}
 
+            # Features with < 100 occurrences need a full HGETALL (HRANDFIELD may
+            # dedup). That is the common case, so batch them into one round-trip.
+            small_pipe = self.r.pipeline(transaction=False)
+            small_hashes = [
+                fh for idx, fh in enumerate(chunk) if 0 < res1[idx * 3 + 1] <= 100
+            ]
+            for fh in small_hashes:
+                small_pipe.hgetall(f"{collection}:feature:{fh}:meta")
+            small_full = dict(zip(small_hashes, small_pipe.execute()))
+
             for idx, fh in enumerate(chunk):
                 hr = res1[idx * 3]
                 # HRANDFIELD withvalues returns flat list [key1, val1, key2, val2, ...]
@@ -402,9 +494,8 @@ class FeatureService:
                 total_freq = res1[idx * 3 + 1]
                 tf_score_val = res1[idx * 3 + 2]
 
-                # If full hash < 100 entries, re-fetch all (HRANDFIELD may dedup)
-                if total_freq <= 100 and total_freq > 0:
-                    data_batch = self.r.hgetall(f"{collection}:feature:{fh}:meta")
+                if fh in small_full:
+                    data_batch = small_full[fh]
 
                 # parse each occ, include function_id from the hash field
                 parsed = {}
@@ -521,11 +612,14 @@ class FeatureService:
                 for func_id, ctx_entry in zip(pending_funcs, ctx_res):
                     if ctx_entry:
                         entry_decoded = json.loads(ctx_entry)
-                        source_lookup[func_id] = (
-                            entry_decoded[0]
-                            if isinstance(entry_decoded, list)
-                            else entry_decoded
-                        )
+                        # An empty list is stored for functions with no source.
+                        # `isinstance([], list)` is true, so the old form did
+                        # [][0] and raised -- one such record aborted the entire
+                        # enrichment run, which at 419k features meant the job
+                        # could never finish no matter how often it was retried.
+                        if isinstance(entry_decoded, list):
+                            entry_decoded = entry_decoded[0] if entry_decoded else {}
+                        source_lookup[func_id] = entry_decoded
                     else:
                         source_lookup[func_id] = {}
 
@@ -537,11 +631,10 @@ class FeatureService:
                 for func_id, ctx_entry in zip(func_vec, ctx_res2):
                     if ctx_entry:
                         entry_decoded = json.loads(ctx_entry)
-                        vec_meta_lookup[func_id] = (
-                            entry_decoded[0]
-                            if isinstance(entry_decoded, list)
-                            else entry_decoded
-                        )
+                        # Same empty-list guard as :source above.
+                        if isinstance(entry_decoded, list):
+                            entry_decoded = entry_decoded[0] if entry_decoded else []
+                        vec_meta_lookup[func_id] = entry_decoded
                     else:
                         vec_meta_lookup[func_id] = []
 
@@ -610,16 +703,34 @@ class FeatureService:
 
             save_pipe.execute()
 
-        if job_service and job_id:
+        if job_service and job_id and progress_total is None:
             job_service.update_progress(job_id, 100, "Completed feature enrichment.")
 
-    def enrich_features(self, collection, job_service=None, job_id=None):
+    def enrich_features(
+        self, collection, job_service=None, job_id=None, batch_size=None
+    ):
         """
         Enriches all features that were added to the pending enrichment set.
+
+        Streamed and resumable. This handler OOM-killed ten workers in one
+        evening, and each kill restarted it from zero because the pending set
+        was only deleted at the very end -- five kills over two fleets meant the
+        same work was attempted five times and never finished.
+
+        Two changes: SSCAN a batch at a time instead of materialising the whole
+        set (stdlib-ref holds 375k hashes), and SREM each batch once it has been
+        indexed, so the set itself is the checkpoint. A kill now costs at most
+        one batch, and a rerun picks up exactly where the last one stopped.
+        Removing only what we have already processed is safe under SSCAN.
         """
+        # Kept modest deliberately. The batch is only a checkpoint interval --
+        # peak memory is governed by ENRICH_CHUNK_SIZE inside
+        # index_global_features -- but a smaller batch also means a kill costs
+        # less work. 5000 checkpointed too rarely to be useful at 419k features.
+        batch_size = batch_size or int(os.getenv("ENRICH_BATCH_SIZE", 1000))
         pending_key = f"{collection}:features:pending_enrichment"
-        feature_hashes = list(self.r.smembers(pending_key))
-        if not feature_hashes:
+        total = self.r.scard(pending_key)
+        if not total:
             logging.info(
                 f"[*] No pending features to enrich in collection: {collection}"
             )
@@ -629,14 +740,39 @@ class FeatureService:
                 )
             return True
 
-        feature_hashes = [
-            fh.decode() if isinstance(fh, bytes) else fh for fh in feature_hashes
-        ]
-
-        total = len(feature_hashes)
         logging.info(
             f"[*] Enriching {total} global features for collection: {collection}"
         )
-        self.index_global_features(collection, feature_hashes, job_service, job_id)
-        self.r.delete(pending_key)
+
+        processed = 0
+        while True:
+            # Cursor 0 every time on purpose: the batch we just finished is gone
+            # from the set, so the next scan returns the next slice of work.
+            _, batch = self.r.sscan(pending_key, 0, count=batch_size)
+            if not batch:
+                break
+            batch = [fh.decode() if isinstance(fh, bytes) else fh for fh in batch]
+
+            self.index_global_features(
+                collection,
+                batch,
+                job_service,
+                job_id,
+                progress_offset=processed,
+                progress_total=total,
+            )
+            # Checkpoint AFTER the batch is indexed, never before -- the same
+            # ordering rule as the INDEX_FUNCTIONS chunk delete.
+            self.r.srem(pending_key, *batch)
+            processed += len(batch)
+            logging.info(f"[*] Enriched {processed}/{total} features in {collection}")
+
+        if job_service and job_id:
+            job_service.update_progress(
+                job_id,
+                100,
+                f"Completed feature enrichment ({processed} features).",
+                processed=processed,
+                total=total,
+            )
         return True

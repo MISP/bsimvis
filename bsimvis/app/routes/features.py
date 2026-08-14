@@ -8,7 +8,11 @@ feature_service = FeatureService()
 
 def get_status():
     """Returns indexing status for a collection."""
-    collection = request.args.get("collection", "main")
+    # See routes/index.py: an omitted collection used to return all zeros with
+    # HTTP 200, which reads exactly like an empty instance.
+    collection = request.args.get("collection")
+    if not collection:
+        return {"error": "collection parameter is required"}, 400
     batch_uuid = request.args.get("batch")
     md5 = request.args.get("md5")
 

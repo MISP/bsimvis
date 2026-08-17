@@ -571,7 +571,7 @@ async function startBatchUpload() {
                 <div id="file-status-${i}" style="font-size: 0.7rem; font-weight: bold; color: var(--subtle); flex-shrink: 0;">PREPARING</div>
             </div>
             <div class="job-progress-track" style="height: 4px; background: var(--hover);">
-                <div id="file-progress-${i}" class="job-progress-fill" style="width: 0%;"></div>
+                <div id="file-progress-${i}" class="job-progress-fill progress-running" style="width: 0%;"></div>
             </div>
         `;
         progressList.appendChild(itemEl);
@@ -613,17 +613,23 @@ async function startBatchUpload() {
                 statusEl.innerText = data.file_count > 1 ? `QUEUED (${data.file_count} in archive)` : 'QUEUED';
                 statusEl.style.color = 'var(--success)';
                 progressEl.style.width = '100%';
+                progressEl.classList.remove('progress-running');
+                progressEl.classList.add('progress-completed');
                 results.push(data);
             } else {
                 const error = await response.json();
                 statusEl.innerText = 'FAILED';
                 statusEl.style.color = '#ff4d8d';
+                progressEl.classList.remove('progress-running');
+                progressEl.classList.add('progress-failed');
                 console.error(`Upload failed for ${file.name}:`, error);
             }
         } catch (err) {
             console.error(`Error uploading ${file.name}:`, err);
             document.getElementById(`file-status-${i}`).innerText = 'ERROR';
             document.getElementById(`file-status-${i}`).style.color = '#ff4d8d';
+            document.getElementById(`file-progress-${i}`).classList.remove('progress-running');
+            document.getElementById(`file-progress-${i}`).classList.add('progress-failed');
         }
 
         completedCount++;
@@ -661,7 +667,13 @@ async function startBatchUpload() {
 
     const globalSpinner = document.getElementById('global-upload-spinner');
     if (globalSpinner) globalSpinner.style.display = 'none';
-    
+
+    const globalFill = document.getElementById('global-progress-fill');
+    if (globalFill) {
+        globalFill.classList.remove('progress-running');
+        globalFill.classList.add(results.length === selectedFiles.length ? 'progress-completed' : 'progress-failed');
+    }
+
     document.getElementById('start-upload-btn').innerHTML = '<i class="fa-solid fa-check"></i> Finished';
 
     // Update the URL and Navbar to the new collection context

@@ -234,7 +234,46 @@ already-saturated kvrocks. The CPU saving is real but is a minority of that wall
 clock. A per-binary sample (where a real build gets its reuse) is the meaningful
 end-to-end measurement and had not completed when this was written.
 
-### 5d. What this means
+### 5d. Production deploy, full_arbor (measured after rollout)
+
+Deployed to the live instance and measured with `scripts/compare_build_speed.py`
+over two independent windows (600 s and 1,507 s). Baseline is the pre-deploy
+snapshot pair recorded in `doc/benchmark.md`.
+
+**DB traffic collapsed as designed:**
+
+| kvrocks | pre-deploy | post-deploy |
+|---|---|---|
+| output | 22,353 kbps | **382 kbps** (58x less) |
+| ops/s | 17,312 | 6,827 |
+
+That 58x is also the only reliable proof the new code was live — there is no
+version endpoint, and the old representation could not produce it.
+
+**Throughput did not follow.** Headline numbers are a mix artifact and must be
+size-matched: the pre-deploy sample contained only large binaries (9 large, 0
+small), the post-deploy sample was roughly half small ones.
+
+| bucket | baseline | 600 s window | 1,507 s window |
+|---|---|---|---|
+| overall median (misleading) | 0.0073 | 0.0383 (5.24x) | 0.0391 (5.35x) |
+| **large ≥1000 fn (like-for-like)** | **0.0073** | **0.0083 (1.14x)** | **0.0129 (1.77x)** |
+| 2,394-function binaries | 0.0073 | 0.0050 (0.68x) | 0.0023 (0.32x) |
+| 2,129-function binaries | 0.0073 | 0.0250 (3.41x) | 0.0219 (2.99x) |
+| small <1000 fn | no baseline | 0.0650 | 0.0730 |
+
+**Real like-for-like gain is ~1.1–1.8x, not the 8x the synthetic sweep
+predicted**, with high variance and only 4–5 comparable jobs per window. One
+2,394-function binary built a single function in 25 minutes, so a few
+pathological functions dominate the tail.
+
+The conclusion is sharper than the number: removing 58x of DB traffic bought
+almost no throughput, which proves discovery on this host was **never
+fetch-bound**. The time is in Python, and still is. §5c's 1.08x read-only A/B
+predicted this and should have been weighted more heavily than the in-memory
+sweep.
+
+### 5e. What this means
 
 - CPU-side, at production corpus size: **~8x on discovery**, results identical.
 - End-to-end gain depends on whether fetch or CPU dominates on your host. On a
@@ -243,7 +282,19 @@ end-to-end measurement and had not completed when this was written.
   Python `dict.get` loop, 2.1M calls in the profiled run) and the per-candidate
   scoring loop. **`_intern` is the next thing to optimise** — vectorising it, or
   assigning stable integer function ids at ingest, would remove the one cost this
-  change added.
+  change added. The production deploy in §5d confirms this: DB traffic fell 58x
+  while throughput moved ~1.1–1.8x, so the residual cost is entirely CPU-side.
+- **Was it worth shipping?** On the measured evidence: the cache half is a clear
+  win (58x less DB traffic frees kvrocks for the whole fleet), the vectorisation
+  half is currently cancelled out by `_intern`, and output is provably identical.
+  Keep it, but do not claim a throughput win until `_intern` and the
+  per-candidate loop are addressed.
+- **`build_sim` throughput was never the fleet's real problem.** The original
+  stall was 14 workers monopolised by `build_sim` while 3,265 `ghidra_analyze`
+  jobs starved on a FIFO queue with no per-type fairness. That recurred within
+  hours of the restart (12/15 workers on `build_sim`, ghidra back to 1 running
+  and 86 pending). Worker fairness, not discovery speed, is the higher-leverage
+  fix.
 
 ## 6. Known behavioural difference
 

@@ -93,6 +93,7 @@ class ProcessingService:
         coll_file_meta["function_count"] = num_functions
 
         coll_file_meta["bsim_features_count"] = total_features
+        coll_file_meta["status"] = "analyzed"
 
         pipe = self.r.pipeline(transaction=False)
 

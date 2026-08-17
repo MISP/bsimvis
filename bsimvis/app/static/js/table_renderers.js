@@ -79,6 +79,28 @@ function jobStatusCell(target) {
     return `<span class="job-status-cell" data-job-target="${target}">${jobStatusBadgeHtml(target)}</span>`;
 }
 
+// File rows carry a real lifecycle (data-service-set on upload/analysis, see
+// index_service.update_file_status), not just "is a job running right now" --
+// so they get their own badge instead of jobStatusCell's generic one.
+function fileStatusBadgeHtml(f) {
+    // Files indexed before this field existed have no `status` -- they are,
+    // by definition, already fully analyzed.
+    const status = f.status || 'analyzed';
+    const cssStatus = status === 'analyzing' ? 'running' : (status === 'analyzed' ? 'completed' : status);
+    const icons = {
+        pending: 'fa-clock',
+        analyzing: 'fa-circle-notch fa-spin',
+        failed: 'fa-exclamation-circle',
+        analyzed: 'fa-check-circle',
+    };
+    const target = f['file_md5'];
+    const job = target && window.activeJobsByTarget && window.activeJobsByTarget[target];
+    const clickAttr = job
+        ? `onclick="event.stopPropagation(); showJobDetails(${escapeAttr(jsString(job.id))})" style="cursor:pointer;" title="${escapeHtml(job.type || 'job')} — click to view log"`
+        : '';
+    return `<span class="job-status-badge status-${cssStatus}" ${clickAttr}><i class="fa-solid ${icons[status] || icons.analyzed}"></i> ${escapeHtml(status.toUpperCase())}</span>`;
+}
+
 window.refreshVisibleStatusBadges = function () {
     document.querySelectorAll('.job-status-cell[data-job-target]').forEach(el => {
         el.outerHTML = jobStatusCell(el.dataset.jobTarget);
@@ -441,7 +463,7 @@ window.TableRenderers = {
                 <td class="sim-cell mono dim" style="font-size:0.7rem" title="${escapeAttr(batchUuid)}">
                     ${escapeHtml(batchUuid.length > 8 ? batchUuid.substring(0, 8) + '...' : batchUuid)}
                 </td>
-                <td class="sim-cell">${jobStatusCell(f['file_md5'])}</td>
+                <td class="sim-cell">${fileStatusBadgeHtml(f)}</td>
                 <td class="sim-cell">
                     <div style="display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%;">
                         <span style="font-weight: bold; min-width: 20px; text-align: right;">${funcCount}</span>

@@ -314,6 +314,24 @@ def save_file(pipe, coll, file_md5, data):
     pipe.sadd(f"{coll}:all_files", base_id)
 
 
+def update_file_status(r, coll, file_md5, status, only_if_not=None):
+    """Patches the `status` field on an already-registered file's meta blob.
+
+    `only_if_not` guards a late-stage failure (e.g. BUILD_SIM) from clobbering
+    a file that already finished its core analysis -- only the stages before
+    that point should be able to mark a file failed.
+    """
+    key = f"{coll}:file:{file_md5}:meta"
+    raw = r.get(key)
+    if not raw:
+        return
+    data = json.loads(raw)
+    if only_if_not and data.get("status") == only_if_not:
+        return
+    data["status"] = status
+    r.set(key, json.dumps(data))
+
+
 def save_function(pipe, coll, md5, addr, data):
     """Index all fields for a function doc. Standardized as {col}:func:{md5}:{addr}"""
     base_id = f"{coll}:func:{md5}:{addr}"

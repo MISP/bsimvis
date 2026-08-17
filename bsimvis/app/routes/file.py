@@ -2,7 +2,7 @@ from flask import request
 import json
 import hashlib
 from bsimvis.app.services import archive_service, lineage_service, unpack_service
-from bsimvis.app.services.index_service import normalize_tags
+from bsimvis.app.services.index_service import normalize_tags, save_file
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.milvus_service import milvus_service
@@ -399,6 +399,85 @@ def _ingest_raw_binary(
     raw_file_id = f"{collection}:file:{file_md5}:raw"
     r_data.set(raw_file_id, raw_bytes)
 
+    # Default enqueue to true unless explicitly disabled. Computed early: an
+    # enqueue=false upload (used for unpacked container members that never
+    # reach a worker) must NOT get a document registered here either, or it
+    # stops being distinguishable from an actually-processed file -- see the
+    # lineage "child with no document yet" test.
+    enqueue_arg = request.args.get("enqueue")
+    if enqueue_arg is not None:
+        enqueue = enqueue_arg.lower() == "true"
+    else:
+        enqueue = True
+
+    # Register a pending stub immediately so the file shows up (with a status)
+    # in searches/listings right away, instead of only after the whole
+    # analysis+indexing pipeline finishes. index_metadata overwrites this with
+    # the full record once GHIDRA_ANALYZE completes. Skipped when enqueue is
+    # false: those files (unpacked container members) never reach a worker,
+    # so they must stay invisible/non-existent, same as before this stub
+    # existed.
+    if enqueue:
+        file_base_id = f"{collection}:file:{file_md5}"
+        stub_meta = {
+            "file_md5": file_md5,
+            "file_name": file_name,
+            "batch_uuid": batch_uuid,
+            "batch_name": batch_name,
+            "collection": collection,
+            "type": "file",
+            "file_id": file_base_id,
+            "status": "pending",
+            "function_count": 0,
+            "bsim_features_count": 0,
+            "entry_date": int(time.time()),
+        }
+        stub_pipe = r_data.pipeline(transaction=False)
+        stub_pipe.set(f"{file_base_id}:meta", json.dumps(stub_meta))
+        save_file(stub_pipe, collection, file_md5, stub_meta)
+        stub_pipe.execute()
+
+        # Same idea for the batch: register it (if new) so it shows up in
+        # /api/batch/search right away. Per-item state doesn't apply here --
+        # the existing job-status badge covers "is something running for
+        # this batch".
+        global_batch_key = f"global:batch:{batch_uuid}"
+        if not r_data.exists(global_batch_key):
+            now_ms = int(time.time() * 1000)
+            r_data.sadd("global:batches", batch_uuid)
+            r_data.set(
+                global_batch_key,
+                json.dumps(
+                    {
+                        "name": batch_name,
+                        "batch_uuid": batch_uuid,
+                        "batch_id": global_batch_key,
+                        "created_at": now_ms,
+                        "last_updated": now_ms,
+                        "collections": {collection: True},
+                    }
+                ),
+            )
+        batch_key = f"{collection}:batch:{batch_uuid}"
+        if not r_data.exists(batch_key):
+            now_ms = int(time.time() * 1000)
+            r_data.sadd(f"{collection}:all_batches", batch_uuid)
+            r_data.set(
+                batch_key,
+                json.dumps(
+                    {
+                        "name": batch_name,
+                        "batch_uuid": batch_uuid,
+                        "batch_id": batch_key,
+                        "created_at": now_ms,
+                        "last_updated": now_ms,
+                        "total_files": 0,
+                        "total_functions": 0,
+                        "collection": collection,
+                    }
+                ),
+            )
+
     # Build analysis payload
     analysis_payload = {
         "collection": collection,
@@ -500,12 +579,6 @@ def _ingest_raw_binary(
             )
         )
 
-    # Default enqueue to true unless explicitly disabled
-    enqueue_arg = request.args.get("enqueue")
-    if enqueue_arg is not None:
-        enqueue = enqueue_arg.lower() == "true"
-    else:
-        enqueue = True
     pipeline_id = job_service.create_pipeline(pipeline_tasks, enqueue=enqueue)
 
     return {

@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from bsimvis.app.services.redis_client import get_queue_redis, get_redis, get_raw_redis
+from bsimvis.app.services.index_service import update_file_status
 from bsimvis.app.services.job_service import JobService, JobStatus, JobType, LEASE_TTL
 from bsimvis.app.services.processing_service import ProcessingService
 from bsimvis.app.services.feature_service import FeatureService
@@ -277,6 +278,25 @@ class Worker:
         self.r_queue.hdel(f"job:{job_id}", "queued")
         self.job_service.enqueue_job(job_id)
 
+    def _mark_file_status(self, payload, status, only_if_not=None):
+        """Mirrors a per-file job's outcome onto its file record's `status`.
+
+        payload key names vary by job type (analysis_payload uses
+        `file_md5`, build_sim/index_sim payloads use `md5`), so both are
+        checked. No-ops for jobs that aren't scoped to a single file
+        (batch/collection/pool-wide jobs carry neither key).
+        """
+        collection = payload.get("collection")
+        file_md5 = payload.get("file_md5") or payload.get("md5")
+        if not collection or not file_md5:
+            return
+        try:
+            update_file_status(
+                self.r_data, collection, file_md5, status, only_if_not=only_if_not
+            )
+        except Exception as e:
+            logging.warning(f"[!] Could not update file status for {file_md5}: {e}")
+
     def _execute_job(self, job_id, job_data):
         jtype = job_data.get("type")
         payload = json.loads(job_data.get("payload", "{}"))
@@ -296,6 +316,9 @@ class Worker:
             },
         )
 
+        if jtype == JobType.GHIDRA_ANALYZE.value:
+            self._mark_file_status(payload, "analyzing")
+
         # Execute Job within a timer context
         with job_timer(job_id) as timer:
             try:
@@ -308,6 +331,7 @@ class Worker:
                     )
                     self.job_service.complete_job(job_id)
                 else:
+                    self._mark_file_status(payload, "failed", only_if_not="analyzed")
                     self.job_service.fail_job(
                         job_id, "Job failed (returned False from dispatcher)."
                     )
@@ -317,6 +341,7 @@ class Worker:
                 import traceback
 
                 traceback.print_exc()
+                self._mark_file_status(payload, "failed", only_if_not="analyzed")
                 self.job_service.fail_job(job_id, str(e))
             finally:
                 # Record what this job actually cost, so admission weights come

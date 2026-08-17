@@ -64,14 +64,13 @@ function renderBinarySimilarityView(params) {
     let html = `
         <div id="bin-sim-results" style="display:none; flex:1; flex-direction:column; padding:20px; min-height:0; overflow-y:auto;">
             <!-- Similarity Hero (prominent, score-colored) -->
-            <div id="bin-sim-hero" style="border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 16px; background: var(--card-bg);">
+            <div id="bin-sim-hero" style="position:relative; border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 16px; background: var(--card-bg);">
                 <span style="color: var(--subtle); text-transform: uppercase; font-size: 0.8rem; font-weight: bold; letter-spacing: 0.08em;">Binary Similarity</span>
                 <span id="bin-sim-score-val" style="font-family: 'Consolas', monospace; font-weight: 800; font-size: 2.4rem; line-height: 1; color: var(--accent);">--%</span>
+                <!-- Resplit pill: pinned to the hero corner so it's in plain
+                     sight without stealing a full row. Hidden unless stale. -->
+                <div id="bin-sim-resplit-banner" style="display:none; position:absolute; top:10px; right:14px;"></div>
             </div>
-
-            <!-- Resplit banner: out of the composition-flow controls, own row,
-                 hidden unless the split is actually stale. -->
-            <div id="bin-sim-resplit-banner" style="display:none;"></div>
 
             <!-- Slim per-binary strip: user tags + notes only -->
             <div style="display: flex; gap: 20px; margin-bottom: 12px;">
@@ -1802,9 +1801,11 @@ window.toggleFileSimNs = function(key) {
 };
 
 // Tagging changes the split, never the score, so a stale split is an offer to
-// recompute rather than a reason to invalidate the pair. Lives in its own
-// banner row (not the composition-flow controls) so it's hard to miss.
+// recompute rather than a reason to invalidate the pair. Pinned to the hero
+// corner as a small amber pill, not a full-width row, so it stands out by
+// color instead of by size.
 let binSimResplitPoll = null;
+const BSIM_RESPLIT_AMBER = '#f0ad4e';
 
 function renderFileSimResplit(stale) {
     const banner = document.getElementById('bin-sim-resplit-banner');
@@ -1812,10 +1813,10 @@ function renderFileSimResplit(stale) {
     // A poll already in flight is tracking this pair's job; don't stomp it
     // with the stale-button markup on every re-render of the sankey.
     if (binSimResplitPoll) return;
-    banner.style.display = stale ? 'flex' : 'none';
+    banner.style.display = stale ? 'block' : 'none';
     banner.innerHTML = stale
-        ? `<button class="view-btn" id="bin-sim-resplit-btn" onclick="resplitBinSimTags()"
-             style="display:flex; align-items:center; gap:8px; font-size:0.95rem; padding:8px 16px; margin-bottom:12px; width:100%; justify-content:center; border:1px solid var(--accent); color:var(--accent); background:var(--card-bg);"
+        ? `<button id="bin-sim-resplit-btn" onclick="resplitBinSimTags()"
+             style="display:flex; align-items:center; gap:6px; font-size:0.78rem; font-weight:600; padding:5px 10px; border-radius:999px; border:1px solid ${BSIM_RESPLIT_AMBER}; color:${BSIM_RESPLIT_AMBER}; background:color-mix(in srgb, ${BSIM_RESPLIT_AMBER} 15%, transparent); cursor:pointer;"
              title="Tags changed since this pair was split. The score is unaffected; only its breakdown by tag is.">
              <i class="fa-solid fa-arrows-rotate"></i> Tags changed &mdash; refresh split</button>`
         : '';
@@ -1824,15 +1825,15 @@ function renderFileSimResplit(stale) {
 function setBinSimResplitBanner(html) {
     const banner = document.getElementById('bin-sim-resplit-banner');
     if (!banner) return;
-    banner.style.display = 'flex';
+    banner.style.display = 'block';
     banner.innerHTML = html;
 }
 
 window.resplitBinSimTags = async function() {
     if (!binSimCtx) return;
     const ctx = binSimCtx; // snapshot: user may navigate to another pair mid-poll
-    setBinSimResplitBanner(`<span style="display:flex; align-items:center; gap:8px; font-size:0.95rem; padding:8px 16px; margin-bottom:12px; width:100%; justify-content:center; border:1px solid var(--border); color:var(--dim); background:var(--card-bg);">
-        <i class="fa-solid fa-spinner fa-spin"></i> Resplitting tags&hellip;</span>`);
+    setBinSimResplitBanner(`<span style="display:flex; align-items:center; gap:6px; font-size:0.78rem; font-weight:600; padding:5px 10px; border-radius:999px; border:1px solid ${BSIM_RESPLIT_AMBER}; color:${BSIM_RESPLIT_AMBER}; background:color-mix(in srgb, ${BSIM_RESPLIT_AMBER} 15%, transparent);">
+        <i class="fa-solid fa-spinner fa-spin"></i> Resplitting&hellip;</span>`);
     try {
         const res = await fetch('/api/bin_sim/resplit', {
             method: 'POST',

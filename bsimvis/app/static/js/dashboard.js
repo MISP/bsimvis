@@ -964,6 +964,77 @@ function updateNavbarLinks(col) {
 }
 window.updateNavbarLinks = updateNavbarLinks;
 
+// Bin-sim search filters: score type (Overall/Code/Library/Content) and node
+// type (File/Container) render as clickable tag pills -- same visual language
+// as the score sub-cards in the results view -- instead of <select> dropdowns.
+// Both live behind hidden inputs (#bsim-score-type, #bsim-containers) so
+// applyBinSimSearch's generic id->param reader in binary_similarity.js needs
+// no changes.
+function binSimPillStyle(active, color) {
+    color = color || 'var(--accent)';
+    return `display:inline-flex; align-items:center; gap:3px; padding:3px 8px; border-radius:10px; font-size:0.62rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid ${active ? color : 'var(--border)'}; color:${active ? color : 'var(--subtle)'}; background:${active ? color + '22' : 'transparent'};`;
+}
+
+function binSimScoreTypeTagsHtml(p) {
+    const active = p.get('sort') || 'score';
+    const types = window.BinSimScoreTypes || { score: { label: 'Overall', icon: 'fa-solid fa-layer-group', color: 'var(--success)' } };
+    const pills = Object.entries(types).map(([v, meta]) => {
+        const on = v === active;
+        return `<span class="bsim-tag-pill" data-value="${v}" onclick="setBinSimScoreType('${v}')" style="${binSimPillStyle(on, meta.color)}" title="${escapeAttr(meta.label)}"><i class="${meta.icon}"></i>${meta.label}</span>`;
+    }).join('');
+    return `<input type="hidden" id="bsim-score-type" value="${escapeAttr(active)}"><div id="bsim-score-type-tags" style="display:flex; flex-wrap:wrap; gap:4px;">${pills}</div>`;
+}
+
+function binSimNodeTypeTagsHtml(p) {
+    const cur = p.get('containers') || '';
+    const fileActive = cur !== 'both';
+    const containerActive = cur !== 'none';
+    return `<input type="hidden" id="bsim-containers" value="${escapeAttr(cur === 'none' || cur === 'both' ? cur : '')}">
+        <div style="display:flex; flex-wrap:wrap; gap:4px;">
+            <span id="bsim-nt-file" class="bsim-nt-pill" onclick="toggleBinSimNodeType('file')" style="${binSimPillStyle(fileActive, 'var(--info, #3b82f6)')}" title="Include file ↔ file pairs"><i class="fa-solid fa-file"></i>File</span>
+            <span id="bsim-nt-container" class="bsim-nt-pill" onclick="toggleBinSimNodeType('container')" style="${binSimPillStyle(containerActive, 'var(--warning, #d97706)')}" title="Include container ↔ container pairs"><i class="fa-solid fa-box"></i>Container</span>
+        </div>`;
+}
+
+function setBinSimScoreType(v) {
+    const el = document.getElementById('bsim-score-type');
+    if (el) el.value = v;
+    if (window.applyBinSimSearch) window.applyBinSimSearch();
+}
+window.setBinSimScoreType = setBinSimScoreType;
+
+function toggleBinSimNodeType(which) {
+    const el = document.getElementById('bsim-containers');
+    if (!el) return;
+    let fileActive = el.value !== 'both';
+    let containerActive = el.value !== 'none';
+    if (which === 'file') fileActive = !fileActive; else containerActive = !containerActive;
+    if (!fileActive && !containerActive) { fileActive = true; containerActive = true; } // never both off
+    el.value = fileActive && containerActive ? '' : (fileActive ? 'none' : 'both');
+    if (window.applyBinSimSearch) window.applyBinSimSearch();
+}
+window.toggleBinSimNodeType = toggleBinSimNodeType;
+
+function syncBinSimTags(p) {
+    const active = p.get('sort') || 'score';
+    const hidden = document.getElementById('bsim-score-type');
+    if (hidden) hidden.value = active;
+    document.querySelectorAll('#bsim-score-type-tags .bsim-tag-pill').forEach(el => {
+        const meta = (window.BinSimScoreTypes || {})[el.dataset.value] || {};
+        const on = el.dataset.value === active;
+        el.setAttribute('style', binSimPillStyle(on, meta.color));
+    });
+    const cur = p.get('containers') || '';
+    const hiddenC = document.getElementById('bsim-containers');
+    if (hiddenC) hiddenC.value = (cur === 'none' || cur === 'both') ? cur : '';
+    const fileActive = cur !== 'both';
+    const containerActive = cur !== 'none';
+    const fileEl = document.getElementById('bsim-nt-file');
+    const contEl = document.getElementById('bsim-nt-container');
+    if (fileEl) fileEl.setAttribute('style', binSimPillStyle(fileActive, 'var(--info, #3b82f6)'));
+    if (contEl) contEl.setAttribute('style', binSimPillStyle(containerActive, 'var(--warning, #d97706)'));
+}
+
 function updateUI(viewKey, collection, params, route, force = false) {
     showDashboardActions();
     const routingState = getRoutingState();
@@ -1416,24 +1487,17 @@ function updateUI(viewKey, collection, params, route, force = false) {
             } else if (path === 'binary-similarity') {
                 headHtml += `<tr class="filter-row">
                     <th>
-                        <div style="display:flex; flex-direction:column; gap:2px;">
-                            <select id="bsim-score-type" onchange="debouncedSearch(applyBinSimSearch)" style="font-size:0.6rem; padding:2px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
-                                ${Object.entries(window.BinSimScoreTypes || { score: { label: 'Overall' } }).map(([v, meta]) =>
-                                    `<option value="${v}" ${(p.get('sort') || 'score') === v ? 'selected' : ''}>${meta.label}</option>`
-                                ).join('')}
-                            </select>
+                        <div style="display:flex; flex-direction:column; gap:4px;">
+                            ${binSimScoreTypeTagsHtml(p)}
                             <div style="display:flex; align-items:center; gap:2px;">
                                 <input type="number" id="bsim-min-score" placeholder="Min..." step="0.05" min="0" max="1" value="${escapeAttr(p.get('min_score') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-score" placeholder="Max..." step="0.05" min="0" max="1" value="${escapeAttr(p.get('max_score') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;">
                             </div>
                         </div>
                     </th>
                     <th>
-                        <div style="display:flex; flex-direction:column; gap:2px;">
+                        <div style="display:flex; flex-direction:column; gap:4px;">
                             <input type="text" id="bsim-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;">
-                            <select id="bsim-view" onchange="applyBinSimSearch()" title="File vs Container is a hard split: an edge never crosses node types" style="font-size:0.6rem; padding:2px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px; width:100%; box-sizing:border-box;">
-                                ${[['file', 'File ↔ File'], ['container', 'Container ↔ Container']].map(([v, label]) => `<option value="${escapeAttr(v)}" ${(p.get('view') || 'file') === v ? 'selected' : ''}>${label}</option>`).join('')}
-                            </select>
-                            <select id="bsim-containers" style="display:none;"></select>
+                            ${binSimNodeTypeTagsHtml(p)}
                         </div>
                     </th>
                     <th><input type="text" id="bsim-md5" placeholder="MD5..." value="${escapeAttr(p.get('md5') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box; font-family:monospace;"></th>
@@ -1608,8 +1672,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
             syncInput('flt-pool-id', 'id'); syncInput('flt-pool-name', 'name'); syncSelect('flt-pool-status', 'sync_status', '');
             syncDate('flt-pool-min-date', 'min_created_at'); syncDate('flt-pool-max-date', 'max_created_at');
         } else if (path === 'binary-similarity') {
-            syncSelect('bsim-score-type', 'sort', 'score'); syncInput('bsim-min-score', 'min_score'); syncInput('bsim-max-score', 'max_score'); syncInput('bsim-file-name', 'file_name'); syncInput('bsim-md5', 'md5'); syncInput('bsim-arch', 'arch');
-            syncSelect('bsim-view', 'view', 'file');
+            syncBinSimTags(p); syncInput('bsim-min-score', 'min_score'); syncInput('bsim-max-score', 'max_score'); syncInput('bsim-file-name', 'file_name'); syncInput('bsim-md5', 'md5'); syncInput('bsim-arch', 'arch');
             syncInput('bsim-min-funcs', 'min_funcs'); syncInput('bsim-max-funcs', 'max_funcs'); syncInput('bsim-min-cov', 'min_coverage'); syncInput('bsim-max-cov', 'max_coverage'); syncInput('bsim-min-shared', 'min_shared');
         } else if (path === 'jobs') {
             syncSelect('job-type-filter', 'type'); syncSelect('job-collection-filter', 'collection'); syncSelect('job-status-filter', 'status');

@@ -109,7 +109,8 @@ function renderBinarySimilarityView(params) {
                         <button class="bsim-tab active" id="bin-sim-tab-btn-summary" onclick="switchBinSimTab('summary')">Summary</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-all" onclick="switchBinSimTab('all')">All</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-matched" onclick="switchBinSimTab('matched')">Matched</button>
-                        <button class="bsim-tab" id="bin-sim-tab-btn-unmatched" onclick="switchBinSimTab('unmatched')">Unmatched</button>
+                        <button class="bsim-tab" id="bin-sim-tab-btn-unique_a" onclick="switchBinSimTab('unique_a')">Unique to A</button>
+                        <button class="bsim-tab" id="bin-sim-tab-btn-unique_b" onclick="switchBinSimTab('unique_b')">Unique to B</button>
                     </div>
 
                     <!-- Global scope chips: the tree selection, removable from here too -->
@@ -489,12 +490,14 @@ function initResizableCards() {
 
         const btnAll = document.getElementById('bin-sim-tab-btn-all');
         const btnMatched = document.getElementById('bin-sim-tab-btn-matched');
-        const btnUnmatched = document.getElementById('bin-sim-tab-btn-unmatched');
+        const btnUniqueA = document.getElementById('bin-sim-tab-btn-unique_a');
+        const btnUniqueB = document.getElementById('bin-sim-tab-btn-unique_b');
         // A matched row is one function on each side, so All counts both sides.
         const allCount = (counts.matched || 0) * 2 + (counts.unique_to_a || 0) + (counts.unique_to_b || 0);
         if (btnAll) btnAll.textContent = `All (${allCount})`;
         if (btnMatched) btnMatched.textContent = `Matched (${counts.matched})`;
-        if (btnUnmatched) btnUnmatched.textContent = `Unmatched (${counts.unique_to_a} / ${counts.unique_to_b})`;
+        if (btnUniqueA) btnUniqueA.textContent = `Unique to A (${counts.unique_to_a})`;
+        if (btnUniqueB) btnUniqueB.textContent = `Unique to B (${counts.unique_to_b})`;
 
         // Tree + Summary render from the compact payload alone; the table and the
         // function graph page themselves once a tab that needs rows is shown.
@@ -551,7 +554,7 @@ const FILESIM_GROUPS = [
 let fileSimSelection = new Set();
 // The one expansion state, shared by tree / summary / table / sankey.
 let fileSimTreeOpen = new Set(['root', 'libraries', 'bundles']);
-// 'summary' | 'all' | 'matched' | 'unmatched' -- the right pane's tabs.
+// 'summary' | 'all' | 'matched' | 'unique_a' | 'unique_b' -- the right pane's tabs.
 let fileSimTab = 'summary';
 // How All / Matched / Unmatched draw the same rows: as a table or as flow.
 let fileSimView = 'table';     // 'table' | 'graph'
@@ -1043,7 +1046,7 @@ function renderFileSimChips() {
             </span>`);
     });
 
-    const stateLabel = { matched: 'matched', unmatched: 'unmatched' }[fileSimTab];
+    const stateLabel = { matched: 'matched', unique_a: 'unique to A', unique_b: 'unique to B' }[fileSimTab];
     if (stateLabel) {
         chips.push(`
             <span class="bsim-chip">state: <b>${stateLabel}</b>
@@ -1163,7 +1166,8 @@ function renderFileSimSummary() {
 const FILESIM_TAB_STATES = {
     all: '',
     matched: 'matched',
-    unmatched: 'uniq_a,uniq_b',
+    unique_a: 'uniq_a',
+    unique_b: 'uniq_b',
 };
 
 // Per-node row pages, keyed by tree node id ('' = the flat, ungrouped list).
@@ -1305,23 +1309,35 @@ function fileSimRowHtml(row, depth, groupId) {
     return out.join('');
 }
 
-function fileSimTableHeadHtml() {
+// mode: 'both' (All/Matched -- 7 cols, both sides) or 'a'/'b' (Unique to A/B --
+// rows are always one-sided there, so Similarity and the other side's two blank
+// columns are pointless; drop them to 4 cols).
+function fileSimColMode() {
+    if (fileSimTab === 'unique_a') return 'a';
+    if (fileSimTab === 'unique_b') return 'b';
+    return 'both';
+}
+
+function fileSimTableHeadHtml(mode) {
     const data = binSimDataCache || {};
     const nameA = data.file_metadata_a?.file_name || 'Binary A';
     const nameB = data.file_metadata_b?.file_name || 'Binary B';
     const icon = (col) => binSimSortState.matched.col === col
         ? (binSimSortState.matched.dir === -1 ? '▼' : '▲') : '↕';
-    return `
-        <tr>
-            <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable" onclick="setBinSimSort('matched','similarity')">Similarity <small>${icon('similarity')}</small></th>
-            <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:80px;" class="sortable" onclick="setBinSimSort('matched','avg_features')" title="BSim feature count (A / B for a match)">Features <small>${icon('avg_features')}</small></th>
-            <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:150px;" class="sortable" onclick="setBinSimSort('matched','cluster_name')">Cluster <small>${icon('cluster_name')}</small></th>
-            <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">${escapeHtml(nameA)}</th>
-            <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:50px;">Notes</th>
-            <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">${escapeHtml(nameB)}</th>
-            <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:50px;">Notes</th>
-        </tr>
-        <tr class="filter-row">
+    const simTh = `<th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable" onclick="setBinSimSort('matched','similarity')">Similarity <small>${icon('similarity')}</small></th>`;
+    const featTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:80px;" class="sortable" onclick="setBinSimSort('matched','avg_features')" title="BSim feature count (A / B for a match)">Features <small>${icon('avg_features')}</small></th>`;
+    const clusterTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:150px;" class="sortable" onclick="setBinSimSort('matched','cluster_name')">Cluster <small>${icon('cluster_name')}</small></th>`;
+    const aTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">${escapeHtml(nameA)}</th>`;
+    const aNotesTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:50px;">Notes</th>`;
+    const bTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">${escapeHtml(nameB)}</th>`;
+    const bNotesTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:50px;">Notes</th>`;
+
+    const headCells = mode === 'a' ? [featTh, clusterTh, aTh, aNotesTh]
+        : mode === 'b' ? [featTh, clusterTh, bTh, bNotesTh]
+        : [simTh, featTh, clusterTh, aTh, aNotesTh, bTh, bNotesTh];
+
+    const searchColspan = mode === 'both' ? 4 : 2;
+    const filterCells = mode === 'both' ? `
             <th style="position:relative;"><div style="display:flex; flex-direction:column; gap:3px;" onclick="event.stopPropagation()">
                 <div style="display:flex; align-items:center; gap:2px;">
                     <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-coh-min" placeholder="Min..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
@@ -1333,7 +1349,11 @@ function fileSimTableHeadHtml() {
                            onkeydown="binSimSimTagAdd(event)"
                            onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bsim-sim', 'sim_tag', val, false, false); this.value=''; binSimFilterChange(true); })">
                 </div>
-            </div></th>
+            </div></th>` : '';
+    return `
+        <tr>${headCells.join('')}</tr>
+        <tr class="filter-row">
+            ${filterCells}
             <th><div style="display:flex; align-items:center; gap:2px;" onclick="event.stopPropagation()">
                 <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-feat-min" placeholder="Min..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
                 <span class="dim" style="font-size:0.6rem">-</span>
@@ -1342,7 +1362,7 @@ function fileSimTableHeadHtml() {
             <th><div onclick="event.stopPropagation()">
                 <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-cl-q" placeholder="Cluster name..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
             </div></th>
-            <th colspan="4"><div onclick="event.stopPropagation()">
+            <th colspan="${searchColspan}"><div onclick="event.stopPropagation()">
                 <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-q" placeholder="Search name / tag / addr..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
             </div></th>
         </tr>`;
@@ -1408,9 +1428,10 @@ function renderFileSimTable() {
     const tbody = document.getElementById('bin-sim-table-matched');
     if (!tbody) return;
     const thead = tbody.previousElementSibling;
-    if (thead && !thead.dataset.built) {
-        thead.innerHTML = fileSimTableHeadHtml();
-        thead.dataset.built = '1';
+    const colMode = fileSimColMode();
+    if (thead && thead.dataset.built !== colMode) {
+        thead.innerHTML = fileSimTableHeadHtml(colMode);
+        thead.dataset.built = colMode;
         restoreFileSimFilters();
     }
     const countEl = document.getElementById('bsim-table-count');
@@ -2431,14 +2452,12 @@ function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
         col4 = renderFuncBadge(m.func_b);
         col5 = noteBtn(m.func_b);
     } else if (type === 'uniqueA') {
-        similarityHtml = `<span class="mono" style="color:#f92672; font-weight:bold;">0%</span>`;
         if (m.func_id) {
             fA = buildFuncObj(m.func_id);
             col2 = renderFuncBadge(m.func_id);
             col3 = noteBtn(m.func_id);
         }
     } else if (type === 'uniqueB') {
-        similarityHtml = `<span class="mono" style="color:#66d9ef; font-weight:bold;">0%</span>`;
         if (m.func_id) {
             fB = buildFuncObj(m.func_id);
             col4 = renderFuncBadge(m.func_id);
@@ -2456,29 +2475,31 @@ function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
     const ctxAttr = ctxData
         ? ` data-entity-data='${escapeAttr(JSON.stringify(ctxData))}' oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'similarity', this)"`
         : '';
+    const simTd = `<td style="padding:10px; padding-left:${12 + depth * 22}px;">${similarityHtml}</td>`;
+    const featTd = `<td style="padding:8px; text-align:center; vertical-align:top;">${fileSimFeatCell(m, fA, fB)}</td>`;
+    const clusterTd = `<td style="padding:6px; text-align:center; vertical-align:top;">${fileSimClusterCell(m)}</td>`;
+    const aTd = `<td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">${col2}</td>`;
+    const aNoteTd = `<td style="padding:4px; vertical-align:top;">${col3}</td>`;
+    const bTd = `<td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">${col4}</td>`;
+    const bNoteTd = `<td style="padding:4px; vertical-align:top;">${col5}</td>`;
+
+    // Unique-A/B rows are always one-sided (100% one side): Similarity is
+    // meaningless there (always 0%) and the other side's two columns are
+    // always blank, so those tabs drop straight to Features/Cluster/side/Notes.
+    let cells;
+    if (type === 'uniqueA') {
+        cells = [featTd, clusterTd, aTd, aNoteTd];
+        // Indent lives on the (now-first) Features cell for one-sided rows.
+        cells[0] = `<td style="padding:8px; padding-left:${12 + depth * 22}px; text-align:center; vertical-align:top;">${fileSimFeatCell(m, fA, fB)}</td>`;
+    } else if (type === 'uniqueB') {
+        cells = [featTd, clusterTd, bTd, bNoteTd];
+        cells[0] = `<td style="padding:8px; padding-left:${12 + depth * 22}px; text-align:center; vertical-align:top;">${fileSimFeatCell(m, fA, fB)}</td>`;
+    } else {
+        cells = [simTd, featTd, clusterTd, aTd, aNoteTd, bTd, bNoteTd];
+    }
     return `
         <tr style="border-bottom: 1px solid var(--border); background: var(--bg);" data-id="${escapeAttr(rowId)}"${ctxAttr}>
-            <td style="padding:10px; padding-left:${12 + depth * 22}px;">
-                ${similarityHtml}
-            </td>
-            <td style="padding:8px; text-align:center; vertical-align:top;">
-                ${fileSimFeatCell(m, fA, fB)}
-            </td>
-            <td style="padding:6px; text-align:center; vertical-align:top;">
-                ${fileSimClusterCell(m)}
-            </td>
-            <td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">
-                ${col2}
-            </td>
-            <td style="padding:4px; vertical-align:top;">
-                ${col3}
-            </td>
-            <td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">
-                ${col4}
-            </td>
-            <td style="padding:4px; vertical-align:top;">
-                ${col5}
-            </td>
+            ${cells.join('')}
         </tr>`;
 }
 
@@ -2957,15 +2978,15 @@ function renderBinSimStrip(containerId, m, fileId) {
     `;
 }
 
-// ---- Tab switching: Summary / All / Matched / Unmatched / Metadata / Clusters ----
+// ---- Tab switching: Summary / All / Matched / Unique to A / Unique to B / Metadata / Clusters ----
 // Detail tabs (scoped by the tree) and sidebar pages (not scoped). Both live in
 // the same hash so Back/forward restores either.
-const BIN_SIM_DETAIL_TABS = ['summary', 'all', 'matched', 'unmatched'];
+const BIN_SIM_DETAIL_TABS = ['summary', 'all', 'matched', 'unique_a', 'unique_b'];
 const BIN_SIM_NAV_PAGES = ['metadata', 'inferred'];
 const BIN_SIM_TABS = BIN_SIM_DETAIL_TABS.concat(BIN_SIM_NAV_PAGES);
 
-// Which DOM panel backs each tab. All / Matched / Unmatched share one panel --
-// they differ only by the state filter they send.
+// Which DOM panel backs each tab. All / Matched / Unique to A / Unique to B share
+// one panel -- they differ only by the state filter they send.
 function binSimPanelFor(tab) {
     if (tab === 'summary') return 'summary';
     if (BIN_SIM_NAV_PAGES.includes(tab)) return tab;

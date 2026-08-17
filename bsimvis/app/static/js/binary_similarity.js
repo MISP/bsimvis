@@ -401,10 +401,36 @@ function initResizableCards() {
         Breadcrumbs.refresh();
         
         // Render Summary — prominent, score-colored
+        const heroEl = document.getElementById('bin-sim-hero');
         const scoreVal = document.getElementById('bin-sim-score-val');
         if (scoreVal) {
             scoreVal.textContent = (data.score * 100).toFixed(1) + '%';
             scoreVal.style.color = 'var(--success)';
+        }
+        if (heroEl) {
+            const existing = document.getElementById('bin-sim-sub-scores');
+            if (existing) existing.remove();
+
+            let extraHtml = '';
+            ['score_code', 'score_library', 'score_content'].forEach(k => {
+                if (data[k] !== undefined && data[k] !== null) {
+                    const cfg = window.BinSimScoreTypes[k];
+                    extraHtml += `
+                        <div style="display:flex; flex-direction:column; align-items:center; border-left:1px solid var(--border); padding-left:16px;">
+                            <span style="color:var(--subtle); font-size:0.7rem; text-transform:uppercase; font-weight:bold; letter-spacing:0.05em;"><i class="${cfg.icon}" style="margin-right:4px;"></i>${cfg.label}</span>
+                            <span style="font-family:'Consolas', monospace; font-size:1.4rem; font-weight:700; color:${cfg.color};">${(data[k] * 100).toFixed(1)}%</span>
+                        </div>`;
+                }
+            });
+            if (extraHtml) {
+                const subEl = document.createElement('div');
+                subEl.id = 'bin-sim-sub-scores';
+                subEl.style.display = 'flex';
+                subEl.style.gap = '16px';
+                subEl.style.marginLeft = '16px';
+                subEl.innerHTML = extraHtml;
+                heroEl.appendChild(subEl);
+            }
         }
 
         resultsEl.style.display = 'flex';
@@ -1040,11 +1066,14 @@ function fileSimSummaryRows(nodes, depth, out) {
         const open = fileSimTreeOpen.has(node.id);
         const drift = Object.entries(node.drift || {}).sort((x, y) => y[1] - x[1]);
         const caret = hasKids
-            ? `<span class="bsim-caret-btn" onclick="event.stopPropagation(); toggleFileSimNode(${escapeAttr(jsString(node.id))})">${open ? '▼' : '▶'}</span>`
+            ? `<span class="bsim-caret-btn">${open ? '▼' : '▶'}</span>`
             : '<span class="bsim-caret-btn"></span>';
+        const rowClick = hasKids 
+            ? `toggleFileSimNode(${escapeAttr(jsString(node.id))})`
+            : `selectFileSimNode(${escapeAttr(jsString(node.id))}, event)`;
         out.push(`
             <tr class="bsim-sum-row" style="cursor:pointer;"
-                onclick="selectFileSimNode(${escapeAttr(jsString(node.id))}, event)">
+                onclick="${rowClick}">
                 <td style="padding-left:${10 + depth * 18}px;">${caret}${fileSimDotHtml(node.id, 'margin-right:6px;')}${escapeHtml(node.label)}</td>
                 <td style="text-align:right;">${Math.round(node.a)}</td>
                 <td style="text-align:right;">${Math.round(node.b)}</td>
@@ -1076,20 +1105,7 @@ function renderFileSimSummary() {
     const counts = data.counts || {};
 
     if (head && head.id === 'root') {
-        const arch = [data.file_metadata_a?.language_id, data.file_metadata_b?.language_id].filter(Boolean);
-        headEl.innerHTML = `
-            <div style="border:1px solid var(--border); border-radius:8px; padding:14px 16px; background:var(--card-bg);">
-                <div style="font-size:0.95rem; font-weight:600; margin-bottom:8px;">
-                    ${escapeHtml(nameA)} <span style="color:var(--dim);">↔</span> ${escapeHtml(nameB)}
-                </div>
-                <div style="display:flex; gap:24px; flex-wrap:wrap; font-size:0.8rem; color:var(--subtle);">
-                    <div>score <b style="color:var(--accent);">${((data.score || 0) * 100).toFixed(1)}%</b></div>
-                    <div>matched <b style="color:var(--text);">${counts.matched || 0}</b></div>
-                    <div>unique A <b style="color:var(--text);">${counts.unique_to_a || 0}</b></div>
-                    <div>unique B <b style="color:var(--text);">${counts.unique_to_b || 0}</b></div>
-                    ${arch.length ? `<div>arch <b style="color:var(--text);">${escapeHtml(arch.join(' ↔ '))}</b></div>` : ''}
-                </div>
-            </div>`;
+        headEl.innerHTML = '';
     } else if (head) {
         const drift = Object.entries(head.drift || {}).sort((x, y) => y[1] - x[1]);
         headEl.innerHTML = `
@@ -1121,8 +1137,8 @@ function renderFileSimSummary() {
                 <thead>
                     <tr>
                         <th style="padding:8px 10px;">Tag</th>
-                        <th style="padding:8px 10px; text-align:right;">${escapeHtml(nameA)}</th>
-                        <th style="padding:8px 10px; text-align:right;">${escapeHtml(nameB)}</th>
+                        <th style="padding:8px 10px; text-align:right; max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(nameA)}">${escapeHtml(nameA)}</th>
+                        <th style="padding:8px 10px; text-align:right; max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(nameB)}">${escapeHtml(nameB)}</th>
                         <th style="padding:8px 10px; text-align:right;">Sim</th>
                         <th style="padding:8px 10px;"></th>
                         <th style="padding:8px 10px;">Drift</th>
@@ -2874,8 +2890,9 @@ function renderBinSimStrip(containerId, m, fileId) {
     const noteBtn = (typeof EntityRenderer !== 'undefined')
         ? EntityRenderer.renderFileNoteButton(fileId, m.note_owners || [], { raw_data: m })
         : '';
+    const filenameEl = (typeof EntityRenderer !== 'undefined') ? EntityRenderer.renderFileName(name, md5, col) : escapeHtml(name);
     el.innerHTML = `
-        <a href="${escapeAttr(fileUrl)}" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(fileUrl))}, event, { title: ${escapeAttr(jsString('File: ' + name))}, type: 'file' });" style="font-weight:bold; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:40%; text-decoration:none;" title="${escapeAttr(name)}" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${escapeHtml(name)}</a>
+        <span style="max-width:40%; display:inline-flex; min-width:0; align-items:center;" title="${escapeAttr(name)}">${filenameEl}</span>
         <span style="display:inline-flex; gap:4px; flex:1; min-width:0; flex-wrap:wrap;">${tags}</span>
         <span style="margin-left:auto;">${noteBtn}</span>
     `;

@@ -143,7 +143,7 @@ def _byte_sizes(collection, md5s, r):
 # ---------------------------------------------------------------------------
 
 
-def aggregate(edges, funcs_a, funcs_b, coverage=None):
+def aggregate(edges, funcs_a, funcs_b, coverage=None, child_scores=None):
     """Roll child-pair scores into one score for the two sides.
 
     `edges` is `(leaf_a, leaf_b, score, sid)`; `funcs_*` maps every leaf on that
@@ -153,9 +153,17 @@ def aggregate(edges, funcs_a, funcs_b, coverage=None):
     side of its own doc. A missing entry counts the pair as fully covering,
     which happens only if the pair doc vanished underneath us.
 
+    `child_scores` maps a sid to `{"code": x, "library": y}` -- the matched
+    child's own Code/Library split. The container's Code/Library score rolls
+    up over the same greedy match as `score`, using the same per-edge weight,
+    but averaged only over the edges that carry that score (like the file-level
+    split, matched mass only, not diluted by children with no data for it) --
+    so a value is None rather than 0.0 when no matched child has an opinion.
+
     Pure -- no redis, no keys. This is the whole formula, and `demo()` pins it.
     """
     coverage = coverage or {}
+    child_scores = child_scores or {}
     # Best pair first, md5s as the tie-break so a rebuild picks the same match:
     # the ordering rule build_bin_sim uses over function pairs.
     ranked = sorted(
@@ -166,6 +174,8 @@ def aggregate(edges, funcs_a, funcs_b, coverage=None):
     taken_a, taken_b, matched = set(), set(), []
     num = den = 0.0
     cov_num_a = cov_num_b = 0.0
+    num_code = den_code = 0.0
+    num_lib = den_lib = 0.0
 
     for leaf_a, leaf_b, score, sid in ranked:
         if leaf_a in taken_a or leaf_b in taken_b:
@@ -182,6 +192,13 @@ def aggregate(edges, funcs_a, funcs_b, coverage=None):
         cov_b = float(cov.get(leaf_b, 1.0))
         cov_num_a += n_a * cov_a
         cov_num_b += n_b * cov_b
+        cs = child_scores.get(sid) or {}
+        if cs.get("code") is not None:
+            num_code += cs["code"] * w
+            den_code += w
+        if cs.get("library") is not None:
+            num_lib += cs["library"] * w
+            den_lib += w
         matched.append(
             {
                 "md5_a": leaf_a,
@@ -216,6 +233,8 @@ def aggregate(edges, funcs_a, funcs_b, coverage=None):
 
     return {
         "score": (num / den) if den > 0 else 0.0,
+        "score_code": (num_code / den_code) if den_code > 0 else None,
+        "score_library": (num_lib / den_lib) if den_lib > 0 else None,
         "coverage_a": (cov_num_a / total_a) if total_a else 0.0,
         "coverage_b": (cov_num_b / total_b) if total_b else 0.0,
         "functions_count_a": total_a,
@@ -291,7 +310,7 @@ def build_container_sims(
         pair: aggregate(scored, leaves_of(pair[0]), leaves_of(pair[1]))
         for pair, scored in scored_by_pair.items()
     }
-    coverage = _read_coverage(
+    coverage, child_scores = _read_child_docs(
         collection,
         algo,
         {m["sid"] for agg in provisional.values() for m in agg["matched"]},
@@ -312,15 +331,22 @@ def build_container_sims(
     pipe = r.pipeline(transaction=False)
     written = 0
     for (p, q), scored in scored_by_pair.items():
-        agg = aggregate(scored, leaves_of(p), leaves_of(q), coverage)
+        agg = aggregate(scored, leaves_of(p), leaves_of(q), coverage, child_scores)
         if not agg["matched"]:
             continue
+        agg["score_content"] = _content_score(leaves_of(p), leaves_of(q), sizes)
         doc = _build_doc(
             algo, p, q, agg, leaves_of(p), leaves_of(q), meta, sizes, paths, containers
         )
         sid = _sid(collection, algo, p, q)
         pipe.set(sid, json.dumps(doc))
         pipe.zadd(f"{collection}:bin_sim:score:{algo}", {sid: doc["score"]})
+        if doc["score_code"] is not None:
+            pipe.zadd(f"{collection}:bin_sim:score_code:{algo}", {sid: doc["score_code"]})
+        if doc["score_library"] is not None:
+            pipe.zadd(f"{collection}:bin_sim:score_library:{algo}", {sid: doc["score_library"]})
+        if doc["score_content"] is not None:
+            pipe.zadd(f"{collection}:bin_sim:score_content:{algo}", {sid: doc["score_content"]})
         pipe.sadd(f"{collection}:bin_sim:involves:{p}", sid)
         pipe.sadd(f"{collection}:bin_sim:involves:{q}", sid)
         pipe.sadd(f"{collection}:bin_sim:built:{algo}", sid)
@@ -399,15 +425,21 @@ def _read_scores(collection, algo, sids, r):
     return out
 
 
-def _read_coverage(collection, algo, sids, r):
-    """`{sid: {leaf_md5: coverage}}` for the child pairs that won their match."""
+def _read_child_docs(collection, algo, sids, r):
+    """(coverage, child_scores) for the child pairs that won their match.
+
+    coverage is `{sid: {leaf_md5: coverage}}` -- keyed by md5 so the caller
+    never has to know which side of the stored doc a given leaf landed on.
+    child_scores is `{sid: {"code": x, "library": y}}`, read off the same doc
+    in the same round trip -- one child pair doc answers both questions.
+    """
     sids = [s for s in sids if s]
     if not sids:
-        return {}
+        return {}, {}
     pipe = r.pipeline(transaction=False)
     for sid in sids:
         pipe.get(sid)
-    out = {}
+    coverage, child_scores = {}, {}
     for sid, raw in zip(sids, pipe.execute()):
         if not raw:
             continue
@@ -415,13 +447,15 @@ def _read_coverage(collection, algo, sids, r):
             doc = json.loads(_txt(raw))
         except (ValueError, TypeError):
             continue
-        # Keyed by md5, so the caller never has to know which side of the stored
-        # doc a given leaf landed on.
-        out[sid] = {
+        coverage[sid] = {
             doc.get("md5_a"): float(doc.get("coverage_a") or 0.0),
             doc.get("md5_b"): float(doc.get("coverage_b") or 0.0),
         }
-    return out
+        child_scores[sid] = {
+            "code": doc.get("score_code"),
+            "library": doc.get("score_library"),
+        }
+    return coverage, child_scores
 
 
 def _load_meta(collection, md5s, r):
@@ -454,6 +488,24 @@ def _child_paths(collection, scored_by_pair, containers, r):
                 for e in lineage_service.descendants(collection, side, r)
             }
     return out
+
+
+def _content_score(funcs_p, funcs_q, sizes):
+    """Exact-md5 byte-match ratio over non-code members (classes.dex, assets).
+
+    `funcs_*` counts 0 functions for a leaf with no analyzed code -- exactly
+    the mass a function-count score cannot speak for. None (not a 0.0 card)
+    when either side has no such mass, so the UI never shows a dead card for
+    a container that is pure code.
+    """
+    non_code_p = {m for m, n in funcs_p.items() if not n}
+    non_code_q = {m for m, n in funcs_q.items() if not n}
+    bytes_p = sum(sizes.get(m, 0) for m in non_code_p)
+    bytes_q = sum(sizes.get(m, 0) for m in non_code_q)
+    if not bytes_p or not bytes_q:
+        return None
+    matched_bytes = sum(sizes.get(m, 0) for m in non_code_p & non_code_q)
+    return (2.0 * matched_bytes) / (bytes_p + bytes_q)
 
 
 def _build_doc(algo, p, q, agg, funcs_p, funcs_q, meta, sizes, paths, containers):
@@ -495,6 +547,9 @@ def _build_doc(algo, p, q, agg, funcs_p, funcs_q, meta, sizes, paths, containers
         "analyzed_bytes_b": analyzed_q,
         "unanalyzed_bytes_b": unanalyzed_q,
         "score": agg["score"],
+        "score_code": agg.get("score_code"),
+        "score_library": agg.get("score_library"),
+        "score_content": agg.get("score_content"),
         "coverage_a": agg["coverage_a"],
         "coverage_b": agg["coverage_b"],
         "shared_clusters": len(agg["matched"]),
@@ -563,6 +618,9 @@ def clear_for(collection, md5, algo=ALGO_DEFAULT, r=None):
             )
             pipe.delete(sid)
             pipe.zrem(f"{collection}:bin_sim:score:{algo}", sid)
+            pipe.zrem(f"{collection}:bin_sim:score_code:{algo}", sid)
+            pipe.zrem(f"{collection}:bin_sim:score_library:{algo}", sid)
+            pipe.zrem(f"{collection}:bin_sim:score_content:{algo}", sid)
             pipe.srem(f"{collection}:bin_sim:built:{algo}", sid)
             pipe.srem(involves, sid)
             if other:
@@ -633,6 +691,30 @@ def demo():
     # Nothing on either side: a score of 0, not a division by zero.
     assert aggregate([], {}, {})["score"] == 0.0
     assert aggregate([], {"a1": 0}, {"b1": 0})["score"] == 0.0
+
+    # No child carries a Code/Library split -> None, not a fabricated 0.0.
+    agg = aggregate([("a1", "b1", 0.8, "s1")], {"a1": 100}, {"b1": 100})
+    assert agg["score_code"] is None and agg["score_library"] is None
+
+    # Code/Library roll up over the same matched edges and weights as score,
+    # averaged only over the edges that have an opinion.
+    agg = aggregate(
+        [("a1", "b1", 0.8, "s1"), ("a2", "b2", 0.4, "s2")],
+        {"a1": 100, "a2": 100},
+        {"b1": 100, "b2": 100},
+        child_scores={"s1": {"code": 0.9, "library": None}, "s2": {"code": 0.5, "library": 0.2}},
+    )
+    assert abs(agg["score_code"] - (0.9 * 100 + 0.5 * 100) / 200) < 1e-9, agg["score_code"]
+    # library only had one opinionated edge, so it is that edge's value alone.
+    assert abs(agg["score_library"] - 0.2) < 1e-9, agg["score_library"]
+
+    # Content score: exact-md5 match over non-code (0-function) leaves only,
+    # None when either side has no such mass.
+    assert _content_score({"a1": 10}, {"b1": 10}, {}) is None
+    score = _content_score(
+        {"a1": 0, "a2": 5}, {"a1": 0, "b2": 5}, {"a1": 100, "a2": 50, "b2": 100}
+    )
+    assert abs(score - (2 * 100) / (100 + 100)) < 1e-9, score
 
     print("container_sim_service demo OK")
 

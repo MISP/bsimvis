@@ -1,5 +1,15 @@
 // Binary Similarity View Logic
 
+// Score types a bin_sim pair doc can carry, keyed by the `sort` param value.
+// `field` is the doc key `renderBinSimPairs` reads for that type -- Overall
+// stays `score` for backward-compat URLs. Order here is card display order.
+window.BinSimScoreTypes = {
+    score: { label: 'Overall', field: 'score', icon: 'fa-solid fa-layer-group', color: 'var(--success)' },
+    score_code: { label: 'Code', field: 'score_code', icon: 'fa-solid fa-code', color: 'var(--info, #3b82f6)' },
+    score_library: { label: 'Library', field: 'score_library', icon: 'fa-solid fa-cubes', color: 'var(--warning, #d97706)' },
+    score_content: { label: 'Content', field: 'score_content', icon: 'fa-solid fa-file-image', color: 'var(--accent, #9333ea)' },
+};
+
 let binSimDataCache = null;
 let binSimMetaCtx = null;
 let binSimMetaCache = null;
@@ -2464,6 +2474,7 @@ function applyBinSimSearch() {
         'file_name': 'bsim-file-name',
         'md5': 'bsim-md5',
         'arch': 'bsim-arch',
+        'view': 'bsim-view',
         'containers': 'bsim-containers',
         'min_funcs': 'bsim-min-funcs',
         'max_funcs': 'bsim-max-funcs',
@@ -2527,7 +2538,7 @@ async function renderContainerPairView(data, collection, md5a, md5b, collB, pool
     if (!el) return;
     const nameA = data.file_metadata_a?.file_name || md5a;
     const nameB = data.file_metadata_b?.file_name || md5b;
-    const score = ((data.score || 0) * 100).toFixed(1) + '%';
+    const activeScoreType = (new URLSearchParams(location.search)).get('sort') || 'score';
 
     const side = (name, md5, coll, cov, analyzed, unanalyzed, childCount, funcs) => `
         <div style="flex:1; min-width:0;">
@@ -2546,7 +2557,7 @@ async function renderContainerPairView(data, collection, md5a, md5b, collB, pool
         <div style="flex:1; display:flex; flex-direction:column; padding:20px; min-height:0; overflow-y:auto;">
             <div style="border:1px solid var(--border); border-radius:8px; padding:18px 20px; margin-bottom:12px; display:flex; align-items:center; justify-content:center; gap:16px; background:var(--card-bg);">
                 <span style="color:var(--subtle); text-transform:uppercase; font-size:0.8rem; font-weight:bold; letter-spacing:0.08em;">Container Similarity</span>
-                <span style="font-family:'Consolas',monospace; font-weight:800; font-size:2.4rem; line-height:1; color:var(--success);">${score}</span>
+                ${binSimScoreCards(data, activeScoreType)}
                 <span class="dim" style="font-size:0.72rem; max-width:280px;">rolled up from the files inside, weighted by function count</span>
             </div>
             <div style="display:flex; gap:20px; margin-bottom:14px;">
@@ -2648,6 +2659,43 @@ function binSimCovBar(coverage, analyzedBytes, unanalyzedBytes) {
     </div>`;
 }
 
+/** Main score card (current sort key) + small side cards for every other
+ *  score type the item actually has data for, high -> low, click-to-promote.
+ *  A type with a null/undefined field on this item gets no card -- a
+ *  container-only Content score never shows a dead 0% on a file pair. */
+function binSimScoreCards(item, activeScoreType) {
+    const types = window.BinSimScoreTypes || {};
+    const active = types[activeScoreType] ? activeScoreType : 'score';
+    const mainMeta = types[active] || types.score;
+    const mainVal = item[mainMeta.field];
+    const mainPct = ((mainVal || 0) * 100).toFixed(1) + '%';
+
+    const others = Object.keys(types)
+        .filter(k => k !== active && item[types[k].field] != null)
+        .sort((a, b) => (item[types[b].field] || 0) - (item[types[a].field] || 0));
+
+    const promote = (type) =>
+        `event.stopPropagation(); const sel = document.getElementById('bsim-score-type'); if (sel) { sel.value = ${jsString(type)}; applyBinSimSearch(); }`;
+
+    const small = others.map(k => {
+        const meta = types[k];
+        const val = ((item[meta.field] || 0) * 100).toFixed(0) + '%';
+        return `<div class="bsim-score-card" title="${escapeAttr(meta.label + ': click to make this the main score')}"
+            onclick="${escapeAttr(promote(k))}"
+            style="display:flex; align-items:center; gap:3px; font-size:0.65rem; color:${meta.color}; cursor:pointer; opacity:0.85;">
+            <i class="${meta.icon}"></i>${val}
+        </div>`;
+    }).join('');
+
+    return `<div style="display:flex; flex-direction:column; gap:2px;">
+        <div style="display:flex; align-items:center; gap:6px;">
+            <i class="${mainMeta.icon}" style="color:${mainMeta.color}; font-size:0.9rem;" title="${escapeAttr(mainMeta.label)}"></i>
+            <span style="font-size:1.1rem; font-weight:bold; color:${mainMeta.color};">${mainPct}</span>
+        </div>
+        ${small ? `<div style="display:flex; gap:8px; flex-wrap:wrap;">${small}</div>` : ''}
+    </div>`;
+}
+
 /** @param depth 0 for a normal row; deeper rows are the children folded under a
  *  container row, hidden until its caret is opened. */
 function renderBinSimPairs(items, depth = 0) {
@@ -2664,8 +2712,6 @@ function renderBinSimPairs(items, depth = 0) {
             ? `<span class="bsim-caret-btn" style="display:inline-block; width:14px; cursor:pointer; color:var(--subtle);" onclick="event.stopPropagation(); Lineage.toggleTreeRow(this.closest('tr'));">▶</span>`
             : (depth > 0 ? `<span style="display:inline-block; width:${14 + (depth - 1) * 12}px;"></span>` : '');
         const activeScoreType = params.get('sort') || 'score';
-        const score = item[activeScoreType] || item.score || 0;
-        const scoreFormatted = (score * 100).toFixed(1) + '%';
         const archA = item.architecture_a || '---';
         const archB = item.architecture_b || '---';
         const funcsA = item.functions_count_a || 0;
@@ -2694,7 +2740,7 @@ function renderBinSimPairs(items, depth = 0) {
                 <td>
                     <div style="display:flex; align-items:center; gap:8px; padding-left:${depth * 14}px;">
                         ${caret}
-                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;" onclick="${escapeAttr(onClickHandler)}" title="Open Diff">${scoreFormatted}</div>
+                        <div style="cursor:pointer;" onclick="${escapeAttr(onClickHandler)}" title="Open Diff">${binSimScoreCards(item, activeScoreType)}</div>
                         ${item.is_container_pair ? '<i class="fa-solid fa-box-archive" style="color:var(--subtle); font-size:0.75rem;" title="Container pair: rolled up from the files inside"></i>' : ''}
                     </div>
                 </td>

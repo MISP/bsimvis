@@ -16,6 +16,9 @@ CONTAINER_MODES = ("both", "any", "none")
 # Mirrors the numeric indexes written by _index_bin_sim_pair.
 SORT_ZSET_MAP = {
     "score": "score",
+    "score_code": "score_code",
+    "score_library": "score_library",
+    "score_content": "score_content",
     "coverage": "coverage_a",
     "shared_clusters": "shared_clusters",
     "functions_count": "functions_count_a",
@@ -495,6 +498,11 @@ def _pool_page(r, pool_id, algo, f):
         if isinstance(doc, str):
             doc = json.loads(doc)
         ld["score"] = float(doc.get("score", 0.0))
+        # None-valued fields (a pair with no library/content data) sort as 0,
+        # same as the ZSET-backed collection path never adding an unset field.
+        ld["score_code"] = float(doc.get("score_code") or 0.0)
+        ld["score_library"] = float(doc.get("score_library") or 0.0)
+        ld["score_content"] = float(doc.get("score_content") or 0.0)
         ld["coverage_a"] = float(doc.get("coverage_a", 0.0))
         ld["coverage_b"] = float(doc.get("coverage_b", 0.0))
         ld["shared_clusters"] = int(doc.get("shared_clusters", 0))
@@ -649,7 +657,16 @@ def search_bin_sims():
             "max_shared": parse_float(request.args.get("max_shared")),
             "min_funcs": parse_float(request.args.get("min_funcs")),
             "max_funcs": parse_float(request.args.get("max_funcs")),
-            "containers": request.args.get("containers", "").strip().lower(),
+            # `view` is the hard File/Container partition (no edge ever crosses
+            # node types); it overrides the older `containers` both/any/none
+            # filter rather than composing with it, so there is no way back to
+            # a mixed page once a view is chosen.
+            "containers": (
+                {"file": "none", "container": "both"}.get(
+                    request.args.get("view", "").strip().lower()
+                )
+                or request.args.get("containers", "").strip().lower()
+            ),
             "arch": request.args.get("arch", "").strip().lower(),
             "md5": request.args.get("md5", "").strip().lower(),
             "file_name": request.args.get("file_name", "").strip().lower(),

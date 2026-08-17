@@ -455,12 +455,13 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
     // height; overflow tags sit behind a "+N" chip instead of being dropped.
     const maxTags = options.maxTags;
     const nonSpecialUserTags = userTagsList.filter(t => t !== 'bookmark' && t !== 'ignore');
+    const byPriorityDesc = (a, b) => (window.getTagMetadata(b.t).priority || 0) - (window.getTagMetadata(a.t).priority || 0);
     let visibleHtml, overflowHtml = '';
     if (maxTags && (tagsList.length + nonSpecialUserTags.length) > maxTags) {
         const allTags = [
             ...tagsList.map(t => ({ t, badge: analysisBadge })),
             ...nonSpecialUserTags.map(t => ({ t, badge: userBadge })),
-        ];
+        ].sort(byPriorityDesc);
         const shown = allTags.slice(0, maxTags);
         const hidden = allTags.slice(maxTags);
         visibleHtml = shown.map(x => x.badge(x.t)).join('');
@@ -471,7 +472,11 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
             <div class="tag-overflow-dropdown" onclick="event.stopPropagation();">${hiddenHtml}</div>
         </span>`;
     } else {
-        visibleHtml = tagsList.map(analysisBadge).join('') + nonSpecialUserTags.map(userBadge).join('');
+        const allTags = [
+            ...tagsList.map(t => ({ t, badge: analysisBadge })),
+            ...nonSpecialUserTags.map(t => ({ t, badge: userBadge })),
+        ].sort(byPriorityDesc);
+        visibleHtml = allTags.map(x => x.badge(x.t)).join('');
     }
 
     return `

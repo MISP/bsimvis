@@ -67,7 +67,7 @@ class WindowManager {
                     <button class="win-btn win-forward" title="Forward"><i class="fa-solid fa-arrow-right"></i></button>
                     <button class="win-btn win-sticky" title="Toggle Sticky (Always on Top)"><i class="fa-solid fa-thumbtack"></i></button>
                 </div>
-                <div class="window-title">${title}</div>
+                <div class="window-title">${escapeHtml(title)}</div>
                 <div class="window-controls-right">
                     <button class="win-btn win-dock-left" title="Dock Left"><i class="fa-solid fa-align-left"></i></button>
                     <button class="win-btn win-dock-bottom" title="Dock Bottom"><i class="fa-solid fa-window-minimize" style="transform: rotate(180deg)"></i></button>

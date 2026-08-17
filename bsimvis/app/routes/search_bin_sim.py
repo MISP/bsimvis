@@ -3,17 +3,22 @@ import logging
 import time
 
 from flask import request
+from bsimvis.app.services import lineage_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import normalize_tags, enrich_pool_data
 
 DEFAULT_LIMIT = 50
 
+# ?containers= values: both members / at least one / neither (plain files only).
+CONTAINER_MODES = ("both", "any", "none")
+
 # Collection sort field -> ZSET index suffix (None = no zset, must sort via docs).
 # Mirrors the numeric indexes written by _index_bin_sim_pair.
 SORT_ZSET_MAP = {
     "score": "score",
-    "score_sim_weighted": "score_sim_weighted",
-    "score_collection_weighted": "score_collection_weighted",
+    "score_code": "score_code",
+    "score_library": "score_library",
+    "score_content": "score_content",
     "coverage": "coverage_a",
     "shared_clusters": "shared_clusters",
     "functions_count": "functions_count_a",
@@ -109,6 +114,58 @@ def _file_tag_union(r, collection, val, fields=("tags", "user_tags"), is_pool=Fa
     return out
 
 
+def _split_sid(sid, algo_marker, collection, is_pool=False):
+    """Parse a pair SID into (coll_a, m_a, coll_b, m_b), or None if it isn't one.
+    Collection: {coll}:bin_sim:{algo}:{m_a}::{m_b}
+    Pool:       global:pool:{id}:bin_sim:{algo}:{coll_a}:{m_a}::{coll_b}:{m_b}"""
+    try:
+        rest = sid.split(algo_marker, 1)[1]
+    except (IndexError, ValueError):
+        return None
+    parts = rest.split("::", 1)
+    part_a = parts[0]
+    part_b = parts[1] if len(parts) > 1 else ""
+    if is_pool:
+        coll_a, m_a = part_a.rsplit(":", 1) if ":" in part_a else ("", part_a)
+        coll_b, m_b = part_b.rsplit(":", 1) if ":" in part_b else ("", part_b)
+    else:
+        coll_a = coll_b = collection
+        m_a, m_b = part_a, part_b
+    return coll_a, m_a, coll_b, m_b
+
+
+def _container_pred(r, collection, algo_marker, mode, is_pool=False):
+    """Predicate sid -> keep, for the container-membership filter. None if off.
+
+    Reads the live `{coll}:lineage:containers` set rather than a bin_sim index,
+    so marking a file as a container takes effect without rebuilding pairs.
+    ponytail: one SMEMBERS per involved collection, cached for the request.
+    """
+    if mode not in CONTAINER_MODES:
+        return None
+    cache = {}
+
+    def members(coll):
+        if coll not in cache:
+            cache[coll] = lineage_service.container_md5s(coll, r) if coll else set()
+        return cache[coll]
+
+    def keep(sid):
+        parsed = _split_sid(sid, algo_marker, collection, is_pool)
+        if not parsed:
+            return False
+        coll_a, m_a, coll_b, m_b = parsed
+        a = m_a in members(coll_a)
+        b = m_b in members(coll_b)
+        if mode == "both":
+            return a and b
+        if mode == "any":
+            return a or b
+        return not a and not b
+
+    return keep
+
+
 def _znum(r, collection, field, lo, hi):
     """SIDs in the numeric ZSET index for `field` within [lo, hi] (None = open)."""
     key = f"{collection}:idx:bin_sim:{field}"
@@ -129,14 +186,6 @@ def _collection_page(r, collection, algo, f, is_pool=False):
     sort_zset_field = SORT_ZSET_MAP.get(f["sort_by"], "score")
     reverse = f["sort_order"] != "asc"
 
-    # score filter uses the score variant matching the chosen sort, else col-weighted
-    score_field = (
-        f["sort_by"]
-        if f["sort_by"]
-        in ("score", "score_sim_weighted", "score_collection_weighted")
-        else "score_collection_weighted"
-    )
-
     candidates = None  # None == unconstrained (all sims for this algo)
 
     def restrict(s):
@@ -145,11 +194,43 @@ def _collection_page(r, collection, algo, f, is_pool=False):
 
     # --- Set-bucket (substring) filters, a/b unioned ---
     if f["file_name"]:
-        restrict(_bucket_union(r, collection, ["file_name_a", "file_name_b", "file_parent_file_name_a", "file_parent_file_name_b", "file_related_file_name_a", "file_related_file_name_b"], f["file_name"]))
+        restrict(
+            _bucket_union(
+                r,
+                collection,
+                [
+                    "file_name_a",
+                    "file_name_b",
+                    "file_parent_file_name_a",
+                    "file_parent_file_name_b",
+                    "file_related_file_name_a",
+                    "file_related_file_name_b",
+                ],
+                f["file_name"],
+            )
+        )
     if f["arch"]:
-        restrict(_bucket_union(r, collection, ["architecture_a", "architecture_b"], f["arch"]))
+        restrict(
+            _bucket_union(
+                r, collection, ["architecture_a", "architecture_b"], f["arch"]
+            )
+        )
     if f["md5"]:
-        restrict(_bucket_union(r, collection, ["md5_a", "md5_b", "file_parent_md5_a", "file_parent_md5_b", "file_related_md5_a", "file_related_md5_b"], f["md5"]))
+        restrict(
+            _bucket_union(
+                r,
+                collection,
+                [
+                    "md5_a",
+                    "md5_b",
+                    "file_parent_md5_a",
+                    "file_parent_md5_b",
+                    "file_related_md5_a",
+                    "file_related_md5_b",
+                ],
+                f["md5"],
+            )
+        )
     for tf in f["file_tag"]:
         restrict(_file_tag_union(r, collection, tf, is_pool=is_pool))
     for word in f["q"].split():
@@ -166,9 +247,9 @@ def _collection_page(r, collection, algo, f, is_pool=False):
 
     # --- Numeric range filters via ZSET indexes (a/b union semantics) ---
     if f["min_score"] is not None:
-        restrict(_znum(r, collection, score_field, f["min_score"], None))
+        restrict(_znum(r, collection, "score", f["min_score"], None))
     if f["max_score"] is not None:
-        restrict(_znum(r, collection, score_field, None, f["max_score"]))
+        restrict(_znum(r, collection, "score", None, f["max_score"]))
     # coverage: min keeps if max(a,b)>=min (union); max keeps if min(a,b)<=max (union)
     if f["min_cov"] is not None:
         restrict(
@@ -184,15 +265,18 @@ def _collection_page(r, collection, algo, f, is_pool=False):
         restrict(_znum(r, collection, "shared_clusters", f["min_shared"], None))
     if f["max_shared"] is not None:
         restrict(_znum(r, collection, "shared_clusters", None, f["max_shared"]))
+    # functions_count: both sides must pass. A pair is only interesting when both
+    # binaries carry enough functions — a union lets a 3-function stub ride along
+    # with a big partner and swamp the page.
     if f["min_funcs"] is not None:
         restrict(
             _znum(r, collection, "functions_count_a", f["min_funcs"], None)
-            | _znum(r, collection, "functions_count_b", f["min_funcs"], None)
+            & _znum(r, collection, "functions_count_b", f["min_funcs"], None)
         )
     if f["max_funcs"] is not None:
         restrict(
             _znum(r, collection, "functions_count_a", None, f["max_funcs"])
-            | _znum(r, collection, "functions_count_b", None, f["max_funcs"])
+            & _znum(r, collection, "functions_count_b", None, f["max_funcs"])
         )
 
     # --- Exclusions (subtract) ---
@@ -223,7 +307,11 @@ def _collection_page(r, collection, algo, f, is_pool=False):
     zkey = f"{collection}:idx:bin_sim:{sort_zset_field}" if sort_zset_field else None
     offset, limit = f["offset"], f["limit"]
 
-    if candidates is None and zkey:
+    # Container membership isn't indexed per pair; it's a predicate on the SID's
+    # two md5s, so it rules out the count-only fast path below.
+    keep = _container_pred(r, collection, algo_marker, f["containers"], is_pool)
+
+    if candidates is None and zkey and keep is None:
         # Fast path: page straight off the sorted ZSET (O(offset+limit)).
         total = r.zcard(zkey)
         page_raw = (
@@ -242,10 +330,13 @@ def _collection_page(r, collection, algo, f, is_pool=False):
         page_sids = []
         for s in ordered:
             s = _dec(s)
-            if s in candidates:
-                if offset <= total < offset + limit:
-                    page_sids.append(s)
-                total += 1
+            if candidates is not None and s not in candidates:
+                continue
+            if keep is not None and not keep(s):
+                continue
+            if offset <= total < offset + limit:
+                page_sids.append(s)
+            total += 1
     else:
         # architecture sort: no ZSET, rank candidate docs by architecture_a.
         if candidates is None:
@@ -253,7 +344,7 @@ def _collection_page(r, collection, algo, f, is_pool=False):
             candidates = set(
                 _dec(x) for x in r.smembers(f"{collection}:bin_sim:built:{algo}")
             )
-        cand = [s for s in candidates if algo_marker in s]
+        cand = [s for s in candidates if algo_marker in s and (keep is None or keep(s))]
         total = len(cand)
         pipe = r.pipeline(transaction=False)
         for s in cand:
@@ -274,35 +365,33 @@ def _collection_page(r, collection, algo, f, is_pool=False):
         page_sids = [s for s, _ in arch[offset : offset + limit]]
 
     # --- Build light docs for the page + fetch metadata for its md5s only ---
-    paged_light, page_md5s = _light_from_sids(page_sids, algo_marker, collection, is_pool)
+    paged_light, page_md5s = _light_from_sids(
+        page_sids, algo_marker, collection, is_pool
+    )
     file_meta_cache, file_funcs_count = _fetch_meta(r, page_md5s)
     return paged_light, total, file_meta_cache, file_funcs_count
 
 
 def _light_from_sids(page_sids, algo_marker, collection, is_pool=False):
-    """Parse SIDs into light docs.
-    Collection: {coll}:bin_sim:{algo}:{m_a}::{m_b}
-    Pool:       global:pool:{id}:bin_sim:{algo}:{coll_a}:{m_a}::{coll_b}:{m_b}"""
+    """Parse SIDs into light docs."""
     paged_light = []
     page_md5s = set()
     for sid in page_sids:
-        try:
-            rest = sid.split(algo_marker, 1)[1]
-            parts = rest.split("::", 1)
-            part_a = parts[0]
-            part_b = parts[1] if len(parts) > 1 else ""
-        except (IndexError, ValueError):
+        parsed = _split_sid(sid, algo_marker, collection, is_pool)
+        if not parsed:
             continue
-        if is_pool:
-            coll_a, m_a = part_a.rsplit(":", 1) if ":" in part_a else ("", part_a)
-            coll_b, m_b = part_b.rsplit(":", 1) if ":" in part_b else ("", part_b)
-        else:
-            coll_a = coll_b = collection
-            m_a, m_b = part_a, part_b
+        coll_a, m_a, coll_b, m_b = parsed
         page_md5s.add((coll_a, m_a))
         page_md5s.add((coll_b, m_b))
         paged_light.append(
-            {"sid": sid, "m_a": m_a, "m_b": m_b, "coll_a": coll_a, "coll_b": coll_b, "doc": None}
+            {
+                "sid": sid,
+                "m_a": m_a,
+                "m_b": m_b,
+                "coll_a": coll_a,
+                "coll_b": coll_b,
+                "doc": None,
+            }
         )
     return paged_light, page_md5s
 
@@ -366,18 +455,19 @@ def _pool_page(r, pool_id, algo, f):
     if not candidates:
         return [], 0, {}, {}
 
+    keep = _container_pred(
+        r, f"global:pool:{pool_id}", algo_marker, f["containers"], is_pool=True
+    )
+
     light_docs = []
     unique_md5s = set()
     for sid in candidates:
-        try:
-            rest = sid.split(algo_marker, 1)[1]
-            parts = rest.split("::", 1)
-            part_a = parts[0]
-            part_b = parts[1] if len(parts) > 1 else ""
-            coll_a, m_a = part_a.rsplit(":", 1) if ":" in part_a else ("", part_a)
-            coll_b, m_b = part_b.rsplit(":", 1) if ":" in part_b else ("", part_b)
-        except (IndexError, ValueError):
+        if keep is not None and not keep(sid):
             continue
+        parsed = _split_sid(sid, algo_marker, "", is_pool=True)
+        if not parsed:
+            continue
+        coll_a, m_a, coll_b, m_b = parsed
         unique_md5s.add((coll_a, m_a))
         unique_md5s.add((coll_b, m_b))
         light_docs.append(
@@ -388,8 +478,6 @@ def _pool_page(r, pool_id, algo, f):
                 "coll_a": coll_a,
                 "coll_b": coll_b,
                 "score": 0.0,
-                "score_sim_weighted": 0.0,
-                "score_collection_weighted": 0.0,
                 "coverage_a": 0.0,
                 "coverage_b": 0.0,
                 "shared_clusters": 0,
@@ -409,20 +497,17 @@ def _pool_page(r, pool_id, algo, f):
         doc = json.loads(raw) if not isinstance(raw, dict) else raw
         if isinstance(doc, str):
             doc = json.loads(doc)
-        matched_cnt = doc.get("matched_count", 0)
         ld["score"] = float(doc.get("score", 0.0))
-        ld["score_sim_weighted"] = float(doc.get("sim_weighted_score") or doc.get("score", 0.0))
-        ld["score_collection_weighted"] = float(doc.get("collection_weighted_score") or doc.get("score", 0.0))
-        ld["coverage_a"] = float(doc.get("coverage_a") or (1.0 if matched_cnt > 0 else 0.0))
-        ld["coverage_b"] = float(doc.get("coverage_b") or (1.0 if matched_cnt > 0 else 0.0))
-        ld["shared_clusters"] = int(doc.get("shared_clusters") or matched_cnt)
+        # None-valued fields (a pair with no library/content data) sort as 0,
+        # same as the ZSET-backed collection path never adding an unset field.
+        ld["score_code"] = float(doc.get("score_code") or 0.0)
+        ld["score_library"] = float(doc.get("score_library") or 0.0)
+        ld["score_content"] = float(doc.get("score_content") or 0.0)
+        ld["coverage_a"] = float(doc.get("coverage_a", 0.0))
+        ld["coverage_b"] = float(doc.get("coverage_b", 0.0))
+        ld["shared_clusters"] = int(doc.get("shared_clusters", 0))
         ld["doc"] = doc
 
-    score_field = (
-        f["sort_by"]
-        if f["sort_by"] in ("score", "score_sim_weighted", "score_collection_weighted")
-        else "score_collection_weighted"
-    )
     filtered = []
     for ld in light_docs:
         coll_a, m_a = ld["coll_a"], ld["m_a"]
@@ -445,7 +530,11 @@ def _pool_page(r, pool_id, algo, f):
         ld["functions_count_b"] = funcs_b
         ld["architecture_a"] = arch_a
 
-        if f["file_name"] and f["file_name"] not in name_a.lower() and f["file_name"] not in name_b.lower():
+        if (
+            f["file_name"]
+            and f["file_name"] not in name_a.lower()
+            and f["file_name"] not in name_b.lower()
+        ):
             continue
         if f["md5"] and f["md5"] not in m_a.lower() and f["md5"] not in m_b.lower():
             continue
@@ -453,23 +542,34 @@ def _pool_page(r, pool_id, algo, f):
             hay = " ".join([name_a, name_b, m_a, m_b] + tags_a + tags_b).lower()
             if not all(w in hay for w in f["q"].split()):
                 continue
-        if f["min_score"] is not None and ld.get(score_field, 0) < f["min_score"]:
+        if f["min_score"] is not None and ld.get("score", 0) < f["min_score"]:
             continue
-        if f["max_score"] is not None and ld.get(score_field, 0) > f["max_score"]:
+        if f["max_score"] is not None and ld.get("score", 0) > f["max_score"]:
             continue
-        if f["min_cov"] is not None and max(ld["coverage_a"], ld["coverage_b"]) < f["min_cov"]:
+        if (
+            f["min_cov"] is not None
+            and max(ld["coverage_a"], ld["coverage_b"]) < f["min_cov"]
+        ):
             continue
-        if f["max_cov"] is not None and min(ld["coverage_a"], ld["coverage_b"]) > f["max_cov"]:
+        if (
+            f["max_cov"] is not None
+            and min(ld["coverage_a"], ld["coverage_b"]) > f["max_cov"]
+        ):
             continue
         if f["min_shared"] is not None and ld["shared_clusters"] < f["min_shared"]:
             continue
         if f["max_shared"] is not None and ld["shared_clusters"] > f["max_shared"]:
             continue
-        if f["arch"] and f["arch"] not in arch_a.lower() and f["arch"] not in arch_b.lower():
+        if (
+            f["arch"]
+            and f["arch"] not in arch_a.lower()
+            and f["arch"] not in arch_b.lower()
+        ):
             continue
-        if f["min_funcs"] is not None and max(funcs_a, funcs_b) < f["min_funcs"]:
+        # both sides must pass, same as the indexed path
+        if f["min_funcs"] is not None and min(funcs_a, funcs_b) < f["min_funcs"]:
             continue
-        if f["max_funcs"] is not None and min(funcs_a, funcs_b) > f["max_funcs"]:
+        if f["max_funcs"] is not None and max(funcs_a, funcs_b) > f["max_funcs"]:
             continue
         if f["file_tag"]:
             combined = set(t.lower() for t in tags_a + tags_b)
@@ -480,11 +580,16 @@ def _pool_page(r, pool_id, algo, f):
             if any(tf in combined for tf in f["exclude_file_tag"]):
                 continue
         if f["exclude_file_static_tag"]:
-            static = set(t.lower() for t in meta_a.get("tags", []) + meta_b.get("tags", []))
+            static = set(
+                t.lower() for t in meta_a.get("tags", []) + meta_b.get("tags", [])
+            )
             if any(tf in static for tf in f["exclude_file_static_tag"]):
                 continue
         if f["exclude_file_user_tag"]:
-            usr = set(t.lower() for t in meta_a.get("user_tags", []) + meta_b.get("user_tags", []))
+            usr = set(
+                t.lower()
+                for t in meta_a.get("user_tags", []) + meta_b.get("user_tags", [])
+            )
             if any(tf in usr for tf in f["exclude_file_user_tag"]):
                 continue
         filtered.append(ld)
@@ -540,7 +645,9 @@ def search_bin_sims():
         f = {
             "offset": offset,
             "limit": limit,
-            "sort_by": (request.args.get("sort_by") or request.args.get("sort") or "score").strip(),
+            "sort_by": (
+                request.args.get("sort_by") or request.args.get("sort") or "score"
+            ).strip(),
             "sort_order": request.args.get("sort_order", "desc"),
             "min_score": parse_float(request.args.get("min_score")),
             "max_score": parse_float(request.args.get("max_score")),
@@ -550,6 +657,17 @@ def search_bin_sims():
             "max_shared": parse_float(request.args.get("max_shared")),
             "min_funcs": parse_float(request.args.get("min_funcs")),
             "max_funcs": parse_float(request.args.get("max_funcs")),
+            # `view` is the hard File/Container partition (no edge ever crosses
+            # node types); it overrides the older `containers` both/any/none
+            # filter rather than composing with it, so there is no way back to
+            # a mixed page once a view is chosen.
+            "containers": (
+                {"file": "none", "container": "both"}.get(
+                    request.args.get("view", "").strip().lower()
+                )
+                or request.args.get("containers", "").strip().lower()
+                or "none"
+            ),
             "arch": request.args.get("arch", "").strip().lower(),
             "md5": request.args.get("md5", "").strip().lower(),
             "file_name": request.args.get("file_name", "").strip().lower(),
@@ -570,14 +688,18 @@ def search_bin_sims():
         if is_pool:
             prefix = f"global:pool:{pool_id}"
             if r.exists(f"{prefix}:idx:bin_sim:score"):
-                paged_light, total, file_meta_cache, file_funcs_count = _collection_page(
-                    r, prefix, algo, f, is_pool=True
+                paged_light, total, file_meta_cache, file_funcs_count = (
+                    _collection_page(r, prefix, algo, f, is_pool=True)
                 )
             else:
                 # Not reindexed yet -> legacy O(N) scan. Run reindex_pool_bin_sim to speed up.
-                paged_light, total, file_meta_cache, file_funcs_count = _pool_page(r, pool_id, algo, f)
+                paged_light, total, file_meta_cache, file_funcs_count = _pool_page(
+                    r, pool_id, algo, f
+                )
         else:
-            paged_light, total, file_meta_cache, file_funcs_count = _collection_page(r, collection, algo, f)
+            paged_light, total, file_meta_cache, file_funcs_count = _collection_page(
+                r, collection, algo, f
+            )
         t1 = time.perf_counter()
 
         # Batch-fetch sim docs for any page row that doesn't already carry one
@@ -603,19 +725,14 @@ def search_bin_sims():
             doc["_id"] = sid
             doc.pop("diff", None)
 
-            m_a = doc.get("md5_a") or doc.get("md5_1") or ld["m_a"]
-            m_b = doc.get("md5_b") or doc.get("md5_2") or ld["m_b"]
+            m_a = doc.get("md5_a") or ld["m_a"]
+            m_b = doc.get("md5_b") or ld["m_b"]
             coll_a = ld["coll_a"]
             coll_b = ld["coll_b"]
             doc["md5_a"] = m_a
             doc["md5_b"] = m_b
             doc["coll_a"] = coll_a
             doc["coll_b"] = coll_b
-            # Pool docs carry matched_count instead of coverage/shared_clusters.
-            matched = doc.get("matched_count", 0)
-            doc["coverage_a"] = doc.get("coverage_a") or ld.get("coverage_a") or (1.0 if matched > 0 else 0.0)
-            doc["coverage_b"] = doc.get("coverage_b") or ld.get("coverage_b") or (1.0 if matched > 0 else 0.0)
-            doc["shared_clusters"] = doc.get("shared_clusters") or ld.get("shared_clusters") or matched
 
             meta_a = file_meta_cache.get((coll_a, m_a), {})
             meta_b = file_meta_cache.get((coll_b, m_b), {})
@@ -638,10 +755,18 @@ def search_bin_sims():
             doc["file_tags_b"] = meta_b.get("tags", [])
             doc["file_user_tags_a"] = meta_a.get("user_tags", [])
             doc["file_user_tags_b"] = meta_b.get("user_tags", [])
-            doc["architecture_a"] = doc.get("architecture_a") or meta_a.get("language_id", "")
-            doc["architecture_b"] = doc.get("architecture_b") or meta_b.get("language_id", "")
-            doc["functions_count_a"] = doc.get("functions_count_a") or file_funcs_count.get((coll_a, m_a), 0)
-            doc["functions_count_b"] = doc.get("functions_count_b") or file_funcs_count.get((coll_b, m_b), 0)
+            doc["architecture_a"] = doc.get("architecture_a") or meta_a.get(
+                "language_id", ""
+            )
+            doc["architecture_b"] = doc.get("architecture_b") or meta_b.get(
+                "language_id", ""
+            )
+            doc["functions_count_a"] = doc.get(
+                "functions_count_a"
+            ) or file_funcs_count.get((coll_a, m_a), 0)
+            doc["functions_count_b"] = doc.get(
+                "functions_count_b"
+            ) or file_funcs_count.get((coll_b, m_b), 0)
             doc["compiler_a"] = meta_a.get("compiler") or meta_a.get("compiler_id", "")
             doc["compiler_b"] = meta_b.get("compiler") or meta_b.get("compiler_id", "")
             doc["entry_date_a"] = meta_a.get("entry_date", 0)
@@ -650,15 +775,29 @@ def search_bin_sims():
             normalize_tags(doc)
             normalize_tags(
                 doc,
-                tag_fields=["file_tags_a", "file_user_tags_a", "file_tags_b", "file_user_tags_b"],
+                tag_fields=[
+                    "file_tags_a",
+                    "file_user_tags_a",
+                    "file_tags_b",
+                    "file_user_tags_b",
+                ],
             )
 
             # sim-level tag filters (page-local; adjusts total like the legacy path)
-            if sim_tag_filters or exclude_sim_tag_filters or exclude_sim_static_tag_filters or exclude_sim_user_tag_filters:
-                sim_tags = set(t.lower() for t in doc.get("tags", []) + doc.get("user_tags", []))
+            if (
+                sim_tag_filters
+                or exclude_sim_tag_filters
+                or exclude_sim_static_tag_filters
+                or exclude_sim_user_tag_filters
+            ):
+                sim_tags = set(
+                    t.lower() for t in doc.get("tags", []) + doc.get("user_tags", [])
+                )
                 sim_static = set(t.lower() for t in doc.get("tags", []))
                 sim_user = set(t.lower() for t in doc.get("user_tags", []))
-                if sim_tag_filters and not all(tf in sim_tags for tf in sim_tag_filters):
+                if sim_tag_filters and not all(
+                    tf in sim_tags for tf in sim_tag_filters
+                ):
                     total -= 1
                     continue
                 if any(tf in sim_tags for tf in exclude_sim_tag_filters):

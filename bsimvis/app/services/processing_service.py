@@ -2,6 +2,25 @@ import logging
 import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import save_file, save_function
+from bsimvis.app.services import lineage_service, tag_taxonomy
+
+
+def lib_parent(tag):
+    """File-level origin tag implied by a function tag, or None.
+
+    `origin:lib:uclibc:0.9.30.1:xdrmem_getint32` -> `origin:lib:uclibc`. See
+    `tag_taxonomy.origin_parent` for why the version is dropped here.
+    """
+    return tag_taxonomy.origin_parent(tag)
+
+
+def lib_parents(tags):
+    """Distinct file-level library tags implied by a function's `tags`."""
+    if isinstance(tags, dict):
+        tags = tags.keys()
+    elif not isinstance(tags, (list, tuple, set)):
+        return set()
+    return {p for p in (lib_parent(t) for t in tags) if p}
 
 
 class ProcessingService:
@@ -75,6 +94,21 @@ class ProcessingService:
 
         coll_file_meta["bsim_features_count"] = total_features
 
+        # This overwrites the whole meta blob, including whatever status the
+        # upload stub / GHIDRA_ANALYZE dispatch set -- carry it forward
+        # instead of clobbering it. Functions/features are still being
+        # indexed at this point (see worker.py's INDEX_FEATURES handler for
+        # where "analyzed" actually gets set), so this must never regress an
+        # in-progress file back to a blank status.
+        existing_status = None
+        existing_raw = self.r.get(file_meta_key)
+        if existing_raw:
+            try:
+                existing_status = json.loads(existing_raw).get("status")
+            except (ValueError, TypeError):
+                pass
+        coll_file_meta["status"] = existing_status or "analyzing"
+
         pipe = self.r.pipeline(transaction=False)
 
         # 0. Store exploded file meta
@@ -146,6 +180,20 @@ class ProcessingService:
 
         pipe.execute()
 
+        # Lineage is maintained here rather than in the upload route because
+        # every path that creates a file document lands here -- server-side
+        # unpacking, a locally-analyzed upload, a declared out-of-band parent.
+        # record() is idempotent, so the route recording the same edge first
+        # (it also records edges for children that fail as duplicates) costs
+        # nothing.
+        parent_md5 = coll_file_meta.get("parent_md5")
+        if parent_md5:
+            path = coll_file_meta.get("path_in_parent") or coll_file_meta.get(
+                "file_name", ""
+            )
+            lineage_service.record(collection, parent_md5, file_md5, path)
+        lineage_service.record_function_count(collection, file_md5, num_functions)
+
         if job_service and job_id:
             job_service.update_progress(
                 job_id, 100, "Metadata and registry indexing complete."
@@ -195,6 +243,7 @@ class ProcessingService:
 
         # Use a single pipeline for indexing functions
         pipe = self.r.pipeline(transaction=False)
+        file_lib_tags = set()
 
         for i, func_data in enumerate(functions):
             if job_service and job_id and (i % 50 == 0 or i == total - 1):
@@ -220,6 +269,8 @@ class ProcessingService:
             for f in fields_to_copy:
                 if f in file_meta:
                     func_meta[f] = file_meta[f]
+
+            file_lib_tags |= lib_parents(func_meta.get("tags"))
 
             func_features = func_data.get("function_features", {})
             func_source = func_data.get("function_source", {})
@@ -293,7 +344,49 @@ class ProcessingService:
                 pipe.execute()
                 pipe = self.r.pipeline(transaction=False)
 
+        # Library tags seen in this chunk. A SET, not the file doc: chunks are
+        # parallel jobs and can even land before INDEX_META, so a
+        # read-modify-write of the doc here would drop tags or be overwritten.
+        # rollup_lib_tags folds it in once every chunk is done.
+        if file_lib_tags:
+            pipe.sadd(f"{collection}:file:{file_md5}:lib_tags", *file_lib_tags)
+
         pipe.execute()
+        return True
+
+    def rollup_lib_tags(self, collection, file_md5):
+        """Copies the library tags found on a file's functions onto the file.
+
+        Idempotent: re-running only ever adds what the file is missing, so it is
+        safe to call after any stage that may have added function tags.
+        """
+        acc_key = f"{collection}:file:{file_md5}:lib_tags"
+        raw = self.r.smembers(acc_key)
+        if not raw:
+            return True
+
+        derived = sorted(t.decode() if isinstance(t, bytes) else t for t in raw)
+        meta_key = f"{collection}:file:{file_md5}:meta"
+        doc_raw = self.r.get(meta_key)
+        if not doc_raw:
+            logging.warning(f"[!] rollup_lib_tags: no file meta at {meta_key}")
+            return False
+
+        data = json.loads(doc_raw)
+        tags = data.get("tags")
+        tags = list(tags) if isinstance(tags, (list, tuple)) else []
+        missing = [t for t in derived if t not in tags]
+        if not missing:
+            return True
+
+        data["tags"] = tags + missing
+        pipe = self.r.pipeline(transaction=False)
+        pipe.set(meta_key, json.dumps(data))
+        save_file(pipe, collection, file_md5, data)
+        pipe.execute()
+        logging.info(
+            f"[+] Rolled up {len(missing)} library tag(s) onto {collection}:file:{file_md5}"
+        )
         return True
 
     def delete_collection(self, collection, job_service=None, job_id=None):

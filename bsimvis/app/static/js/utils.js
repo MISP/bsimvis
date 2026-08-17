@@ -13,6 +13,27 @@ function escapeAttr(value) {
     return escapeHtml(value);
 }
 
+// Filter values: an unquoted `*` is a wildcard on the backend, quotes make the
+// whole value literal. Values that come from data (a tag chip, an autocomplete
+// pick, a value restored from the URL) must be quoted, or a return type like
+// `DIR *` would be read as a pattern. Only what the user typed by hand keeps
+// its wildcards.
+function quoteFilterValue(value, literal = true) {
+    const s = String(value ?? '');
+    if (!literal && s.includes('*')) return s;
+    return '"' + s.replace(/"/g, '\\"') + '"';
+}
+
+// Inverse, for showing a value back to the user. Returns the bare text and
+// whether it had been quoted.
+function unquoteFilterValue(value) {
+    const s = String(value ?? '');
+    if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
+        return { value: s.slice(1, -1).replace(/\\"/g, '"'), literal: true };
+    }
+    return { value: s, literal: false };
+}
+
 function jsString(value) {
     return JSON.stringify(String(value ?? ''))
         .replace(/</g, '\\u003C')
@@ -34,6 +55,17 @@ function safeCssColor(value, fallback = '#66d9ef') {
     return fallback;
 }
 
+// Elides the middle of a long string, keeping both ends readable. Archive
+// paths differ at the tail ("lib/armeabi-v7a/libfoo.so"), so a plain
+// text-overflow ellipsis would cut off the part that identifies the file.
+function middleTruncate(value, max = 40) {
+    const s = String(value ?? '');
+    if (s.length <= max) return s;
+    const head = Math.ceil((max - 1) / 2);
+    return s.slice(0, head) + '…' + s.slice(s.length - (max - 1 - head));
+}
+window.middleTruncate = middleTruncate;
+
 function formatDate(iso) {
     if (!iso || iso === 'N/A') return '---';
     if (typeof iso === 'string' && /^\d+$/.test(iso)) {
@@ -44,9 +76,27 @@ function formatDate(iso) {
 }
 window.formatDate = formatDate;
 
+// Returns the <iframe> in the parent document that hosts this window, or null
+// when we are not framed. windowManager assigns random ids, so frames can only
+// be matched by contentWindow identity.
+function getHostFrame() {
+    if (!window.parent || window.parent === window) return null;
+    try {
+        return Array.from(window.parent.document.querySelectorAll('iframe'))
+            .find(f => f.contentWindow === window) || null;
+    } catch (e) {
+        return null; // cross-origin parent
+    }
+}
+window.getHostFrame = getHostFrame;
+
 function formatDuration(createdAt, updatedAt, status) {
     if (!createdAt) return '<span class="dim">-</span>';
-    let end = updatedAt;
+    // ponytail: legacy jobs stored created_at/updated_at in epoch seconds;
+    // current job_service.py writes epoch ms. Normalize both to ms.
+    const toMs = (t) => (t && t < 1e12 ? t * 1000 : t);
+    createdAt = toMs(createdAt);
+    let end = toMs(updatedAt);
     if (status === 'running' || status === 'pending') {
         end = Date.now();
     }
@@ -130,7 +180,7 @@ function parseRestfulPath() {
     };
 
     if (parts.length === 0) {
-        params.view = 'collections';
+        params.view = 'home';
         return params;
     }
 
@@ -494,7 +544,7 @@ function showNullContextWarning(collection, pool, viewKey) {
     }
     banner = document.createElement('div');
     banner.id = 'null-context-warning';
-    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#f92672;color:#fff;text-align:center;padding:8px;font-size:0.85rem;font-weight:bold;box-shadow:0 2px 8px rgba(249,38,114,0.4);cursor:pointer;';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#f92672;color:var(--text);text-align:center;padding:8px;font-size:0.85rem;font-weight:bold;cursor:pointer;';
     banner.textContent = `⚠️ Navigation error: Invalid collection or pool context. Please navigate directly to a valid collection or pool.`;
     banner.onclick = () => banner.remove();
     document.body.prepend(banner);
@@ -543,3 +593,63 @@ function showToast(message, type = 'info') {
     }, 4000);
 }
 window.showToast = showToast;
+
+// Apply theme across all pages that include utils.js (like iframes)
+if (localStorage.getItem('lightTheme') === 'true') {
+    document.documentElement.classList.add('light-theme');
+} else {
+    document.documentElement.classList.remove('light-theme');
+}
+
+// Inject floating UI Settings button for standalone views
+document.addEventListener('DOMContentLoaded', () => {
+    // Only inject if the page doesn't have the main dashboard settings button
+    if (!document.getElementById('header-settings-btn') && !document.getElementById('floating-settings-btn')) {
+        const btn = document.createElement('button');
+        btn.id = 'floating-settings-btn';
+        btn.innerHTML = '<i class="fa-solid fa-sliders"></i>';
+        btn.title = "UI Settings";
+        btn.style.cssText = "position:fixed; bottom:20px; left:20px; z-index:9999; background:var(--card-bg); color:var(--accent); border:1px solid var(--border); border-radius:50%; width:45px; height:45px; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:1.2rem; transition: all 0.2s;";
+        
+        btn.onmouseover = () => btn.style.transform = "scale(1.1)";
+        btn.onmouseout = () => btn.style.transform = "scale(1)";
+        
+        btn.onclick = () => {
+            let panel = document.getElementById('floating-ui-settings');
+            if (!panel) {
+                panel = document.createElement('div');
+                panel.id = 'floating-ui-settings';
+                panel.style.cssText = "position:fixed; bottom:75px; left:20px; z-index:9999; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:20px; width:280px; color:var(--text); display:block; font-family: 'Inter', sans-serif;";
+                
+                const isLight = document.documentElement.classList.contains('light-theme');
+                const useFloating = localStorage.getItem('useFloatingWindows') === 'true';
+                const includeHeaders = localStorage.getItem('includeHeaders') === 'true';
+                
+                panel.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                        <h3 style="margin:0; font-size:1rem; color:var(--accent);"><i class="fa-solid fa-sliders"></i> UI Settings</h3>
+                        <button onclick="document.getElementById('floating-ui-settings').style.display='none'" style="background:none; border:none; color:var(--dim); cursor:pointer;"><i class="fa-solid fa-times"></i></button>
+                    </div>
+                    <label style="display:flex; align-items:center; gap:10px; margin-bottom: 20px; cursor:pointer; padding: 4px 0;">
+                        <input type="checkbox" id="floating-param-light-theme" ${isLight ? 'checked' : ''} onchange="
+                            if(this.checked) {
+                                document.documentElement.classList.add('light-theme');
+                                localStorage.setItem('lightTheme', 'true');
+                            } else {
+                                document.documentElement.classList.remove('light-theme');
+                                localStorage.setItem('lightTheme', 'false');
+                            }
+                        " style="cursor:pointer;">
+                        <span style="font-size:0.9rem; flex:1; display:flex; align-items:center; gap:10px;">
+                            <i class="fa-solid fa-sun" style="color:var(--accent); width:16px; text-align:center;"></i> Light Theme
+                        </span>
+                    </label>
+                `;
+                document.body.appendChild(panel);
+            } else {
+                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+            }
+        };
+        document.body.appendChild(btn);
+    }
+});

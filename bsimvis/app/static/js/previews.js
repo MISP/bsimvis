@@ -32,6 +32,7 @@
                 'code-preview-tooltip',
                 'token-tooltip',
                 'diff-preview-tooltip',
+                'note-preview-tooltip',
                 'hierarchy-tooltip',
                 'bin-hierarchy-tooltip',
                 'binary-preview-tooltip',
@@ -111,8 +112,8 @@
             position: 'fixed',
             pointerEvents: 'none',
             zIndex: '20002',
-            background: '#121212',
-            color: '#fff',
+            background: 'var(--bg)',
+            color: 'var(--text)',
             border: '1px solid #a6e22e',
             borderRadius: '4px',
             padding: '10px',
@@ -138,7 +139,7 @@
             display: 'none',
             pointerEvents: 'auto',
             fontSize: '0.8rem',
-            boxShadow: '0 15px 50px rgba(0,0,0,0.9)',
+            boxShadow: '0 15px 50px var(--window-bg)',
             backdropFilter: 'blur(15px)',
             overflow: 'hidden',
             maxWidth: 'calc(100vw - 30px)',
@@ -173,6 +174,7 @@
             getCodeTooltip(),
             document.getElementById('token-tooltip'),
             document.getElementById('diff-preview-tooltip'),
+            document.getElementById('note-preview-tooltip'),
             getBinaryTooltip(),
         ];
         els.forEach(el => {
@@ -233,11 +235,11 @@
 
         tooltip.innerHTML = `
             <div class="preview-card">
-                <div class="preview-header">Quick Preview: ${name || id.split(':').pop()}</div>
+                <div class="preview-header">Quick Preview: ${escapeHtml(name || id.split(':').pop())}</div>
                 <div style="font-size:0.65rem; color:var(--accent,#66d9ef); font-family:monospace; padding:0 8px; margin-bottom:5px;">
-                    Addr: ${addr || '---'} | Bin: ${file_name || bin || '---'} | Feat: ${v_size || 0}
+                    Addr: ${escapeHtml(addr || '---')} | Bin: ${escapeHtml(file_name || bin || '---')} | Feat: ${escapeHtml(v_size || 0)}
                 </div>
-                <div style="font-size:0.55rem; color:var(--subtle,#75715e); padding:0 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">ID: ${id}</div>
+                <div style="font-size:0.55rem; color:var(--subtle,#75715e); padding:0 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">ID: ${escapeHtml(id)}</div>
                 <div class="preview-header" style="border:none; margin-top:10px;">Loading Code...</div>
             </div>
             ${extraHtml}
@@ -293,7 +295,7 @@
 
         let html = `
             <div class="preview-card" style="max-height:450px; display:flex; flex-direction:column;">
-                <div style="flex-shrink:0; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:8px; margin-bottom:8px;">
+                <div style="flex-shrink:0; border-bottom: 1px solid var(--border); padding-bottom:8px; margin-bottom:8px;">
                     <div class="preview-header" style="border:none; margin-bottom:4px; padding:0;">Quick Preview: <span style="color:#ae81ff">${retType}</span> ${ns ? `<span style="color:white">${ns}::</span>` : ''}${displayName}<span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span></div>
                     <div style="font-size:0.65rem; color:var(--accent,#66d9ef); font-family:monospace; padding:0 8px;">
                         Addr: ${displayAddr} | Bin: ${displayBin} | Feat: ${displayFeat}
@@ -317,7 +319,7 @@
         html += '</div>';
 
         if (rows.length > 18) {
-            html += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle,#75715e); padding-top:8px; border-top:1px solid rgba(255,255,255,0.05); flex-shrink:0;">💡 Use scroll wheel to view all ${rows.length} lines</div>`;
+            html += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle,#75715e); padding-top:8px; border-top: 1px solid var(--border); flex-shrink:0;">💡 Use scroll wheel to view all ${rows.length} lines</div>`;
         }
 
         html += '</div>';
@@ -376,7 +378,7 @@
         let html = '';
         if (idx !== undefined && window.previewTips && window.previewTips[idx]) {
             const data = window.previewTips[idx];
-            html = `<div style="font-weight:bold; color:var(--accent,#66d9ef); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Features (${data[1]})</div>`;
+            html = `<div style="font-weight:bold; color:var(--accent,#66d9ef); border-bottom:1px solid var(--border); padding-bottom:5px; margin-bottom:5px;">Features (${data[1]})</div>`;
             data[2].forEach(f => {
                 const color = f[8] || 'var(--accent,#66d9ef)';
                 html += `<div style="margin-bottom:8px;">
@@ -385,10 +387,10 @@
                 </div>`;
             });
         } else {
-            html = `<div style="font-weight:bold; color:var(--accent,#66d9ef); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Features (${hashes.length})</div>`;
+            html = `<div style="font-weight:bold; color:var(--accent,#66d9ef); border-bottom:1px solid var(--border); padding-bottom:5px; margin-bottom:5px;">Features (${hashes.length})</div>`;
             hashes.forEach(h => {
                 html += `<div style="margin-bottom:8px;">
-                    <div style="font-family:monospace; color:var(--accent,#66d9ef); font-weight:bold;">${h}</div>
+                    <div style="font-family:monospace; color:var(--accent,#66d9ef); font-weight:bold;">${escapeHtml(h)}</div>
                 </div>`;
             });
         }
@@ -417,6 +419,18 @@
         const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
         const hierTooltip = targetWindow.document.getElementById('hierarchy-tooltip');
         const binHierTooltip = targetWindow.document.getElementById('bin-hierarchy-tooltip');
+
+        const noteTooltip = document.getElementById('note-preview-tooltip');
+        const isNoteActive = noteTooltip && (noteTooltip.style.display === 'flex' || noteTooltip.classList.contains('showing'));
+        if (isNoteActive) {
+            const noteScroll = noteTooltip.querySelector('.note-preview-scroll');
+            if (noteScroll) {
+                e.preventDefault();
+                e.stopPropagation();
+                noteScroll.scrollTop += e.deltaY;
+                return;
+            }
+        }
 
         const isCodeActive = codeTooltip && (codeTooltip.style.display === 'flex' || codeTooltip.classList.contains('showing'));
         const isDiffActive = diffTooltip && (diffTooltip.style.display === 'flex' || diffTooltip.classList.contains('showing'));
@@ -511,6 +525,39 @@
         }
     });
 
+    // Escape key: close panels, tooltips, settings
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+
+        // Don't steal Escape from inputs/textareas that live outside the side panels
+        const tag = document.activeElement && document.activeElement.tagName;
+        const isInSidePanel = document.activeElement &&
+            document.activeElement.closest('#notes-panel-v2, #ai-panel-v2');
+        if ((tag === 'INPUT' || tag === 'TEXTAREA') && !isInSidePanel) return;
+
+        // Hide all hover tooltips
+        window.hideAllTooltips(true);
+
+        // Close Notes panel
+        if (typeof closeNotesPanel === 'function') closeNotesPanel();
+
+        // Close AI/LLM panel
+        if (typeof closeAIPanel === 'function') closeAIPanel();
+
+        // Close UI settings panel
+        const settingsPanel = document.getElementById('ui-settings-panel');
+        if (settingsPanel && settingsPanel.style.display !== 'none') {
+            settingsPanel.style.display = 'none';
+        }
+
+        // Collapse "Show more metadata" if expanded
+        document.querySelectorAll('.meta-col-body-wrapper:not(.collapsed)').forEach(wrapper => {
+            const card = wrapper.closest('.func-meta-card');
+            const btn = card && card.querySelector('.btn-more-toggle');
+            if (btn && typeof toggleSection === 'function') toggleSection(btn);
+        });
+    });
+
     // Global MutationObserver to catch element deletions
     const observer = new MutationObserver((mutations) => {
         if (!lastTriggerElement) return;
@@ -553,7 +600,7 @@
                 }
                 
                 return `
-                <span class="tag-card" style="border-color:${color}44; color:${color}; background:${color}11; font-size: 0.65rem; padding: 2px 6px; border-radius: 12px; margin: 2px 4px 2px 0; display: inline-flex; align-items: center; gap: 4px;">
+                <span class="tag-card" style="border-color:${tagAlpha(color, 27)}; color:${color}; background:${tagAlpha(color, 7)}; font-size: 0.65rem; padding: 2px 6px; border-radius: 12px; margin: 2px 4px 2px 0; display: inline-flex; align-items: center; gap: 4px;">
                     ${isBookmark ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>' : ''}
                     ${isIgnore ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>' : ''}
                     ${tag}
@@ -561,7 +608,7 @@
             }).join('');
             
             tagsHtml = `
-            <div style="margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 8px;">
+            <div style="margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px;">
                 <div style="font-size: 0.65rem; color: #777; text-transform: uppercase; margin-bottom: 4px;"><i class="fa-solid fa-tags" style="margin-right: 6px; opacity: 0.5;"></i>Tags</div>
                 <div style="display: flex; flex-wrap: wrap;">${tagBadges}</div>
             </div>`;
@@ -583,47 +630,47 @@
         
         let extraFieldsHtml = '';
         if (avtype) {
-            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                 <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-shield" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>AV Type</span>
-                <span class="mono" style="color: #eee; font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${avtype}">${avtype}</span>
+                <span class="mono" style="color: var(--meta-text); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${avtype}">${avtype}</span>
             </div>`;
         }
         if (filetype) {
-            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                 <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-file-code" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>File Type</span>
-                <span class="mono" style="color: #eee; font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${filetype}">${filetype}</span>
+                <span class="mono" style="color: var(--meta-text); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${filetype}">${filetype}</span>
             </div>`;
         }
         if (yara) {
-            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                 <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-biohazard" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>Yara</span>
                 <span class="mono" style="color: var(--accent); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${yara}">${yara}</span>
             </div>`;
         }
         if (cc_ip) {
-            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                 <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-network-wired" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>CC IPs</span>
-                <span class="mono" style="color: var(--info, #60a5fa); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${cc_ip}">${cc_ip}</span>
+                <span class="mono" style="color: var(--info, #60a5fa); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeAttr(cc_ip)}">${escapeHtml(cc_ip)}</span>
             </div>`;
         }
 
         tooltip.innerHTML = `
-        <div class="func-meta-card modern" style="border: 1px solid var(--accent, #66d9ef); box-shadow: 0 15px 50px rgba(0,0,0,0.9); background: rgba(13,15,20,0.98); backdrop-filter: blur(15px); padding: 12px; border-radius: 8px; margin-bottom: 0;">
-            <div style="font-weight: bold; font-size: 0.95rem; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px; margin-bottom: 8px; color: #fff; display: flex; align-items: center; gap: 8px; font-family: 'Inter', sans-serif;">
+        <div class="func-meta-card modern" style="border: 1px solid var(--accent, #66d9ef); background: rgba(13,15,20,0.98); backdrop-filter: blur(15px); padding: 12px; border-radius: 8px; margin-bottom: 0;">
+            <div style="font-weight: bold; font-size: 0.95rem; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 8px; color: var(--text); display: flex; align-items: center; gap: 8px; font-family: 'Inter', sans-serif;">
                 <i class="fa-solid fa-file" style="color: var(--accent);"></i>
-                <span>${fileName}</span>
+                <span>${escapeHtml(fileName)}</span>
             </div>
             
             <div style="display: flex; flex-direction: column; gap: 4px; font-family: 'Inter', sans-serif;">
-                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                     <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-hashtag" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>MD5</span>
                     <span class="mono" style="color: var(--accent); font-weight: bold; font-family: 'JetBrains Mono', 'Consolas', monospace;">${md5}</span>
                 </div>
-                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                     <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-list-ol" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>Functions</span>
                     <span class="mono" style="color: #a6e22e; font-family: 'JetBrains Mono', 'Consolas', monospace;">${count}</span>
                 </div>
-                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                     <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-globe" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>Language</span>
                     <span class="mono" style="color: #ae81ff; font-family: 'JetBrains Mono', 'Consolas', monospace;">${language}</span>
                 </div>

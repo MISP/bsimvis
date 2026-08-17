@@ -37,6 +37,14 @@ never hardcode a string. Pipelines and groups are jobs too (`type` = `pipeline` 
 `group`, children in `task_ids`).
 
 - `enqueue_job` is idempotent via a `queued` latch field; do not bypass it.
+- A claimed job holds a **lease** (`jobs:leased` ZSET, `LEASE_TTL` seconds), refreshed
+  by a worker heartbeat thread. A worker that dies by SIGKILL/OOM stops refreshing,
+  the lease expires, and `reap_expired()` requeues the job (up to `MAX_ATTEMPTS`,
+  then fails it). Never sweep `jobs:processing` wholesale — that requeues jobs live
+  workers are still running.
+- `splice_tasks()` is the only correct way to add tasks to a running pipeline's
+  `task_ids`; a plain read-modify-write loses concurrent splices.
+- `jobs:paused` is the pause flag, read between claims. In-flight jobs finish.
 - Chunked work re-enqueues itself as a *continuation* (`rpush` to the tail) so batches
   from different jobs interleave instead of one job starving the fleet.
 - Clear jobs (`clear_sim`, `clear_features`, `clear_cluster`, `clear_bin_sim`,
@@ -61,6 +69,19 @@ false-positive-prone on tiny functions. Both the collection and pool build paths
 
 Binary similarity diff tables are paged, filtered and sorted **server-side**
 (`_page_diff` in `routes/bin_sim.py`). Don't reintroduce full-table client loads.
+
+## Homepage and unified search
+
+`routes/home.py` backs the instance-wide homepage (`/`, view key `home`,
+`static/js/views/home_view.js`) and the Ctrl+K palette
+(`static/js/search_palette.js`). The collections table moved to `/collections`.
+
+Nothing here keeps its own index. `_call(fn, **args)` runs an existing route
+function inside a synthetic request context, so every search reuses that route's
+own `request.args` parsing — add a new entity to `unified_search` by calling its
+search route, never by writing a second query path. `/api/index/home/insights`
+(top tags, biggest clusters, recent batches) is the expensive half and is cached
+120s in-process; `/api/index/home/stats` stays cheap and uncached.
 
 ## Workers and Ghidra memory
 
@@ -97,6 +118,8 @@ Since its only for jobs, the jobs are in :
 | `job:{id}` | **Hash** | Status, payload and metadata for a job, pipeline or group. |
 | `jobs:pending` / `jobs:pending:high` | **List** | Work queues; workers pop from the tail. |
 | `jobs:processing` | **List** | In-flight job IDs; a worker `LMOVE`s here when it claims a job. |
+| `jobs:leased` | **ZSET** | Claimed job ID -> lease expiry (unix seconds). Expired = its worker died. |
+| `jobs:paused` | **String** | Present while the fleet is paused. |
 | `jobs:global` / `jobs:collection:{c}` | **List** | Recent job IDs, trimmed to 1000. |
 
 ## Worktree testing
@@ -104,12 +127,24 @@ Since its only for jobs, the jobs are in :
 Never read `data/kvrocks/` or `hs_err_pid*.log` — confidential (real binary md5s /
 function data). Tests use only the git-tracked `data/test/` fixtures.
 
-In a linked worktree, run `./scripts/wt-test.sh` before committing. It symlinks
-`bin/` from the main repo (never recompiled — 1.4G of downloaded tools), writes an
-isolated `.env` (own `PROJECT_NAME` + offset ports + fresh local data dir, so it can
-run alongside the main stack without touching its confidential DB), launches the full
-stack via `launch_tmux.sh`, runs `test_api_endpoints.py`, and tears
-down. Do NOT commit if it prints `RESULT: FAIL` or the run was skipped. Show the output.
+In a linked worktree, run `./scripts/wt-test.sh` before committing. Do NOT commit if
+it prints `RESULT: FAIL` or the run was skipped. Show the output.
+
+- **Do NOT run the whole suite every time.** Use the `--only <substring>` filter to run only the specific test steps related to your changes (e.g., `./scripts/wt-test.sh --only pool`).
+- **For UI changes only:** Do not run `wt-test.sh` (as there are no UI tests). Instead, simply run `node --check <file>` on the modified JavaScript files to verify they compile.
+
+Three scripts, all refusing to run outside a linked worktree so they can never touch
+the main stack's `.env`, ports or confidential DB:
+
+| Script | Does |
+|:--- |:--- |
+| `scripts/wt-setup.sh` | Brings the isolated stack up and leaves it running. Symlinks `bin/` from the main repo (never recompiled — 1.4G of downloaded tools), writes an isolated `.env` if missing (own `PROJECT_NAME` + offset ports + fresh local data dir), aborts if any of its ports is already held, launches via `launch_tmux.sh --clear`, waits for the app port. Idempotent — tears down an existing session of its own first. |
+| `scripts/wt-teardown.sh` | Shuts redis + kvrocks down and kills the worktree's tmux session. Reads the worktree's own `.env` for ports; no-ops if there is none. |
+| `scripts/wt-test.sh` | `wt-setup.sh` → `test_api_endpoints.py` (with `API_URL` pointed at the worktree's app port) → `wt-teardown.sh`, then `RESULT: PASS`/`FAIL`. |
+
+Use `wt-setup.sh` directly when you want a live stack to poke at by hand, and
+`wt-teardown.sh` when done — the dashboard URL is printed as a clickable link at the
+end of launch. Ports come from the worktree name, so two worktrees can run at once.
 
 Test files live at the repo root: `test_api_endpoints.py` (the broad suite — endpoints,
 pools, filtering and sorting sweeps; the old `test_pools.py` was absorbed into it),

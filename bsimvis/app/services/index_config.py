@@ -15,6 +15,8 @@ bin_sim level uses native fields only (no propagation to other levels).
 File metadata is denormalized directly into the bin_sim index at build time.
 """
 
+import re
+
 INDEX_CONFIG = {
     "file": {
         "file_name": ["file", "func", "sim"],  # propagated to sim for fast lookup
@@ -22,12 +24,18 @@ INDEX_CONFIG = {
         "related_file_name": ["file", "func", "sim"],
         "file_md5": ["file", "func", "sim"],  # fast MD5 lookup at sim level
         "parent_md5": ["file", "func", "sim"],
+        # md5 of the upload this file was eventually extracted from. Unpacking
+        # stops at unpack_service.MAX_DEPTH, so root + parent together answer
+        # "everything under X" for any node without walking the lineage edges.
+        "root_md5": ["file", "func", "sim"],
         "related_md5": ["file", "func", "sim"],
         "tags": ["file", "func", "sim"],  # becomes 'file_tags' when propagated
         "user_tags": ["file", "func", "sim"],  # not propagated
         "language_id": ["file", "func", "sim"],
         "batch_uuid": ["file", "func"],
         "type": ["file", "func"],
+        # pending/analyzing/failed/analyzed -- see index_service.update_file_status
+        "status": ["file"],
         "batch_order": ["file", "func"],  # numeric
         "entry_date": ["file", "func"],  # numeric
         "file_date": ["file", "func"],  # numeric
@@ -103,8 +111,6 @@ INDEX_CONFIG = {
         "file_user_tags_a": ["bin_sim"],
         "file_user_tags_b": ["bin_sim"],
         "score": ["bin_sim"],  # numeric
-        "score_sim_weighted": ["bin_sim"],  # numeric
-        "score_collection_weighted": ["bin_sim"],  # numeric
         "coverage_a": ["bin_sim"],  # numeric
         "coverage_b": ["bin_sim"],  # numeric
         "shared_clusters": ["bin_sim"],  # numeric
@@ -163,8 +169,6 @@ NUM_FIELDS = {
     "tf_score",
     # bin_sim numeric fields
     "score",
-    "score_sim_weighted",
-    "score_collection_weighted",
     "coverage_a",
     "coverage_b",
     "shared_clusters",
@@ -179,6 +183,134 @@ EXACT_FIELDS = {
     # "file_md5",
     # "batch_uuid",
 }
+
+# Fields whose values are free text rather than a controlled vocabulary. A
+# filter on these with no wildcard means "contains", because nobody can type a
+# 200-char demangled symbol exactly. Every other field defaults to an exact
+# bucket lookup — see query_syntax.parse_filter_value().
+SUBSTRING_FIELDS = {
+    "function_name",
+    "file_name",
+    "parent_file_name",
+    "related_file_name",
+    "file_names",
+    "yara",
+    "avtype",
+    "filetype",
+    "cc_ip",
+    "cluster_name",
+    "bin_cluster_name",
+    "parameters",
+    "note_owners",
+    "inferred_yara",
+    "inferred_avtype",
+    "inferred_filetype",
+    "inferred_ccip",
+    "inferred_filename",
+    "inferred_md5",
+    "file_name_a",
+    "file_name_b",
+    "file_parent_file_name_a",
+    "file_parent_file_name_b",
+    "file_related_file_name_a",
+    "file_related_file_name_b",
+    # md5 fields used to require an explicit `*value*` wildcard while filename
+    # fields didn't — same "free text, can't type it exactly" reasoning as
+    # filenames applies to a 32-char hex string typed by hand.
+    "file_md5",
+    "parent_md5",
+    "root_md5",
+    "related_md5",
+    "md5_a",
+    "md5_b",
+    "file_parent_md5_a",
+    "file_parent_md5_b",
+    "file_related_md5_a",
+    "file_related_md5_b",
+}
+
+# Address fields: `@`/`0x` prefixes and leading zeros are cosmetic, so the
+# query value is normalized in query_syntax.parse_filter_value() and matched
+# with any amount of leading zeros ignored on the bucket side too.
+ADDRESS_FIELDS = {
+    "entrypoint_address",
+}
+
+# Hash fields: a leading `#` (as in `#<md5>` or `# <md5>`) is stripped before
+# matching, same idea as the `@`/`0x` stripping on ADDRESS_FIELDS.
+HASH_FIELDS = {
+    "file_md5",
+    "parent_md5",
+    "root_md5",
+    "related_md5",
+    "md5_a",
+    "md5_b",
+    "file_parent_md5_a",
+    "file_parent_md5_b",
+    "file_related_md5_a",
+    "file_related_md5_b",
+}
+
+# Hierarchical fields: values are paths, and every ancestor of a value is
+# indexed as its own bucket at write time. `lib:uclibc:0.9.30.1:seekdir` also
+# lands in `lib`, `lib:uclibc` and `lib:uclibc:0.9.30.1`, which turns the common
+# "everything under this namespace" query into a single exact bucket lookup
+# instead of a scan over the whole tag vocabulary.
+#
+# Keyed by indexed field name, so propagated variants (file_tags, func_tags)
+# must be listed explicitly. Value is the list of separators, longest first —
+# `::` must precede `:` or it would split into empty segments.
+HIERARCHY_SEPARATORS = {
+    "tags": [":"],
+    "user_tags": [":"],
+    "file_tags": [":"],
+    "file_user_tags": [":"],
+    "func_tags": [":"],
+    "func_user_tags": [":"],
+    # Function namespaces mix all three in one value, e.g.
+    # `crypto/elliptic::crypto/elliptic.initP256`.
+    "namespace": ["::", "/", "."],
+}
+
+_HIERARCHY_SPLIT_RE = {}
+
+
+def _hierarchy_splitter(seps):
+    """Compiled alternation over the separators, longest first."""
+    key = tuple(seps)
+    if key not in _HIERARCHY_SPLIT_RE:
+        pattern = "|".join(re.escape(s) for s in sorted(seps, key=len, reverse=True))
+        _HIERARCHY_SPLIT_RE[key] = re.compile("(" + pattern + ")")
+    return _HIERARCHY_SPLIT_RE[key]
+
+
+def tag_ancestors(field: str, value: str) -> list[str]:
+    """Ancestor bucket values for a hierarchical field value, excluding itself.
+
+    `lib:uclibc:seekdir` -> ['lib', 'lib:uclibc']. Empty for non-hierarchical
+    fields, and for values with no separator (nothing above them).
+
+    Splits on any configured separator, not just the first one present, because
+    a single namespace mixes them: `crypto/elliptic::crypto/elliptic.initP256`
+    yields `crypto`, `crypto/elliptic`, `crypto/elliptic::crypto` and
+    `crypto/elliptic::crypto/elliptic`. Each ancestor keeps the original
+    separators, so it is a real prefix of the value rather than a normalized
+    form of it.
+    """
+    seps = HIERARCHY_SEPARATORS.get(field)
+    if not seps or not value:
+        return []
+
+    # Keeps the separators as capture groups: [seg, sep, seg, sep, seg, ...]
+    parts = _hierarchy_splitter(seps).split(value)
+    ancestors = []
+    prefix = parts[0]
+    for i in range(1, len(parts) - 1, 2):
+        if prefix:
+            ancestors.append(prefix)
+        prefix += parts[i] + parts[i + 1]
+    return ancestors
+
 
 # Fields that are auto-analysis artifacts of clustering. Clustering runs per
 # namespace (a collection OR a pool), so these indexes belong to whichever

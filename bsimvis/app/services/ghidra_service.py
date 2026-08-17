@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -12,8 +13,50 @@ import pyghidra
 from pyghidra.launcher import HeadlessPyGhidraLauncher
 import tomllib
 
+from bsimvis.app.services import tag_taxonomy
+
 GHIDRA_DECOMP_MAX_TIMEOUT = 10
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
+
+# Ghidra's Function ID analyzer records a match in the function's *plate
+# comment*, not in the bookmark it also drops (ApplyFidEntriesCommand:
+# generateComment writes the library line, generateBookmark does not). Shape:
+#
+#     Library Function - Single Match
+#      strcpy
+#     Library: libc 2.31 default
+#
+# The library line is `LibraryRecord.toString()` -- family, version, variant.
+_FID_LIBRARY_RE = re.compile(r"^Library:[ \t]*(\S+)(?:[ \t]+(\S+))?", re.MULTILINE)
+
+
+def fid_tags_from_plate_comment(comment, func_name):
+    """`origin:lib:...` tags for a function the FID analyzer already matched.
+
+    Free: the analyzer runs during auto-analysis either way, so reading its
+    verdict costs a string parse instead of a per-function database query.
+
+    ponytail: only the single-library `Library:` line is read. A multi-library
+    match writes `Libraries: a, b, c`, which names no single origin -- parse it
+    if attributing ambiguous matches turns out to be worth the noise.
+    """
+    if not comment:
+        return []
+    m = _FID_LIBRARY_RE.search(comment)
+    if not m:
+        return []
+    lib_name = (m.group(1) or "").strip("*/; \t")
+    if not lib_name:
+        return []
+    lib_ver = (m.group(2) or "").strip("*/; \t") or None
+    if "Multiple Matches" in comment:
+        func = "ambiguous"
+    elif func_name.startswith("FUN_"):
+        # Ghidra's placeholder name identifies nothing worth putting in a tag.
+        func = None
+    else:
+        func = func_name
+    return [tag_taxonomy.origin_tag("lib", lib_name, lib_ver, func)]
 
 
 class GhidraService:
@@ -65,23 +108,21 @@ class GhidraService:
             self._launcher.start()
         return self._launcher
 
-    def _function_id_hash(self, func, program):
+    def _function_id_hash(self, func, program, hash_quad=None):
         """Deterministic per-function hash for exact-matching small functions.
 
         Primary: Ghidra FunctionID full-hash (masks relocatable operands, so it
-        is stable across binaries). Fallback: sha1 of the mnemonic+operand-type
-        sequence when FID declines — it refuses functions below its shingle
-        floor, which are exactly the tiniest ones we still want to match.
-        Returns None only if the function has no instructions.
+        is stable across binaries), passed in by the caller so one function is
+        hashed once. Fallback: sha1 of the mnemonic+operand-type sequence when
+        FID declines — it refuses functions below its shingle floor, which are
+        exactly the tiniest ones we still want to match. Returns None only if
+        the function has no instructions.
         """
-        try:
-            from ghidra.feature.fid.service import FidService
-
-            quad = FidService().hashFunction(func)
-            if quad is not None:
-                return format(quad.getFullHash() & 0xFFFFFFFFFFFFFFFF, "016x")
-        except Exception:
-            pass
+        if hash_quad is not None:
+            try:
+                return format(hash_quad.getFullHash() & 0xFFFFFFFFFFFFFFFF, "016x")
+            except Exception:
+                pass
 
         # ponytail: fallback keys on mnemonic + operand *types* only, not operand
         # values — loose for pathological tiny funcs. Tighten with operand-value
@@ -407,6 +448,65 @@ class GhidraService:
             functions.extend(chunk)
         return {"file_metadata": file_metadata, "functions": functions}
 
+    def _extract_fid_tags_for_function(
+        self, func, program, fid_query_service=None, hash_quad=None
+    ):
+        # 1. Read the verdict the Function ID analyzer already wrote
+        try:
+            fid_tags = set(
+                fid_tags_from_plate_comment(func.getComment(), func.getName())
+            )
+        except Exception:
+            fid_tags = set()
+
+        # 2. Query the FID databases for functions the analyzer left unmatched
+        if fid_query_service and hash_quad is not None:
+            try:
+                # Ghidra's default Instruction Count Threshold (10). The hash
+                # already counted the code units, so re-walking the listing
+                # from Python would just repeat the work across the JVM bridge.
+                if hash_quad.getCodeUnitSize() < 10:
+                    return list(fid_tags)
+
+                # Full hash only. `findFunctionsBySpecificHash` is an unindexed
+                # full table scan (FunctionsTable walks `table.iterator()` over
+                # every record, where the full hash gets `indexKeyIterator`),
+                # and Ghidra itself calls it only from the FID debug UI. As a
+                # per-function fallback it cost 2-9x the whole analyze job. It
+                # also cannot match what the full hash missed: the full hash
+                # covers the same code units with the operands masked out, so a
+                # differing instruction sequence misses both.
+                records = list(
+                    fid_query_service.findFunctionsByFullHash(hash_quad.getFullHash())
+                )
+
+                is_multiple_match = len(records) > 5
+                lib_to_names = {}
+                for r in records:
+                    lib = fid_query_service.getLibraryForFunction(r)
+                    if lib:
+                        lib_name = lib.getLibraryFamilyName()
+                        lib_ver = lib.getLibraryVersion()
+                        if lib_name:
+                            key = (lib_name, lib_ver)
+                            if key not in lib_to_names:
+                                lib_to_names[key] = set()
+                            lib_to_names[key].add(r.getName())
+
+                for (lib_name, lib_ver), names in lib_to_names.items():
+                    func_name = (
+                        "ambiguous"
+                        if is_multiple_match or len(names) > 1
+                        else list(names)[0]
+                    )
+                    fid_tags.add(
+                        tag_taxonomy.origin_tag("lib", lib_name, lib_ver, func_name)
+                    )
+            except Exception as e:
+                logging.debug(f"FID query failed for {func.getName()}: {e}")
+
+        return list(fid_tags)
+
     def stream_bsim_data(
         self, program, options=None, chunk_size=100, job_service=None, job_id=None
     ):
@@ -562,6 +662,22 @@ class GhidraService:
                 lambda x: (x["entrypoint"], x["name"], x["is_external"]),
             )
 
+        skip_function_id = bool(options.get("skip_function_id"))
+
+        # The hash is per-function identity we ship either way, so the service
+        # is opened even when Function ID tagging is skipped -- hashing touches
+        # no database, only the query service does.
+        fid_service = None
+        fid_query_service = None
+        try:
+            from ghidra.feature.fid.service import FidService
+
+            fid_service = FidService()
+            if not skip_function_id:
+                fid_query_service = fid_service.openFidQueryService(language, False)
+        except Exception as e:
+            logging.debug(f"FID service unavailable: {e}")
+
         chunk = []
         decompiled_count = 0
 
@@ -594,6 +710,55 @@ class GhidraService:
             )
             parameters = [p.getDataType().getName() for p in func.getParameters()]
 
+            # One hash per function, shared by the tag lookup and the identity
+            # hash below -- each `hashFunction` call walks the function extent
+            # twice inside Ghidra, so hashing once here halves that.
+            hash_quad = None
+            if fid_service:
+                try:
+                    hash_quad = fid_service.hashFunction(func)
+                except Exception:
+                    pass
+
+            # A function's `tags` are evidence about *that function*: Function
+            # ID matched its bytes, capa matched its instructions, a YARA string
+            # resolved to its body or to data it references. The file's own tags
+            # never come down here.
+            #
+            # They used to. A file tag is true of the file, not of each of its
+            # functions, so copying the set gave every function in a binary the
+            # same marks: `container:apk` looked like library evidence, and one
+            # Mirai string in .rodata marked uclibc's `fcntl64` a linux backdoor
+            # via the rulezet sidecar. Nothing is lost by dropping it -- the
+            # index already carries the file's tags on every function document
+            # as `file_tags`/`file_user_tags` (index_config.resolve_target_field),
+            # which is where a question about the *file* belongs. That is also
+            # what keeps the two fields from being byte-identical copies.
+            func_tags = []
+            fid_tags = (
+                []
+                if skip_function_id
+                else self._extract_fid_tags_for_function(
+                    func, program, fid_query_service, hash_quad
+                )
+            )
+            for ft in fid_tags:
+                if ft not in func_tags:
+                    func_tags.append(ft)
+
+            # Insert Capa tags based on function address
+            addr_hex = hex(func.getEntryPoint().getOffset())
+            capa_tags = options.get("capa_tags", {})
+            for ctag in capa_tags.get(addr_hex, []):
+                if ctag not in func_tags:
+                    func_tags.append(ctag)
+
+            # Insert YARA tags based on function address
+            yara_tags = options.get("yara_tags", {})
+            for ytag in yara_tags.get(addr_hex, []):
+                if ytag not in func_tags:
+                    func_tags.append(ytag)
+
             entry_symbols = symbol_table.getSymbols(entry_point)
             labels = [s.getName() for s in entry_symbols]
             if not labels:
@@ -614,6 +779,20 @@ class GhidraService:
             bsim_meta, bsim_raw, bsim_tf = [], [], []
 
             if decomp_results.decompileCompleted():
+                # The listing signature above is the program DB one, which stays
+                # "undefined FUN_xxx()" for every function with a DEFAULT signature
+                # source. The decompiler's own prototype is what the C body was
+                # printed from, so prefer it and keep the DB values as fallback.
+                try:
+                    proto = decomp_results.getHighFunction().getFunctionPrototype()
+                    return_type = proto.getReturnType().getName()
+                    parameters = [
+                        proto.getParam(i).getDataType().getName()
+                        for i in range(proto.getNumParams())
+                    ]
+                except Exception:
+                    pass
+
                 markup = decomp_results.getCCodeMarkup()
                 (
                     c_lines,
@@ -652,7 +831,7 @@ class GhidraService:
                         "full_id": full_id,
                         "batch_uuid": batch_uuid,
                         "batch_name": batch_name,
-                        "tags": tags,
+                        "tags": func_tags,
                         "instruction_count": func.getBody().getNumAddresses(),
                         "is_thunk": func.isThunk(),
                         "labels": labels,
@@ -661,7 +840,9 @@ class GhidraService:
                         "namespace": namespace,
                         "parameters": parameters,
                         "entrypoint_address": entry_str,
-                        "function_id_hash": self._function_id_hash(func, program),
+                        "function_id_hash": self._function_id_hash(
+                            func, program, hash_quad
+                        ),
                         "bsim_features_count": len(bsim_raw),
                         "bsim_unique_features_count": len(bsim_tf),
                         "callees": callees_list,
@@ -693,9 +874,17 @@ class GhidraService:
         if chunk:
             yield chunk
 
+        if fid_query_service:
+            try:
+                fid_query_service.close()
+            except Exception:
+                pass
+
         decomp_interface.dispose()
 
-    def run_profile_analysis(self, program, profile_name, force_reanalysis=False):
+    def run_profile_analysis(
+        self, program, profile_name, force_reanalysis=False, disable_function_id=False
+    ):
         from ghidra.app.plugin.core.analysis import AutoAnalysisManager
         from ghidra.util.task import ConsoleTaskMonitor
 
@@ -710,6 +899,10 @@ class GhidraService:
             )
             tx_id = program.startTransaction("Default Analysis")
             try:
+                if disable_function_id:
+                    options = program.getOptions("Analyzers")
+                    if options.contains("Function ID"):
+                        options.setBoolean("Function ID", False)
                 if force_reanalysis:
                     mgr.reAnalyzeAll(None)
                 mgr.startAnalysis(monitor)
@@ -734,6 +927,12 @@ class GhidraService:
                     options.setBoolean(name, enabled)
                 else:
                     logging.warning(f"Analyzer '{name}' not found.")
+
+            if disable_function_id:
+                if options.contains("Function ID"):
+                    options.setBoolean("Function ID", False)
+            elif options.contains("Function ID.Always Apply FID Labels"):
+                options.setBoolean("Function ID.Always Apply FID Labels", True)
 
             if force_reanalysis:
                 mgr.reAnalyzeAll(None)
@@ -780,8 +979,12 @@ class GhidraService:
                 logging.error(f"[!] Analysis failed for file : {target_path.name}: {e}")
                 raise
             finally:
-                if "program" in locals() and program:
-                    program.release(project)
+                # close() releases every program importProgram() registered, ends
+                # their transactions, and disposes the project's LocalFileSystem --
+                # which is what stops its "File System Listener" thread. Do not
+                # release the program first: that consumer is already gone by then
+                # and close() would throw "unknown consumer". See worker.py.
+                project.close()
 
     def analyze_project(self, project_path, options=None):
         from ghidra.base.project import GhidraProject
@@ -818,3 +1021,35 @@ class GhidraService:
 
 
 ghidra_service = GhidraService()
+
+
+if __name__ == "__main__":  # ponytail: one runnable check, no framework
+    _PLATE = "Library Function - Single Match\n strcpy\nLibrary: libc 2.31 default"
+
+    assert fid_tags_from_plate_comment(_PLATE, "strcpy") == [
+        "origin:lib:libc:2.31:strcpy"
+    ]
+    # Ghidra's placeholder name identifies nothing; the library still does.
+    assert fid_tags_from_plate_comment(_PLATE, "FUN_00401000") == [
+        "origin:lib:libc:2.31"
+    ]
+    assert fid_tags_from_plate_comment(
+        _PLATE.replace("Single Match", "Multiple Matches"), "strcpy"
+    ) == ["origin:lib:libc:2.31:ambiguous"]
+    # A library with no version still rolls up at the fixed origin depth.
+    assert fid_tags_from_plate_comment("Library: libc", "strcpy") == [
+        "origin:lib:libc:unknown:strcpy"
+    ]
+    # The bookmark the analyzer also writes carries no library line -- reading
+    # it instead of the plate comment is what produced zero tags before.
+    assert (
+        fid_tags_from_plate_comment("Library Function - Single Match, strcpy", "x")
+        == []
+    )
+    # A multi-library match names no single origin.
+    assert (
+        fid_tags_from_plate_comment("Libraries: libc 2.31 default, musl 1.2", "x") == []
+    )
+    assert fid_tags_from_plate_comment(None, "strcpy") == []
+
+    print("fid_tags_from_plate_comment: OK")

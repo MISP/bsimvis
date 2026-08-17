@@ -1,11 +1,20 @@
 import logging
 import json
+import os
 import time
 import uuid
 from collections import Counter, defaultdict
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.cluster_utils import pick_best_shared_cluster
+from bsimvis.app.services import mem_util, sim_edges
+
+# Above this many nodes a dense size^2 float64 distance matrix stops being
+# survivable (0.8 GiB at 10k, 3.2 GiB at 20k) on a 3 GB per-worker cap.
+CLUSTER_MAX_COMPONENT = int(os.getenv("CLUSTER_MAX_COMPONENT", 10000))
+
+_EMPTY_I = np.empty(0, dtype=np.int32)
+_EMPTY_F = np.empty(0, dtype=np.float32)
 
 try:
     import hdbscan
@@ -79,27 +88,6 @@ class ClusterService:
                 job_id, f"Fetching similarity pairs for {collection} ({algo})..."
             )
 
-        # Use ZSCAN to be safe with large datasets
-        pairs = []
-        cursor = 0
-        while True:
-            cursor, results = r.zscan(sim_score_key, cursor=cursor, count=1000)
-            for sid, score in results:
-                pairs.append((sid.decode() if isinstance(sid, bytes) else sid, score))
-            if cursor == 0:
-                break
-            if len(pairs) % 10000 == 0:
-                logging.info(f"[*] Fetched {len(pairs)} similarity pairs...")
-
-        msg = f"Fetched {len(pairs)} similarity pairs."
-        logging.info(f"[+] {msg}")
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
-
-        if not pairs:
-            logging.warning(f"No similarity pairs found for {collection}:{algo}")
-            return True
-
         # 1.5 Feature Filtering
         allowed_fids = None
         if min_features > 0:
@@ -108,106 +96,58 @@ class ClusterService:
             if job_service and job_id:
                 job_service.add_log(job_id, msg)
 
-            unique_fids = set()
-            for sid, _ in pairs:
-                if not sid.startswith(prefix):
-                    continue
-
-                ids_part = sid[len(prefix) :]
-                if "::" not in ids_part:
-                    continue
-
-                c1, c2 = ids_part.split("::")
-                if is_pool:
-                    unique_fids.add(c1)
-                    unique_fids.add(c2)
-                else:
-                    unique_fids.add(f"{collection}:func:{c1}")
-                    unique_fids.add(f"{collection}:func:{c2}")
-
-            allowed_fids = set()
-            fids_list = list(unique_fids)
-            # Bulk fetch bsim_features_count
-            pipe = r.pipeline(transaction=False)
-            for fid in fids_list:
-                pipe.get(f"{fid}:meta")
-
-            raw_res = pipe.execute()
-            for fid, res in zip(fids_list, raw_res):
-                try:
-                    val = 0
-                    if res:
-                        doc = json.loads(res)
-                        val = doc.get("bsim_features_count", 0)
-                    if int(val) >= min_features:
-                        allowed_fids.add(fid)
-                except (ValueError, TypeError, IndexError):
-                    continue
-
+            allowed_fids = sim_edges.collect_allowed_fids(
+                r, sim_score_key, prefix, is_pool, collection, min_features
+            )
             logging.info(f"[+] {len(allowed_fids)} functions passed feature filter.")
 
-        # 2. Build identity mapping and edge list
-        # We need a numeric mapping for HDBSCAN
-        id_to_idx = {}
-        idx_to_id = {}
-        edges = []
+        # 2. Stream the ZSET straight into typed edge arrays.
+        # This used to build a `pairs` list of every member string first, then a
+        # second list of edge tuples. Measured on a real 5.4M-pair pool that was
+        # 2.15 GiB before clustering even started, against a 3 GB worker cap.
+        edge_set = sim_edges.load_edges(
+            r,
+            sim_score_key,
+            prefix,
+            is_pool,
+            collection,
+            min_sim=min_sim,
+            allowed_fids=allowed_fids,
+        )
+        id_to_idx = edge_set.id_to_idx
+        idx_to_id = edge_set.idx_to_id
 
-        for sid, score in pairs:
-            # sid format: {coll}:sim:{algo}:{clean_id1}::{clean_id2}
-            if not sid.startswith(prefix):
-                continue
+        msg = f"Fetched {edge_set.n_scanned} similarity pairs."
+        logging.info(f"[+] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+        mem_util.phase(
+            f"after streaming {edge_set.n_scanned} pairs", job_service, job_id
+        )
 
-            ids_part = sid[len(prefix) :]
-            if "::" not in ids_part:
-                continue
+        if edge_set.n_scanned == 0:
+            logging.warning(f"No similarity pairs found for {collection}:{algo}")
+            return True
 
-            c1, c2 = ids_part.split("::")
-            if is_pool:
-                fid1 = c1
-                fid2 = c2
-            else:
-                fid1 = f"{collection}:func:{c1}"
-                fid2 = f"{collection}:func:{c2}"
-
-            # Apply Feature Filter
-            if allowed_fids is not None:
-                if fid1 not in allowed_fids or fid2 not in allowed_fids:
-                    continue
-
-            for fid in [fid1, fid2]:
-                if fid not in id_to_idx:
-                    idx = len(id_to_idx)
-                    id_to_idx[fid] = idx
-                    idx_to_id[idx] = fid
-
-            # 2.5 Apply similarity threshold if provided
-            score_val = float(score)
-            if min_sim > 0 and score_val < min_sim:
-                continue
-
-            # HDBSCAN works with distance. Distance = 1 - score (for normalized cosine)
-            dist = max(0, 1.0 - score_val)
-            edges.append((id_to_idx[fid1], id_to_idx[fid2], dist))
-
-        if not edges:
+        if edge_set.src.size == 0:
             logging.warning(
-                f"No valid edges found for {collection}:{algo} after parsing {len(pairs)} pairs."
+                f"No valid edges found for {collection}:{algo} after parsing {edge_set.n_scanned} pairs."
             )
             if job_service and job_id:
                 job_service.add_log(
                     job_id,
-                    f"Error: No valid similarity edges found after parsing {len(pairs)} pairs. Check filters.",
+                    f"Error: No valid similarity edges found after parsing {edge_set.n_scanned} pairs. Check filters.",
                 )
             return True
 
         num_nodes = len(id_to_idx)
-        msg = f"Building graph with {num_nodes} functions and {len(edges)} similarity edges..."
+        msg = f"Building graph with {num_nodes} functions and {edge_set.src.size} similarity edges..."
         logging.info(f"[*] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
+        mem_util.phase(f"after building {edge_set.src.size} edges", job_service, job_id)
 
         # 3. Connected Components and Local HDBSCAN
-        import scipy.sparse as sp
         from scipy.sparse.csgraph import connected_components
         import pandas as pd
 
@@ -216,17 +156,10 @@ class ClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        rows = []
-        cols = []
-        data = []
-        for i, j, d in edges:
-            if d < 1.0:  # Only real similarity edges
-                rows.extend([i, j])
-                cols.extend([j, i])
-                data.extend([1, 1])
-
-        adj_matrix = sp.csr_matrix((data, (rows, cols)), shape=(num_nodes, num_nodes))
+        adj_matrix = sim_edges.build_adjacency(edge_set, num_nodes)
+        mem_util.phase("after adjacency matrix", job_service, job_id)
         n_components, labels = connected_components(csgraph=adj_matrix, directed=False)
+        del adj_matrix
 
         comp_to_nodes = {}
         for i, comp_id in enumerate(labels):
@@ -234,23 +167,28 @@ class ClusterService:
                 comp_to_nodes[comp_id] = []
             comp_to_nodes[comp_id].append(i)
 
-        comp_to_edges = {}
-        for i, j, d in edges:
-            c = labels[i]
-            if c == labels[j]:
-                if c not in comp_to_edges:
-                    comp_to_edges[c] = []
-                comp_to_edges[c].append((i, j, d))
+        # Views into one sorted permutation rather than a dict of tuple lists,
+        # which was a third full copy of every edge.
+        comp_to_edges = sim_edges.group_edges_by_component(edge_set, labels)
+
+        mem_util.phase("after comp_to_edges", job_service, job_id)
 
         msg = f"Found {n_components} connected components. Running local HDBSCAN..."
         logging.info(f"[*] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
+        biggest = max((len(v) for v in comp_to_nodes.values()), default=0)
+        logging.info(f"[*] Largest connected component: {biggest} nodes")
 
         global_tree_rows = []
         global_root_id = num_nodes
         next_cluster_id = num_nodes + 1
         comp_roots = []
+
+        # One scratch buffer for global-index -> component-local-index, reused
+        # across components. Allocating it per component would reintroduce a
+        # per-component O(num_nodes) allocation.
+        gmap = np.full(num_nodes, -1, dtype=np.int32)
 
         start_fit = time.time()
 
@@ -264,22 +202,26 @@ class ClusterService:
             sub_id_to_global = {
                 i: global_idx for i, global_idx in enumerate(comp_nodes)
             }
-            global_to_sub_id = {
-                global_idx: i for i, global_idx in enumerate(comp_nodes)
-            }
+
+            # Global index -> position within this component, vectorised. The
+            # per-edge Python loop that did this built three more lists per
+            # component on top of the edge copy it was reading from.
+            comp_nodes_arr = np.asarray(comp_nodes, dtype=np.int32)
+            gmap[comp_nodes_arr] = np.arange(size, dtype=np.int32)
+            e_src, e_dst, e_dist = comp_to_edges.get(
+                comp_id, (_EMPTY_I, _EMPTY_I, _EMPTY_F)
+            )
+            ui = gmap[e_src]
+            vi = gmap[e_dst]
 
             if size >= 5000:
                 from scipy.sparse.linalg import svds
+                import scipy.sparse as sp
 
-                rows_sp, cols_sp, data_sp = [], [], []
-                if comp_id in comp_to_edges:
-                    for u, v, d in comp_to_edges[comp_id]:
-                        ui = global_to_sub_id[u]
-                        vi = global_to_sub_id[v]
-                        sim = 1.0 - d
-                        rows_sp.extend([ui, vi])
-                        cols_sp.extend([vi, ui])
-                        data_sp.extend([sim, sim])
+                sim = 1.0 - e_dist
+                rows_sp = np.concatenate([ui, vi])
+                cols_sp = np.concatenate([vi, ui])
+                data_sp = np.concatenate([sim, sim])
 
                 comp_matrix = sp.csr_matrix(
                     (data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32
@@ -301,15 +243,16 @@ class ClusterService:
                 )
                 clusterer.fit(embeddings)
             else:
-                sub_dist = np.ones((size, size), dtype=np.float32)
+                # float64 up front. HDBSCAN's precomputed path needs float64
+                # anyway, so building this float32 and converting at fit time
+                # held BOTH the 100 MB original and its 200 MB copy alive at
+                # size=5000 -- 300 MB where 200 MB does the same work.
+                sub_dist = np.ones((size, size), dtype=np.float64)
                 np.fill_diagonal(sub_dist, 0)
 
-                if comp_id in comp_to_edges:
-                    for u, v, d in comp_to_edges[comp_id]:
-                        ui = global_to_sub_id[u]
-                        vi = global_to_sub_id[v]
-                        sub_dist[ui, vi] = d
-                        sub_dist[vi, ui] = d
+                if ui.size:
+                    sub_dist[ui, vi] = e_dist
+                    sub_dist[vi, ui] = e_dist
 
                 clusterer = hdbscan.HDBSCAN(
                     min_cluster_size=min(min_cluster_size, size),
@@ -319,7 +262,7 @@ class ClusterService:
                     metric="precomputed",
                     gen_min_span_tree=True,
                 )
-                clusterer.fit(sub_dist.astype(np.float64))
+                clusterer.fit(sub_dist)
 
             local_tree_df = clusterer.condensed_tree_.to_pandas()
             if local_tree_df.empty:
@@ -331,9 +274,9 @@ class ClusterService:
             # Ensure local root maps to a single global internal ID
             local_root_sub = local_tree_df["parent"].min()
 
-            for _, row in local_tree_df.iterrows():
-                parent = int(row["parent"])
-                child = int(row["child"])
+            for row in local_tree_df.itertuples(index=False):
+                parent = int(row.parent)
+                child = int(row.child)
 
                 if parent not in sub_internal_to_global:
                     sub_internal_to_global[parent] = next_cluster_id
@@ -351,8 +294,8 @@ class ClusterService:
                     {
                         "parent": sub_internal_to_global[parent],
                         "child": global_child,
-                        "lambda_val": float(row["lambda_val"]),
-                        "child_size": int(row["child_size"]),
+                        "lambda_val": float(row.lambda_val),
+                        "child_size": int(row.child_size),
                     }
                 )
 
@@ -387,15 +330,15 @@ class ClusterService:
         # Root birth is 0
         root_id = tree_df["parent"].min()
         birth_lambdas = {root_id: 0.0}
-        for _, row in tree_df.iterrows():
-            if row["child_size"] > 1:
-                birth_lambdas[int(row["child"])] = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            if row.child_size > 1:
+                birth_lambdas[int(row.child)] = float(row.lambda_val)
 
         # 2. Death lambdas for all clusters (max lambda of any child)
         death_lambdas = {}
-        for _, row in tree_df.iterrows():
-            p = int(row["parent"])
-            l = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            p = int(row.parent)
+            l = float(row.lambda_val)
             if p not in death_lambdas or l > death_lambdas[p]:
                 death_lambdas[p] = l
 
@@ -424,11 +367,11 @@ class ClusterService:
         # Build a pruned tree DataFrame
         if pruned_clusters:
             pruned_rows = []
-            for _, row in tree_df.iterrows():
-                parent = int(row["parent"])
-                child = int(row["child"])
-                child_size = int(row["child_size"])
-                lambda_val = float(row["lambda_val"])
+            for row in tree_df.itertuples(index=False):
+                parent = int(row.parent)
+                child = int(row.child)
+                child_size = int(row.child_size)
+                lambda_val = float(row.lambda_val)
 
                 if parent in pruned_clusters:
                     ancestor = get_nearest_non_pruned_ancestor(parent)
@@ -461,14 +404,14 @@ class ClusterService:
         # Store cluster parent-child relationships for dendrogram
         cluster_tree_key = f"{collection}:cluster:tree_links:{algo}"
         tree_links = []
-        for _, row in tree_df.iterrows():
-            if int(row["child_size"]) > 1:
+        for row in tree_df.itertuples(index=False):
+            if int(row.child_size) > 1:
                 tree_links.append(
                     {
-                        "parent": int(row["parent"]),
-                        "child": int(row["child"]),
-                        "lambda": float(row["lambda_val"]),
-                        "size": int(row["child_size"]),
+                        "parent": int(row.parent),
+                        "child": int(row.child),
+                        "lambda": float(row.lambda_val),
+                        "size": int(row.child_size),
                     }
                 )
         r.set(cluster_tree_key, json.dumps(tree_links))
@@ -501,9 +444,9 @@ class ClusterService:
 
         # Pre-calculate leaf deaths
         leaf_death_lambdas = {}
-        for _, row in tree_df.iterrows():
-            if row["child_size"] == 1:
-                leaf_death_lambdas[int(row["child"])] = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            if row.child_size == 1:
+                leaf_death_lambdas[int(row.child)] = float(row.lambda_val)
 
         # Calculate stability for each hierarchical cluster
         for label, members in cluster_members.items():
@@ -671,11 +614,11 @@ class ClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        adj_sim = {i: {} for i in range(num_nodes)}
-        for u, v, d in edges:
-            sim = 1.0 - d
-            adj_sim[u][v] = sim
-            adj_sim[v][u] = sim
+        # CSR, not a dict of dicts. Measured on the real 11.3M-pair pool, the
+        # dict version held 1.08 GiB and took the run from 1.70 GiB to 2.78 GiB
+        # against a 3 GB cap -- the single largest structure left in clustering.
+        adj_sim = sim_edges.SimAdjacency(edge_set, num_nodes)
+        mem_util.phase("after adj_sim", job_service, job_id)
 
         total_clusters = len(cluster_members)
         msg = f"Enriching metadata for {total_clusters} hierarchical clusters..."
@@ -704,21 +647,7 @@ class ClusterService:
                 member_indices = [id_to_idx[fid] for fid in members]
                 n_members = len(members)
 
-                total_sim = 0.0
-                if n_members < 50:
-                    for i in range(n_members):
-                        u = member_indices[i]
-                        for j in range(i + 1, n_members):
-                            v = member_indices[j]
-                            total_sim += adj_sim[u].get(v, 0.0)
-                else:
-                    member_set = set(member_indices)
-                    for u in member_indices:
-                        for v, sim in adj_sim[u].items():
-                            if v in member_set:
-                                total_sim += sim
-                    total_sim /= 2.0
-
+                total_sim = adj_sim.cohesion_sum(member_indices)
                 cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
             else:
                 cohesion_score = 1.0
@@ -798,6 +727,12 @@ class ClusterService:
                 pool_cluster_list_key = f"global:pool:{pool_id}:cluster:list"
                 r.delete(pool_cluster_list_key)
                 r.sadd(pool_cluster_list_key, *[str(k) for k in cluster_members.keys()])
+
+        # Free the graph structures before propagation: even as CSR, adj_sim
+        # holds two entries per edge (~22M on the 11.3M-pair pool), and keeping
+        # it alive through the whole sim-index phase used to leave the worker
+        # swapping.
+        del adj_sim, comp_to_edges, edge_set, all_member_meta
 
         logging.info(f"Update sim indexes...")
 
@@ -915,13 +850,20 @@ class ClusterService:
         """Delete all index buckets for a field using its registry, then clear the registry."""
         r = self.r
         reg_key = f"{collection}:reg:{level}:{field}"
-        buckets = r.smembers(reg_key)
+        buckets = list(r.smembers(reg_key))
         if buckets:
-            pipe = r.pipeline(transaction=False)
-            for b_raw in buckets:
-                b = b_raw.decode() if isinstance(b_raw, bytes) else b_raw
-                pipe.delete(b)
-            pipe.execute()
+            t0 = time.time()
+            # ponytail: fixed 1000-cmd chunks; one giant pipeline here was a multi-minute
+            # silent stall on big collections. Tune if a round trip ever dominates.
+            for i in range(0, len(buckets), 1000):
+                pipe = r.pipeline(transaction=False)
+                for b_raw in buckets[i : i + 1000]:
+                    b = b_raw.decode() if isinstance(b_raw, bytes) else b_raw
+                    pipe.delete(b)
+                pipe.execute()
+            logging.info(
+                f"[*] Cleared {len(buckets)} {level}:{field} index buckets in {time.time() - t0:.1f}s"
+            )
         r.delete(reg_key)
 
     def _update_similarity_indexing(
@@ -933,14 +875,29 @@ class ClusterService:
         On build: fetches function cluster metadata and re-indexes each similarity if propagation is enabled.
         """
         r = self.r
+
+        phase_t = time.time()
+
+        def phase(msg):
+            """Log a phase boundary with the elapsed time of the previous phase."""
+            nonlocal phase_t
+            now = time.time()
+            logging.info(f"[*] sim-index: {msg} (prev phase {now - phase_t:.1f}s)")
+            phase_t = now
+            # This whole stage runs after the edge structures are freed, so it
+            # looked cheap and was not measured. On the 11.3M-pair pool it is
+            # where peak RSS actually lands, which is only visible with the
+            # phase markers on.
+            mem_util.phase(f"sim-index: {msg}", job_service, job_id)
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+
         # Pool sim keys are namespaced under global:pool:{id} WITHOUT the algo segment,
         # and pool member fids are full source-collection fids ({srccoll}:func:{md5}:{addr}),
         # not algo-relative clean ids. Non-pool keys carry :{algo}: and strip to clean ids.
         is_pool = collection.startswith("global:pool:")
         sim_score_key = (
-            f"{collection}:sim:score"
-            if is_pool
-            else f"{collection}:sim:score:{algo}"
+            f"{collection}:sim:score" if is_pool else f"{collection}:sim:score:{algo}"
         )
 
         from bsimvis.app.services.index_service import (
@@ -985,7 +942,17 @@ class ClusterService:
             return True
 
         # BUILD PATH
+        from bsimvis.app.services.config_service import config_service
+
+        if not config_service.get("clustering.propagate_sim_indexes", True):
+            phase(
+                "Sim cluster index propagation disabled "
+                "(clustering.propagate_sim_indexes=false) — skipping."
+            )
+            return True
+
         # 0. Wipe existing sim cluster indexes to avoid stale entries
+        phase("Wiping stale sim cluster indexes...")
         for orig, target in cluster_prop:
             self._clear_indexes_via_registry(collection, "sim", target)
         for f in cluster_prop_num:
@@ -993,8 +960,7 @@ class ClusterService:
         r.delete(f"{collection}:sim:best_cluster:{algo}")
 
         # 1. Pre-fetch all cluster metadata records matching {collection}:cluster:{algo}:*:meta
-        if job_service and job_id:
-            job_service.add_log(job_id, "Pre-fetching cluster metadata records...")
+        phase("Pre-fetching cluster metadata records...")
 
         cluster_meta_map = {}
         cluster_list_key = f"{collection}:cluster:list:{algo}"
@@ -1019,12 +985,13 @@ class ClusterService:
                 if cursor == 0:
                     break
 
-        if meta_keys:
+        for i in range(0, len(meta_keys), 1000):
+            chunk_keys = meta_keys[i : i + 1000]
             c_pipe = r.pipeline(transaction=False)
-            for k in meta_keys:
+            for k in chunk_keys:
                 c_pipe.get(k)
             res_list = c_pipe.execute()
-            for k, res in zip(meta_keys, res_list):
+            for k, res in zip(chunk_keys, res_list):
                 if res:
                     cm = json.loads(res) if not isinstance(res, dict) else res
                     if isinstance(cm, str):
@@ -1034,16 +1001,17 @@ class ClusterService:
                         cluster_meta_map[cid] = cm
 
         # 2. Fetch function cluster metadata into memory (only for clustered functions)
-        if job_service and job_id:
-            job_service.add_log(
-                job_id, "Fetching function metadata for similarity re-indexing..."
-            )
+        phase(
+            f"Reading members of {len(cluster_meta_map)} clusters "
+            "for similarity re-indexing..."
+        )
 
         # First, gather all clustered function IDs by reading the members of all discovered clusters
         clustered_funcs_set = set()
-        if cluster_meta_map:
+        cid_list = list(cluster_meta_map.keys())
+        for i in range(0, len(cid_list), 1000):
             m_pipe = r.pipeline(transaction=False)
-            for cid in cluster_meta_map.keys():
+            for cid in cid_list[i : i + 1000]:
                 m_pipe.smembers(f"{collection}:cluster:{algo}:{cid}:members")
             for mem_set in m_pipe.execute():
                 if mem_set:
@@ -1054,8 +1022,13 @@ class ClusterService:
 
         func_meta = {}
         funcs_list = list(clustered_funcs_set)
+        phase(f"Fetching cluster assignments for {len(funcs_list)} functions...")
 
         for i in range(0, len(funcs_list), 1000):
+            if i and i % 20000 == 0:
+                logging.info(
+                    f"[*] sim-index: cluster assignments {i}/{len(funcs_list)}"
+                )
             chunk = funcs_list[i : i + 1000]
             pipe = r.pipeline(transaction=False)
             for fid_raw in chunk:
@@ -1130,47 +1103,18 @@ class ClusterService:
                 # Pool fids are already the involves-index key form; non-pool strip the prefix.
                 clustered_clean_ids.add(fid if is_pool else fid[len(func_prefix) :])
 
-        if job_service and job_id:
-            job_service.add_log(
-                job_id,
-                f"Fetching similarity candidates for {len(clustered_clean_ids)} clustered functions...",
-            )
-
         prefix = f"{collection}:sim:" if is_pool else f"{collection}:sim:{algo}:"
-        candidate_sids = set()
         clean_ids_list = list(clustered_clean_ids)
-        involves_pipe = r.pipeline(transaction=False)
-
-        for i in range(0, len(clean_ids_list), 1000):
-            chunk = clean_ids_list[i : i + 1000]
-            for c1 in chunk:
-                involves_pipe.smembers(f"{collection}:sim:involves:func:{c1}")
-            results = involves_pipe.execute()
-            for res in results:
-                if res:
-                    for sid_raw in res:
-                        sid = (
-                            sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
-                        )
-                        if sid.startswith(prefix):
-                            candidate_sids.add(sid)
-
-        total_candidates = len(candidate_sids)
+        total_funcs = len(clean_ids_list)
         total_sims = r.zcard(sim_score_key) or 0
         processed = 0
         indexed = 0
 
-        if job_service and job_id:
-            job_service.add_log(
-                job_id,
-                f"Propagating cluster indexes to {total_candidates} candidate similarities "
-                f"(out of {total_sims} total sims)...",
-            )
-            logging.info(
-                f"[*] Starting similarity index propagation for {total_candidates} candidates..."
-            )
+        phase(
+            f"Propagating cluster indexes from {total_funcs} clustered functions "
+            f"(out of {total_sims} total sims)..."
+        )
 
-        candidate_list = list(candidate_sids)
         update_pipe = r.pipeline(transaction=False)
 
         start_prop = time.time()
@@ -1201,12 +1145,37 @@ class ClusterService:
             num_zsets.clear()
             best_cluster_map.clear()
 
-        for idx, sid in enumerate(candidate_list):
-            id_part = sid[len(prefix) :]
-            if "::" not in id_part:
-                continue
-            c1, c2 = id_part.split("::")
+        def iter_candidates():
+            """Stream (sid, c1, c2) from the involves index, 1000 functions at a time.
 
+            ponytail: deliberately no global candidate set. Materializing all sim ids
+            (7M on a real collection) cost ~2GB and swapped the worker to a standstill.
+            Each sim is emitted exactly once, by accepting it only from the involves
+            set of its first endpoint — c1's set always contains it.
+            """
+            for i in range(0, total_funcs, 1000):
+                if i and i % 50000 == 0:
+                    logging.info(f"[*] sim-index: involves scan {i}/{total_funcs}")
+                chunk = clean_ids_list[i : i + 1000]
+                scan_pipe = r.pipeline(transaction=False)
+                for c in chunk:
+                    scan_pipe.smembers(f"{collection}:sim:involves:func:{c}")
+                for c, res in zip(chunk, scan_pipe.execute()):
+                    for sid_raw in res or ():
+                        sid = (
+                            sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
+                        )
+                        if not sid.startswith(prefix):
+                            continue
+                        id_part = sid[len(prefix) :]
+                        if "::" not in id_part:
+                            continue
+                        c1, c2 = id_part.split("::")
+                        # Skip here when c is the second endpoint: c1's own set emits it.
+                        if c1 == c:
+                            yield sid, c1, c2
+
+        for sid, c1, c2 in iter_candidates():
             # Skip if either function is not clustered
             if c1 not in clustered_clean_ids or c2 not in clustered_clean_ids:
                 continue
@@ -1254,16 +1223,24 @@ class ClusterService:
             if processed % 5000 == 0:
                 flush_batch()
                 update_pipe = r.pipeline(transaction=False)
+                logging.info(
+                    f"[*] sim-index: propagated {processed}/~{total_sims} "
+                    f"({time.time() - start_prop:.1f}s)"
+                )
+                if processed % 500_000 == 0:
+                    mem_util.phase(
+                        f"sim-index: propagated {processed}", job_service, job_id
+                    )
                 if job_service and job_id:
                     pct = (
-                        int((processed / total_candidates) * 100)
-                        if total_candidates > 0
+                        min(int((processed / total_sims) * 100), 99)
+                        if total_sims > 0
                         else 100
                     )
                     job_service.update_progress(
                         job_id,
                         pct,
-                        f"Scanning similarities: {processed}/{total_candidates} ({indexed} indexed)",
+                        f"Scanning similarities: {processed}/~{total_sims} ({indexed} indexed)",
                     )
 
         flush_batch()
@@ -1475,68 +1452,40 @@ class ClusterService:
                 f"[*] Fetching pool binary similarity pairs from {sim_score_key}",
             )
 
-        pairs = []
-        cursor = 0
-        while True:
-            cursor, results = r.zscan(sim_score_key, cursor=cursor, count=1000)
-            for sid, score in results:
-                pairs.append((sid.decode() if isinstance(sid, bytes) else sid, score))
-            if cursor == 0:
-                break
+        # Each half is "<coll>:<md5>", rebuilt as "<coll>:file:<md5>".
+        def _pool_bin_ids(c1, c2):
+            p1, p2 = c1.split(":"), c2.split(":")
+            if len(p1) < 2 or len(p2) < 2:
+                return None
+            return f"{p1[0]}:file:{p1[1]}", f"{p2[0]}:file:{p2[1]}"
 
-        if not pairs:
+        # Streamed into typed arrays instead of a `pairs` list plus an `edges`
+        # list. See sim_edges: that pattern cost 2.15 GiB on a real 5.4M-pair
+        # set, against a 3 GB per-worker cap.
+        edge_set = sim_edges.load_edges(
+            r,
+            sim_score_key,
+            prefix,
+            True,
+            None,
+            min_sim=min_sim,
+            id_fn=_pool_bin_ids,
+        )
+        id_to_idx = edge_set.id_to_idx
+        idx_to_id = edge_set.idx_to_id
+
+        if edge_set.n_scanned == 0:
             logging.warning(f"No binary similarity pairs found for pool {pool_id}")
             return True
 
-        id_to_idx = {}
-        idx_to_id = {}
-        edges = []
-
-        for sid, score in pairs:
-            if not sid.startswith(prefix):
-                continue
-            ids_part = sid[len(prefix) :]
-            if "::" not in ids_part:
-                continue
-            parts = ids_part.split("::")
-            if len(parts) != 2:
-                continue
-
-            p1 = parts[0].split(":")
-            p2 = parts[1].split(":")
-            if len(p1) < 2 or len(p2) < 2:
-                continue
-            file_id1 = f"{p1[0]}:file:{p1[1]}"
-            file_id2 = f"{p2[0]}:file:{p2[1]}"
-
-            for fid in [file_id1, file_id2]:
-                if fid not in id_to_idx:
-                    idx = len(id_to_idx)
-                    id_to_idx[fid] = idx
-                    idx_to_id[idx] = fid
-
-            score_val = float(score)
-            if min_sim > 0 and score_val < min_sim:
-                continue
-
-            dist = max(0, 1.0 - score_val)
-            edges.append((id_to_idx[file_id1], id_to_idx[file_id2], dist))
-
-        if not edges:
+        if edge_set.src.size == 0:
             logging.warning(f"No valid edges for pool {pool_id} after filtering.")
             return True
 
         num_nodes = len(id_to_idx)
 
         # Split into connected components (same as BinClusterService.run_clustering)
-        rows, cols, data = [], [], []
-        for i, j, d in edges:
-            if d < 1.0:  # Only real similarity edges
-                rows.extend([i, j])
-                cols.extend([j, i])
-                data.extend([1, 1])
-
-        adj_matrix = sp.csr_matrix((data, (rows, cols)), shape=(num_nodes, num_nodes))
+        adj_matrix = sim_edges.build_adjacency(edge_set, num_nodes)
         n_components, comp_labels = connected_components(
             csgraph=adj_matrix, directed=False
         )
@@ -1545,11 +1494,8 @@ class ClusterService:
         for i, comp_id in enumerate(comp_labels):
             comp_to_nodes.setdefault(comp_id, []).append(i)
 
-        comp_to_edges = {}
-        for i, j, d in edges:
-            c = comp_labels[i]
-            if c == comp_labels[j]:
-                comp_to_edges.setdefault(c, []).append((i, j, d))
+        # Views into one sorted permutation, not a dict of tuple lists.
+        comp_to_edges = sim_edges.group_edges_by_component(edge_set, comp_labels)
 
         if job_service and job_id:
             job_service.add_log(
@@ -1562,6 +1508,9 @@ class ClusterService:
         next_cluster_id = num_nodes + 1
         comp_roots = []
 
+        # Reused scratch: global index -> component-local index.
+        gmap_pb = np.full(num_nodes, -1, dtype=np.int32)
+
         for comp_id, comp_nodes in comp_to_nodes.items():
             size = len(comp_nodes)
             if size < min_cluster_size:
@@ -1570,14 +1519,40 @@ class ClusterService:
                 continue
 
             sub_id_to_global = {i: g for i, g in enumerate(comp_nodes)}
-            global_to_sub_id = {g: i for i, g in enumerate(comp_nodes)}
 
-            sub_dist = np.ones((size, size), dtype=np.float32)
+            # Unlike the function clustering paths, this one has no sparse
+            # fallback for big components -- it always builds a dense size^2
+            # float64 matrix. 0.8 GiB at 10k nodes, 3.2 GiB at 20k: an OOM kill
+            # with no warning. Refuse instead, and say why.
+            if size > CLUSTER_MAX_COMPONENT:
+                msg = (
+                    f"Pool binary component {comp_id} has {size} files; a dense "
+                    f"distance matrix would need {size * size * 8 / 1024**3:.1f} GiB. "
+                    f"Above CLUSTER_MAX_COMPONENT={CLUSTER_MAX_COMPONENT}, so its "
+                    f"files are left unclustered rather than OOM-killing the worker."
+                )
+                logging.warning(f"[!] {msg}")
+                if job_service and job_id:
+                    job_service.add_log(job_id, msg)
+                for node in comp_nodes:
+                    comp_roots.append((node, 1))
+                continue
+
+            # float64 up front; see run_clustering above. Building float32 and
+            # converting at fit time kept both matrices alive at once.
+            sub_dist = np.ones((size, size), dtype=np.float64)
             np.fill_diagonal(sub_dist, 0)
-            for u, v, d in comp_to_edges.get(comp_id, []):
-                ui, vi = global_to_sub_id[u], global_to_sub_id[v]
-                sub_dist[ui, vi] = d
-                sub_dist[vi, ui] = d
+
+            comp_nodes_arr = np.asarray(comp_nodes, dtype=np.int32)
+            gmap_pb[comp_nodes_arr] = np.arange(size, dtype=np.int32)
+            e_src, e_dst, e_dist = comp_to_edges.get(
+                comp_id, (_EMPTY_I, _EMPTY_I, _EMPTY_F)
+            )
+            if e_src.size:
+                ui = gmap_pb[e_src]
+                vi = gmap_pb[e_dst]
+                sub_dist[ui, vi] = e_dist
+                sub_dist[vi, ui] = e_dist
 
             clusterer = hdbscan.HDBSCAN(
                 min_cluster_size=min(min_cluster_size, size),
@@ -1587,7 +1562,7 @@ class ClusterService:
                 metric="precomputed",
                 gen_min_span_tree=True,
             )
-            clusterer.fit(sub_dist.astype(np.float64))
+            clusterer.fit(sub_dist)
 
             local_tree_df = clusterer.condensed_tree_.to_pandas()
             if local_tree_df.empty:
@@ -1598,9 +1573,9 @@ class ClusterService:
             sub_internal_to_global = {}
             local_root_sub = local_tree_df["parent"].min()
 
-            for _, row in local_tree_df.iterrows():
-                parent = int(row["parent"])
-                child = int(row["child"])
+            for row in local_tree_df.itertuples(index=False):
+                parent = int(row.parent)
+                child = int(row.child)
                 if parent not in sub_internal_to_global:
                     sub_internal_to_global[parent] = next_cluster_id
                     next_cluster_id += 1
@@ -1615,8 +1590,8 @@ class ClusterService:
                     {
                         "parent": sub_internal_to_global[parent],
                         "child": global_child,
-                        "lambda_val": float(row["lambda_val"]),
-                        "child_size": int(row["child_size"]),
+                        "lambda_val": float(row.lambda_val),
+                        "child_size": int(row.child_size),
                     }
                 )
 
@@ -1640,14 +1615,14 @@ class ClusterService:
         r.set(tree_key, tree_json)
 
         tree_links = []
-        for _, row in tree_df.iterrows():
-            if int(row["child_size"]) > 1:
+        for row in tree_df.itertuples(index=False):
+            if int(row.child_size) > 1:
                 tree_links.append(
                     {
-                        "parent": int(row["parent"]),
-                        "child": int(row["child"]),
-                        "lambda": float(row["lambda_val"]),
-                        "size": int(row["child_size"]),
+                        "parent": int(row.parent),
+                        "child": int(row.child),
+                        "lambda": float(row.lambda_val),
+                        "size": int(row.child_size),
                     }
                 )
         r.set(
@@ -1675,14 +1650,14 @@ class ClusterService:
 
         # Stability
         birth_lambdas = {root_id: 0.0}
-        for _, row in tree_df.iterrows():
-            if row["child_size"] > 1:
-                birth_lambdas[int(row["child"])] = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            if row.child_size > 1:
+                birth_lambdas[int(row.child)] = float(row.lambda_val)
 
         leaf_death_lambdas = {}
-        for _, row in tree_df.iterrows():
-            if row["child_size"] == 1:
-                leaf_death_lambdas[int(row["child"])] = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            if row.child_size == 1:
+                leaf_death_lambdas[int(row.child)] = float(row.lambda_val)
 
         stabilities = {}
         for label, members in cluster_members.items():
@@ -1693,12 +1668,9 @@ class ClusterService:
             )
             stabilities[label] = total_area
 
-        # Sparse adjacency for cohesion
-        adj_sim = {i: {} for i in range(num_nodes)}
-        for u, v, d in edges:
-            sim = 1.0 - d
-            adj_sim[u][v] = sim
-            adj_sim[v][u] = sim
+        # Sparse adjacency for cohesion. CSR rather than a dict of dicts -- see
+        # sim_edges.SimAdjacency.
+        adj_sim = sim_edges.SimAdjacency(edge_set, num_nodes)
 
         # Generate cluster UUIDs first
         label_to_uuid = {c: f"{uuid.uuid4().hex[:12]}" for c in cluster_members.keys()}
@@ -1804,11 +1776,7 @@ class ClusterService:
             n_members = len(members)
             if n_members > 1:
                 member_indices = [id_to_idx[fid] for fid in members]
-                total_sim = sum(
-                    adj_sim[member_indices[i]].get(member_indices[j], 0.0)
-                    for i in range(n_members)
-                    for j in range(i + 1, n_members)
-                )
+                total_sim = adj_sim.cohesion_sum(member_indices)
                 cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
             else:
                 cohesion_score = 1.0

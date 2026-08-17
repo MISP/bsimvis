@@ -161,6 +161,16 @@ bulk_metadata_propagate_model = api.model(
     },
 )
 
+stage_metadata_model = api.model(
+    "StageBatchMetadata",
+    {
+        "batch_uuid": fields.String(required=True, description="Batch UUID"),
+        "updates": fields.Raw(
+            required=True, description="Mapping of MD5 to metadata dictionary"
+        ),
+    },
+)
+
 # Similarity Models
 similarity_build_model = api.model(
     "SimilarityBuild",
@@ -341,6 +351,34 @@ class IndexStatus(Resource):
         return get_index_status()
 
 
+@ns_index.route("/home/stats")
+class HomeStats(Resource):
+    def get(self):
+        """Instance-wide counters (files, functions, collections, pools) plus job queue health."""
+        from bsimvis.app.routes.home import get_home_stats
+
+        return get_home_stats()
+
+
+@ns_index.route("/home/insights")
+class HomeInsights(Resource):
+    @ns_index.doc(params={"refresh": "true to bypass the 120s cache"})
+    def get(self):
+        """Heavier homepage panels: top tags, biggest binary clusters, recent batches (cached 120s)."""
+        from bsimvis.app.routes.home import get_home_insights
+
+        return get_home_insights()
+
+
+@ns_index.route("/languages")
+class IndexLanguages(Resource):
+    def get(self):
+        """Lists Ghidra language IDs and the compiler specs valid for each."""
+        from bsimvis.app.routes.index import get_languages
+
+        return get_languages()
+
+
 @ns_index.route("/config")
 class IndexConfig(Resource):
     def get(self):
@@ -405,6 +443,27 @@ class JobDetail(Resource):
         return get_job(job_id)
 
 
+@ns_jobs.route("/pause")
+class JobPause(Resource):
+    def get(self):
+        """Returns whether workers are currently paused."""
+        from bsimvis.app.routes.jobs import get_pause_state
+
+        return get_pause_state()
+
+    def post(self):
+        """Pauses the fleet: workers finish their current job and claim no more."""
+        from bsimvis.app.routes.jobs import pause_jobs
+
+        return pause_jobs()
+
+    def delete(self):
+        """Resumes the fleet."""
+        from bsimvis.app.routes.jobs import resume_jobs
+
+        return resume_jobs()
+
+
 @ns_jobs.route("/all/cancel")
 class JobCancelAll(Resource):
     def post(self):
@@ -429,6 +488,33 @@ class JobCancel(Resource):
         from bsimvis.app.routes.jobs import cancel_job
 
         return cancel_job(job_id)
+
+
+@ns_jobs.route("/<string:job_id>/pause")
+class JobPauseOne(Resource):
+    @ns_jobs.doc(
+        params={
+            "job_id": {
+                "description": "Job, group or pipeline UUID to hold back",
+                "example": "7b8e23af-4b2a-4e6c-8a1d-3c9f2b1a0e5d",
+            }
+        }
+    )
+    def post(self, job_id):
+        """Pauses one job/group/pipeline. Other jobs keep being processed.
+
+        A running leaf finishes first; nothing underneath the paused job is
+        claimed again until it is resumed.
+        """
+        from bsimvis.app.routes.jobs import pause_job
+
+        return pause_job(job_id)
+
+    def delete(self, job_id):
+        """Resumes a paused job/group/pipeline."""
+        from bsimvis.app.routes.jobs import resume_job
+
+        return resume_job(job_id)
 
 
 @ns_jobs.route("/<string:job_id>/retry")
@@ -737,10 +823,21 @@ class RawFileUpload(Resource):
             "min_features": "Minimum feature count required",
             "algo": "Similarity algorithm (jaccard, unweighted_cosine, milvus_sparse)",
             "skip_sim": "Set to true to skip building similarities",
+            "archive_password": "Password for an uploaded zip archive (default: infected)",
+            "unpack": "Set to false to analyze the upload exactly as-is (default: true)",
+            "parent_md5": "md5 of the container this file was extracted from",
+            "parent_file_name": "File name of the declared parent_md5 container",
+            "path_in_parent": "Path of this file inside the declared parent container",
         }
     )
     def post(self):
-        """Uploads a raw binary file for server-side analysis."""
+        """Uploads a raw binary, an archive/APK, or a packed executable.
+
+        Archives, APKs and fat Mach-O binaries are unpacked and every binary
+        inside is analyzed; a UPX-packed executable is analyzed both packed and
+        unpacked. Everything unpacked is tagged with the format it came from
+        (packer:upx, container:apk, ...) and carries the parent's md5.
+        """
         from bsimvis.app.routes.file import upload_raw_binary
 
         return upload_raw_binary()
@@ -764,6 +861,24 @@ class BatchFinalize(Resource):
         return finalize_batch_upload()
 
 
+@ns_file.route("/<string:file_md5>/lineage")
+class FileLineage(Resource):
+    @ns_file.doc(
+        params={"collection": "Collection name (default: main)"},
+        description=(
+            "Containment lineage for one file: the containers it came out of "
+            "(nearest first) and the files extracted out of it. Nodes carry an "
+            "`exists` flag, false for a container that was declared but never "
+            "uploaded."
+        ),
+    )
+    def get(self, file_md5):
+        """Returns the parents, ancestors and children of a file."""
+        from bsimvis.app.routes.file import get_file_lineage
+
+        return get_file_lineage(file_md5)
+
+
 @ns_file.route("/<string:file_md5>/metadata")
 class FileMetadata(Resource):
     @ns_file.doc(description="Updates metadata fields for a file and propagates them")
@@ -773,6 +888,23 @@ class FileMetadata(Resource):
         from bsimvis.app.routes.file import update_file_metadata
 
         return update_file_metadata(file_md5)
+
+
+@ns_file.route("/metadata/stage")
+class BatchMetadataStage(Resource):
+    @ns_file.doc(
+        description=(
+            "Stages a batch's MD5 -> metadata map. Uploads in that batch resolve "
+            "their own metadata by hash, including binaries that only exist after "
+            "server-side unpacking (archive members, UPX payloads, GPR programs)."
+        )
+    )
+    @ns_file.expect(stage_metadata_model)
+    def post(self):
+        """Stages a batch's MD5 -> metadata map for the ingest path."""
+        from bsimvis.app.routes.file import stage_batch_metadata
+
+        return stage_batch_metadata()
 
 
 @ns_file.route("/metadata/propagate")
@@ -853,7 +985,14 @@ class FunctionSearch(Resource):
             },
             "exclude_user_tag": {"description": "Exclude functions with this user tag"},
             "exclude_func_tag": {
-                "description": "Exclude functions with this function-level tag"
+                "description": (
+                    "Exclude functions with this function-level tag. "
+                    "Matching is exact on the tag value; hierarchical tags also "
+                    "match by namespace, so `origin:lib` excludes "
+                    "`origin:lib:uclibc:0.9:seekdir`. "
+                    "Use `*` for wildcards (`origin:lib*`, `*uclibc*`) and wrap a value "
+                    'in double quotes to keep it literal ("DIR *").'
+                )
             },
             "exclude_func_static_tag": {
                 "description": "Exclude functions with this function-level static tag"
@@ -981,6 +1120,40 @@ class FeatureDetails(Resource):
 
 
 # --- Search Namespace ---
+@ns_search.route("/unified")
+class SearchUnified(Resource):
+    @ns_search.doc(
+        params={
+            "q": {"description": "Free-text query", "required": True},
+            "limit": "Max results per entity type (default: 5)",
+            "collection": "Restrict to these collections (repeatable). Default: all",
+            "max_collections": "Cap on collections fanned out to (default: unlimited)",
+        }
+    )
+    def get(self):
+        """Searches batches, files, functions, clusters, tags, features, collections and pools at once."""
+        from bsimvis.app.routes.home import unified_search
+
+        return unified_search()
+
+
+@ns_search.route("/unified/stream")
+class SearchUnifiedStream(Resource):
+    @ns_search.doc(
+        params={
+            "q": {"description": "Free-text query", "required": True},
+            "limit": "Max results per entity type (default: 5)",
+            "collection": "Restrict to these collections (repeatable). Default: all",
+            "max_collections": "Cap on collections fanned out to (default: unlimited)",
+        }
+    )
+    def get(self):
+        """Streams the same unified search as NDJSON, one group per line as it is found."""
+        from bsimvis.app.routes.home import unified_search_stream
+
+        return unified_search_stream()
+
+
 @ns_search.route("/autocomplete")
 class SearchAutocomplete(Resource):
     @ns_search.doc(
@@ -1349,6 +1522,62 @@ class TagList(Resource):
         return get_tags()
 
 
+@ns_tags.route("/provenance")
+class TagProvenance(Resource):
+    @ns_tags.doc(
+        params={
+            "tag": {
+                "description": "Tag id; repeat for several, or pass a comma-separated `tags`",
+                "required": True,
+                "example": "yara:trojan:mirai:Linux_Trojan_Mirai",
+            }
+        }
+    )
+    def get(self):
+        """Returns the rule each tag came from, with a link to its source."""
+        from bsimvis.app.routes.tags import get_tag_provenance
+
+        return get_tag_provenance()
+
+
+@ns_tags.route("/rule_source")
+class TagRuleSource(Resource):
+    @ns_tags.doc(
+        params={
+            "id": {
+                "description": "Rule id as returned by /tags/provenance",
+                "required": True,
+                "example": "000067b2-3e11-4ac7-889a-0dc05e0efe91",
+            }
+        }
+    )
+    def get(self):
+        """Returns one rule's own source text, read from the ruleset on disk."""
+        from bsimvis.app.routes.tags import get_rule_source
+
+        return get_rule_source()
+
+
+@ns_tags.route("/match_provenance")
+class TagMatchProvenance(Resource):
+    @ns_tags.expect(
+        api.model(
+            "TagMatchProvenance",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "entity_ids": fields.List(
+                    fields.String, required=True, example=["main:file:1234"]
+                ),
+            },
+        )
+    )
+    def post(self):
+        """Returns match metadata (rules) for a list of entities."""
+        from bsimvis.app.routes.tags import get_match_provenance
+
+        return get_match_provenance()
+
+
 @ns_tags.route("/add")
 class TagAdd(Resource):
     @ns_tags.expect(
@@ -1451,6 +1680,15 @@ class TagStats(Resource):
         return get_tag_stats()
 
 
+@ns_tags.route("/colors")
+class TagColorConfig(Resource):
+    def get(self):
+        """Returns the parameters tag colours are derived from."""
+        from bsimvis.app.routes.tags import get_color_config
+
+        return get_color_config()
+
+
 @ns_tags.route("/color")
 class TagSetColor(Resource):
     @ns_tags.expect(
@@ -1487,6 +1725,81 @@ class TagSetPriority(Resource):
         from bsimvis.app.routes.tags import set_priority
 
         return set_priority()
+
+
+@ns_tags.route("/list")
+class TagVocabularyList(Resource):
+    @ns_tags.doc(
+        params={
+            "collection": {"description": "Collection name", "required": True},
+            "q": {"description": "Substring filter on the tag name"},
+            "sort_by": {"description": "tag | priority | total_count | function_count"},
+            "sort_order": {"description": "asc | desc"},
+        }
+    )
+    def get(self):
+        """Lists the tag vocabulary with usage counts and the LLM flag."""
+        from bsimvis.app.routes.tags import list_tags
+
+        return list_tags()
+
+
+@ns_tags.route("/create")
+class TagCreate(Resource):
+    @ns_tags.expect(
+        api.model(
+            "TagCreate",
+            {
+                "collection": fields.String(required=True),
+                "tag": fields.String(required=True, example="crypto"),
+                "color": fields.String(example="#ff0000"),
+                "priority": fields.Integer(example=0),
+                "llm": fields.Boolean(example=True),
+            },
+        )
+    )
+    def post(self):
+        """Creates a tag in the vocabulary without tagging any entity."""
+        from bsimvis.app.routes.tags import create_tag
+
+        return create_tag()
+
+
+@ns_tags.route("/delete")
+class TagDelete(Resource):
+    @ns_tags.expect(
+        api.model(
+            "TagDelete",
+            {
+                "collection": fields.String(required=True),
+                "tag": fields.String(required=True),
+            },
+        )
+    )
+    def post(self):
+        """Deletes a tag AND strips it from every entity carrying it."""
+        from bsimvis.app.routes.tags import delete_tag
+
+        return delete_tag()
+
+
+@ns_tags.route("/llm")
+class TagSetLLM(Resource):
+    @ns_tags.expect(
+        api.model(
+            "TagSetLLM",
+            {
+                "collection": fields.String(required=True),
+                "tag": fields.String(required=True),
+                "llm": fields.Boolean(required=True),
+            },
+        )
+    )
+    def post(self):
+        """Includes or excludes a tag from the LLM tagging vocabulary."""
+        from bsimvis.app.routes.tags import set_llm_flag
+
+        return set_llm_flag()
 
 
 # --- Cluster Namespace ---
@@ -1890,6 +2203,16 @@ class BinSimRebuild(Resource):
         return rebuild_bin_sim()
 
 
+@ns_bin_sim.route("/resplit")
+class BinSimResplit(Resource):
+    @ns_bin_sim.expect(bin_sim_clear_model)
+    def post(self):
+        """Recomputes the tag split of stored pairs (cheap; no rebuild)."""
+        from bsimvis.app.routes.bin_sim import resplit_bin_sim
+
+        return resplit_bin_sim()
+
+
 @ns_bin_sim.route("/clear")
 class BinSimClear(Resource):
     @ns_bin_sim.expect(bin_sim_clear_model)
@@ -1930,6 +2253,11 @@ class BinSimList(Resource):
             "md5": "Target binary MD5",
             "limit": "Max results",
             "offset": "Pagination offset",
+            "group": (
+                "Set to 'container' to fold every match that was extracted from "
+                "a container into that container's row, as `children`. Ignored "
+                "for pools."
+            ),
         }
     )
     def get(self):
@@ -1981,6 +2309,21 @@ class BinSimSearch(Resource):
             "max_coverage_b": {"description": "Maximum coverage for binary B"},
             "min_shared": {"description": "Minimum shared clusters", "example": 5},
             "max_shared": {"description": "Maximum shared clusters"},
+            "min_funcs": {
+                "description": "Minimum function count — both sides must reach it",
+                "example": 20,
+            },
+            "max_funcs": {
+                "description": "Maximum function count — both sides must stay under it"
+            },
+            "containers": {
+                "description": (
+                    "Container membership of the pair: 'both' (both sides are "
+                    "containers), 'any' (at least one), 'none' (plain files only). "
+                    "Empty = no filter."
+                ),
+                "example": "both",
+            },
             "sort_by": {
                 "description": "Sort by: score (default), coverage_a, coverage_b, shared_clusters, computed_at"
             },
@@ -2155,6 +2498,55 @@ class LLMSummarizeFile(Resource):
         return summarize_file()
 
 
+@ns_llm.route("/batch")
+class LLMBatch(Resource):
+    @ns_llm.expect(
+        api.model(
+            "LLMBatchRequest",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "func_ids": fields.List(
+                    fields.String, description="Explicit function ids"
+                ),
+                "filters": fields.String(
+                    description="Function-search query string, resolved server-side "
+                    "(alternative to func_ids)",
+                    example="file_md5=16c2addf...&min_features=10",
+                ),
+                "actions": fields.List(
+                    fields.String, enum=["notes", "tags"], example=["notes", "tags"]
+                ),
+                "overwrite": fields.Boolean(default=False),
+                "custom_prompt": fields.String,
+                "tag_vocabulary": fields.List(fields.String),
+            },
+        )
+    )
+    def post(self):
+        """Starts a background LLM enrichment job (notes and/or tags) over functions."""
+        from bsimvis.app.routes.llm import batch
+
+        return batch()
+
+
+@ns_llm.route("/batch/<string:job_id>")
+class LLMBatchStatus(Resource):
+    def get(self, job_id):
+        """Returns progress, per-function state and errors for an LLM batch job."""
+        from bsimvis.app.routes.llm import batch_status
+
+        return batch_status(job_id)
+
+
+@ns_llm.route("/batch/<string:job_id>/cancel")
+class LLMBatchCancel(Resource):
+    def post(self, job_id):
+        """Cancels an LLM batch job."""
+        from bsimvis.app.routes.llm import batch_cancel
+
+        return batch_cancel(job_id)
+
+
 # --- Pool Namespace ---
 
 pool_func_sim_params_model = api.model(
@@ -2231,7 +2623,9 @@ class PoolList(Resource):
                 "example": "mirai",
             },
             "name": {"description": "Substring filter on pool name"},
-            "sync_status": {"description": "Exact sync status: current | outdated | created"},
+            "sync_status": {
+                "description": "Exact sync status: current | outdated | created"
+            },
             "sort_by": {
                 "description": "name | id | created_at | last_built_at | sync_status | count fields",
                 "example": "created_at",
@@ -2277,7 +2671,11 @@ class PoolDetail(Resource):
 
         return delete_pool(pool_id)
 
-    @ns_pool.expect(api.model("PoolUpdate", {"name": fields.String(required=True, example="New Name")}))
+    @ns_pool.expect(
+        api.model(
+            "PoolUpdate", {"name": fields.String(required=True, example="New Name")}
+        )
+    )
     def put(self, pool_id):
         """Updates the pool's name."""
         from bsimvis.app.routes.pools import edit_pool

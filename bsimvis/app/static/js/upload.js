@@ -148,6 +148,10 @@ function renderUploadView(params) {
                 </div>
             </div>
 
+            <div id="upload-progress-container" style="margin-bottom: 40px; display: none; background: var(--border); border: 1px solid var(--border); border-radius: 8px; padding: 25px;">
+                ${uploadProgressPanelMarkup()}
+            </div>
+
             <div class="upload-grid" style="display: grid; grid-template-columns: 1fr 1.2fr; gap: 40px;">
                 <div class="upload-settings-panel" style="display: flex; flex-direction: column; gap: 10px;">
                     <details open style="background: var(--hover); border: 1px solid var(--border); border-radius: 8px;">
@@ -260,10 +264,6 @@ function renderUploadView(params) {
                         </div>
                     </div>
                 </div>
-            </div>
-
-            <div id="upload-progress-container" style="margin-top: 40px; display: none; background: var(--border); border: 1px solid var(--border); border-radius: 8px; padding: 25px;">
-                ${uploadProgressPanelMarkup()}
             </div>
         </div>
     `;

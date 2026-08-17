@@ -263,18 +263,7 @@ function renderUploadView(params) {
             </div>
 
             <div id="upload-progress-container" style="margin-top: 40px; display: none; background: var(--border); border: 1px solid var(--border); border-radius: 8px; padding: 25px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                    <h3 style="color: var(--accent); font-size: 1rem; margin: 0; display: flex; align-items: center; gap: 10px;">
-                        <div class="nav-job-spinner" id="global-upload-spinner" style="margin:0"></div>
-                        Batch Upload Progress
-                    </h3>
-                    <div id="global-progress-text" style="font-size: 0.85rem; font-weight: bold; color: var(--accent);">0%</div>
-                </div>
-                <div class="job-progress-track" style="height: 10px; margin-bottom: 25px; background: var(--hover);">
-                    <div id="global-progress-fill" class="job-progress-fill progress-running" style="width: 0%;"></div>
-                </div>
-                <div id="upload-progress-list" style="display: flex; flex-direction: column; gap: 12px; max-height: 400px; overflow-y: auto; padding-right: 10px;">
-                </div>
+                ${uploadProgressPanelMarkup()}
             </div>
         </div>
     `;
@@ -411,6 +400,23 @@ function refreshUploadCspecs() {
         : 'No compiler specs for this language';
 }
 
+function uploadProgressPanelMarkup() {
+    return `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h3 style="color: var(--accent); font-size: 1rem; margin: 0; display: flex; align-items: center; gap: 10px;">
+                <div class="nav-job-spinner" id="global-upload-spinner" style="margin:0"></div>
+                Batch Upload Progress
+            </h3>
+            <div id="global-progress-text" style="font-size: 0.85rem; font-weight: bold; color: var(--accent);">0%</div>
+        </div>
+        <div class="job-progress-track" style="height: 10px; margin-bottom: 25px; background: var(--hover);">
+            <div id="global-progress-fill" class="job-progress-fill progress-running" style="width: 0%;"></div>
+        </div>
+        <div id="upload-progress-list" style="display: flex; flex-direction: column; gap: 12px; max-height: 400px; overflow-y: auto; padding-right: 10px;">
+        </div>
+    `;
+}
+
 function setupUploadEvents() {
     const dropZone = document.getElementById('upload-drop-zone');
     const fileInput = document.getElementById('upload-file-input');
@@ -476,10 +482,10 @@ function clearUploadList() {
     const progContainer = document.getElementById('upload-progress-container');
     if (progContainer) {
         progContainer.style.display = 'none';
-        // Remove go-to-collection footer so it doesn't persist into a new session
-        const goBtn = document.getElementById('go-to-collection-btn');
-        if (goBtn) goBtn.closest('div[style*="border-top"]')?.remove();
+        progContainer.innerHTML = uploadProgressPanelMarkup();
     }
+    const topGoBtn = document.getElementById('top-go-to-collection-btn');
+    if (topGoBtn) topGoBtn.style.display = 'none';
     const startBtn = document.getElementById('start-upload-btn');
     if (startBtn) {
         startBtn.disabled = false;
@@ -697,23 +703,50 @@ async function startBatchUpload() {
     const uploadView = document.getElementById('upload-view-container');
     if (uploadView) uploadView.dataset.context = collection;
 
-    // Show "Go to Collection" button once upload is done
+    // Wire the top-of-page CTA to jump straight to the collection.
     const collectionUrl = `/collections/${encodeURIComponent(collection)}`;
-    const progressContainer = document.getElementById('upload-progress-container');
-    if (progressContainer && !document.getElementById('go-to-collection-btn')) {
-        const goBtn = document.createElement('div');
-        goBtn.style.cssText = 'margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;';
-        goBtn.innerHTML = `
-            <span style="font-size: 0.8rem; color: var(--subtle);">
-                <i class="fa-solid fa-layer-group" style="margin-right: 6px;"></i>
-                Uploaded to <b style="color: var(--text);">${escapeHtml(collection)}</b>
-            </span>
-            <button id="go-to-collection-btn" onclick="Nav.openPath(${escapeAttr(jsString(collectionUrl))})" class="btn-primary" style="height: 34px; padding: 0 16px; font-size: 0.8rem; display: flex; align-items: center; gap: 8px;">
-                <i class="fa-solid fa-arrow-right"></i> Go to Collection
-            </button>
-        `;
-        progressContainer.appendChild(goBtn);
+    const topGoBtn = document.getElementById('top-go-to-collection-btn');
+    if (topGoBtn) {
+        topGoBtn.style.display = 'inline-flex';
+        topGoBtn.onclick = () => Nav.openPath(collectionUrl);
     }
+
+    showUploadSuccessScreen(collection, results.length, selectedFiles.length);
+}
+
+function showUploadSuccessScreen(collection, succeeded, total) {
+    const collectionUrl = `/collections/${encodeURIComponent(collection)}`;
+    const jobsUrl = `/collections/${encodeURIComponent(collection)}/jobs`;
+    const filesUrl = `/collections/${encodeURIComponent(collection)}/files`;
+    const progressContainer = document.getElementById('upload-progress-container');
+    if (!progressContainer) return;
+
+    const failed = total - succeeded;
+    progressContainer.innerHTML = `
+        <div style="text-align: center; padding: 20px 10px;">
+            <i class="fa-solid ${failed === 0 ? 'fa-circle-check' : 'fa-triangle-exclamation'}" style="font-size: 3rem; color: ${failed === 0 ? 'var(--success)' : '#ffb020'}; margin-bottom: 15px;"></i>
+            <h3 style="margin: 0 0 8px 0; color: var(--text);">
+                ${failed === 0 ? `Uploaded ${succeeded} binaries successfully` : `Uploaded ${succeeded}/${total} binaries (${failed} failed)`}
+            </h3>
+            <p style="color: var(--subtle); font-size: 0.85rem; margin: 0 0 25px 0;">
+                Sent to collection <b style="color: var(--accent);">${escapeHtml(collection)}</b> — analysis pipeline is now running.
+            </p>
+            <div style="display: flex; justify-content: center; gap: 12px; flex-wrap: wrap;">
+                <button onclick="Nav.openPath(${escapeAttr(jsString(collectionUrl))})" class="btn-primary" style="height: 38px; padding: 0 18px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 8px;">
+                    <i class="fa-solid fa-layer-group"></i> Go to Collection
+                </button>
+                <button onclick="Nav.openPath(${escapeAttr(jsString(jobsUrl))})" class="top-action-btn" style="height: 38px; padding: 0 18px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 8px;">
+                    <i class="fa-solid fa-server"></i> Follow Jobs
+                </button>
+                <button onclick="Nav.openPath(${escapeAttr(jsString(filesUrl))})" class="top-action-btn" style="height: 38px; padding: 0 18px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 8px;">
+                    <i class="fa-solid fa-file-code"></i> Go to Files
+                </button>
+                <button onclick="clearUploadList()" class="top-action-btn" style="height: 38px; padding: 0 18px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 8px;">
+                    <i class="fa-solid fa-cloud-arrow-up"></i> Upload More Binaries
+                </button>
+            </div>
+        </div>
+    `;
 }
 
 async function populateUploadCollectionDropdown(currentCollection) {

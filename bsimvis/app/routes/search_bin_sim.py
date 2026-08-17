@@ -247,9 +247,9 @@ def _collection_page(r, collection, algo, f, is_pool=False):
 
     # --- Numeric range filters via ZSET indexes (a/b union semantics) ---
     if f["min_score"] is not None:
-        restrict(_znum(r, collection, "score", f["min_score"], None))
+        restrict(_znum(r, collection, f["score_field"], f["min_score"], None))
     if f["max_score"] is not None:
-        restrict(_znum(r, collection, "score", None, f["max_score"]))
+        restrict(_znum(r, collection, f["score_field"], None, f["max_score"]))
     # coverage: min keeps if max(a,b)>=min (union); max keeps if min(a,b)<=max (union)
     if f["min_cov"] is not None:
         restrict(
@@ -542,9 +542,9 @@ def _pool_page(r, pool_id, algo, f):
             hay = " ".join([name_a, name_b, m_a, m_b] + tags_a + tags_b).lower()
             if not all(w in hay for w in f["q"].split()):
                 continue
-        if f["min_score"] is not None and ld.get("score", 0) < f["min_score"]:
+        if f["min_score"] is not None and ld.get(f["score_field"], 0) < f["min_score"]:
             continue
-        if f["max_score"] is not None and ld.get("score", 0) > f["max_score"]:
+        if f["max_score"] is not None and ld.get(f["score_field"], 0) > f["max_score"]:
             continue
         if (
             f["min_cov"] is not None
@@ -649,6 +649,11 @@ def search_bin_sims():
                 request.args.get("sort_by") or request.args.get("sort") or "score"
             ).strip(),
             "sort_order": request.args.get("sort_order", "desc"),
+            # active score type (lib/original/content) from the score-type
+            # selector, used to filter min/max on the same field the UI sorts/shows.
+            "score_field": SORT_ZSET_MAP.get(
+                (request.args.get("sort") or "score").strip(), "score"
+            ) or "score",
             "min_score": parse_float(request.args.get("min_score")),
             "max_score": parse_float(request.args.get("max_score")),
             "min_cov": parse_float(request.args.get("min_coverage")),

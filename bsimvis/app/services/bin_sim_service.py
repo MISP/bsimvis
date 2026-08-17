@@ -8,6 +8,7 @@ from bsimvis.app.services import lineage_service
 from bsimvis.app.services.bin_sim_tags import (
     AxisSplit,
     EMPTY_SUMMARIES,
+    code_library_split,
     merge_tag_fields,
     load_tag_meta,
     read_tags_rev,
@@ -56,6 +57,9 @@ def _index_bin_sim_pair(pipe, collection, sid, doc, file_meta_a=None, file_meta_
 
     # Numeric indexes
     num_index("score", doc.get("score"))
+    num_index("score_code", doc.get("score_code"))
+    num_index("score_library", doc.get("score_library"))
+    num_index("score_content", doc.get("score_content"))
     num_index("coverage_a", doc.get("coverage_a"))
     num_index("coverage_b", doc.get("coverage_b"))
     num_index("shared_clusters", doc.get("shared_clusters"))
@@ -97,6 +101,9 @@ def _unindex_bin_sim_pair(
 
     for num_field in [
         "score",
+        "score_code",
+        "score_library",
+        "score_content",
         "coverage_a",
         "coverage_b",
         "shared_clusters",
@@ -551,6 +558,12 @@ class BinSimService:
             sid = f"{collection}:bin_sim:{algo}:{m_a}::{m_b}"
             pair_scores[(m_a, m_b)] = score_unweighted
 
+            # Code/Library is a namespace split of the same matched mass
+            # `tags_summary` already carries -- no second pass over functions.
+            score_library, score_code = code_library_split(
+                tag_fields.get("tags_summary")
+            )
+
             doc = {
                 "md5_a": m_a,
                 "md5_b": m_b,
@@ -560,6 +573,8 @@ class BinSimService:
                 "functions_count_a": binary_func_counts.get(m_a, 0),
                 "functions_count_b": binary_func_counts.get(m_b, 0),
                 "score": score_unweighted,
+                "score_code": score_code,
+                "score_library": score_library,
                 "coverage_a": cov_a,
                 "coverage_b": cov_b,
                 "shared_clusters": len(diff_matched),
@@ -589,6 +604,9 @@ class BinSimService:
             final_bin_score = score_unweighted
 
             pipe.zadd(f"{collection}:bin_sim:score:{algo}", {sid: final_bin_score})
+            pipe.zadd(f"{collection}:bin_sim:score_code:{algo}", {sid: score_code})
+            if score_library is not None:
+                pipe.zadd(f"{collection}:bin_sim:score_library:{algo}", {sid: score_library})
             pipe.sadd(f"{collection}:bin_sim:involves:{m_a}", sid)
             pipe.sadd(f"{collection}:bin_sim:involves:{m_b}", sid)
             pipe.sadd(f"{collection}:bin_sim:built:{algo}", sid)
@@ -682,6 +700,9 @@ class BinSimService:
 
                     pipe.delete(sid)
                     pipe.zrem(f"{collection}:bin_sim:score:{algo}", sid)
+                    pipe.zrem(f"{collection}:bin_sim:score_code:{algo}", sid)
+                    pipe.zrem(f"{collection}:bin_sim:score_library:{algo}", sid)
+                    pipe.zrem(f"{collection}:bin_sim:score_content:{algo}", sid)
                     pipe.srem(f"{collection}:bin_sim:built:{algo}", sid)
 
                     m_a, m_b = doc.get("md5_a"), doc.get("md5_b")
@@ -715,6 +736,9 @@ class BinSimService:
                         break
 
             r.delete(f"{collection}:bin_sim:score:{algo}")
+            r.delete(f"{collection}:bin_sim:score_code:{algo}")
+            r.delete(f"{collection}:bin_sim:score_library:{algo}")
+            r.delete(f"{collection}:bin_sim:score_content:{algo}")
             r.delete(f"{collection}:bin_sim:built:{algo}")
 
         if job_service and job_id:

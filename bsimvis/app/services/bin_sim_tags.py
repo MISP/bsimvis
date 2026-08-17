@@ -753,6 +753,38 @@ EMPTY_SUMMARIES = {
 }
 
 
+# Origin namespaces whose mass counts as "library" rather than "code" for the
+# Code/Library score split. A tuple, not one string: the plan for more origin
+# namespaces (beyond `lib`) only needs another prefix added here.
+LIBRARY_ORIGIN_PREFIXES = ("origin:lib:",)
+
+
+def code_library_split(tags_summary, namespaces=LIBRARY_ORIGIN_PREFIXES):
+    """(score_library, score_code) from a pair doc's origin-axis `tags_summary`.
+
+    Each top-level row is already the matched mass for one origin (or
+    `original_code`); a namespace-prefix check on its `tag_id` is enough to
+    route it, no separate detection pass needed. `score_library` is None when
+    no row carries a library namespace -- absence of library mass, not a zero
+    score, so callers can skip a dead card. `score_code` always has a value:
+    the `original_code` bucket is always present (see TagSplit._default).
+    """
+    lib_w = lib_num = code_w = code_num = 0.0
+    for row in tags_summary or []:
+        tag_id = str(row.get("tag_id") or "")
+        w = float(row.get("matched_weight") or 0.0)
+        s = float(row.get("score") or 0.0)
+        if any(tag_id.startswith(ns) for ns in namespaces):
+            lib_w += w
+            lib_num += w * s
+        else:
+            code_w += w
+            code_num += w * s
+    score_library = (lib_num / lib_w) if lib_w > 0 else None
+    score_code = (code_num / code_w) if code_w > 0 else 0.0
+    return score_library, score_code
+
+
 def tags_rev_key(collection):
     return f"{collection}:tags_rev"
 
@@ -810,3 +842,31 @@ def load_tag_meta(r, collection):
                 pass
         out[tag_id] = {"color": val}
     return out
+
+
+def demo():
+    """Self-check for code_library_split. Pure, no kvrocks needed."""
+    # No origin:lib row at all -> no library card, all mass is code.
+    lib, code = code_library_split(
+        [{"tag_id": "original_code", "matched_weight": 10.0, "score": 0.4}]
+    )
+    assert lib is None, lib
+    assert abs(code - 0.4) < 1e-9, code
+
+    # Mixed: origin:lib:* rows feed library, everything else feeds code.
+    lib, code = code_library_split(
+        [
+            {"tag_id": "origin:lib:libc:2.31", "matched_weight": 20.0, "score": 1.0},
+            {"tag_id": "original_code", "matched_weight": 10.0, "score": 0.2},
+            {"tag_id": "origin:bundle:mirai:unknown", "matched_weight": 10.0, "score": 0.5},
+        ]
+    )
+    assert abs(lib - 1.0) < 1e-9, lib
+    # code = (10*0.2 + 10*0.5) / 20 = 0.35
+    assert abs(code - 0.35) < 1e-9, code
+
+    print("bin_sim_tags demo OK")
+
+
+if __name__ == "__main__":
+    demo()

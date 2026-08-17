@@ -138,8 +138,13 @@ function renderUploadView(params) {
                     <h2 style="color: var(--accent); margin: 0 0 5px 0; font-size: 1.5rem;">Upload Binaries</h2>
                     <p style="color: var(--subtle); font-size: 0.9rem; margin: 0;">Target Collection: <b style="color:var(--accent)">${collection}</b></p>
                 </div>
-                <div style="font-size: 0.8rem; color: var(--subtle);">
-                    Using Ghidra analysis pipeline
+                <div style="display:flex; align-items:center; gap:15px;">
+                    <div style="font-size: 0.8rem; color: var(--subtle);">
+                        Using Ghidra analysis pipeline
+                    </div>
+                    <button id="top-go-to-collection-btn" style="display:none; height: 34px; padding: 0 16px; font-size: 0.8rem; align-items: center; gap: 8px;" class="btn-primary">
+                        <i class="fa-solid fa-arrow-right"></i> Go to Collection
+                    </button>
                 </div>
             </div>
 

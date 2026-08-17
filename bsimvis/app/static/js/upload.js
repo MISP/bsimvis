@@ -42,7 +42,7 @@ const BASE_ANALYSIS = {
 // What to price when the list is empty, so the estimates are never blank.
 const TYPICAL_FILE_MB = 0.5;
 
-function formatDuration(seconds) {
+function formatEtaDuration(seconds) {
     if (seconds < 60) return `${Math.max(1, Math.round(seconds))} sec`;
     if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
     const h = Math.floor(seconds / 3600);
@@ -64,11 +64,11 @@ function estimateModuleCost(module) {
 function updateModuleEstimates() {
     ANALYSIS_MODULES.forEach(m => {
         const el = document.getElementById(`module-est-${m.id}`);
-        if (el) el.innerText = `~${formatDuration(estimateModuleCost(m))}`;
+        if (el) el.innerText = `~${formatEtaDuration(estimateModuleCost(m))}`;
     });
 
     const baseEl = document.getElementById('module-est-base');
-    if (baseEl) baseEl.innerText = `~${formatDuration(estimateModuleCost(BASE_ANALYSIS))}`;
+    if (baseEl) baseEl.innerText = `~${formatEtaDuration(estimateModuleCost(BASE_ANALYSIS))}`;
 
     // Only the ticked modules count -- untouched ones cost nothing.
     const totalEl = document.getElementById('module-est-total');
@@ -77,7 +77,7 @@ function updateModuleEstimates() {
         const total = ANALYSIS_MODULES
             .filter(m => enabled.has(m.id))
             .reduce((sum, m) => sum + estimateModuleCost(m), estimateModuleCost(BASE_ANALYSIS));
-        totalEl.innerText = `~${formatDuration(total)}`;
+        totalEl.innerText = `~${formatEtaDuration(total)}`;
     }
 
     const note = document.getElementById('module-estimate-note');

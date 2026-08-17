@@ -482,7 +482,11 @@ class TagSplit:
         else:
             matched_w = sum(r["matched_weight"] for r in merge)
             matched_n = sum(r["matched_count"] for r in merge)
-            cohesion = sum(r["score"] * r["matched_weight"] for r in merge)
+            # Reconstruct raw cohesion from each child's own score * denominator
+            # (matched + unique), not `matched_weight` alone -- `score` is no
+            # longer matched-only, so backing it out against matched_weight
+            # would silently drop the unique share these children already have.
+            cohesion = sum(r["score"] * r["score_weight"] for r in merge)
             w_a = sum(r["weight_a"] for r in merge)
             w_b = sum(r["weight_b"] for r in merge)
             uw_a = sum(r["unique_weight_a"] for r in merge)
@@ -505,6 +509,12 @@ class TagSplit:
 
         t_type, t_name, t_version = parse_tag_id(tag_id)
         meta = tag_meta.get(tag_id) or {}
+        # `score` mirrors the pair-level score formula: matched mass in the
+        # numerator, matched + unmatched (unique) mass of *this tag* in the
+        # denominator, so a tag that matched well but only covers a sliver of
+        # the binary doesn't read as 100% -- same coverage penalty `score` and
+        # `score_code`/`score_library` already apply.
+        score_weight = matched_w + uw_a + uw_b
         return {
             "tag_id": tag_id,
             "type": meta.get("type") or t_type,
@@ -512,7 +522,8 @@ class TagSplit:
             "version": meta.get("version") or t_version,
             "source": meta.get("source", "system"),
             "color": meta.get("color", ""),
-            "score": cohesion / matched_w if matched_w > 0 else 0.0,
+            "score": cohesion / score_weight if score_weight > 0 else 0.0,
+            "score_weight": score_weight,
             "contribution_pct": 100.0 * matched_w / total_w if total_w > 0 else 0.0,
             "matched_weight": matched_w,
             "matched_count": matched_n,

@@ -2257,7 +2257,7 @@ function renderFuncBadge(fid) {
         ? EntityRenderer.renderFunction(f, { isTable: true, hideNote: true, showActions: false })
         : (f.function_name || fid);
     const tagsHtml = (typeof EntityRenderer !== 'undefined')
-        ? EntityRenderer.renderTag('function', fid, f.tags, f.user_tags) : '';
+        ? EntityRenderer.renderTag('function', fid, f.tags, f.user_tags, { maxTags: 4 }) : '';
     return `
         <div class="bsim-func-cell" style="display:flex; flex-direction:column; gap:2px; min-width:0; text-align:left; width:100%;">
             ${sig}
@@ -2339,7 +2339,7 @@ function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
         // The row IS a function-similarity pair, so it carries that pair's tags —
         // the same editor, on the same entity, as the function-similarity view.
         const simTags = (typeof EntityRenderer !== 'undefined' && m.sid)
-            ? EntityRenderer.renderTag('similarity', m.sid, m.tags || [], m.user_tags || [])
+            ? EntityRenderer.renderTag('similarity', m.sid, m.tags || [], m.user_tags || [], { maxTags: 4 })
             : '';
         similarityHtml = `
             <div style="display:flex; align-items:center; gap:8px;">
@@ -2783,8 +2783,8 @@ function renderBinSimPairs(items, depth = 0) {
                 </td>
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:8px;">
-                        <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${collA}:file:${item.md5_a}`, tagsA, userTagsA)}</div>
-                        <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${collB}:file:${item.md5_b}`, tagsB, userTagsB)}</div>
+                        <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${collA}:file:${item.md5_a}`, tagsA, userTagsA, { maxTags: 4 })}</div>
+                        <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${collB}:file:${item.md5_b}`, tagsB, userTagsB, { maxTags: 4 })}</div>
                     </div>
                 </td>
                 ${window.renderCollectionCell ? window.renderCollectionCell(collA, collB) : ''}

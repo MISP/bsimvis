@@ -1455,6 +1455,45 @@ body {
     opacity: 0.8;
 }
 
+.entity-tags-editor, .sim-tags-editor {
+    max-width: 100%;
+    overflow: hidden;
+}
+
+.tag-overflow-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.65rem;
+    margin: 2px;
+    border: 1px solid var(--border);
+    background: var(--hover);
+    color: var(--subtle);
+    cursor: pointer;
+}
+
+.tag-overflow-dropdown {
+    display: none;
+    position: absolute;
+    z-index: 50;
+    top: 100%;
+    left: 0;
+    margin-top: 4px;
+    padding: 6px;
+    max-width: 260px;
+    background: var(--bg-secondary, var(--bg));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    flex-wrap: wrap;
+    gap: 2px;
+}
+
+.tag-overflow-dropdown.open {
+    display: flex;
+}
+
 .remove-tag-btn {
     cursor: pointer;
     width: 14px;

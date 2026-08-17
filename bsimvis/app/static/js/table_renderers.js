@@ -477,7 +477,7 @@ window.TableRenderers = {
                 </td>
                 <td class="sim-cell dim">${formatDate(f['entry_date'])}</td>
                 <td>
-                    ${EntityRenderer.renderTag('file', fileId, tags, user_tags)}
+                    ${EntityRenderer.renderTag('file', fileId, tags, user_tags, { maxTags: 4 })}
                 </td>
                 ${renderCollectionCell(col)}
             </tr>
@@ -509,7 +509,7 @@ window.TableRenderers = {
                     ${EntityRenderer.renderFunction(f, { hideNote: true })}
                 </td>
                 <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${escapeHtml(entry)}</span></td>
-                <td>${EntityRenderer.renderTag('function', funcId, tags, user_tags)}</td>
+                <td>${EntityRenderer.renderTag('function', funcId, tags, user_tags, { maxTags: 4 })}</td>
                 <td class="cluster-cards-cell" data-clusters='${escapeAttr(JSON.stringify(clusters))}'>${EntityRenderer.renderClusterCard(clusters)}</td>
                 <td class="sim-cell" style="text-align:center;">
                     <div style="display:inline-flex; align-items:center; gap:6px;">
@@ -524,7 +524,7 @@ window.TableRenderers = {
                 <td class="sim-cell"><div style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${escapeAttr(fileName)}"><b style="color:var(--accent); cursor:pointer;" onclick="openFileDetails(${escapeAttr(jsString(targetCol))}, ${escapeAttr(jsString(file_md5))}, ${escapeAttr(jsString(fileName))}, event)">${escapeHtml(fileName)}</b></div></td>
 
                 <td class="sim-cell">${EntityRenderer.renderMd5(file_md5)}</td>
-                <td>${EntityRenderer.renderTag('file', `${fColl}:file:${file_md5}`, f.file_tags || [], f.file_user_tags || [])}</td>
+                <td>${EntityRenderer.renderTag('file', `${fColl}:file:${file_md5}`, f.file_tags || [], f.file_user_tags || [], { maxTags: 4 })}</td>
                 <td class="sim-cell"><span class="mono" style="color:var(--accent)">${escapeHtml(language)}</span></td>
                 <td class="sim-cell"><span class="dim" style="font-size:0.7rem;">${formatDate(f['entry_date'] || f['file_date'])}</span></td>
                 <td class="sim-cell"></td>

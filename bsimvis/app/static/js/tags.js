@@ -10,6 +10,11 @@ if (typeof window.getCurrentCollection !== 'function') {
 let tagMetadata = {};
 window.tagMetadata = tagMetadata;
 
+document.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.tag-overflow-chip')) return;
+    document.querySelectorAll('.tag-overflow-dropdown.open').forEach(d => d.classList.remove('open'));
+});
+
 if (typeof escapeHtml === 'undefined') {
     window.escapeHtml = function (value) {
         return String(value ?? '')
@@ -424,12 +429,12 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
     // used to be the one place that did not: a class with a fixed palette, so
     // `category:network` looked the same as `severity:high` in a table and
     // different from the same tag in the graphs.
-    const analysisHtml = tagsList.map(t => {
+    const analysisBadge = t => {
         const color = window.tagInk(window.getTagMetadata(t).color);
         return `<span class="analysis-tag-badge" style="cursor:pointer; border-color:${tagAlpha(color, 40)}; color:${color}; background:${tagAlpha(color, 7)};" data-eid="${escapeAttr(eid)}" title="Analysis Tag: ${escapeAttr(t)} (click for source)">${escapeHtml(t)}</span>`;
-    }).join('');
+    };
 
-    const userHtml = userTagsList.map(t => {
+    const userBadge = t => {
         if (t === 'bookmark' || t === 'ignore') return '';
         const color = window.tagInk(window.getTagMetadata(t).color);
         const removeClick = `removeTag(event, ${jsString(etype)}, ${jsString(eid)}, ${jsString(t)})`;
@@ -444,9 +449,33 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
             ${escapeHtml(t)}
             <span class="remove-tag-btn" onclick="${escapeAttr(removeClick)}" style="background:${escapeAttr(color)}22">×</span>
         </span>`;
-    }).join('');
+    };
+
+    // Table cells cap visible tags so a file with 30 tags doesn't blow out row
+    // height; overflow tags sit behind a "+N" chip instead of being dropped.
+    const maxTags = options.maxTags;
+    const nonSpecialUserTags = userTagsList.filter(t => t !== 'bookmark' && t !== 'ignore');
+    let visibleHtml, overflowHtml = '';
+    if (maxTags && (tagsList.length + nonSpecialUserTags.length) > maxTags) {
+        const allTags = [
+            ...tagsList.map(t => ({ t, badge: analysisBadge })),
+            ...nonSpecialUserTags.map(t => ({ t, badge: userBadge })),
+        ];
+        const shown = allTags.slice(0, maxTags);
+        const hidden = allTags.slice(maxTags);
+        visibleHtml = shown.map(x => x.badge(x.t)).join('');
+        const hiddenHtml = hidden.map(x => x.badge(x.t)).join('');
+        overflowHtml = `
+        <span class="tag-overflow-wrap" style="position:relative; display:inline-flex;">
+            <span class="tag-overflow-chip" onclick="event.stopPropagation(); this.nextElementSibling.classList.toggle('open');">+${hidden.length}</span>
+            <div class="tag-overflow-dropdown" onclick="event.stopPropagation();">${hiddenHtml}</div>
+        </span>`;
+    } else {
+        visibleHtml = tagsList.map(analysisBadge).join('') + nonSpecialUserTags.map(userBadge).join('');
+    }
+
     return `
-        <div class="${editorClass}" data-etype="${escapeAttr(etype)}" data-eid="${escapeAttr(eid)}" style="display:inline-flex; flex-wrap:wrap; gap:2px; align-items:center; vertical-align:middle;">
+        <div class="${editorClass}" data-etype="${escapeAttr(etype)}" data-eid="${escapeAttr(eid)}" style="display:inline-flex; flex-wrap:wrap; gap:2px; align-items:center; vertical-align:middle; max-width:100%;">
             <button class="bookmark-btn ${isBookmarked ? 'active' : ''}"
                     title="${isBookmarked ? 'Remove Bookmark' : 'Add Bookmark'}"
                     onclick="${escapeAttr(bookmarkOnClick)}">
@@ -457,8 +486,8 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
                     onclick="${escapeAttr(ignoreOnClick)}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
             </button>
-            ${analysisHtml}
-            ${userHtml}
+            ${visibleHtml}
+            ${overflowHtml}
             <button class="add-tag-btn" onclick="${escapeAttr(addOnClick)}">+</button>
         </div>
     `;

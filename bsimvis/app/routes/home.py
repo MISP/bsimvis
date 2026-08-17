@@ -132,7 +132,7 @@ def _biggest_clusters(cols, limit=10):
                     "collection": c["name"],
                     "cluster_id": cl.get("cluster_id"),
                     "cluster_name": cl.get("cluster_name"),
-                    "count": cl.get("member_count", 0),
+                    "count": cl.get("count", 0),
                     "cohesion": cl.get("cohesion_score"),
                 }
             )

@@ -1750,8 +1750,12 @@ function fileSimSankeyGroups(rows, scale, matrix) {
         if (front.more) g.expandable = true;
         const [sa, sb, ua, ub] = fileSimRowMass(row, scale);
         g.sharedA += sa; g.sharedB += sb; g.uniqA += ua; g.uniqB += ub;
-        g.cohNum += (row.score || 0) * (row.matched_weight || 0);
-        g.cohDen += row.matched_weight || 0;
+        // score_weight (matched + this tag's own unmatched mass) is score's real
+        // denominator now -- reconstructing against matched_weight alone would
+        // drop the unique share and inflate the folded group's score.
+        const scoreWeight = row.score_weight != null ? row.score_weight : row.matched_weight;
+        g.cohNum += (row.score || 0) * (scoreWeight || 0);
+        g.cohDen += scoreWeight || 0;
         g.tags += 1;
         // The other axis, folded onto the same node: how much of this tag's
         // matched mass someone flagged. Rows fold, so their cells fold with them.

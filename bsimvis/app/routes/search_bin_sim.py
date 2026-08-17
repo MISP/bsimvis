@@ -657,7 +657,16 @@ def search_bin_sims():
             "max_shared": parse_float(request.args.get("max_shared")),
             "min_funcs": parse_float(request.args.get("min_funcs")),
             "max_funcs": parse_float(request.args.get("max_funcs")),
-            "containers": request.args.get("containers", "").strip().lower(),
+            # `view` is the hard File/Container partition (no edge ever crosses
+            # node types); it overrides the older `containers` both/any/none
+            # filter rather than composing with it, so there is no way back to
+            # a mixed page once a view is chosen.
+            "containers": (
+                {"file": "none", "container": "both"}.get(
+                    request.args.get("view", "").strip().lower()
+                )
+                or request.args.get("containers", "").strip().lower()
+            ),
             "arch": request.args.get("arch", "").strip().lower(),
             "md5": request.args.get("md5", "").strip().lower(),
             "file_name": request.args.get("file_name", "").strip().lower(),

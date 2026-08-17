@@ -666,6 +666,7 @@ def search_bin_sims():
                     request.args.get("view", "").strip().lower()
                 )
                 or request.args.get("containers", "").strip().lower()
+                or "none"
             ),
             "arch": request.args.get("arch", "").strip().lower(),
             "md5": request.args.get("md5", "").strip().lower(),

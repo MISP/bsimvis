@@ -407,8 +407,7 @@ function initResizableCards() {
             const mainMeta = types.score;
             const mainPct = ((data.score || 0) * 100).toFixed(1) + '%';
             
-            const others = ['score_code', 'score_library', 'score_content']
-                .filter(k => data[k] != null);
+            const others = Object.keys(types).filter(k => k !== 'score');
                 
             const small = others.map(k => {
                 const meta = types[k];
@@ -425,7 +424,7 @@ function initResizableCards() {
                         <span style="color:var(--subtle); text-transform:uppercase; font-size:0.9rem; font-weight:bold; letter-spacing:0.05em;">${mainMeta.label}</span>
                         <span style="font-family:'Consolas', monospace; font-weight:800; font-size:2.4rem; line-height:1; color:${mainMeta.color};">${mainPct}</span>
                     </div>
-                    ${small ? `<div style="display:flex; gap:16px; margin-left:8px; border-left:1px solid var(--border); padding-left:24px;">${small}</div>` : ''}
+                    <div style="display:flex; gap:16px; margin-left:8px; border-left:1px solid var(--border); padding-left:24px;">${small}</div>
                 </div>
             `;
         }
@@ -2758,15 +2757,16 @@ function renderBinSimPairs(items, depth = 0) {
                     <div style="display:flex; align-items:center; gap:8px; padding-left:${depth * 14}px;">
                         ${caret}
                         <div style="cursor:pointer;" onclick="${escapeAttr(onClickHandler)}" title="Open Diff">${binSimScoreCards(item, activeScoreType)}</div>
-                        ${item.is_container_pair ? '<i class="fa-solid fa-box-archive" style="color:var(--subtle); font-size:0.75rem;" title="Container pair: rolled up from the files inside"></i>' : ''}
                     </div>
                 </td>
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:8px;">
-                        <div style="display:flex; align-items:center; overflow:hidden; min-height:24px;" title="${item.file_name_a || ''}">
+                        <div style="display:flex; align-items:center; gap:6px; overflow:hidden; min-height:24px;" title="${item.file_name_a || ''}">
+                            ${item.is_container_pair ? '<i class="fa-solid fa-box-archive" style="color:var(--subtle); font-size:0.75rem;" title="Container pair: rolled up from the files inside"></i>' : ''}
                             ${EntityRenderer.renderFileName(item.file_name_a, item.md5_a, collA)}
                         </div>
-                        <div style="display:flex; align-items:center; overflow:hidden; min-height:24px;" title="${item.file_name_b || ''}">
+                        <div style="display:flex; align-items:center; gap:6px; overflow:hidden; min-height:24px;" title="${item.file_name_b || ''}">
+                            ${item.is_container_pair ? '<i class="fa-solid fa-box-archive" style="color:var(--subtle); font-size:0.75rem;" title="Container pair: rolled up from the files inside"></i>' : ''}
                             ${EntityRenderer.renderFileName(item.file_name_b, item.md5_b, collB)}
                         </div>
                     </div>

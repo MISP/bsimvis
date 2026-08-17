@@ -139,7 +139,7 @@ def list_pools():
     )
 
     page, total = lq.sort_and_paginate(
-        pools, offset, limit, "created_at", True, key_fns
+        pools, offset, limit, "last_built_at", True, key_fns
     )
     return {"pools": page, "total": total, "offset": offset, "limit": limit}
 

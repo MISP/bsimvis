@@ -93,7 +93,21 @@ class ProcessingService:
         coll_file_meta["function_count"] = num_functions
 
         coll_file_meta["bsim_features_count"] = total_features
-        coll_file_meta["status"] = "analyzed"
+
+        # This overwrites the whole meta blob, including whatever status the
+        # upload stub / GHIDRA_ANALYZE dispatch set -- carry it forward
+        # instead of clobbering it. Functions/features are still being
+        # indexed at this point (see worker.py's INDEX_FEATURES handler for
+        # where "analyzed" actually gets set), so this must never regress an
+        # in-progress file back to a blank status.
+        existing_status = None
+        existing_raw = self.r.get(file_meta_key)
+        if existing_raw:
+            try:
+                existing_status = json.loads(existing_raw).get("status")
+            except (ValueError, TypeError):
+                pass
+        coll_file_meta["status"] = existing_status or "analyzing"
 
         pipe = self.r.pipeline(transaction=False)
 

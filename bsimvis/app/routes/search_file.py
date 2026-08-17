@@ -57,6 +57,7 @@ def search_files():
             ("q", "q"),
             ("language_id", "language_id"),
             ("language", "language_id"),
+            ("status", "status"),
             ("batch_uuid", "batch_uuid"),
             ("bin_cluster_uuid", "bin_cluster_uuid"),
             ("bin_cluster_name", "bin_cluster_name"),
@@ -463,6 +464,7 @@ def query_files_advanced(r, collection, filters):
             )
         elif field in [
             "language_id",
+            "status",
             "batch_uuid",
             "bin_cluster_name",
             "bin_cluster_uuid",

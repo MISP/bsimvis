@@ -288,6 +288,12 @@ class Worker:
         """
         collection = payload.get("collection")
         file_md5 = payload.get("file_md5") or payload.get("md5")
+        if not file_md5:
+            # INDEX_META's payload nests it under file_meta instead of
+            # carrying it at the top level like every other file-scoped job.
+            file_meta = payload.get("file_meta") or {}
+            file_md5 = file_meta.get("file_md5")
+            collection = collection or file_meta.get("collection")
         if not collection or not file_md5:
             return
         try:
@@ -518,6 +524,12 @@ class Worker:
             # chunk, so it is where the functions' library tags become file tags.
             if ok and md5:
                 self.processing_service.rollup_lib_tags(collection, md5)
+                # Also the last file-scoped stage of core analysis (before the
+                # optional similarity stages), so this is where a file's
+                # status stops being "analyzing" -- not GHIDRA_ANALYZE
+                # dispatch or INDEX_META, both of which fire while functions
+                # are still being indexed.
+                update_file_status(self.r_data, collection, md5, "analyzed")
             return ok
 
         elif jtype == JobType.SYNC_MILVUS.value:

@@ -326,10 +326,19 @@ def update_file_status(r, coll, file_md5, status, only_if_not=None):
     if not raw:
         return
     data = json.loads(raw)
-    if only_if_not and data.get("status") == only_if_not:
+    old_status = data.get("status")
+    if only_if_not and old_status == only_if_not:
+        return
+    if old_status == status:
         return
     data["status"] = status
-    r.set(key, json.dumps(data))
+    base_id = f"{coll}:file:{file_md5}"
+    pipe = r.pipeline(transaction=False)
+    pipe.set(key, json.dumps(data))
+    if old_status:
+        _unindex_tag(pipe, coll, "file", "status", old_status, base_id)
+    _index_tag(pipe, coll, "file", "status", status, base_id)
+    pipe.execute()
 
 
 def save_function(pipe, coll, md5, addr, data):

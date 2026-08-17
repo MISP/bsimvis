@@ -1282,6 +1282,11 @@ function updateUI(viewKey, collection, params, route, force = false) {
                         </th>
                         <th><input type="text" id="flt-file-batch" placeholder="Batch UUID..." value="${escapeAttr(p.get('batch_uuid') || '')}" onfocus="attachAutocomplete(this, 'file', 'batch_uuid', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
                         <th>
+                            <select id="flt-file-status" onchange="applyAdvancedFileSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">
+                                ${['', 'pending', 'analyzing', 'failed', 'analyzed'].map(s => `<option value="${escapeAttr(s)}" ${(p.get('status') || '') === s ? 'selected' : ''}>${s ? s.toUpperCase() : 'All Statuses'}</option>`).join('')}
+                            </select>
+                        </th>
+                        <th>
                             <div style="display:flex; align-items:center; gap:2px;">
                                 <input type="number" id="flt-file-min-funcs" placeholder="Min..." value="${escapeAttr(p.get('min_function_count') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                 <span class="dim" style="font-size:0.6rem">-</span>
@@ -1459,6 +1464,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     ${numRange('flt-coll-min-files', 'flt-coll-max-files', 'min_files', 'max_files')}
                     ${numRange('flt-coll-min-functions', 'flt-coll-max-functions', 'min_functions', 'max_functions')}
                     <th><div style="display:flex; align-items:center; gap:2px;"><input type="date" id="flt-coll-min-date" title="From" value="${escapeAttr(msToDate(p.get('min_last_updated')))}" onchange="debouncedSearch(applyCollectionSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"><input type="date" id="flt-coll-max-date" title="To" value="${escapeAttr(msToDate(p.get('max_last_updated')))}" onchange="debouncedSearch(applyCollectionSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"></div></th>
+                    <th></th>
                     <th></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
@@ -1979,6 +1985,7 @@ function applyAdvancedFileSearch() {
     const md5Flt = document.getElementById('flt-file-md5')?.value;
     const langFlt = document.getElementById('flt-file-language')?.value;
     const batchFlt = document.getElementById('flt-file-batch')?.value;
+    const statusFlt = document.getElementById('flt-file-status')?.value;
     const minEntryFlt = document.getElementById('flt-file-min-date')?.value;
     const maxEntryFlt = document.getElementById('flt-file-max-date')?.value;
     const minFuncsFlt = document.getElementById('flt-file-min-funcs')?.value;
@@ -1999,6 +2006,7 @@ function applyAdvancedFileSearch() {
     if (md5Flt) params.set('file_md5', md5Flt); else params.delete('file_md5');
     if (langFlt) params.set('language_id', langFlt); else params.delete('language_id');
     if (batchFlt) params.set('batch_uuid', batchFlt); else params.delete('batch_uuid');
+    if (statusFlt) params.set('status', statusFlt); else params.delete('status');
     if (minEntryFlt) params.set('min_entry_date', minEntryFlt); else params.delete('min_entry_date');
     if (maxEntryFlt) params.set('max_entry_date', maxEntryFlt); else params.delete('max_entry_date');
     if (minFuncsFlt) params.set('min_function_count', minFuncsFlt); else params.delete('min_function_count');

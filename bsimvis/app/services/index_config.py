@@ -34,6 +34,8 @@ INDEX_CONFIG = {
         "language_id": ["file", "func", "sim"],
         "batch_uuid": ["file", "func"],
         "type": ["file", "func"],
+        # pending/analyzing/failed/analyzed -- see index_service.update_file_status
+        "status": ["file"],
         "batch_order": ["file", "func"],  # numeric
         "entry_date": ["file", "func"],  # numeric
         "file_date": ["file", "func"],  # numeric

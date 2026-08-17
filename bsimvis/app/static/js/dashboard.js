@@ -2804,10 +2804,7 @@ window.addEventListener('load', () => {
 
     const { collection, viewKey, pool } = getRoutingState();
     updateNavVisibility(collection);
-    if (window.location.pathname === '/' || window.location.pathname === '') {
-        history.replaceState(null, '', '/collections');
-    }
-    
+
     if (window.location.hash && (window.location.pathname === '/' || window.location.pathname === '')) {
         // Migration for users with bookmarks
         const [hashPath, queryString] = window.location.hash.split('?');

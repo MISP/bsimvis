@@ -92,7 +92,11 @@ window.getHostFrame = getHostFrame;
 
 function formatDuration(createdAt, updatedAt, status) {
     if (!createdAt) return '<span class="dim">-</span>';
-    let end = updatedAt;
+    // ponytail: legacy jobs stored created_at/updated_at in epoch seconds;
+    // current job_service.py writes epoch ms. Normalize both to ms.
+    const toMs = (t) => (t && t < 1e12 ? t * 1000 : t);
+    createdAt = toMs(createdAt);
+    let end = toMs(updatedAt);
     if (status === 'running' || status === 'pending') {
         end = Date.now();
     }

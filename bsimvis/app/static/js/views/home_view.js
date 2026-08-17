@@ -135,9 +135,9 @@ window.HomeView = (function () {
                         </p>
                     </div>
                     <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                        <button class="home-btn home-btn-primary" onclick="Nav.openPath('${uploadUrl(lastCollection)}')">
+                        <a class="home-btn home-btn-primary" href="${esc(uploadUrl(lastCollection))}" onclick="Nav.openPath(this.href, event)" style="text-decoration:none;">
                             <i class="fa-solid fa-cloud-arrow-up"></i> Upload binary
-                        </button>
+                        </a>
                         <button class="home-btn" onclick="Nav.openPath('/collections')">
                             <i class="fa-solid fa-layer-group"></i> Collections
                         </button>

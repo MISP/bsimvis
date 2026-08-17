@@ -72,7 +72,7 @@ function renderBinarySimilarityView(params) {
             <!-- Resplit pill: own row right under the hero, not inside it
                  (hero's innerHTML is fully replaced on every pair load, which
                  was silently wiping this out). Hidden unless stale. -->
-            <div id="bin-sim-resplit-banner" style="display:none; margin-bottom:12px; justify-content:center;"></div>
+            <div id="bin-sim-resplit-banner" style="display:none; margin-bottom:12px; justify-content:flex-end;"></div>
 
             <!-- Slim per-binary strip: user tags + notes only -->
             <div style="display: flex; gap: 20px; margin-bottom: 12px;">

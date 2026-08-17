@@ -62,6 +62,29 @@ function createNav(view, collection, params = {}) {
     return `href="${escapeAttr(url)}" onclick="Nav.openPath(${escapeAttr(jsString(url))}, event)"`;
 }
 
+// Shared "is this row being worked on right now" badge for the batches/files
+// tables. Reads window.activeJobsByTarget (jobs.js:refreshActiveJobsByTarget),
+// which is kept warm by the existing 3s nav-job-status poll.
+function jobStatusBadgeHtml(target) {
+    const job = target && window.activeJobsByTarget && window.activeJobsByTarget[target];
+    if (!job) return '<span class="dim" style="font-size:0.7rem;">—</span>';
+    return `
+        <span class="row-job-status-badge" onclick="event.stopPropagation(); showJobDetails('${job.id}')" title="${job.type || 'job'} — click to view log" style="display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-size:0.7rem; color:var(--accent); background:rgba(4,217,255,0.08); border:1px solid rgba(4,217,255,0.25); border-radius:4px; padding:3px 8px;">
+            <span class="nav-job-spinner" style="width:10px; height:10px; margin:0;"></span> ${job.type || 'running'}
+        </span>
+    `;
+}
+
+function jobStatusCell(target) {
+    return `<span class="job-status-cell" data-job-target="${target}">${jobStatusBadgeHtml(target)}</span>`;
+}
+
+window.refreshVisibleStatusBadges = function () {
+    document.querySelectorAll('.job-status-cell[data-job-target]').forEach(el => {
+        el.outerHTML = jobStatusCell(el.dataset.jobTarget);
+    });
+};
+
 window.TableRenderers = {
     renderPools: function(data) {
         if (!data || !data.length) return '<tr><td colspan="6" style="text-align:center">No pools found.</td></tr>';
@@ -165,6 +188,7 @@ window.TableRenderers = {
                     </div>
                 </td>
                 <td class="dim">${formatDate(col['last_updated'])}</td>
+                <td>${jobStatusCell(col.name)}</td>
                 <td>
                     <div style="display: flex; gap: 15px;">
                         <a ${createNav('upload', col.name)} class="btn-action" title="Upload" style="color:var(--accent); display: flex; align-items: center; gap: 5px; text-decoration: none;">
@@ -194,6 +218,7 @@ window.TableRenderers = {
                 <td class="mono"><a ${createNav('files', col, { batch_uuid: b['batch_uuid'] })} class="clickable-count">${b['total_files']}</a></td>
                 <td class="mono"><a ${createNav('functions', col, { batch_uuid: b['batch_uuid'] })} class="clickable-count">${b['total_functions']}</a></td>
                 <td class="dim">${formatDate(b['last_updated'] || b['created_at'])}</td>
+                <td>${jobStatusCell(b['batch_uuid'])}</td>
                 <td>
                     <div style="display: flex; gap: 15px;">
                         <a ${createNav('upload', col, { batch_uuid: b['batch_uuid'] })} class="btn-action" title="Upload to Batch" style="color:var(--accent)">
@@ -416,6 +441,7 @@ window.TableRenderers = {
                 <td class="sim-cell mono dim" style="font-size:0.7rem" title="${escapeAttr(batchUuid)}">
                     ${escapeHtml(batchUuid.length > 8 ? batchUuid.substring(0, 8) + '...' : batchUuid)}
                 </td>
+                <td class="sim-cell">${jobStatusCell(f['file_md5'])}</td>
                 <td class="sim-cell">
                     <div style="display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%;">
                         <span style="font-weight: bold; min-width: 20px; text-align: right;">${funcCount}</span>

@@ -199,6 +199,7 @@ const routes = {
             { label: 'Files', sort: 'total_files' },
             { label: 'Functions', sort: 'total_functions' },
             { label: 'Last Updated', sort: 'last_updated' },
+            'Status',
             'Actions'
         ],
         renderer: renderCollections
@@ -223,7 +224,7 @@ const routes = {
     'batches': {
         title: 'Batches',
         api: '/api/batch/search',
-        headers: ['Batch Name', 'UUID', 'Files', 'Functions', 'Timestamp', 'Actions'],
+        headers: ['Batch Name', 'UUID', 'Files', 'Functions', 'Timestamp', 'Status', 'Actions'],
         renderer: renderBatches
     },
     'tags': {
@@ -249,6 +250,7 @@ const routes = {
             { label: 'MD5 / Arch', width: '11%' },
             { label: 'Metadata', width: '14%' },
             { label: 'Batch UUID', width: '9%' },
+            { label: 'Status', width: '7%' },
             { label: 'Funcs', width: '7%', sort: 'function_count' },
             { label: 'Notes', width: '3%' },
             { label: 'Clusters', width: '12%' },
@@ -2995,6 +2997,12 @@ window.addEventListener('load', () => {
             // would spin forever.
             const activeJobs = stats.active_jobs_count ?? 0;
             const isActive = activeJobs > 0 || stats.pending_jobs > 0;
+
+            if (isActive && typeof refreshActiveJobsByTarget === 'function') {
+                refreshActiveJobsByTarget();
+            } else {
+                window.activeJobsByTarget = {};
+            }
 
             if (loader && icon && navLink) {
                 if (isActive) {

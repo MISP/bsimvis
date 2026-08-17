@@ -103,6 +103,38 @@ const JOB_TYPE_ICONS = {
 let lastJobsData = null;
 const activeSubtaskFetches = new Set();
 
+// Per-target (batch_uuid / file md5) active-job lookup for row status badges
+// on the batches/files tables. Populated on the same poll as the nav job
+// icon (dashboard.js:updateJobStatusIcon) so it doesn't need its own timer.
+window.activeJobsByTarget = window.activeJobsByTarget || {};
+let activeJobsFetchInFlight = false;
+
+async function refreshActiveJobsByTarget() {
+    if (activeJobsFetchInFlight) return;
+    activeJobsFetchInFlight = true;
+    try {
+        const res = await fetch('/api/jobs?limit=200');
+        if (!res.ok) return;
+        const data = await res.json();
+        const jobs = Array.isArray(data) ? data : (data.items || []);
+        const map = {};
+        jobs.forEach(job => {
+            if (!['pending', 'running', 'queued'].includes(job.status)) return;
+            let payload = job.payload;
+            try { if (typeof payload === 'string') payload = JSON.parse(payload); } catch (e) { payload = {}; }
+            const targets = [job.target, job.collection, payload && payload.batch_uuid, payload && payload.md5, payload && payload.file_id].filter(Boolean);
+            targets.forEach(t => { map[t] = job; });
+        });
+        window.activeJobsByTarget = map;
+        if (typeof window.refreshVisibleStatusBadges === 'function') window.refreshVisibleStatusBadges();
+    } catch (e) {
+        console.error('Failed to refresh active jobs by target', e);
+    } finally {
+        activeJobsFetchInFlight = false;
+    }
+}
+window.refreshActiveJobsByTarget = refreshActiveJobsByTarget;
+
 async function refreshPipelineSubtasks(pipelineId) {
     if (activeSubtaskFetches.has(pipelineId)) return;
     activeSubtaskFetches.add(pipelineId);

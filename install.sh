@@ -32,6 +32,17 @@ for cmd in autoconf automake libtoolize; do
     fi
 done
 
+# Initialize config files from examples if missing
+if [ ! -f .env ] && [ -f .env.example ]; then
+    echo "Creating .env from .env.example..."
+    cp .env.example .env
+fi
+
+if [ ! -f bsimvis_config.toml ] && [ -f bsimvis_config.toml.example ]; then
+    echo "Creating bsimvis_config.toml from example..."
+    cp bsimvis_config.toml.example bsimvis_config.toml
+fi
+
 # Load .env early to get DATA_BASE_DIR
 if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)

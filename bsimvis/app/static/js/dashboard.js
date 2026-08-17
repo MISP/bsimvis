@@ -750,6 +750,15 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                 tableBodyWrap.addEventListener('scroll', window.bsimHeroScrollListener, { passive: true });
             }
         }
+    } else if (viewKey === 'collections') {
+        const gridHeader = document.getElementById('grid-header');
+        if (gridHeader) {
+            renderHeroHeader(gridHeader, 'collections-hero-text',
+                'Collections group uploaded binaries and their analysis results. Upload new files to create or extend a collection, or open one below to explore its files, functions, and similarities.',
+                `<a href="/upload" onclick="Nav.openPath(this.href, event)" class="top-action-btn" style="background:var(--accent); color:var(--bg); padding:10px 20px; font-size:0.95rem; display:inline-flex; align-items:center; gap:8px; border-radius:8px; text-decoration:none; font-weight:600; width:fit-content;">
+                    <i class="fa-solid fa-cloud-arrow-up"></i> Upload Binaries
+                </a>`);
+        }
     } else {
         const gridHeader = document.getElementById('grid-header');
         if (gridHeader) gridHeader.innerHTML = '';
@@ -1043,6 +1052,36 @@ function updateNavbarLinks(col) {
     updateNavLink('nav-jobs', 'jobs');
 }
 window.updateNavbarLinks = updateNavbarLinks;
+
+// Generic collapsible orientation header for views that otherwise drop the
+// user straight into an empty grid: one-line explainer + optional action
+// button(s), same collapse-on-scroll behavior as the bin-sim hero text.
+function renderHeroHeader(gridHeader, heroId, text, actionsHtml) {
+    gridHeader.innerHTML = `
+        <div style="padding: 24px; border-bottom: 1px solid var(--border); background: var(--bg); display: flex; flex-direction: column; gap: 16px;">
+            <div id="${heroId}" style="transition: max-height 0.3s ease, opacity 0.3s ease; overflow: hidden; max-height: 200px; opacity: 1;">
+                <p style="margin: 0; font-size: 0.95rem; color: var(--subtle); max-width: 800px; line-height: 1.5;">${text}</p>
+            </div>
+            ${actionsHtml || ''}
+        </div>
+    `;
+    const tableBodyWrap = document.getElementById('table-body-wrap');
+    if (!tableBodyWrap) return;
+    const listenerKey = heroId + 'ScrollListener';
+    if (window[listenerKey]) tableBodyWrap.removeEventListener('scroll', window[listenerKey]);
+    window[listenerKey] = function() {
+        const heroText = document.getElementById(heroId);
+        if (!heroText) return;
+        if (tableBodyWrap.scrollTop > 30) {
+            heroText.style.maxHeight = '0';
+            heroText.style.opacity = '0';
+        } else {
+            heroText.style.maxHeight = '200px';
+            heroText.style.opacity = '1';
+        }
+    };
+    tableBodyWrap.addEventListener('scroll', window[listenerKey], { passive: true });
+}
 
 // Bin-sim search filters: score type (Overall/Code/Library/Content) and node
 // type (File/Container) render as clickable tag pills -- same visual language

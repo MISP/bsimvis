@@ -22,6 +22,21 @@ function renderUploadView(params) {
                 </div>
             </div>
 
+            <div id="upload-progress-container" style="margin-bottom: 40px; display: none; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 8px; padding: 25px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h3 style="color: var(--accent); font-size: 1rem; margin: 0; display: flex; align-items: center; gap: 10px;">
+                        <div class="nav-job-spinner" id="global-upload-spinner" style="margin:0"></div>
+                        Batch Upload Progress
+                    </h3>
+                    <div id="global-progress-text" style="font-size: 0.85rem; font-weight: bold; color: var(--accent);">0%</div>
+                </div>
+                <div class="job-progress-track" style="height: 10px; margin-bottom: 25px; background: rgba(255,255,255,0.05);">
+                    <div id="global-progress-fill" class="job-progress-fill progress-running" style="width: 0%;"></div>
+                </div>
+                <div id="upload-progress-list" style="display: flex; flex-direction: column; gap: 12px; max-height: 400px; overflow-y: auto; padding-right: 10px;">
+                </div>
+            </div>
+
             <div class="upload-grid" style="display: grid; grid-template-columns: 1fr 1.2fr; gap: 40px;">
                 <div class="upload-settings-panel">
                     <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 20px;">
@@ -90,21 +105,6 @@ function renderUploadView(params) {
                         <div id="upload-file-list" style="flex: 1; overflow-y: auto; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 4px; padding: 5px;">
                         </div>
                     </div>
-                </div>
-            </div>
-
-            <div id="upload-progress-container" style="margin-top: 40px; display: none; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 8px; padding: 25px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                    <h3 style="color: var(--accent); font-size: 1rem; margin: 0; display: flex; align-items: center; gap: 10px;">
-                        <div class="nav-job-spinner" id="global-upload-spinner" style="margin:0"></div>
-                        Batch Upload Progress
-                    </h3>
-                    <div id="global-progress-text" style="font-size: 0.85rem; font-weight: bold; color: var(--accent);">0%</div>
-                </div>
-                <div class="job-progress-track" style="height: 10px; margin-bottom: 25px; background: rgba(255,255,255,0.05);">
-                    <div id="global-progress-fill" class="job-progress-fill progress-running" style="width: 0%;"></div>
-                </div>
-                <div id="upload-progress-list" style="display: flex; flex-direction: column; gap: 12px; max-height: 400px; overflow-y: auto; padding-right: 10px;">
                 </div>
             </div>
         </div>

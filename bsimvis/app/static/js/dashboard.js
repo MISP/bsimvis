@@ -1413,7 +1413,9 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <th>
                         <div style="display:flex; flex-direction:column; gap:2px;">
                             <select id="bsim-score-type" onchange="debouncedSearch(applyBinSimSearch)" style="font-size:0.6rem; padding:2px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
-                                <option value="score" ${p.get('sort') === 'score' || !p.get('sort') ? 'selected' : ''}>Unweighted</option>
+                                ${Object.entries(window.BinSimScoreTypes || { score: { label: 'Overall' } }).map(([v, meta]) =>
+                                    `<option value="${v}" ${(p.get('sort') || 'score') === v ? 'selected' : ''}>${meta.label}</option>`
+                                ).join('')}
                             </select>
                             <div style="display:flex; align-items:center; gap:2px;">
                                 <input type="number" id="bsim-min-score" placeholder="Min..." step="0.05" min="0" max="1" value="${escapeAttr(p.get('min_score') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-score" placeholder="Max..." step="0.05" min="0" max="1" value="${escapeAttr(p.get('max_score') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;">

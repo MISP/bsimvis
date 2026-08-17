@@ -402,35 +402,32 @@ function initResizableCards() {
         
         // Render Summary — prominent, score-colored
         const heroEl = document.getElementById('bin-sim-hero');
-        const scoreVal = document.getElementById('bin-sim-score-val');
-        if (scoreVal) {
-            scoreVal.textContent = (data.score * 100).toFixed(1) + '%';
-            scoreVal.style.color = 'var(--success)';
-        }
         if (heroEl) {
-            const existing = document.getElementById('bin-sim-sub-scores');
-            if (existing) existing.remove();
+            const types = window.BinSimScoreTypes || {};
+            const mainMeta = types.score;
+            const mainPct = ((data.score || 0) * 100).toFixed(1) + '%';
+            
+            const others = ['score_code', 'score_library', 'score_content']
+                .filter(k => data[k] != null);
+                
+            const small = others.map(k => {
+                const meta = types[k];
+                const val = ((data[k] || 0) * 100).toFixed(0) + '%';
+                return `<div style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:${meta.color}; font-weight:600;">
+                    <i class="${meta.icon}"></i> <span>${meta.label}</span> <span>${val}</span>
+                </div>`;
+            }).join('');
 
-            let extraHtml = '';
-            ['score_code', 'score_library', 'score_content'].forEach(k => {
-                if (data[k] !== undefined && data[k] !== null) {
-                    const cfg = window.BinSimScoreTypes[k];
-                    extraHtml += `
-                        <div style="display:flex; flex-direction:column; align-items:center; border-left:1px solid var(--border); padding-left:16px;">
-                            <span style="color:var(--subtle); font-size:0.7rem; text-transform:uppercase; font-weight:bold; letter-spacing:0.05em;"><i class="${cfg.icon}" style="margin-right:4px;"></i>${cfg.label}</span>
-                            <span style="font-family:'Consolas', monospace; font-size:1.4rem; font-weight:700; color:${cfg.color};">${(data[k] * 100).toFixed(1)}%</span>
-                        </div>`;
-                }
-            });
-            if (extraHtml) {
-                const subEl = document.createElement('div');
-                subEl.id = 'bin-sim-sub-scores';
-                subEl.style.display = 'flex';
-                subEl.style.gap = '16px';
-                subEl.style.marginLeft = '16px';
-                subEl.innerHTML = extraHtml;
-                heroEl.appendChild(subEl);
-            }
+            heroEl.innerHTML = `
+                <div style="display:flex; align-items:center; gap:20px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <i class="${mainMeta.icon}" style="color:${mainMeta.color}; font-size:1.4rem;" title="${escapeAttr(mainMeta.label)}"></i>
+                        <span style="color:var(--subtle); text-transform:uppercase; font-size:0.9rem; font-weight:bold; letter-spacing:0.05em;">${mainMeta.label}</span>
+                        <span style="font-family:'Consolas', monospace; font-weight:800; font-size:2.4rem; line-height:1; color:${mainMeta.color};">${mainPct}</span>
+                    </div>
+                    ${small ? `<div style="display:flex; gap:16px; margin-left:8px; border-left:1px solid var(--border); padding-left:24px;">${small}</div>` : ''}
+                </div>
+            `;
         }
 
         resultsEl.style.display = 'flex';
@@ -2702,17 +2699,18 @@ function binSimScoreCards(item, activeScoreType) {
         const val = ((item[meta.field] || 0) * 100).toFixed(0) + '%';
         return `<div class="bsim-score-card" title="${escapeAttr(meta.label + ': click to make this the main score')}"
             onclick="${escapeAttr(promote(k))}"
-            style="display:flex; align-items:center; gap:3px; font-size:0.65rem; color:${meta.color}; cursor:pointer; opacity:0.85;">
-            <i class="${meta.icon}"></i>${val}
+            style="display:flex; align-items:center; gap:4px; font-size:0.7rem; color:${meta.color}; cursor:pointer; opacity:0.85; font-weight:600;">
+            <i class="${meta.icon}"></i> <span>${meta.label}</span> <span>${val}</span>
         </div>`;
     }).join('');
 
-    return `<div style="display:flex; flex-direction:column; gap:2px;">
+    return `<div style="display:flex; flex-direction:column; gap:4px;">
         <div style="display:flex; align-items:center; gap:6px;">
             <i class="${mainMeta.icon}" style="color:${mainMeta.color}; font-size:0.9rem;" title="${escapeAttr(mainMeta.label)}"></i>
+            <span style="font-size:0.8rem; font-weight:bold; color:var(--subtle); text-transform:uppercase;">${mainMeta.label}</span>
             <span style="font-size:1.1rem; font-weight:bold; color:${mainMeta.color};">${mainPct}</span>
         </div>
-        ${small ? `<div style="display:flex; gap:8px; flex-wrap:wrap;">${small}</div>` : ''}
+        ${small ? `<div style="display:flex; gap:10px; flex-wrap:wrap;">${small}</div>` : ''}
     </div>`;
 }
 

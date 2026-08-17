@@ -69,6 +69,10 @@ function renderBinarySimilarityView(params) {
                 <span id="bin-sim-score-val" style="font-family: 'Consolas', monospace; font-weight: 800; font-size: 2.4rem; line-height: 1; color: var(--accent);">--%</span>
             </div>
 
+            <!-- Resplit banner: out of the composition-flow controls, own row,
+                 hidden unless the split is actually stale. -->
+            <div id="bin-sim-resplit-banner" style="display:none;"></div>
+
             <!-- Slim per-binary strip: user tags + notes only -->
             <div style="display: flex; gap: 20px; margin-bottom: 12px;">
                 <div id="bin-sim-strip-a" class="bin-sim-strip" style="flex: 1; min-width: 0;"></div>
@@ -130,7 +134,6 @@ function renderBinarySimilarityView(params) {
                                         title="Cross the tree's axis with a second one, e.g. Severity × Behavior shows shared high-severity network code"></select>
                             </div>
                             <span style="font-size:0.68rem; color:var(--dim); font-family:sans-serif;">follows the tree's folding · click a node to drill in</span>
-                            <span id="bin-sim-resplit-slot"></span>
                         </div>
                         <div id="bin-sim-filesim-sankey-card" style="position:relative; width:100%; flex:0 0 auto; height:440px; border:1px solid var(--border); background:var(--bg); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
                             <div id="bin-sim-filesim-sankey" style="flex:1; width:100%; min-height:0; overflow:auto; position:relative;"></div>
@@ -364,7 +367,13 @@ function initResizableCards() {
             async function fetchAndRenderBinaryDiff(collection, md5a, md5b, collB, poolId) {
 
     const resultsEl = document.getElementById('bin-sim-results');
-    
+
+    // Navigating to a different pair abandons any resplit poll for the old one.
+    if (binSimResplitPoll && !(binSimCtx && binSimCtx.md5a === md5a && binSimCtx.md5b === md5b && binSimCtx.collection === collection)) {
+        clearInterval(binSimResplitPoll);
+        binSimResplitPoll = null;
+    }
+
     try {
         // Compact summary: scores, counts, file meta, and the Sankey projection — no rows.
         let url = `/api/diff?view=sankey&collection_a=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`;
@@ -1793,44 +1802,90 @@ window.toggleFileSimNs = function(key) {
 };
 
 // Tagging changes the split, never the score, so a stale split is an offer to
-// recompute rather than a reason to invalidate the pair.
+// recompute rather than a reason to invalidate the pair. Lives in its own
+// banner row (not the composition-flow controls) so it's hard to miss.
+let binSimResplitPoll = null;
+
 function renderFileSimResplit(stale) {
-    const slot = document.getElementById('bin-sim-resplit-slot');
-    if (!slot) return;
-    slot.innerHTML = stale
+    const banner = document.getElementById('bin-sim-resplit-banner');
+    if (!banner) return;
+    // A poll already in flight is tracking this pair's job; don't stomp it
+    // with the stale-button markup on every re-render of the sankey.
+    if (binSimResplitPoll) return;
+    banner.style.display = stale ? 'flex' : 'none';
+    banner.innerHTML = stale
         ? `<button class="view-btn" id="bin-sim-resplit-btn" onclick="resplitBinSimTags()"
-             title="Tags changed since this pair was split. The score is unaffected; only its breakdown by tag is.">&#8635; Tags changed &mdash; refresh split</button>`
+             style="display:flex; align-items:center; gap:8px; font-size:0.95rem; padding:8px 16px; margin-bottom:12px; width:100%; justify-content:center; border:1px solid var(--accent); color:var(--accent); background:var(--card-bg);"
+             title="Tags changed since this pair was split. The score is unaffected; only its breakdown by tag is.">
+             <i class="fa-solid fa-arrows-rotate"></i> Tags changed &mdash; refresh split</button>`
         : '';
 }
 
+function setBinSimResplitBanner(html) {
+    const banner = document.getElementById('bin-sim-resplit-banner');
+    if (!banner) return;
+    banner.style.display = 'flex';
+    banner.innerHTML = html;
+}
+
 window.resplitBinSimTags = async function() {
-    const btn = document.getElementById('bin-sim-resplit-btn');
     if (!binSimCtx) return;
-    if (btn) { btn.disabled = true; btn.textContent = 'Resplitting...'; }
+    const ctx = binSimCtx; // snapshot: user may navigate to another pair mid-poll
+    setBinSimResplitBanner(`<span style="display:flex; align-items:center; gap:8px; font-size:0.95rem; padding:8px 16px; margin-bottom:12px; width:100%; justify-content:center; border:1px solid var(--border); color:var(--dim); background:var(--card-bg);">
+        <i class="fa-solid fa-spinner fa-spin"></i> Resplitting tags&hellip;</span>`);
     try {
         const res = await fetch('/api/bin_sim/resplit', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                collection: binSimCtx.collection,
+                collection: ctx.collection,
                 algo: new URLSearchParams(location.search).get('algo') || 'unweighted_cosine',
                 // Only pairs naming these two can have changed. Resplitting the
                 // whole collection would rewrite thousands of identical docs.
-                md5: [binSimCtx.md5a, binSimCtx.md5b],
+                md5: [ctx.md5a, ctx.md5b],
             }),
         });
         const out = await res.json();
-        if (out.status === 'success') {
-            showToast('Tag resplit queued for these two binaries — reopen the pair when the job finishes', 'info');
-        } else {
+        if (out.status !== 'success') {
             showToast(out.message || 'Resplit failed', 'error');
-            if (btn) { btn.disabled = false; }
+            renderFileSimResplit(true);
+            return;
         }
+        pollBinSimResplitJob(out.job_id, ctx);
     } catch (e) {
         showToast('Resplit failed: ' + e, 'error');
-        if (btn) { btn.disabled = false; }
+        renderFileSimResplit(true);
     }
 };
+
+function pollBinSimResplitJob(jobId, ctx) {
+    if (binSimResplitPoll) clearInterval(binSimResplitPoll);
+    binSimResplitPoll = setInterval(async () => {
+        let job;
+        try {
+            const res = await fetch(`/api/jobs/${jobId}`);
+            job = await res.json();
+        } catch (e) {
+            return; // transient fetch error, try again next tick
+        }
+        if (!job || job.status === 'pending' || job.status === 'running') return;
+
+        clearInterval(binSimResplitPoll);
+        binSimResplitPoll = null;
+
+        if (job.status !== 'completed') {
+            showToast('Tag resplit job failed', 'error');
+            renderFileSimResplit(true);
+            return;
+        }
+        showToast('Tag resplit complete — refreshing', 'success');
+        // Only refresh if the user is still looking at the pair the resplit was for.
+        if (binSimCtx && binSimCtx.md5a === ctx.md5a && binSimCtx.md5b === ctx.md5b
+            && binSimCtx.collection === ctx.collection) {
+            fetchAndRenderBinaryDiff(ctx.collection, ctx.md5a, ctx.md5b, ctx.collB, ctx.poolId);
+        }
+    }, 2000);
+}
 
 function renderFileSimSankey(data) {
     renderFileSimResplit(data.tags_stale);

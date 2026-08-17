@@ -759,27 +759,52 @@ EMPTY_SUMMARIES = {
 LIBRARY_ORIGIN_PREFIXES = ("origin:lib:",)
 
 
-def code_library_split(tags_summary, namespaces=LIBRARY_ORIGIN_PREFIXES):
-    """(score_library, score_code) from a pair doc's origin-axis `tags_summary`.
+def code_library_split(
+    matched, unique_to_a, unique_to_b, fid_tags, namespaces=LIBRARY_ORIGIN_PREFIXES
+):
+    """(score_library, score_code) computed by the *same formula* as the pair's
+    overall `score` (weighted-cosine mean, unmatched functions dragging the
+    denominator down), just restricted to one category's matched edges and
+    leftovers -- not a re-average of `tags_summary`.
 
-    Each top-level row is already the matched mass for one origin (or
-    `original_code`); a namespace-prefix check on its `tag_id` is enough to
-    route it, no separate detection pass needed. `score_library` is None when
-    no row carries a library namespace -- absence of library mass, not a zero
-    score, so callers can skip a dead card. `score_code` always has a value:
-    the `original_code` bucket is always present (see TagSplit._default).
+    Category is decided once per matched edge, trusting the match: an edge
+    counts as library if *either* side carries an `origin:lib:*` tag, so a
+    Function ID miss on one side of an otherwise-successful match doesn't
+    zero it out of the library score (or double-count it into both). Only a
+    function with no peer (`unique_to_a`/`unique_to_b`) is judged on its own
+    tag, since there's no partner to trust there.
+
+    `score_library` is None when no library-tagged mass exists at all --
+    absence of library mass, not a zero score, so callers can skip a dead
+    card. `score_code` always has a value: everything not routed to library
+    lands here, matching how `original_code` is always populated.
     """
-    lib_w = lib_num = code_w = code_num = 0.0
-    for row in tags_summary or []:
-        tag_id = str(row.get("tag_id") or "")
-        w = float(row.get("matched_weight") or 0.0)
-        s = float(row.get("score") or 0.0)
-        if any(tag_id.startswith(ns) for ns in namespaces):
+
+    def is_lib(fid):
+        tags = fid_tags.get(fid) if fid_tags else None
+        if not tags:
+            return False
+        return any(tag_id.startswith(ns) for ns in namespaces for tag_id in tags)
+
+    lib_num = lib_w = code_num = code_w = 0.0
+    for m in matched or []:
+        w = float(m.get("avg_features") or 0.0)
+        s = float(m.get("similarity") or 0.0)
+        if is_lib(m.get("func_a")) or is_lib(m.get("func_b")):
+            lib_num += s * w
             lib_w += w
-            lib_num += w * s
         else:
+            code_num += s * w
             code_w += w
-            code_num += w * s
+
+    for rows in (unique_to_a, unique_to_b):
+        for u in rows or []:
+            w = float(u.get("avg_features") or 0.0)
+            if is_lib(u.get("func_id")):
+                lib_w += w
+            else:
+                code_w += w
+
     score_library = (lib_num / lib_w) if lib_w > 0 else None
     score_code = (code_num / code_w) if code_w > 0 else 0.0
     return score_library, score_code
@@ -846,24 +871,40 @@ def load_tag_meta(r, collection):
 
 def demo():
     """Self-check for code_library_split. Pure, no kvrocks needed."""
-    # No origin:lib row at all -> no library card, all mass is code.
+    fid_tags = {
+        "fa": {"origin:lib:libc:2.31": 1.0},
+        "fb": {},  # FunctionID missed this side -- must not zero the match out
+        "fc": {"origin:bundle:mirai:unknown": 1.0},
+        "fd": {},
+        "ua": {"origin:lib:libc:2.31": 1.0},
+        "ub": {},
+    }
+
+    # Matched edge where only one side carries the lib tag still counts fully
+    # as library (trust the match), and coverage-penalizes via unmatched mass.
     lib, code = code_library_split(
-        [{"tag_id": "original_code", "matched_weight": 10.0, "score": 0.4}]
+        matched=[
+            {"func_a": "fa", "func_b": "fb", "similarity": 1.0, "avg_features": 20.0},
+            {"func_a": "fc", "func_b": "fd", "similarity": 0.5, "avg_features": 10.0},
+        ],
+        unique_to_a=[{"func_id": "ua", "avg_features": 20.0}],
+        unique_to_b=[{"func_id": "ub", "avg_features": 10.0}],
+        fid_tags=fid_tags,
+    )
+    # lib: matched 20*1.0 + unmatched ua 20 -> num=20, denom=40 -> 0.5
+    assert abs(lib - 0.5) < 1e-9, lib
+    # code: matched 10*0.5 + unmatched ub 10 -> num=5, denom=20 -> 0.25
+    assert abs(code - 0.25) < 1e-9, code
+
+    # No library-tagged mass anywhere -> no library card.
+    lib, code = code_library_split(
+        matched=[{"func_a": "fc", "func_b": "fd", "similarity": 0.4, "avg_features": 10.0}],
+        unique_to_a=[],
+        unique_to_b=[],
+        fid_tags=fid_tags,
     )
     assert lib is None, lib
     assert abs(code - 0.4) < 1e-9, code
-
-    # Mixed: origin:lib:* rows feed library, everything else feeds code.
-    lib, code = code_library_split(
-        [
-            {"tag_id": "origin:lib:libc:2.31", "matched_weight": 20.0, "score": 1.0},
-            {"tag_id": "original_code", "matched_weight": 10.0, "score": 0.2},
-            {"tag_id": "origin:bundle:mirai:unknown", "matched_weight": 10.0, "score": 0.5},
-        ]
-    )
-    assert abs(lib - 1.0) < 1e-9, lib
-    # code = (10*0.2 + 10*0.5) / 20 = 0.35
-    assert abs(code - 0.35) < 1e-9, code
 
     print("bin_sim_tags demo OK")
 

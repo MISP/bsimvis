@@ -558,10 +558,10 @@ class BinSimService:
             sid = f"{collection}:bin_sim:{algo}:{m_a}::{m_b}"
             pair_scores[(m_a, m_b)] = score_unweighted
 
-            # Code/Library is a namespace split of the same matched mass
-            # `tags_summary` already carries -- no second pass over functions.
+            # Code/Library is the same weighted-cosine formula as `score`,
+            # restricted per category -- not a re-average of `tags_summary`.
             score_library, score_code = code_library_split(
-                tag_fields.get("tags_summary")
+                diff_matched, unique_to_a, unique_to_b, fid_tags
             )
 
             doc = {
@@ -949,7 +949,23 @@ class BinSimService:
                             total_b += w
                 doc.update(split.summaries(total_a, total_b, tag_meta))
                 doc["tags_rev"] = rev
+                matched = diff.get("matched") or []
+                u_a = diff.get("unique_to_a") or []
+                u_b = diff.get("unique_to_b") or []
+                score_library, score_code = code_library_split(
+                    matched, u_a, u_b, fid_tags
+                )
+                doc["score_library"] = score_library
+                doc["score_code"] = score_code
                 pipe.set(sid, json.dumps(doc))
+                pipe.zadd(f"{collection}:bin_sim:score_code:{algo}", {sid: score_code})
+                if score_library is not None:
+                    pipe.zadd(
+                        f"{collection}:bin_sim:score_library:{algo}",
+                        {sid: score_library},
+                    )
+                else:
+                    pipe.zrem(f"{collection}:bin_sim:score_library:{algo}", sid)
             pipe.execute()
 
             done += len(chunk)

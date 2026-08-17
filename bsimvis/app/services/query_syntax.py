@@ -27,7 +27,9 @@ import logging
 import re
 
 from bsimvis.app.services.index_config import (
+    ADDRESS_FIELDS,
     EXACT_FIELDS,
+    HASH_FIELDS,
     SUBSTRING_FIELDS,
     tag_ancestors,
 )
@@ -127,6 +129,29 @@ def _unquote(raw):
     return raw, False
 
 
+def _normalize_value(field, value):
+    """Strip the cosmetic prefixes/separators users type but never index.
+
+    `#<md5>`, `@<addr>`/`0x<addr>`/zero-padding, and `mitre:x:y` vs the
+    canonical `mitre:x.y` are all the same value to a human; only the code
+    treated them as different strings.
+    """
+    if field in HASH_FIELDS and value.startswith("#"):
+        value = value[1:].strip()
+
+    if field in ADDRESS_FIELDS:
+        value = value.lstrip("@").strip()
+        if value.startswith("0x"):
+            value = value[2:]
+        value = value.lstrip("0") or "0"
+
+    if value.startswith("mitre:"):
+        head, _, rest = value.partition(":")
+        value = head + ":" + rest.replace(":", ".")
+
+    return value
+
+
 def parse_filter_value(field, raw, default_kind="exact"):
     """Parse one filter value into a MatchSpec. `raw` is the value as typed.
 
@@ -136,7 +161,7 @@ def parse_filter_value(field, raw, default_kind="exact"):
     so `q=lib*` is a wildcard everywhere.
     """
     value, quoted = _unquote(raw.strip())
-    value = value.lower()
+    value = _normalize_value(field, value.lower())
 
     if not quoted and "*" in value:
         parts = value.split("*")
@@ -145,6 +170,16 @@ def parse_filter_value(field, raw, default_kind="exact"):
             value=value,
             glob="*".join(_escape_glob(p) for p in parts),
             regex=re.compile("^" + ".*".join(re.escape(p) for p in parts) + "$"),
+        )
+
+    if field in ADDRESS_FIELDS and not quoted and value:
+        # Leading zeros are cosmetic: match the bucket value with any amount
+        # of zero-padding, not just the exact string the user typed.
+        return MatchSpec(
+            kind="glob",
+            value=value,
+            glob="*" + _escape_glob(value),
+            regex=re.compile("^0*" + re.escape(value) + "$"),
         )
 
     kind = default_kind

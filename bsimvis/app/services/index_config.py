@@ -212,6 +212,41 @@ SUBSTRING_FIELDS = {
     "file_parent_file_name_b",
     "file_related_file_name_a",
     "file_related_file_name_b",
+    # md5 fields used to require an explicit `*value*` wildcard while filename
+    # fields didn't — same "free text, can't type it exactly" reasoning as
+    # filenames applies to a 32-char hex string typed by hand.
+    "file_md5",
+    "parent_md5",
+    "root_md5",
+    "related_md5",
+    "md5_a",
+    "md5_b",
+    "file_parent_md5_a",
+    "file_parent_md5_b",
+    "file_related_md5_a",
+    "file_related_md5_b",
+}
+
+# Address fields: `@`/`0x` prefixes and leading zeros are cosmetic, so the
+# query value is normalized in query_syntax.parse_filter_value() and matched
+# with any amount of leading zeros ignored on the bucket side too.
+ADDRESS_FIELDS = {
+    "entrypoint_address",
+}
+
+# Hash fields: a leading `#` (as in `#<md5>` or `# <md5>`) is stripped before
+# matching, same idea as the `@`/`0x` stripping on ADDRESS_FIELDS.
+HASH_FIELDS = {
+    "file_md5",
+    "parent_md5",
+    "root_md5",
+    "related_md5",
+    "md5_a",
+    "md5_b",
+    "file_parent_md5_a",
+    "file_parent_md5_b",
+    "file_related_md5_a",
+    "file_related_md5_b",
 }
 
 # Hierarchical fields: values are paths, and every ancestor of a value is

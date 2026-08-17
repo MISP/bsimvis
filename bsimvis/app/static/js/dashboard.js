@@ -1036,7 +1036,10 @@ function updateUI(viewKey, collection, params, route, force = false) {
             if (sortKey) {
                 const currentSort = params.get('sort_by');
                 const currentOrder = params.get('sort_order') || 'desc';
-                const icon = (currentSort === sortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
+                // ponytail: bin-sim "Score" column tracks whichever score type is active
+                const effectiveSortKey = (viewKey === 'binary-similarity' && sortKey === 'score')
+                    ? (params.get('sort') || 'score') : sortKey;
+                const icon = (currentSort === effectiveSortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
                 headHtml += `<th ${style} class="sortable resizable-th" data-label="${label}" onclick="toggleSort('${sortKey}')">${label} <small>${icon}</small>${resizerHtml}</th>`;
             } else {
                 headHtml += `<th ${style} class="resizable-th" data-label="${label}">${label}${resizerHtml}</th>`;
@@ -1070,9 +1073,11 @@ function updateUI(viewKey, collection, params, route, force = false) {
             const match = onclickStr.match(/toggleSort\('([^']+)'\)/);
             if (match) {
                 const sortKey = match[1];
+                const effectiveSortKey = (viewKey === 'binary-similarity' && sortKey === 'score')
+                    ? (params.get('sort') || 'score') : sortKey;
                 const small = th.querySelector('small');
                 if (small) {
-                    small.innerText = (currentSort === sortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
+                    small.innerText = (currentSort === effectiveSortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
                 }
             }
         });
@@ -1683,6 +1688,12 @@ function applySearch() {
 
 function toggleSort(key) {
     const { viewKey, params } = getRoutingState();
+    // ponytail: bin-sim "Score" column must sort on whichever score type
+    // (lib/original/content) is active in the score-type dropdown, not
+    // always the overall 'score' field.
+    if (viewKey === 'binary-similarity' && key === 'score') {
+        key = params.get('sort') || 'score';
+    }
     const currentSort = params.get('sort_by');
     const currentOrder = params.get('sort_order') || 'desc';
 

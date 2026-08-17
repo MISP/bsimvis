@@ -179,7 +179,88 @@ measure your harness instead of your change.
 - **kvrocks `dbsize` reads 0** even with data present (lazy scan). Use `SCARD` /
   `ZCARD` on a known key to confirm ingestion.
 
-## 7. Reporting
+## 7. Comparing across a deploy on a live instance
+
+Restarting a fleet mid-build is safe here, but only because of specifics worth
+knowing before you do it.
+
+### What survives a restart
+
+- **Per-file builds resume.** A `build_sim` job carrying an `md5` (or
+  `batch_uuid`) skips functions already in `{collection}:built:functions:{algo}`
+  with one `SISMEMBER` each and never refetches their vectors.
+- **An all-collection build does not.** `build_batch` with neither `md5` nor
+  `batch_uuid` *deletes* that skip-set on entry, so it restarts from zero. Check
+  `payload` before killing anything: no `md5` key means hours are at risk.
+- **The reaper requeues.** Leases are 60 s; a killed worker's job is requeued
+  once its lease expires, and a job that advanced since its last claim is treated
+  as slow rather than poison, so it is not abandoned after repeated attempts.
+- **Loss window is one chunk.** Functions are marked built *before* their
+  similarities are persisted, so a kill can lose the chunk in flight. `chunk_size`
+  is `min(100, 100000/collection_size)`, which on a 1.5M-function collection is
+  **1** — so at most one function per worker, and it stays marked built.
+
+### Why SIGTERM alone will not do it
+
+`worker.stop()` only sets a flag that is read *between* jobs, and
+`POST /api/jobs/pause` behaves the same way. Neither interrupts a running job, so
+against multi-hour builds both mean waiting hours. Sequence that actually works:
+
+```bash
+curl -X POST  http://<host>:5000/api/jobs/pause    # stop new claims
+# kill the workers (SIGKILL); leases lapse within 60s
+# deploy, restart workers
+curl -X DELETE http://<host>:5000/api/jobs/pause   # resume
+```
+
+Pausing first matters: without it, restarted workers start claiming immediately
+and you cannot verify the new build before it is running at full fleet width.
+
+### Measuring the difference
+
+Use `scripts/compare_build_speed.py`, which compares **the same job ids** before
+and after. Two different jobs are not comparable — throughput depends on the
+binary and on how large the collection already is — but a job that spans the
+deploy holds both constant.
+
+```bash
+python scripts/compare_build_speed.py --api http://<host>:5000 snapshot before.json
+# ... deploy ...
+python scripts/compare_build_speed.py --api http://<host>:5000 snapshot after.json
+python scripts/compare_build_speed.py compare before.json after.json
+```
+
+Take **two** pre-deploy snapshots as well, so the baseline rate is measured the
+same way as the post-deploy rate. The `speed` field on a job is a cumulative
+average over its whole life and will understate a recent improvement for hours —
+do not use it for this.
+
+**The trap this script guards:** a requeued job restarts its counter at 0 and
+races through the skip-set. That burst is `SISMEMBER` calls, not building, and it
+looks like an enormous speedup. Any job whose counter went backwards is flagged
+and excluded until it passes its previous high-water mark.
+
+The API returns these counters as **strings**. Comparing them as strings is
+lexicographic, which breaks both the delta and the resumed-job detection while
+looking plausible — the script coerces on the way in, and anything else reading
+`processed_items` / `total_items` should too.
+
+### Recorded pre-deploy baseline (full_arbor, 2026-08-14, commit `a17b89d`)
+
+Two snapshots 547 s apart, 14 running `build_sim` jobs, all md5-scoped:
+
+| metric | value |
+|---|---|
+| median per-job throughput | **0.0073 fn/s** |
+| comparable jobs | 9 of 14 (4 showed no progress in the window, 1 finished) |
+| fleet total in window | 256 functions / 547 s = **0.468 fn/s** |
+
+Compare the post-deploy run against these, not against a job's `speed` field.
+Note that several nearly-finished jobs advanced zero functions in nine minutes —
+a single function can exceed that on this corpus, so short windows are noisy;
+prefer 20 min or more.
+
+## 8. Reporting
 
 State: base commit, corpus and its size, which phase, each side's relevant
 defaults, cold/warm, and the run-to-run spread. If the benchmark cannot resolve

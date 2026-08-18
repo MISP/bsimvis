@@ -24,6 +24,7 @@ from bsimvis.app.services.cluster_utils import (
     pick_best_shared_cluster,
     pick_best_cluster,
 )
+from bsimvis.app.services.tag_taxonomy import tag_in_scope
 from bsimvis.app.services import container_sim_service, lineage_service
 import json
 
@@ -966,7 +967,7 @@ def _page_diff(diff_data, table, r=None, collection=None, algo=None, pool_id=Non
         if tag_scope:
             tags = _row_tags(item, fmeta)
             if not any(
-                t == p or t.startswith(p + ":") for t in tags for p in tag_scope
+                tag_in_scope(t, p) for t in tags for p in tag_scope
             ):
                 return False
         if fold_name is not None and _fold_key(item, fmeta) != fold_name:

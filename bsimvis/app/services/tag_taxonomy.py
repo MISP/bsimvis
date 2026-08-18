@@ -245,6 +245,24 @@ def tag_separators(namespace):
     return TAG_SEPARATORS.get(namespace, TAG_SEPARATORS_DEFAULT)
 
 
+def tag_in_scope(tag_id, prefix):
+    """Whether a tag falls under a scope prefix, by levels rather than by text.
+
+    A scope names levels, so it must be tested against levels: a plain
+    `startswith(prefix + ":")` reads `fid:uclibc:0.9.30.1#xdrmem_getint32` as
+    outside `fid:uclibc:0.9.30.1`, because the next character is the detail
+    marker rather than a colon. That is how selecting a library version came
+    back with nothing.
+
+    Uses the same prefixes the index buckets under, so a scope selects in the
+    UI exactly what it selects in a search.
+    """
+    if not tag_id or not prefix:
+        return False
+    body = tag_body(tag_id)[0]
+    return prefix == body or prefix in tag_prefixes(tag_id)
+
+
 def canonical_tag_id(tag_id):
     """A tag id in the form every consumer downstream may assume.
 
@@ -1134,6 +1152,18 @@ def demo():
     assert modernize_tag_id("category:network:c2") == "category:network:c2"
     for already in ("fid:libc:2.31#memcpy", "yara:trojan:mirai#ELF_Mirai"):
         assert modernize_tag_id(already) == already, already
+
+    # A scope names levels, so it is tested against levels. Selecting a library
+    # version came back empty because `startswith(prefix + ":")` reads the
+    # detail marker as being outside the version it hangs off.
+    assert tag_in_scope("fid:uclibc:0.9.30.1#xdrmem_getint32", "fid:uclibc:0.9.30.1")
+    assert tag_in_scope("fid:uclibc:0.9.30.1#xdrmem_getint32", "fid:uclibc")
+    assert tag_in_scope("fid:uclibc:0.9.30.1", "fid:uclibc:0.9.30.1")
+    assert tag_in_scope("origin:lib:uclibc:0.9.30.1:x", "origin:lib:uclibc")
+    # A sibling whose name merely starts with the same text is not in scope.
+    assert not tag_in_scope("fid:uclibcplus:1.0", "fid:uclibc")
+    assert not tag_in_scope("fid:musl:1.2#x", "fid:uclibc")
+    assert not tag_in_scope("", "fid:uclibc")
 
     assert namespaced("mytag") == "user:mytag"
     assert namespaced("category:network:c2") == "category:network:c2"

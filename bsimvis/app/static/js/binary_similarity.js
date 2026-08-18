@@ -747,7 +747,10 @@ function fileSimNodePrefixes(node) {
 function fileSimScopeRows(rows) {
     const prefixes = fileSimScopePrefixes();
     if (!prefixes.length) return rows;
-    return rows.filter(r => prefixes.some(p => r.tag_id === p || String(r.tag_id).startsWith(p + ':')));
+    // By levels, not by text: `startsWith(p + ':')` reads
+    // `fid:uclibc:0.9.30.1#xdrmem_getint32` as outside `fid:uclibc:0.9.30.1`,
+    // because the next character is the detail marker rather than a colon.
+    return rows.filter(r => prefixes.some(p => fileSimTagChain(r.tag_id).includes(p)));
 }
 
 // The tag prefixes the current selection sends to the backend. A group node has

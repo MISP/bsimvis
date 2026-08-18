@@ -602,7 +602,7 @@ def demo():
         {
             uuid: rulezet_row(
                 {"title": "Some Rule Title", "author": "someone", "license": "MIT"},
-                tags=["platform:linux", "rulezet:Mirror_Rule", "yara:trojan:x:Mirror_Rule"],
+                tags=["platform:linux", "rulezet:Mirror_Rule", "yara:trojan:x#Mirror_Rule"],
             )
         },
         r,
@@ -703,7 +703,7 @@ def demo():
     by_entity, table = match_provenance("coll", ["f1", "f2", "f3"], r)
     assert set(by_entity) == {"f1", "f2"}, by_entity
     assert by_entity["f1"]["platform:linux"] == [uuid], by_entity["f1"]
-    assert by_entity["f2"] == {"yara:unknown:unknown:R": [vid]}, by_entity["f2"]
+    assert by_entity["f2"] == {"yara:unknown:unknown#R": [vid]}, by_entity["f2"]
     assert set(table) == {uuid, vid}, table
     assert table[vid]["path"] == "/rules/elastic/a.yar", table[vid]
 

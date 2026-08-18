@@ -1,4 +1,6 @@
-"""Rewrite every tag id onto the four-namespace taxonomy.
+"""Rewrite every stored tag id, for either of the two vocabulary moves.
+
+Default (`migrate_tag`) -- onto the four-namespace taxonomy:
 
     lib:libc:2.31:memcpy      -> origin:lib:libc:2.31:memcpy
     bundle:mirai              -> origin:bundle:mirai:unknown
@@ -6,9 +8,22 @@
     llm:malicious:injection   -> severity:high   + category:process:inject
     mirai                     -> user:mirai
 
-The mapping itself lives in `bsimvis.app.services.tag_taxonomy.migrate_tag`, so
-this script only handles storage. It is idempotent: an already-migrated tag maps
-to itself, so a re-run after an interruption is safe.
+`--modernize` (`modernize_tag_id`) -- the later move, putting the detector in
+the namespace and per-function evidence in the `#` tail:
+
+    origin:lib:libc:2.31:memcpy   -> fid:libc:2.31#memcpy
+    origin:bundle:mirai:unknown   -> malware:mirai
+    yara:trojan:mirai:ELF_Mirai   -> yara:trojan:mirai#ELF_Mirai
+    cve:cve-2021-44228            -> cve:2021-44228
+
+Both mappings live in `bsimvis.app.services.tag_taxonomy`, so this script only
+handles storage and never has to know what a tag means. Both are idempotent: an
+already-migrated tag maps to itself, so a re-run after an interruption is safe.
+
+Run them in order on a corpus that predates both. The `#` tail is what stops a
+function name from being a grouping level, so after `--modernize` the index
+holds no bucket named after a symbol -- which is also why it must be followed by
+the re-index this script already performs.
 
 What it rewrites, per collection:
 
@@ -65,6 +80,19 @@ def _s(v):
     return v.decode() if isinstance(v, bytes) else v
 
 
+# Which rewrite this run performs. `--modernize` selects the later one: the
+# detector out of segment 2 and into the namespace, and per-function evidence out
+# of a level and into the `#` tail. Both are id -> [id], both are idempotent, and
+# every piece of storage handling below is identical for either -- which is the
+# whole reason the mapping lives in `tag_taxonomy` and this script does not know
+# what a tag means.
+_MAPPERS = {
+    "taxonomy": tag_taxonomy.migrate_tag,
+    "modernize": lambda tag: [t for t in [tag_taxonomy.modernize_tag_id(tag)] if t],
+}
+_map_tag = _MAPPERS["taxonomy"]
+
+
 def migrate_tag_list(tags):
     """Old tag list -> new tag list, order-preserving and deduped.
 
@@ -75,7 +103,7 @@ def migrate_tag_list(tags):
     if isinstance(tags, dict):
         out = {}
         for tag, conf in tags.items():
-            for new in tag_taxonomy.migrate_tag(tag):
+            for new in _map_tag(tag):
                 out.setdefault(new, conf)
         return out
     if isinstance(tags, str):
@@ -86,7 +114,7 @@ def migrate_tag_list(tags):
 
     out = []
     for tag in tags:
-        for new in tag_taxonomy.migrate_tag(tag):
+        for new in _map_tag(tag):
             if new not in out:
                 out.append(new)
     return out
@@ -201,7 +229,7 @@ def _migrate_tags_metadata(r, collection, dry_run):
             meta = {"color": val}
         if not isinstance(meta, dict):
             meta = {"color": val}
-        for new in tag_taxonomy.migrate_tag(old):
+        for new in _map_tag(old):
             if new in merged:
                 merged[new]["llm"] = bool(merged[new].get("llm") or meta.get("llm"))
             else:
@@ -311,6 +339,30 @@ def demo():
         "name": "f",
     }, doc
     assert migrate_meta(doc) is False, "second pass must be a no-op"
+
+    # --modernize: same storage handling, the other mapping. Swapped the way
+    # main() swaps it, so the two paths cannot drift.
+    global _map_tag
+    _map_tag = _MAPPERS["modernize"]
+    try:
+        assert migrate_tag_list(
+            ["origin:lib:libc:2.31:memcpy", "origin:bundle:mirai:unknown"]
+        ) == ["fid:libc:2.31#memcpy", "malware:mirai"]
+        # A rule name is a level on the way in and a symbol on the way out, so
+        # it must not be case-folded like the levels around it.
+        assert migrate_tag_list(["yara:trojan:mirai:ELF_Mirai"]) == [
+            "yara:trojan:mirai#ELF_Mirai"
+        ]
+        again = migrate_tag_list(["origin:lib:libc:2.31:memcpy", "user:bookmark"])
+        assert migrate_tag_list(again) == again, again
+
+        moderned = {"tags": {"origin:lib:libc:2.31:memcpy": 0.9}, "name": "f"}
+        assert migrate_meta(moderned) is True
+        assert moderned["tags"] == {"fid:libc:2.31#memcpy": 0.9}, moderned
+        assert migrate_meta(moderned) is False, "second pass must be a no-op"
+    finally:
+        _map_tag = _MAPPERS["taxonomy"]
+
     print("migrate_tag_taxonomy demo OK")
 
 
@@ -320,7 +372,18 @@ def main():
     ap.add_argument("--all", action="store_true", help="every known collection")
     ap.add_argument("--dry-run", action="store_true", help="report, write nothing")
     ap.add_argument("--demo", action="store_true", help="run the rule checks and exit")
+    ap.add_argument(
+        "--modernize",
+        action="store_true",
+        help="run the later rewrite instead: detector into the namespace, "
+        "per-function evidence into the # tail "
+        "(origin:lib:libc:2.31:memcpy -> fid:libc:2.31#memcpy)",
+    )
     args = ap.parse_args()
+
+    if args.modernize:
+        global _map_tag
+        _map_tag = _MAPPERS["modernize"]
 
     if args.demo:
         demo()

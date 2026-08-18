@@ -62,10 +62,30 @@ CATEGORIES = {
 # --- Origin -----------------------------------------------------------------
 ORIGIN_KINDS = ("lib", "stdlib", "bundle")
 
-# Bundles have no natural version but carry this placeholder anyway, so origin
-# ids are a uniform `origin:kind:name:version[:func]` and roll up at one depth.
-# Mirrors bin_sim_tags.ORIGIN_NO_VERSION; kept here so the migration does not
-# have to import the split engine.
+# The origin axis is one namespace per source, not one `origin:` namespace with
+# the source at segment 2. Two reasons, and neither is cosmetic: a function's
+# tags are `{tag_id: weight}` with nowhere to record who found them, so the id
+# has to; and it puts the library at the first level, which is what lets a
+# single colour rule tell `fid:libc` from `fid:openssl` instead of needing a
+# per-namespace hue depth.
+#
+# `lib` and `stdlib` no longer separate: the distinction never did anything --
+# both carried priority 100, and nothing else read the kind. Both now take the
+# namespace of whichever detector found them, which is the fact worth keeping.
+#
+# Only kinds that name a *source* rather than a detector's finding appear here.
+# A bundle is the malware itself, so it is `malware:` whoever noticed it.
+ORIGIN_KIND_NAMESPACE = {"bundle": "malware"}
+
+# Mirrors bin_sim_tags.TAG_NAMESPACES' origin entries. `pkg:` is reserved for
+# SBOM-sourced facts: purl identifies a package, which is a different claim from
+# "these bytes are libc", so a detector never writes it.
+ORIGIN_NAMESPACES = ("fid", "bsim", "malware", "pkg", "original")
+
+# Kept only so `migrate_tag` can recognise the placeholder version in a legacy
+# `origin:bundle:mirai:unknown`. New ids omit a version they do not have --
+# depth is not fixed any more, so a filler segment bought nothing and read as a
+# claim the analyzer never made.
 ORIGIN_NO_VERSION = "unknown"
 
 # File-scope only. `unpack_service` writes these onto file docs and
@@ -385,35 +405,52 @@ def namespaced(tag_id):
     return raw if ":" in raw else f"user:{raw}"
 
 
-def origin_tag(kind, name, version=None, func=None):
-    """Build `origin:<kind>:<name>:<version>[:<func>]`.
+def origin_tag(kind, name, version=None, func=None, detector="fid"):
+    """Build `<namespace>:<name>[:<version>][#<func>]`.
 
-    The version segment is always present -- `unknown` when the analyzer did not
-    establish one -- so every origin id rolls up at one fixed depth instead of
-    needing a per-kind rule.
+    The namespace names *who said so* -- `fid:libc:2.31#memcpy`. A function's
+    tags are `{tag_id: weight}`, so the id is the only per-function field there
+    is: with the detector buried in a shared `origin:` namespace there would be
+    no way to see where Function ID and BSim disagree, and no way to give two
+    libraries two hues, because the first level would be the kind rather than
+    the library.
+
+    A missing version is a shorter id, not a placeholder segment: depth is not
+    fixed any more, so `unknown` bought nothing and read as a claim.
+
+    `kind` stays in the signature because callers speak in kinds; a bundle is
+    the malware itself rather than a detector's finding, so it routes to
+    `malware:`.
     """
-    parts = ["origin", kind, name, version or ORIGIN_NO_VERSION]
-    if func:
-        parts.append(func)
-    return ":".join(parts)
+    ns = ORIGIN_KIND_NAMESPACE.get(kind, detector)
+    parts = [ns, name] + ([version] if version else [])
+    tag = ":".join(str(p) for p in parts)
+    return canonical_tag_id(f"{tag}{TAG_DETAIL}{func}" if func else tag)
 
 
 def origin_parent(tag_id):
     """File-level origin implied by a function's origin tag, or None.
 
-    `origin:lib:uclibc:0.9.30.1:xdrmem_getint32` -> `origin:lib:uclibc`: if a
-    function is a known uClibc routine, the binary contains uClibc. The version
-    is deliberately dropped -- one Function ID hit dates a single function, not
-    the library the file was linked against, and a per-function version on the
-    file document reads as a claim about the whole binary that nothing here
+    `fid:uclibc:0.9.30.1#xdrmem_getint32` -> `fid:uclibc`: if a function is a
+    known uClibc routine, the binary contains uClibc. The version is
+    deliberately dropped -- one Function ID hit dates a single function, not the
+    library the file was linked against, and a per-function version on the file
+    document reads as a claim about the whole binary that nothing here
     established. The version stays on the function tag, where the evidence is.
+
+    Legacy `origin:<kind>:<name>:...` ids answer with their own shape for as
+    long as any survive the migration.
     """
     if not tag_id:
         return None
-    parts = str(tag_id).split(":")
-    if len(parts) < 3 or parts[0] != "origin" or not parts[2]:
+    parts = tag_body(tag_id)[0].split(":")
+    if parts[0] == "origin":
+        if len(parts) < 3 or not parts[2]:
+            return None
+        return f"origin:{parts[1]}:{parts[2]}"
+    if parts[0] not in ORIGIN_NAMESPACES or len(parts) < 2 or not parts[1]:
         return None
-    return f"origin:{parts[1]}:{parts[2]}"
+    return f"{parts[0]}:{parts[1]}"
 
 
 def severity_tag(level):
@@ -513,19 +550,27 @@ def capa_rule_hits(cdata):
     return base, hits
 
 
-def yara_tag(category, family, rule_name):
-    """A matched YARA rule -> `yara:<category>:<family>:<rule_name>` tag id.
+def yara_tag(category, family, rule_name, namespace=YARA_NAMESPACE):
+    """A matched YARA rule -> `yara:<category>:<family>#<rule_name>` tag id.
 
     A YARA rule carries no built-in namespace the way a capa rule does, so the
-    id is assembled from the vendored ruleset's own `meta.category` and
-    `meta.malware` fields (e.g. `category: "ransomware"`, `malware: "LOCKBIT"`).
-    Either can be missing on a rule that predates that convention; `unknown`
-    keeps the id at a fixed four-segment depth rather than needing a per-rule
-    rule for how many segments it has.
+    id is assembled from the ruleset's own `meta.category` and `meta.malware`
+    fields (e.g. `category: "ransomware"`, `malware: "LOCKBIT"`). Either can be
+    missing on a rule that predates that convention, and `unknown` says so.
+
+    The rule name is the detail tail, not a level: one rule fires on one
+    function and there are hundreds of thousands of them, so as a level it would
+    mint an index bucket per rule and offer the sankey a column nobody can read.
+    As a tail it stays searchable and displayed while grouping happens at the
+    family above it.
+
+    `namespace` picks the ruleset: `yara` for the vendored one, `rulezet` for a
+    mirrored rule. Which ruleset fired is per-function evidence, and the id is
+    the only per-function field there is.
     """
     cat = str(category or "unknown").strip().lower() or "unknown"
     fam = str(family or "unknown").strip().lower() or "unknown"
-    return f"yara:{cat}:{fam}:{rule_name}"
+    return canonical_tag_id(f"{namespace}:{cat}:{fam}{TAG_DETAIL}{rule_name}")
 
 
 def yara_rule_hits(matches, extra=None):
@@ -794,6 +839,70 @@ LEGACY_CAPABILITY = {
 }
 
 
+def modernize_tag_id(tag_id):
+    """A tag id in the old shape -> the same fact in the current one.
+
+    Separate from `migrate_tag`, which maps the *previous* vocabulary
+    (`flag:`/`llm:`) onto this one. This handles the later move: the detector out
+    of segment 2 and into the namespace, and per-function evidence out of a
+    level and into the detail tail.
+
+        origin:lib:libc:2.31:memcpy      -> fid:libc:2.31#memcpy
+        origin:stdlib:libstdc++:11       -> fid:libstdc++:11
+        origin:bundle:mirai:unknown      -> malware:mirai
+        yara:trojan:mirai:ELF_Mirai      -> yara:trojan:mirai#ELF_Mirai
+        rulezet:ELF_Mirai                -> rulezet:unknown#ELF_Mirai
+        cve:cve-2021-44228               -> cve:2021-44228
+
+    An id already in the current shape is returned unchanged, so the migration
+    is safe to run twice -- which it will be, because a corpus is re-tagged in
+    pieces and nobody tracks which pieces.
+
+    `rulezet:` loses nothing it had: the mirrored rule's category and family
+    were never in that id. They arrive on the `yara:` tag the same rule writes
+    when it fires, so the migrated id says `unknown` rather than inventing one.
+    """
+    # Deliberately not canonicalised first: a rule name is a *level* in the old
+    # id and a tail in the new one, and levels fold case. Normalising before the
+    # move would lowercase `ELF_Mirai` on its way to becoming a symbol.
+    raw = " ".join(str(tag_id or "").split())
+    if not raw:
+        return ""
+    body, detail = tag_body(raw)
+    parts = [p for p in body.split(":") if p]
+    if not parts:
+        return ""
+    head = parts[0].lower()
+
+    if head == "origin" and len(parts) >= 3:
+        kind, name, rest = parts[1], parts[2], parts[3:]
+        ns = ORIGIN_KIND_NAMESPACE.get(kind, "fid")
+        version = rest[0] if rest and rest[0] != ORIGIN_NO_VERSION else None
+        func = detail or (rest[1] if len(rest) > 1 else None)
+        levels = [ns, name] + ([version] if version else [])
+        out = ":".join(levels)
+        return canonical_tag_id(f"{out}{TAG_DETAIL}{func}" if func else out)
+
+    # `yara:<category>:<family>:<rule>` -- the rule name becomes the tail.
+    if head in (YARA_NAMESPACE, "rulezet") and not detail:
+        if head == "rulezet" and len(parts) == 2:
+            return canonical_tag_id(f"rulezet:unknown{TAG_DETAIL}{parts[1]}")
+        if len(parts) >= 4:
+            return canonical_tag_id(
+                ":".join(parts[:3]) + TAG_DETAIL + ":".join(parts[3:])
+            )
+
+    # `cve:cve-2021-44228` -- the namespace already says which registry.
+    if (
+        head in VULN_NAMESPACES
+        and len(parts) == 2
+        and parts[1].lower().startswith(head + "-")
+    ):
+        return canonical_tag_id(f"{head}:{parts[1][len(head) + 1:]}")
+
+    return canonical_tag_id(raw)
+
+
 def migrate_tag(tag_id):
     """Old tag id -> the list of new ids replacing it.
 
@@ -960,20 +1069,61 @@ def demo():
     assert not is_taxonomy_tag("category:network:invented")
     assert not is_taxonomy_tag("origin:lib:libc:2.31"), "model must not invent origins"
 
-    assert origin_tag("lib", "libc", "2.31", "memcpy") == "origin:lib:libc:2.31:memcpy"
-    assert origin_tag("lib", "libc") == "origin:lib:libc:unknown"
+    # The namespace names the detector, the first level names the library, and
+    # the function is a detail tail rather than a fifth level.
+    assert origin_tag("lib", "libc", "2.31", "memcpy") == "fid:libc:2.31#memcpy"
+    assert origin_tag("lib", "libc") == "fid:libc"
+    assert origin_tag("bundle", "mirai", None, "scanner") == "malware:mirai#scanner"
     assert (
-        origin_tag("bundle", "mirai", None, "scanner")
-        == "origin:bundle:mirai:unknown:scanner"
+        origin_tag("lib", "openssl", "3.0.2", "EVP_EncryptInit", detector="bsim")
+        == "bsim:openssl:3.0.2#EVP_EncryptInit"
+    ), "a second detector is a second namespace, so the two can be compared"
+    # A symbol keeps its case; a level does not.
+    assert origin_tag("lib", "Visual Studio", "2019", "atexit") == (
+        "fid:visual-studio:2019#atexit"
     )
+
     # A tag the analyzer builds must roll up the way the split engine expects.
+    assert origin_parent("fid:uclibc:0.9.30.1#xdrmem_getint32") == "fid:uclibc"
+    assert origin_parent("malware:mirai") == "malware:mirai"
+    assert origin_parent("severity:high") is None
+    assert origin_parent("") is None
+    # Legacy ids keep answering until the migration has run.
     assert (
         origin_parent("origin:lib:uclibc:0.9.30.1:xdrmem_getint32")
         == "origin:lib:uclibc"
     )
     assert origin_parent("origin:bundle:mirai:unknown") == "origin:bundle:mirai"
-    assert origin_parent("severity:high") is None
-    assert origin_parent("") is None
+
+    # `canonical_tag_id` normalises only what the query and index layers cannot
+    # carry, and leaves a source's own punctuation as data.
+    assert canonical_tag_id("  Origin:lib:Visual Studio:2019 ") == (
+        "origin:lib:visual-studio:2019"
+    )
+    assert canonical_tag_id('misp-galaxy:tool="Cobalt Strike"') == (
+        "misp-galaxy:tool=cobalt-strike"
+    )
+    assert canonical_tag_id("a::b") == "a:b", "an empty level is not a level"
+    assert canonical_tag_id("mirai") == "user:mirai"
+    assert canonical_tag_id("mitre:T1027.005") == "mitre:t1027.005", "a dot is data"
+    assert canonical_tag_id("fid:openssl:3.0.2#EVP_EncryptInit") == (
+        "fid:openssl:3.0.2#EVP_EncryptInit"
+    ), "a symbol keeps its case"
+    assert canonical_tag_id("   ") == ""
+
+    # The move to detector namespaces and detail tails, and it must be safe to
+    # run twice -- a corpus gets migrated in pieces and nobody tracks which.
+    assert modernize_tag_id("origin:lib:libc:2.31:memcpy") == "fid:libc:2.31#memcpy"
+    assert modernize_tag_id("origin:stdlib:libstdc++:11") == "fid:libstdc++:11"
+    assert modernize_tag_id("origin:bundle:mirai:unknown") == "malware:mirai"
+    assert modernize_tag_id("yara:trojan:mirai:ELF_Mirai") == (
+        "yara:trojan:mirai#ELF_Mirai"
+    ), "a rule name is a symbol on its way out of being a level"
+    assert modernize_tag_id("rulezet:ELF_Mirai") == "rulezet:unknown#ELF_Mirai"
+    assert modernize_tag_id("cve:cve-2021-44228") == "cve:2021-44228"
+    assert modernize_tag_id("category:network:c2") == "category:network:c2"
+    for already in ("fid:libc:2.31#memcpy", "yara:trojan:mirai#ELF_Mirai"):
+        assert modernize_tag_id(already) == already, already
 
     assert namespaced("mytag") == "user:mytag"
     assert namespaced("category:network:c2") == "category:network:c2"
@@ -1071,11 +1221,11 @@ def demo():
     }, mhits
 
     assert yara_tag("Ransomware", "LOCKBIT", "Win32_Ransomware_LockBit") == (
-        "yara:ransomware:lockbit:Win32_Ransomware_LockBit"
+        "yara:ransomware:lockbit#Win32_Ransomware_LockBit"
     )
-    assert yara_tag(None, None, "no_meta_rule") == "yara:unknown:unknown:no_meta_rule"
+    assert yara_tag(None, None, "no_meta_rule") == "yara:unknown:unknown#no_meta_rule"
     assert (
-        namespaced("yara:ransomware:lockbit:x") == "yara:ransomware:lockbit:x"
+        namespaced("yara:ransomware:lockbit#x") == "yara:ransomware:lockbit#x"
     ), "a yara tag must not be buried under user:"
 
     # Shaped like yara-python's own Match/StringMatch/StringMatchInstance, not a
@@ -1118,12 +1268,12 @@ def demo():
     ]
     hits = yara_rule_hits(matches)
     assert hits == {
-        0x1000: {"yara:ransomware:lockbit:Win32_Ransomware_LockBit"},
-        0x2000: {"yara:ransomware:lockbit:Win32_Ransomware_LockBit"},
-        0x2500: {"yara:ransomware:lockbit:Win32_Ransomware_LockBit"},
-        0x3000: {"yara:unknown:unknown:homebrew_rule"},
-        0x4000: {"yara:trojan:mirai:Linux_Trojan_Mirai_268aac0b"},
-        0x5000: {"yara:unknown:unknown:odd_shape_rule"},
+        0x1000: {"yara:ransomware:lockbit#Win32_Ransomware_LockBit"},
+        0x2000: {"yara:ransomware:lockbit#Win32_Ransomware_LockBit"},
+        0x2500: {"yara:ransomware:lockbit#Win32_Ransomware_LockBit"},
+        0x3000: {"yara:unknown:unknown#homebrew_rule"},
+        0x4000: {"yara:trojan:mirai#Linux_Trojan_Mirai_268aac0b"},
+        0x5000: {"yara:unknown:unknown#odd_shape_rule"},
     }, hits
     assert yara_rule_hits([]) == {}
 
@@ -1131,13 +1281,13 @@ def demo():
     # rule is in it and is absent from every value in `hits`.
     file_tags = yara_file_tags(matches)
     assert file_tags == {
-        "yara:ransomware:lockbit:Win32_Ransomware_LockBit",
-        "yara:unknown:unknown:homebrew_rule",
-        "yara:packer:unknown:Win32_Packer_Themida",
-        "yara:trojan:mirai:Linux_Trojan_Mirai_268aac0b",
-        "yara:unknown:unknown:odd_shape_rule",
+        "yara:ransomware:lockbit#Win32_Ransomware_LockBit",
+        "yara:unknown:unknown#homebrew_rule",
+        "yara:packer:unknown#Win32_Packer_Themida",
+        "yara:trojan:mirai#Linux_Trojan_Mirai_268aac0b",
+        "yara:unknown:unknown#odd_shape_rule",
     }, file_tags
-    assert "yara:packer:unknown:Win32_Packer_Themida" not in set().union(*hits.values())
+    assert "yara:packer:unknown#Win32_Packer_Themida" not in set().union(*hits.values())
     assert yara_file_tags([]) == set()
 
     # The mirrored ruleset's tags ride in a sidecar keyed by the uuid YARA
@@ -1160,14 +1310,14 @@ def demo():
     ]
     sidecar = {uuid_str: ["mitre:t1027", "cve:cve-2021-44228"]}
     assert yara_file_tags(mirrored, sidecar) == {
-        "yara:trojan:mirai:Some_Rule",
+        "yara:trojan:mirai#Some_Rule",
         "mitre:t1027",
         "cve:cve-2021-44228",
         "rulezet:Some_Rule",
     }
     assert yara_rule_hits(mirrored, sidecar) == {
         0x7000: {
-            "yara:trojan:mirai:Some_Rule",
+            "yara:trojan:mirai#Some_Rule",
             "mitre:t1027",
             "cve:cve-2021-44228",
             "rulezet:Some_Rule",
@@ -1175,11 +1325,11 @@ def demo():
     }
     # No sidecar entry, and matches with no namespace at all, still work.
     assert yara_file_tags(mirrored, {"other": ["x"]}) == {
-        "yara:trojan:mirai:Some_Rule",
+        "yara:trojan:mirai#Some_Rule",
         "rulezet:Some_Rule",
     }
     assert yara_file_tags(matches[:1], sidecar) == {
-        "yara:ransomware:lockbit:Win32_Ransomware_LockBit"
+        "yara:ransomware:lockbit#Win32_Ransomware_LockBit"
     }
 
     # --- Source tag routing -------------------------------------------------

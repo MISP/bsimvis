@@ -184,7 +184,7 @@ def demo():
             assert mine, "mirrored rule did not match"
             assert mine[0].namespace == uuid, mine[0].namespace
             tags = yara_file_tags(matches, extra)
-            assert "yara:trojan:canary:Sidecar_Canary" in tags, tags
+            assert "yara:trojan:canary#Sidecar_Canary" in tags, tags
             assert {"mitre:t1027", "cve:cve-2021-44228"} <= tags, tags
 
             # The two rulesets are separately switchable -- an upload can ask

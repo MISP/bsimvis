@@ -452,9 +452,7 @@ class TagService:
                 p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
                 pool_meta_key = f"global:pool:{p_id}:tags_metadata"
                 if not self.r.hexists(pool_meta_key, tag):
-                    self.r.hset(
-                        pool_meta_key, tag, json.dumps({"color": color, "priority": 0})
-                    )
+                    self.r.hset(pool_meta_key, tag, json.dumps({"priority": 0}))
 
     def get_tags(self, collection):
         """Returns the global tag index for a collection."""

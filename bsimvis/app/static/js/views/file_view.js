@@ -26,6 +26,9 @@ window.FileView = {
         this.sortState = { col: 'function_name', dir: 1 };
         this.fvAxis = '';
         this.fvSelectedTag = null;
+        this.fvSelectedTagLabel = null;
+        this.fvTreeOpen = new Set();
+        this.fvSidebarVisible = true;
 
         const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
@@ -100,6 +103,17 @@ window.FileView = {
                 }
                 .bsim-node .bsim-node-label { flex:1; overflow:hidden; text-overflow:ellipsis; }
                 .bsim-node .bsim-node-count { font-size:0.68rem; color:var(--dim); font-family:'Consolas',monospace; }
+                /* Scope chips -- same shape/classes as bin-sim's #bsim-chips */
+                .bsim-chips { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px 0; min-height:0; }
+                .bsim-chip {
+                    display:inline-flex; align-items:center; gap:6px; padding:3px 8px;
+                    border:1px solid var(--border); border-radius:12px; background:var(--bg-alt);
+                    font-size:0.72rem; font-family:'Inter',sans-serif; color:var(--subtle);
+                }
+                .bsim-chip b { color:var(--text); font-weight:600; }
+                .bsim-chip .bsim-chip-x { cursor:pointer; color:var(--dim); }
+                .bsim-chip .bsim-chip-x:hover { color:var(--token-instruction); }
+                #fv-tree-sidebar.fv-hidden { display:none; }
             </style>
             <div id="file-view-loader" style="text-align:center; padding:50px; color:var(--dim); font-size:1.2rem;">
                 <i class="fa-solid fa-spinner fa-spin"></i> Loading Binary Details...
@@ -152,11 +166,18 @@ window.FileView = {
 
                 <!-- Functions Tab Panel -->
                 <div id="file-panel-functions" class="file-view-panel" style="display: none;">
+                  <div style="display:flex; justify-content:flex-end; margin-bottom:6px;">
+                      <span class="bsim-side-actions" style="cursor:pointer;" onclick="FileView.toggleTreeSidebar()" title="Show/hide the tag tree">
+                          <span id="fv-tree-toggle-label">hide tree</span>
+                      </span>
+                  </div>
                   <div style="display:flex; gap:16px; align-items:stretch; min-height:0;">
                     <div id="fv-tree-sidebar">
                         <div class="bsim-side-title">
                             Function tag tree
                             <span class="bsim-side-actions">
+                                <span onclick="FileView.expandAllTreeNodes()" title="Expand every tag node">expand all</span>
+                                <span onclick="FileView.collapseAllTreeNodes()" title="Collapse every tag node">collapse all</span>
                                 <span onclick="FileView.clearTreeSelection()" title="Clear the tag filter">clear</span>
                             </span>
                         </div>
@@ -164,6 +185,7 @@ window.FileView = {
                         <div id="fv-tree" class="bsim-tree"></div>
                     </div>
                     <div class="card" style="flex:1; min-width:0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
+                        <div id="fv-chips" class="bsim-chips"></div>
                         <!-- ponytail: viewport-relative instead of a flex chain; 260px is the title strip + tabbar + card padding above it -->
                         <div id="file-func-scroll" style="overflow-x: auto; max-height: calc(100vh - 260px); min-height: 300px; overflow-y: auto;">
                             <table class="file-func-table" id="file-func-table">
@@ -187,7 +209,13 @@ window.FileView = {
                                             </div>
                                         </th>
                                         <th><input type="text" id="flt-func-address" placeholder="Addr..." style="width:100%;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
-                                        <th><input type="text" id="flt-func-tag" placeholder="Tag..." style="width:100%;" onfocus="FileView.attachTagFilterAutocomplete(this)" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
+                                        <th>
+                                            <div class="tag-filter-container" id="tag-container-fv-func">
+                                                <input type="text" class="tag-filter-add" placeholder="+ Tag"
+                                                       onkeydown="FileView.tagFilterAdd(event)"
+                                                       onfocus="attachTagAutocomplete(this, (val) => { createTagCard('fv-func', 'func_tag', val, false, false); this.value=''; FileView.applyFilters(); })">
+                                            </div>
+                                        </th>
                                         <th>
                                             <div style="display:flex; flex-direction:column; gap:2px;">
                                                 <input type="text" id="flt-func-cluster" placeholder="UUID..." style="width:100%; font-size:0.6rem;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
@@ -649,7 +677,6 @@ window.FileView = {
         'flt-func-namespace': 'namespace',
         'flt-func-ret_type': 'return_type',
         'flt-func-address': 'entrypoint_address',
-        'flt-func-tag': 'func_tag',
         'flt-func-cluster': 'cluster_uuid',
         'flt-func-cluster-name': 'cluster_name',
         'flt-func-min-cohesion': 'min_cohesion',
@@ -667,12 +694,26 @@ window.FileView = {
         });
     },
 
-    attachTagFilterAutocomplete(input) {
-        if (typeof attachTagAutocomplete !== 'function') return;
-        attachTagAutocomplete(input, (val) => {
-            input.value = val;
-            this.applyFilters();
-        });
+    // Enter/comma commits the typed value as a tag card, same as bin-sim's
+    // `binSimSimTagAdd`.
+    tagFilterAdd(event) {
+        if (event.key !== 'Enter' && event.key !== ',') return;
+        event.preventDefault();
+        const val = event.target.value.replace(',', '').trim();
+        if (!val) return;
+        createTagCard('fv-func', 'func_tag', val, false, false);
+        event.target.value = '';
+        this.applyFilters();
+    },
+
+    // Tag cards typed in the header (additive, AND'd with the tree scope below).
+    fvReadTagCards() {
+        const c = document.getElementById('tag-container-fv-func');
+        if (!c) return [];
+        return Array.from(c.querySelectorAll('.tag-filter-card')).map(el => ({
+            value: el.dataset.value,
+            exclude: el.dataset.exclude === 'true',
+        }));
     },
 
     applyFilters() {
@@ -702,6 +743,12 @@ window.FileView = {
             const v = (document.getElementById(id)?.value || '').trim();
             if (v) p.set(param, v);
         }
+        // Tag cards typed in the header and the tree's scope both narrow on
+        // func_tag/exclude_func_tag -- same field, so they combine naturally.
+        this.fvReadTagCards().forEach(t => {
+            p.append(t.exclude ? 'exclude_func_tag' : 'func_tag', t.value);
+        });
+        if (this.fvSelectedTag) p.append('func_tag', this.fvSelectedTag);
         return p.toString();
     },
 
@@ -903,6 +950,9 @@ window.FileView = {
     // until someone needs whole-file counts before scrolling/filtering.
     fvAxis: '',
     fvSelectedTag: null,
+    fvSelectedTagLabel: null,
+    fvTreeOpen: new Set(),
+    fvSidebarVisible: true,
 
     fvTagCounts() {
         const counts = {};
@@ -955,6 +1005,8 @@ window.FileView = {
             </select>`;
     },
 
+    // Caret toggles open/closed (bin-sim's fileSimNodeHtml); clicking the row
+    // itself selects, exactly like #bsim-tree.
     fvRenderTree() {
         const host = document.getElementById('fv-tree');
         if (!host) return;
@@ -965,18 +1017,25 @@ window.FileView = {
         }
         const dot = (id) => (typeof TagColor !== 'undefined')
             ? `<span class="bsim-node-dot" style="background:${TagColor.forTag(id)};"></span>` : '';
-        const nodeHtml = (n, depth, hasKids) => `
+        const nodeHtml = (n, depth, hasKids, open) => {
+            const caret = hasKids
+                ? `<span class="bsim-caret" onclick="event.stopPropagation(); FileView.toggleTreeNode(${escapeAttr(jsString(n.id))})">${open ? '▼' : '▶'}</span>`
+                : '<span class="bsim-caret"></span>';
+            return `
             <div class="bsim-node${this.fvSelectedTag === (n.prefix || n.id) ? ' selected' : ''}" style="padding-left:${8 + depth * 14}px;"
-                 onclick="FileView.selectTreeNode(${escapeAttr(jsString(n.id))}, ${escapeAttr(jsString(n.prefix || ''))})">
-                <span class="bsim-caret">${hasKids ? '▾' : ''}</span>
+                 onclick="FileView.selectTreeNode(${escapeAttr(jsString(n.id))}, ${escapeAttr(jsString(n.prefix || ''))}, ${escapeAttr(jsString(n.label))})">
+                ${caret}
                 ${dot(n.id)}
                 <span class="bsim-node-label">${escapeHtml(n.label)}</span>
                 <span class="bsim-node-count">${n.count}</span>
             </div>`;
+        };
         const out = [];
         nodes.forEach(n => {
-            out.push(nodeHtml(n, 0, n.children.length > 0));
-            n.children.forEach(c => out.push(nodeHtml(c, 1, false)));
+            const hasKids = n.children.length > 0;
+            const open = this.fvTreeOpen.has(n.id);
+            out.push(nodeHtml(n, 0, hasKids, open));
+            if (hasKids && open) n.children.forEach(c => out.push(nodeHtml(c, 1, false, false)));
         });
         host.innerHTML = out.join('');
     },
@@ -984,32 +1043,70 @@ window.FileView = {
     renderTagTree() {
         this.fvRenderAxisPicker();
         this.fvRenderTree();
+        this.fvRenderChips();
     },
 
     setTreeAxis(axis) {
         this.fvAxis = axis;
         this.fvSelectedTag = null;
+        this.fvSelectedTagLabel = null;
         this.renderTagTree();
+        this.fvRenderChips();
+    },
+
+    toggleTreeNode(id) {
+        if (this.fvTreeOpen.has(id)) this.fvTreeOpen.delete(id);
+        else this.fvTreeOpen.add(id);
+        this.fvRenderTree();
+    },
+
+    expandAllTreeNodes() {
+        this.fvTree().forEach(n => { if (n.children.length) this.fvTreeOpen.add(n.id); });
+        this.fvRenderTree();
+    },
+
+    collapseAllTreeNodes() {
+        this.fvTreeOpen.clear();
+        this.fvRenderTree();
     },
 
     // A name node (>1 version) filters by prefix (`lib:libc*`); a leaf/version
     // node or a flattened single-version name filters by the exact tag id --
     // same wildcard syntax /api/function/search already supports (query_syntax.py).
-    selectTreeNode(id, prefix) {
+    selectTreeNode(id, prefix, label) {
         const isGroup = prefix && id.startsWith('n:');
-        this.fvSelectedTag = isGroup ? prefix : id;
-        const input = document.getElementById('flt-func-tag');
-        if (input) input.value = isGroup ? `${prefix}*` : id;
+        this.fvSelectedTag = isGroup ? `${prefix}*` : id;
+        this.fvSelectedTagLabel = label || this.fvSelectedTag;
         this.fvRenderTree();
+        this.fvRenderChips();
         this.applyFilters();
     },
 
     clearTreeSelection() {
         this.fvSelectedTag = null;
-        const input = document.getElementById('flt-func-tag');
-        if (input) input.value = '';
+        this.fvSelectedTagLabel = null;
         this.fvRenderTree();
+        this.fvRenderChips();
         this.applyFilters();
+    },
+
+    // Removable scope chip mirroring the tree selection -- bin-sim's #bsim-chips.
+    fvRenderChips() {
+        const el = document.getElementById('fv-chips');
+        if (!el) return;
+        el.innerHTML = this.fvSelectedTag
+            ? `<span class="bsim-chip">tag: <b>${escapeHtml(this.fvSelectedTagLabel || this.fvSelectedTag)}</b>
+                   <span class="bsim-chip-x" title="Remove this scope" onclick="FileView.clearTreeSelection()">✕</span>
+               </span>`
+            : '<span style="font-size:0.72rem; color:var(--dim); font-family:sans-serif;">All functions — select a tag on the left to scope.</span>';
+    },
+
+    toggleTreeSidebar() {
+        this.fvSidebarVisible = !this.fvSidebarVisible;
+        const sidebar = document.getElementById('fv-tree-sidebar');
+        const label = document.getElementById('fv-tree-toggle-label');
+        if (sidebar) sidebar.classList.toggle('fv-hidden', !this.fvSidebarVisible);
+        if (label) label.textContent = this.fvSidebarVisible ? 'hide tree' : 'show tree';
     },
 
     openFunctions(e) {

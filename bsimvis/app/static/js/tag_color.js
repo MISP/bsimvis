@@ -71,6 +71,25 @@ const TagColor = (() => {
         return parts(tagId).body;
     }
 
+    // The levels a tag id occupies, outermost first, every one a real tag id:
+    // `['fid', 'fid:libc', 'fid:libc:2.31']`. The tree in any view is this walk,
+    // so a node id is always a string some tag actually produces -- which is
+    // what makes its colour, its index buckets and its filter the same string.
+    function chain(tagId) {
+        const out = prefixes(tagId);
+        out.push(groupId(tagId));
+        return out;
+    }
+
+    // Which axis a tag answers, from the map the backend ships. Kept here rather
+    // than copied into each view: a second table is how a tag ends up on one
+    // axis in the tree and another in the graph.
+    function axisOf(tagId) {
+        const ns = parts(tagId).ns;
+        if (!cfg) return ns;
+        return cfg.tag_axes[ns] || cfg.tag_axis_default;
+    }
+
     function style(tagId) {
         const id = String(tagId || '').includes(':') ? String(tagId) : `user:${tagId}`;
         if (!cfg) return { hue: null, tone: 0, step: 0 };
@@ -126,7 +145,11 @@ const TagColor = (() => {
         .then(c => { cfg = c; return c; })
         .catch(e => { console.error('tag colour config failed to load', e); });
 
-    return { style, css, forTag, ready, hash32, levels, prefixes, groupId, config: () => cfg };
+    return {
+        style, css, forTag, ready, hash32,
+        levels, prefixes, groupId, chain, axisOf,
+        config: () => cfg,
+    };
 })();
 
 window.TagColor = TagColor;

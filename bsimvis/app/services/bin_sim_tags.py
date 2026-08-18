@@ -28,7 +28,7 @@ It adds no asymptotic cost: everything here is O(1) per already-matched edge.
 
 from collections import defaultdict
 
-from bsimvis.app.services.tag_taxonomy import tag_body
+from bsimvis.app.services.tag_taxonomy import TAG_AXES, tag_body
 
 # Two distinct kinds of "we can't attribute this to a library", kept apart on
 # purpose: UNTAGGED means at least one side carries no tag at all (no evidence),
@@ -107,38 +107,14 @@ AXES = (
     AXIS_VULN,
 )
 
-# namespace prefix -> axis. Priority is resolved separately (ORIGIN_PRIORITY),
-# because for `origin:` it depends on the *second* segment, not the first.
-# Several namespaces share `family` and `vuln`: an axis is a question, and
-# `misp:tool:cobalt-strike` and `runtime-packer:pe:upx` answer the same
-# one whatever taxonomy they came out of.
-TAG_NAMESPACES = {
-    # Origin, one namespace per detector rather than one `origin:` namespace
-    # with the detector buried at segment 2. The id is the only per-function
-    # field a tag has -- `{tag_id: weight}`, no room for a source -- so if you
-    # want to see where FID and BSim disagree, the detector has to be in the id.
-    # It also puts the library at the first level, which is what lets one colour
-    # rule give `fid:libc` and `fid:openssl` different hues.
-    "fid": AXIS_ORIGIN,
-    "bsim": AXIS_ORIGIN,
-    "malware": AXIS_ORIGIN,
-    "pkg": AXIS_ORIGIN,
-    "original": AXIS_ORIGIN,
-    "origin": AXIS_ORIGIN,
-    "severity": AXIS_SEVERITY,
-    "category": AXIS_CATEGORY,
-    "user": AXIS_USER,
-    "capa": AXIS_CAPA,
-    "mitre": AXIS_MITRE,
-    "yara": AXIS_YARA,
-    "rulezet": AXIS_RULESET,
-    "misp": AXIS_FAMILY,
-    "ms-caro-malware-full": AXIS_FAMILY,
-    "runtime-packer": AXIS_FAMILY,
-    "cve": AXIS_VULN,
-    "ghsa": AXIS_VULN,
-    "pysec": AXIS_VULN,
-}
+# namespace prefix -> axis, owned by `tag_taxonomy` because more than this
+# module needs it: the file view groups by axis too, and `color_config` ships
+# the same map to the browser. A second copy is how a tag ends up on one axis in
+# the tree and another in the graph.
+#
+# Priority is resolved separately (ORIGIN_PRIORITY), because a legacy `origin:`
+# id keeps its kind at the *second* segment rather than in the namespace.
+TAG_NAMESPACES = TAG_AXES
 
 # Priority only matters inside origin, where a function must resolve to one
 # source; the other axes overlay and never compete. Library tags outrank bundle

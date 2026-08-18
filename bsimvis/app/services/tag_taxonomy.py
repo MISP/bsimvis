@@ -129,6 +129,51 @@ MISP_NAMESPACE = "misp"
 # to roll up on.
 VULN_NAMESPACES = ("cve", "ghsa", "pysec")
 
+# --- Axes -------------------------------------------------------------------
+# namespace -> the question a tag in it answers. Lives here, with the
+# vocabulary, because more than the split engine needs it: every view that
+# groups tags by axis reads the same map, shipped to the browser by
+# `color_config`. `bin_sim_tags` re-exports it as `TAG_NAMESPACES`.
+#
+# Several namespaces share an axis on purpose: an axis is a question, and
+# `misp:tool:cobalt-strike` and `runtime-packer:pe:upx` answer the same one
+# whatever taxonomy produced them. Origin has one namespace per detector, so
+# `fid:` and `bsim:` can be told apart on a function that has room for nothing
+# but its tag ids.
+TAG_AXES = {
+    "fid": "origin",
+    "bsim": "origin",
+    "malware": "origin",
+    "pkg": "origin",
+    "original": "origin",
+    "origin": "origin",
+    "severity": "severity",
+    "category": "category",
+    "user": "user",
+    "capa": "capa",
+    "mitre": "mitre",
+    "yara": "yara",
+    "rulezet": "ruleset",
+    "misp": "family",
+    "ms-caro-malware-full": "family",
+    "runtime-packer": "family",
+    "cve": "vuln",
+    "ghsa": "vuln",
+    "pysec": "vuln",
+    # The two synthetic buckets. They are whole ids rather than namespaces, but
+    # a namespace lookup on an id with no colon returns the id itself, so this
+    # entry answers for them -- and any view reading the map gets what
+    # `tag_axis` special-cases, instead of dropping them on the user axis.
+    "original_code": "origin",
+    "tag_mismatch": "origin",
+}
+
+# A tag with no known namespace (a bare `mirai` typed into the tag box) lands on
+# the user axis: it came from a human, and an unrecognised tag must never be
+# able to silently empty `original_code` or dilute the LLM's percentages.
+DEFAULT_AXIS = "user"
+
+
 # --- Colour -----------------------------------------------------------------
 # A tag's colour is derived from its id, never assigned: a new namespace, a new
 # library, a new capa rule all get a stable colour the day they first appear,
@@ -401,11 +446,17 @@ def tag_style(tag_id):
 def color_config():
     """The rule's parameters, for the UI to apply the same rule client-side.
 
-    Shipped rather than a colour per tag because the UI invents ids the backend
-    never sees -- folding `origin:lib:libc:2.31` up to `origin:lib:libc` happens
-    in the browser, and that folded node still needs its colour.
+    Shipped rather than a colour per tag because the UI folds ids the backend
+    never sent -- `fid:libc:2.31` up to `fid:libc` happens in the browser, and
+    that folded node still needs its colour.
+
+    Carries the namespace -> axis map too. Any view that groups tags by axis
+    needs it, and a second copy living in JS is exactly the drift that let a
+    tree colour a node from a string the index had never bucketed.
     """
     return {
+        "tag_axes": dict(TAG_AXES),
+        "tag_axis_default": DEFAULT_AXIS,
         "severity_hues": SEVERITY_HUES,
         "hue_depth": HUE_DEPTH,
         "hue_depth_default": HUE_DEPTH_DEFAULT,

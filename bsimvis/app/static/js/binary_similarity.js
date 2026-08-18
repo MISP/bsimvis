@@ -108,10 +108,10 @@ function renderBinarySimilarityView(params) {
                     <div class="bsim-tabbar" id="bin-sim-tabs">
                         <button class="bsim-tab active" id="bin-sim-tab-btn-summary" onclick="switchBinSimTab('summary')">Summary</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-all" onclick="switchBinSimTab('all')">All</button>
-                        <button class="bsim-tab" id="bin-sim-tab-btn-matched" onclick="switchBinSimTab('matched')">Matched</button>
+                        <button class="bsim-tab" id="bin-sim-tab-btn-matched" onclick="switchBinSimTab('matched')">Common</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-unique_a" onclick="switchBinSimTab('unique_a')">Unique to A</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-unique_b" onclick="switchBinSimTab('unique_b')">Unique to B</button>
-                        <button class="bsim-tab" id="bin-sim-tab-btn-unmatched" onclick="switchBinSimTab('unmatched')">Unmatched</button>
+                        <button class="bsim-tab" id="bin-sim-tab-btn-unmatched" onclick="switchBinSimTab('unmatched')">All Unique</button>
                     </div>
 
                     <!-- Global scope chips: the tree selection, removable from here too -->
@@ -497,10 +497,10 @@ function initResizableCards() {
         // A matched row is one function on each side, so All counts both sides.
         const allCount = (counts.matched || 0) * 2 + (counts.unique_to_a || 0) + (counts.unique_to_b || 0);
         if (btnAll) btnAll.textContent = `All (${allCount})`;
-        if (btnMatched) btnMatched.textContent = `Matched (${counts.matched})`;
+        if (btnMatched) btnMatched.textContent = `Common (${counts.matched})`;
         if (btnUniqueA) btnUniqueA.textContent = `Unique to A (${counts.unique_to_a})`;
         if (btnUniqueB) btnUniqueB.textContent = `Unique to B (${counts.unique_to_b})`;
-        if (btnUnmatched) btnUnmatched.textContent = `Unmatched (${counts.unique_to_a} / ${counts.unique_to_b})`;
+        if (btnUnmatched) btnUnmatched.textContent = `All Unique (${counts.unique_to_a} / ${counts.unique_to_b})`;
 
         // Tree + Summary render from the compact payload alone; the table and the
         // function graph page themselves once a tab that needs rows is shown.

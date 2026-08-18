@@ -161,4 +161,39 @@ assert.strictEqual(frontier('lib:libc:2.31'), '2.31');
 assert.strictEqual(frontier('lib:libc:2.35'), '2.35');
 assert.strictEqual(frontier('lib:zlib:1.2'), 'zlib');
 
+// ---- The invariant this suite exists for -------------------------------
+// Every node id must be a string some tag beneath it actually produces: a real
+// tag id, or one of its own ancestor prefixes. The reported bug was a node id
+// (`libraries/Visual Studio`) that no tag, no index bucket and no colour rule
+// had ever seen, so the tree hashed it to one hue while the library's card
+// hashed the real id to another. An invented id is unrepresentable now, and
+// this is what keeps it that way when a fourth axis builder gets written.
+const walk = (n, out = []) => {
+    out.push(n);
+    (n.children || []).forEach(c => walk(c, out));
+    return out;
+};
+
+const mixed = fileSimTree([
+    tag('lib', 'libc', 2, 2, { tag_id: 'lib:libc:2.31#memcpy' }),
+    tag('lib', 'Visual Studio', 3, 1, { tag_id: 'lib:Visual Studio:2019' }),
+    tag('bundle', 'mirai', 1, 1),
+    Object.assign(tag('original_code', 'Original', 1, 1), { tag_id: 'original_code' }),
+]);
+
+for (const node of walk(mixed).slice(1)) {
+    const legal = new Set();
+    for (const tagId of node.tagIds) {
+        TagColor.prefixes(tagId).forEach(p => legal.add(p));
+        legal.add(TagColor.groupId(tagId));
+    }
+    assert.ok(
+        legal.has(node.id),
+        `node id ${JSON.stringify(node.id)} is not a prefix of any tag under it ` +
+        `(${JSON.stringify(node.tagIds)}) -- it would take a colour no card can match`
+    );
+    assert.ok(!node.id.includes('#'), `detail tail leaked into node id ${node.id}`);
+    assert.strictEqual(node.prefix, node.id, `scope prefix must be the node id: ${node.id}`);
+}
+
 console.log('ok');

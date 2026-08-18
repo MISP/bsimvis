@@ -801,9 +801,14 @@ EMPTY_SUMMARIES = {
 
 
 # Origin namespaces whose mass counts as "library" rather than "code" for the
-# Code/Library score split. A tuple, not one string: the plan for more origin
-# namespaces (beyond `lib`) only needs another prefix added here.
-LIBRARY_ORIGIN_PREFIXES = ("origin:lib:",)
+# Code/Library score split.
+#
+# Every detector that identifies library code belongs here, not just the one in
+# use today: the namespace names who found it, so reading only `fid:` would make
+# the library score silently halve the day BSim starts tagging alongside Function
+# ID. `malware:` is deliberately absent -- a bundle names the sample, which is
+# the code under analysis rather than a library it links against.
+LIBRARY_ORIGIN_PREFIXES = ("fid:", "bsim:", "pkg:", "origin:lib:", "origin:stdlib:")
 
 
 def code_library_split(
@@ -952,6 +957,25 @@ def demo():
     )
     assert lib is None, lib
     assert abs(code - 0.4) < 1e-9, code
+
+    # Every library-identifying detector counts, not just the one in use today:
+    # the namespace names who found it, so reading only `fid:` would halve the
+    # library score the day BSim starts tagging alongside Function ID. A bundle
+    # is the sample under analysis, not a library it links against.
+    def _one(tag):
+        return code_library_split(
+            matched=[
+                {"func_a": "x", "func_b": "y", "similarity": 1.0, "avg_features": 10.0}
+            ],
+            unique_to_a=[],
+            unique_to_b=[],
+            fid_tags={"x": {tag: 1.0}, "y": {}},
+        )
+
+    for tag in ("fid:libc:2.31#memcpy", "bsim:libc:2.31", "origin:lib:libc:2.31"):
+        assert _one(tag)[0] == 1.0, tag
+    for tag in ("malware:mirai", "category:network:c2"):
+        assert _one(tag)[0] is None, tag
 
     print("bin_sim_tags demo OK")
 

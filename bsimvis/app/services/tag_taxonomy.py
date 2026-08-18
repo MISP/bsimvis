@@ -155,10 +155,12 @@ SEVERITY_HUES = {"none": 120, "low": 55, "medium": 30, "high": 0}
 # for the family arc *and* `libc` for its own colour.
 HUE_DEPTH_DEFAULT = 1
 HUE_DEPTH = {
+    # Legacy ids only. `origin:lib:libc` buried the library at the second
+    # segment, so one level of hue would have painted every library alike --
+    # which is the bug this whole rework exists to remove. New ids put the
+    # library first (`fid:libc`), so they need no entry, and this one can go
+    # once no `origin:` ids remain.
     "origin": 2,
-    "capa": 2,
-    "yara": 2,
-    "misp": 2,
 }
 
 # --- Structure --------------------------------------------------------------
@@ -227,6 +229,14 @@ COLOR_VECTORS = (
     "capa:host-interaction:file-system:write",
     "mitre:t1027.005",
     "cve:cve-2021-44228",
+    # The current shape: the library carries the hue, the version and the
+    # matched symbol are shades of it, and a second library is a different hue
+    # rather than a different lightness of the same one.
+    "fid:libc",
+    "fid:libc:2.31",
+    "fid:libc:2.31#memcpy",
+    "fid:openssl",
+    "yara:trojan:mirai#ELF_Mirai",
 )
 
 
@@ -1412,10 +1422,25 @@ def demo():
         (75.52, 0, 0),
         (75.52, 0, 2),
         (76.91, 0, 0),
-        (120.52, 0, 1),
+        (122.73, 1, 2),
         (237.27, 0, 1),
         (99.82, 0, 0),
+        (99.82, 1, 0),
+        (99.82, 1, 1),
+        (99.82, 1, 1),
+        (54.0, 0, 0),
+        (54.0, 0, 1),
     ], [tag_style(t) for t in COLOR_VECTORS]
+
+    # The bug this rework exists to remove: two libraries must differ in hue,
+    # not merely in lightness, and a library must keep one hue at every depth it
+    # is displayed at -- as a card, as a tree node, as a version, as a symbol.
+    libc = [tag_style(f"fid:libc{s}")[0] for s in ("", ":2.31", ":2.31#memcpy")]
+    assert len(set(libc)) == 1, libc
+    assert tag_style("fid:libc")[0] != tag_style("fid:openssl")[0]
+    assert tag_style("fid:libc")[0] != tag_style("fid:visual-studio")[0]
+    # A detail tail changes nothing about the colour: it is not a level.
+    assert tag_style("fid:libc:2.31#memcpy") == tag_style("fid:libc:2.31#malloc")
 
     rules = prompt_rules()
     assert "severity:<level>" in rules and "key_exchange" in rules

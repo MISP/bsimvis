@@ -111,6 +111,7 @@ function renderBinarySimilarityView(params) {
                         <button class="bsim-tab" id="bin-sim-tab-btn-matched" onclick="switchBinSimTab('matched')">Matched</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-unique_a" onclick="switchBinSimTab('unique_a')">Unique to A</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-unique_b" onclick="switchBinSimTab('unique_b')">Unique to B</button>
+                        <button class="bsim-tab" id="bin-sim-tab-btn-unmatched" onclick="switchBinSimTab('unmatched')">Unmatched</button>
                     </div>
 
                     <!-- Global scope chips: the tree selection, removable from here too -->
@@ -492,12 +493,14 @@ function initResizableCards() {
         const btnMatched = document.getElementById('bin-sim-tab-btn-matched');
         const btnUniqueA = document.getElementById('bin-sim-tab-btn-unique_a');
         const btnUniqueB = document.getElementById('bin-sim-tab-btn-unique_b');
+        const btnUnmatched = document.getElementById('bin-sim-tab-btn-unmatched');
         // A matched row is one function on each side, so All counts both sides.
         const allCount = (counts.matched || 0) * 2 + (counts.unique_to_a || 0) + (counts.unique_to_b || 0);
         if (btnAll) btnAll.textContent = `All (${allCount})`;
         if (btnMatched) btnMatched.textContent = `Matched (${counts.matched})`;
         if (btnUniqueA) btnUniqueA.textContent = `Unique to A (${counts.unique_to_a})`;
         if (btnUniqueB) btnUniqueB.textContent = `Unique to B (${counts.unique_to_b})`;
+        if (btnUnmatched) btnUnmatched.textContent = `Unmatched (${counts.unique_to_a} / ${counts.unique_to_b})`;
 
         // Tree + Summary render from the compact payload alone; the table and the
         // function graph page themselves once a tab that needs rows is shown.
@@ -1166,6 +1169,7 @@ function renderFileSimSummary() {
 const FILESIM_TAB_STATES = {
     all: '',
     matched: 'matched',
+    unmatched: 'uniq_a,uniq_b',
     unique_a: 'uniq_a',
     unique_b: 'uniq_b',
 };
@@ -2483,15 +2487,19 @@ function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
     const bTd = `<td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">${col4}</td>`;
     const bNoteTd = `<td style="padding:4px; vertical-align:top;">${col5}</td>`;
 
-    // Unique-A/B rows are always one-sided (100% one side): Similarity is
-    // meaningless there (always 0%) and the other side's two columns are
-    // always blank, so those tabs drop straight to Features/Cluster/side/Notes.
+    // Column count follows the TABLE's mode, not this row's type: the
+    // Unique-A/B tabs are 100% one-sided so they drop to a 4-col layout, but
+    // All/Matched/Unmatched are 7-col tables that can still mix matched and
+    // one-sided rows (e.g. All shows everything, Unmatched shows both
+    // uniqueA and uniqueB rows) — those must always emit all 7 cells so the
+    // header and body stay aligned regardless of any individual row's type.
+    const mode = fileSimColMode();
     let cells;
-    if (type === 'uniqueA') {
+    if (mode === 'a') {
         cells = [featTd, clusterTd, aTd, aNoteTd];
         // Indent lives on the (now-first) Features cell for one-sided rows.
         cells[0] = `<td style="padding:8px; padding-left:${12 + depth * 22}px; text-align:center; vertical-align:top;">${fileSimFeatCell(m, fA, fB)}</td>`;
-    } else if (type === 'uniqueB') {
+    } else if (mode === 'b') {
         cells = [featTd, clusterTd, bTd, bNoteTd];
         cells[0] = `<td style="padding:8px; padding-left:${12 + depth * 22}px; text-align:center; vertical-align:top;">${fileSimFeatCell(m, fA, fB)}</td>`;
     } else {
@@ -2981,7 +2989,7 @@ function renderBinSimStrip(containerId, m, fileId) {
 // ---- Tab switching: Summary / All / Matched / Unique to A / Unique to B / Metadata / Clusters ----
 // Detail tabs (scoped by the tree) and sidebar pages (not scoped). Both live in
 // the same hash so Back/forward restores either.
-const BIN_SIM_DETAIL_TABS = ['summary', 'all', 'matched', 'unique_a', 'unique_b'];
+const BIN_SIM_DETAIL_TABS = ['summary', 'all', 'matched', 'unique_a', 'unique_b', 'unmatched'];
 const BIN_SIM_NAV_PAGES = ['metadata', 'inferred'];
 const BIN_SIM_TABS = BIN_SIM_DETAIL_TABS.concat(BIN_SIM_NAV_PAGES);
 

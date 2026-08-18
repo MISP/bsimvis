@@ -27,6 +27,7 @@ window.FileView = {
         this.fvAxis = '';
         this.fvSelectedTag = null;
         this.fvOpen = new Set();
+        this.fvGroupBy = 'auto';
 
         const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
@@ -101,6 +102,26 @@ window.FileView = {
                 }
                 .bsim-node .bsim-node-label { flex:1; overflow:hidden; text-overflow:ellipsis; }
                 .bsim-node .bsim-node-count { font-size:0.68rem; color:var(--dim); font-family:'Consolas',monospace; }
+                .bsim-chips { display:flex; flex-wrap:wrap; gap:6px; padding:0 12px 8px; min-height:0; }
+                .bsim-chip {
+                    display:inline-flex; align-items:center; gap:6px; padding:3px 8px;
+                    border:1px solid var(--border); border-radius:12px; background:var(--bg-alt);
+                    font-size:0.72rem; font-family:'Inter',sans-serif; color:var(--subtle);
+                }
+                .bsim-chip b { color:var(--text); font-weight:600; }
+                .bsim-chip .bsim-chip-x { cursor:pointer; color:var(--dim); }
+                .bsim-chip .bsim-chip-x:hover { color:var(--token-instruction); }
+                .bsim-ctl-label {
+                    font-size:0.7rem; color:var(--subtle); margin-right:6px; font-weight:bold;
+                    font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;
+                }
+                .bsim-grp-row td {
+                    background:var(--bg-alt); border-top:1px solid var(--border);
+                    border-bottom:1px solid var(--border); padding:7px 10px;
+                    font-family:'Inter',sans-serif; font-size:0.78rem; cursor:pointer;
+                }
+                .bsim-grp-row:hover td { background:var(--hover); }
+                .bsim-caret-btn { cursor:pointer; user-select:none; color:var(--subtle); display:inline-block; width:14px; }
             </style>
             <div id="file-view-loader" style="text-align:center; padding:50px; color:var(--dim); font-size:1.2rem;">
                 <i class="fa-solid fa-spinner fa-spin"></i> Loading Binary Details...
@@ -163,8 +184,17 @@ window.FileView = {
                         </div>
                         <div id="fv-axis-pick" class="bsim-axis-pick"></div>
                         <div id="fv-tree" class="bsim-tree"></div>
+                        <div id="fv-chips" class="bsim-chips"></div>
                     </div>
                     <div class="card" style="flex:1; min-width:0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
+                        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                            <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
+                                <span class="bsim-ctl-label">Group by:</span>
+                                <button class="view-btn active" id="fv-group-btn-auto" onclick="FileView.setGroupBy('auto')" title="Group by tag when more than one tag is in scope">Auto</button>
+                                <button class="view-btn" id="fv-group-btn-tag" onclick="FileView.setGroupBy('tag')" title="Always group by tag">Tag</button>
+                                <button class="view-btn" id="fv-group-btn-none" onclick="FileView.setGroupBy('none')" title="One flat list">None</button>
+                            </div>
+                        </div>
                         <!-- ponytail: viewport-relative instead of a flex chain; 260px is the title strip + tabbar + card padding above it -->
                         <div id="file-func-scroll" style="overflow-x: auto; max-height: calc(100vh - 260px); min-height: 300px; overflow-y: auto;">
                             <table class="file-func-table" id="file-func-table">
@@ -806,7 +836,7 @@ window.FileView = {
         const collection = this.params.collection || '';
         const file_md5 = this.params.md5 || this.params.file_md5;
 
-        tbody.innerHTML = this.functions.map(f => {
+        const rowHtml = (f) => {
             const entry = f.entrypoint_address || '';
             const funcName = f.function_name || 'unknown';
             const featCount = f.bsim_features_count || 0;
@@ -869,7 +899,57 @@ window.FileView = {
                     <td style="text-align:center;">${noteBtn}</td>
                 </tr>
             `;
-        }).join('');
+        };
+
+        // Grouped: functions bucketed by their top-level tag node, folded with
+        // the same fvOpen state the sidebar tree uses -- one dropdown tree,
+        // shared between sidebar and table, exactly like bin-sim's bsim-grp-row.
+        const nodes = this.fvTree();
+        const grouped = this.fvGroupBy === 'tag'
+            || (this.fvGroupBy === 'auto' && !this.fvSelectedTag && nodes.length > 1);
+
+        if (!grouped) {
+            tbody.innerHTML = this.functions.map(rowHtml).join('');
+        } else {
+            const dot = (id) => (typeof TagColor !== 'undefined')
+                ? `<span class="bsim-node-dot" style="background:${TagColor.forTag(id)}; margin-right:6px;"></span>` : '';
+            const out = [];
+            const rest = new Set(this.functions);
+            nodes.forEach(n => {
+                const matches = this.functions.filter(f => (f.tags || []).some(t => t.startsWith(n.prefix)));
+                matches.forEach(f => rest.delete(f));
+                const open = this.fvOpen.has(n.id);
+                out.push(`
+                    <tr class="bsim-grp-row" onclick="FileView.toggleTreeNode(${escapeAttr(jsString(n.id))})">
+                        <td colspan="6">
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <span class="bsim-caret-btn">${open ? '▼' : '▶'}</span>
+                                ${dot(n.id)}
+                                <span style="font-weight:600;">${escapeHtml(n.label)}</span>
+                                <div style="flex:1;"></div>
+                                <span style="color:var(--subtle); font-size:0.74rem;">${matches.length}</span>
+                            </div>
+                        </td>
+                    </tr>`);
+                if (open) matches.forEach(f => out.push(rowHtml(f)));
+            });
+            if (rest.size) {
+                const open = this.fvOpen.has('__untagged__');
+                out.push(`
+                    <tr class="bsim-grp-row" onclick="FileView.toggleTreeNode('__untagged__')">
+                        <td colspan="6">
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <span class="bsim-caret-btn">${open ? '▼' : '▶'}</span>
+                                <span style="font-weight:600; color:var(--dim);">(untagged)</span>
+                                <div style="flex:1;"></div>
+                                <span style="color:var(--subtle); font-size:0.74rem;">${rest.size}</span>
+                            </div>
+                        </td>
+                    </tr>`);
+                if (open) [...rest].forEach(f => out.push(rowHtml(f)));
+            }
+            tbody.innerHTML = out.join('');
+        }
 
         const shown = this.functions.length;
         const total = this.funcPage.total ?? shown;
@@ -1017,6 +1097,29 @@ window.FileView = {
     renderTagTree() {
         this.fvRenderAxisPicker();
         this.fvRenderTree();
+        this.fvRenderChips();
+    },
+
+    fvRenderChips() {
+        const host = document.getElementById('fv-chips');
+        if (!host) return;
+        if (!this.fvSelectedTag) {
+            host.innerHTML = '<span style="font-size:0.72rem; color:var(--dim); font-family:sans-serif;">Whole file — select a tag above to scope.</span>';
+            return;
+        }
+        host.innerHTML = `
+            <span class="bsim-chip">tag: <b>${escapeHtml(this.fvSelectedTag)}</b>
+                <span class="bsim-chip-x" title="Remove this scope" onclick="FileView.clearTreeSelection()">✕</span>
+            </span>`;
+    },
+
+    setGroupBy(mode) {
+        this.fvGroupBy = mode;
+        ['auto', 'tag', 'none'].forEach(m => {
+            const btn = document.getElementById(`fv-group-btn-${m}`);
+            if (btn) btn.classList.toggle('active', m === mode);
+        });
+        this.renderFunctionsTable();
     },
 
     setTreeAxis(axis) {
@@ -1028,7 +1131,7 @@ window.FileView = {
     toggleTreeNode(id) {
         if (this.fvOpen.has(id)) this.fvOpen.delete(id);
         else this.fvOpen.add(id);
-        this.fvRenderTree();
+        this.renderFunctionsTable();
     },
 
     // Every node is a real tag id, so selecting one filters by that id as a

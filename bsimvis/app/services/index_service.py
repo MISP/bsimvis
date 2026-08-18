@@ -228,21 +228,12 @@ def _index_tag(pipe, coll, level, field, value, doc_id, seen=None):
         # AUTO-DISCOVERY: Ensure tags are registered in global metadata
         if "tags" in field:
             meta_key = f"{coll}:tags_metadata"
-            import random
-
-            palette = [
-                "#FF5555",
-                "#50FA7B",
-                "#F1FA8C",
-                "#BD93F9",
-                "#FF79C6",
-                "#8BE9FD",
-                "#FFB86C",
-                "#A6E22E",
-                "#66D9EF",
-            ]
-            default_meta = json.dumps({"color": random.choice(palette), "priority": 0})
-            pipe.hsetnx(meta_key, str(v), default_meta)
+            # No colour: a tag's colour is derived from its id, so that a library
+            # reads the same everywhere and two libraries differ by hue. Rolling
+            # a palette entry here beat that rule, because a stored colour wins
+            # in the UI -- and `random.choice` meant the same tag could land a
+            # different colour in two collections.
+            pipe.hsetnx(meta_key, str(v), json.dumps({"priority": 0}))
 
 
 def _unindex_tag(pipe, coll, level, field, value, doc_id, remaining=None):

@@ -1008,9 +1008,12 @@
                     activeList.innerHTML = `<span style="font-style: italic; font-size: 0.75rem; color: var(--dim, var(--subtle));">No custom tags applied.</span>`;
                 } else {
                     activeList.innerHTML = activeTags.map(tag => {
-                        const meta = tagMeta[tag] || { color: '#66d9ef' };
+                        // Through `getTagMetadata`, so a tag nobody recoloured
+                        // draws the colour derived from its id instead of one
+                        // flat blue shared by every tag in the list.
+                        const meta = window.getTagMetadata(tag);
                         return `
-                            <span class="tag-modal-tag-pill" style="background: ${safeCssColor(meta.color)}">
+                            <span class="tag-modal-tag-pill" style="background: ${meta.color}">
                                 ${escapeHtml(tag)}
                                 <span class="remove-btn" onclick="window.handleModalRemoveTag(${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))}, ${escapeAttr(jsString(tag))})">&times;</span>
                             </span>
@@ -1040,12 +1043,12 @@
                 } else {
                     suggestionsList.innerHTML = filtered.map(tag => {
                         const isApplied = activeTags.includes(tag);
-                        const meta = tagMeta[tag] || { color: '#66d9ef' };
+                        const meta = window.getTagMetadata(tag);
                         const clickAction = isApplied ? '' : `onclick="window.handleModalAddTag(${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))}, ${escapeAttr(jsString(tag))})"`;
                         const activeClass = isApplied ? 'active-tag' : '';
                         return `
                             <div class="tag-modal-suggestion-item ${activeClass}" ${clickAction}>
-                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${safeCssColor(meta.color)}"></span>
+                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${meta.color}"></span>
                                 <span>${escapeHtml(tag)}</span>
                                 ${isApplied ? '<span style="margin-left: auto; font-size: 0.7rem; color: var(--dim, var(--subtle));">Applied</span>' : ''}
                             </div>

@@ -267,7 +267,13 @@ window.getTagMetadata = (tag) => {
     if (tag === 'bookmark') return { color: window.tagInk('#66d9ef'), priority: 1000 };
     if (tag === 'ignore') return { color: window.tagInk('#f92672'), priority: 900 };
     const m = tagMetadata[tag] || (window.parent && window.parent.tagMetadata && window.parent.tagMetadata[tag]);
-    if (m) return { ...m, color: window.tagInk(safeCssColor(m.color)) };
+    // Branch on having a *colour*, not on having a row. Every tag has a row --
+    // it carries the priority and the llm flag -- but only a tag someone
+    // recoloured by hand carries a colour. Testing the row sent every tag
+    // through `safeCssColor(undefined)`, whose fallback is one flat blue, so the
+    // derived colour below was never reached outside the bin-sim views.
+    if (m && m.color) return { ...m, color: window.tagInk(safeCssColor(m.color)) };
+    if (m) return { ...m, color: TagColor.css(tag) };
     // No stored colour: derive one from the tag id. A fixed palette indexed by a
     // hash of the whole name gave `category:network` and `category:crypto` two
     // unrelated colours and `network` a third; `TagColor` keeps a namespace's
@@ -287,8 +293,12 @@ window.hideTooltip = () => {
 window.handleTagContextMenu = (e, tag) => {
     e.preventDefault();
     const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : '';
-    const currentMeta = { ...(tagMetadata[tag] || { color: "#66d9ef", priority: 0 }) };
-    currentMeta.color = safeCssColor(currentMeta.color);
+    // The colour picker opens on what the tag actually draws as, so recolouring
+    // starts from its derived colour rather than from a blue it never had.
+    const currentMeta = { ...(tagMetadata[tag] || { priority: 0 }) };
+    currentMeta.color = currentMeta.color
+        ? safeCssColor(currentMeta.color)
+        : TagColor.css(tag);
 
     let menu = document.getElementById('tag-custom-context-menu');
     if (!menu) {
@@ -1175,8 +1185,10 @@ async function confirmAddTag(etype, eid, tag, container) {
 }
 
 function updateUIForTagAdd(editors, tag) {
-    const meta = tagMetadata[tag] || { color: '#66d9ef' };
-    const color = window.tagInk(safeCssColor(meta.color));
+    // Through `getTagMetadata`, so a tag nobody recoloured gets the colour
+    // derived from its id rather than a flat blue default.
+    const meta = window.getTagMetadata(tag);
+    const color = meta.color;
     const isBookmark = (tag === 'bookmark');
     const isIgnore = (tag === 'ignore');
     const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : '';

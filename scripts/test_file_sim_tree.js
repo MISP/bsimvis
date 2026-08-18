@@ -161,6 +161,28 @@ assert.strictEqual(frontier('lib:libc:2.31'), '2.31');
 assert.strictEqual(frontier('lib:libc:2.35'), '2.35');
 assert.strictEqual(frontier('lib:zlib:1.2'), 'zlib');
 
+// Regression: the graph looks a summary row up in the tree by its own id, and
+// the tree is built from the deepest rows it is given -- so a node's tagIds hold
+// `fid:uclibc:0.9.30.1#memcpy`, never the parent id `fid:uclibc:0.9.30.1` that
+// the row carries. Matching on tagIds membership dropped every rolled-up row,
+// which is how a library with 409 matched functions in the table drew no band in
+// the graph at all.
+const rolledUp = fileSimTree([{
+    type: 'lib', name: 'uclibc', tag_id: 'fid:uclibc:0.9.30.1',
+    unique_count_a: 3, unique_count_b: 3, bins: {},
+    children: [
+        tag('lib', 'uclibc', 2, 2, { tag_id: 'fid:uclibc:0.9.30.1#xdrmem_getint32' }),
+        tag('lib', 'uclibc', 1, 1, { tag_id: 'fid:uclibc:0.9.30.1#memcpy' }),
+    ],
+}]);
+setOpen([]);
+const parentFrontier = fileSimFrontierNode('fid:uclibc:0.9.30.1', rolledUp);
+assert.ok(parentFrontier, 'a rolled-up parent row must find its node in the tree');
+assert.strictEqual(parentFrontier.label, 'uclibc');
+// A leaf id resolves to the same place when nothing is expanded.
+assert.strictEqual(
+    fileSimFrontierNode('fid:uclibc:0.9.30.1#memcpy', rolledUp).label, 'uclibc');
+
 // ---- The invariant this suite exists for -------------------------------
 // Every node id must be a string some tag beneath it actually produces: a real
 // tag id, or one of its own ancestor prefixes. The reported bug was a node id

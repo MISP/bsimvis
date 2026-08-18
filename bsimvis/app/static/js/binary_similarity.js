@@ -1611,9 +1611,16 @@ function fileSimJointMarginal(joint, axisA, axisB) {
 // this to fold exactly where the tree folds instead of keeping its own frontier.
 // Depth is whatever the axis's tree has, so origin's three levels and the other
 // axes' one both work off the same walk.
+// Matched by levels rather than by `tagIds` membership: the tree is built from
+// the deepest rows it is given, because a parent row is the merge of its
+// children and feeding both would count the mass twice. So a node's `tagIds`
+// hold the leaves -- `fid:uclibc:0.9.30.1#memcpy` -- and never the parent id
+// `fid:uclibc:0.9.30.1` that the graph looks up. Asking whether the node is on
+// the id's own chain answers for both, and matches how a scope selects.
 function fileSimChainFor(tagId, node, chain = []) {
+    const levels = fileSimTagChain(tagId);
     for (const child of node.children || []) {
-        if (!(child.tagIds || []).includes(tagId)) continue;
+        if (!levels.includes(child.id)) continue;
         return fileSimChainFor(tagId, child, chain.concat(child));
     }
     return chain;

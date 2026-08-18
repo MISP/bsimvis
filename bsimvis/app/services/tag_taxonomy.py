@@ -215,6 +215,44 @@ def tag_separators(namespace):
     return TAG_SEPARATORS.get(namespace, TAG_SEPARATORS_DEFAULT)
 
 
+def canonical_tag_id(tag_id):
+    """A tag id in the form every consumer downstream may assume.
+
+    One function, called by every constructor here and by the user-tag write
+    path, so an id cannot enter the system in a shape the tree, the index or the
+    colour rule would read differently. It normalises only what those layers
+    cannot carry:
+
+      * whitespace becomes `-`, because a space has to be quoted in a filter
+        value and percent-encoded in a permalink
+      * `"` is dropped, because it is how `query_syntax` quotes a literal
+      * empty levels collapse, so `a::b` and `a:b` are one tag rather than two
+      * case folds *the levels*, because the index buckets lowercase and two
+        casings of one tag would be two vocabulary entries pointing at the same
+        functions
+
+    The detail tail keeps its case: it is a symbol, and `EVP_EncryptInit` is not
+    `evp_encryptinit` in any debugger the analyst will paste it into. It is not a
+    grouping level, so nothing depends on it folding.
+
+    Everything else survives untouched. A source's own punctuation is data --
+    `2.31`, `libstdc++`, `System.Net.Http` and `t1027.005` all keep their dots,
+    and whether a dot is a level is `TAG_SEPARATORS`' business, not this one's.
+    A bare word becomes a `user:` tag: it came from a human, and an
+    unnamespaced id must not silently land on an analysis axis.
+    """
+    raw = " ".join(str(tag_id or "").split()).replace('"', "")
+    if not raw:
+        return ""
+    body, detail = tag_body(raw)
+    body = ":".join(p for p in body.split(":") if p)
+    if not body:
+        return ""
+    out = body if ":" in body else f"user:{body}"
+    out = out.replace(" ", "-").lower()
+    return f"{out}{TAG_DETAIL}{detail.replace(' ', '-')}" if detail else out
+
+
 def _split_keep(body, seps):
     """`[seg, sep, seg, sep, ...]` -- separators kept so prefixes stay literal.
 

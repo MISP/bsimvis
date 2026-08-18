@@ -28,6 +28,8 @@ It adds no asymptotic cost: everything here is O(1) per already-matched edge.
 
 from collections import defaultdict
 
+from bsimvis.app.services.tag_taxonomy import tag_body
+
 # Two distinct kinds of "we can't attribute this to a library", kept apart on
 # purpose: UNTAGGED means at least one side carries no tag at all (no evidence),
 # MISMATCH means both sides are tagged but share nothing -- the interesting case,
@@ -111,6 +113,17 @@ AXES = (
 # `misp:tool:cobalt-strike` and `runtime-packer:pe:upx` answer the same
 # one whatever taxonomy they came out of.
 TAG_NAMESPACES = {
+    # Origin, one namespace per detector rather than one `origin:` namespace
+    # with the detector buried at segment 2. The id is the only per-function
+    # field a tag has -- `{tag_id: weight}`, no room for a source -- so if you
+    # want to see where FID and BSim disagree, the detector has to be in the id.
+    # It also puts the library at the first level, which is what lets one colour
+    # rule give `fid:libc` and `fid:openssl` different hues.
+    "fid": AXIS_ORIGIN,
+    "bsim": AXIS_ORIGIN,
+    "malware": AXIS_ORIGIN,
+    "pkg": AXIS_ORIGIN,
+    "original": AXIS_ORIGIN,
     "origin": AXIS_ORIGIN,
     "severity": AXIS_SEVERITY,
     "category": AXIS_CATEGORY,
@@ -133,7 +146,21 @@ TAG_NAMESPACES = {
 # labels a whole binary: a statically linked memcpy inside a Mirai sample is
 # still libc's, and calling it Mirai's is how a libc floor turns into a fake
 # family attribution.
-ORIGIN_PRIORITY = {"lib": 100, "stdlib": 100, "bundle": 50}
+#
+# Keyed on the namespace, which is where the detector now lives. The legacy
+# `origin:<kind>:` ids resolve through their kind segment for as long as any
+# survive the migration.
+ORIGIN_PRIORITY = {
+    "fid": 100,
+    "bsim": 90,
+    "pkg": 60,
+    "malware": 50,
+    "original": 0,
+    # legacy `origin:<kind>:...`
+    "lib": 100,
+    "stdlib": 100,
+    "bundle": 50,
+}
 DEFAULT_ORIGIN_PRIORITY = 0
 
 # Origin ids are `origin:kind:name:version[:func]`. Bundles have no natural
@@ -219,10 +246,13 @@ def tag_priority(tag_id, tag_meta=None):
                 pass
     if tag_axis(tag_id) != AXIS_ORIGIN:
         return 0
-    # `origin:lib:...` vs `origin:bundle:...` -- the kind is the second segment.
+    # The namespace is the detector (`fid:libc:2.31`). Legacy `origin:` ids kept
+    # the kind at the second segment instead, so fall through to that.
     parts = str(tag_id).split(":")
-    kind = parts[1] if len(parts) > 1 else ""
-    return ORIGIN_PRIORITY.get(kind, DEFAULT_ORIGIN_PRIORITY)
+    head = parts[0]
+    if head == "origin":
+        head = parts[1] if len(parts) > 1 else ""
+    return ORIGIN_PRIORITY.get(head, DEFAULT_ORIGIN_PRIORITY)
 
 
 # Depth an axis rolls up to in the summary. Origin keeps
@@ -265,11 +295,17 @@ def tag_parent(tag_id):
     """
     if tag_id in (TAG_UNTAGGED, TAG_MISMATCH):
         return tag_id
-    parts = str(tag_id).split(":")
+    # A detail tail is per-function evidence, never a display row of its own:
+    # `fid:libc:2.31#memcpy` rolls up to the version it was matched under, the
+    # same way the old `origin:lib:libc:2.31:memcpy` did through depth alone.
+    body, detail = tag_body(tag_id)
+    if detail:
+        return body
+    parts = body.split(":")
     depth = _PARENT_DEPTH[tag_axis(tag_id)]
     if depth and len(parts) > depth:
         return ":".join(parts[:depth])
-    return tag_id
+    return body
 
 
 def split_axes(tags, tag_meta=None):

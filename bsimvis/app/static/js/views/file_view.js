@@ -28,6 +28,7 @@ window.FileView = {
         this.fvSelectedTag = null;
         this.fvOpen = new Set();
         this.fvGroupBy = 'auto';
+        this.fvTagIndex = null;
 
         const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
@@ -275,6 +276,7 @@ window.FileView = {
 
             // buildFunctionsQuery and the lineage panel both need the raw doc.
             this.file = file;
+            this.fvLoadTagIndex();
             if (file.is_container) {
                 document.getElementById('file-md5-text').insertAdjacentHTML('beforebegin',
                     `<span class="badge" title="Container: holds code but is not code itself. Its function count is the total of everything below it."
@@ -986,8 +988,55 @@ window.FileView = {
     fvSelectedTag: null,
     // Which tree nodes are unfolded, keyed by node id -- which is a tag id.
     fvOpen: new Set(),
+    // Tag counts across the WHOLE file, independent of whatever the table's
+    // filter row currently has typed in. Scoping the table to one tag used to
+    // rebuild the tree from `this.functions` -- which is the *filtered* page --
+    // so the tree would collapse down to just the branch you clicked. This is
+    // fetched once per file (fvLoadTagIndex) and never touched by table filters.
+    fvTagIndex: null,
+
+    // Pages through every function this file has, ignoring the table's filter
+    // row, to build a stable tag count. Runs once per file load, in the
+    // background; the tree/axis picker fall back to the filtered page's counts
+    // until it lands.
+    // ponytail: no backend tag-aggregate endpoint exists yet (bin-sim's
+    // tags_summary is two-sided-comparison-shaped, not reusable here -- see the
+    // note on fvTree below), so this pages the same search endpoint with a
+    // bigger limit and no filters. Capped at 20k functions; add a real
+    // aggregate endpoint if a file blows past that.
+    async fvLoadTagIndex() {
+        const collection = this.params.collection || '';
+        const file_md5 = this.params.md5 || this.params.file_md5;
+        const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+        const counts = {};
+        let offset = 0;
+        const PAGE = 500, CAP = 20000;
+        try {
+            while (offset < CAP) {
+                const p = new URLSearchParams(apiParams);
+                if (this.file && this.file.is_container) {
+                    p.set(this.file.root_md5 ? 'md5' : 'root_md5', file_md5);
+                } else {
+                    p.set('file_md5', file_md5);
+                }
+                p.set('offset', offset);
+                p.set('limit', PAGE);
+                const res = await fetch(`/api/function/search?${p.toString()}`);
+                if (!res.ok) break;
+                const data = await res.json();
+                (data.functions || []).forEach(f => (f.tags || []).forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
+                offset += PAGE;
+                if (!data.functions || data.functions.length < PAGE || offset >= (data.total || 0)) break;
+            }
+        } catch (e) {
+            console.error('tag index load failed', e);
+        }
+        this.fvTagIndex = counts;
+        this.renderTagTree();
+    },
 
     fvTagCounts() {
+        if (this.fvTagIndex) return this.fvTagIndex;
         const counts = {};
         (this.functions || []).forEach(f => {
             (f.tags || []).forEach(t => { counts[t] = (counts[t] || 0) + 1; });
@@ -1054,11 +1103,15 @@ window.FileView = {
         if (!host) return;
         const avail = this.fvAvailableAxes();
         if (!avail.includes(this.fvAxis)) this.fvAxis = avail[0] || '';
-        host.innerHTML = avail.length < 2 ? '' : `
-            <span class="dim" style="font-size:0.72rem;">Axis:</span>
-            <select onchange="FileView.setTreeAxis(this.value)">
-                ${avail.map(a => `<option value="${escapeAttr(a)}"${a === this.fvAxis ? ' selected' : ''}>${escapeHtml(a)}</option>`).join('')}
-            </select>`;
+        // Always shown -- every axis this file has tags on stays pickable
+        // regardless of the current tag scope, not just while >1 exists.
+        host.innerHTML = !avail.length ? '' : `
+            <div class="view-toggle" style="margin:0; flex:1; min-width:0;">
+                <span class="bsim-ctl-label" style="margin:4px 6px;">Axis:</span>
+                <select class="view-btn" style="flex:1; min-width:0;" onchange="FileView.setTreeAxis(this.value)">
+                    ${avail.map(a => `<option value="${escapeAttr(a)}"${a === this.fvAxis ? ' selected' : ''}>${escapeHtml(a)}</option>`).join('')}
+                </select>
+            </div>`;
     },
 
     fvRenderTree() {

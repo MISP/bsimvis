@@ -141,13 +141,26 @@ HUE_DEPTH = {
     "misp": 2,
 }
 
-# What separates a namespace's segments, where it is not a colon. ATT&CK is the
-# case that forces this: a sub-technique is written `mitre:t1027.005` because
-# that is how ATT&CK writes it, so its second level hides behind a dot. Splitting
-# on it here gives sub-techniques their parent's hue for free, with no id change
-# and no migration.
-HUE_SPLIT = {"mitre": r"[:.]"}
-HUE_SPLIT_DEFAULT = r":"
+# --- Structure --------------------------------------------------------------
+# What separates a namespace's levels, where it is not a colon, and where the
+# instance tail begins. One table, one parser: `tag_levels` (colour) and
+# `tag_prefixes` (index buckets) both read it, so a tag's hierarchy is the same
+# fact wherever it is asked for. Two copies of this rule is what let a tree node
+# take its colour from a string the index had never bucketed.
+#
+# ATT&CK is what forces a per-namespace entry: a sub-technique is written
+# `mitre:t1027.005` because that is how ATT&CK writes it, so its second level
+# hides behind a dot. A namespace keeps its source's own separators rather than
+# being rewritten, so a tag stays pasteable back into the tool it came from.
+TAG_SEPARATORS_DEFAULT = (":",)
+TAG_SEPARATORS = {"mitre": (":", ".")}
+
+# Everything from the first `#` is an instance, not a level: the function a
+# library tag was matched on, the rule name a detection fired from. It stays
+# part of the id -- searchable, filterable, displayed -- but it never becomes a
+# grouping level, an index bucket, or a colour. `origin:lib:libc:2.31#memcpy`
+# must not put `memcpy` in a sankey column next to `libc`.
+TAG_DETAIL = "#"
 
 # Each subdivision keeps this fraction of the interval its parent picked, per
 # level. The first is narrow so unrelated groups land far apart; the second is
@@ -197,6 +210,64 @@ COLOR_VECTORS = (
 )
 
 
+def tag_separators(namespace):
+    """The characters that separate levels inside this namespace's ids."""
+    return TAG_SEPARATORS.get(namespace, TAG_SEPARATORS_DEFAULT)
+
+
+def _split_keep(body, seps):
+    """`[seg, sep, seg, sep, ...]` -- separators kept so prefixes stay literal.
+
+    Longest separator first, so a two-character one is never split by the
+    single-character one it contains.
+    """
+    pattern = (
+        "(" + "|".join(re.escape(x) for x in sorted(seps, key=len, reverse=True)) + ")"
+    )
+    return re.split(pattern, body)
+
+
+def tag_body(tag_id):
+    """`(body, detail)` -- the id split at the first `#`, which starts the tail."""
+    body, marker, detail = str(tag_id).partition(TAG_DETAIL)
+    return body, (detail if marker else "")
+
+
+def tag_levels(tag_id):
+    """`(namespace, levels, detail)` for a tag id.
+
+    `levels` excludes the namespace, so `category:network:c2` yields
+    `("category", ["network", "c2"], "")`. Nothing here namespaces a bare tag --
+    callers that want `mytag` read as `user:mytag` apply `namespaced()` first,
+    because the index must keep bucketing the literal value it was handed.
+    """
+    body, detail = tag_body(tag_id)
+    ns = body.split(":", 1)[0]
+    parts = _split_keep(body, tag_separators(ns))
+    segs = [p for i, p in enumerate(parts) if i % 2 == 0 and p]
+    return ns, segs[1:], detail
+
+
+def tag_prefixes(tag_id):
+    """Ancestor prefixes of a tag id, excluding itself.
+
+    `origin:lib:libc:2.31` -> `['origin', 'origin:lib', 'origin:lib:libc']`, and
+    the detail tail contributes nothing: `lib:libc:2.31#memcpy` stops at
+    `lib:libc`, so no bucket named after a function can exist. Each prefix keeps
+    the original separators, so it is a literal prefix of the value rather than a
+    normalized form of it.
+    """
+    body, _ = tag_body(tag_id)
+    ns = body.split(":", 1)[0]
+    parts = _split_keep(body, tag_separators(ns))
+    out, prefix = [], parts[0]
+    for i in range(1, len(parts) - 1, 2):
+        if prefix:
+            out.append(prefix)
+        prefix += parts[i] + parts[i + 1]
+    return out
+
+
 def _hash32(text):
     """FNV-1a over UTF-16 code units.
 
@@ -217,10 +288,8 @@ def tag_style(tag_id):
     lightened past the tag's own colour. `hue` is None for an id with nothing to
     hash (a bare namespace), which the UI draws grey.
     """
-    tag_id = namespaced(tag_id)
-    ns = tag_id.split(":", 1)[0]
-    segs = [s for s in re.split(HUE_SPLIT.get(ns, HUE_SPLIT_DEFAULT), tag_id) if s]
-    rest = segs[1:]
+    ns, rest, _detail = tag_levels(namespaced(tag_id))
+    segs = [ns] + rest
     if not rest:
         return None, 0, 0
 
@@ -254,8 +323,9 @@ def color_config():
         "severity_hues": SEVERITY_HUES,
         "hue_depth": HUE_DEPTH,
         "hue_depth_default": HUE_DEPTH_DEFAULT,
-        "hue_split": HUE_SPLIT,
-        "hue_split_default": HUE_SPLIT_DEFAULT,
+        "tag_separators": {k: list(v) for k, v in TAG_SEPARATORS.items()},
+        "tag_separators_default": list(TAG_SEPARATORS_DEFAULT),
+        "tag_detail": TAG_DETAIL,
         "hue_shrink": list(HUE_SHRINK),
         "hue_slots": HUE_SLOTS,
         "tones": TONES,

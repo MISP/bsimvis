@@ -260,17 +260,33 @@ HASH_FIELDS = {
 # Keyed by indexed field name, so propagated variants (file_tags, func_tags)
 # must be listed explicitly. Value is the list of separators, longest first —
 # `::` must precede `:` or it would split into empty segments.
+#
+# Tag fields carry no separator list of their own: a tag's hierarchy depends on
+# the namespace it is in, not on the field that happens to hold it, and this
+# table is keyed by field. `tag_taxonomy.tag_prefixes` owns that rule for every
+# tag field, so the buckets the index builds and the levels the UI colours come
+# from one parser instead of two that can disagree.
+TAG_FIELDS = frozenset(
+    {
+        "tags",
+        "user_tags",
+        "file_tags",
+        "file_user_tags",
+        "func_tags",
+        "func_user_tags",
+    }
+)
+
 HIERARCHY_SEPARATORS = {
-    "tags": [":"],
-    "user_tags": [":"],
-    "file_tags": [":"],
-    "file_user_tags": [":"],
-    "func_tags": [":"],
-    "func_user_tags": [":"],
     # Function namespaces mix all three in one value, e.g.
     # `crypto/elliptic::crypto/elliptic.initP256`.
     "namespace": ["::", "/", "."],
 }
+
+def is_hierarchical(field: str) -> bool:
+    """Whether this field's values roll up into ancestor buckets."""
+    return field in TAG_FIELDS or field in HIERARCHY_SEPARATORS
+
 
 _HIERARCHY_SPLIT_RE = {}
 
@@ -290,6 +306,11 @@ def tag_ancestors(field: str, value: str) -> list[str]:
     `lib:uclibc:seekdir` -> ['lib', 'lib:uclibc']. Empty for non-hierarchical
     fields, and for values with no separator (nothing above them).
 
+    Tag fields delegate to `tag_taxonomy.tag_prefixes`, which knows the
+    separators each namespace uses and where a tag's instance tail begins --
+    `lib:libc:2.31#memcpy` buckets up to `lib:libc` and never mints a bucket
+    named after a function.
+
     Splits on any configured separator, not just the first one present, because
     a single namespace mixes them: `crypto/elliptic::crypto/elliptic.initP256`
     yields `crypto`, `crypto/elliptic`, `crypto/elliptic::crypto` and
@@ -297,6 +318,11 @@ def tag_ancestors(field: str, value: str) -> list[str]:
     separators, so it is a real prefix of the value rather than a normalized
     form of it.
     """
+    if field in TAG_FIELDS:
+        from bsimvis.app.services.tag_taxonomy import tag_prefixes
+
+        return tag_prefixes(value) if value else []
+
     seps = HIERARCHY_SEPARATORS.get(field)
     if not seps or not value:
         return []

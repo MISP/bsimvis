@@ -2861,7 +2861,7 @@ function renderBinSimPairs(items, depth = 0, anchorMd5 = null) {
                     <td class="sim-cell"><span class="dim" style="font-size:0.8rem;">${otherFuncs}</span></td>
                     <td class="sim-cell">${otherCov}</td>
                     <td class="sim-cell" style="text-align:center;">${shared}</td>
-                    <td class="sim-cell">${EntityRenderer.renderTag('file', `${otherColl}:file:${otherMd5}`, otherTags, otherUserTags)}</td>
+                    <td class="sim-cell">${EntityRenderer.renderTag('file', `${otherColl}:file:${otherMd5}`, otherTags, otherUserTags, { maxTags: 4 })}</td>
                 </tr>
             `;
             return;

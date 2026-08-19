@@ -98,11 +98,6 @@ window.FunctionView = {
                                     <input type="hidden" id="fn-nbr-cross-binary" value="">
                                     <div id="fn-nbr-cross-binary-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
                                 </div>
-                                <div class="home-card" style="padding:16px; min-width:160px;">
-                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Match Mode</h3>
-                                    <input type="hidden" id="fn-nbr-match-mode" value="any">
-                                    <div id="fn-nbr-match-mode-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
-                                </div>
                                 <div class="home-card" style="padding:16px; min-width:100px;">
                                     <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Limit</h3>
                                     <input type="number" id="fn-nbr-limit" value="50" min="1" max="1000" style="width:70px; font-size:0.8rem; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:5px;" oninput="FunctionView.debounceNeighborsSearch()">
@@ -367,8 +362,6 @@ window.FunctionView = {
         setIfVal('fn-nbr-q', 'q');
         setIfVal('fn-nbr-max-score', 'max_score');
         setIfVal('fn-nbr-cross-binary', 'cross_binary');
-        const matchMode = document.getElementById('fn-nbr-match-mode')?.value;
-        if (matchMode && matchMode !== 'any') qs.set('match_mode', matchMode);
         setIfVal('fn-nbr-name', 'name');
         setIfVal('fn-nbr-namespace', 'namespace');
         setIfVal('fn-nbr-ret-type', 'ret_type');
@@ -418,23 +411,17 @@ window.FunctionView = {
         if (inputId === 'fn-nbr-scope') this.renderScopePills();
         else if (inputId === 'fn-nbr-algo') this.renderNeighborPillGroup(inputId, containerId, this.ALGO_OPTIONS, 'var(--info, #3b82f6)');
         else if (inputId === 'fn-nbr-cross-binary') this.renderNeighborPillGroup(inputId, containerId, this.CROSS_BINARY_OPTIONS, 'var(--warning, #d97706)');
-        else if (inputId === 'fn-nbr-match-mode') this.renderNeighborPillGroup(inputId, containerId, this.MATCH_MODE_OPTIONS, 'var(--accent, #9333ea)');
         this.searchNeighbors();
     },
 
     ALGO_OPTIONS: [
         { v: 'unweighted_cosine', label: 'Cosine', icon: 'fa-solid fa-arrows-left-right' },
         { v: 'jaccard', label: 'Jaccard', icon: 'fa-solid fa-object-group' },
-        { v: 'milvus_sparse', label: 'Milvus Sparse', icon: 'fa-solid fa-braille' },
     ],
     CROSS_BINARY_OPTIONS: [
         { v: '', label: 'All Binaries', icon: 'fa-solid fa-globe' },
         { v: 'false', label: 'Same Binary', icon: 'fa-solid fa-file' },
         { v: 'true', label: 'Cross Binary', icon: 'fa-solid fa-shuffle' },
-    ],
-    MATCH_MODE_OPTIONS: [
-        { v: 'any', label: 'Match Any', icon: 'fa-solid fa-check' },
-        { v: 'both', label: 'Match Both', icon: 'fa-solid fa-check-double' },
     ],
 
     renderScopePills() {
@@ -453,7 +440,6 @@ window.FunctionView = {
         this.renderScopePills();
         this.renderNeighborPillGroup('fn-nbr-algo', 'fn-nbr-algo-pills', this.ALGO_OPTIONS, 'var(--info, #3b82f6)');
         this.renderNeighborPillGroup('fn-nbr-cross-binary', 'fn-nbr-cross-binary-pills', this.CROSS_BINARY_OPTIONS, 'var(--warning, #d97706)');
-        this.renderNeighborPillGroup('fn-nbr-match-mode', 'fn-nbr-match-mode-pills', this.MATCH_MODE_OPTIONS, 'var(--accent, #9333ea)');
     },
 
     copyFunctionCode(btn) {

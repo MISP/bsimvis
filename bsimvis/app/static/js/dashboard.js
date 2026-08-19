@@ -750,6 +750,15 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                 tableBodyWrap.addEventListener('scroll', window.bsimHeroScrollListener, { passive: true });
             }
         }
+    } else if (viewKey === 'function-similarity') {
+        const gridHeader = document.getElementById('grid-header');
+        if (gridHeader) {
+            const p = new URLSearchParams(params);
+            gridHeader.innerHTML = `
+                <div style="padding: 24px; border-bottom: 1px solid var(--border); background: var(--bg); display: flex; flex-direction: column;">
+                    ${simFilterPillsHtml(p)}
+                </div>`;
+        }
     } else if (viewKey === 'collections') {
         const gridHeader = document.getElementById('grid-header');
         if (gridHeader) {
@@ -1154,6 +1163,76 @@ function syncBinSimTags(p) {
     if (contEl) contEl.setAttribute('style', binSimPillStyle(containerActive, 'var(--warning, #d97706)'));
 }
 
+// Same card/pill treatment as the bin-sim hero, applied to the
+// function-similarity search page's Algorithm/Cross Binary/Match Mode
+// controls -- previously three plain <select>s buried under a mislabeled
+// "Date" column header.
+const SimAlgoOptions = [
+    { v: 'unweighted_cosine', label: 'Cosine', icon: 'fa-solid fa-arrows-left-right' },
+    { v: 'jaccard', label: 'Jaccard', icon: 'fa-solid fa-object-group' },
+    { v: 'milvus_sparse', label: 'Milvus Sparse', icon: 'fa-solid fa-braille' },
+];
+const SimCrossBinaryOptions = [
+    { v: '', label: 'All Binaries', icon: 'fa-solid fa-globe' },
+    { v: 'false', label: 'Same Binary', icon: 'fa-solid fa-file' },
+    { v: 'true', label: 'Cross Binary', icon: 'fa-solid fa-shuffle' },
+];
+const SimMatchModeOptions = [
+    { v: 'any', label: 'Match Any', icon: 'fa-solid fa-check' },
+    { v: 'both', label: 'Match Both', icon: 'fa-solid fa-check-double' },
+];
+
+function simPillGroupHtml(groupClass, options, active, color) {
+    return options.map(o => `<span class="${groupClass}" data-value="${escapeAttr(o.v)}" onclick="setSimPill('${groupClass}', ${jsString(o.v)})" style="${binSimPillStyle(o.v === active, color)}" title="${escapeAttr(o.label)}"><i class="${o.icon}"></i>${o.label}</span>`).join('');
+}
+
+function simFilterPillsHtml(p) {
+    const algo = p.get('algo') || 'unweighted_cosine';
+    const crossBinary = p.has('cross_binary') ? p.get('cross_binary') : '';
+    const matchMode = p.get('match_mode') || 'any';
+    return `
+        <input type="hidden" id="sim-algo" value="${escapeAttr(algo)}">
+        <input type="hidden" id="sim-cross-binary" value="${escapeAttr(crossBinary)}">
+        <input type="hidden" id="sim-match-mode" value="${escapeAttr(matchMode)}">
+        <div style="display:flex; gap:24px; flex-wrap:wrap;">
+            <div class="home-card" style="padding:16px; min-width:220px;">
+                <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Algorithm</h3>
+                <div id="sim-algo-pills" style="display:flex; flex-wrap:wrap; gap:8px;">${simPillGroupHtml('sim-algo-pill', SimAlgoOptions, algo, 'var(--info, #3b82f6)')}</div>
+            </div>
+            <div class="home-card" style="padding:16px; min-width:220px;">
+                <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Cross Binary</h3>
+                <div id="sim-cross-binary-pills" style="display:flex; flex-wrap:wrap; gap:8px;">${simPillGroupHtml('sim-cb-pill', SimCrossBinaryOptions, crossBinary, 'var(--warning, #d97706)')}</div>
+            </div>
+            <div class="home-card" style="padding:16px; min-width:180px;">
+                <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Match Mode</h3>
+                <div id="sim-match-mode-pills" style="display:flex; flex-wrap:wrap; gap:8px;">${simPillGroupHtml('sim-mm-pill', SimMatchModeOptions, matchMode, 'var(--accent, #9333ea)')}</div>
+            </div>
+        </div>`;
+}
+
+function setSimPill(groupClass, value) {
+    const idByClass = { 'sim-algo-pill': 'sim-algo', 'sim-cb-pill': 'sim-cross-binary', 'sim-mm-pill': 'sim-match-mode' };
+    const hidden = document.getElementById(idByClass[groupClass]);
+    if (hidden) hidden.value = value;
+    if (window.applySimSearch) window.applySimSearch();
+}
+window.setSimPill = setSimPill;
+
+function syncSimFilterPills(p) {
+    const groups = [
+        ['sim-algo', 'sim-algo-pill', p.get('algo') || 'unweighted_cosine', 'var(--info, #3b82f6)'],
+        ['sim-cross-binary', 'sim-cb-pill', p.has('cross_binary') ? p.get('cross_binary') : '', 'var(--warning, #d97706)'],
+        ['sim-match-mode', 'sim-mm-pill', p.get('match_mode') || 'any', 'var(--accent, #9333ea)'],
+    ];
+    groups.forEach(([inputId, pillClass, active, color]) => {
+        const hidden = document.getElementById(inputId);
+        if (hidden) hidden.value = active;
+        document.querySelectorAll(`.${pillClass}`).forEach(el => {
+            el.setAttribute('style', binSimPillStyle(el.dataset.value === active, color));
+        });
+    });
+}
+
 function updateUI(viewKey, collection, params, route, force = false) {
     showDashboardActions();
     const routingState = getRoutingState();
@@ -1547,25 +1626,10 @@ function updateUI(viewKey, collection, params, route, force = false) {
                         <th style="position:relative"><div class="tag-filter-container" id="tag-container-file"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
                         <th><input type="text" id="flt-func-language" placeholder="Lang..." value="${escapeAttr(p.get('language_id') || p.get('language') || '')}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>`;
                     if (path === 'function-similarity') {
-                        headHtml += `
-                            <th style="font-size: 0.65rem;">
-                                <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:var(--window-tray); color:var(--text); border:1px solid var(--border); font-size:0.65rem; border-radius:2px;">
-                                    <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
-                                    <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
-                                    <option value="milvus_sparse" ${p.get('algo') === 'milvus_sparse' ? 'selected' : ''}>Milvus Sparse</option>
-                                </select>
-                                <div style="margin-top:4px;">
-                                    <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:var(--window-tray); color:var(--text); border:1px solid var(--border); font-size:0.6rem; border-radius:2px;">
-                                        <option value="" ${!p.get('cross_binary') ? 'selected' : ''}>All Binaries</option>
-                                        <option value="false" ${p.get('cross_binary') === 'false' ? 'selected' : ''}>Same Binary Only</option>
-                                        <option value="true" ${p.get('cross_binary') === 'true' ? 'selected' : ''}>Cross Binary Only</option>
-                                    </select>
-                                    <select id="sim-match-mode" onchange="applySimSearch()" style="width:100%; background:var(--window-tray); color:var(--text); border:1px solid var(--border); font-size:0.6rem; border-radius:2px; margin-top:4px;">
-                                        <option value="any" ${(p.get('match_mode') || 'any') === 'any' ? 'selected' : ''}>Match Any Function</option>
-                                        <option value="both" ${p.get('match_mode') === 'both' ? 'selected' : ''}>Match Both Functions</option>
-                                    </select>
-                                </div>
-                            </th>`;
+                        // Algorithm/Cross Binary/Match Mode moved to the hero pill cards
+                        // above the table (simFilterPillsHtml) -- this column, previously
+                        // mislabeled "Date", is now genuinely empty.
+                        headHtml += `<th></th>`;
                     } else { headHtml += `<th></th><th></th>`; }
                 }
                 headHtml += `</tr>`;
@@ -1757,11 +1821,9 @@ function updateUI(viewKey, collection, params, route, force = false) {
             const nameParam = path === 'function-similarity' ? 'name' : 'function_name';
             const addrParam = path === 'function-similarity' ? 'address' : 'entrypoint_address';
             if (path === 'function-similarity') { 
-                syncInput('sim-min-score', 'min_score'); 
-                syncInput('sim-max-score', 'max_score'); 
-                syncSelect('sim-algo', 'algo', 'unweighted_cosine'); 
-                syncSelect('sim-cross-binary', 'cross_binary', ''); 
-                syncSelect('sim-match-mode', 'match_mode', 'any'); 
+                syncInput('sim-min-score', 'min_score');
+                syncInput('sim-max-score', 'max_score');
+                syncSimFilterPills(p);
             }
             syncInput('flt-func-name', nameParam); syncInput('flt-func-namespace', 'namespace'); syncInput('flt-func-ret_type', 'return_type'); syncInput('flt-func-address', addrParam);
             syncInput('flt-func-cluster', 'cluster_uuid'); syncInput('flt-func-cluster-name', 'cluster_name'); syncInput('flt-func-min-cohesion', 'min_cohesion');
@@ -2500,7 +2562,7 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
                 </td>
                 <td style="min-width: 300px;">${EntityRenderer.renderFunction(otherData, { hideNote: true })}</td>
                 <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${otherAddr}</span></td>
-                <td>${EntityRenderer.renderTag('function', otherId, otherMeta?.tags || [], otherMeta?.user_tags || [])}</td>
+                <td>${EntityRenderer.renderTag('function', otherId, otherMeta?.tags || [], otherMeta?.user_tags || [], { maxTags: 4 })}</td>
                 <td><div class="cluster-cards-cell" data-clusters='${JSON.stringify(sharedClusters).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(sharedClusters)}</div></td>
                 <td class="sim-cell" style="text-align:center;">
                     <span class="mono" style="color:var(--accent);">${otherMeta?.bsim_features_count || 0}</span>
@@ -2589,8 +2651,8 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${col}:file:${p.meta1?.file_md5}`, p.meta1?.file_tags || [], p.meta1?.file_user_tags || [])}</div>
-                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${col2}:file:${p.meta2?.file_md5}`, p.meta2?.file_tags || [], p.meta2?.file_user_tags || [])}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${col}:file:${p.meta1?.file_md5}`, p.meta1?.file_tags || [], p.meta1?.file_user_tags || [], { maxTags: 4 })}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${col2}:file:${p.meta2?.file_md5}`, p.meta2?.file_tags || [], p.meta2?.file_user_tags || [], { maxTags: 4 })}</div>
                 </div>
             </td>
             <td class="sim-cell">

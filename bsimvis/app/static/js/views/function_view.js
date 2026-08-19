@@ -48,6 +48,12 @@ window.FunctionView = {
                 .bsim-tab:hover { color:var(--text); background:rgba(255,255,255,0.04); }
                 .bsim-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
 
+                #fn-nbr-filters input, #fn-nbr-filters select {
+                    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+                    padding: 4px; border-radius: 2px; box-sizing: border-box;
+                }
+                #fn-nbr-filters input:focus, #fn-nbr-filters select:focus { border-color: var(--accent); outline: none; }
+
                 .file-func-table { width:100%; border-collapse:collapse; font-size:0.8rem; }
                 .file-func-table th { text-align:left; padding:10px; border-bottom:1px solid var(--border); color:var(--subtle); text-transform:uppercase; font-size:0.75rem; letter-spacing:0.05em; }
                 .file-func-table td { padding:10px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:middle; }
@@ -60,7 +66,7 @@ window.FunctionView = {
                 <div id="function-content" style="display:none; flex:1; flex-direction:column; overflow:hidden; height:100%;">
                     <div class="bsim-tabbar" id="function-view-tabs">
                         <button class="bsim-tab active" id="function-tab-btn-code" onclick="FunctionView.switchTab('code')">Code</button>
-                        <button class="bsim-tab" id="function-tab-btn-neighbors" onclick="FunctionView.switchTab('neighbors')">Neighbors</button>
+                        <button class="bsim-tab" id="function-tab-btn-neighbors" onclick="FunctionView.switchTab('neighbors')">Neighbors (<span id="fn-nbr-count">0</span>)</button>
                     </div>
 
                     <div id="function-panel-code" class="function-view-panel" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
@@ -412,6 +418,8 @@ window.FunctionView = {
             const items = data.pairs || data.items || data.results || [];
             const html = window.renderTopCorrelations ? window.renderTopCorrelations(items, {}, file_md5, address) : '';
             tbody.innerHTML = html || '<tr><td colspan="9" style="text-align: center; color: var(--dim); padding: 20px;">No neighbors found.</td></tr>';
+            const countEl = document.getElementById('fn-nbr-count');
+            if (countEl) countEl.innerText = data.total ?? items.length;
         } catch (e) {
             console.error(e);
             tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading neighbors: ${e.message}</td></tr>`;

@@ -2853,7 +2853,7 @@ function renderBinSimPairs(items, depth = 0, anchorMd5 = null) {
             html += `
                 <tr class="sim-row">
                     <td>
-                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;" onclick="${onClickHandler}" title="Open Diff">${scoreFormatted}</div>
+                        <div style="cursor:pointer;" onclick="${escapeAttr(onClickHandler)}" title="Open Diff">${binSimScoreCards(item, activeScoreType)}</div>
                     </td>
                     <td class="sim-cell">${EntityRenderer.renderFileName(otherName, otherMd5, otherColl)}</td>
                     <td class="sim-cell">${EntityRenderer.renderMd5(otherMd5)}</td>

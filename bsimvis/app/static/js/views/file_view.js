@@ -55,6 +55,12 @@ window.FileView = {
                 .file-func-table th { text-align:left; padding:10px; border-bottom:1px solid var(--border); color:var(--subtle); text-transform:uppercase; font-size:0.75rem; letter-spacing:0.05em; }
                 .file-func-table td { padding:10px; border-bottom: 1px solid var(--border); vertical-align:middle; }
                 .file-func-table tr:hover { background: var(--hover); }
+
+                #nbr-filters input, #nbr-filters select {
+                    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+                    padding: 4px; border-radius: 2px; box-sizing: border-box;
+                }
+                #nbr-filters input:focus, #nbr-filters select:focus { border-color: var(--accent); outline: none; }
                 
                 .file-func-table th.sortable { cursor: pointer; user-select: none; }
                 .file-func-table th.sortable:hover { color: var(--text); }
@@ -123,7 +129,7 @@ window.FileView = {
                     <button class="bsim-tab" id="file-tab-btn-functions" onclick="FileView.switchTab('functions')">Functions (<span id="functions-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-clusters" onclick="FileView.switchTab('clusters')">Clusters (<span id="cluster-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-extracted_from" onclick="FileView.switchTab('extracted_from')" style="display: none;">Extracted From</button>
-                    <button class="bsim-tab" id="file-tab-btn-neighbors" onclick="FileView.switchTab('neighbors')">Neighbors</button>
+                    <button class="bsim-tab" id="file-tab-btn-neighbors" onclick="FileView.switchTab('neighbors')">Neighbors (<span id="nbr-count">0</span>)</button>
                 </div>
 
                 <!-- Files Tab Panel -->
@@ -917,6 +923,8 @@ window.FileView = {
             const items = data.items || data.results || [];
             const html = window.renderBinSimPairs ? window.renderBinSimPairs(items, 0, file_md5) : '';
             tbody.innerHTML = html || '<tr><td colspan="8" style="text-align: center; color: var(--dim); padding: 20px;">No neighbors found.</td></tr>';
+            const countEl = document.getElementById('nbr-count');
+            if (countEl) countEl.innerText = data.total ?? items.length;
         } catch (e) {
             console.error(e);
             tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading neighbors: ${e.message}</td></tr>`;

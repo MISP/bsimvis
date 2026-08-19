@@ -10,6 +10,11 @@ if (typeof window.getCurrentCollection !== 'function') {
 let tagMetadata = {};
 window.tagMetadata = tagMetadata;
 
+document.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.tag-overflow-chip')) return;
+    document.querySelectorAll('.tag-overflow-dropdown.open').forEach(d => d.classList.remove('open'));
+});
+
 if (typeof escapeHtml === 'undefined') {
     window.escapeHtml = function (value) {
         return String(value ?? '')
@@ -40,6 +45,30 @@ if (typeof safeCssColor === 'undefined') {
         return fallback;
     };
 }
+
+// Tag colors are picked for a dark background; on the light theme the pale ones
+// (yellow, light green) vanish. Darken them, keeping the hue so tags stay
+// recognizable. ponytail: pure function, callers re-render on theme toggle.
+window.tagInk = function (color) {
+    if (!document.documentElement.classList.contains('light-theme')) return color;
+    let hex = String(color || '').trim();
+    if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(hex)) return color;
+    if (hex.length === 4) hex = '#' + [...hex.slice(1)].map(c => c + c).join('');
+    const rgb = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+    // Relative luminance; anything brighter than this washes out on white.
+    const lum = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255;
+    if (lum <= 0.40) return hex;
+    const k = 0.40 / lum; // uniform scale keeps the hue, just dims it
+    return '#' + rgb.map(c => Math.round(c * k).toString(16).padStart(2, '0')).join('');
+};
+
+// A tag colour at partial opacity, for the card borders and fills that used to
+// be written as `${color}44`. A derived colour is an `hsl()` with CSS variables
+// in it, not a hex string, so appending alpha digits to it produces nothing at
+// all -- `color-mix` takes any colour, including those.
+window.tagAlpha = function (color, pct) {
+    return `color-mix(in srgb, ${color} ${pct}%, transparent)`;
+};
 
 let isFetchingTagMetadata = false;
 let tagFetchPromise = null;
@@ -85,7 +114,9 @@ function getRawTagColor(analysisTags, userTags = []) {
         let meta = tagMetadata[t];
         if (t === 'bookmark') meta = { color: '#66d9ef', priority: 1000 };
         if (t === 'ignore') meta = { color: '#f92672', priority: 900 };
-        const color = safeCssColor((meta && meta.color) ? meta.color : '#66d9ef');
+        const color = (meta && meta.color)
+            ? safeCssColor(meta.color)
+            : TagColor.css(t);
         const priority = (meta && meta.priority !== undefined) ? meta.priority : 0;
 
         if (priority >= maxPrio) {
@@ -157,18 +188,18 @@ function updateTagUIElements(tag, color) {
     // Update .sim-tag-card (User Tags)
     document.querySelectorAll('.sim-tag-card').forEach(card => {
         if (card.textContent.replace('×', '').trim() === tag) {
-            card.style.borderColor = color + '66';
+            card.style.borderColor = tagAlpha(color, 40);
             card.style.color = color;
-            card.style.background = color + '11';
+            card.style.background = tagAlpha(color, 7);
         }
     });
 
     // Update .analysis-tag-badge (Analysis Tags)
     document.querySelectorAll('.analysis-tag-badge').forEach(badge => {
         if (badge.textContent.trim() === tag) {
-            badge.style.borderColor = color + '66';
+            badge.style.borderColor = tagAlpha(color, 40);
             badge.style.color = color;
-            badge.style.background = color + '11';
+            badge.style.background = tagAlpha(color, 7);
         }
     });
 
@@ -176,9 +207,9 @@ function updateTagUIElements(tag, color) {
     document.querySelectorAll('.cluster-card').forEach(card => {
         const nameSpan = card.querySelector('span');
         if (nameSpan && nameSpan.textContent.trim() === tag) {
-            card.style.borderColor = color + '44';
+            card.style.borderColor = tagAlpha(color, 27);
             card.style.color = color;
-            card.style.background = color + '11';
+            card.style.background = tagAlpha(color, 7);
         }
     });
 }
@@ -190,7 +221,7 @@ window.showTooltip = (e, tag, coll) => {
     if (!el) {
         el = document.createElement('div');
         el.id = 'tag-tooltip';
-        el.style.cssText = "position:fixed; z-index:20005; background:rgba(20,22,26,0.95); border:1px solid var(--border); padding:12px; border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,0.5); display:none; pointer-events:none; font-size:0.8rem; color:var(--text); backdrop-filter:blur(10px); min-width:180px;";
+        el.style.cssText = "position:fixed; z-index:20005; background:var(--meta-bg); border:1px solid var(--border); padding:12px; border-radius:8px; display:none; pointer-events:none; font-size:0.8rem; color:var(--text); backdrop-filter:blur(10px); min-width:180px;";
         document.body.appendChild(el);
     }
 
@@ -233,13 +264,16 @@ window.showTooltip = (e, tag, coll) => {
 };
 
 window.getTagMetadata = (tag) => {
-    if (tag === 'bookmark') return { color: '#66d9ef', priority: 1000 };
-    if (tag === 'ignore') return { color: '#f92672', priority: 900 };
+    if (tag === 'bookmark') return { color: window.tagInk('#66d9ef'), priority: 1000 };
+    if (tag === 'ignore') return { color: window.tagInk('#f92672'), priority: 900 };
     const m = tagMetadata[tag] || (window.parent && window.parent.tagMetadata && window.parent.tagMetadata[tag]);
-    if (m) return { ...m, color: safeCssColor(m.color) };
-    const palette = ["#FF5555", "#50FA7B", "#F1FA8C", "#BD93F9", "#FF79C6", "#8BE9FD", "#FFB86C", "#A6E22E", "#66D9EF", "#FFD700", "#FF69B4", "#7B68EE", "#48D1CC", "#00FF7F", "#F4A460"];
-    let hash = 0; for (let i = 0; i < tag.length; i++) hash = tag.charCodeAt(i) + ((hash << 5) - hash);
-    return { color: palette[Math.abs(hash) % palette.length], priority: 0 };
+    if (m) return { ...m, color: window.tagInk(safeCssColor(m.color)) };
+    // No stored colour: derive one from the tag id. A fixed palette indexed by a
+    // hash of the whole name gave `category:network` and `category:crypto` two
+    // unrelated colours and `network` a third; `TagColor` keeps a namespace's
+    // tags in one arc and a leaf a shade of its group, and matches what the
+    // graphs paint for the same tag.
+    return { color: TagColor.css(tag), priority: 0 };
 };
 
 window.hideTooltip = () => {
@@ -260,12 +294,12 @@ window.handleTagContextMenu = (e, tag) => {
     if (!menu) {
         menu = document.createElement('div');
         menu.id = 'tag-custom-context-menu';
-        menu.style.cssText = "position:fixed; z-index:20010; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; box-shadow:0 15px 35px rgba(0,0,0,0.6); display:none; overflow:hidden; width:220px; font-family:var(--font-main, inherit);";
+        menu.style.cssText = "position:fixed; z-index:20010; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; display:none; overflow:hidden; width:220px; font-family:var(--font-main, inherit);";
         document.body.appendChild(menu);
     }
 
     menu.innerHTML = `
-        <div style="padding:12px 15px; font-weight:bold; font-size:0.8rem; color:var(--accent); border-bottom:1px solid var(--border); background:rgba(255,255,255,0.03); display:flex; justify-content:space-between; align-items:center;">
+        <div style="padding:12px 15px; font-weight:bold; font-size:0.8rem; color:var(--accent); border-bottom:1px solid var(--border); background: var(--hover); display:flex; justify-content:space-between; align-items:center;">
             <span>Tag: ${escapeHtml(tag)}</span>
             <button onclick="document.getElementById('tag-custom-context-menu').style.display='none'" style="background:none; border:none; color:var(--dim); cursor:pointer;"><i class="fa-solid fa-times"></i></button>
         </div>
@@ -279,7 +313,7 @@ window.handleTagContextMenu = (e, tag) => {
                 <input type="range" id="tag-prio-slider" min="0" max="1000" step="10" value="${currentMeta.priority}" style="width:100%; cursor:pointer;">
             </div>
 
-            <button id="tag-save-btn" style="width:100%; padding:10px; background:var(--accent); color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer; transition:opacity 0.2s;">
+            <button id="tag-save-btn" style="width:100%; padding:10px; background:var(--accent); color:var(--window-tray); border:none; border-radius:4px; font-weight:bold; cursor:pointer; transition:opacity 0.2s;">
                 Apply Changes
             </button>
         </div>
@@ -333,7 +367,7 @@ window.handleTagContextMenu = (e, tag) => {
             }
 
             // Update all tag badges and cards in the current document
-            updateTagUIElements(tag, newColor);
+            updateTagUIElements(tag, window.tagInk(newColor));
 
             // Refresh row colors
             if (typeof refreshAllRowColors === 'function') {
@@ -388,27 +422,65 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
 
     const addOnClick = `startAddTag(event, ${jsString(etype)}, ${jsString(eid)})`;
 
-    const analysisHtml = tagsList.map(t => `<span class="analysis-tag-badge" title="Analysis Tag: ${escapeAttr(t)}">${escapeHtml(t)}</span>`).join('');
+    // The entity id rides on the badge so the provenance popup can ask "which
+    // rule fired *here*" (match_provenance) before falling back to "which rules
+    // can emit this tag at all" (tag_rules).
+    // An analysis tag badge carries its tag's colour like every other card. It
+    // used to be the one place that did not: a class with a fixed palette, so
+    // `category:network` looked the same as `severity:high` in a table and
+    // different from the same tag in the graphs.
+    const analysisBadge = t => {
+        const color = window.tagInk(window.getTagMetadata(t).color);
+        return `<span class="analysis-tag-badge" style="cursor:pointer; border-color:${tagAlpha(color, 40)}; color:${color}; background:${tagAlpha(color, 7)};" data-eid="${escapeAttr(eid)}" title="Analysis Tag: ${escapeAttr(t)} (click for source)">${escapeHtml(t)}</span>`;
+    };
 
-    const userHtml = userTagsList.map(t => {
+    const userBadge = t => {
         if (t === 'bookmark' || t === 'ignore') return '';
-        const meta = tagMetadata[t] || { color: '#66d9ef' };
-        const color = safeCssColor(meta.color);
+        const color = window.tagInk(window.getTagMetadata(t).color);
         const removeClick = `removeTag(event, ${jsString(etype)}, ${jsString(eid)}, ${jsString(t)})`;
         const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : '';
 
         return `
         <span class="sim-tag-card"
-              style="border-color:${color}44; color:${color}; background:${color}11; cursor:pointer;"
+              style="border-color:${tagAlpha(color, 27)}; color:${color}; background:${tagAlpha(color, 7)}; cursor:pointer;"
               onmouseenter="showTooltip(event, ${escapeAttr(jsString(t))}, ${escapeAttr(jsString(coll))})"
               onmouseleave="hideTooltip()"
               oncontextmenu="handleTagContextMenu(event, ${escapeAttr(jsString(t))})">
             ${escapeHtml(t)}
             <span class="remove-tag-btn" onclick="${escapeAttr(removeClick)}" style="background:${escapeAttr(color)}22">×</span>
         </span>`;
-    }).join('');
+    };
+
+    // Table cells cap visible tags so a file with 30 tags doesn't blow out row
+    // height; overflow tags sit behind a "+N" chip instead of being dropped.
+    const maxTags = options.maxTags;
+    const nonSpecialUserTags = userTagsList.filter(t => t !== 'bookmark' && t !== 'ignore');
+    const byPriorityDesc = (a, b) => (window.getTagMetadata(b.t).priority || 0) - (window.getTagMetadata(a.t).priority || 0);
+    let visibleHtml, overflowHtml = '';
+    if (maxTags && (tagsList.length + nonSpecialUserTags.length) > maxTags) {
+        const allTags = [
+            ...tagsList.map(t => ({ t, badge: analysisBadge })),
+            ...nonSpecialUserTags.map(t => ({ t, badge: userBadge })),
+        ].sort(byPriorityDesc);
+        const shown = allTags.slice(0, maxTags);
+        const hidden = allTags.slice(maxTags);
+        visibleHtml = shown.map(x => x.badge(x.t)).join('');
+        const hiddenHtml = hidden.map(x => x.badge(x.t)).join('');
+        overflowHtml = `
+        <span class="tag-overflow-wrap" style="position:relative; display:inline-flex;">
+            <span class="tag-overflow-chip" onclick="event.stopPropagation(); this.nextElementSibling.classList.toggle('open');">+${hidden.length}</span>
+            <div class="tag-overflow-dropdown" onclick="event.stopPropagation();">${hiddenHtml}</div>
+        </span>`;
+    } else {
+        const allTags = [
+            ...tagsList.map(t => ({ t, badge: analysisBadge })),
+            ...nonSpecialUserTags.map(t => ({ t, badge: userBadge })),
+        ].sort(byPriorityDesc);
+        visibleHtml = allTags.map(x => x.badge(x.t)).join('');
+    }
+
     return `
-        <div class="${editorClass}" data-etype="${escapeAttr(etype)}" data-eid="${escapeAttr(eid)}" style="display:inline-flex; flex-wrap:wrap; gap:2px; align-items:center; vertical-align:middle;">
+        <div class="${editorClass}" data-etype="${escapeAttr(etype)}" data-eid="${escapeAttr(eid)}" style="display:inline-flex; flex-wrap:wrap; gap:2px; align-items:center; vertical-align:middle; max-width:100%;">
             <button class="bookmark-btn ${isBookmarked ? 'active' : ''}"
                     title="${isBookmarked ? 'Remove Bookmark' : 'Add Bookmark'}"
                     onclick="${escapeAttr(bookmarkOnClick)}">
@@ -419,8 +491,8 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
                     onclick="${escapeAttr(ignoreOnClick)}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
             </button>
-            ${analysisHtml}
-            ${userHtml}
+            ${visibleHtml}
+            ${overflowHtml}
             <button class="add-tag-btn" onclick="${escapeAttr(addOnClick)}">+</button>
         </div>
     `;
@@ -481,9 +553,7 @@ window.showClusterCardTooltip = function(event, uuid, name, size, stability, coh
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
     let adjustedEvent = event;
     if (targetWindow !== window) {
-        let iframeId = 'code-frame';
-        if (window.location.pathname.includes('/diff/')) iframeId = 'diff-frame';
-        const iframe = targetWindow.document.getElementById(iframeId);
+        const iframe = window.getHostFrame();
         if (iframe) {
             const rect = iframe.getBoundingClientRect();
             adjustedEvent = {
@@ -530,9 +600,7 @@ window.moveClusterCardTooltip = function(e) {
     if (!activeTooltip) return;
     
     if (targetWindow !== window) {
-        let iframeId = 'code-frame';
-        if (window.location.pathname.includes('/diff/')) iframeId = 'diff-frame';
-        const iframe = targetWindow.document.getElementById(iframeId);
+        const iframe = window.getHostFrame();
         if (iframe) {
             const rect = iframe.getBoundingClientRect();
             const adjustedEvent = {
@@ -587,7 +655,7 @@ window.renderClusterCards = (clusters, isBinary = false) => {
         const score = (c.cohesion_score || 0).toFixed(2);
         const uuid = c.cluster_uuid;
         const hue = Math.max(0, Math.min(120, (c.cohesion_score || 0) * 120));
-        const color = `hsl(${hue}, 100%, 65%)`;
+        const color = `hsl(${hue}, var(--color-s-high), var(--color-l-high))`;
         
         let displayName = name;
         if (isBinary) {
@@ -612,7 +680,7 @@ window.renderClusterCards = (clusters, isBinary = false) => {
               onmouseleave="hideClusterCardTooltip(event)"
               onmousemove="moveClusterCardTooltip(event)"
               onclick="applyClusterFilter(${escapeAttr(jsString(uuid))}, ${isBinary})"
-              style="border-color:${color}44; color:${color}; background:${color}11; align-items:center; gap:4px; padding:2px 6px 2px 8px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;">
+              style="border-color:${tagAlpha(color, 27)}; color:${color}; background:${tagAlpha(color, 7)}; align-items:center; gap:4px; padding:2px 6px 2px 8px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                  stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10"></circle>
@@ -633,7 +701,7 @@ window.renderClusterCards = (clusters, isBinary = false) => {
     const allHtml = sorted.map(c => renderCard(c, false)).join('');
     const overflowBox = `
         <div class="cluster-overflow-box">
-            <div style="font-size:0.6rem; color:#888; margin-bottom:4px; text-transform:uppercase; letter-spacing:1px; padding:0 4px;">Clusters</div>
+            <div style="font-size:0.6rem; color:var(--subtle); margin-bottom:4px; text-transform:uppercase; letter-spacing:1px; padding:0 4px;">Clusters</div>
             ${allHtml}
         </div>`;
 
@@ -683,7 +751,9 @@ function attachTagAutocomplete(input, onSelect) {
         tags.forEach(t => {
             const item = document.createElement('div');
             item.className = 'tag-suggestion-item';
-            const meta = tagMetadata[t] || { color: '#66d9ef', count: 0, priority: 0 };
+            // Through `getTagMetadata` so a suggestion's dot is the colour the
+            // tag will actually have once applied, derived or hand-picked.
+            const meta = { ...(tagMetadata[t] || { count: 0 }), ...window.getTagMetadata(t) };
             const isBookmark = (t === 'bookmark');
             const isIgnore = (t === 'ignore');
             item.innerHTML = `
@@ -808,7 +878,14 @@ function attachAutocomplete(input, level, field, onSelect) {
             div.className = 'tag-suggestion-item';
             div.style.display = 'flex';
             div.style.justifyContent = 'space-between';
-            div.innerHTML = `<span>${escapeHtml(item.value)}</span> <span class="dim" style="font-size:0.6rem; margin-left:10px;">${escapeHtml(item.count)}</span>`;
+            // On a tag field the suggestion carries the tag's colour, as a dot
+            // rather than coloured text: a whole dropdown of coloured rows is
+            // unreadable, and the dot is enough to tie the entry to the same
+            // tag in the tables and the graphs.
+            const dot = /tag/i.test(field)
+                ? `<span class="tag-color-dot" style="background:${window.getTagMetadata(item.value).color};"></span>`
+                : '';
+            div.innerHTML = `${dot}<span style="flex:1">${escapeHtml(item.value)}</span> <span class="dim" style="font-size:0.6rem; margin-left:10px;">${escapeHtml(item.count)}</span>`;
             div.onmousedown = (e) => {
                 e.preventDefault();
                 onSelect(item.value);
@@ -1018,12 +1095,12 @@ async function confirmAddTag(etype, eid, tag, container) {
     const col = colStr || (typeof getCurrentCollection === 'function' ? getCurrentCollection() : window.getCollectionFromId(eid));
 
     let targets = [{ etype, eid, container }];
-    const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds() : [];
+    const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds(etype) : [];
 
     if (selectedIds.includes(eid)) {
         targets = selectedIds.map(id => {
-            const row = document.querySelector(`tr[data-id="${id}"]`);
-            const targetContainer = row ? row.querySelector(`[data-etype="${etype}"][data-eid="${id}"]`) : null;
+            // Rows without a data-id (bin diff) still have their editor in the DOM.
+            const targetContainer = document.querySelector(`[data-etype="${etype}"][data-eid="${CSS.escape(id)}"]`);
             return { etype, eid: id, container: targetContainer };
         });
     }
@@ -1099,7 +1176,7 @@ async function confirmAddTag(etype, eid, tag, container) {
 
 function updateUIForTagAdd(editors, tag) {
     const meta = tagMetadata[tag] || { color: '#66d9ef' };
-    const color = safeCssColor(meta.color);
+    const color = window.tagInk(safeCssColor(meta.color));
     const isBookmark = (tag === 'bookmark');
     const isIgnore = (tag === 'ignore');
     const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : '';
@@ -1117,9 +1194,9 @@ function updateUIForTagAdd(editors, tag) {
             if (!existing) {
                 const card = document.createElement('span');
                 card.className = 'sim-tag-card';
-                card.style.borderColor = color + '44';
+                card.style.borderColor = tagAlpha(color, 27);
                 card.style.color = color;
-                card.style.background = color + '11';
+                card.style.background = tagAlpha(color, 7);
                 card.style.cursor = 'pointer';
 
                 // Add event handlers for tooltip and context menu
@@ -1144,12 +1221,12 @@ async function removeTag(event, etype, eid, tag) {
     const col = colStr || (typeof getCurrentCollection === 'function' ? getCurrentCollection() : window.getCollectionFromId(eid));
 
     let targets = [{ etype, eid }];
-    const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds() : [];
+    const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds(etype) : [];
 
     if (selectedIds.includes(eid)) {
         targets = selectedIds.map(id => {
-            const row = document.querySelector(`tr[data-id="${id}"]`);
-            const targetContainer = row ? row.querySelector(`[data-etype="${etype}"][data-eid="${id}"]`) : null;
+            // Rows without a data-id (bin diff) still have their editor in the DOM.
+            const targetContainer = document.querySelector(`[data-etype="${etype}"][data-eid="${CSS.escape(id)}"]`);
             return { etype, eid: id, container: targetContainer };
         });
     }
@@ -1289,4 +1366,240 @@ window.addEventListener('message', (event) => {
     });
 
     if (typeof refreshAllRowColors === 'function') refreshAllRowColors();
+});
+
+// --- Tag provenance ---------------------------------------------------------
+// Which rule minted an analysis tag, and where that rule lives. Deliberately
+// click-only and fetched on demand: the tag lists, the search filters and the
+// chips themselves stay flat strings, so nothing on the render path pays for
+// this. Delegated off document rather than wired per badge, so every place
+// that renders an .analysis-tag-badge gets it without knowing about it.
+
+// `<coll>:file:<md5>` / `<coll>:func:<md5>:<addr>` -> the collection. Pool
+// collections are themselves prefixed (`global:pool:x:file:...`), so the split
+// is on the entity kind rather than on the first colon.
+const provEntityCollection = (eid) => String(eid || '').replace(/:(file|func):.*$/, '');
+
+// Rule text is fetched per rule id, once. A mirror rule body is a few KB and a
+// popup gets reopened constantly, so the cache is worth its one line.
+const provSourceCache = {};
+
+const provRuleSource = (rid) => {
+    if (rid in provSourceCache) return Promise.resolve(provSourceCache[rid]);
+    return fetch(`/api/tags/rule_source?id=${encodeURIComponent(rid)}`)
+        .then((res) => res.json())
+        .then((data) => (provSourceCache[rid] = (data && data.text) || null))
+        .catch(() => null);
+};
+
+window.showTagProvenance = (e, tag, eid) => {
+    let el = document.getElementById('tag-provenance-popup');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'tag-provenance-popup';
+        el.style.cssText = "position:fixed; z-index:20015; background:var(--card-bg); border:1px solid var(--border); padding:0; border-radius:8px; display:none; font-size:0.78rem; color:var(--text); width:520px; max-width:92vw; box-shadow:0 8px 24px rgba(0,0,0,0.35);";
+        document.body.appendChild(el);
+        // Hoverable: the pointer leaving the badge must be able to land in the
+        // popup without it closing, so both ends cancel the pending close.
+        el.addEventListener('mouseenter', () => window.cancelTagProvenanceClose());
+        el.addEventListener('mouseleave', () => window.hideTagProvenance(400));
+    }
+
+    const row = (label, value) => value
+        ? `<div style="display:grid; grid-template-columns:78px 1fr; gap:4px 10px; margin-top:3px;">
+               <span style="color:var(--dim)">${label}</span>
+               <span style="word-break:break-all;">${escapeHtml(String(value))}</span>
+           </div>`
+        : '';
+
+    const chips = (tags) => (tags && tags.length)
+        ? `<div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:6px;">` +
+          tags.map(t => `<span style="background:var(--hover); border:1px solid var(--border); border-radius:10px; padding:1px 7px; font-size:0.7rem;">${escapeHtml(String(t))}</span>`).join('') +
+          `</div>`
+        : '';
+
+    el.innerHTML = `<div style="padding:12px 14px; color:var(--dim)">Looking up <b>${escapeHtml(tag)}</b>...</div>`;
+    el.style.display = 'block';
+
+    let x = e.clientX + 12, y = e.clientY + 12;
+    if (x + 540 > window.innerWidth) x = Math.max(10, window.innerWidth - 550);
+    if (y + 380 > window.innerHeight) y = Math.max(10, window.innerHeight - 390);
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+
+    const header = (note) => `
+        <div style="padding:10px 14px 8px; border-bottom:1px solid var(--border); background:var(--hover); border-radius:8px 8px 0 0;">
+            <div style="font-weight:bold; display:flex; justify-content:space-between; gap:10px; align-items:center;">
+                <span style="word-break:break-all;">${escapeHtml(tag)}</span>
+                <span id="tag-prov-close" style="color:var(--dim); cursor:pointer; font-size:1rem;">&times;</span>
+            </div>
+            ${note ? `<div style="color:var(--dim); margin-top:4px;">${escapeHtml(note)}</div>` : ''}
+        </div>`;
+
+    // One card per rule. The rule text is the expensive half, so it loads for
+    // the first card only and the rest load when their toggle is clicked.
+    const card = (r, i) => `
+        <div style="padding:8px 14px; border-bottom:1px solid var(--border);">
+            <div style="color:var(--accent); font-weight:bold; word-break:break-all;">${escapeHtml(r.title || r.name || r.source || r.id || '')}</div>
+            ${row('Origin', r.source)}
+            ${row('Rule id', r.id)}
+            ${row('Rule name', r.title && r.name ? r.name : '')}
+            ${row('File', r.path)}
+            ${row('Format', r.format)}
+            ${row('Author', r.author || (r.authors || []).join(', '))}
+            ${row('Rules', (r.rules || []).join(', '))}
+            ${row('Scope', r.scopes ? Object.entries(r.scopes).map(([k, v]) => `${k}: ${v}`).join(', ') : '')}
+            ${row('ATT&CK', (r.attack || []).join(', '))}
+            ${row('MBC', (r.mbc || []).join(', '))}
+            ${row('Examples', (r.examples || []).join(', '))}
+            ${row('License', r.license)}
+            ${row('Upstream', r.upstream)}
+            ${chips(r.tags)}
+            <div style="margin-top:7px; display:flex; gap:12px;">
+                ${r.id ? `<span class="tag-prov-toggle" data-rid="${escapeAttr(r.id)}" data-idx="${i}" style="color:var(--accent); cursor:pointer;">Rule text</span>` : ''}
+                ${r.url ? `<a href="${escapeAttr(r.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Open source &nearr;</a>` : ''}
+            </div>
+            <pre id="tag-prov-src-${i}" style="display:none; margin:7px 0 0; padding:8px; background:var(--hover); border:1px solid var(--border); border-radius:6px; max-height:220px; overflow:auto; white-space:pre; font-size:0.72rem; line-height:1.35;"></pre>
+        </div>`;
+
+    const loadInto = (rid, pre) => {
+        pre.style.display = 'block';
+        pre.textContent = 'Loading rule...';
+        provRuleSource(rid).then((text) => {
+            pre.textContent = text || 'Rule text not available locally (see Open source).';
+        });
+    };
+
+    const paint = (records, note) => {
+        const body = records.length
+            ? records.map(card).join('')
+            : `<div style="padding:10px 14px; color:var(--dim); font-style:italic;">No source recorded for this tag.</div>`;
+        // Scrolls as one list: many rules stay reachable without the popup
+        // growing past the viewport, and each rule body scrolls inside its own
+        // box so the outer scroll position does not jump when one expands.
+        el.innerHTML = header(note) +
+            `<div style="max-height:min(60vh, 520px); overflow-y:auto;">${body}</div>`;
+
+        const close = el.querySelector('#tag-prov-close');
+        if (close) close.onclick = () => window.hideTagProvenance(0);
+
+        el.querySelectorAll('.tag-prov-toggle').forEach((t) => {
+            t.onclick = () => {
+                const pre = el.querySelector(`#tag-prov-src-${t.dataset.idx}`);
+                if (!pre) return;
+                if (pre.style.display === 'block') { pre.style.display = 'none'; return; }
+                loadInto(t.dataset.rid, pre);
+            };
+        });
+
+        if (records.length && records[0].id) {
+            const first = el.querySelector('#tag-prov-src-0');
+            if (first) loadInto(records[0].id, first);
+        }
+    };
+
+    // Endpoint B: the whole ruleset, not this entity. Paged, so the count is
+    // half the answer -- without it 50 rows read as "these are the rules".
+    const showRuleset = () => fetch(`/api/tags/provenance?tag=${encodeURIComponent(tag)}`)
+        .then(res => res.json())
+        .then(data => {
+            const records = (data && data.provenance && data.provenance[tag]) || [];
+            const total = (data && data.counts && data.counts[tag]) || records.length;
+            const note = !records.length
+                ? ''
+                : records.length < total
+                    ? `Ruleset-wide: showing ${records.length} of ${total} rules that can emit this tag.`
+                    : `Ruleset-wide: ${total} rule${total === 1 ? '' : 's'} can emit this tag.`;
+            paint(records, note);
+        });
+
+    // Endpoint A: the rules that actually fired on this entity. Recorded for
+    // the file and for every function a match resolved into; a function whose
+    // tag came from an offset that resolved nowhere has no entry and falls
+    // through to B, which is the honest answer for it.
+    const collection = provEntityCollection(eid);
+    const request = (eid && collection)
+        ? fetch('/api/tags/match_provenance', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ collection, entity_ids: [eid] }),
+          })
+              .then(res => res.json())
+              .then(data => {
+                  const ids = (((data && data.hits) || {})[eid] || {})[tag] || [];
+                  if (!ids.length) return showRuleset();
+                  const rules = (data && data.rules) || {};
+                  const where = eid.includes(':func:') ? 'function' : 'file';
+                  paint(
+                      ids.map(id => Object.assign({ id }, rules[id] || {})),
+                      `Matched here: ${ids.length} rule${ids.length === 1 ? '' : 's'} fired on this ${where}.`,
+                  );
+              })
+        : showRuleset();
+
+    request.catch(() => {
+        el.innerHTML = `<div style="color:var(--dim)">Could not load provenance for ${escapeHtml(tag)}.</div>`;
+    });
+};
+
+// A popup that is *entered* by the pointer cannot close on the badge's
+// mouseleave, so closing is always deferred and any re-entry cancels it.
+let provCloseTimer = null;
+let provOpenTimer = null;
+let provOpenFor = '';
+
+window.cancelTagProvenanceClose = () => {
+    if (provCloseTimer) { clearTimeout(provCloseTimer); provCloseTimer = null; }
+};
+
+window.hideTagProvenance = (delay) => {
+    window.cancelTagProvenanceClose();
+    const hide = () => {
+        const popup = document.getElementById('tag-provenance-popup');
+        if (popup) popup.style.display = 'none';
+        provOpenFor = '';
+    };
+    if (!delay) return hide();
+    provCloseTimer = setTimeout(hide, delay);
+};
+
+const provKey = (badge) => `${badge.textContent.trim()}|${badge.dataset.eid || ''}`;
+
+document.addEventListener('mouseover', (e) => {
+    const badge = e.target.closest && e.target.closest('.analysis-tag-badge');
+    if (!badge) return;
+    window.cancelTagProvenanceClose();
+    if (provKey(badge) === provOpenFor) return;
+    // Delayed so sweeping the pointer across a row of chips does not fire a
+    // request per chip.
+    clearTimeout(provOpenTimer);
+    provOpenTimer = setTimeout(() => {
+        provOpenFor = provKey(badge);
+        showTagProvenance(e, badge.textContent.trim(), badge.dataset.eid || '');
+    }, 250);
+});
+
+document.addEventListener('mouseout', (e) => {
+    const badge = e.target.closest && e.target.closest('.analysis-tag-badge');
+    if (!badge) return;
+    clearTimeout(provOpenTimer);
+    window.hideTagProvenance(400);
+});
+
+document.addEventListener('click', (e) => {
+    const badge = e.target.closest && e.target.closest('.analysis-tag-badge');
+    const popup = document.getElementById('tag-provenance-popup');
+    if (badge) {
+        e.stopPropagation();
+        clearTimeout(provOpenTimer);
+        window.cancelTagProvenanceClose();
+        provOpenFor = provKey(badge);
+        showTagProvenance(e, badge.textContent.trim(), badge.dataset.eid || '');
+    } else if (popup && !e.target.closest('#tag-provenance-popup')) {
+        window.hideTagProvenance(0);
+    }
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') window.hideTagProvenance(0);
 });

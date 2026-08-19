@@ -14,6 +14,7 @@ import json
 import datetime
 
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.index_config import tag_ancestors
 
 
 def normalize_tags(data, tag_fields=None):
@@ -207,16 +208,22 @@ def _index_tag(pipe, coll, level, field, value, doc_id, seen=None):
     for v in values:
         if v is None or v == "":
             continue
-        # Standardized Bucket: {col}:idx:{level}:{field}:{value}
-        bucket_key = f"{coll}:idx:{level}:{field}:{str(v).lower()}"
-        pipe.sadd(bucket_key, doc_id)
-        # Standardized Registry: {coll}:reg:{level}:{field} (points to many buckets)
+        v_lower = str(v).lower()
         registry_key = f"{coll}:reg:{level}:{field}"
-        if seen is None:
-            pipe.sadd(registry_key, bucket_key)
-        elif (registry_key, bucket_key) not in seen:
-            pipe.sadd(registry_key, bucket_key)
-            seen.add((registry_key, bucket_key))
+
+        # The value itself plus, for hierarchical fields, every ancestor path.
+        # Indexing `lib` and `lib:uclibc` as real buckets is what lets a
+        # namespace filter be one exact lookup instead of a vocabulary scan.
+        for bucket_value in [v_lower] + tag_ancestors(field, v_lower):
+            # Standardized Bucket: {col}:idx:{level}:{field}:{value}
+            bucket_key = f"{coll}:idx:{level}:{field}:{bucket_value}"
+            pipe.sadd(bucket_key, doc_id)
+            # Standardized Registry: {coll}:reg:{level}:{field} (many buckets)
+            if seen is None:
+                pipe.sadd(registry_key, bucket_key)
+            elif (registry_key, bucket_key) not in seen:
+                pipe.sadd(registry_key, bucket_key)
+                seen.add((registry_key, bucket_key))
 
         # AUTO-DISCOVERY: Ensure tags are registered in global metadata
         if "tags" in field:
@@ -238,8 +245,14 @@ def _index_tag(pipe, coll, level, field, value, doc_id, seen=None):
             pipe.hsetnx(meta_key, str(v), default_meta)
 
 
-def _unindex_tag(pipe, coll, level, field, value, doc_id):
-    """Remove doc_id from the tag set for field=value."""
+def _unindex_tag(pipe, coll, level, field, value, doc_id, remaining=None):
+    """Remove doc_id from the tag set for field=value.
+
+    remaining: the values of this field the doc still carries after the removal.
+    Ancestor buckets are shared, so dropping `lib:uclibc:seekdir` must not pull
+    the doc out of `lib:uclibc` while it still holds `lib:uclibc:telldir`.
+    Callers that delete the whole doc pass nothing and every ancestor goes.
+    """
     if value is None:
         return
     if isinstance(value, list):
@@ -251,11 +264,23 @@ def _unindex_tag(pipe, coll, level, field, value, doc_id):
                 values.append(v)
     else:
         values = [value]
+
+    kept = set()
+    for v in remaining or []:
+        if v is None or v == "":
+            continue
+        v_lower = str(v).lower()
+        kept.add(v_lower)
+        kept.update(tag_ancestors(field, v_lower))
+
     for v in values:
         if v is None or v == "":
             continue
-        bucket_key = f"{coll}:idx:{level}:{field}:{str(v).lower()}"
-        pipe.srem(bucket_key, doc_id)
+        v_lower = str(v).lower()
+        for bucket_value in [v_lower] + tag_ancestors(field, v_lower):
+            if bucket_value in kept:
+                continue
+            pipe.srem(f"{coll}:idx:{level}:{field}:{bucket_value}", doc_id)
 
 
 def _index_num(pipe, coll, level, field, value, doc_id):
@@ -287,6 +312,33 @@ def save_file(pipe, coll, file_md5, data):
     for f in FILE_NUM_FIELDS:
         _index_num(pipe, coll, "file", f, data.get(f), base_id)
     pipe.sadd(f"{coll}:all_files", base_id)
+
+
+def update_file_status(r, coll, file_md5, status, only_if_not=None):
+    """Patches the `status` field on an already-registered file's meta blob.
+
+    `only_if_not` guards a late-stage failure (e.g. BUILD_SIM) from clobbering
+    a file that already finished its core analysis -- only the stages before
+    that point should be able to mark a file failed.
+    """
+    key = f"{coll}:file:{file_md5}:meta"
+    raw = r.get(key)
+    if not raw:
+        return
+    data = json.loads(raw)
+    old_status = data.get("status")
+    if only_if_not and old_status == only_if_not:
+        return
+    if old_status == status:
+        return
+    data["status"] = status
+    base_id = f"{coll}:file:{file_md5}"
+    pipe = r.pipeline(transaction=False)
+    pipe.set(key, json.dumps(data))
+    if old_status:
+        _unindex_tag(pipe, coll, "file", "status", old_status, base_id)
+    _index_tag(pipe, coll, "file", "status", status, base_id)
+    pipe.execute()
 
 
 def save_function(pipe, coll, md5, addr, data):
@@ -453,8 +505,21 @@ def delete_file(r, coll, file_md5):
     for f in FILE_NUM_FIELDS:
         _unindex_num(pipe, coll, "file", f, base_id)
     pipe.srem(f"{coll}:all_files", base_id)
+    pipe.delete(f"{base_id}:lib_tags")
     pipe.hincrby(f"global:collection:{coll}:meta", "total_files", -1)
     pipe.execute()
+
+    # Containment edges outlive the document otherwise, leaving children
+    # pointing at a container that is gone and containers counting functions
+    # that no longer exist. Imported here: lineage_service imports this module.
+    from bsimvis.app.services import container_sim_service, lineage_service
+
+    # A container's similarity score is a claim about its children, so it stops
+    # being true the moment one of them goes. Must run before forget(), which is
+    # what knows the containers above this file.
+    container_sim_service.clear_for(coll, file_md5, r=r)
+
+    lineage_service.forget(coll, file_md5, r)
 
 
 def delete_function(r, coll, md5, addr):

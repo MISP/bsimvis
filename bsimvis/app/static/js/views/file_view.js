@@ -12,18 +12,24 @@ window.FileView = {
     neighborsLoaded: false,
     neighborsDebounceTimer: null,
     sortState: { col: 'function_name', dir: 1 },
-    filterState: { q: '', featMin: '', featMax: '' },
+    funcClusters: {},
+    funcPage: { total: null, loading: false, reqId: 0 },
+    FUNC_PAGE_SIZE: 100,
 
     async init(params, containerId) {
         this.params = params;
         this.container = document.getElementById(containerId);
         this.functions = [];
         this.clusters = {};
+        this.funcClusters = {};
+        this.file = null;
+        this.funcPage = { total: null, loading: false, reqId: 0 };
         this.functionsLoaded = false;
         this.neighborsLoaded = false;
         this.sortState = { col: 'function_name', dir: 1 };
-        this.filterState = { q: '', featMin: '', featMax: '' };
-        
+        this.fvAxis = '';
+        this.fvSelectedTag = null;
+
         const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
 
@@ -42,31 +48,67 @@ window.FileView = {
                     color:var(--subtle); font-size:0.9rem; font-weight:600; letter-spacing:0.01em;
                     transition:color 0.15s, border-color 0.15s, background 0.15s;
                 }
-                .bsim-tab:hover { color:var(--text); background:rgba(255,255,255,0.04); }
+                .bsim-tab:hover { color:var(--text); background: var(--hover); }
                 .bsim-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
                 
                 .file-func-table { width:100%; border-collapse:collapse; font-size:0.8rem; }
                 .file-func-table th { text-align:left; padding:10px; border-bottom:1px solid var(--border); color:var(--subtle); text-transform:uppercase; font-size:0.75rem; letter-spacing:0.05em; }
-                .file-func-table td { padding:10px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:middle; }
-                .file-func-table tr:hover { background: rgba(255,255,255,0.02); }
+                .file-func-table td { padding:10px; border-bottom: 1px solid var(--border); vertical-align:middle; }
+                .file-func-table tr:hover { background: var(--hover); }
                 
                 .file-func-table th.sortable { cursor: pointer; user-select: none; }
                 .file-func-table th.sortable:hover { color: var(--text); }
-                .file-func-table tr.filter-row th { padding: 4px 10px; border-bottom: 1px solid var(--border); background: rgba(0,0,0,0.1); }
-                .file-func-table tr.filter-row input { background: #000; border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 3px; font-size: 0.7rem; box-sizing: border-box; }
+                .file-func-table tr.filter-row th { padding: 4px 10px; border-bottom: 1px solid var(--border); background: var(--border); }
+                .file-func-table tr.filter-row input { background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 3px; font-size: 0.7rem; box-sizing: border-box; }
 
                 .bin-sim-mc-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
                 .bin-sim-mc-table th { text-align:left; padding:6px 12px; color:var(--subtle); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid var(--border); }
-                .bin-sim-mc-table td { padding:6px 12px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:top; font-family:'Consolas',monospace; word-break:break-word; }
+                .bin-sim-mc-table td { padding:6px 12px; border-bottom: 1px solid var(--border); vertical-align:top; font-family:'Consolas',monospace; word-break:break-word; }
                 .bin-sim-mc-cat { padding:10px 12px 4px; font-weight:bold; color:var(--accent); font-size:0.78rem; }
                 .bin-sim-mc-label { color:var(--subtle); font-family:'Inter',sans-serif; width:160px; }
                 
                 .bin-sim-strip { border:1px solid var(--border); border-radius:6px; padding:10px 12px; background:var(--card-bg); display:flex; align-items:center; gap:10px; min-height:24px; }
+
+                /* Function tag tree sidebar -- same shape/classes as bin-sim's
+                   #bsim-sidebar (binary_similarity.js), ported for a single file's
+                   function list instead of a two-sided comparison. */
+                #fv-tree-sidebar {
+                    width:240px; flex-shrink:0; display:flex; flex-direction:column;
+                    border:1px solid var(--border); border-radius:8px; background:var(--card-bg);
+                    overflow:auto; padding:10px 0; max-height: calc(100vh - 260px); min-height: 300px;
+                }
+                .bsim-side-title {
+                    font-size:0.68rem; text-transform:uppercase; letter-spacing:0.07em;
+                    color:var(--subtle); font-weight:bold; padding:4px 12px 8px;
+                    display:flex; align-items:baseline; justify-content:space-between; gap:8px;
+                }
+                .bsim-side-actions { display:flex; gap:8px; text-transform:none; letter-spacing:0; font-weight:normal; }
+                .bsim-side-actions span { cursor:pointer; color:var(--dim); }
+                .bsim-side-actions span:hover { color:var(--accent); }
+                .bsim-axis-pick { display:flex; align-items:center; gap:6px; padding:0 12px 8px; }
+                .bsim-axis-pick:empty { display:none; }
+                .bsim-axis-pick select { flex:1; min-width:0; }
+                .bsim-tree { flex:0 0 auto; }
+                .bsim-node {
+                    display:flex; align-items:center; gap:6px; padding:4px 12px; cursor:pointer;
+                    font-size:0.8rem; font-family:'Inter',sans-serif; color:var(--text);
+                    border-left:3px solid transparent; white-space:nowrap;
+                }
+                .bsim-node:hover { background:var(--hover); }
+                .bsim-node.selected { background:var(--hover); border-left-color:var(--accent); }
+                .bsim-node .bsim-caret { width:12px; color:var(--subtle); flex-shrink:0; user-select:none; }
+                .bsim-node-dot {
+                    display:inline-block; width:8px; height:8px; border-radius:50%; flex-shrink:0;
+                    vertical-align:middle;
+                }
+                .bsim-node .bsim-node-label { flex:1; overflow:hidden; text-overflow:ellipsis; }
+                .bsim-node .bsim-node-count { font-size:0.68rem; color:var(--dim); font-family:'Consolas',monospace; }
             </style>
             <div id="file-view-loader" style="text-align:center; padding:50px; color:var(--dim); font-size:1.2rem;">
                 <i class="fa-solid fa-spinner fa-spin"></i> Loading Binary Details...
             </div>
             <div id="file-view-content" style="display: none; flex:1; overflow-y:auto; padding: 0 0 20px 0;">
+                <div id="file-lineage-breadcrumb"></div>
                 <div id="file-title-strip" class="bin-sim-strip" style="margin-bottom: 20px; cursor: context-menu;"
                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
                     <span id="file-title-text" style="font-weight:bold; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:30%;">unknown</span>
@@ -76,23 +118,35 @@ window.FileView = {
                 </div>
 
                 <div class="bsim-tabbar" id="file-view-tabs">
+                    <button class="bsim-tab" id="file-tab-btn-files" onclick="FileView.switchTab('files')" style="display: none;">Files</button>
                     <button class="bsim-tab active" id="file-tab-btn-metadata" onclick="FileView.switchTab('metadata')">Metadata (<span id="metadata-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-functions" onclick="FileView.switchTab('functions')">Functions (<span id="functions-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-clusters" onclick="FileView.switchTab('clusters')">Clusters (<span id="cluster-count">0</span>)</button>
+                    <button class="bsim-tab" id="file-tab-btn-extracted_from" onclick="FileView.switchTab('extracted_from')" style="display: none;">Extracted From</button>
                     <button class="bsim-tab" id="file-tab-btn-neighbors" onclick="FileView.switchTab('neighbors')">Neighbors</button>
+                </div>
+
+                <!-- Files Tab Panel -->
+                <div id="file-panel-files" class="file-view-panel" style="display: none;">
+                    <div id="file-lineage-children-panel"></div>
+                </div>
+
+                <!-- Extracted From Tab Panel -->
+                <div id="file-panel-extracted_from" class="file-view-panel" style="display: none;">
+                    <div id="file-lineage-parents-panel"></div>
                 </div>
 
                 <!-- Metadata Tab Panel (Default Active) -->
                 <div id="file-panel-metadata" class="file-view-panel" style="display: block;">
                     <div style="display: flex; flex-direction: column; gap: 20px;">
-                        <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
+                        <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; ">
                             <div id="file-meta-container">
                                 <!-- Reused comparison table layout here -->
                             </div>
                         </div>
 
-                        <div class="card" id="inferred-meta-card" style="display: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
-                            <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
+                        <div class="card" id="inferred-meta-card" style="display: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; ">
+                            <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
                                 <i class="fa-solid fa-wand-magic-sparkles"></i> Inferred Metadata
                             </div>
                             <div class="meta-grid" id="inferred-meta" style="display: grid; grid-template-columns: auto 1fr; gap: 10px 15px; font-size: 0.85rem;"></div>
@@ -102,9 +156,21 @@ window.FileView = {
 
                 <!-- Functions Tab Panel -->
                 <div id="file-panel-functions" class="file-view-panel" style="display: none;">
-                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); display: flex; flex-direction: column; gap: 15px;">
-                        <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
-                            <table class="file-func-table">
+                  <div style="display:flex; gap:16px; align-items:stretch; min-height:0;">
+                    <div id="fv-tree-sidebar">
+                        <div class="bsim-side-title">
+                            Function tag tree
+                            <span class="bsim-side-actions">
+                                <span onclick="FileView.clearTreeSelection()" title="Clear the tag filter">clear</span>
+                            </span>
+                        </div>
+                        <div id="fv-axis-pick" class="bsim-axis-pick"></div>
+                        <div id="fv-tree" class="bsim-tree"></div>
+                    </div>
+                    <div class="card" style="flex:1; min-width:0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
+                        <!-- ponytail: viewport-relative instead of a flex chain; 260px is the title strip + tabbar + card padding above it -->
+                        <div id="file-func-scroll" style="overflow-x: auto; max-height: calc(100vh - 260px); min-height: 300px; overflow-y: auto;">
+                            <table class="file-func-table" id="file-func-table">
                                 <thead>
                                     <tr>
                                         <th class="sortable" onclick="FileView.toggleSort('function_name')">Function <span id="sort-icon-function_name">↕</span></th>
@@ -115,18 +181,26 @@ window.FileView = {
                                         <th>Notes</th>
                                     </tr>
                                     <tr class="filter-row">
-                                        <th><input type="text" id="flt-q" placeholder="Search name/tag/addr..." style="width:100%;" oninput="FileView.handleFilterChange()" /></th>
-                                        <th></th>
-                                        <th></th>
-                                        <th></th>
                                         <th>
-                                            <div style="display:flex; align-items:center; gap:2px;">
-                                                <input type="number" id="flt-feat-min" placeholder="Min" style="width:45%;" oninput="FileView.handleFilterChange()" />
-                                                <span class="dim" style="font-size:0.6rem">-</span>
-                                                <input type="number" id="flt-feat-max" placeholder="Max" style="width:45%;" oninput="FileView.handleFilterChange()" />
+                                            <div style="display:flex; flex-direction:column; gap:4px;">
+                                                <input type="text" id="flt-func-name" placeholder="Name..." style="width:100%;" onfocus="FileView.attachFieldAutocomplete(this, 'function_name')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                <div style="display:flex; gap:2px;">
+                                                    <input type="text" id="flt-func-namespace" placeholder="Namespace..." style="width:50%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'namespace')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                    <input type="text" id="flt-func-ret_type" placeholder="Return type..." style="width:50%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'return_type')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                </div>
                                             </div>
                                         </th>
-                                        <th></th>
+                                        <th><input type="text" id="flt-func-address" placeholder="Addr..." style="width:100%;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
+                                        <th><input type="text" id="flt-func-tag" placeholder="Tag..." style="width:100%;" onfocus="FileView.attachTagFilterAutocomplete(this)" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
+                                        <th>
+                                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                                <input type="text" id="flt-func-cluster" placeholder="UUID..." style="width:100%; font-size:0.6rem;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                <input type="text" id="flt-func-cluster-name" placeholder="Cluster name..." style="width:100%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'cluster_name')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                <input type="number" id="flt-func-min-cohesion" placeholder="Min cohesion..." value="0.95" step="0.05" min="0" max="1" title="Min Cluster Cohesion" style="width:100%; font-size:0.6rem;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                            </div>
+                                        </th>
+                                        <th><input type="number" id="flt-func-min-features" placeholder="Min" min="0" title="Min Features" style="width:100%;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
+                                        <th><input type="text" id="flt-func-note-owner" placeholder="Note owner..." style="width:100%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'note_owners')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
                                     </tr>
                                 </thead>
                                 <tbody id="file-functions-tbody">
@@ -134,12 +208,14 @@ window.FileView = {
                                 </tbody>
                             </table>
                         </div>
+                        <div id="file-func-status" class="dim" style="font-size:0.7rem; text-align:center;"></div>
                     </div>
+                  </div>
                 </div>
 
                 <!-- Clusters Tab Panel -->
                 <div id="file-panel-clusters" class="file-view-panel" style="display: none;">
-                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
+                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; ">
                         <div class="cluster-list" id="cluster-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
                     </div>
                 </div>
@@ -256,6 +332,14 @@ window.FileView = {
             window.filenameCache[file.file_md5] = fileName;
             document.getElementById('file-title-text').innerText = fileName;
             document.getElementById('file-md5-text').innerText = `(MD5: ${file.file_md5})`;
+
+            // buildFunctionsQuery and the lineage panel both need the raw doc.
+            this.file = file;
+            if (file.is_container) {
+                document.getElementById('file-md5-text').insertAdjacentHTML('beforebegin',
+                    `<span class="badge" title="Container: holds code but is not code itself. Its function count is the total of everything below it."
+                        style="font-size:0.7rem; margin-right:8px;"><i class="fa-solid fa-box-archive"></i> Container</span>`);
+            }
 
             // Pre-populate functions count
             document.getElementById('functions-count').innerText = file.function_count || 0;
@@ -387,7 +471,7 @@ window.FileView = {
                     legendHtml += `
                         <div style="display: flex; align-items: center; gap: 6px; font-size: 0.75rem; margin-bottom: 4px;">
                             <div style="width: 10px; height: 10px; background-color: ${color}; border-radius: 2px;"></div>
-                            <span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px;" title="${d.value}">${d.value}</span>
+                            <span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px;" title="${d.value}">${d.value}</span>
                             <span style="color: var(--dim); margin-left: auto;">${d.percent || 0}%</span>
                         </div>
                     `;
@@ -395,7 +479,7 @@ window.FileView = {
                 });
                 
                 if (totalPercent < 100) {
-                    pieData.push({value: 100 - totalPercent, color: 'rgba(255,255,255,0.05)', isDummy: true});
+                    pieData.push({value: 100 - totalPercent, color: 'var(--border)', isDummy: true});
                 }
                 
                 const width = 50;
@@ -409,7 +493,6 @@ window.FileView = {
                     .attr("width", width)
                     .attr("height", height)
                     .attr("viewBox", `0 0 ${width} ${height}`)
-                    .style("box-shadow", "0 2px 10px rgba(0,0,0,0.5)")
                     .style("border-radius", "50%");
                     
                 svg.append("g")
@@ -425,7 +508,7 @@ window.FileView = {
                 const svgHtml = svg.node().outerHTML;
                 
                 return `
-                    <div style="margin-top: 15px; padding: 10px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px;">
+                    <div style="margin-top: 15px; padding: 10px; background: var(--border); border: 1px solid var(--border); border-radius: 6px;">
                         <div style="font-size: 0.75rem; color: var(--dim); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
                             <i class="${icon}"></i> ${title}
                         </div>
@@ -472,14 +555,14 @@ window.FileView = {
                     distBadges += renderDist('MD5 Distributions', 'fa-solid fa-fingerprint', cm.md5_distribution);
 
                     clustersHtml += `
-                        <div class="cluster-item" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:8px;">
-                            <div class="cluster-item-header" style="margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center; font-weight:bold; font-size:0.95rem; color:#fff;">
+                        <div class="cluster-item" style="background: var(--border); border: 1px solid var(--border); border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:8px;">
+                            <div class="cluster-item-header" style="margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center; font-weight:bold; font-size:0.95rem; color:var(--text);">
                                 <span style="color: var(--accent);"><i class="fa-solid fa-bullseye" style="margin-right: 6px;"></i>${name}</span>
-                                <a href="#" style="font-size:0.75rem; color:var(--dim); text-decoration:none;" onclick="FileView.openClusterFiles(event, '${cm.cluster_uuid}')">View Binaries <i class="fa-solid fa-arrow-right"></i></a>
+                                <a href="#" style="font-size:0.75rem; color:var(--dim); text-decoration:none;" onclick="FileView.openClusterFiles(event, ${escapeAttr(jsString(cm.cluster_uuid))})">View Binaries <i class="fa-solid fa-arrow-right"></i></a>
                             </div>
                             <div class="cluster-stat-badges" style="margin-bottom: 5px; display:flex; gap:10px; flex-wrap:wrap;">
-                                <div class="stat-badge" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-users" style="color:var(--dim);"></i><span>Members: <span class="val" style="color:var(--accent); font-family: 'JetBrains Mono', 'Consolas', monospace;">${size}</span></span></div>
-                                <div class="stat-badge" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-bullseye" style="color:var(--dim);"></i><span>Cohesion: <span class="val" style="color: ${cohesionColor}; font-family: 'JetBrains Mono', 'Consolas', monospace;">${cohesion}</span></span></div>
+                                <div class="stat-badge" style="background: var(--hover); border: 1px solid var(--border); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-users" style="color:var(--dim);"></i><span>Members: <span class="val" style="color:var(--accent); font-family: 'JetBrains Mono', 'Consolas', monospace;">${size}</span></span></div>
+                                <div class="stat-badge" style="background: var(--hover); border: 1px solid var(--border); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-bullseye" style="color:var(--dim);"></i><span>Cohesion: <span class="val" style="color: ${cohesionColor}; font-family: 'JetBrains Mono', 'Consolas', monospace;">${cohesion}</span></span></div>
                             </div>
                             ${distBadges}
                         </div>
@@ -497,7 +580,7 @@ window.FileView = {
                     const confScore = confObj.percent;
                     const confColor = d3.interpolateRdYlGn(confScore / 100);
                     const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
-                    return `<a href="${clusterLink}" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
+                    return `<a href="${clusterLink}" class="stat-badge" style="background: var(--hover); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(clusterLink))}, event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
                 }).join('');
                 return `
                     <div class="meta-label" style="align-items: flex-start; margin-top: 4px; color: var(--dim); text-transform: uppercase; font-size: 0.75rem; display: flex; gap: 6px;"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>
@@ -517,6 +600,21 @@ window.FileView = {
                 document.getElementById('inferred-meta').innerHTML = inferredHtml;
                 document.getElementById('inferred-meta-card').style.display = 'block';
             }
+
+            // Unique-value counts appended to the filter placeholders
+            if (typeof loadFieldCardinalities === 'function') {
+                loadFieldCardinalities(collection, 'func', {
+                    'function_name': 'flt-func-name',
+                    'namespace': 'flt-func-namespace',
+                    'return_type': 'flt-func-ret_type',
+                    'cluster_name': 'flt-func-cluster-name',
+                    'note_owners': 'flt-func-note-owner'
+                });
+            }
+
+            // Breadcrumb and containment panel; not awaited, they only fill
+            // their own containers and must not hold up the rest of the view.
+            this.loadLineage(collection, file_md5);
 
             // Silently fetch functions so they're ready when switching tabs
             this.loadFunctionsTable();
@@ -542,6 +640,56 @@ window.FileView = {
         }
     },
 
+    /**
+     * Containment breadcrumb + "Extracted from / Contains" panel.
+     *
+     * Siblings need one extra lookup per parent: the lineage of a file lists
+     * its parents, not its parents' other children. A file usually has one
+     * parent, and multi-parent means the same child sitting in two archives,
+     * so the neighbours are grouped per parent rather than merged.
+     */
+    async loadLineage(collection, file_md5) {
+        const crumbEl = document.getElementById('file-lineage-breadcrumb');
+        const parentsEl = document.getElementById('file-lineage-parents-panel');
+        const childrenEl = document.getElementById('file-lineage-children-panel');
+        if (!crumbEl) return;
+        try {
+            const lin = await Lineage.fetch(collection, file_md5);
+            if (!this.container) return;   // view was destroyed mid-flight
+
+            const siblingsByParent = {};
+            const [, subtrees] = await Promise.all([
+                Promise.all((lin.parents || []).map(async p => {
+                    if (!p.exists) return;
+                    try {
+                        siblingsByParent[p.file_md5] = (await Lineage.fetch(collection, p.file_md5)).children || [];
+                    } catch (e) {
+                        console.error(e);
+                    }
+                })),
+                // A container nested in this one is shown already expanded.
+                Lineage.fetchSubtrees(collection, lin.children || []),
+            ]);
+            if (!this.container) return;
+
+            crumbEl.innerHTML = Lineage.renderBreadcrumb(lin, collection);
+            if (parentsEl) {
+                parentsEl.innerHTML = Lineage.renderParents(lin, collection, siblingsByParent);
+                if (window.TableSelection) {
+                    parentsEl.querySelectorAll('.data-table').forEach(t => { if (t.id) new window.TableSelection(t.id); });
+                }
+            }
+            if (childrenEl) {
+                childrenEl.innerHTML = Lineage.renderChildren(lin, collection, subtrees);
+                if (window.TableSelection) {
+                    childrenEl.querySelectorAll('.data-table').forEach(t => { if (t.id) new window.TableSelection(t.id); });
+                }
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    },
+
     switchTab(tabId, push = true) {
         document.querySelectorAll('#file-view-tabs .bsim-tab').forEach(btn => btn.classList.remove('active'));
         document.querySelectorAll('.file-view-panel').forEach(panel => panel.style.display = 'none');
@@ -552,7 +700,7 @@ window.FileView = {
         const panel = document.getElementById(`file-panel-${tabId}`);
         if (panel) panel.style.display = 'block';
 
-        if (tabId === 'functions') {
+        if (tabId === 'functions' && !this.functionsLoaded) {
             this.loadFunctionsTable();
         }
         if (tabId === 'neighbors') {
@@ -565,31 +713,149 @@ window.FileView = {
     },
 
     applyTabFromHash() {
-        const allowedTabs = ['metadata', 'functions', 'clusters', 'neighbors'];
-        const tab = location.hash.slice(1);
-        this.switchTab(allowedTabs.includes(tab) ? tab : 'metadata', false);
+        const allowedTabs = ['metadata', 'functions', 'clusters', 'extracted_from', 'files', 'neighbors'];
+        let tab = location.hash.slice(1);
+
+        const hasChildren = this.file && (this.file.child_count > 0 || this.file.is_container);
+        const hasParents = this.file && !!this.file.parent_md5;
+
+        const btnFiles = document.getElementById('file-tab-btn-files');
+        if (btnFiles) btnFiles.style.display = hasChildren ? 'inline-block' : 'none';
+
+        const btnExtracted = document.getElementById('file-tab-btn-extracted_from');
+        if (btnExtracted) btnExtracted.style.display = hasParents ? 'inline-block' : 'none';
+
+        if (!allowedTabs.includes(tab)) {
+            if (hasChildren) tab = 'files';
+            else tab = 'metadata';
+        }
+
+        if (tab === 'files' && !hasChildren) tab = 'metadata';
+        if (tab === 'extracted_from' && !hasParents) tab = 'metadata';
+
+        this.switchTab(tab, false);
     },
 
-    async loadFunctionsTable() {
-        if (this.functionsLoaded) return;
+    // Filter inputs -> /api/function/search params. Same names the function
+    // search view uses, so the server-side handling is shared.
+    FUNC_FILTERS: {
+        'flt-func-name': 'function_name',
+        'flt-func-namespace': 'namespace',
+        'flt-func-ret_type': 'return_type',
+        'flt-func-address': 'entrypoint_address',
+        'flt-func-tag': 'func_tag',
+        'flt-func-cluster': 'cluster_uuid',
+        'flt-func-cluster-name': 'cluster_name',
+        'flt-func-min-cohesion': 'min_cohesion',
+        'flt-func-min-features': 'min_features',
+        'flt-func-note-owner': 'note_owner'
+    },
+
+    // attachAutocomplete rebinds focus/click/input on the element, so the inline
+    // onfocus only ever runs once — same wiring as the function search view.
+    attachFieldAutocomplete(input, field) {
+        if (typeof attachAutocomplete !== 'function') return;
+        attachAutocomplete(input, 'func', field, (val) => {
+            input.value = val;
+            this.applyFilters();
+        });
+    },
+
+    attachTagFilterAutocomplete(input) {
+        if (typeof attachTagAutocomplete !== 'function') return;
+        attachTagAutocomplete(input, (val) => {
+            input.value = val;
+            this.applyFilters();
+        });
+    },
+
+    applyFilters() {
+        clearTimeout(this._filterTimer);
+        this.loadFunctionsTable({ reset: true });
+    },
+
+    buildFunctionsQuery(offset) {
         const collection = this.params.collection || '';
         const file_md5 = this.params.md5 || this.params.file_md5;
+        const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+        const p = new URLSearchParams(apiParams);
+        // A container has no functions of its own, so file_md5= would show an
+        // empty tab. Unpacking stops at MAX_DEPTH=2: root_md5 covers a whole
+        // upload, and md5 (file_md5 OR parent_md5) covers a mid-tree subtree,
+        // so between them every container's subtree is reachable.
+        if (this.file && this.file.is_container) {
+            p.set(this.file.root_md5 ? 'md5' : 'root_md5', file_md5);
+        } else {
+            p.set('file_md5', file_md5);
+        }
+        p.set('offset', offset);
+        p.set('limit', this.FUNC_PAGE_SIZE);
+        p.set('sort_by', this.sortState.col);
+        p.set('sort_order', this.sortState.dir === 1 ? 'asc' : 'desc');
+        for (const [id, param] of Object.entries(this.FUNC_FILTERS)) {
+            const v = (document.getElementById(id)?.value || '').trim();
+            if (v) p.set(param, v);
+        }
+        return p.toString();
+    },
+
+    async loadFunctionsTable({ reset = false } = {}) {
+        if (this.funcPage.loading && !reset) return;
+        // No `functionsLoaded` guard here: this is also the "load the next page"
+        // entry point for the infinite scroll. Having everything already is what
+        // the total check below covers; callers that only want the first page
+        // check functionsLoaded themselves.
+        if (!reset && this.funcPage.total !== null && this.functions.length >= this.funcPage.total) return;
+
         const tbody = document.getElementById('file-functions-tbody');
-        
+        if (reset) {
+            this.functions = [];
+            this.funcPage.total = null;
+        }
+        this.funcPage.loading = true;
+        this.setFunctionsStatus('<i class="fa-solid fa-spinner fa-spin"></i> Loading...');
+
+        // Bump on every request so a slow earlier page can't overwrite a newer filter's result
+        const reqId = ++this.funcPage.reqId;
+
         try {
-            const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
-            const res = await fetch(`/api/function/search?file_md5=${file_md5}&limit=1000&${apiParams}`);
+            const res = await fetch(`/api/function/search?${this.buildFunctionsQuery(this.functions.length)}`);
             if (!res.ok) throw new Error("Functions load failed");
             const data = await res.json();
-            
-            this.functions = data.functions || [];
-            document.getElementById('functions-count').innerText = this.functions.length;
+            if (reqId !== this.funcPage.reqId) return;
+            if (data.error) throw new Error(data.error);
+
+            this.functions = this.functions.concat(data.functions || []);
+            this.funcPage.total = data.total || 0;
+            this.funcClusters = Object.assign(this.funcClusters || {}, data.clusters || {});
+            document.getElementById('functions-count').innerText = this.funcPage.total;
             this.renderFunctionsTable();
             this.functionsLoaded = true;
         } catch (e) {
             console.error(e);
+            if (reqId !== this.funcPage.reqId) return;
             if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading functions: ${e.message}</td></tr>`;
+            this.setFunctionsStatus('');
+        } finally {
+            if (reqId === this.funcPage.reqId) this.funcPage.loading = false;
         }
+    },
+
+    setFunctionsStatus(html) {
+        const el = document.getElementById('file-func-status');
+        if (el) el.innerHTML = html;
+    },
+
+    // Loads the next page whenever the table is scrolled near the bottom.
+    bindFunctionsScroll() {
+        const scroller = document.getElementById('file-func-scroll');
+        if (!scroller || scroller._funcScrollBound) return;
+        scroller._funcScrollBound = true;
+        scroller.addEventListener('scroll', () => {
+            if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 200) {
+                this.loadFunctionsTable();
+            }
+        });
     },
 
     async loadNeighborsPanel() {
@@ -649,7 +915,7 @@ window.FileView = {
             if (!res.ok) throw new Error("Neighbors search failed");
             const data = await res.json();
             const items = data.items || data.results || [];
-            const html = window.renderBinSimPairs ? window.renderBinSimPairs(items, file_md5) : '';
+            const html = window.renderBinSimPairs ? window.renderBinSimPairs(items, 0, file_md5) : '';
             tbody.innerHTML = html || '<tr><td colspan="8" style="text-align: center; color: var(--dim); padding: 20px;">No neighbors found.</td></tr>';
         } catch (e) {
             console.error(e);
@@ -664,85 +930,54 @@ window.FileView = {
             this.sortState.col = col;
             this.sortState.dir = 1;
         }
-        
+
         ['function_name', 'entrypoint_address', 'bsim_features_count'].forEach(c => {
             const el = document.getElementById(`sort-icon-${c}`);
             if (el) {
                 el.innerText = this.sortState.col === c ? (this.sortState.dir === 1 ? '▲' : '▼') : '↕';
             }
         });
-        
-        this.renderFunctionsTable();
+
+        this.loadFunctionsTable({ reset: true });
     },
 
     handleFilterChange() {
-        this.filterState.q = document.getElementById('flt-q').value;
-        this.filterState.featMin = document.getElementById('flt-feat-min').value;
-        this.filterState.featMax = document.getElementById('flt-feat-max').value;
-        this.renderFunctionsTable();
+        clearTimeout(this._filterTimer);
+        this._filterTimer = setTimeout(() => this.loadFunctionsTable({ reset: true }), 350);
+    },
+
+    handleFilterKey(e) {
+        if (e.key === 'Enter') this.applyFilters();
     },
 
     renderFunctionsTable() {
         const tbody = document.getElementById('file-functions-tbody');
         if (!tbody) return;
 
-        // Apply filters
-        let filtered = this.functions.slice();
-        
-        const q = this.filterState.q.toLowerCase().trim();
-        if (q) {
-            filtered = filtered.filter(f => {
-                const name = (f.function_name || '').toLowerCase();
-                const addr = (f.entrypoint_address || '').toLowerCase();
-                const tags = (f.tags || []).join(' ').toLowerCase() + ' ' + (f.user_tags || []).join(' ').toLowerCase();
-                return name.includes(q) || addr.includes(q) || tags.includes(q);
-            });
-        }
-        
-        const minFeat = parseInt(this.filterState.featMin);
-        const maxFeat = parseInt(this.filterState.featMax);
-        if (!isNaN(minFeat)) {
-            filtered = filtered.filter(f => (f.bsim_features_count || 0) >= minFeat);
-        }
-        if (!isNaN(maxFeat)) {
-            filtered = filtered.filter(f => (f.bsim_features_count || 0) <= maxFeat);
-        }
-
-        // Apply sort
-        const col = this.sortState.col;
-        const dir = this.sortState.dir;
-        filtered.sort((a, b) => {
-            let valA = a[col];
-            let valB = b[col];
-            
-            if (col === 'bsim_features_count') {
-                valA = Number(valA || 0);
-                valB = Number(valB || 0);
-            } else {
-                valA = String(valA || '').toLowerCase();
-                valB = String(valB || '').toLowerCase();
-            }
-            
-            if (valA < valB) return -dir;
-            if (valA > valB) return dir;
-            return 0;
-        });
-
-        if (filtered.length === 0) {
+        // Filtering, sorting and paging all happen server-side; render what we hold.
+        if (this.functions.length === 0) {
             tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--dim); padding: 20px;">No functions found.</td></tr>';
+            this.setFunctionsStatus('');
             return;
         }
 
         const collection = this.params.collection || '';
         const file_md5 = this.params.md5 || this.params.file_md5;
 
-        tbody.innerHTML = filtered.map(f => {
+        tbody.innerHTML = this.functions.map(f => {
             const entry = f.entrypoint_address || '';
             const funcName = f.function_name || 'unknown';
             const featCount = f.bsim_features_count || 0;
             const fColl = f.collection || collection;
-            const funcId = f.function_id || `${fColl}:func:${file_md5}:${entry}`;
-            
+            // A container's tab lists its whole subtree, so the owning file is
+            // per row, not the file being viewed.
+            const fMd5 = f.file_md5 || file_md5;
+            const funcId = f.function_id || `${fColl}:func:${fMd5}:${entry}`;
+            // renderFunction/context menu read these off the object; the search API may omit them
+            f.collection = fColl;
+            f.file_md5 = fMd5;
+            f.function_id = funcId;
+
             // Notes
             const noteBtn = window.EntityRenderer ? window.EntityRenderer.renderNoteButton(funcId, f.note_owners, { isTable: true, raw_data: f }) : '';
             
@@ -750,7 +985,7 @@ window.FileView = {
             const tagsHtml = window.EntityRenderer ? window.EntityRenderer.renderTag('function', funcId, f.tags || [], f.user_tags || []) : '';
             
             // Clusters
-            const cls = (f.clusters || []).map(uuid => this.clusters[uuid]).filter(Boolean);
+            const cls = (f.clusters || []).map(uuid => (this.funcClusters || {})[uuid] || this.clusters[uuid]).filter(Boolean);
             const clusterCardHtml = window.EntityRenderer ? window.EntityRenderer.renderClusterCard(cls) : '';
 
             // Clickable details URL
@@ -758,27 +993,35 @@ window.FileView = {
             if (window.getRoutingState && window.getRoutingState().pool) {
                 poolId = window.getRoutingState().pool;
             }
-            let detailUrl = `/collections/${encodeURIComponent(fColl)}/files/${file_md5}/functions/${entry}`;
+            let detailUrl = `/collections/${encodeURIComponent(fColl)}/files/${fMd5}/functions/${entry}`;
             if (poolId) {
                 detailUrl = `/pools/${encodeURIComponent(poolId)}` + detailUrl;
             }
 
+            // Only meaningful for a container, where each row came out of a
+            // different extracted file.
+            const originHtml = fMd5 === file_md5 ? '' : `
+                <div class="lineage-path" style="margin-top:2px;">
+                    from <b class="lineage-link" onclick="event.stopPropagation(); openFileDetails(${escapeAttr(jsString(fColl))}, ${escapeAttr(jsString(fMd5))}, ${escapeAttr(jsString(f.file_name || ''))}, event)">${escapeHtml(middleTruncate(f.file_name || fMd5, 40))}</b>
+                </div>`;
+
             return `
                 <tr class="sim-row" style="font-size: 0.75rem;" data-id="${funcId}"
-                    data-entity-data='${JSON.stringify(f).replace(/'/g, "&apos;")}'
+                    data-entity-data='${escapeAttr(JSON.stringify(f))}'
                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
-                    <td>
-                        <a href="${detailUrl}" onclick="event.preventDefault(); Nav.openPath('${detailUrl}', event);" style="color:var(--accent); font-weight:bold; text-decoration:none;">
-                            ${funcName}
-                        </a>
+                    <td class="sim-cell" style="min-width:300px;">
+                        ${window.EntityRenderer ? window.EntityRenderer.renderFunction(f, { hideNote: true }) : funcName}
+                        ${originHtml}
                     </td>
-                    <td class="mono" style="color:var(--accent);">@ ${entry}</td>
+                    <td>
+                        <a class="mono" href="${detailUrl}" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(detailUrl))}, event);" style="color:var(--accent); text-decoration:none;">@ ${entry}</a>
+                    </td>
                     <td>${tagsHtml}</td>
                     <td>${clusterCardHtml}</td>
                     <td>
                         <div style="display:inline-flex; align-items:center; gap:6px;">
                             <span class="mono" style="color:var(--accent); font-weight:bold;">${featCount}</span>
-                            <button class="btn-icon" onclick="showFeaturePanel('${funcId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
+                            <button class="btn-icon" onclick="showFeaturePanel(${escapeAttr(jsString(funcId))}, event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
                         </div>
                     </td>
                     <td style="text-align:center;">${noteBtn}</td>
@@ -786,9 +1029,146 @@ window.FileView = {
             `;
         }).join('');
 
+        const shown = this.functions.length;
+        const total = this.funcPage.total ?? shown;
+        this.setFunctionsStatus(shown < total ? `Showing ${shown} of ${total} — scroll for more` : `${total} function${total === 1 ? '' : 's'}`);
+        this.bindFunctionsScroll();
+        this.renderTagTree();
+
+        // TableSelection takes an element id, not an element (constructor is idempotent per table)
         if (window.TableSelection) {
-            new window.TableSelection(tbody.closest('table'));
+            new window.TableSelection('file-func-table');
         }
+    },
+
+    // ---- Function tag tree sidebar --------------------------------------
+    // Ported from bin-sim's tag tree (binary_similarity.js: fileSimTree /
+    // fileSimTreeRoot / fileSimAxisNodes). That tree reads backend-precomputed
+    // `tags_summary` rows shaped for a TWO-SIDED comparison (a/b counts per
+    // tag, drift between sides) -- genuinely comparison-specific data, not a
+    // flat `{tags:[...]}` shape, so it isn't reusable as-is for one file's
+    // function list. What IS reused verbatim: the CSS classes/layout
+    // (#fv-tree-sidebar mirrors #bsim-sidebar), `fileSimTagParts()` and
+    // `TagColor.forTag()` from binary_similarity.js (both globals, already
+    // loaded on this page) for tag decomposition/colour, and the same
+    // click-to-filter interaction feel. The tree itself -- counting tags
+    // across `this.functions` and grouping name -> version -- is new, small,
+    // and single-sided by construction (no drift/sankey/cross-axis: those are
+    // two-sided-only concepts with nothing to port).
+    // ponytail: tree only reflects functions already paged into `this.functions`
+    // (grows as you scroll, narrows with any active filter -- same "scope
+    // narrows everything" feel bin-sim's chips have), not a full-file
+    // aggregate. A dedicated backend summary endpoint would fix that; skip
+    // until someone needs whole-file counts before scrolling/filtering.
+    fvAxis: '',
+    fvSelectedTag: null,
+
+    fvTagCounts() {
+        const counts = {};
+        (this.functions || []).forEach(f => {
+            (f.tags || []).forEach(t => { counts[t] = (counts[t] || 0) + 1; });
+        });
+        return counts;
+    },
+
+    fvAvailableAxes() {
+        const counts = this.fvTagCounts();
+        const axes = new Set();
+        Object.keys(counts).forEach(tagId => {
+            axes.add((typeof fileSimTagParts === 'function' ? fileSimTagParts({ tag_id: tagId }).type : tagId.split(':')[0]));
+        });
+        return [...axes].sort();
+    },
+
+    fvTree() {
+        const counts = this.fvTagCounts();
+        const axis = this.fvAxis;
+        const names = new Map(); // name -> { id, label, count, children: Map(version -> {id,label,count}) }
+        Object.entries(counts).forEach(([tagId, count]) => {
+            const parts = typeof fileSimTagParts === 'function'
+                ? fileSimTagParts({ tag_id: tagId })
+                : { type: tagId.split(':')[0], name: tagId, version: '' };
+            if (parts.type !== axis) return;
+            if (!names.has(parts.name)) {
+                names.set(parts.name, { id: `n:${axis}:${parts.name}`, label: parts.name, count: 0, prefix: `${axis}:${parts.name}`, children: [] });
+            }
+            const node = names.get(parts.name);
+            node.count += count;
+            if (parts.version) node.children.push({ id: tagId, label: parts.version, count });
+        });
+        const nodes = [...names.values()];
+        nodes.forEach(n => { if (n.children.length < 2) n.children = []; });
+        nodes.sort((a, b) => b.count - a.count);
+        return nodes;
+    },
+
+    fvRenderAxisPicker() {
+        const host = document.getElementById('fv-axis-pick');
+        if (!host) return;
+        const avail = this.fvAvailableAxes();
+        if (!avail.includes(this.fvAxis)) this.fvAxis = avail[0] || '';
+        host.innerHTML = avail.length < 2 ? '' : `
+            <span class="dim" style="font-size:0.72rem;">Axis:</span>
+            <select onchange="FileView.setTreeAxis(this.value)">
+                ${avail.map(a => `<option value="${escapeAttr(a)}"${a === this.fvAxis ? ' selected' : ''}>${escapeHtml(a)}</option>`).join('')}
+            </select>`;
+    },
+
+    fvRenderTree() {
+        const host = document.getElementById('fv-tree');
+        if (!host) return;
+        const nodes = this.fvTree();
+        if (!nodes.length) {
+            host.innerHTML = '<div style="color:var(--dim); padding:10px 12px; font-size:0.78rem;">No tag data yet.</div>';
+            return;
+        }
+        const dot = (id) => (typeof TagColor !== 'undefined')
+            ? `<span class="bsim-node-dot" style="background:${TagColor.forTag(id)};"></span>` : '';
+        const nodeHtml = (n, depth, hasKids) => `
+            <div class="bsim-node${this.fvSelectedTag === (n.prefix || n.id) ? ' selected' : ''}" style="padding-left:${8 + depth * 14}px;"
+                 onclick="FileView.selectTreeNode(${escapeAttr(jsString(n.id))}, ${escapeAttr(jsString(n.prefix || ''))})">
+                <span class="bsim-caret">${hasKids ? '▾' : ''}</span>
+                ${dot(n.id)}
+                <span class="bsim-node-label">${escapeHtml(n.label)}</span>
+                <span class="bsim-node-count">${n.count}</span>
+            </div>`;
+        const out = [];
+        nodes.forEach(n => {
+            out.push(nodeHtml(n, 0, n.children.length > 0));
+            n.children.forEach(c => out.push(nodeHtml(c, 1, false)));
+        });
+        host.innerHTML = out.join('');
+    },
+
+    renderTagTree() {
+        this.fvRenderAxisPicker();
+        this.fvRenderTree();
+    },
+
+    setTreeAxis(axis) {
+        this.fvAxis = axis;
+        this.fvSelectedTag = null;
+        this.renderTagTree();
+    },
+
+    // A name node (>1 version) filters by prefix (`lib:libc*`); a leaf/version
+    // node or a flattened single-version name filters by the exact tag id --
+    // same wildcard syntax /api/function/search already supports (query_syntax.py).
+    selectTreeNode(id, prefix) {
+        const isGroup = prefix && id.startsWith('n:');
+        this.fvSelectedTag = isGroup ? prefix : id;
+        const input = document.getElementById('flt-func-tag');
+        if (input) input.value = isGroup ? `${prefix}*` : id;
+        this.fvRenderTree();
+        this.applyFilters();
+    },
+
+    clearTreeSelection() {
+        this.fvSelectedTag = null;
+        const input = document.getElementById('flt-func-tag');
+        if (input) input.value = '';
+        this.fvRenderTree();
+        this.applyFilters();
     },
 
     openFunctions(e) {
@@ -819,10 +1199,15 @@ window.FileView = {
             window.removeEventListener('hashchange', this._onHashChange);
             this._hashBound = false;
         }
+        clearTimeout(this._filterTimer);
+        this.funcPage.reqId++;   // orphan any request still in flight
         this.container = null;
         this.params = null;
         this.functions = [];
         this.clusters = {};
+        this.funcClusters = {};
+        this.file = null;
+        this.funcPage = { total: null, loading: false, reqId: 0 };
         this.functionsLoaded = false;
         this.neighborsLoaded = false;
         if (this.neighborsDebounceTimer) clearTimeout(this.neighborsDebounceTimer);

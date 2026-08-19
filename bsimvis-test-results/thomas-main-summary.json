@@ -1,0 +1,104 @@
+{
+  "all_requested": true,
+  "backend": "auto",
+  "classification": "portable-bsimvis-maintainer-benchmark-set",
+  "created_at": "2026-07-27T11:58:19.714708+00:00",
+  "gpu_mode": "auto",
+  "label": "thomas-main",
+  "repo": "/home/thomas/projects/bsimvis2",
+  "schema_version": 1,
+  "status": "failed",
+  "tests": [
+    {
+      "command": [
+        "/home/thomas/projects/bsimvis2/.venv/bin/python3",
+        "/home/thomas/projects/bsimvis-lca-maintainer-tests/run_bsimvis_benchmark_suite.py",
+        "--workers",
+        "8",
+        "--backend",
+        "auto",
+        "--gpu-mode",
+        "auto",
+        "--output",
+        "/home/thomas/projects/bsimvis2/bsimvis-test-results/thomas-main-suite.json"
+      ],
+      "finished_at": "2026-07-27T11:47:29.165706+00:00",
+      "name": "portable correctness and small-performance suite",
+      "output": "/home/thomas/projects/bsimvis2/bsimvis-test-results/thomas-main-suite.json",
+      "returncode": 0,
+      "started_at": "2026-07-27T11:36:33.798832+00:00",
+      "status": "passed",
+      "wall_seconds": 655.366874
+    },
+    {
+      "command": [
+        "/home/thomas/projects/bsimvis2/.venv/bin/python3",
+        "/home/thomas/projects/bsimvis-lca-maintainer-tests/run_breakeven_matrix.py",
+        "--workers",
+        "8",
+        "--sizes",
+        "100",
+        "200",
+        "500",
+        "1000",
+        "4611",
+        "--output",
+        "/home/thomas/projects/bsimvis2/bsimvis-test-results/thomas-main-breakeven.json"
+      ],
+      "finished_at": "2026-07-27T11:53:55.026661+00:00",
+      "name": "operational latency and breakeven matrix",
+      "output": "/home/thomas/projects/bsimvis2/bsimvis-test-results/thomas-main-breakeven.json",
+      "returncode": 1,
+      "started_at": "2026-07-27T11:47:29.165929+00:00",
+      "status": "failed",
+      "wall_seconds": 385.860732
+    },
+    {
+      "command": [
+        "/home/thomas/projects/bsimvis2/.venv/bin/python3",
+        "/home/thomas/projects/bsimvis-lca-maintainer-tests/run_variable_silicon_scaling.py",
+        "--workers",
+        "8",
+        "--sizes",
+        "4611",
+        "10000",
+        "20000",
+        "--output",
+        "/home/thomas/projects/bsimvis2/bsimvis-test-results/thomas-main-scaling.json"
+      ],
+      "finished_at": "2026-07-27T11:58:19.488970+00:00",
+      "name": "large exact compute and selection scaling",
+      "output": "/home/thomas/projects/bsimvis2/bsimvis-test-results/thomas-main-scaling.json",
+      "returncode": 0,
+      "started_at": "2026-07-27T11:53:55.107725+00:00",
+      "status": "passed",
+      "wall_seconds": 264.381245
+    },
+    {
+      "command": [
+        "/home/thomas/projects/bsimvis2/.venv/bin/python3",
+        "/home/thomas/projects/bsimvis-lca-maintainer-tests/run_lca_corpus_benchmark.py",
+        "--repo",
+        "/home/thomas/projects/bsimvis2",
+        "--workers",
+        "8",
+        "--observe-seconds",
+        "300.0",
+        "--backend",
+        "auto",
+        "--gpu-mode",
+        "auto",
+        "--output",
+        "/home/thomas/projects/bsimvis2/bsimvis-test-results/thomas-main-corpus.json"
+      ],
+      "finished_at": "2026-07-27T11:58:19.714375+00:00",
+      "name": "bounded 25-file Double Dragon corpus",
+      "output": "/home/thomas/projects/bsimvis2/bsimvis-test-results/thomas-main-corpus.json",
+      "returncode": 1,
+      "started_at": "2026-07-27T11:58:19.489304+00:00",
+      "status": "failed",
+      "wall_seconds": 0.225071
+    }
+  ],
+  "workers": 8
+}

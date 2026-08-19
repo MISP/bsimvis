@@ -42,7 +42,7 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 
 ### Analyst Notes & AI Insights
 - Analyst notes system for files and functions
-- Local LLM assistant for file and function summaries
+- LLM assistant for file and function summaries (local or remote via Ollama)
 
 ### API
 - REST API with Swagger documentation
@@ -71,9 +71,11 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 
 # Requirements
 
+- Java 21+ (Ghidra 12 requirement) — `install.sh` drops a portable Temurin JDK 21 into `bin/` and sets `JAVA_HOME` in `.env` if the system Java is missing or older
 - Ghidra and pyghidra install
 - Redis and Kvrocks databases
-
+- Function ID databases in the Ghidra install (see below) — without them, function library tags stay empty
+- Ollama (optional) for LLM analyst insights and function summaries. Can be run locally (default port `11434`) or remotely (configurable via `ollama_url` in `bsimvis_config.toml`).
 # Installation
 
 Copy the example configuration files and customize them:
@@ -90,6 +92,33 @@ Run the install script to set up portable Redis, Kvrocks, and optionally Ghidra:
 ```
 
 Milvus support is optional and can be enabled via the `.env` file (`ENABLE_MILVUS=true`).
+
+## Function ID databases
+
+Ghidra's Function ID (FID) analyzer is what produces the `lib:<library>:<version>:<name>` tags BSimVis puts
+on functions: standard library code identified by exact and operand-masked instruction hashes. Stock Ghidra
+ships FID databases for Visual Studio runtimes only, so on ELF samples nothing gets identified until you add
+databases to `$GHIDRA_HOME/Ghidra/Features/FunctionID/data/`.
+
+`install.sh` fetches the open-source [threatrack/ghidra-fidb-repo](https://github.com/threatrack/ghidra-fidb-repo)
+(MIT — 67 MB download, 215 MB unpacked, 47 databases: glibc, uClibc/OpenWrt, gcc, OpenSSL, Qt5, SDL,
+libsodium, CentOS 6/7, across x86 32/64, ARM, AARCH64, MIPS, PowerPC, SPARC, SuperH, m68k). Skip it with
+`SKIP_FIDB=1 ./install.sh`.
+
+To install them by hand, into your own Ghidra:
+
+```bash
+curl -LO https://github.com/threatrack/ghidra-fidb-repo/releases/download/20200530/ghidra-fidb-repo_20200530.zip
+unzip ghidra-fidb-repo_20200530.zip -d "$GHIDRA_HOME/Ghidra/Features/FunctionID/data/"
+```
+
+Those are the pre-unpacked `.fidbf` files, so no Ghidra rebuild is needed. Restart the workers afterwards —
+Ghidra reads the data directory at startup.
+
+Coverage is per-architecture and per-toolchain. No database exists for PowerPC e500, MIPS64r6, RISC-V or
+LoongArch, and a statically linked binary built with a different compiler or `-O` level than the one the FIDB
+was built from misses every hash even where a database exists. Build your own with Ghidra's
+`Tools -> Function ID -> Populate Function ID Database` when a library matters and nothing matches it.
 
 # Running
 
@@ -156,6 +185,30 @@ curl -X POST --data-binary "@/path/to/file" \
     "message": "Binary uploaded. Analysis pipeline started."
 }
 ```
+
+## Supported upload formats
+
+`/api/file/upload` takes the raw bytes of whatever you have. Containers are unpacked server-side and every binary inside is analyzed as its own file, tagged with the format it came from and carrying the container's md5 in `parent_md5`.
+
+| Upload | What gets analyzed | Tag |
+|---|---|---|
+| Raw executable (ELF, PE, Mach-O, ...) | The file itself | — |
+| `.zip`, `.tar`, `.tar.gz`, `.tar.bz2`, `.tar.xz` | Every member, one file each | `container:archive` |
+| Encrypted zip (ZipCrypto or AES) | Same, password defaults to `infected` | `container:archive` |
+| `.apk`, `.aab` | Only `.dex`, `.so` and `.jar` members — resources and assets are skipped | `container:apk` |
+| Fat/universal Mach-O | One file per architecture slice, named `<file>:x86_64`, `<file>:arm64`, ... | `container:macho-fat` |
+| UPX-packed executable | **Both** the packed file and its unpacked child, so packed-vs-unpacked is a normal binary diff | `packer:upx` |
+| `.gpr.zip` (Ghidra project) | Imported whole, never unpacked — see below | — |
+
+Notes:
+
+- Archive password: `--archive-password` on the CLI, `archive_password=` on the API. Default is `infected`, the usual convention for shipped malware samples.
+- Unpacking UPX needs the `upx` binary, installed into `bin/` by `install.sh`. Without it a packed sample is still analyzed, just packed.
+- Containers are followed 2 levels deep, capped at 200 children.
+- `--no-unpack` (`unpack=false`) analyzes the upload exactly as-is.
+- Unpacked something with your own tooling? Declare the lineage yourself with `--parent-md5` / `--parent-name` (`parent_md5=` / `parent_file_name=`).
+
+Adding another format means one entry in `HANDLERS` in [`bsimvis/app/services/unpack_service.py`](bsimvis/app/services/unpack_service.py).
 
 ## Ghidra project upload 
 

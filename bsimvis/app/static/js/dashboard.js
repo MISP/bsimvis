@@ -186,6 +186,9 @@ function toggleFilters() {
     setTimeout(() => window.dispatchEvent(new Event('resize')), 200);
 }
 
+// Views whose pool-scoped results can span several collections.
+const COLLECTION_COLUMN_VIEWS = ['files', 'functions', 'function-similarity', 'binary-similarity'];
+
 const routes = {
     'collections': {
         title: 'Collections',
@@ -196,6 +199,7 @@ const routes = {
             { label: 'Files', sort: 'total_files' },
             { label: 'Functions', sort: 'total_functions' },
             { label: 'Last Updated', sort: 'last_updated' },
+            'Status',
             'Actions'
         ],
         renderer: renderCollections
@@ -220,8 +224,23 @@ const routes = {
     'batches': {
         title: 'Batches',
         api: '/api/batch/search',
-        headers: ['Batch Name', 'UUID', 'Files', 'Functions', 'Timestamp', 'Actions'],
+        headers: ['Batch Name', 'UUID', 'Files', 'Functions', 'Timestamp', 'Status', 'Actions'],
         renderer: renderBatches
+    },
+    'tags': {
+        title: 'Tags',
+        api: '/api/tags/list',
+        headers: [
+            { label: 'Tag', sort: 'tag', width: '30%' },
+            { label: 'Color', width: '8%' },
+            { label: 'Priority', sort: 'priority', width: '10%' },
+            { label: 'LLM', width: '6%' },
+            { label: 'Functions', sort: 'function_count', width: '12%' },
+            { label: 'Files', sort: 'file_count', width: '12%' },
+            { label: 'Similarities', width: '12%' },
+            { label: 'Actions', width: '10%' }
+        ],
+        renderer: renderTagVocabulary
     },
     'files': {
         title: 'Files',
@@ -231,6 +250,7 @@ const routes = {
             { label: 'MD5 / Arch', width: '11%' },
             { label: 'Metadata', width: '14%' },
             { label: 'Batch UUID', width: '9%' },
+            { label: 'Status', width: '7%' },
             { label: 'Funcs', width: '7%', sort: 'function_count' },
             { label: 'Notes', width: '3%' },
             { label: 'Clusters', width: '12%' },
@@ -408,6 +428,7 @@ window.ModuleLoader = {
             'call_graph': window.CallGraphView,
             'feature': window.FeatureView,
             'function_features': window.FunctionFeaturesView,
+            'home': window.HomeView,
             'pool-detail': window.PoolDetailView,
             'collection-detail': window.CollectionDetailView,
             'bin_sim': {
@@ -457,11 +478,8 @@ window.ModuleLoader = {
 function hideDashboardActions() {
     const toHide = [
         document.getElementById('search-settings-container'),
-        document.getElementById('header-clear-btn'),
-        document.getElementById('header-history-btn-container'),
-        document.getElementById('toggle-filters-btn'),
-        document.getElementById('collapse-header-btn'),
-        document.getElementById('header-settings-btn')
+        document.getElementById('header-clear-btn'), // filter-actions-container
+        document.getElementById('collapse-header-btn')
     ];
     toHide.forEach(el => {
         if (el) el.style.display = 'none';
@@ -472,15 +490,59 @@ function hideDashboardActions() {
 
 function showDashboardActions() {
     const toShow = [
-        document.getElementById('header-clear-btn'),
-        document.getElementById('header-history-btn-container'),
-        document.getElementById('toggle-filters-btn'),
+        document.getElementById('header-clear-btn'), // filter-actions-container
         document.getElementById('collapse-header-btn'),
         document.getElementById('header-settings-btn')
     ];
     toShow.forEach(el => {
         if (el) el.style.display = '';
     });
+}
+
+function toggleFilterActionsDropdown(event) {
+    event.stopPropagation();
+    const dd = document.getElementById('filter-actions-dropdown');
+    if (!dd) return;
+    const isOpen = dd.style.display !== 'none';
+    if (isOpen) {
+        dd.style.display = 'none';
+    } else {
+        dd.style.display = 'block';
+        // Close on outside click
+        const close = (e) => {
+            if (!dd.contains(e.target) && e.target !== event.currentTarget) {
+                dd.style.display = 'none';
+                document.removeEventListener('click', close);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', close), 0);
+    }
+}
+
+function closeFilterActionsDropdown() {
+    const dd = document.getElementById('filter-actions-dropdown');
+    if (dd) dd.style.display = 'none';
+}
+
+// Add a NOT exclude tag card for 'ignore' to all visible tag filter containers
+function addNotIgnoreFilters() {
+    const tagContainerIds = ['sim', 'func', 'file', 'bin-sim'];
+    const typeMap = { 'sim': 'sim_tag', 'func': 'func_tag', 'file': 'file_tag', 'bin-sim': 'file_tag' };
+    let added = 0;
+    tagContainerIds.forEach(key => {
+        const container = document.getElementById(`tag-container-${key}`);
+        if (!container) return;
+        // Only act on visible containers
+        if (container.offsetParent === null) return;
+        // Check if 'ignore' exclude card already exists
+        const already = Array.from(container.querySelectorAll('.tag-filter-card')).find(
+            c => c.dataset.value === 'ignore' && c.dataset.exclude === 'true'
+        );
+        if (already) return;
+        createTagCard(key, typeMap[key], 'ignore', true);
+        added++;
+    });
+    if (added > 0) triggerTagSearch();
 }
 
 async function refreshData(appendArg = false, force = false, skipHeader = false) {
@@ -490,7 +552,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
 
     // Check if we should load a module view
-    if (['function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail'].includes(viewKey)) {
+    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail'].includes(viewKey)) {
         const stateParams = Object.fromEntries(params);
         stateParams.collection = collection;
         stateParams.pool = pool;
@@ -555,6 +617,8 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     lastPathName = currentUrlPath;
     if (viewKey === 'pools') {
         if (!skipHeader) renderPoolCreationForm();
+    } else if (viewKey === 'tags') {
+        if (!skipHeader) renderTagCreationForm();
     } else if (viewKey === 'jobs') {
         const gridHeader = document.getElementById('grid-header');
         if (gridHeader) {
@@ -581,7 +645,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
             }
 
             gridHeader.innerHTML = `
-                <div style="padding: 10px 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.01);">
+                <div style="padding: 10px 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: var(--hover);">
                     <div style="display: flex; gap: 10px; align-items: center;">
                         ${showContextBtn ? `
                             <button class="top-action-btn ${isContextFiltered ? 'active' : ''}" onclick="window.goToContextJobs()" style="${isContextFiltered ? 'background: var(--accent); color: var(--bg);' : ''}">
@@ -605,6 +669,95 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                     </div>
                 </div>
             `;
+        }
+    } else if (viewKey === 'binary-similarity') {
+        const gridHeader = document.getElementById('grid-header');
+        if (gridHeader) {
+            const p = new URLSearchParams(params);
+            gridHeader.innerHTML = `
+                <div style="padding: 24px; border-bottom: 1px solid var(--border); background: var(--bg); display: flex; flex-direction: column;">
+                    <div id="bsim-hero-text" style="transition: max-height 0.3s ease, opacity 0.3s ease; overflow: hidden; max-height: 200px; opacity: 1;">
+                        <p style="margin: 0 0 20px 0; font-size: 0.95rem; color: var(--subtle); max-width: 800px; line-height: 1.5;">
+                            Search and compare similarities between binaries and containers based on shared code, libraries, and content. 
+                            Use the filters below to refine your view by scoring methodology and artifact type.
+                        </p>
+                    </div>
+                    <div style="display: flex; gap: 24px; flex-wrap: wrap;">
+                        <div class="home-card" style="padding: 16px; min-width: 300px;">
+                            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
+                                <h3 style="margin: 0; font-size: 0.9rem; color: var(--text);">Scoring Metric</h3>
+                                <span class="home-tip" tabindex="0" data-tip="The dimensions of similarity calculated between two binaries. Overall combines multiple factors, while Library, Code, and Content scores isolate specific types of matches."><i class="fa-solid fa-circle-info"></i></span>
+                            </div>
+                            ${binSimScoreTypeTagsHtml(p)}
+                        </div>
+                        <div class="home-card" style="padding: 16px; min-width: 300px;">
+                            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
+                                <h3 style="margin: 0; font-size: 0.9rem; color: var(--text);">Node Type</h3>
+                                <span class="home-tip" tabindex="0" data-tip="A node is the artifact being compared. It can be a single parsed File (e.g. an ELF binary), or a Container holding multiple files (e.g. an APK, MachO, or Zip archive) which aggregates matches from its contents."><i class="fa-solid fa-circle-info"></i></span>
+                            </div>
+                            ${binSimNodeTypeTagsHtml(p)}
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Asynchronously fetch counts for the pills
+            setTimeout(async () => {
+                const fetchCount = async (paramKey, paramVal, elId) => {
+                    try {
+                        const u = new URLSearchParams(params);
+                        u.set('limit', 0); // Only return total count
+                        if (paramKey) u.set(paramKey, paramVal);
+                        
+                        const res = await fetch('/api/bin_sim/search?' + u.toString());
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        if (data && data.total !== undefined) {
+                            const el = document.getElementById(elId);
+                            if (el) el.innerText = '(' + data.total.toLocaleString() + ')';
+                        }
+                    } catch (e) {}
+                };
+                
+                // Fetch for Score Types
+                const types = window.BinSimScoreTypes || { score: {} };
+                for (const v of Object.keys(types)) {
+                    fetchCount('sort', v, 'bsim-count-score-' + v);
+                }
+                
+                // Fetch for Node Types
+                fetchCount('containers', 'none', 'bsim-count-nt-file');
+                fetchCount('containers', 'both', 'bsim-count-nt-container');
+            }, 50);
+            
+            // Collapse hero text on table scroll
+            const tableBodyWrap = document.getElementById('table-body-wrap');
+            if (tableBodyWrap) {
+                if (window.bsimHeroScrollListener) {
+                    tableBodyWrap.removeEventListener('scroll', window.bsimHeroScrollListener);
+                }
+                window.bsimHeroScrollListener = function() {
+                    const heroText = document.getElementById('bsim-hero-text');
+                    if (!heroText) return;
+                    if (tableBodyWrap.scrollTop > 30) {
+                        heroText.style.maxHeight = '0';
+                        heroText.style.opacity = '0';
+                    } else {
+                        heroText.style.maxHeight = '200px';
+                        heroText.style.opacity = '1';
+                    }
+                };
+                tableBodyWrap.addEventListener('scroll', window.bsimHeroScrollListener, { passive: true });
+            }
+        }
+    } else if (viewKey === 'collections') {
+        const gridHeader = document.getElementById('grid-header');
+        if (gridHeader) {
+            renderHeroHeader(gridHeader, 'collections-hero-text',
+                'Collections group uploaded binaries and their analysis results. Upload new files to create or extend a collection, or open one below to explore its files, functions, and similarities.',
+                `<a href="/upload" onclick="Nav.openPath(this.href, event)" class="top-action-btn" style="background:var(--accent); color:var(--bg); padding:10px 20px; font-size:0.95rem; display:inline-flex; align-items:center; gap:8px; border-radius:8px; text-decoration:none; font-weight:600; width:fit-content;">
+                    <i class="fa-solid fa-cloud-arrow-up"></i> Upload Binaries
+                </a>`);
         }
     } else {
         const gridHeader = document.getElementById('grid-header');
@@ -699,6 +852,12 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     }
 
     let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
+    // Neighbours of one file, folded into the containers they came from. The
+    // faceted pair search this view normally uses is index-backed and cannot
+    // group, so grouping is served by the neighbour endpoint instead.
+    if (viewKey === 'binary-similarity' && params.get('group') === 'container' && params.get('md5')) {
+        apiUrl = '/api/bin_sim/list?' + params.toString();
+    }
     updateUI(viewKey, collection, params, route, force);
 
     const isGraphView = params.get('view') === 'graph' || params.get('view') === 'hierarchy' || params.get('view') === 'packing';
@@ -894,6 +1053,107 @@ function updateNavbarLinks(col) {
 }
 window.updateNavbarLinks = updateNavbarLinks;
 
+// Generic collapsible orientation header for views that otherwise drop the
+// user straight into an empty grid: one-line explainer + optional action
+// button(s), same collapse-on-scroll behavior as the bin-sim hero text.
+function renderHeroHeader(gridHeader, heroId, text, actionsHtml) {
+    gridHeader.innerHTML = `
+        <div style="padding: 24px; border-bottom: 1px solid var(--border); background: var(--bg); display: flex; flex-direction: column; gap: 16px;">
+            <div id="${heroId}" style="transition: max-height 0.3s ease, opacity 0.3s ease; overflow: hidden; max-height: 200px; opacity: 1;">
+                <p style="margin: 0; font-size: 0.95rem; color: var(--subtle); max-width: 800px; line-height: 1.5;">${text}</p>
+            </div>
+            ${actionsHtml || ''}
+        </div>
+    `;
+    const tableBodyWrap = document.getElementById('table-body-wrap');
+    if (!tableBodyWrap) return;
+    const listenerKey = heroId + 'ScrollListener';
+    if (window[listenerKey]) tableBodyWrap.removeEventListener('scroll', window[listenerKey]);
+    window[listenerKey] = function() {
+        const heroText = document.getElementById(heroId);
+        if (!heroText) return;
+        if (tableBodyWrap.scrollTop > 30) {
+            heroText.style.maxHeight = '0';
+            heroText.style.opacity = '0';
+        } else {
+            heroText.style.maxHeight = '200px';
+            heroText.style.opacity = '1';
+        }
+    };
+    tableBodyWrap.addEventListener('scroll', window[listenerKey], { passive: true });
+}
+
+// Bin-sim search filters: score type (Overall/Code/Library/Content) and node
+// type (File/Container) render as clickable tag pills -- same visual language
+// as the score sub-cards in the results view -- instead of <select> dropdowns.
+// Both live behind hidden inputs (#bsim-score-type, #bsim-containers) so
+// applyBinSimSearch's generic id->param reader in binary_similarity.js needs
+// no changes.
+function binSimPillStyle(active, color) {
+    color = color || 'var(--accent)';
+    return `display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid ${active ? color : 'var(--border)'}; color:${active ? color : 'var(--subtle)'}; background:${active ? color + '22' : 'var(--window-tray, transparent)'};`;
+}
+
+function binSimScoreTypeTagsHtml(p) {
+    const active = p.get('sort') || 'score';
+    const types = window.BinSimScoreTypes || { score: { label: 'Overall', icon: 'fa-solid fa-layer-group', color: 'var(--success)' } };
+    const pills = Object.entries(types).map(([v, meta]) => {
+        const on = v === active;
+        return `<span class="bsim-tag-pill" data-value="${v}" onclick="setBinSimScoreType('${v}')" style="${binSimPillStyle(on, meta.color)}" title="${escapeAttr(meta.label)}"><i class="${meta.icon}"></i>${meta.label} <span id="bsim-count-score-${v}" style="font-size:0.75rem; opacity:0.8; font-weight:normal;"></span></span>`;
+    }).join('');
+    return `<input type="hidden" id="bsim-score-type" value="${escapeAttr(active)}"><div id="bsim-score-type-tags" style="display:flex; flex-wrap:wrap; gap:8px;">${pills}</div>`;
+}
+
+function binSimNodeTypeTagsHtml(p) {
+    const cur = p.has('containers') ? p.get('containers') : 'none';
+    const fileActive = cur !== 'both';
+    const containerActive = cur !== 'none';
+    return `<input type="hidden" id="bsim-containers" value="${escapeAttr(cur)}">
+        <div style="display:flex; flex-wrap:wrap; gap:8px;">
+            <span id="bsim-nt-file" class="bsim-nt-pill" onclick="toggleBinSimNodeType('file')" style="${binSimPillStyle(fileActive, 'var(--info, #3b82f6)')}" title="Include file ↔ file pairs"><i class="fa-solid fa-file"></i>File <span id="bsim-count-nt-file" style="font-size:0.75rem; opacity:0.8; font-weight:normal;"></span></span>
+            <span id="bsim-nt-container" class="bsim-nt-pill" onclick="toggleBinSimNodeType('container')" style="${binSimPillStyle(containerActive, 'var(--warning, #d97706)')}" title="Include container ↔ container pairs"><i class="fa-solid fa-box"></i>Container <span id="bsim-count-nt-container" style="font-size:0.75rem; opacity:0.8; font-weight:normal;"></span></span>
+        </div>`;
+}
+
+function setBinSimScoreType(v) {
+    const el = document.getElementById('bsim-score-type');
+    if (el) el.value = v;
+    if (window.applyBinSimSearch) window.applyBinSimSearch();
+}
+window.setBinSimScoreType = setBinSimScoreType;
+
+function toggleBinSimNodeType(which) {
+    const el = document.getElementById('bsim-containers');
+    if (!el) return;
+    let fileActive = el.value !== 'both';
+    let containerActive = el.value !== 'none';
+    if (which === 'file') fileActive = !fileActive; else containerActive = !containerActive;
+    if (!fileActive && !containerActive) { fileActive = true; containerActive = true; } // never both off
+    el.value = (fileActive && containerActive) ? 'all' : (fileActive ? 'none' : 'both');
+    if (window.applyBinSimSearch) window.applyBinSimSearch();
+}
+window.toggleBinSimNodeType = toggleBinSimNodeType;
+
+function syncBinSimTags(p) {
+    const active = p.get('sort') || 'score';
+    const hidden = document.getElementById('bsim-score-type');
+    if (hidden) hidden.value = active;
+    document.querySelectorAll('#bsim-score-type-tags .bsim-tag-pill').forEach(el => {
+        const meta = (window.BinSimScoreTypes || {})[el.dataset.value] || {};
+        const on = el.dataset.value === active;
+        el.setAttribute('style', binSimPillStyle(on, meta.color));
+    });
+    const cur = p.has('containers') ? p.get('containers') : 'none';
+    const hiddenC = document.getElementById('bsim-containers');
+    if (hiddenC) hiddenC.value = cur;
+    const fileActive = cur !== 'both';
+    const containerActive = cur !== 'none';
+    const fileEl = document.getElementById('bsim-nt-file');
+    const contEl = document.getElementById('bsim-nt-container');
+    if (fileEl) fileEl.setAttribute('style', binSimPillStyle(fileActive, 'var(--info, #3b82f6)'));
+    if (contEl) contEl.setAttribute('style', binSimPillStyle(containerActive, 'var(--warning, #d97706)'));
+}
+
 function updateUI(viewKey, collection, params, route, force = false) {
     showDashboardActions();
     const routingState = getRoutingState();
@@ -1014,14 +1274,20 @@ function updateUI(viewKey, collection, params, route, force = false) {
     if (pathChanged) {
         let headHtml = '<tr>';
 
+        // Pool searches span collections: append a Collection column, matching
+        // the trailing cell renderCollectionCell() emits in the row renderers.
+        const routeHeaders = (pool && !col && COLLECTION_COLUMN_VIEWS.includes(viewKey))
+            ? [...route.headers, { label: 'Collection', width: '8%' }]
+            : route.headers;
+
         const savedForRoute = JSON.parse(localStorage.getItem('columnWidths') || '{}')[viewKey];
         const hasSavedWidths = savedForRoute && Object.keys(savedForRoute).length > 0;
-        const hasWidths = route.headers.some(h => typeof h === 'object' && h.width) || hasSavedWidths;
+        const hasWidths = routeHeaders.some(h => typeof h === 'object' && h.width) || hasSavedWidths;
 
         const tableLayout = hasWidths ? 'fixed' : 'auto';
         if (dataTable) dataTable.style.tableLayout = tableLayout;
         if (dataTableHeader) dataTableHeader.style.tableLayout = tableLayout;
-        route.headers.forEach(h => {
+        routeHeaders.forEach(h => {
             const label = typeof h === 'string' ? h : h.label;
             const sortKey = typeof h === 'object' ? h.sort : null;
             let width = typeof h === 'object' ? h.width : 'auto';
@@ -1036,8 +1302,11 @@ function updateUI(viewKey, collection, params, route, force = false) {
             if (sortKey) {
                 const currentSort = params.get('sort_by');
                 const currentOrder = params.get('sort_order') || 'desc';
-                const icon = (currentSort === sortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
-                headHtml += `<th ${style} class="sortable resizable-th" data-label="${label}" onclick="toggleSort('${sortKey}')">${label} <small>${icon}</small>${resizerHtml}</th>`;
+                // ponytail: bin-sim "Score" column tracks whichever score type is active
+                const effectiveSortKey = (viewKey === 'binary-similarity' && sortKey === 'score')
+                    ? (params.get('sort') || 'score') : sortKey;
+                const icon = (currentSort === effectiveSortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
+                headHtml += `<th ${style} class="sortable resizable-th" data-label="${escapeAttr(label)}" data-sort="${escapeAttr(sortKey)}" onclick="toggleSort(${escapeAttr(jsString(sortKey))})">${escapeHtml(label)} <small>${icon}</small>${resizerHtml}</th>`;
             } else {
                 headHtml += `<th ${style} class="resizable-th" data-label="${label}">${label}${resizerHtml}</th>`;
             }
@@ -1065,15 +1334,15 @@ function updateUI(viewKey, collection, params, route, force = false) {
         // Surgical Sort Icon Update
         const currentSort = params.get('sort_by');
         const currentOrder = params.get('sort_order') || 'desc';
+        // ponytail: read the key off data-sort, not out of the onclick string —
+        // the quoting there is escapeAttr(jsString(...))'s business, not ours.
         thead.querySelectorAll('th.sortable').forEach(th => {
-            const onclickStr = th.getAttribute('onclick') || '';
-            const match = onclickStr.match(/toggleSort\('([^']+)'\)/);
-            if (match) {
-                const sortKey = match[1];
-                const small = th.querySelector('small');
-                if (small) {
-                    small.innerText = (currentSort === sortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
-                }
+            const sortKey = th.dataset.sort;
+            const effectiveSortKey = (viewKey === 'binary-similarity' && sortKey === 'score')
+                ? (params.get('sort') || 'score') : sortKey;
+            const small = th.querySelector('small');
+            if (sortKey && small) {
+                small.innerText = (currentSort === effectiveSortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
             }
         });
     }
@@ -1090,7 +1359,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <div style="display:flex; align-items:center; gap:8px;">
                         <input type="checkbox" id="job-auto-refresh" ${localStorage.getItem('jobAutoRefresh') !== 'false' ? 'checked' : ''} onchange="localStorage.setItem('jobAutoRefresh', this.checked)" style="cursor:pointer; vertical-align:middle;">
                         <label for="job-auto-refresh" style="font-size:0.75rem; color:var(--text); cursor:pointer; font-weight:bold;">Auto-Refresh</label>
-                    </div>`;
+                    </div>
+                    <button id="job-pause-toggle" class="view-btn" onclick="toggleJobPause()" title="Pause/resume all workers (fleet-wide)">…</button>`;
             } else {
                 const viewMode = params.get('view') || 'table';
                 const poolLimit = params.get('pool_limit') || '1000000';
@@ -1128,9 +1398,9 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     settingsHtml += `
                         <span class="dim" style="font-size:0.65rem; margin-left:15px;">Pool Limit:</span>
                         <div style="position:relative; display:inline-flex; align-items:center;">
-                            <input type="number" id="sim-pool-limit" value="${poolLimit}" step="100000" min="1000" max="1000000" 
+                            <input type="number" id="sim-pool-limit" value="${escapeAttr(poolLimit)}" step="100000" min="1000" max="1000000" 
                                 title="Max candidates to score / filter" 
-                                style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                                style="width:70px; background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
                                 onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
                             <span id="pool-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Pool Truncated: Not all candidates were scored.">⚠️</span>
                         </div>`;
@@ -1139,15 +1409,16 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 settingsHtml += `
                     <span class="dim" style="font-size:0.65rem; margin-left:15px;">Limit:</span>
                     <div style="position:relative; display:inline-flex; align-items:center;">
-                        <input type="number" id="sim-limit" value="${countLimit}" step="10" min="1" max="50000" 
+                        <input type="number" id="sim-limit" value="${escapeAttr(countLimit)}" step="10" min="1" max="50000" 
                             title="Max results to display (Output Limit)" 
-                            style="width:60px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                            style="width:60px; background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
                             onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
                         <span id="limit-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Output Limit Reached: Results are capped.">ℹ️</span>
                     </div>
                 `;
             }
             settingsEl.innerHTML = settingsHtml;
+            if (path === 'jobs' && window.refreshPauseButton) window.refreshPauseButton();
 
             const p = new URLSearchParams(params);
             let headHtml = thead.innerHTML; // Start with the <tr> built above
@@ -1156,78 +1427,83 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 headHtml += `<tr class="filter-row">`;
                 if (path === 'features-global') {
                     headHtml += `
-                        <th><input type="text" id="flt-feat-hash" placeholder="Hash..." value="${p.get('hash') || ''}" onfocus="attachAutocomplete(this, 'feature', 'hash', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                        <th><input type="text" id="flt-feat-hash" placeholder="Hash..." value="${escapeAttr(p.get('hash') || '')}" onfocus="attachAutocomplete(this, 'feature', 'hash', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
                         <th>
                             <div style="display:flex; flex-direction:column; gap:4px;">
-                                <input type="text" id="flt-feat-type" placeholder="Type..." value="${p.get('type') || ''}" onfocus="attachAutocomplete(this, 'feature', 'type', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                                <input type="text" id="flt-feat-op" placeholder="Op..." value="${p.get('op') || ''}" onfocus="attachAutocomplete(this, 'feature', 'op', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                                <input type="text" id="flt-feat-type" placeholder="Type..." value="${escapeAttr(p.get('type') || '')}" onfocus="attachAutocomplete(this, 'feature', 'type', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                                <input type="text" id="flt-feat-op" placeholder="Op..." value="${escapeAttr(p.get('op') || '')}" onfocus="attachAutocomplete(this, 'feature', 'op', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
                             </div>
                         </th>
                         <th></th><th></th>
                         <th>
                             <div style="display:flex; align-items:center; gap:2px;">
-                                <input type="number" id="flt-feat-min-tf" placeholder="Min..." value="${p.get('min_tf_score') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                <input type="number" id="flt-feat-min-tf" placeholder="Min..." value="${escapeAttr(p.get('min_tf_score') || '')}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                 <span class="dim" style="font-size:0.6rem">-</span>
-                                <input type="number" id="flt-feat-max-tf" placeholder="Max..." value="${p.get('max_tf_score') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                <input type="number" id="flt-feat-max-tf" placeholder="Max..." value="${escapeAttr(p.get('max_tf_score') || '')}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                             </div>
                         </th>
                         <th>
                             <div style="display:flex; align-items:center; gap:2px;">
-                                <input type="number" id="flt-feat-min-freq" placeholder="Min..." value="${p.get('min_frequency') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                <input type="number" id="flt-feat-min-freq" placeholder="Min..." value="${escapeAttr(p.get('min_frequency') || '')}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                 <span class="dim" style="font-size:0.6rem">-</span>
-                                <input type="number" id="flt-feat-max-freq" placeholder="Max..." value="${p.get('max_frequency') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                <input type="number" id="flt-feat-max-freq" placeholder="Max..." value="${escapeAttr(p.get('max_frequency') || '')}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                             </div>
                         </th>
                         <th></th>`;
                 } else if (path === 'files') {
                     headHtml += `
-                        <th><input type="text" id="flt-file-name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                        <th><input type="text" id="flt-file-name" placeholder="Name..." value="${escapeAttr(p.get('file_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
                         <th>
                             <div style="display:flex; flex-direction:column; gap:4px;">
-                                <input type="text" id="flt-file-md5" placeholder="MD5..." value="${p.get('file_md5') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                                <input type="text" id="flt-file-language" placeholder="Lang..." value="${p.get('language_id') || ''}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                                <input type="text" id="flt-file-md5" placeholder="MD5..." value="${escapeAttr(p.get('file_md5') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                                <input type="text" id="flt-file-language" placeholder="Lang..." value="${escapeAttr(p.get('language_id') || '')}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
                             </div>
                         </th>
                         <th>
                             <div style="display:flex; flex-direction:column; gap:4px;">
-                                <input type="text" id="flt-file-yara" placeholder="Yara..." value="${p.get('yara') || ''}" onfocus="attachAutocomplete(this, 'file', 'yara', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                                <input type="text" id="flt-file-avtype" placeholder="AVType..." value="${p.get('avtype') || ''}" onfocus="attachAutocomplete(this, 'file', 'avtype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                                <input type="text" id="flt-file-ccip" placeholder="CC IP..." value="${p.get('cc_ip') || ''}" onfocus="attachAutocomplete(this, 'file', 'cc_ip', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                                <hr style="margin: 2px 0; border: none; border-top: 1px solid rgba(255,255,255,0.1);">
+                                <input type="text" id="flt-file-yara" placeholder="Yara..." value="${escapeAttr(p.get('yara') || '')}" onfocus="attachAutocomplete(this, 'file', 'yara', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                                <input type="text" id="flt-file-avtype" placeholder="AVType..." value="${escapeAttr(p.get('avtype') || '')}" onfocus="attachAutocomplete(this, 'file', 'avtype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                                <input type="text" id="flt-file-ccip" placeholder="CC IP..." value="${escapeAttr(p.get('cc_ip') || '')}" onfocus="attachAutocomplete(this, 'file', 'cc_ip', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                                <hr style="margin: 2px 0; border: none; border-top: 1px solid var(--border);">
                                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 2px;">
-                                    <input type="text" id="flt-file-inf-yara" placeholder="Inf.Yara" title="Inferred Yara" value="${p.get('inferred_yara') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_yara', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
-                                    <input type="text" id="flt-file-inf-avtype" placeholder="Inf.AV" title="Inferred AVType" value="${p.get('inferred_avtype') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_avtype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
+                                    <input type="text" id="flt-file-inf-yara" placeholder="Inf.Yara" title="Inferred Yara" value="${escapeAttr(p.get('inferred_yara') || '')}" onfocus="attachAutocomplete(this, 'file', 'inferred_yara', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
+                                    <input type="text" id="flt-file-inf-avtype" placeholder="Inf.AV" title="Inferred AVType" value="${escapeAttr(p.get('inferred_avtype') || '')}" onfocus="attachAutocomplete(this, 'file', 'inferred_avtype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
                                 </div>
                                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 2px;">
-                                    <input type="text" id="flt-file-inf-type" placeholder="Inf.Type" title="Inferred Type" value="${p.get('inferred_filetype') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_filetype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
-                                    <input type="text" id="flt-file-inf-ccip" placeholder="Inf.IP" title="Inferred CC IP" value="${p.get('inferred_ccip') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_ccip', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
+                                    <input type="text" id="flt-file-inf-type" placeholder="Inf.Type" title="Inferred Type" value="${escapeAttr(p.get('inferred_filetype') || '')}" onfocus="attachAutocomplete(this, 'file', 'inferred_filetype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
+                                    <input type="text" id="flt-file-inf-ccip" placeholder="Inf.IP" title="Inferred CC IP" value="${escapeAttr(p.get('inferred_ccip') || '')}" onfocus="attachAutocomplete(this, 'file', 'inferred_ccip', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
                                 </div>
                             </div>
                         </th>
-                        <th><input type="text" id="flt-file-batch" placeholder="Batch UUID..." value="${p.get('batch_uuid') || ''}" onfocus="attachAutocomplete(this, 'file', 'batch_uuid', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                        <th><input type="text" id="flt-file-batch" placeholder="Batch UUID..." value="${escapeAttr(p.get('batch_uuid') || '')}" onfocus="attachAutocomplete(this, 'file', 'batch_uuid', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                        <th>
+                            <select id="flt-file-status" onchange="applyAdvancedFileSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">
+                                ${['', 'pending', 'analyzing', 'failed', 'analyzed'].map(s => `<option value="${escapeAttr(s)}" ${(p.get('status') || '') === s ? 'selected' : ''}>${s ? s.toUpperCase() : 'All Statuses'}</option>`).join('')}
+                            </select>
+                        </th>
                         <th>
                             <div style="display:flex; align-items:center; gap:2px;">
-                                <input type="number" id="flt-file-min-funcs" placeholder="Min..." value="${p.get('min_function_count') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                <input type="number" id="flt-file-min-funcs" placeholder="Min..." value="${escapeAttr(p.get('min_function_count') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                 <span class="dim" style="font-size:0.6rem">-</span>
-                                <input type="number" id="flt-file-max-funcs" placeholder="Max..." value="${p.get('max_function_count') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                <input type="number" id="flt-file-max-funcs" placeholder="Max..." value="${escapeAttr(p.get('max_function_count') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                             </div>
                         </th>
-                        <th><input type="text" id="flt-file-note-owner" placeholder="Note Owner..." value="${p.get('note_owner') || ''}" onfocus="attachAutocomplete(this, 'file', 'note_owners', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></th>
+                        <th><input type="text" id="flt-file-note-owner" placeholder="Note Owner..." value="${escapeAttr(p.get('note_owner') || '')}" onfocus="attachAutocomplete(this, 'file', 'note_owners', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></th>
                         <th>
                             <div style="display:flex; flex-direction:column; gap:2px;">
-                                <input type="text" id="flt-file-cluster" placeholder="UUID..." value="${p.get('bin_cluster_uuid') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                                <input type="text" id="flt-file-cluster-name" placeholder="Cluster Name..." value="${p.get('bin_cluster_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'bin_cluster_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                                <input type="text" id="flt-file-cluster" placeholder="UUID..." value="${escapeAttr(p.get('bin_cluster_uuid') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                                <input type="text" id="flt-file-cluster-name" placeholder="Cluster Name..." value="${escapeAttr(p.get('bin_cluster_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'bin_cluster_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                                 <div style="display:flex; align-items:center; gap:2px;">
-                                    <input type="number" id="flt-file-min-cohesion" placeholder="Min coh..." value="${p.get('min_cohesion') || '0.5'}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                    <input type="number" id="flt-file-min-cohesion" placeholder="Min coh..." value="${escapeAttr(p.get('min_cohesion') || '0.5')}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                     <span class="dim" style="font-size:0.6rem">-</span>
-                                    <input type="number" id="flt-file-max-cohesion" placeholder="Max coh..." value="${p.get('max_cohesion') || ''}" step="0.05" min="0" max="1" title="Max Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                    <input type="number" id="flt-file-max-cohesion" placeholder="Max coh..." value="${escapeAttr(p.get('max_cohesion') || '')}" step="0.05" min="0" max="1" title="Max Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                 </div>
                             </div>
                         </th>
                         <th>
                             <div style="display:flex; flex-direction:column; gap:2px;">
-                                <input type="text" id="flt-file-min-date" placeholder="Min Date..." value="${p.get('min_entry_date') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                                <input type="text" id="flt-file-max-date" placeholder="Max Date..." value="${p.get('max_entry_date') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                                <input type="text" id="flt-file-min-date" placeholder="Min Date..." value="${escapeAttr(p.get('min_entry_date') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                                <input type="text" id="flt-file-max-date" placeholder="Max Date..." value="${escapeAttr(p.get('max_entry_date') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
                             </div>
                         </th>
                         <th style="position:relative"><div class="tag-filter-container" id="tag-container-file"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div></th>`;
@@ -1236,9 +1512,9 @@ function updateUI(viewKey, collection, params, route, force = false) {
                         headHtml += `
                             <th style="vertical-align: middle;">
                                 <div style="display:flex; align-items:center; gap:2px;">
-                                    <input type="number" id="sim-min-score" value="${p.get('min_score') || defaultMinScore()}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
+                                    <input type="number" id="sim-min-score" value="${escapeAttr(p.get('min_score') || defaultMinScore())}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
                                     <span class="dim" style="font-size:0.6rem">-</span>
-                                    <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
+                                    <input type="number" id="sim-max-score" value="${escapeAttr(p.get('max_score') || '1.0')}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
                                 </div>
                                 <div class="tag-filter-container" id="tag-container-sim"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('sim', 'sim_tag', val); this.value=''; triggerTagSearch(); })"></div>
                             </th>`;
@@ -1247,44 +1523,44 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     headHtml += `
                         <th>
                             <div style="display:flex; flex-direction:column; gap:4px;">
-                                <input type="text" id="flt-func-name" placeholder="Name..." value="${nameVal || ''}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                                <input type="text" id="flt-func-name" placeholder="Name..." value="${escapeAttr(nameVal || '')}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
                                 <div style="display:flex; gap:2px;">
-                                    <input type="text" id="flt-func-namespace" placeholder="Namespace..." value="${p.get('namespace') || ''}" onfocus="attachAutocomplete(this, 'func', 'namespace', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
-                                    <input type="text" id="flt-func-ret_type" placeholder="Return Type..." value="${p.get('return_type') || p.get('ret_type') || ''}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                                    <input type="text" id="flt-func-namespace" placeholder="Namespace..." value="${escapeAttr(p.get('namespace') || '')}" onfocus="attachAutocomplete(this, 'func', 'namespace', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                                    <input type="text" id="flt-func-ret_type" placeholder="Return Type..." value="${escapeAttr(p.get('return_type') || p.get('ret_type') || '')}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
                                 </div>
                             </div>
                         </th>`;
                     const addrVal = path === 'function-similarity' ? p.get('address') : p.get('entrypoint_address');
-                    headHtml += `<th><input type="text" id="flt-func-address" placeholder="Addr..." value="${addrVal || ''}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                    headHtml += `<th><input type="text" id="flt-func-address" placeholder="Addr..." value="${escapeAttr(addrVal || '')}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
                         <th style="position:relative"><div class="tag-filter-container" id="tag-container-func"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
                         <th>
                             <div style="display:flex; flex-direction:column; gap:2px;">
-                                <input type="text" id="flt-func-cluster" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                                <input type="text" id="flt-func-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'cluster_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                                <input type="number" id="flt-func-min-cohesion" placeholder="Min cohesion..." value="${p.get('min_cohesion') || '0.95'}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                                <input type="text" id="flt-func-cluster" placeholder="UUID..." value="${escapeAttr(p.get('cluster_uuid') || '')}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                                <input type="text" id="flt-func-cluster-name" placeholder="Name..." value="${escapeAttr(p.get('cluster_name') || '')}" onfocus="attachAutocomplete(this, 'func', 'cluster_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                                <input type="number" id="flt-func-min-cohesion" placeholder="Min cohesion..." value="${escapeAttr(p.get('min_cohesion') || '0.95')}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                             </div>
                         </th>
-                        <th><input type="number" id="flt-func-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-                        <th><input type="text" id="flt-func-note-owner" placeholder="Note Owner..." value="${p.get('note_owner') || ''}" onfocus="attachAutocomplete(this, 'func', 'note_owners', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></th>
-                        <th><input type="text" id="flt-func-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
-                        <th><input type="text" id="flt-func-md5" placeholder="MD5..." value="${p.get('file_md5') || p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
+                        <th><input type="number" id="flt-func-min-features" value="${escapeAttr(p.get('min_features') || '0')}" min="0" title="Min Features" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                        <th><input type="text" id="flt-func-note-owner" placeholder="Note Owner..." value="${escapeAttr(p.get('note_owner') || '')}" onfocus="attachAutocomplete(this, 'func', 'note_owners', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></th>
+                        <th><input type="text" id="flt-func-file_name" placeholder="Name..." value="${escapeAttr(p.get('file_name') || '')}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
+                        <th><input type="text" id="flt-func-md5" placeholder="MD5..." value="${escapeAttr(p.get('file_md5') || p.get('md5') || '')}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
                         <th style="position:relative"><div class="tag-filter-container" id="tag-container-file"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
-                        <th><input type="text" id="flt-func-language" placeholder="Lang..." value="${p.get('language_id') || p.get('language') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>`;
+                        <th><input type="text" id="flt-func-language" placeholder="Lang..." value="${escapeAttr(p.get('language_id') || p.get('language') || '')}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>`;
                     if (path === 'function-similarity') {
                         headHtml += `
                             <th style="font-size: 0.65rem;">
-                                <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
+                                <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:var(--window-tray); color:var(--text); border:1px solid var(--border); font-size:0.65rem; border-radius:2px;">
                                     <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
                                     <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                                     <option value="milvus_sparse" ${p.get('algo') === 'milvus_sparse' ? 'selected' : ''}>Milvus Sparse</option>
                                 </select>
                                 <div style="margin-top:4px;">
-                                    <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px;">
+                                    <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:var(--window-tray); color:var(--text); border:1px solid var(--border); font-size:0.6rem; border-radius:2px;">
                                         <option value="" ${!p.get('cross_binary') ? 'selected' : ''}>All Binaries</option>
                                         <option value="false" ${p.get('cross_binary') === 'false' ? 'selected' : ''}>Same Binary Only</option>
                                         <option value="true" ${p.get('cross_binary') === 'true' ? 'selected' : ''}>Cross Binary Only</option>
                                     </select>
-                                    <select id="sim-match-mode" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px; margin-top:4px;">
+                                    <select id="sim-match-mode" onchange="applySimSearch()" style="width:100%; background:var(--window-tray); color:var(--text); border:1px solid var(--border); font-size:0.6rem; border-radius:2px; margin-top:4px;">
                                         <option value="any" ${(p.get('match_mode') || 'any') === 'any' ? 'selected' : ''}>Match Any Function</option>
                                         <option value="both" ${p.get('match_mode') === 'both' ? 'selected' : ''}>Match Both Functions</option>
                                     </select>
@@ -1307,51 +1583,46 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 if (dataTable) dataTable.style.tableLayout = 'fixed';
                 if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
                 headHtml += `<tr class="filter-row">
-                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-cluster-uuid" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-id" placeholder="ID..." value="${p.get('cluster_id') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
-                    <th><input type="text" id="flt-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
-                    <th><input type="number" id="flt-cluster-min-count" value="${p.get('min_count') || '0'}" min="0" title="Min Functions" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-                    <th><input type="number" id="flt-cluster-min-stability" value="${p.get('min_stability') || '0'}" step="0.1" min="0" max="1" title="Min Stability" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-                    <th><input type="number" id="flt-cluster-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-                    <th><input type="number" id="flt-cluster-min-cohesion" value="${p.get('min_cohesion') || '0'}" step="0.1" min="0" max="1" title="Min Cohesion" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-cluster-uuid" placeholder="UUID..." value="${escapeAttr(p.get('cluster_uuid') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-id" placeholder="ID..." value="${escapeAttr(p.get('cluster_id') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
+                    <th><input type="text" id="flt-cluster-name" placeholder="Name..." value="${escapeAttr(p.get('cluster_name') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                    <th><input type="number" id="flt-cluster-min-count" value="${escapeAttr(p.get('min_count') || '0')}" min="0" title="Min Functions" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><input type="number" id="flt-cluster-min-stability" value="${escapeAttr(p.get('min_stability') || '0')}" step="0.1" min="0" max="1" title="Min Stability" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><input type="number" id="flt-cluster-min-features" value="${escapeAttr(p.get('min_features') || '0')}" min="0" title="Min Features" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><input type="number" id="flt-cluster-min-cohesion" value="${escapeAttr(p.get('min_cohesion') || '0')}" step="0.1" min="0" max="1" title="Min Cohesion" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th></th>
-                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-cluster-func-name" placeholder="Func Name..." value="${p.get('func_name') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-func-addr" placeholder="Func Addr..." value="${p.get('func_addr') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-file-name" placeholder="File Name..." value="${p.get('file_name') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-cluster-func-name" placeholder="Func Name..." value="${escapeAttr(p.get('func_name') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-func-addr" placeholder="Func Addr..." value="${escapeAttr(p.get('func_addr') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
             } else if (path === 'jobs') {
                 if (dataTable) dataTable.style.tableLayout = 'fixed';
                 if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
                 const statuses = ['', 'pending', 'running', 'completed', 'failed', 'cancelled'];
-                const statusOptions = statuses.map(s => { const label = s ? s.toUpperCase() : 'All Statuses'; return `<option value="${s}" ${p.get('status') === s ? 'selected' : ''}>${label}</option>`; }).join('');
+                const statusOptions = statuses.map(s => { const label = s ? s.toUpperCase() : 'All Statuses'; return `<option value="${escapeAttr(s)}" ${p.get('status') === s ? 'selected' : ''}>${label}</option>`; }).join('');
                 const types = ['', 'pipeline', 'group', 'file_data_ingest', 'ghidra_analyze', 'idx_meta', 'idx_functions', 'idx_features', 'build_sim', 'cluster_functions', 'cluster_binaries', 'enrich_features'];
-                const typeOptions = types.map(t => { const label = t ? t.replace(/_/g, ' ').toUpperCase() : 'All Types'; return `<option value="${t}" ${p.get('type') === t ? 'selected' : ''}>${label}</option>`; }).join('');
+                const typeOptions = types.map(t => { const label = t ? t.replace(/_/g, ' ').toUpperCase() : 'All Types'; return `<option value="${escapeAttr(t)}" ${p.get('type') === t ? 'selected' : ''}>${label}</option>`; }).join('');
                 headHtml += `<tr class="filter-row">
-                    <th><select id="job-type-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${typeOptions}</select></th>
+                    <th><select id="job-type-filter" onchange="applyJobSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${typeOptions}</select></th>
                     <th></th>
                     <th></th>
-                    <th><select id="job-status-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOptions}</select></th>
+                    <th><select id="job-status-filter" onchange="applyJobSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOptions}</select></th>
                     <th></th><th></th><th></th><th></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
             } else if (path === 'binary-similarity') {
                 headHtml += `<tr class="filter-row">
                     <th>
-                        <div style="display:flex; flex-direction:column; gap:2px;">
-                            <select id="bsim-score-type" onchange="debouncedSearch(applyBinSimSearch)" style="font-size:0.6rem; padding:2px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
-                                <option value="score" ${p.get('sort') === 'score' || !p.get('sort') ? 'selected' : ''}>Unweighted</option>
-                                <option value="score_sim_weighted" ${p.get('sort') === 'score_sim_weighted' ? 'selected' : ''}>Sim Weighted</option>
-                                <option value="score_collection_weighted" ${p.get('sort') === 'score_collection_weighted' ? 'selected' : ''}>Col Weighted</option>
-                            </select>
-                            <div style="display:flex; align-items:center; gap:2px;">
-                                <input type="number" id="bsim-min-score" placeholder="Min..." step="0.05" min="0" max="1" value="${p.get('min_score') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-score" placeholder="Max..." step="0.05" min="0" max="1" value="${p.get('max_score') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;">
-                            </div>
+                        <div style="display:flex; align-items:center; gap:2px;">
+                            <input type="number" id="bsim-min-score" placeholder="Min..." step="0.05" min="0" max="1" value="${escapeAttr(p.get('min_score') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-score" placeholder="Max..." step="0.05" min="0" max="1" value="${escapeAttr(p.get('max_score') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;">
                         </div>
                     </th>
-                    <th><input type="text" id="bsim-file-name" placeholder="File Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
-                    <th><input type="text" id="bsim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box; font-family:monospace;"></th>
-                    <th><input type="text" id="bsim-arch" placeholder="Arch..." value="${p.get('arch') || ''}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box;"></th>
-                    <th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="bsim-min-funcs" placeholder="Min..." min="0" value="${p.get('min_funcs') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-funcs" placeholder="Max..." min="0" value="${p.get('max_funcs') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"></div></th>
-                    <th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="bsim-min-cov" placeholder="Min..." step="0.1" min="0" max="1" value="${p.get('min_coverage') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-cov" placeholder="Max..." step="0.1" min="0" max="1" value="${p.get('max_coverage') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"></div></th>
-                    <th><input type="number" id="bsim-min-shared" placeholder="Min..." min="0" value="${p.get('min_shared') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
+                    <th>
+                        <input type="text" id="bsim-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;">
+                    </th>
+                    <th><input type="text" id="bsim-md5" placeholder="MD5..." value="${escapeAttr(p.get('md5') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box; font-family:monospace;"></th>
+                    <th><input type="text" id="bsim-arch" placeholder="Arch..." value="${escapeAttr(p.get('arch') || '')}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box;"></th>
+                    <th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="bsim-min-funcs" placeholder="Min..." min="0" value="${escapeAttr(p.get('min_funcs') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-funcs" placeholder="Max..." min="0" value="${escapeAttr(p.get('max_funcs') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"></div></th>
+                    <th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="bsim-min-cov" placeholder="Min..." step="0.1" min="0" max="1" value="${escapeAttr(p.get('min_coverage') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-cov" placeholder="Max..." step="0.1" min="0" max="1" value="${escapeAttr(p.get('max_coverage') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"></div></th>
+                    <th><input type="number" id="bsim-min-shared" placeholder="Min..." min="0" value="${escapeAttr(p.get('min_shared') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
                     <th style="position:relative"><div class="tag-filter-container" id="tag-container-bin-sim"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'bin-sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bin-sim', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
@@ -1360,41 +1631,42 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 if (dataTable) dataTable.style.tableLayout = 'fixed';
                 if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
                 headHtml += `<tr class="filter-row">
-                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-uuid" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-id" placeholder="ID..." value="${p.get('cluster_id') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
-                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><select id="bin-cluster-name-type" style="background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.6rem; border-radius:4px; padding:2px; width:100%; box-sizing:border-box;" onchange="changeBinClusterNameType(this.value)"><option value="file" ${nameType === 'file' ? 'selected' : ''}>Most Common File Name</option><option value="yara" ${nameType === 'yara' ? 'selected' : ''}>Most Common Yara</option></select></div></th>
-                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-count" value="${p.get('min_count') || '0'}" min="0" placeholder="Min" title="Min Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-count" value="${p.get('max_count') || ''}" min="0" placeholder="Max" title="Max Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
-                    <th><input type="number" id="flt-bin-cluster-min-stability" value="${p.get('min_stability') || '0'}" step="0.1" min="0" title="Min Stability" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-cohesion" value="${p.get('min_cohesion') || '0'}" step="0.1" min="0" max="1" placeholder="Min" title="Min Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-cohesion" value="${p.get('max_cohesion') || ''}" step="0.1" min="0" max="1" placeholder="Max" title="Max Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-uuid" placeholder="UUID..." value="${escapeAttr(p.get('cluster_uuid') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-id" placeholder="ID..." value="${escapeAttr(p.get('cluster_id') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${escapeAttr(p.get('cluster_name') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><select id="bin-cluster-name-type" style="background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.6rem; border-radius:4px; padding:2px; width:100%; box-sizing:border-box;" onchange="changeBinClusterNameType(this.value)"><option value="file" ${nameType === 'file' ? 'selected' : ''}>Most Common File Name</option><option value="yara" ${nameType === 'yara' ? 'selected' : ''}>Most Common Yara</option></select></div></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-count" value="${escapeAttr(p.get('min_count') || '0')}" min="0" placeholder="Min" title="Min Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-count" value="${escapeAttr(p.get('max_count') || '')}" min="0" placeholder="Max" title="Max Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
+                    <th><input type="number" id="flt-bin-cluster-min-stability" value="${escapeAttr(p.get('min_stability') || '0')}" step="0.1" min="0" title="Min Stability" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-cohesion" value="${escapeAttr(p.get('min_cohesion') || '0')}" step="0.1" min="0" max="1" placeholder="Min" title="Min Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-cohesion" value="${escapeAttr(p.get('max_cohesion') || '')}" step="0.1" min="0" max="1" placeholder="Max" title="Max Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
                     <th></th>
-                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-file-name" placeholder="File Name..." value="${p.get('file_name') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-file-md5" placeholder="MD5..." value="${p.get('file_md5') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-file-md5" placeholder="MD5..." value="${escapeAttr(p.get('file_md5') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
             } else if (path === 'collections') {
                 const msToDate = (ms) => ms ? new Date(+ms).toISOString().slice(0, 10) : '';
-                const numRange = (minId, maxId, minP, maxP) => `<th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="${minId}" placeholder="Min..." min="0" value="${p.get(minP) || ''}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)" style="font-size:0.6rem; width:45%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="${maxId}" placeholder="Max..." min="0" value="${p.get(maxP) || ''}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)" style="font-size:0.6rem; width:45%; box-sizing:border-box;"></div></th>`;
+                const numRange = (minId, maxId, minP, maxP) => `<th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="${minId}" placeholder="Min..." min="0" value="${escapeAttr(p.get(minP) || '')}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)" style="font-size:0.6rem; width:45%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="${maxId}" placeholder="Max..." min="0" value="${escapeAttr(p.get(maxP) || '')}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)" style="font-size:0.6rem; width:45%; box-sizing:border-box;"></div></th>`;
                 headHtml += `<tr class="filter-row">
-                    <th><input type="text" id="flt-coll-name" placeholder="Name..." value="${p.get('name') || ''}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
+                    <th><input type="text" id="flt-coll-name" placeholder="Name..." value="${escapeAttr(p.get('name') || '')}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
                     ${numRange('flt-coll-min-batches', 'flt-coll-max-batches', 'min_batches', 'max_batches')}
                     ${numRange('flt-coll-min-files', 'flt-coll-max-files', 'min_files', 'max_files')}
                     ${numRange('flt-coll-min-functions', 'flt-coll-max-functions', 'min_functions', 'max_functions')}
-                    <th><div style="display:flex; align-items:center; gap:2px;"><input type="date" id="flt-coll-min-date" title="From" value="${msToDate(p.get('min_last_updated'))}" onchange="debouncedSearch(applyCollectionSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"><input type="date" id="flt-coll-max-date" title="To" value="${msToDate(p.get('max_last_updated'))}" onchange="debouncedSearch(applyCollectionSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"></div></th>
+                    <th><div style="display:flex; align-items:center; gap:2px;"><input type="date" id="flt-coll-min-date" title="From" value="${escapeAttr(msToDate(p.get('min_last_updated')))}" onchange="debouncedSearch(applyCollectionSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"><input type="date" id="flt-coll-max-date" title="To" value="${escapeAttr(msToDate(p.get('max_last_updated')))}" onchange="debouncedSearch(applyCollectionSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"></div></th>
+                    <th></th>
                     <th></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
             } else if (path === 'pools') {
                 const msToDate = (ms) => ms ? new Date(+ms).toISOString().slice(0, 10) : '';
                 const status = p.get('sync_status') || '';
-                const statusOpts = ['', 'current', 'outdated', 'created'].map(s => `<option value="${s}" ${status === s ? 'selected' : ''}>${s ? s.toUpperCase() : 'All'}</option>`).join('');
+                const statusOpts = ['', 'current', 'outdated', 'created'].map(s => `<option value="${escapeAttr(s)}" ${status === s ? 'selected' : ''}>${s ? s.toUpperCase() : 'All'}</option>`).join('');
                 headHtml += `<tr class="filter-row">
-                    <th><input type="text" id="flt-pool-id" placeholder="ID..." value="${p.get('id') || ''}" onchange="debouncedSearch(applyPoolSearch)" onkeydown="handleFilterKey(event, applyPoolSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
-                    <th><input type="text" id="flt-pool-name" placeholder="Name..." value="${p.get('name') || ''}" onchange="debouncedSearch(applyPoolSearch)" onkeydown="handleFilterKey(event, applyPoolSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
+                    <th><input type="text" id="flt-pool-id" placeholder="ID..." value="${escapeAttr(p.get('id') || '')}" onchange="debouncedSearch(applyPoolSearch)" onkeydown="handleFilterKey(event, applyPoolSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
+                    <th><input type="text" id="flt-pool-name" placeholder="Name..." value="${escapeAttr(p.get('name') || '')}" onchange="debouncedSearch(applyPoolSearch)" onkeydown="handleFilterKey(event, applyPoolSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
                     <th></th>
                     <th></th>
                     <th></th>
                     <th></th>
                     <th></th>
-                    <th><select id="flt-pool-status" onchange="applyPoolSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOpts}</select></th>
-                    <th><div style="display:flex; align-items:center; gap:2px;"><input type="date" id="flt-pool-min-date" title="From" value="${msToDate(p.get('min_created_at'))}" onchange="debouncedSearch(applyPoolSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"><input type="date" id="flt-pool-max-date" title="To" value="${msToDate(p.get('max_created_at'))}" onchange="debouncedSearch(applyPoolSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"></div></th>
+                    <th><select id="flt-pool-status" onchange="applyPoolSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOpts}</select></th>
+                    <th><div style="display:flex; align-items:center; gap:2px;"><input type="date" id="flt-pool-min-date" title="From" value="${escapeAttr(msToDate(p.get('min_created_at')))}" onchange="debouncedSearch(applyPoolSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"><input type="date" id="flt-pool-max-date" title="To" value="${escapeAttr(msToDate(p.get('max_created_at')))}" onchange="debouncedSearch(applyPoolSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"></div></th>
                     <th></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
@@ -1428,25 +1700,25 @@ function updateUI(viewKey, collection, params, route, force = false) {
             // Search Bar building
             if (searchArea) {
                 if (path === 'files') {
-                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="file-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFileSearch()" title="Search"></i></div></div>`;
+                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="file-search-input" placeholder="Search by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFileSearch()" title="Search"></i></div></div>`;
                 } else if (path === 'functions') {
                     const fileMd5 = p.get('file_md5');
                     const callGraphBtn = fileMd5 ? `<a class="btn-action" onclick="Nav.openPath('/collections/${encodeURIComponent(p.get('collection'))}/files/${encodeURIComponent(fileMd5)}/functions', event, { title: 'Call Graph: ${fileMd5}', type: 'call_graph' })" style="color:var(--accent); margin-left:10px; padding: 6px 12px; border:1px solid var(--accent); border-radius:4px; font-size:0.8rem; cursor:pointer;">View File Call Graph 🕸️</a>` : '';
-                    searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="func-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFuncSearch()" title="Search"></i></div>${callGraphBtn}</div></div>`;
+                    searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="func-search-input" placeholder="Search by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFuncSearch()" title="Search"></i></div>${callGraphBtn}</div></div>`;
                 } else if (path === 'features-global') {
-                    searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="feature-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFeatureSearch()" title="Search"></i></div></div></div>`;
+                    searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="feature-search-input" placeholder="Search by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFeatureSearch()" title="Search"></i></div></div></div>`;
                 } else if (path === 'function-similarity') {
-                    searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="sim-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applySimSearch()" title="Search"></i></div></div></div>`;
+                    searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="sim-search-input" placeholder="Search by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applySimSearch()" title="Search"></i></div></div></div>`;
                 } else if (path === 'clusters') {
-                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="cluster-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyClusterSearch()" title="Search"></i></div></div>`;
+                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="cluster-search-input" placeholder="Search by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyClusterSearch()" title="Search"></i></div></div>`;
                 } else if (path === 'bin-clusters') {
-                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="bin-cluster-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyBinClusterSearch()" title="Search"></i></div></div>`;
+                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="bin-cluster-search-input" placeholder="Search by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyBinClusterSearch()" title="Search"></i></div></div>`;
                 } else if (path === 'binary-similarity') {
-                    searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="bsim-search-input" placeholder="Search similarities by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyBinSimSearch()" title="Search"></i></div></div></div>`;
+                    searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="bsim-search-input" placeholder="Search similarities by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyBinSimSearch()" title="Search"></i></div></div></div>`;
                 } else if (path === 'collections') {
-                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="collection-search-input" placeholder="Search collections by name..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyCollectionSearch()" title="Search"></i></div></div>`;
+                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="collection-search-input" placeholder="Search collections by name..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyCollectionSearch()" title="Search"></i></div></div>`;
                 } else if (path === 'pools') {
-                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="pool-search-input" placeholder="Search pools by name, id, collection..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyPoolSearch)" onkeydown="handleFilterKey(event, applyPoolSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyPoolSearch()" title="Search"></i></div></div>`;
+                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="pool-search-input" placeholder="Search pools by name, id, collection..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyPoolSearch)" onkeydown="handleFilterKey(event, applyPoolSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyPoolSearch()" title="Search"></i></div></div>`;
                 } else { searchArea.innerHTML = ''; }
             }
         } else {
@@ -1518,7 +1790,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
             syncInput('flt-pool-id', 'id'); syncInput('flt-pool-name', 'name'); syncSelect('flt-pool-status', 'sync_status', '');
             syncDate('flt-pool-min-date', 'min_created_at'); syncDate('flt-pool-max-date', 'max_created_at');
         } else if (path === 'binary-similarity') {
-            syncSelect('bsim-score-type', 'sort', 'score'); syncInput('bsim-min-score', 'min_score'); syncInput('bsim-max-score', 'max_score'); syncInput('bsim-file-name', 'file_name'); syncInput('bsim-md5', 'md5'); syncInput('bsim-arch', 'arch');
+            syncBinSimTags(p); syncInput('bsim-min-score', 'min_score'); syncInput('bsim-max-score', 'max_score'); syncInput('bsim-file-name', 'file_name'); syncInput('bsim-md5', 'md5'); syncInput('bsim-arch', 'arch');
             syncInput('bsim-min-funcs', 'min_funcs'); syncInput('bsim-max-funcs', 'max_funcs'); syncInput('bsim-min-cov', 'min_coverage'); syncInput('bsim-max-cov', 'max_coverage'); syncInput('bsim-min-shared', 'min_shared');
         } else if (path === 'jobs') {
             syncSelect('job-type-filter', 'type'); syncSelect('job-collection-filter', 'collection'); syncSelect('job-status-filter', 'status');
@@ -1583,7 +1855,9 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 const isEx = f.startsWith('exclude_');
                 const baseType = isEx ? f.substring(8) : f;
                 values.forEach(v => {
-                    if (v) createTagCard(col.key, baseType, v, isEx);
+                    if (!v) return;
+                    const parsed = unquoteFilterValue(v);
+                    createTagCard(col.key, baseType, parsed.value, isEx, parsed.literal);
                 });
             });
         });
@@ -1683,6 +1957,12 @@ function applySearch() {
 
 function toggleSort(key) {
     const { viewKey, params } = getRoutingState();
+    // ponytail: bin-sim "Score" column must sort on whichever score type
+    // (lib/original/content) is active in the score-type dropdown, not
+    // always the overall 'score' field.
+    if (viewKey === 'binary-similarity' && key === 'score') {
+        key = params.get('sort') || 'score';
+    }
     const currentSort = params.get('sort_by');
     const currentOrder = params.get('sort_order') || 'desc';
 
@@ -1759,7 +2039,8 @@ function applyAdvancedFuncSearch() {
             const val = card.dataset.value;
             const isEx = card.dataset.exclude === 'true';
             const key = (isEx ? 'exclude_' : '') + type;
-            params.append(key, val);
+            // Quote unless the user hand-typed a wildcard (see quoteFilterValue).
+            params.append(key, quoteFilterValue(val, card.dataset.literal !== 'false'));
         });
     });
 
@@ -1865,7 +2146,8 @@ function applySimSearch() {
             const val = card.dataset.value;
             const isEx = card.dataset.exclude === 'true';
             const key = (isEx ? 'exclude_' : '') + type;
-            params.append(key, val);
+            // Quote unless the user hand-typed a wildcard (see quoteFilterValue).
+            params.append(key, quoteFilterValue(val, card.dataset.literal !== 'false'));
         });
     });
 
@@ -1893,6 +2175,7 @@ function applyAdvancedFileSearch() {
     const md5Flt = document.getElementById('flt-file-md5')?.value;
     const langFlt = document.getElementById('flt-file-language')?.value;
     const batchFlt = document.getElementById('flt-file-batch')?.value;
+    const statusFlt = document.getElementById('flt-file-status')?.value;
     const minEntryFlt = document.getElementById('flt-file-min-date')?.value;
     const maxEntryFlt = document.getElementById('flt-file-max-date')?.value;
     const minFuncsFlt = document.getElementById('flt-file-min-funcs')?.value;
@@ -1913,6 +2196,7 @@ function applyAdvancedFileSearch() {
     if (md5Flt) params.set('file_md5', md5Flt); else params.delete('file_md5');
     if (langFlt) params.set('language_id', langFlt); else params.delete('language_id');
     if (batchFlt) params.set('batch_uuid', batchFlt); else params.delete('batch_uuid');
+    if (statusFlt) params.set('status', statusFlt); else params.delete('status');
     if (minEntryFlt) params.set('min_entry_date', minEntryFlt); else params.delete('min_entry_date');
     if (maxEntryFlt) params.set('max_entry_date', maxEntryFlt); else params.delete('max_entry_date');
     if (minFuncsFlt) params.set('min_function_count', minFuncsFlt); else params.delete('min_function_count');
@@ -1949,7 +2233,8 @@ function applyAdvancedFileSearch() {
             const val = card.dataset.value;
             const isEx = card.dataset.exclude === 'true';
             const key = (isEx ? 'exclude_' : '') + type;
-            params.append(key, val);
+            // Quote unless the user hand-typed a wildcard (see quoteFilterValue).
+            params.append(key, quoteFilterValue(val, card.dataset.literal !== 'false'));
         });
     }
 
@@ -1978,6 +2263,12 @@ window.applyJobSearch = applyJobSearch;
 
 
 function triggerTagSearch() {
+    // The bin-sim detail table filters its own rows in place; it must not fall
+    // through to the binary-similarity LIST search, which navigates.
+    if (document.getElementById('tag-container-bsim-sim')) {
+        binSimFilterChange(true);
+        return;
+    }
     const { viewKey } = getRoutingState();
     if (viewKey === 'function-similarity') debouncedSearch(applySimSearch);
     else if (viewKey === 'binary-similarity') debouncedSearch(applyBinSimSearch);
@@ -2018,7 +2309,7 @@ function applyAdvancedFeatureSearch() {
     navigate(viewKey, params);
 }
 
-function createTagCard(columnId, type, value, isExclude = false) {
+function createTagCard(columnId, type, value, isExclude = false, literal = true) {
     const container = document.getElementById(`tag-container-${columnId}`);
     if (!container) return;
 
@@ -2030,10 +2321,11 @@ function createTagCard(columnId, type, value, isExclude = false) {
     card.dataset.value = value;
     card.dataset.type = type;
     card.dataset.exclude = isExclude;
+    card.dataset.literal = literal;
 
     card.innerHTML = `
         <span class="btn-card-ex" title="Toggle Exclude" onclick="toggleCardExclude(this)">NOT</span>
-        <span class="tag-text" title="${value}">${value}</span>
+        <span class="tag-text" title="${escapeAttr(value)}">${value}</span>
         <span class="btn-card-remove" title="Remove" onclick="this.parentElement.remove(); triggerTagSearch();">×</span>
     `;
 
@@ -2053,7 +2345,7 @@ function handleTagAdd(event, columnId) {
         const val = event.target.value.replace(',', '').trim();
         if (val) {
             let type = (columnId === 'sim' ? 'sim_tag' : (columnId === 'func' ? 'func_tag' : 'file_tag'));
-            createTagCard(columnId, type, val);
+            createTagCard(columnId, type, val, false, false);
             event.target.value = '';
             triggerTagSearch();
         }
@@ -2146,7 +2438,9 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
     return items.map(p => {
         const s1 = p.id1.split(':');
         const s2 = p.id2.split(':');
-        const col = s1[0];
+        // Pool pairs can cross collections, so each side keeps its own.
+        const col = p.meta1?.collection || s1[0];
+        const col2 = p.meta2?.collection || s2[0];
 
         const offset1 = s1[0] === 'idx' ? 1 : 0;
         const offset2 = s2[0] === 'idx' ? 1 : 0;
@@ -2179,7 +2473,7 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
             function_name: p.name2 || p.meta2?.function_name,
             function_id: p.id2,
             entrypoint_address: addr2,
-            collection: col
+            collection: col2
         };
 
         // Single best-shared cluster for the pair (empty when the two share none).
@@ -2220,16 +2514,16 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
         }
 
         return `
-        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${pairId}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}"
-            data-entity-data='${JSON.stringify(p).replace(/'/g, "&apos;")}'
+        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(pairId)}" data-id1="${escapeAttr(p.id1)}" data-id2="${escapeAttr(p.id2)}" data-algo="${escapeAttr(p.algo)}" data-sid="${escapeAttr(p.sid || '')}"
+            data-entity-data='${escapeAttr(JSON.stringify(p))}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'similarity', this)">
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
                     <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
-                        onmouseenter="showDiffPreview('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', ${p.score}, event)"
+                        onmouseenter="showDiffPreview(${escapeAttr(jsString(p.id1))}, ${escapeAttr(jsString(p.name1 || ''))}, ${escapeAttr(jsString(p.id2))}, ${escapeAttr(jsString(p.name2 || ''))}, ${Number(p.score) || 0}, event)"
                         onmousemove="moveCodePreview(event)"
                         onmouseleave="hideDiffPreview(event)"
-                        onclick="openDiffDirectly('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', event)"
+                        onclick="openDiffDirectly(${escapeAttr(jsString(p.id1))}, ${escapeAttr(jsString(p.name1 || ''))}, ${escapeAttr(jsString(p.id2))}, ${escapeAttr(jsString(p.name2 || ''))}, event)"
                         title="Run Aligned Diff">${(p.score * 100).toFixed(1)}%</div>
                 </div>
                 ${EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
@@ -2246,8 +2540,8 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent);">@ ${addr1}</span></div>
-                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent);">@ ${addr2}</span></div>
+                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent);">@ ${escapeHtml(addr1)}</span></div>
+                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent);">@ ${escapeHtml(addr2)}</span></div>
                 </div>
             </td>
             <td>
@@ -2257,17 +2551,17 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
                 </div>
             </td>
             <td>
-                <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(sharedClusters).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(sharedClusters)}</div>
+                <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${escapeAttr(JSON.stringify(sharedClusters))}'>${EntityRenderer.renderClusterCard(sharedClusters)}</div>
             </td>
             <td class="sim-cell" style="text-align:center; vertical-align:middle;">
                 <div style="display:flex; flex-direction:column; gap:8px;">
                     <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
                         <span class="mono" style="color:var(--accent);">${p.meta1?.bsim_features_count || 0}</span>
-                        <button class="btn-icon" onclick="showFeaturePanel('${p.id1}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
+                        <button class="btn-icon" onclick="showFeaturePanel(${escapeAttr(jsString(p.id1))}, event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
                     </div>
                     <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
                         <span class="mono" style="color:var(--accent);">${p.meta2?.bsim_features_count || 0}</span>
-                        <button class="btn-icon" onclick="showFeaturePanel('${p.id2}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
+                        <button class="btn-icon" onclick="showFeaturePanel(${escapeAttr(jsString(p.id2))}, event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
                     </div>
                 </div>
             </td>
@@ -2283,8 +2577,8 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}">${EntityRenderer.renderFileName(p.meta1?.file_name, m1, col)}</div>
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}">${EntityRenderer.renderFileName(p.meta2?.file_name, m2, col)}</div>
+                    <div style="color:var(--meta-text-muted); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${escapeAttr(p.meta1?.file_name)}">${EntityRenderer.renderFileName(p.meta1?.file_name, m1, col)}</div>
+                    <div style="color:var(--meta-text-muted); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${escapeAttr(p.meta2?.file_name)}">${EntityRenderer.renderFileName(p.meta2?.file_name, m2, col2)}</div>
                 </div>
             </td>
             <td class="sim-cell">
@@ -2296,7 +2590,7 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
             <td>
                 <div style="display:flex; flex-direction:column; gap:8px;">
                     <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${col}:file:${p.meta1?.file_md5}`, p.meta1?.file_tags || [], p.meta1?.file_user_tags || [])}</div>
-                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${col}:file:${p.meta2?.file_md5}`, p.meta2?.file_tags || [], p.meta2?.file_user_tags || [])}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${col2}:file:${p.meta2?.file_md5}`, p.meta2?.file_tags || [], p.meta2?.file_user_tags || [])}</div>
                 </div>
             </td>
             <td class="sim-cell">
@@ -2311,6 +2605,7 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
                     <div style="min-height:24px; display:flex; align-items:center;"><span class="dim" style="font-size:0.7rem;">${formatDate(p.meta2?.entry_date)}</span></div>
                 </div>
             </td>
+            ${window.renderCollectionCell ? window.renderCollectionCell(col, col2) : ''}
         </tr>
     `}).join('');
 }
@@ -2653,9 +2948,16 @@ const UIParams = {
     cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.95,
     colorByTag: localStorage.getItem('colorByTag') === 'true',
     includeHeaders: localStorage.getItem('includeHeaders') === 'true',
-    useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? false : localStorage.getItem('useFloatingWindows') === 'true'
+    useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? false : localStorage.getItem('useFloatingWindows') === 'true',
+    lightTheme: localStorage.getItem('lightTheme') === 'true'
 };
 window.UIParams = UIParams;
+
+// Apply theme early on load
+// ponytail: light theme initialization
+if (UIParams.lightTheme) {
+    document.documentElement.classList.add('light-theme');
+}
 
 function toggleUISettings() {
     const panel = document.getElementById('ui-settings-panel');
@@ -2668,10 +2970,19 @@ function updateUIParams() {
     UIParams.colorByTag = document.getElementById('param-color-tags').checked;
     UIParams.includeHeaders = document.getElementById('param-include-headers').checked;
     UIParams.useFloatingWindows = document.getElementById('param-use-floating-windows').checked;
+    UIParams.lightTheme = document.getElementById('param-light-theme').checked;
 
     localStorage.setItem('colorByTag', UIParams.colorByTag);
     localStorage.setItem('includeHeaders', UIParams.includeHeaders);
     localStorage.setItem('useFloatingWindows', UIParams.useFloatingWindows);
+    localStorage.setItem('lightTheme', UIParams.lightTheme);
+
+    // ponytail: light theme toggle action
+    if (UIParams.lightTheme) {
+        document.documentElement.classList.add('light-theme');
+    } else {
+        document.documentElement.classList.remove('light-theme');
+    }
 
     // Sync with sim-color-by-tag for tags.js compatibility
     localStorage.setItem('sim-color-by-tag', UIParams.colorByTag);
@@ -2715,9 +3026,11 @@ function loadUIParams() {
     const elColorTags = document.getElementById('param-color-tags');
     const elIncludeHeaders = document.getElementById('param-include-headers');
     const elFloatingWindows = document.getElementById('param-use-floating-windows');
+    const elLightTheme = document.getElementById('param-light-theme');
     if (elColorTags) elColorTags.checked = UIParams.colorByTag;
     if (elIncludeHeaders) elIncludeHeaders.checked = UIParams.includeHeaders;
     if (elFloatingWindows) elFloatingWindows.checked = UIParams.useFloatingWindows;
+    if (elLightTheme) elLightTheme.checked = UIParams.lightTheme;
 }
 
 window.addEventListener('load', () => {
@@ -2725,10 +3038,7 @@ window.addEventListener('load', () => {
 
     const { collection, viewKey, pool } = getRoutingState();
     updateNavVisibility(collection);
-    if (window.location.pathname === '/' || window.location.pathname === '') {
-        history.replaceState(null, '', '/collections');
-    }
-    
+
     if (window.location.hash && (window.location.pathname === '/' || window.location.pathname === '')) {
         // Migration for users with bookmarks
         const [hashPath, queryString] = window.location.hash.split('?');
@@ -2865,8 +3175,8 @@ window.addEventListener('load', () => {
         const algo = params.get('algo') || 'unweighted_cosine';
 
         // Select all possible buttons
-        const btns = document.querySelectorAll('.nav-rebuild-btn, #header-rebuild-all-btn');
-        const icons = document.querySelectorAll('.nav-rebuild-icon, #header-rebuild-all-icon');
+        const btns = document.querySelectorAll('.nav-rebuild-btn');
+        const icons = document.querySelectorAll('.nav-rebuild-icon');
 
         btns.forEach(btn => btn.disabled = true);
         icons.forEach(icon => icon.classList.add('fa-spin'));
@@ -2914,13 +3224,23 @@ window.addEventListener('load', () => {
             const icon = document.getElementById('nav-jobs-icon');
             const navLink = document.getElementById('nav-jobs');
 
-            const isActive = stats.active_workers > 0 || stats.pending_jobs > 0;
+            // active_workers is now a real worker-process count, so the spinner
+            // keys off running jobs instead -- otherwise an idle-but-alive fleet
+            // would spin forever.
+            const activeJobs = stats.active_jobs_count ?? 0;
+            const isActive = activeJobs > 0 || stats.pending_jobs > 0;
+
+            if (isActive && typeof refreshActiveJobsByTarget === 'function') {
+                refreshActiveJobsByTarget();
+            } else {
+                window.activeJobsByTarget = {};
+            }
 
             if (loader && icon && navLink) {
                 if (isActive) {
                     loader.style.display = 'block';
                     icon.style.display = 'none';
-                    navLink.title = `${stats.active_workers} active, ${stats.pending_jobs} pending jobs`;
+                    navLink.title = `${activeJobs} active, ${stats.pending_jobs} pending jobs (${stats.active_workers} workers)`;
                 } else {
                     loader.style.display = 'none';
                     icon.style.display = 'inline-block';
@@ -2929,8 +3249,8 @@ window.addEventListener('load', () => {
             }
 
             // Update rebuild buttons
-            const btns = document.querySelectorAll('.nav-rebuild-btn, #header-rebuild-all-btn');
-            const icons = document.querySelectorAll('.nav-rebuild-icon, #header-rebuild-all-icon');
+            const btns = document.querySelectorAll('.nav-rebuild-btn');
+            const icons = document.querySelectorAll('.nav-rebuild-icon');
 
             const { collection: currentCollection, pool: currentPool, viewKey: path } = getRoutingState();
 
@@ -2949,21 +3269,8 @@ window.addEventListener('load', () => {
                 else icon.classList.remove('fa-spin');
             });
 
-            // Handle Header Rebuild Button Visibility (only if sidebar is collapsed AND view is Clusters/BinSim)
-            const headerRebuildBtn = document.getElementById('header-rebuild-all-btn');
-            if (headerRebuildBtn) {
-                const isCollapsed = document.body.classList.contains('sidebar-collapsed');
-                const isRelevantView = (path === 'clusters' || path === 'binary-similarity');
-
-                if (isCollapsed && isRelevantView) {
-                    headerRebuildBtn.style.display = 'inline-flex';
-                } else {
-                    headerRebuildBtn.style.display = 'none';
-                }
-            }
-
             // Update view-specific job indicator
-            const activeJobs = stats.active_jobs || [];
+            const activeJobList = stats.active_jobs || [];
             const isJobInContext = (job) => {
                 if (currentPool) {
                     return job.pool_id === currentPool || job.collection === `pool:${currentPool}` || (currentCollection && job.collection === currentCollection);
@@ -3007,7 +3314,7 @@ window.addEventListener('load', () => {
                     .join(' ');
             };
 
-            const matchingJob = activeJobs.find(job => isJobInContext(job) && isJobRelevant(job));
+            const matchingJob = activeJobList.find(job => isJobInContext(job) && isJobRelevant(job));
             const statusBadge = document.getElementById('view-job-status');
             if (statusBadge) {
                 if (matchingJob) {
@@ -3060,7 +3367,7 @@ function renderClusters(items) {
 
         const sampleMembersHtml = (c.sample_members || []).slice(0, 3).map(m => {
             if (typeof m === 'string') {
-                return `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${m}">${m}</div>`;
+                return `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeAttr(m)}">${m}</div>`;
             }
             return `
                 <div style="margin-bottom:2px; width: 100%;">
@@ -3070,37 +3377,39 @@ function renderClusters(items) {
         }).join('') + (showDots ? `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); padding-left:2px; line-height:1;">and ${remaining} others ...</div>` : '') || '<span class="dim">—</span>';
 
         return `
-        <tr data-cluster-id="${c.cluster_id}"
-            data-entity-data='${JSON.stringify({
+        <tr data-cluster-id="${escapeAttr(c.cluster_id)}"
+            data-entity-data='${escapeAttr(JSON.stringify({
             cluster_id: c.cluster_id,
             cluster_uuid: c.cluster_uuid,
             cluster_name: c.cluster_name
-        }).replace(/'/g, "&apos;")}'
+        }))}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'cluster', this)">
-            <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
-                ${(c.cluster_uuid || '').substring(0, 8)}
+            <td class="mono cluster-uuid-id-cell" data-uuid="${escapeAttr(c.cluster_uuid)}" data-id="${escapeAttr(c.cluster_id)}">
+                <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('functions', new URLSearchParams('cluster_uuid=' + ${escapeAttr(jsString(c.cluster_uuid))}), ${collection ? escapeAttr(jsString(collection)) : 'null'})" style="color:var(--accent); text-decoration:none;">
+                    ${(c.cluster_uuid || '').substring(0, 8)}
+                </a>
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
             </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <span id="name-display-${c.cluster_id}" style="cursor:pointer;">${c.cluster_name}</span>
-                    <button class="btn-action" title="Rename" onclick="renameCluster('${c.cluster_id}', '${c.cluster_name}')"><i class="fa-solid fa-pen"></i></button>
+                    <span id="name-display-${escapeAttr(c.cluster_id)}" style="cursor:pointer;">${escapeHtml(c.cluster_name)}</span>
+                    <button class="btn-action" title="Rename" onclick="renameCluster(${escapeAttr(jsString(c.cluster_id))}, ${escapeAttr(jsString(c.cluster_name || ''))})"><i class="fa-solid fa-pen"></i></button>
                 </div>
             </td>
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
-                    <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('functions', new URLSearchParams('cluster_uuid=' + '${c.cluster_uuid}'), ${(collection ? `'${collection}'` : 'null')})" class="btn-action" title="Functions" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">
+                    <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('functions', new URLSearchParams('cluster_uuid=' + ${escapeAttr(jsString(c.cluster_uuid))}), ${collection ? escapeAttr(jsString(collection)) : 'null'})" class="btn-action" title="Functions" onmouseenter="showClusterTableTooltip(event, ${escapeAttr(jsString(c.cluster_uuid))}, ${escapeAttr(jsString(c.cluster_name || ''))}, ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">
                         <i class="fa-solid fa-code"></i>
                     </a>
-                    <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('function-similarity', new URLSearchParams('cluster_uuid=' + '${c.cluster_uuid}'), ${(collection ? `'${collection}'` : 'null')})" class="btn-action" title="Similarities" style="color:var(--info)">
+                    <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('function-similarity', new URLSearchParams('cluster_uuid=' + ${escapeAttr(jsString(c.cluster_uuid))}), ${collection ? escapeAttr(jsString(collection)) : 'null'})" class="btn-action" title="Similarities" style="color:var(--info)">
                         <i class="fa-solid fa-code-compare"></i>
                     </a>
                 </div>
             </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                    <div style="flex:1; height:4px; background:var(--border); border-radius:2px; overflow:hidden; min-width:60px;">
                         <div style="height:100%; background:var(--success); width:${Math.min(100, c.avg_stability).toFixed(0)}%"></div>
                     </div>
                     <span class="dim">${(c.avg_stability).toFixed(2)}</span>
@@ -3109,7 +3418,7 @@ function renderClusters(items) {
             <td class="mono dim">${(c.avg_features || 0).toFixed(1)}</td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                    <div style="flex:1; height:4px; background:var(--border); border-radius:2px; overflow:hidden; min-width:60px;">
                         <div style="height:100%; background:var(--info); width:${((c.cohesion_score || 0) * 100).toFixed(0)}%"></div>
                     </div>
                     <span class="dim">${(c.cohesion_score || 0).toFixed(2)}</span>
@@ -3233,29 +3542,31 @@ function renderBinClusters(items) {
 
         const sampleMembersHtml = (c.sample_members || []).slice(0, 3).map(m => {
             if (typeof m === 'string') {
-                return `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${m}">${m}</div>`;
+                return `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeAttr(m)}">${m}</div>`;
             }
             // For binaries, we don't have a standardized renderer yet, but we can wrap them
-            return `<div class="mono" style="font-size:0.7rem; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${m.name}">${m.name}</div>`;
+            return `<div class="mono" style="font-size:0.7rem; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeAttr(m.name)}">${escapeHtml(m.name)}</div>`;
         }).join('') + (showDots ? `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); padding-left:2px; line-height:1;">and ${remaining} others ...</div>` : '') || '<span class="dim">—</span>';
 
         return `
-        <tr data-cluster-id="${c.cluster_id}"
-            data-entity-data='${JSON.stringify({
+        <tr data-cluster-id="${escapeAttr(c.cluster_id)}"
+            data-entity-data='${escapeAttr(JSON.stringify({
             cluster_id: c.cluster_id,
             cluster_uuid: c.cluster_uuid,
             cluster_name: displayName
-        }).replace(/'/g, "&apos;")}'
+        }))}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
-            <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
-                ${(c.cluster_uuid || '').substring(0, 8)}
+            <td class="mono cluster-uuid-id-cell" data-uuid="${escapeAttr(c.cluster_uuid)}" data-id="${escapeAttr(c.cluster_id)}">
+                <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('files', new URLSearchParams('bin_cluster_uuid=' + ${escapeAttr(jsString(c.cluster_uuid))}), ${collection ? escapeAttr(jsString(collection)) : 'null'})" style="color:var(--accent); text-decoration:none;">
+                    ${(c.cluster_uuid || '').substring(0, 8)}
+                </a>
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; gap:4px;">
                     <div style="display:flex; align-items:center; gap:8px;">
-                        <span id="name-display-bin-${c.cluster_id}" style="cursor:pointer; font-weight:bold;">${displayName}</span>
-                        <button class="btn-action" title="Rename" onclick="renameBinCluster('${c.cluster_id}', '${(c.cluster_name || '').replace(/'/g, "\\'")}')"><i class="fa-solid fa-pen"></i></button>
+                        <span id="name-display-bin-${escapeAttr(c.cluster_id)}" style="cursor:pointer; font-weight:bold;">${escapeHtml(displayName)}</span>
+                        <button class="btn-action" title="Rename" onclick="renameBinCluster(${escapeAttr(jsString(c.cluster_id))}, ${escapeAttr(jsString(c.cluster_name || ''))})"><i class="fa-solid fa-pen"></i></button>
                     </div>
                     <div class="dim" style="font-size:0.65rem; display:flex; flex-direction:column; gap:2px;">
                         ${c.yara_distribution && c.yara_distribution.length ? `<div>Yara: <span style="color:var(--accent)">${c.yara_distribution[0].value} (${c.yara_distribution[0].percent}%)</span></div>` : ''}
@@ -3266,14 +3577,14 @@ function renderBinClusters(items) {
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
-                    <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('files', new URLSearchParams('bin_cluster_uuid=' + '${c.cluster_uuid}'), ${(collection ? `'${collection}'` : 'null')})" class="btn-action" title="Binaries" onmouseenter="showBinClusterTableTooltip(event, '${c.cluster_uuid}', '${(displayName || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideBinClusterTableTooltip(event)" onmousemove="moveBinClusterTableTooltip(event)">
+                    <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('files', new URLSearchParams('bin_cluster_uuid=' + ${escapeAttr(jsString(c.cluster_uuid))}), ${collection ? escapeAttr(jsString(collection)) : 'null'})" class="btn-action" title="Binaries" onmouseenter="showBinClusterTableTooltip(event, ${escapeAttr(jsString(c.cluster_uuid))}, ${escapeAttr(jsString(displayName || ''))}, ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideBinClusterTableTooltip(event)" onmousemove="moveBinClusterTableTooltip(event)">
                         <i class="fa-solid fa-file-code"></i>
                     </a>
                 </div>
             </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                    <div style="flex:1; height:4px; background:var(--border); border-radius:2px; overflow:hidden; min-width:60px;">
                         <div style="height:100%; background:var(--success); width:${Math.min(100, c.avg_stability).toFixed(0)}%"></div>
                     </div>
                     <span class="dim">${(c.avg_stability).toFixed(2)}</span>
@@ -3281,7 +3592,7 @@ function renderBinClusters(items) {
             </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                    <div style="flex:1; height:4px; background:var(--border); border-radius:2px; overflow:hidden; min-width:60px;">
                         <div style="height:100%; background:var(--info); width:${((c.cohesion_score || 0) * 100).toFixed(0)}%"></div>
                     </div>
                     <span class="dim">${(c.cohesion_score || 0).toFixed(2)}</span>
@@ -3610,6 +3921,9 @@ window.renameCluster = renameCluster;
 window.refreshData = refreshData;
 window.clearFilters = clearFilters;
 window.resetColumnWidths = resetColumnWidths;
+window.toggleFilterActionsDropdown = toggleFilterActionsDropdown;
+window.closeFilterActionsDropdown = closeFilterActionsDropdown;
+window.addNotIgnoreFilters = addNotIgnoreFilters;
 window.toggleSort = toggleSort;
 window.applySearch = applySearch;
 window.switchSimView = switchSimView;
@@ -3717,7 +4031,8 @@ const viewMetaData = {
     'features-global': { name: 'Features', icon: 'fa-fingerprint' },
     'function-similarity': { name: 'Similarities', icon: 'fa-code-compare' },
     'clusters': { name: 'Clusters', icon: 'fa-bullseye' },
-    'bin-clusters': { name: 'Bin Clusters', icon: 'fa-bullseye' }
+    'bin-clusters': { name: 'Bin Clusters', icon: 'fa-bullseye' },
+    'tags': { name: 'Tags', icon: 'fa-tags' }
 };
 
 function getFilterSummary(path, params) {
@@ -4010,11 +4325,11 @@ function renderHistoryDropdowns() {
                     <div class="history-item" onclick="loadHistoryItemByTimestamp(${item.timestamp})">
                         <div class="history-item-header">
                             <i class="fa-solid ${meta.icon}"></i>
-                            <span class="history-item-view-name">${meta.name}</span>
+                            <span class="history-item-view-name">${escapeHtml(meta.name)}</span>
                             <span class="history-item-graph-type">${graphType}</span>
-                            <span class="history-item-time" title="${new Date(item.timestamp).toLocaleString()}">${formatRelativeTime(item.timestamp)}</span>
+                            <span class="history-item-time" title="${escapeAttr(new Date(item.timestamp).toLocaleString())}">${formatRelativeTime(item.timestamp)}</span>
                         </div>
-                        <div class="history-item-summary" title="${esc(item.summary)}">${esc(item.summary)}</div>
+                        <div class="history-item-summary" title="${escapeAttr(esc(item.summary))}">${esc(item.summary)}</div>
                     </div>`;
             });
             globalDropdown.innerHTML = html;
@@ -4037,7 +4352,7 @@ function renderHistoryDropdowns() {
             let html = `
                 <div class="history-dropdown-title">
                     <span>View History</span>
-                    <button class="history-dropdown-clear-btn" onclick="clearViewHistory(event, '${currentPath}')">
+                    <button class="history-dropdown-clear-btn" onclick="clearViewHistory(event, ${escapeAttr(jsString(currentPath))})">
                         <i class="fa-solid fa-trash-can"></i> Clear View
                     </button>
                 </div>`;
@@ -4053,11 +4368,11 @@ function renderHistoryDropdowns() {
                     <div class="history-item" onclick="loadHistoryItemByTimestamp(${item.timestamp})">
                         <div class="history-item-header">
                             <i class="fa-solid ${meta.icon}"></i>
-                            <span class="history-item-view-name">${meta.name}</span>
+                            <span class="history-item-view-name">${escapeHtml(meta.name)}</span>
                             <span class="history-item-graph-type">${graphType}</span>
-                            <span class="history-item-time" title="${new Date(item.timestamp).toLocaleString()}">${formatRelativeTime(item.timestamp)}</span>
+                            <span class="history-item-time" title="${escapeAttr(new Date(item.timestamp).toLocaleString())}">${formatRelativeTime(item.timestamp)}</span>
                         </div>
-                        <div class="history-item-summary" title="${esc(item.summary)}">${esc(item.summary)}</div>
+                        <div class="history-item-summary" title="${escapeAttr(esc(item.summary))}">${esc(item.summary)}</div>
                     </div>`;
             });
             viewDropdown.innerHTML = html;
@@ -4323,7 +4638,6 @@ async function renderPoolCreationForm() {
     const funcClusterEpsilon = clustering.epsilon !== undefined ? clustering.epsilon : 0.1;
     const funcClusterMethod = clustering.selection_method || 'eom';
 
-    const fileAlgo = similarity.algo || 'unweighted_cosine';
     const fileTopK = 100; // default for file-level similarity
     const fileMinScore = 0.5; // default for file-level similarity
     const fileClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
@@ -4332,16 +4646,16 @@ async function renderPoolCreationForm() {
     const fileClusterMethod = clustering.selection_method || 'eom';
 
     const colCheckboxes = collections.map(col => `
-        <label style="display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; font-size:0.8rem; border-bottom:1px solid rgba(255,255,255,0.03); transition: background 0.2s;">
-            <input type="checkbox" name="pool-collections" value="${col.name}" onchange="updateAutoPoolName()">
-            <span>${col.name} <span style="font-size:0.7rem; color:var(--dim);">(${col.total_files || 0} files)</span></span>
+        <label style="display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; font-size:0.8rem; border-bottom: 1px solid var(--border); transition: background 0.2s;">
+            <input type="checkbox" name="pool-collections" value="${escapeAttr(col.name)}" onchange="updateAutoPoolName()">
+            <span>${escapeHtml(col.name)} <span style="font-size:0.7rem; color:var(--dim);">(${col.total_files || 0} files)</span></span>
         </label>
     `).join('');
 
     gridHeader.innerHTML = `
-        <div id="create-pool-card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); overflow:hidden;">
+        <div id="create-pool-card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 25px; overflow:hidden;">
             <!-- COLLAPSIBLE HEADER -->
-            <div onclick="togglePoolCreationForm()" style="padding:15px 25px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background:rgba(255,255,255,0.02); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
+            <div onclick="togglePoolCreationForm()" style="padding:15px 25px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background: var(--hover); transition: background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='var(--border)'">
                 <h3 style="margin:0; font-size:1.05rem; color:var(--accent); display:flex; align-items:center; gap:12px;">
                     <i class="fa-solid fa-diagram-project"></i> Create New Pool
                 </h3>
@@ -4351,10 +4665,10 @@ async function renderPoolCreationForm() {
             </div>
 
             <div id="pool-creation-content" style="padding:0 25px 25px 25px; display: none;">
-                <div id="pool-creation-form-container" style="border-top:1px solid rgba(255,255,255,0.05); padding-top:20px;">
+                <div id="pool-creation-form-container" style="border-top: 1px solid var(--border); padding-top:20px;">
                     <div style="margin-bottom: 25px;">
                         <label style="display:block; font-size:0.75rem; color:var(--dim); margin-bottom:6px; font-weight:600; text-transform:uppercase;">Pool Name</label>
-                        <input type="text" id="new-pool-name" placeholder="e.g. Shared Analysis Pool" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:0.85rem;">
+                        <input type="text" id="new-pool-name" placeholder="e.g. Shared Analysis Pool" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:0.85rem;">
                     </div>
 
                     <div style="display:grid; grid-template-columns: 320px 1fr; gap:30px;">
@@ -4369,9 +4683,9 @@ async function renderPoolCreationForm() {
                             </div>
                             <div style="position:relative;">
                                 <i class="fa-solid fa-magnifying-glass" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:0.8rem; color:var(--dim);"></i>
-                                <input type="text" placeholder="Filter collections..." oninput="filterPoolCollections(this.value)" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.1); border:1px solid var(--border); color:var(--text); padding:8px 10px 8px 35px; border-radius:6px; font-size:0.8rem;">
+                                <input type="text" placeholder="Filter collections..." oninput="filterPoolCollections(this.value)" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:8px 10px 8px 35px; border-radius:6px; font-size:0.8rem;">
                             </div>
-                            <div id="pool-collections-list" style="background:rgba(0,0,0,0.15); border:1px solid var(--border); border-radius:6px; max-height:430px; overflow-y:auto; scrollbar-width: thin;">
+                            <div id="pool-collections-list" style="background:var(--border); border:1px solid var(--border); border-radius:6px; max-height:430px; overflow-y:auto; scrollbar-width: thin;">
                                 ${colCheckboxes.length ? colCheckboxes : '<div style="padding:20px; font-size:0.85rem; color:var(--dim); text-align:center;">No collections found.</div>'}
                             </div>
                         </div>
@@ -4379,7 +4693,7 @@ async function renderPoolCreationForm() {
                         <!-- RIGHT COLUMN: CONFIGURATION -->
                         <div style="display:flex; flex-direction:column; gap:15px;">
                             <div style="display:flex; align-items:center; gap:25px; background:rgba(255,171,46,0.03); border:1px solid rgba(255,171,46,0.15); border-radius:8px; padding:12px 15px;">
-                                <div style="display:flex; align-items:center; gap:8px; background:rgba(0,0,0,0.2); padding:6px 12px; border-radius:20px; border:1px solid var(--border); flex-shrink:0;">
+                                <div style="display:flex; align-items:center; gap:8px; background:var(--border); padding:6px 12px; border-radius:20px; border:1px solid var(--border); flex-shrink:0;">
                                     <input type="checkbox" id="pool-cross-only" style="cursor:pointer; width:14px; height:14px; accent-color:var(--accent);">
                                     <label for="pool-cross-only" style="font-size:0.75rem; cursor:pointer; font-weight:700; color:var(--accent); display:flex; align-items:center; gap:4px;">
                                         <i class="fa-solid fa-arrow-right-arrow-left"></i> CROSS-ONLY
@@ -4393,7 +4707,7 @@ async function renderPoolCreationForm() {
                                 </div>
                             </div>
 
-                            <div style="display:flex; flex-direction:column; gap:12px; background:rgba(0,0,0,0.1); border:1px solid var(--border); border-radius:8px; padding:15px;">
+                            <div style="display:flex; flex-direction:column; gap:12px; background:var(--border); border:1px solid var(--border); border-radius:8px; padding:15px;">
                                 <div style="display:flex; align-items:center; gap:8px; color:var(--accent); font-weight:600; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.03em;">
                                     <i class="fa-solid fa-microchip"></i> Function-Level
                                 </div>
@@ -4403,24 +4717,23 @@ async function renderPoolCreationForm() {
                                         <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
-                                                <select id="pool-func-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                <select id="pool-func-algo" onchange="const d=document.getElementById('pool-file-algo-display'); if(d) d.textContent=this.value;" style="width:100%; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                     <option value="unweighted_cosine" ${funcAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
-                                                    <option value="weighted_cosine" ${funcAlgo === 'weighted_cosine' ? 'selected' : ''}>Weighted Cosine</option>
                                                     <option value="jaccard" ${funcAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                                                 </select>
                                             </div>
                                             <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
-                                                    <input type="number" id="pool-func-topk" value="${funcTopK}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-func-topk" value="${escapeAttr(funcTopK)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
-                                                    <input type="number" id="pool-func-minscore" step="0.05" value="${funcMinScore}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-func-minscore" step="0.05" value="${escapeAttr(funcMinScore)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Features</label>
-                                                    <input type="number" id="pool-func-minfeatures" value="${funcMinFeatures}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-func-minfeatures" value="${escapeAttr(funcMinFeatures)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                             </div>
                                         </div>
@@ -4428,19 +4741,19 @@ async function renderPoolCreationForm() {
                                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
-                                            <input type="number" id="pool-cluster-min-size" value="${funcClusterMinSize}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-cluster-min-size" value="${escapeAttr(funcClusterMinSize)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
-                                            <input type="number" id="pool-cluster-min-samples" value="${funcClusterMinSamples}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-cluster-min-samples" value="${escapeAttr(funcClusterMinSamples)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label>
-                                            <input type="number" id="pool-cluster-epsilon" step="0.05" value="${funcClusterEpsilon}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-cluster-epsilon" step="0.05" value="${escapeAttr(funcClusterEpsilon)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label>
-                                            <select id="pool-cluster-method" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <select id="pool-cluster-method" style="width:100%; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 <option value="eom" ${funcClusterMethod === 'eom' ? 'selected' : ''}>EOM</option>
                                                 <option value="leaf" ${funcClusterMethod === 'leaf' ? 'selected' : ''}>Leaf</option>
                                             </select>
@@ -4449,12 +4762,12 @@ async function renderPoolCreationForm() {
                                 </div>
                             </div>
 
-                            <div style="display:flex; flex-direction:column; gap:12px; background:rgba(0,0,0,0.1); border:1px solid var(--border); border-radius:8px; padding:15px;">
+                            <div style="display:flex; flex-direction:column; gap:12px; background:var(--border); border:1px solid var(--border); border-radius:8px; padding:15px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center;">
                                     <div style="display:flex; align-items:center; gap:8px; color:var(--accent); font-weight:600; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.03em;">
                                         <i class="fa-solid fa-file-code"></i> File-Level
                                     </div>
-                                    <div style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,0.03); padding:2px 10px; border-radius:20px; border:1px solid rgba(255,255,255,0.05);">
+                                    <div style="display:flex; align-items:center; gap:10px; background: var(--hover); padding:2px 10px; border-radius:20px; border: 1px solid var(--border);">
                                         <input type="checkbox" id="pool-enable-files" checked onchange="document.getElementById('file-params-grid').style.opacity = this.checked ? '1' : '0.4'; document.getElementById('file-params-grid').style.pointerEvents = this.checked ? 'auto' : 'none';" style="cursor:pointer; width:12px; height:12px; accent-color:var(--accent);">
                                         <label for="pool-enable-files" style="font-size:0.7rem; cursor:pointer; font-weight:600; color:var(--text);">Enabled</label>
                                     </div>
@@ -4465,20 +4778,16 @@ async function renderPoolCreationForm() {
                                         <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
-                                                <select id="pool-file-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
-                                                    <option value="unweighted_cosine" ${fileAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
-                                                    <option value="weighted_cosine" ${fileAlgo === 'weighted_cosine' ? 'selected' : ''}>Weighted Cosine</option>
-                                                    <option value="jaccard" ${fileAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
-                                                </select>
+                                                <div id="pool-file-algo-display" title="Inherited from function similarity: file scores live in the namespace of the function clusters they are built from." style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--dim); padding:6px; border-radius:4px; font-size:0.75rem;">${funcAlgo}</div>
                                             </div>
                                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
-                                                    <input type="number" id="pool-file-topk" value="${fileTopK}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-file-topk" value="${escapeAttr(fileTopK)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
-                                                    <input type="number" id="pool-file-minscore" step="0.05" value="${fileMinScore}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-file-minscore" step="0.05" value="${escapeAttr(fileMinScore)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                             </div>
                                         </div>
@@ -4486,19 +4795,19 @@ async function renderPoolCreationForm() {
                                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
-                                            <input type="number" id="pool-file-cluster-min-size" value="${fileClusterMinSize}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-file-cluster-min-size" value="${escapeAttr(fileClusterMinSize)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
-                                            <input type="number" id="pool-file-cluster-min-samples" value="${fileClusterMinSamples}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-file-cluster-min-samples" value="${escapeAttr(fileClusterMinSamples)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label>
-                                            <input type="number" id="pool-file-cluster-epsilon" step="0.05" value="${fileClusterEpsilon}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-file-cluster-epsilon" step="0.05" value="${escapeAttr(fileClusterEpsilon)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label>
-                                            <select id="pool-file-cluster-method" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; font-size:0.8rem;">
+                                            <select id="pool-file-cluster-method" style="width:100%; background:var(--border); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; font-size:0.8rem;">
                                                 <option value="eom" ${fileClusterMethod === 'eom' ? 'selected' : ''}>EOM</option>
                                                 <option value="leaf" ${fileClusterMethod === 'leaf' ? 'selected' : ''}>Leaf</option>
                                             </select>
@@ -4509,7 +4818,7 @@ async function renderPoolCreationForm() {
 
                             <div style="margin-top:auto; padding-top:15px; display:flex; justify-content:flex-end; gap:12px;">
                                 <button onclick="renderPoolCreationForm()" class="btn-secondary" style="padding:10px 20px; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer;">Reset</button>
-                                <button onclick="submitCreatePool(this)" class="btn-primary" style="padding:10px 25px; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:8px; box-shadow: 0 4px 10px rgba(255,171,46,0.15);">
+                                <button onclick="submitCreatePool(this)" class="btn-primary" style="padding:10px 25px; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:8px; ">
                                     <i class="fa-solid fa-plus-circle"></i> Create Pool
                                 </button>
                             </div>
@@ -4589,7 +4898,6 @@ async function submitCreatePool(btn) {
     
     // File settings
     const enableFiles = document.getElementById('pool-enable-files')?.checked ?? false;
-    const fileAlgo = document.getElementById('pool-file-algo')?.value ?? 'unweighted_cosine';
     const fileTopK = parseInt(document.getElementById('pool-file-topk')?.value || '100');
     const fileMinScore = parseFloat(document.getElementById('pool-file-minscore')?.value || '0.5');
     const fileClusterMinSize = parseInt(document.getElementById('pool-file-cluster-min-size')?.value || '2');
@@ -4638,9 +4946,8 @@ async function submitCreatePool(btn) {
                         epsilon: funcClusterEpsilon,
                         selection_method: funcClusterMethod
                     },
-                    file_sim_params: { 
+                    file_sim_params: {
                         enabled: enableFiles,
-                        algo: fileAlgo,
                         top_k: fileTopK,
                         min_score: fileMinScore
                     },

@@ -129,7 +129,7 @@ window.FileView = {
                     <button class="bsim-tab" id="file-tab-btn-functions" onclick="FileView.switchTab('functions')">Functions (<span id="functions-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-clusters" onclick="FileView.switchTab('clusters')">Clusters (<span id="cluster-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-extracted_from" onclick="FileView.switchTab('extracted_from')" style="display: none;">Extracted From</button>
-                    <button class="bsim-tab" id="file-tab-btn-neighbors" onclick="FileView.switchTab('neighbors')">Neighbors (<span id="nbr-count">0</span>)</button>
+                    <button class="bsim-tab" id="file-tab-btn-neighbors" onclick="FileView.switchTab('neighbors')">Neighbors<span id="nbr-count-wrap" style="display:none;"> (<span id="nbr-count">0</span>)</span></button>
                 </div>
 
                 <!-- Files Tab Panel -->
@@ -925,6 +925,8 @@ window.FileView = {
             tbody.innerHTML = html || '<tr><td colspan="8" style="text-align: center; color: var(--dim); padding: 20px;">No neighbors found.</td></tr>';
             const countEl = document.getElementById('nbr-count');
             if (countEl) countEl.innerText = data.total ?? items.length;
+            const countWrap = document.getElementById('nbr-count-wrap');
+            if (countWrap) countWrap.style.display = 'inline';
         } catch (e) {
             console.error(e);
             tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading neighbors: ${e.message}</td></tr>`;

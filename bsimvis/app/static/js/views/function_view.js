@@ -66,7 +66,7 @@ window.FunctionView = {
                 <div id="function-content" style="display:none; flex:1; flex-direction:column; overflow:hidden; height:100%;">
                     <div class="bsim-tabbar" id="function-view-tabs">
                         <button class="bsim-tab active" id="function-tab-btn-code" onclick="FunctionView.switchTab('code')">Code</button>
-                        <button class="bsim-tab" id="function-tab-btn-neighbors" onclick="FunctionView.switchTab('neighbors')">Neighbors (<span id="fn-nbr-count">0</span>)</button>
+                        <button class="bsim-tab" id="function-tab-btn-neighbors" onclick="FunctionView.switchTab('neighbors')">Neighbors<span id="fn-nbr-count-wrap" style="display:none;"> (<span id="fn-nbr-count">0</span>)</span></button>
                     </div>
 
                     <div id="function-panel-code" class="function-view-panel" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
@@ -420,6 +420,8 @@ window.FunctionView = {
             tbody.innerHTML = html || '<tr><td colspan="9" style="text-align: center; color: var(--dim); padding: 20px;">No neighbors found.</td></tr>';
             const countEl = document.getElementById('fn-nbr-count');
             if (countEl) countEl.innerText = data.total ?? items.length;
+            const countWrap = document.getElementById('fn-nbr-count-wrap');
+            if (countWrap) countWrap.style.display = 'inline';
         } catch (e) {
             console.error(e);
             tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading neighbors: ${e.message}</td></tr>`;

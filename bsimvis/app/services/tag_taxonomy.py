@@ -91,8 +91,11 @@ MBC_NAMESPACE = "mbc"
 
 # Written by the vendored YARA ruleset. Unlike capa/mitre/mbc this one is not
 # recorded verbatim -- a YARA rule has no built-in namespace, so the id is built
-# from the rule's own `category`/`malware` meta fields instead:
-# `yara:<category>:<family>:<rule_name>`.
+# from the rule's own `category`/`malware`/`family` meta fields instead:
+# `yara:<category>:<family>:<rule_name>`. Most of the 129k-rule rulezet mirror
+# is Defender/MTB signature exports with no structured meta at all (only a
+# `description` string), so `yara:unknown:unknown:<rule_name>` there is the
+# correct, expected id -- not a parsing bug to chase further.
 YARA_NAMESPACE = "yara"
 
 # Written by `rulezet_service` from the MISP-style tags it produces for mirrored
@@ -100,8 +103,10 @@ YARA_NAMESPACE = "yara"
 # source namespace the config did not route keeps its own name
 # (`runtime-packer:pe:upx`) rather than being folded under a catch-all, so an
 # unmapped tag is still recorded rather than silently lost. `rulezet:` is not a
-# catch-all: it holds mirrored rule *names* only (`rulezet:ELF_Toriilike_persist`,
-# written by `_match_tags`), which is the ruleset axis.
+# catch-all: it holds the mirrored rule's uuid only (`rulezet:031cfb94-...`),
+# written by `_match_tags` -- this is the ruleset axis. The rule *name*
+# already lives in the `yara:` tag alongside it, so storing it twice would
+# just be two ids for one fact.
 MISP_NAMESPACE = "misp"
 
 # Vulnerability ids, flat: `cve:cve-2021-44228`, `ghsa:ghsa-j8v8-6h6r-m6pq`.
@@ -409,11 +414,12 @@ def yara_tag(category, family, rule_name):
     """A matched YARA rule -> `yara:<category>:<family>:<rule_name>` tag id.
 
     A YARA rule carries no built-in namespace the way a capa rule does, so the
-    id is assembled from the vendored ruleset's own `meta.category` and
-    `meta.malware` fields (e.g. `category: "ransomware"`, `malware: "LOCKBIT"`).
-    Either can be missing on a rule that predates that convention; `unknown`
-    keeps the id at a fixed four-segment depth rather than needing a per-rule
-    rule for how many segments it has.
+    id is assembled from the rule's own `meta.category` and `meta.malware`/
+    `meta.family` fields (e.g. `category: "ransomware"`, `malware: "LOCKBIT"`,
+    or a yarahub-style rule that names the family `family: "Torii"` instead of
+    `malware:`). Either segment can be missing on a rule that carries none of
+    these; `unknown` keeps the id at a fixed four-segment depth rather than
+    needing a per-rule rule for how many segments it has.
     """
     cat = str(category or "unknown").strip().lower() or "unknown"
     fam = str(family or "unknown").strip().lower() or "unknown"
@@ -467,7 +473,9 @@ def _match_tags(match, extra=None):
     if ns:
         try:
             uuid.UUID(str(ns))
-            tags.add(f"rulezet:{match.rule}")
+            # The uuid *is* the tag -- the rule's name is already in the
+            # `yara:` tag above, so `rulezet:` only needs to say which rule.
+            tags.add(f"rulezet:{ns}")
         except ValueError:
             pass
     return tags
@@ -475,7 +483,11 @@ def _match_tags(match, extra=None):
 
 def _match_tag(match):
     meta = getattr(match, "meta", None) or {}
-    category, family = meta.get("category"), meta.get("malware")
+    # `malware` is the vendored ruleset's convention; yarahub-mirrored rules
+    # commonly use `family` instead (e.g. `family: "Torii"` with no `malware`
+    # field at all) -- fall back to it rather than dropping to unknown.
+    category = meta.get("category")
+    family = meta.get("malware") or meta.get("family")
     if not category and not family:
         # Elastic's ruleset carries neither field, but its `threat_name` is
         # already `<os>.<category>.<family>` ("Linux.Trojan.Mirai"), so the two
@@ -746,9 +758,11 @@ def migrate_tag(tag_id):
     # `rulezet:` used to be the catch-all for every source namespace the routing
     # config did not name, so the taxonomy it swallowed is still in the id:
     # `rulezet:ms-caro-malware-full:malware-platform:linux` -> drop the prefix
-    # and the source namespace stands on its own. A two-segment id is a mirrored
-    # rule *name* (`rulezet:ELF_Toriilike_persist`), which is what `rulezet:`
-    # means now, so that one is already current.
+    # and the source namespace stands on its own. A two-segment id is either a
+    # mirrored rule's uuid (`rulezet:031cfb94-...`, current) or, from before
+    # `_match_tags` switched to writing the uuid, a mirrored rule *name*
+    # (`rulezet:ELF_Toriilike_persist`, legacy) -- both are already in the
+    # shape `rulezet:` means today, so both pass through unchanged.
     if head == "rulezet" and len(parts) > 2:
         return [":".join(parts[1:])]
 
@@ -966,6 +980,17 @@ def demo():
         "yara:ransomware:lockbit:Win32_Ransomware_LockBit"
     )
     assert yara_tag(None, None, "no_meta_rule") == "yara:unknown:unknown:no_meta_rule"
+    # yarahub-style meta: `family`, no `malware`, no `category`.
+    import types
+
+    assert (
+        _match_tag(
+            types.SimpleNamespace(
+                rule="ELF_Toriilike_persist", meta={"family": "Torii"}
+            )
+        )
+        == "yara:unknown:torii:ELF_Toriilike_persist"
+    )
     assert (
         namespaced("yara:ransomware:lockbit:x") == "yara:ransomware:lockbit:x"
     ), "a yara tag must not be buried under user:"
@@ -1051,24 +1076,26 @@ def demo():
         )
     ]
     sidecar = {uuid_str: ["mitre:t1027", "cve:cve-2021-44228"]}
+    # `rulezet:` carries the uuid, not the rule name -- the name is already in
+    # the `yara:` tag right next to it.
     assert yara_file_tags(mirrored, sidecar) == {
         "yara:trojan:mirai:Some_Rule",
         "mitre:t1027",
         "cve:cve-2021-44228",
-        "rulezet:Some_Rule",
+        f"rulezet:{uuid_str}",
     }
     assert yara_rule_hits(mirrored, sidecar) == {
         0x7000: {
             "yara:trojan:mirai:Some_Rule",
             "mitre:t1027",
             "cve:cve-2021-44228",
-            "rulezet:Some_Rule",
+            f"rulezet:{uuid_str}",
         }
     }
     # No sidecar entry, and matches with no namespace at all, still work.
     assert yara_file_tags(mirrored, {"other": ["x"]}) == {
         "yara:trojan:mirai:Some_Rule",
-        "rulezet:Some_Rule",
+        f"rulezet:{uuid_str}",
     }
     assert yara_file_tags(matches[:1], sidecar) == {
         "yara:ransomware:lockbit:Win32_Ransomware_LockBit"

@@ -15,6 +15,8 @@ window.FunctionView = {
     rowH: 24,
     OVERSCAN: 20,
     id: '',
+    neighborsLoaded: false,
+    neighborsDebounceTimer: null,
 
     async init(params, containerId) {
         this.params = params;
@@ -31,21 +33,160 @@ window.FunctionView = {
 
         this.id = `idx:${collection}:func:${file_md5}:${address}`;
         window.currentFuncId = `${collection}:func:${file_md5}:${address}`;
-        
+        this.neighborsLoaded = false;
+
         // Build initial layout
         this.container.innerHTML = `
+            <style>
+                .bsim-tabbar { display:flex; gap:4px; margin:0 0 10px 0; border-bottom:2px solid var(--border); flex-shrink:0; }
+                .bsim-tab {
+                    background:none; border:none; border-bottom:3px solid transparent;
+                    margin-bottom:-2px; padding:10px 20px; cursor:pointer;
+                    color:var(--subtle); font-size:0.9rem; font-weight:600; letter-spacing:0.01em;
+                    transition:color 0.15s, border-color 0.15s, background 0.15s;
+                }
+                .bsim-tab:hover { color:var(--text); background:rgba(255,255,255,0.04); }
+                .bsim-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+
+                .file-func-table { width:100%; border-collapse:collapse; font-size:0.8rem; }
+                .file-func-table th { text-align:left; padding:10px; border-bottom:1px solid var(--border); color:var(--subtle); text-transform:uppercase; font-size:0.75rem; letter-spacing:0.05em; }
+                .file-func-table td { padding:10px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:middle; }
+                .file-func-table tr:hover { background: rgba(255,255,255,0.02); }
+            </style>
             <div style="display:flex; flex-direction:column; flex:1; overflow:hidden; height:100%;">
                 <div id="function-loader" style="text-align:center; padding:50px; color:var(--dim); font-size:1.2rem;">
                     <i class="fa-solid fa-spinner fa-spin"></i> Loading Function Code...
                 </div>
                 <div id="function-content" style="display:none; flex:1; flex-direction:column; overflow:hidden; height:100%;">
-                    <div id="meta-container"></div>
-                    <div id="code-scroll" style="flex: 1; position: relative; overflow-y: auto; background: #272822;">
-                        <div id="v-height" style="position: absolute; width: 1px; top: 0; left: 0; z-index: -1;"></div>
-                        <div id="v-content" class="c-code-container" style="position: sticky; top: 0; width: 100%;"></div>
-                        <button id="copy-code-btn" class="floating-copy-btn" title="Copy code with colors" onclick="FunctionView.copyFunctionCode(this)">
-                            <i class="fas fa-copy"></i>
-                        </button>
+                    <div class="bsim-tabbar" id="function-view-tabs">
+                        <button class="bsim-tab active" id="function-tab-btn-code" onclick="FunctionView.switchTab('code')">Code</button>
+                        <button class="bsim-tab" id="function-tab-btn-neighbors" onclick="FunctionView.switchTab('neighbors')">Neighbors</button>
+                    </div>
+
+                    <div id="function-panel-code" class="function-view-panel" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
+                        <div id="meta-container"></div>
+                        <div id="code-scroll" style="flex: 1; position: relative; overflow-y: auto; background: #272822;">
+                            <div id="v-height" style="position: absolute; width: 1px; top: 0; left: 0; z-index: -1;"></div>
+                            <div id="v-content" class="c-code-container" style="position: sticky; top: 0; width: 100%;"></div>
+                            <button id="copy-code-btn" class="floating-copy-btn" title="Copy code with colors" onclick="FunctionView.copyFunctionCode(this)">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="function-panel-neighbors" class="function-view-panel" style="display:none; flex:1; overflow-y:auto;">
+                        <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
+                            <div id="fn-nbr-filters" style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Scope</label>
+                                    <select id="fn-nbr-scope" onchange="FunctionView.searchNeighbors()" style="font-size:0.7rem; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
+                                        <option value="collection">Collection</option>
+                                        <option value="pool">Pool</option>
+                                    </select>
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Algo</label>
+                                    <select id="fn-nbr-algo" onchange="FunctionView.searchNeighbors()" style="font-size:0.7rem; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
+                                        <option value="unweighted_cosine">Cosine</option>
+                                        <option value="jaccard">Jaccard</option>
+                                        <option value="milvus_sparse">Milvus Sparse</option>
+                                    </select>
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Min / Max Score</label>
+                                    <div style="display:flex; gap:2px;">
+                                        <input type="number" id="fn-nbr-min-score" value="0.9" step="0.05" min="0" max="1" style="width:60px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                        <input type="number" id="fn-nbr-max-score" placeholder="Max" step="0.05" min="0" max="1" style="width:60px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                    </div>
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Cross Binary</label>
+                                    <select id="fn-nbr-cross-binary" onchange="FunctionView.searchNeighbors()" style="font-size:0.7rem; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
+                                        <option value="">All Binaries</option>
+                                        <option value="false">Same Binary Only</option>
+                                        <option value="true">Cross Binary Only</option>
+                                    </select>
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Match Mode</label>
+                                    <select id="fn-nbr-match-mode" onchange="FunctionView.searchNeighbors()" style="font-size:0.7rem; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
+                                        <option value="any">Match Any</option>
+                                        <option value="both">Match Both</option>
+                                    </select>
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Name</label>
+                                    <input type="text" id="fn-nbr-name" placeholder="Name..." style="width:120px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Namespace</label>
+                                    <input type="text" id="fn-nbr-namespace" placeholder="Namespace..." style="width:100px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Return Type</label>
+                                    <input type="text" id="fn-nbr-ret-type" placeholder="Return Type..." style="width:90px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Cluster UUID / Name</label>
+                                    <div style="display:flex; gap:2px;">
+                                        <input type="text" id="fn-nbr-cluster" placeholder="UUID..." style="width:70px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                        <input type="text" id="fn-nbr-cluster-name" placeholder="Name..." style="width:70px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                    </div>
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Min Cohesion</label>
+                                    <input type="number" id="fn-nbr-min-cohesion" placeholder="0.95" step="0.05" min="0" max="1" style="width:60px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Min Features</label>
+                                    <input type="number" id="fn-nbr-min-features" placeholder="0" min="0" style="width:60px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Note Owner</label>
+                                    <input type="text" id="fn-nbr-note-owner" placeholder="Owner..." style="width:90px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">File Name</label>
+                                    <input type="text" id="fn-nbr-file-name" placeholder="File Name..." style="width:110px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Language</label>
+                                    <input type="text" id="fn-nbr-language" placeholder="Lang..." style="width:80px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Tags (comma-separated)</label>
+                                    <input type="text" id="fn-nbr-func-tag" placeholder="func_tag..." style="width:110px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Exclude Tags</label>
+                                    <input type="text" id="fn-nbr-exclude-func-tag" placeholder="exclude_func_tag..." style="width:110px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Limit</label>
+                                    <input type="number" id="fn-nbr-limit" value="50" min="1" max="1000" style="width:60px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                </div>
+                            </div>
+                            <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
+                                <table class="file-func-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Score</th>
+                                            <th>Function</th>
+                                            <th>Addr</th>
+                                            <th>Tags</th>
+                                            <th>Clusters</th>
+                                            <th>Features</th>
+                                            <th>Notes</th>
+                                            <th>File</th>
+                                            <th>MD5</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="fn-nbr-results-tbody">
+                                        <tr><td colspan="9" style="text-align: center; color: var(--dim); padding: 20px;">Loading neighbors...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:rgba(0,0,0,0.85); padding:10px; border-radius:4px; border:1px solid var(--accent); color:#fff; font-size:0.8rem; pointer-events:none;"></div>
@@ -151,6 +292,93 @@ window.FunctionView = {
             console.error(err);
             const loader = document.getElementById('function-loader');
             if (loader) loader.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color: #f92672;"></i> ${err.message}`;
+        }
+    },
+
+    switchTab(tabId) {
+        document.querySelectorAll('#function-view-tabs .bsim-tab').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.function-view-panel').forEach(panel => panel.style.display = 'none');
+
+        const btn = document.getElementById(`function-tab-btn-${tabId}`);
+        if (btn) btn.classList.add('active');
+
+        const panel = document.getElementById(`function-panel-${tabId}`);
+        if (panel) panel.style.display = (tabId === 'code') ? 'flex' : 'block';
+
+        // ponytail: no hash-routing for tabs here -- #L<line> hash is already owned by scrollToLine()
+        if (tabId === 'neighbors') this.loadNeighborsPanel();
+    },
+
+    async loadNeighborsPanel() {
+        if (this.neighborsLoaded) return;
+        this.neighborsLoaded = true;
+
+        const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+        const scopeSel = document.getElementById('fn-nbr-scope');
+        if (scopeSel) scopeSel.value = poolId ? 'pool' : 'collection';
+
+        await this.searchNeighbors();
+    },
+
+    debounceNeighborsSearch() {
+        if (this.neighborsDebounceTimer) clearTimeout(this.neighborsDebounceTimer);
+        this.neighborsDebounceTimer = setTimeout(() => this.searchNeighbors(), 400);
+    },
+
+    async searchNeighbors() {
+        const tbody = document.getElementById('fn-nbr-results-tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--dim); padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading neighbors...</td></tr>';
+
+        const collection = this.params.collection || '';
+        const file_md5 = this.params.md5 || this.params.file_md5;
+        const address = this.params.address;
+        const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+        const scope = document.getElementById('fn-nbr-scope')?.value || (poolId ? 'pool' : 'collection');
+
+        const qs = new URLSearchParams();
+        qs.set('md5', file_md5);
+        qs.set('address', address);
+        if (scope === 'pool' && poolId) qs.set('pool', poolId);
+        else qs.set('collection', collection);
+
+        qs.set('algo', document.getElementById('fn-nbr-algo')?.value || 'unweighted_cosine');
+        qs.set('min_score', document.getElementById('fn-nbr-min-score')?.value || '0.9');
+        qs.set('min_cohesion', document.getElementById('fn-nbr-min-cohesion')?.value || '0.95');
+        qs.set('min_features', document.getElementById('fn-nbr-min-features')?.value || '0');
+
+        const setIfVal = (id, key) => {
+            const v = document.getElementById(id)?.value;
+            if (v) qs.set(key, v);
+        };
+        setIfVal('fn-nbr-max-score', 'max_score');
+        setIfVal('fn-nbr-cross-binary', 'cross_binary');
+        const matchMode = document.getElementById('fn-nbr-match-mode')?.value;
+        if (matchMode && matchMode !== 'any') qs.set('match_mode', matchMode);
+        setIfVal('fn-nbr-name', 'name');
+        setIfVal('fn-nbr-namespace', 'namespace');
+        setIfVal('fn-nbr-ret-type', 'ret_type');
+        setIfVal('fn-nbr-cluster', 'cluster_uuid');
+        setIfVal('fn-nbr-cluster-name', 'cluster_name');
+        setIfVal('fn-nbr-note-owner', 'note_owner');
+        setIfVal('fn-nbr-file-name', 'file_name');
+        setIfVal('fn-nbr-language', 'language');
+        qs.set('limit', document.getElementById('fn-nbr-limit')?.value || '50');
+
+        const tagList = (id) => (document.getElementById(id)?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+        tagList('fn-nbr-func-tag').forEach(t => qs.append('func_tag', t));
+        tagList('fn-nbr-exclude-func-tag').forEach(t => qs.append('exclude_func_tag', t));
+
+        try {
+            const res = await fetch(`/api/similarity/search?${qs.toString()}`);
+            if (!res.ok) throw new Error("Neighbors search failed");
+            const data = await res.json();
+            const items = data.pairs || data.items || data.results || [];
+            const html = window.renderTopCorrelations ? window.renderTopCorrelations(items, {}, file_md5, address) : '';
+            tbody.innerHTML = html || '<tr><td colspan="9" style="text-align: center; color: var(--dim); padding: 20px;">No neighbors found.</td></tr>';
+        } catch (e) {
+            console.error(e);
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading neighbors: ${e.message}</td></tr>`;
         }
     },
 
@@ -434,6 +662,8 @@ window.FunctionView = {
         this.tooltipEl = null;
         this.funcRows = [];
         this.funcTips = {};
+        this.neighborsLoaded = false;
+        if (this.neighborsDebounceTimer) clearTimeout(this.neighborsDebounceTimer);
 
         if (this._hashChangeListener) {
             window.removeEventListener('hashchange', this._hashChangeListener);

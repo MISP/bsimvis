@@ -2140,7 +2140,7 @@ function refreshFileRow(fileId) {
 }
 window.refreshFileRow = refreshFileRow;
 
-function renderTopCorrelations(items, clustersMap = {}) {
+function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchorAddress = null) {
     if (!items || !items.length) return '<tr><td colspan="11" style="text-align:center; padding:40px;">No similarity pairs found in this collection.</td></tr>';
 
     return items.map(p => {
@@ -2184,6 +2184,40 @@ function renderTopCorrelations(items, clustersMap = {}) {
 
         // Single best-shared cluster for the pair (empty when the two share none).
         const sharedClusters = (p.shared_clusters || []).map(cid => clustersMap[cid]).filter(Boolean);
+
+        // Neighbors mode: render only the side that is NOT the anchor function, as a single row.
+        if (anchorMd5 && anchorAddress) {
+            const isFunc1Anchor = (m1 === anchorMd5 && addr1 === anchorAddress);
+            const otherData = isFunc1Anchor ? func2Data : func1Data;
+            const otherId = isFunc1Anchor ? p.id2 : p.id1;
+            const otherAddr = isFunc1Anchor ? addr2 : addr1;
+            const otherMeta = isFunc1Anchor ? p.meta2 : p.meta1;
+            const otherMd5 = isFunc1Anchor ? m2 : m1;
+
+            return `
+            <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${pairId}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}"
+                data-entity-data='${JSON.stringify(p).replace(/'/g, "&apos;")}'
+                oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'similarity', this)">
+                <td>
+                    <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
+                        onclick="openDiffDirectly('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', event)"
+                        title="Run Aligned Diff">${(p.score * 100).toFixed(1)}%</div>
+                    ${EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
+                </td>
+                <td style="min-width: 300px;">${EntityRenderer.renderFunction(otherData, { hideNote: true })}</td>
+                <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${otherAddr}</span></td>
+                <td>${EntityRenderer.renderTag('function', otherId, otherMeta?.tags || [], otherMeta?.user_tags || [])}</td>
+                <td><div class="cluster-cards-cell" data-clusters='${JSON.stringify(sharedClusters).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(sharedClusters)}</div></td>
+                <td class="sim-cell" style="text-align:center;">
+                    <span class="mono" style="color:var(--accent);">${otherMeta?.bsim_features_count || 0}</span>
+                    <button class="btn-icon" onclick="showFeaturePanel('${otherId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
+                </td>
+                <td class="sim-cell" style="text-align:center;">${EntityRenderer.renderNoteButton(otherId, otherMeta?.note_owners, { isTable: true, raw_data: otherMeta })}</td>
+                <td class="sim-cell" style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${otherMeta?.file_name}">${EntityRenderer.renderFileName(otherMeta?.file_name, otherMd5, col)}</td>
+                <td class="sim-cell">${EntityRenderer.renderMd5(otherMd5)}</td>
+            </tr>
+            `;
+        }
 
         return `
         <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${pairId}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}"

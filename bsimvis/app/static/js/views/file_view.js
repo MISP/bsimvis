@@ -9,6 +9,8 @@ window.FileView = {
     functions: [],
     clusters: {},
     functionsLoaded: false,
+    neighborsLoaded: false,
+    neighborsDebounceTimer: null,
     sortState: { col: 'function_name', dir: 1 },
     filterState: { q: '', featMin: '', featMax: '' },
 
@@ -18,6 +20,7 @@ window.FileView = {
         this.functions = [];
         this.clusters = {};
         this.functionsLoaded = false;
+        this.neighborsLoaded = false;
         this.sortState = { col: 'function_name', dir: 1 };
         this.filterState = { q: '', featMin: '', featMax: '' };
         
@@ -76,6 +79,7 @@ window.FileView = {
                     <button class="bsim-tab active" id="file-tab-btn-metadata" onclick="FileView.switchTab('metadata')">Metadata (<span id="metadata-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-functions" onclick="FileView.switchTab('functions')">Functions (<span id="functions-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-clusters" onclick="FileView.switchTab('clusters')">Clusters (<span id="cluster-count">0</span>)</button>
+                    <button class="bsim-tab" id="file-tab-btn-neighbors" onclick="FileView.switchTab('neighbors')">Neighbors</button>
                 </div>
 
                 <!-- Metadata Tab Panel (Default Active) -->
@@ -137,6 +141,93 @@ window.FileView = {
                 <div id="file-panel-clusters" class="file-view-panel" style="display: none;">
                     <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
                         <div class="cluster-list" id="cluster-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+                    </div>
+                </div>
+
+                <!-- Neighbors Tab Panel -->
+                <div id="file-panel-neighbors" class="file-view-panel" style="display: none;">
+                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); display: flex; flex-direction: column; gap: 15px;">
+                        <div id="nbr-filters" style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
+                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Scope</label>
+                                <select id="nbr-scope" onchange="FileView.searchNeighbors()" style="font-size:0.7rem; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
+                                    <option value="collection">Collection</option>
+                                    <option value="pool">Pool</option>
+                                </select>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Score Type</label>
+                                <select id="nbr-score-type" onchange="FileView.searchNeighbors()" style="font-size:0.7rem; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
+                                    <option value="score">Unweighted</option>
+                                    <option value="score_sim_weighted">Sim Weighted</option>
+                                    <option value="score_collection_weighted">Col Weighted</option>
+                                </select>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Min / Max Score</label>
+                                <div style="display:flex; gap:2px;">
+                                    <input type="number" id="nbr-min-score" value="0.9" step="0.05" min="0" max="1" style="width:60px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
+                                    <input type="number" id="nbr-max-score" placeholder="Max" step="0.05" min="0" max="1" style="width:60px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
+                                </div>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">File Name</label>
+                                <input type="text" id="nbr-file-name" placeholder="Name..." style="width:120px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Arch</label>
+                                <input type="text" id="nbr-arch" placeholder="Arch..." style="width:80px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Min / Max Funcs</label>
+                                <div style="display:flex; gap:2px;">
+                                    <input type="number" id="nbr-min-funcs" placeholder="Min" min="0" style="width:55px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
+                                    <input type="number" id="nbr-max-funcs" placeholder="Max" min="0" style="width:55px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
+                                </div>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Min / Max Coverage</label>
+                                <div style="display:flex; gap:2px;">
+                                    <input type="number" id="nbr-min-cov" placeholder="Min" step="0.1" min="0" max="1" style="width:55px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
+                                    <input type="number" id="nbr-max-cov" placeholder="Max" step="0.1" min="0" max="1" style="width:55px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
+                                </div>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Min Shared Clusters</label>
+                                <input type="number" id="nbr-min-shared" placeholder="Min" min="0" style="width:60px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Tags (comma-separated)</label>
+                                <input type="text" id="nbr-file-tag" placeholder="file_tag..." style="width:110px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Exclude Tags</label>
+                                <input type="text" id="nbr-exclude-file-tag" placeholder="exclude_file_tag..." style="width:110px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Limit</label>
+                                <input type="number" id="nbr-limit" value="50" min="1" max="1000" style="width:60px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
+                            </div>
+                        </div>
+                        <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
+                            <table class="file-func-table">
+                                <thead>
+                                    <tr>
+                                        <th>Score</th>
+                                        <th>File</th>
+                                        <th>MD5</th>
+                                        <th>Arch</th>
+                                        <th>Funcs</th>
+                                        <th>Coverage</th>
+                                        <th>Shared</th>
+                                        <th>Tags</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="nbr-results-tbody">
+                                    <tr><td colspan="8" style="text-align: center; color: var(--dim); padding: 20px;">Loading neighbors...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -464,6 +555,9 @@ window.FileView = {
         if (tabId === 'functions') {
             this.loadFunctionsTable();
         }
+        if (tabId === 'neighbors') {
+            this.loadNeighborsPanel();
+        }
 
         if (push && location.hash.slice(1) !== tabId) {
             history.pushState(null, '', location.pathname + location.search + '#' + tabId);
@@ -471,7 +565,7 @@ window.FileView = {
     },
 
     applyTabFromHash() {
-        const allowedTabs = ['metadata', 'functions', 'clusters'];
+        const allowedTabs = ['metadata', 'functions', 'clusters', 'neighbors'];
         const tab = location.hash.slice(1);
         this.switchTab(allowedTabs.includes(tab) ? tab : 'metadata', false);
     },
@@ -495,6 +589,71 @@ window.FileView = {
         } catch (e) {
             console.error(e);
             if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading functions: ${e.message}</td></tr>`;
+        }
+    },
+
+    async loadNeighborsPanel() {
+        if (this.neighborsLoaded) return;
+        this.neighborsLoaded = true;
+
+        const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+        const scopeSel = document.getElementById('nbr-scope');
+        if (scopeSel) scopeSel.value = poolId ? 'pool' : 'collection';
+
+        await this.searchNeighbors();
+    },
+
+    debounceNeighborsSearch() {
+        if (this.neighborsDebounceTimer) clearTimeout(this.neighborsDebounceTimer);
+        this.neighborsDebounceTimer = setTimeout(() => this.searchNeighbors(), 400);
+    },
+
+    async searchNeighbors() {
+        const tbody = document.getElementById('nbr-results-tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--dim); padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading neighbors...</td></tr>';
+
+        const collection = this.params.collection || '';
+        const file_md5 = this.params.md5 || this.params.file_md5;
+        const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+        const scope = document.getElementById('nbr-scope')?.value || (poolId ? 'pool' : 'collection');
+
+        const qs = new URLSearchParams();
+        qs.set('md5', file_md5);
+        if (scope === 'pool' && poolId) qs.set('pool', poolId);
+        else qs.set('collection', collection);
+
+        qs.set('sort', document.getElementById('nbr-score-type')?.value || 'score');
+        qs.set('min_score', document.getElementById('nbr-min-score')?.value || '0.9');
+
+        const setIfVal = (id, key) => {
+            const v = document.getElementById(id)?.value;
+            if (v) qs.set(key, v);
+        };
+        setIfVal('nbr-max-score', 'max_score');
+        setIfVal('nbr-file-name', 'file_name');
+        setIfVal('nbr-arch', 'arch');
+        setIfVal('nbr-min-funcs', 'min_funcs');
+        setIfVal('nbr-max-funcs', 'max_funcs');
+        setIfVal('nbr-min-cov', 'min_coverage');
+        setIfVal('nbr-max-cov', 'max_coverage');
+        setIfVal('nbr-min-shared', 'min_shared');
+        qs.set('limit', document.getElementById('nbr-limit')?.value || '50');
+
+        const tagList = (id) => (document.getElementById(id)?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+        tagList('nbr-file-tag').forEach(t => qs.append('file_tag', t));
+        tagList('nbr-exclude-file-tag').forEach(t => qs.append('exclude_file_tag', t));
+
+        try {
+            const res = await fetch(`/api/bin_sim/search?${qs.toString()}`);
+            if (!res.ok) throw new Error("Neighbors search failed");
+            const data = await res.json();
+            const items = data.items || data.results || [];
+            const html = window.renderBinSimPairs ? window.renderBinSimPairs(items, file_md5) : '';
+            tbody.innerHTML = html || '<tr><td colspan="8" style="text-align: center; color: var(--dim); padding: 20px;">No neighbors found.</td></tr>';
+        } catch (e) {
+            console.error(e);
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading neighbors: ${e.message}</td></tr>`;
         }
     },
 
@@ -665,5 +824,7 @@ window.FileView = {
         this.functions = [];
         this.clusters = {};
         this.functionsLoaded = false;
+        this.neighborsLoaded = false;
+        if (this.neighborsDebounceTimer) clearTimeout(this.neighborsDebounceTimer);
     }
 };

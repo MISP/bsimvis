@@ -1656,7 +1656,7 @@ function applyBinSimSearch() {
     }
 }
 
-function renderBinSimPairs(items) {
+function renderBinSimPairs(items, anchorMd5 = null) {
     if (!items || items.length === 0) return '';
     let html = '';
     const { collection, params } = getRoutingState();
@@ -1672,13 +1672,13 @@ function renderBinSimPairs(items) {
         const covA = (item.coverage_a || 0).toFixed(4);
         const covB = (item.coverage_b || 0).toFixed(4);
         const shared = item.shared_clusters || 0;
-        
+
         let tagsA = Array.isArray(item.file_tags_a) ? item.file_tags_a : [];
         let userTagsA = Array.isArray(item.file_user_tags_a) ? item.file_user_tags_a : [];
-        
+
         let tagsB = Array.isArray(item.file_tags_b) ? item.file_tags_b : [];
         let userTagsB = Array.isArray(item.file_user_tags_b) ? item.file_user_tags_b : [];
-        
+
         const collA = item.coll_a || collection;
         const collB = item.coll_b || collA;
         const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
@@ -1688,6 +1688,35 @@ function renderBinSimPairs(items) {
         const safeNameA = (item.file_name_a || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
         const safeNameB = (item.file_name_b || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
         const onClickHandler = `Nav.openPath('${diffUrl}', event, { title: 'Bin Diff: ${safeNameA} vs ${safeNameB}', type: 'bin_sim' });`;
+
+        // Neighbors mode: render only the side that is NOT the anchor file, as a single row.
+        if (anchorMd5) {
+            const isAOther = item.md5_a !== anchorMd5;
+            const otherMd5 = isAOther ? item.md5_a : item.md5_b;
+            const otherName = isAOther ? item.file_name_a : item.file_name_b;
+            const otherColl = isAOther ? collA : collB;
+            const otherArch = isAOther ? archA : archB;
+            const otherFuncs = isAOther ? funcsA : funcsB;
+            const otherCov = isAOther ? covA : covB;
+            const otherTags = isAOther ? tagsA : tagsB;
+            const otherUserTags = isAOther ? userTagsA : userTagsB;
+
+            html += `
+                <tr class="sim-row">
+                    <td>
+                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;" onclick="${onClickHandler}" title="Open Diff">${scoreFormatted}</div>
+                    </td>
+                    <td class="sim-cell">${EntityRenderer.renderFileName(otherName, otherMd5, otherColl)}</td>
+                    <td class="sim-cell">${EntityRenderer.renderMd5(otherMd5)}</td>
+                    <td class="sim-cell"><span class="dim" style="font-size:0.75rem;">${otherArch}</span></td>
+                    <td class="sim-cell"><span class="dim" style="font-size:0.8rem;">${otherFuncs}</span></td>
+                    <td class="sim-cell">${otherCov}</td>
+                    <td class="sim-cell" style="text-align:center;">${shared}</td>
+                    <td class="sim-cell">${EntityRenderer.renderTag('file', `${otherColl}:file:${otherMd5}`, otherTags, otherUserTags)}</td>
+                </tr>
+            `;
+            return;
+        }
 
         html += `
             <tr class="sim-row">

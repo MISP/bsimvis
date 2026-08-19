@@ -402,7 +402,7 @@ window.FunctionView = {
         const el = document.getElementById(containerId);
         if (!el || !window.binSimPillStyle) return;
         const active = document.getElementById(inputId)?.value ?? '';
-        el.innerHTML = options.map(o => `<span class="bsim-tag-pill" style="${window.binSimPillStyle(o.v === active, color)}${o.disabled ? ' opacity:0.4; cursor:not-allowed;' : ''}" title="${escapeAttr(o.label)}" ${o.disabled ? '' : `onclick="FunctionView.setNeighborPill('${inputId}', '${containerId}', ${jsString(o.v)})"`}><i class="${o.icon}"></i>${o.label}</span>`).join('');
+        el.innerHTML = options.map(o => `<span class="bsim-tag-pill" style="${window.binSimPillStyle(o.v === active, color)}${o.disabled ? ' opacity:0.4; cursor:not-allowed;' : ''}" title="${escapeAttr(o.label)}" ${o.disabled ? '' : `onclick="FunctionView.setNeighborPill('${inputId}', '${containerId}', '${o.v}')"`}><i class="${o.icon}"></i>${o.label}</span>`).join('');
     },
 
     setNeighborPill(inputId, containerId, value) {

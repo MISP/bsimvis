@@ -1183,7 +1183,7 @@ const SimMatchModeOptions = [
 ];
 
 function simPillGroupHtml(groupClass, options, active, color) {
-    return options.map(o => `<span class="${groupClass}" data-value="${escapeAttr(o.v)}" onclick="setSimPill('${groupClass}', ${jsString(o.v)})" style="${binSimPillStyle(o.v === active, color)}" title="${escapeAttr(o.label)}"><i class="${o.icon}"></i>${o.label}</span>`).join('');
+    return options.map(o => `<span class="${groupClass}" data-value="${escapeAttr(o.v)}" onclick="setSimPill('${groupClass}', '${o.v}')" style="${binSimPillStyle(o.v === active, color)}" title="${escapeAttr(o.label)}"><i class="${o.icon}"></i>${o.label}</span>`).join('');
 }
 
 function simFilterPillsHtml(p) {

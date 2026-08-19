@@ -76,40 +76,36 @@ window.FunctionView = {
 
                     <div id="function-panel-neighbors" class="function-view-panel" style="display:none; flex:1; overflow-y:auto;">
                         <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
-                            <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Scope</label>
-                                    <select id="fn-nbr-scope" onchange="FunctionView.searchNeighbors()" style="font-size:0.7rem; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
-                                        <option value="collection">Collection</option>
-                                        <option value="pool">Pool</option>
-                                    </select>
+                            <div class="filter-bar" style="gap:20px; padding:0;">
+                                <div class="search-input-wrapper">
+                                    <input type="text" id="fn-nbr-q" placeholder="Search neighbors by keywords..." oninput="FunctionView.debounceNeighborsSearch()">
+                                    <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="FunctionView.searchNeighbors()" title="Search"></i>
                                 </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Algo</label>
-                                    <select id="fn-nbr-algo" onchange="FunctionView.searchNeighbors()" style="font-size:0.7rem; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
-                                        <option value="unweighted_cosine">Cosine</option>
-                                        <option value="jaccard">Jaccard</option>
-                                        <option value="milvus_sparse">Milvus Sparse</option>
-                                    </select>
+                            </div>
+                            <div style="display:flex; gap:20px; flex-wrap:wrap;">
+                                <div class="home-card" style="padding:16px; min-width:160px;">
+                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Scope</h3>
+                                    <input type="hidden" id="fn-nbr-scope" value="collection">
+                                    <div id="fn-nbr-scope-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
                                 </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Cross Binary</label>
-                                    <select id="fn-nbr-cross-binary" onchange="FunctionView.searchNeighbors()" style="font-size:0.7rem; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
-                                        <option value="">All Binaries</option>
-                                        <option value="false">Same Binary Only</option>
-                                        <option value="true">Cross Binary Only</option>
-                                    </select>
+                                <div class="home-card" style="padding:16px; min-width:220px;">
+                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Algorithm</h3>
+                                    <input type="hidden" id="fn-nbr-algo" value="unweighted_cosine">
+                                    <div id="fn-nbr-algo-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
                                 </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Match Mode</label>
-                                    <select id="fn-nbr-match-mode" onchange="FunctionView.searchNeighbors()" style="font-size:0.7rem; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
-                                        <option value="any">Match Any</option>
-                                        <option value="both">Match Both</option>
-                                    </select>
+                                <div class="home-card" style="padding:16px; min-width:220px;">
+                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Cross Binary</h3>
+                                    <input type="hidden" id="fn-nbr-cross-binary" value="">
+                                    <div id="fn-nbr-cross-binary-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
                                 </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Limit</label>
-                                    <input type="number" id="fn-nbr-limit" value="50" min="1" max="1000" style="width:60px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
+                                <div class="home-card" style="padding:16px; min-width:160px;">
+                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Match Mode</h3>
+                                    <input type="hidden" id="fn-nbr-match-mode" value="any">
+                                    <div id="fn-nbr-match-mode-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+                                </div>
+                                <div class="home-card" style="padding:16px; min-width:100px;">
+                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Limit</h3>
+                                    <input type="number" id="fn-nbr-limit" value="50" min="1" max="1000" style="width:70px; font-size:0.8rem; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:5px;" oninput="FunctionView.debounceNeighborsSearch()">
                                 </div>
                             </div>
                             <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
@@ -330,8 +326,9 @@ window.FunctionView = {
         this.neighborsLoaded = true;
 
         const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
-        const scopeSel = document.getElementById('fn-nbr-scope');
-        if (scopeSel) scopeSel.value = poolId ? 'pool' : 'collection';
+        const scopeEl = document.getElementById('fn-nbr-scope');
+        if (scopeEl) scopeEl.value = poolId ? 'pool' : 'collection';
+        this.renderAllNeighborPills();
 
         await this.searchNeighbors();
     },
@@ -367,6 +364,7 @@ window.FunctionView = {
             const v = document.getElementById(id)?.value;
             if (v) qs.set(key, v);
         };
+        setIfVal('fn-nbr-q', 'q');
         setIfVal('fn-nbr-max-score', 'max_score');
         setIfVal('fn-nbr-cross-binary', 'cross_binary');
         const matchMode = document.getElementById('fn-nbr-match-mode')?.value;
@@ -401,6 +399,61 @@ window.FunctionView = {
             console.error(e);
             tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading neighbors: ${e.message}</td></tr>`;
         }
+    },
+
+    // Generic pill group: [{v, label, icon, disabled}], one hidden input holds
+    // the active value, one container div renders the pills. Shared shape for
+    // Scope/Algorithm/Cross Binary/Match Mode -- none of these carry counts
+    // (unlike bin-sim's Scoring Metric cards), so no extra fetches here.
+    renderNeighborPillGroup(inputId, containerId, options, color) {
+        const el = document.getElementById(containerId);
+        if (!el || !window.binSimPillStyle) return;
+        const active = document.getElementById(inputId)?.value ?? '';
+        el.innerHTML = options.map(o => `<span class="bsim-tag-pill" style="${window.binSimPillStyle(o.v === active, color)}${o.disabled ? ' opacity:0.4; cursor:not-allowed;' : ''}" title="${escapeAttr(o.label)}" ${o.disabled ? '' : `onclick="FunctionView.setNeighborPill('${inputId}', '${containerId}', ${jsString(o.v)})"`}><i class="${o.icon}"></i>${o.label}</span>`).join('');
+    },
+
+    setNeighborPill(inputId, containerId, value) {
+        const el = document.getElementById(inputId);
+        if (el) el.value = value;
+        if (inputId === 'fn-nbr-scope') this.renderScopePills();
+        else if (inputId === 'fn-nbr-algo') this.renderNeighborPillGroup(inputId, containerId, this.ALGO_OPTIONS, 'var(--info, #3b82f6)');
+        else if (inputId === 'fn-nbr-cross-binary') this.renderNeighborPillGroup(inputId, containerId, this.CROSS_BINARY_OPTIONS, 'var(--warning, #d97706)');
+        else if (inputId === 'fn-nbr-match-mode') this.renderNeighborPillGroup(inputId, containerId, this.MATCH_MODE_OPTIONS, 'var(--accent, #9333ea)');
+        this.searchNeighbors();
+    },
+
+    ALGO_OPTIONS: [
+        { v: 'unweighted_cosine', label: 'Cosine', icon: 'fa-solid fa-arrows-left-right' },
+        { v: 'jaccard', label: 'Jaccard', icon: 'fa-solid fa-object-group' },
+        { v: 'milvus_sparse', label: 'Milvus Sparse', icon: 'fa-solid fa-braille' },
+    ],
+    CROSS_BINARY_OPTIONS: [
+        { v: '', label: 'All Binaries', icon: 'fa-solid fa-globe' },
+        { v: 'false', label: 'Same Binary', icon: 'fa-solid fa-file' },
+        { v: 'true', label: 'Cross Binary', icon: 'fa-solid fa-shuffle' },
+    ],
+    MATCH_MODE_OPTIONS: [
+        { v: 'any', label: 'Match Any', icon: 'fa-solid fa-check' },
+        { v: 'both', label: 'Match Both', icon: 'fa-solid fa-check-double' },
+    ],
+
+    renderScopePills() {
+        const el = document.getElementById('fn-nbr-scope-pills');
+        if (!el || !window.binSimPillStyle) return;
+        const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+        const active = document.getElementById('fn-nbr-scope')?.value || (poolId ? 'pool' : 'collection');
+        const options = [
+            { v: 'collection', label: 'Collection', icon: 'fa-solid fa-database' },
+            { v: 'pool', label: 'Pool', icon: 'fa-solid fa-layer-group', disabled: !poolId },
+        ];
+        el.innerHTML = options.map(o => `<span class="bsim-tag-pill" style="${window.binSimPillStyle(o.v === active, 'var(--success)')}${o.disabled ? ' opacity:0.4; cursor:not-allowed;' : ''}" title="${o.disabled ? 'No pool in this context' : escapeAttr(o.label)}" ${o.disabled ? '' : `onclick="FunctionView.setNeighborPill('fn-nbr-scope', 'fn-nbr-scope-pills', '${o.v}')"`}><i class="${o.icon}"></i>${o.label}</span>`).join('');
+    },
+
+    renderAllNeighborPills() {
+        this.renderScopePills();
+        this.renderNeighborPillGroup('fn-nbr-algo', 'fn-nbr-algo-pills', this.ALGO_OPTIONS, 'var(--info, #3b82f6)');
+        this.renderNeighborPillGroup('fn-nbr-cross-binary', 'fn-nbr-cross-binary-pills', this.CROSS_BINARY_OPTIONS, 'var(--warning, #d97706)');
+        this.renderNeighborPillGroup('fn-nbr-match-mode', 'fn-nbr-match-mode-pills', this.MATCH_MODE_OPTIONS, 'var(--accent, #9333ea)');
     },
 
     copyFunctionCode(btn) {

@@ -223,25 +223,26 @@ window.FileView = {
                 <!-- Neighbors Tab Panel -->
                 <div id="file-panel-neighbors" class="file-view-panel" style="display: none;">
                     <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); display: flex; flex-direction: column; gap: 15px;">
-                        <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
-                            <div style="display:flex; flex-direction:column; gap:2px;">
-                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Scope</label>
-                                <select id="nbr-scope" onchange="FileView.searchNeighbors()" style="font-size:0.7rem; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
-                                    <option value="collection">Collection</option>
-                                    <option value="pool">Pool</option>
-                                </select>
+                        <div class="filter-bar" style="gap:20px; padding:0;">
+                            <div class="search-input-wrapper">
+                                <input type="text" id="nbr-q" placeholder="Search neighbors by keywords..." oninput="FileView.debounceNeighborsSearch()">
+                                <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="FileView.searchNeighbors()" title="Search"></i>
                             </div>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
-                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Score Type</label>
-                                <select id="nbr-score-type" onchange="FileView.searchNeighbors()" style="font-size:0.7rem; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
-                                    <option value="score">Unweighted</option>
-                                    <option value="score_sim_weighted">Sim Weighted</option>
-                                    <option value="score_collection_weighted">Col Weighted</option>
-                                </select>
+                        </div>
+                        <div style="display:flex; gap:20px; flex-wrap:wrap;">
+                            <div class="home-card" style="padding:16px; min-width:180px;">
+                                <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Scope</h3>
+                                <input type="hidden" id="nbr-scope" value="collection">
+                                <div id="nbr-scope-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
                             </div>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
-                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Limit</label>
-                                <input type="number" id="nbr-limit" value="50" min="1" max="1000" style="width:60px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
+                            <div class="home-card" style="padding:16px; min-width:300px;">
+                                <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Scoring Metric</h3>
+                                <input type="hidden" id="nbr-score-type" value="score">
+                                <div id="nbr-score-type-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+                            </div>
+                            <div class="home-card" style="padding:16px; min-width:100px;">
+                                <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Limit</h3>
+                                <input type="number" id="nbr-limit" value="50" min="1" max="1000" style="width:70px; font-size:0.8rem; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:5px;" oninput="FileView.debounceNeighborsSearch()">
                             </div>
                         </div>
                         <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
@@ -855,8 +856,10 @@ window.FileView = {
         this.neighborsLoaded = true;
 
         const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
-        const scopeSel = document.getElementById('nbr-scope');
-        if (scopeSel) scopeSel.value = poolId ? 'pool' : 'collection';
+        const scopeEl = document.getElementById('nbr-scope');
+        if (scopeEl) scopeEl.value = poolId ? 'pool' : 'collection';
+        this.renderScopePills();
+        this.renderScoreTypePills();
 
         await this.searchNeighbors();
     },
@@ -888,6 +891,7 @@ window.FileView = {
             const v = document.getElementById(id)?.value;
             if (v) qs.set(key, v);
         };
+        setIfVal('nbr-q', 'q');
         setIfVal('nbr-max-score', 'max_score');
         setIfVal('nbr-file-name', 'file_name');
         setIfVal('nbr-arch', 'arch');
@@ -914,10 +918,64 @@ window.FileView = {
             const countWrap = document.getElementById('nbr-count-wrap');
             if (countWrap) countWrap.style.display = 'inline';
             if (window.TableSelection) new window.TableSelection('nbr-results-table');
+            this.refreshNeighborPillCounts(qs);
         } catch (e) {
             console.error(e);
             tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading neighbors: ${e.message}</td></tr>`;
         }
+    },
+
+    renderScopePills() {
+        const el = document.getElementById('nbr-scope-pills');
+        if (!el || !window.binSimPillStyle) return;
+        const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+        const active = document.getElementById('nbr-scope')?.value || (poolId ? 'pool' : 'collection');
+        const options = [
+            { v: 'collection', label: 'Collection', icon: 'fa-solid fa-database', color: 'var(--info, #3b82f6)' },
+            { v: 'pool', label: 'Pool', icon: 'fa-solid fa-layer-group', color: 'var(--warning, #d97706)', disabled: !poolId },
+        ];
+        el.innerHTML = options.map(o => `<span class="bsim-tag-pill" style="${window.binSimPillStyle(o.v === active, o.color)}${o.disabled ? ' opacity:0.4; cursor:not-allowed;' : ''}" title="${o.disabled ? 'No pool in this context' : escapeAttr(o.label)}" ${o.disabled ? '' : `onclick="FileView.setNeighborScope('${o.v}')"`}><i class="${o.icon}"></i>${o.label}</span>`).join('');
+    },
+
+    setNeighborScope(v) {
+        const el = document.getElementById('nbr-scope');
+        if (el) el.value = v;
+        this.renderScopePills();
+        this.searchNeighbors();
+    },
+
+    renderScoreTypePills() {
+        const el = document.getElementById('nbr-score-type-pills');
+        if (!el || !window.binSimPillStyle) return;
+        const types = window.BinSimScoreTypes || { score: { label: 'Overall', icon: 'fa-solid fa-layer-group', color: 'var(--success)' } };
+        const active = document.getElementById('nbr-score-type')?.value || 'score';
+        el.innerHTML = Object.entries(types).map(([v, meta]) => `<span class="bsim-tag-pill" style="${window.binSimPillStyle(v === active, meta.color)}" title="${escapeAttr(meta.label)}" onclick="FileView.setNeighborScoreType('${v}')"><i class="${meta.icon}"></i>${meta.label} <span id="nbr-count-score-${v}" style="font-size:0.75rem; opacity:0.8; font-weight:normal;"></span></span>`).join('');
+    },
+
+    setNeighborScoreType(v) {
+        const el = document.getElementById('nbr-score-type');
+        if (el) el.value = v;
+        this.renderScoreTypePills();
+        this.searchNeighbors();
+    },
+
+    // Cheap limit=0 count-only requests per score type, so the pills show
+    // "(N)" the same way the bin-sim search hero does -- one extra request
+    // per type, fired after the real search so it never blocks results.
+    refreshNeighborPillCounts(baseQs) {
+        const types = window.BinSimScoreTypes || {};
+        Object.keys(types).forEach(async (v) => {
+            try {
+                const u = new URLSearchParams(baseQs);
+                u.set('sort', v);
+                u.set('limit', '0');
+                const res = await fetch(`/api/bin_sim/search?${u.toString()}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                const el = document.getElementById(`nbr-count-score-${v}`);
+                if (el && data.total !== undefined) el.innerText = `(${data.total.toLocaleString()})`;
+            } catch (e) {}
+        });
     },
 
     toggleSort(col) {

@@ -29,6 +29,9 @@ window.FileView = {
         this.sortState = { col: 'function_name', dir: 1 };
         this.fvAxis = '';
         this.fvSelectedTag = null;
+        this.fvOpen = new Set();
+        this.fvGroupBy = 'auto';
+        this.fvTagIndex = null;
 
         const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
@@ -103,6 +106,26 @@ window.FileView = {
                 }
                 .bsim-node .bsim-node-label { flex:1; overflow:hidden; text-overflow:ellipsis; }
                 .bsim-node .bsim-node-count { font-size:0.68rem; color:var(--dim); font-family:'Consolas',monospace; }
+                .bsim-chips { display:flex; flex-wrap:wrap; gap:6px; padding:0 12px 8px; min-height:0; }
+                .bsim-chip {
+                    display:inline-flex; align-items:center; gap:6px; padding:3px 8px;
+                    border:1px solid var(--border); border-radius:12px; background:var(--bg-alt);
+                    font-size:0.72rem; font-family:'Inter',sans-serif; color:var(--subtle);
+                }
+                .bsim-chip b { color:var(--text); font-weight:600; }
+                .bsim-chip .bsim-chip-x { cursor:pointer; color:var(--dim); }
+                .bsim-chip .bsim-chip-x:hover { color:var(--token-instruction); }
+                .bsim-ctl-label {
+                    font-size:0.7rem; color:var(--subtle); margin-right:6px; font-weight:bold;
+                    font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;
+                }
+                .bsim-grp-row td {
+                    background:var(--bg-alt); border-top:1px solid var(--border);
+                    border-bottom:1px solid var(--border); padding:7px 10px;
+                    font-family:'Inter',sans-serif; font-size:0.78rem; cursor:pointer;
+                }
+                .bsim-grp-row:hover td { background:var(--hover); }
+                .bsim-caret-btn { cursor:pointer; user-select:none; color:var(--subtle); display:inline-block; width:14px; }
             </style>
             <div id="file-view-loader" style="text-align:center; padding:50px; color:var(--dim); font-size:1.2rem;">
                 <i class="fa-solid fa-spinner fa-spin"></i> Loading Binary Details...
@@ -166,8 +189,17 @@ window.FileView = {
                         </div>
                         <div id="fv-axis-pick" class="bsim-axis-pick"></div>
                         <div id="fv-tree" class="bsim-tree"></div>
+                        <div id="fv-chips" class="bsim-chips"></div>
                     </div>
                     <div class="card" style="flex:1; min-width:0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
+                        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                            <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
+                                <span class="bsim-ctl-label">Group by:</span>
+                                <button class="view-btn active" id="fv-group-btn-auto" onclick="FileView.setGroupBy('auto')" title="Group by tag when more than one tag is in scope">Auto</button>
+                                <button class="view-btn" id="fv-group-btn-tag" onclick="FileView.setGroupBy('tag')" title="Always group by tag">Tag</button>
+                                <button class="view-btn" id="fv-group-btn-none" onclick="FileView.setGroupBy('none')" title="One flat list">None</button>
+                            </div>
+                        </div>
                         <!-- ponytail: viewport-relative instead of a flex chain; 260px is the title strip + tabbar + card padding above it -->
                         <div id="file-func-scroll" style="overflow-x: auto; max-height: calc(100vh - 260px); min-height: 300px; overflow-y: auto;">
                             <table class="file-func-table" id="file-func-table">
@@ -328,6 +360,7 @@ window.FileView = {
 
             // buildFunctionsQuery and the lineage panel both need the raw doc.
             this.file = file;
+            this.fvLoadTagIndex();
             if (file.is_container) {
                 document.getElementById('file-md5-text').insertAdjacentHTML('beforebegin',
                     `<span class="badge" title="Container: holds code but is not code itself. Its function count is the total of everything below it."
@@ -1019,7 +1052,7 @@ window.FileView = {
         const collection = this.params.collection || '';
         const file_md5 = this.params.md5 || this.params.file_md5;
 
-        tbody.innerHTML = this.functions.map(f => {
+        const rowHtml = (f) => {
             const entry = f.entrypoint_address || '';
             const funcName = f.function_name || 'unknown';
             const featCount = f.bsim_features_count || 0;
@@ -1082,7 +1115,57 @@ window.FileView = {
                     <td style="text-align:center;">${noteBtn}</td>
                 </tr>
             `;
-        }).join('');
+        };
+
+        // Grouped: functions bucketed by their top-level tag node, folded with
+        // the same fvOpen state the sidebar tree uses -- one dropdown tree,
+        // shared between sidebar and table, exactly like bin-sim's bsim-grp-row.
+        const nodes = this.fvTree();
+        const grouped = this.fvGroupBy === 'tag'
+            || (this.fvGroupBy === 'auto' && !this.fvSelectedTag && nodes.length > 1);
+
+        if (!grouped) {
+            tbody.innerHTML = this.functions.map(rowHtml).join('');
+        } else {
+            const dot = (id) => (typeof TagColor !== 'undefined')
+                ? `<span class="bsim-node-dot" style="background:${TagColor.forTag(id)}; margin-right:6px;"></span>` : '';
+            const out = [];
+            const rest = new Set(this.functions);
+            nodes.forEach(n => {
+                const matches = this.functions.filter(f => (f.tags || []).some(t => t.startsWith(n.prefix)));
+                matches.forEach(f => rest.delete(f));
+                const open = this.fvOpen.has(n.id);
+                out.push(`
+                    <tr class="bsim-grp-row" onclick="FileView.toggleTreeNode(${escapeAttr(jsString(n.id))})">
+                        <td colspan="6">
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <span class="bsim-caret-btn">${open ? '▼' : '▶'}</span>
+                                ${dot(n.id)}
+                                <span style="font-weight:600;">${escapeHtml(n.label)}</span>
+                                <div style="flex:1;"></div>
+                                <span style="color:var(--subtle); font-size:0.74rem;">${matches.length}</span>
+                            </div>
+                        </td>
+                    </tr>`);
+                if (open) matches.forEach(f => out.push(rowHtml(f)));
+            });
+            if (rest.size) {
+                const open = this.fvOpen.has('__untagged__');
+                out.push(`
+                    <tr class="bsim-grp-row" onclick="FileView.toggleTreeNode('__untagged__')">
+                        <td colspan="6">
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <span class="bsim-caret-btn">${open ? '▼' : '▶'}</span>
+                                <span style="font-weight:600; color:var(--dim);">(untagged)</span>
+                                <div style="flex:1;"></div>
+                                <span style="color:var(--subtle); font-size:0.74rem;">${rest.size}</span>
+                            </div>
+                        </td>
+                    </tr>`);
+                if (open) [...rest].forEach(f => out.push(rowHtml(f)));
+            }
+            tbody.innerHTML = out.join('');
+        }
 
         const shown = this.functions.length;
         const total = this.funcPage.total ?? shown;
@@ -1117,8 +1200,57 @@ window.FileView = {
     // until someone needs whole-file counts before scrolling/filtering.
     fvAxis: '',
     fvSelectedTag: null,
+    // Which tree nodes are unfolded, keyed by node id -- which is a tag id.
+    fvOpen: new Set(),
+    // Tag counts across the WHOLE file, independent of whatever the table's
+    // filter row currently has typed in. Scoping the table to one tag used to
+    // rebuild the tree from `this.functions` -- which is the *filtered* page --
+    // so the tree would collapse down to just the branch you clicked. This is
+    // fetched once per file (fvLoadTagIndex) and never touched by table filters.
+    fvTagIndex: null,
+
+    // Pages through every function this file has, ignoring the table's filter
+    // row, to build a stable tag count. Runs once per file load, in the
+    // background; the tree/axis picker fall back to the filtered page's counts
+    // until it lands.
+    // ponytail: no backend tag-aggregate endpoint exists yet (bin-sim's
+    // tags_summary is two-sided-comparison-shaped, not reusable here -- see the
+    // note on fvTree below), so this pages the same search endpoint with a
+    // bigger limit and no filters. Capped at 20k functions; add a real
+    // aggregate endpoint if a file blows past that.
+    async fvLoadTagIndex() {
+        const collection = this.params.collection || '';
+        const file_md5 = this.params.md5 || this.params.file_md5;
+        const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+        const counts = {};
+        let offset = 0;
+        const PAGE = 500, CAP = 20000;
+        try {
+            while (offset < CAP) {
+                const p = new URLSearchParams(apiParams);
+                if (this.file && this.file.is_container) {
+                    p.set(this.file.root_md5 ? 'md5' : 'root_md5', file_md5);
+                } else {
+                    p.set('file_md5', file_md5);
+                }
+                p.set('offset', offset);
+                p.set('limit', PAGE);
+                const res = await fetch(`/api/function/search?${p.toString()}`);
+                if (!res.ok) break;
+                const data = await res.json();
+                (data.functions || []).forEach(f => (f.tags || []).forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
+                offset += PAGE;
+                if (!data.functions || data.functions.length < PAGE || offset >= (data.total || 0)) break;
+            }
+        } catch (e) {
+            console.error('tag index load failed', e);
+        }
+        this.fvTagIndex = counts;
+        this.renderTagTree();
+    },
 
     fvTagCounts() {
+        if (this.fvTagIndex) return this.fvTagIndex;
         const counts = {};
         (this.functions || []).forEach(f => {
             (f.tags || []).forEach(t => { counts[t] = (counts[t] || 0) + 1; });
@@ -1126,34 +1258,57 @@ window.FileView = {
         return counts;
     },
 
+    // The axes this file actually carries mass on, named the way Bin Sim names
+    // them. The namespace -> axis map comes from `/api/tags/colors`, so both
+    // views put a tag on the same axis instead of each keeping its own table.
     fvAvailableAxes() {
         const counts = this.fvTagCounts();
         const axes = new Set();
-        Object.keys(counts).forEach(tagId => {
-            axes.add((typeof fileSimTagParts === 'function' ? fileSimTagParts({ tag_id: tagId }).type : tagId.split(':')[0]));
-        });
+        Object.keys(counts).forEach(tagId => axes.add(TagColor.axisOf(tagId)));
         return [...axes].sort();
     },
 
+    // One trie over the tag ids, the same shape Bin Sim's tree has: a node id is
+    // a real tag id and a literal prefix of everything beneath it, depth is
+    // whatever the ids have, and a detail tail is never a level -- so the
+    // function a library was matched on cannot become a category of its own.
+    //
+    // This used to read `fileSimTagParts`, which flattened every id to
+    // name/version and could only ever draw two levels.
     fvTree() {
         const counts = this.fvTagCounts();
         const axis = this.fvAxis;
-        const names = new Map(); // name -> { id, label, count, children: Map(version -> {id,label,count}) }
+        const root = { children: new Map() };
+
         Object.entries(counts).forEach(([tagId, count]) => {
-            const parts = typeof fileSimTagParts === 'function'
-                ? fileSimTagParts({ tag_id: tagId })
-                : { type: tagId.split(':')[0], name: tagId, version: '' };
-            if (parts.type !== axis) return;
-            if (!names.has(parts.name)) {
-                names.set(parts.name, { id: `n:${axis}:${parts.name}`, label: parts.name, count: 0, prefix: `${axis}:${parts.name}`, children: [] });
-            }
-            const node = names.get(parts.name);
-            node.count += count;
-            if (parts.version) node.children.push({ id: tagId, label: parts.version, count });
+            if (TagColor.axisOf(tagId) !== axis) return;
+            let node = root;
+            TagColor.chain(tagId).forEach(prefix => {
+                let next = node.children.get(prefix);
+                if (!next) {
+                    const segs = TagColor.levels(prefix).segs;
+                    next = {
+                        id: prefix, prefix,
+                        label: segs[segs.length - 1] || prefix,
+                        count: 0, children: new Map(),
+                    };
+                    node.children.set(prefix, next);
+                }
+                next.count += count;
+                node = next;
+            });
         });
-        const nodes = [...names.values()];
-        nodes.forEach(n => { if (n.children.length < 2) n.children = []; });
-        nodes.sort((a, b) => b.count - a.count);
+
+        const finish = (node) => {
+            const kids = [...node.children.values()].map(finish);
+            kids.sort((a, b) => b.count - a.count);
+            node.children = kids;
+            return node;
+        };
+        let nodes = finish(root).children;
+        // The picker already names the namespace, so a lone top node repeats it.
+        // One level only, matching Bin Sim.
+        if (nodes.length === 1 && nodes[0].children.length) nodes = nodes[0].children;
         return nodes;
     },
 
@@ -1162,11 +1317,15 @@ window.FileView = {
         if (!host) return;
         const avail = this.fvAvailableAxes();
         if (!avail.includes(this.fvAxis)) this.fvAxis = avail[0] || '';
-        host.innerHTML = avail.length < 2 ? '' : `
-            <span class="dim" style="font-size:0.72rem;">Axis:</span>
-            <select onchange="FileView.setTreeAxis(this.value)">
-                ${avail.map(a => `<option value="${escapeAttr(a)}"${a === this.fvAxis ? ' selected' : ''}>${escapeHtml(a)}</option>`).join('')}
-            </select>`;
+        // Always shown -- every axis this file has tags on stays pickable
+        // regardless of the current tag scope, not just while >1 exists.
+        host.innerHTML = !avail.length ? '' : `
+            <div class="view-toggle" style="margin:0; flex:1; min-width:0;">
+                <span class="bsim-ctl-label" style="margin:4px 6px;">Axis:</span>
+                <select class="view-btn" style="flex:1; min-width:0;" onchange="FileView.setTreeAxis(this.value)">
+                    ${avail.map(a => `<option value="${escapeAttr(a)}"${a === this.fvAxis ? ' selected' : ''}>${escapeHtml(a)}</option>`).join('')}
+                </select>
+            </div>`;
     },
 
     fvRenderTree() {
@@ -1179,25 +1338,55 @@ window.FileView = {
         }
         const dot = (id) => (typeof TagColor !== 'undefined')
             ? `<span class="bsim-node-dot" style="background:${TagColor.forTag(id)};"></span>` : '';
-        const nodeHtml = (n, depth, hasKids) => `
-            <div class="bsim-node${this.fvSelectedTag === (n.prefix || n.id) ? ' selected' : ''}" style="padding-left:${8 + depth * 14}px;"
-                 onclick="FileView.selectTreeNode(${escapeAttr(jsString(n.id))}, ${escapeAttr(jsString(n.prefix || ''))})">
-                <span class="bsim-caret">${hasKids ? '▾' : ''}</span>
+        const out = [];
+        // Depth is whatever the ids have, so this recurses rather than
+        // unrolling two levels the way the name/version tree did.
+        const walk = (n, depth) => {
+            const hasKids = n.children.length > 0;
+            const open = this.fvOpen.has(n.id);
+            const caret = hasKids
+                ? `<span class="bsim-caret" onclick="event.stopPropagation(); FileView.toggleTreeNode(${escapeAttr(jsString(n.id))})">${open ? '▾' : '▸'}</span>`
+                : '<span class="bsim-caret"></span>';
+            out.push(`
+            <div class="bsim-node${this.fvSelectedTag === n.id ? ' selected' : ''}" style="padding-left:${8 + depth * 14}px;"
+                 onclick="FileView.selectTreeNode(${escapeAttr(jsString(n.id))})">
+                ${caret}
                 ${dot(n.id)}
                 <span class="bsim-node-label">${escapeHtml(n.label)}</span>
                 <span class="bsim-node-count">${n.count}</span>
-            </div>`;
-        const out = [];
-        nodes.forEach(n => {
-            out.push(nodeHtml(n, 0, n.children.length > 0));
-            n.children.forEach(c => out.push(nodeHtml(c, 1, false)));
-        });
+            </div>`);
+            if (open) n.children.forEach(c => walk(c, depth + 1));
+        };
+        nodes.forEach(n => walk(n, 0));
         host.innerHTML = out.join('');
     },
 
     renderTagTree() {
         this.fvRenderAxisPicker();
         this.fvRenderTree();
+        this.fvRenderChips();
+    },
+
+    fvRenderChips() {
+        const host = document.getElementById('fv-chips');
+        if (!host) return;
+        if (!this.fvSelectedTag) {
+            host.innerHTML = '<span style="font-size:0.72rem; color:var(--dim); font-family:sans-serif;">Whole file — select a tag above to scope.</span>';
+            return;
+        }
+        host.innerHTML = `
+            <span class="bsim-chip">tag: <b>${escapeHtml(this.fvSelectedTag)}</b>
+                <span class="bsim-chip-x" title="Remove this scope" onclick="FileView.clearTreeSelection()">✕</span>
+            </span>`;
+    },
+
+    setGroupBy(mode) {
+        this.fvGroupBy = mode;
+        ['auto', 'tag', 'none'].forEach(m => {
+            const btn = document.getElementById(`fv-group-btn-${m}`);
+            if (btn) btn.classList.toggle('active', m === mode);
+        });
+        this.renderFunctionsTable();
     },
 
     setTreeAxis(axis) {
@@ -1206,14 +1395,21 @@ window.FileView = {
         this.renderTagTree();
     },
 
-    // A name node (>1 version) filters by prefix (`lib:libc*`); a leaf/version
-    // node or a flattened single-version name filters by the exact tag id --
-    // same wildcard syntax /api/function/search already supports (query_syntax.py).
-    selectTreeNode(id, prefix) {
-        const isGroup = prefix && id.startsWith('n:');
-        this.fvSelectedTag = isGroup ? prefix : id;
+    toggleTreeNode(id) {
+        if (this.fvOpen.has(id)) this.fvOpen.delete(id);
+        else this.fvOpen.add(id);
+        this.renderFunctionsTable();
+    },
+
+    // Every node is a real tag id, so selecting one filters by that id as a
+    // prefix -- the wildcard syntax /api/function/search already supports
+    // (query_syntax.py). It is a prefix even at a leaf: `fid:libc:2.31` has to
+    // catch `fid:libc:2.31#memcpy`, because the functions carrying a library's
+    // mass are tagged with the symbol they matched on.
+    selectTreeNode(id) {
+        this.fvSelectedTag = id;
         const input = document.getElementById('flt-func-tag');
-        if (input) input.value = isGroup ? `${prefix}*` : id;
+        if (input) input.value = `${id}*`;
         this.fvRenderTree();
         this.applyFilters();
     },

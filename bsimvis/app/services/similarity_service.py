@@ -1599,27 +1599,18 @@ class SimilarityService:
         return self.tag_service.add_user_tag(collection, "similarity", sid, tag)
 
     def _ensure_tag_metadata(self, collection: str, tag: str):
-        """Ensures a tag has metadata (color) in the global index."""
+        """Ensures a tag has a metadata row in the global index.
+
+        No colour, for the reason `tag_service._ensure_tag_metadata` gives: a
+        colour is derived from the tag id, and a stored one wins over it, so
+        rolling a palette entry here silently disabled the rule.
+        """
         r = self.r
         meta_key = f"{collection}:tags_metadata"
         if not r.hexists(meta_key, tag):
-            palette = [
-                "#FF5555",
-                "#50FA7B",
-                "#F1FA8C",
-                "#BD93F9",
-                "#FF79C6",
-                "#8BE9FD",
-                "#FFB86C",
-                "#A6E22E",
-                "#66D9EF",
-            ]
-            import random
-
-            color = random.choice(palette)
             import json
 
-            r.hset(meta_key, tag, json.dumps({"color": color, "priority": 0}))
+            r.hset(meta_key, tag, json.dumps({"priority": 0}))
 
     def untag_similarity(
         self, collection: str, id1: str, id2: str, algo: str, tag: str

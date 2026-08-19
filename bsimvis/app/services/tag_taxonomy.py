@@ -62,10 +62,30 @@ CATEGORIES = {
 # --- Origin -----------------------------------------------------------------
 ORIGIN_KINDS = ("lib", "stdlib", "bundle")
 
-# Bundles have no natural version but carry this placeholder anyway, so origin
-# ids are a uniform `origin:kind:name:version[:func]` and roll up at one depth.
-# Mirrors bin_sim_tags.ORIGIN_NO_VERSION; kept here so the migration does not
-# have to import the split engine.
+# The origin axis is one namespace per source, not one `origin:` namespace with
+# the source at segment 2. Two reasons, and neither is cosmetic: a function's
+# tags are `{tag_id: weight}` with nowhere to record who found them, so the id
+# has to; and it puts the library at the first level, which is what lets a
+# single colour rule tell `fid:libc` from `fid:openssl` instead of needing a
+# per-namespace hue depth.
+#
+# `lib` and `stdlib` no longer separate: the distinction never did anything --
+# both carried priority 100, and nothing else read the kind. Both now take the
+# namespace of whichever detector found them, which is the fact worth keeping.
+#
+# Only kinds that name a *source* rather than a detector's finding appear here.
+# A bundle is the malware itself, so it is `malware:` whoever noticed it.
+ORIGIN_KIND_NAMESPACE = {"bundle": "malware"}
+
+# Mirrors bin_sim_tags.TAG_NAMESPACES' origin entries. `pkg:` is reserved for
+# SBOM-sourced facts: purl identifies a package, which is a different claim from
+# "these bytes are libc", so a detector never writes it.
+ORIGIN_NAMESPACES = ("fid", "bsim", "malware", "pkg", "original")
+
+# Kept only so `migrate_tag` can recognise the placeholder version in a legacy
+# `origin:bundle:mirai:unknown`. New ids omit a version they do not have --
+# depth is not fixed any more, so a filler segment bought nothing and read as a
+# claim the analyzer never made.
 ORIGIN_NO_VERSION = "unknown"
 
 # File-scope only. `unpack_service` writes these onto file docs and
@@ -114,6 +134,51 @@ MISP_NAMESPACE = "misp"
 # to roll up on.
 VULN_NAMESPACES = ("cve", "ghsa", "pysec")
 
+# --- Axes -------------------------------------------------------------------
+# namespace -> the question a tag in it answers. Lives here, with the
+# vocabulary, because more than the split engine needs it: every view that
+# groups tags by axis reads the same map, shipped to the browser by
+# `color_config`. `bin_sim_tags` re-exports it as `TAG_NAMESPACES`.
+#
+# Several namespaces share an axis on purpose: an axis is a question, and
+# `misp:tool:cobalt-strike` and `runtime-packer:pe:upx` answer the same one
+# whatever taxonomy produced them. Origin has one namespace per detector, so
+# `fid:` and `bsim:` can be told apart on a function that has room for nothing
+# but its tag ids.
+TAG_AXES = {
+    "fid": "origin",
+    "bsim": "origin",
+    "malware": "origin",
+    "pkg": "origin",
+    "original": "origin",
+    "origin": "origin",
+    "severity": "severity",
+    "category": "category",
+    "user": "user",
+    "capa": "capa",
+    "mitre": "mitre",
+    "yara": "yara",
+    "rulezet": "ruleset",
+    "misp": "family",
+    "ms-caro-malware-full": "family",
+    "runtime-packer": "family",
+    "cve": "vuln",
+    "ghsa": "vuln",
+    "pysec": "vuln",
+    # The two synthetic buckets. They are whole ids rather than namespaces, but
+    # a namespace lookup on an id with no colon returns the id itself, so this
+    # entry answers for them -- and any view reading the map gets what
+    # `tag_axis` special-cases, instead of dropping them on the user axis.
+    "original_code": "origin",
+    "tag_mismatch": "origin",
+}
+
+# A tag with no known namespace (a bare `mirai` typed into the tag box) lands on
+# the user axis: it came from a human, and an unrecognised tag must never be
+# able to silently empty `original_code` or dilute the LLM's percentages.
+DEFAULT_AXIS = "user"
+
+
 # --- Colour -----------------------------------------------------------------
 # A tag's colour is derived from its id, never assigned: a new namespace, a new
 # library, a new capa rule all get a stable colour the day they first appear,
@@ -140,19 +205,34 @@ SEVERITY_HUES = {"none": 120, "low": 55, "medium": 30, "high": 0}
 # for the family arc *and* `libc` for its own colour.
 HUE_DEPTH_DEFAULT = 1
 HUE_DEPTH = {
+    # Legacy ids only. `origin:lib:libc` buried the library at the second
+    # segment, so one level of hue would have painted every library alike --
+    # which is the bug this whole rework exists to remove. New ids put the
+    # library first (`fid:libc`), so they need no entry, and this one can go
+    # once no `origin:` ids remain.
     "origin": 2,
-    "capa": 2,
-    "yara": 2,
-    "misp": 2,
 }
 
-# What separates a namespace's segments, where it is not a colon. ATT&CK is the
-# case that forces this: a sub-technique is written `mitre:t1027.005` because
-# that is how ATT&CK writes it, so its second level hides behind a dot. Splitting
-# on it here gives sub-techniques their parent's hue for free, with no id change
-# and no migration.
-HUE_SPLIT = {"mitre": r"[:.]"}
-HUE_SPLIT_DEFAULT = r":"
+# --- Structure --------------------------------------------------------------
+# What separates a namespace's levels, where it is not a colon, and where the
+# instance tail begins. One table, one parser: `tag_levels` (colour) and
+# `tag_prefixes` (index buckets) both read it, so a tag's hierarchy is the same
+# fact wherever it is asked for. Two copies of this rule is what let a tree node
+# take its colour from a string the index had never bucketed.
+#
+# ATT&CK is what forces a per-namespace entry: a sub-technique is written
+# `mitre:t1027.005` because that is how ATT&CK writes it, so its second level
+# hides behind a dot. A namespace keeps its source's own separators rather than
+# being rewritten, so a tag stays pasteable back into the tool it came from.
+TAG_SEPARATORS_DEFAULT = (":",)
+TAG_SEPARATORS = {"mitre": (":", ".")}
+
+# Everything from the first `#` is an instance, not a level: the function a
+# library tag was matched on, the rule name a detection fired from. It stays
+# part of the id -- searchable, filterable, displayed -- but it never becomes a
+# grouping level, an index bucket, or a colour. `origin:lib:libc:2.31#memcpy`
+# must not put `memcpy` in a sankey column next to `libc`.
+TAG_DETAIL = "#"
 
 # Each subdivision keeps this fraction of the interval its parent picked, per
 # level. The first is narrow so unrelated groups land far apart; the second is
@@ -199,7 +279,129 @@ COLOR_VECTORS = (
     "capa:host-interaction:file-system:write",
     "mitre:t1027.005",
     "cve:cve-2021-44228",
+    # The current shape: the library carries the hue, the version and the
+    # matched symbol are shades of it, and a second library is a different hue
+    # rather than a different lightness of the same one.
+    "fid:libc",
+    "fid:libc:2.31",
+    "fid:libc:2.31#memcpy",
+    "fid:openssl",
+    "yara:trojan:mirai#ELF_Mirai",
 )
+
+
+def tag_separators(namespace):
+    """The characters that separate levels inside this namespace's ids."""
+    return TAG_SEPARATORS.get(namespace, TAG_SEPARATORS_DEFAULT)
+
+
+def tag_in_scope(tag_id, prefix):
+    """Whether a tag falls under a scope prefix, by levels rather than by text.
+
+    A scope names levels, so it must be tested against levels: a plain
+    `startswith(prefix + ":")` reads `fid:uclibc:0.9.30.1#xdrmem_getint32` as
+    outside `fid:uclibc:0.9.30.1`, because the next character is the detail
+    marker rather than a colon. That is how selecting a library version came
+    back with nothing.
+
+    Uses the same prefixes the index buckets under, so a scope selects in the
+    UI exactly what it selects in a search.
+    """
+    if not tag_id or not prefix:
+        return False
+    body = tag_body(tag_id)[0]
+    return prefix == body or prefix in tag_prefixes(tag_id)
+
+
+def canonical_tag_id(tag_id):
+    """A tag id in the form every consumer downstream may assume.
+
+    One function, called by every constructor here and by the user-tag write
+    path, so an id cannot enter the system in a shape the tree, the index or the
+    colour rule would read differently. It normalises only what those layers
+    cannot carry:
+
+      * whitespace becomes `-`, because a space has to be quoted in a filter
+        value and percent-encoded in a permalink
+      * `"` is dropped, because it is how `query_syntax` quotes a literal
+      * empty levels collapse, so `a::b` and `a:b` are one tag rather than two
+      * case folds *the levels*, because the index buckets lowercase and two
+        casings of one tag would be two vocabulary entries pointing at the same
+        functions
+
+    The detail tail keeps its case: it is a symbol, and `EVP_EncryptInit` is not
+    `evp_encryptinit` in any debugger the analyst will paste it into. It is not a
+    grouping level, so nothing depends on it folding.
+
+    Everything else survives untouched. A source's own punctuation is data --
+    `2.31`, `libstdc++`, `System.Net.Http` and `t1027.005` all keep their dots,
+    and whether a dot is a level is `TAG_SEPARATORS`' business, not this one's.
+    A bare word becomes a `user:` tag: it came from a human, and an
+    unnamespaced id must not silently land on an analysis axis.
+    """
+    raw = " ".join(str(tag_id or "").split()).replace('"', "")
+    if not raw:
+        return ""
+    body, detail = tag_body(raw)
+    body = ":".join(p for p in body.split(":") if p)
+    if not body:
+        return ""
+    out = body if ":" in body else f"user:{body}"
+    out = out.replace(" ", "-").lower()
+    return f"{out}{TAG_DETAIL}{detail.replace(' ', '-')}" if detail else out
+
+
+def _split_keep(body, seps):
+    """`[seg, sep, seg, sep, ...]` -- separators kept so prefixes stay literal.
+
+    Longest separator first, so a two-character one is never split by the
+    single-character one it contains.
+    """
+    pattern = (
+        "(" + "|".join(re.escape(x) for x in sorted(seps, key=len, reverse=True)) + ")"
+    )
+    return re.split(pattern, body)
+
+
+def tag_body(tag_id):
+    """`(body, detail)` -- the id split at the first `#`, which starts the tail."""
+    body, marker, detail = str(tag_id).partition(TAG_DETAIL)
+    return body, (detail if marker else "")
+
+
+def tag_levels(tag_id):
+    """`(namespace, levels, detail)` for a tag id.
+
+    `levels` excludes the namespace, so `category:network:c2` yields
+    `("category", ["network", "c2"], "")`. Nothing here namespaces a bare tag --
+    callers that want `mytag` read as `user:mytag` apply `namespaced()` first,
+    because the index must keep bucketing the literal value it was handed.
+    """
+    body, detail = tag_body(tag_id)
+    ns = body.split(":", 1)[0]
+    parts = _split_keep(body, tag_separators(ns))
+    segs = [p for i, p in enumerate(parts) if i % 2 == 0 and p]
+    return ns, segs[1:], detail
+
+
+def tag_prefixes(tag_id):
+    """Ancestor prefixes of a tag id, excluding itself.
+
+    `origin:lib:libc:2.31` -> `['origin', 'origin:lib', 'origin:lib:libc']`, and
+    the detail tail contributes nothing: `lib:libc:2.31#memcpy` stops at
+    `lib:libc`, so no bucket named after a function can exist. Each prefix keeps
+    the original separators, so it is a literal prefix of the value rather than a
+    normalized form of it.
+    """
+    body, _ = tag_body(tag_id)
+    ns = body.split(":", 1)[0]
+    parts = _split_keep(body, tag_separators(ns))
+    out, prefix = [], parts[0]
+    for i in range(1, len(parts) - 1, 2):
+        if prefix:
+            out.append(prefix)
+        prefix += parts[i] + parts[i + 1]
+    return out
 
 
 def _hash32(text):
@@ -222,10 +424,8 @@ def tag_style(tag_id):
     lightened past the tag's own colour. `hue` is None for an id with nothing to
     hash (a bare namespace), which the UI draws grey.
     """
-    tag_id = namespaced(tag_id)
-    ns = tag_id.split(":", 1)[0]
-    segs = [s for s in re.split(HUE_SPLIT.get(ns, HUE_SPLIT_DEFAULT), tag_id) if s]
-    rest = segs[1:]
+    ns, rest, _detail = tag_levels(namespaced(tag_id))
+    segs = [ns] + rest
     if not rest:
         return None, 0, 0
 
@@ -251,16 +451,23 @@ def tag_style(tag_id):
 def color_config():
     """The rule's parameters, for the UI to apply the same rule client-side.
 
-    Shipped rather than a colour per tag because the UI invents ids the backend
-    never sees -- folding `origin:lib:libc:2.31` up to `origin:lib:libc` happens
-    in the browser, and that folded node still needs its colour.
+    Shipped rather than a colour per tag because the UI folds ids the backend
+    never sent -- `fid:libc:2.31` up to `fid:libc` happens in the browser, and
+    that folded node still needs its colour.
+
+    Carries the namespace -> axis map too. Any view that groups tags by axis
+    needs it, and a second copy living in JS is exactly the drift that let a
+    tree colour a node from a string the index had never bucketed.
     """
     return {
+        "tag_axes": dict(TAG_AXES),
+        "tag_axis_default": DEFAULT_AXIS,
         "severity_hues": SEVERITY_HUES,
         "hue_depth": HUE_DEPTH,
         "hue_depth_default": HUE_DEPTH_DEFAULT,
-        "hue_split": HUE_SPLIT,
-        "hue_split_default": HUE_SPLIT_DEFAULT,
+        "tag_separators": {k: list(v) for k, v in TAG_SEPARATORS.items()},
+        "tag_separators_default": list(TAG_SEPARATORS_DEFAULT),
+        "tag_detail": TAG_DETAIL,
         "hue_shrink": list(HUE_SHRINK),
         "hue_slots": HUE_SLOTS,
         "tones": TONES,
@@ -282,35 +489,52 @@ def namespaced(tag_id):
     return raw if ":" in raw else f"user:{raw}"
 
 
-def origin_tag(kind, name, version=None, func=None):
-    """Build `origin:<kind>:<name>:<version>[:<func>]`.
+def origin_tag(kind, name, version=None, func=None, detector="fid"):
+    """Build `<namespace>:<name>[:<version>][#<func>]`.
 
-    The version segment is always present -- `unknown` when the analyzer did not
-    establish one -- so every origin id rolls up at one fixed depth instead of
-    needing a per-kind rule.
+    The namespace names *who said so* -- `fid:libc:2.31#memcpy`. A function's
+    tags are `{tag_id: weight}`, so the id is the only per-function field there
+    is: with the detector buried in a shared `origin:` namespace there would be
+    no way to see where Function ID and BSim disagree, and no way to give two
+    libraries two hues, because the first level would be the kind rather than
+    the library.
+
+    A missing version is a shorter id, not a placeholder segment: depth is not
+    fixed any more, so `unknown` bought nothing and read as a claim.
+
+    `kind` stays in the signature because callers speak in kinds; a bundle is
+    the malware itself rather than a detector's finding, so it routes to
+    `malware:`.
     """
-    parts = ["origin", kind, name, version or ORIGIN_NO_VERSION]
-    if func:
-        parts.append(func)
-    return ":".join(parts)
+    ns = ORIGIN_KIND_NAMESPACE.get(kind, detector)
+    parts = [ns, name] + ([version] if version else [])
+    tag = ":".join(str(p) for p in parts)
+    return canonical_tag_id(f"{tag}{TAG_DETAIL}{func}" if func else tag)
 
 
 def origin_parent(tag_id):
     """File-level origin implied by a function's origin tag, or None.
 
-    `origin:lib:uclibc:0.9.30.1:xdrmem_getint32` -> `origin:lib:uclibc`: if a
-    function is a known uClibc routine, the binary contains uClibc. The version
-    is deliberately dropped -- one Function ID hit dates a single function, not
-    the library the file was linked against, and a per-function version on the
-    file document reads as a claim about the whole binary that nothing here
+    `fid:uclibc:0.9.30.1#xdrmem_getint32` -> `fid:uclibc`: if a function is a
+    known uClibc routine, the binary contains uClibc. The version is
+    deliberately dropped -- one Function ID hit dates a single function, not the
+    library the file was linked against, and a per-function version on the file
+    document reads as a claim about the whole binary that nothing here
     established. The version stays on the function tag, where the evidence is.
+
+    Legacy `origin:<kind>:<name>:...` ids answer with their own shape for as
+    long as any survive the migration.
     """
     if not tag_id:
         return None
-    parts = str(tag_id).split(":")
-    if len(parts) < 3 or parts[0] != "origin" or not parts[2]:
+    parts = tag_body(tag_id)[0].split(":")
+    if parts[0] == "origin":
+        if len(parts) < 3 or not parts[2]:
+            return None
+        return f"origin:{parts[1]}:{parts[2]}"
+    if parts[0] not in ORIGIN_NAMESPACES or len(parts) < 2 or not parts[1]:
         return None
-    return f"origin:{parts[1]}:{parts[2]}"
+    return f"{parts[0]}:{parts[1]}"
 
 
 def severity_tag(level):
@@ -410,20 +634,29 @@ def capa_rule_hits(cdata):
     return base, hits
 
 
-def yara_tag(category, family, rule_name):
-    """A matched YARA rule -> `yara:<category>:<family>:<rule_name>` tag id.
+def yara_tag(category, family, rule_name, namespace=YARA_NAMESPACE):
+    """A matched YARA rule -> `yara:<category>:<family>#<rule_name>` tag id.
 
     A YARA rule carries no built-in namespace the way a capa rule does, so the
     id is assembled from the rule's own `meta.category` and `meta.malware`/
     `meta.family` fields (e.g. `category: "ransomware"`, `malware: "LOCKBIT"`,
     or a yarahub-style rule that names the family `family: "Torii"` instead of
-    `malware:`). Either segment can be missing on a rule that carries none of
-    these; `unknown` keeps the id at a fixed four-segment depth rather than
-    needing a per-rule rule for how many segments it has.
+    `malware:`). Either can be missing on a rule that carries none of these,
+    and `unknown` says so.
+
+    The rule name is the detail tail, not a level: one rule fires on one
+    function and there are hundreds of thousands of them, so as a level it would
+    mint an index bucket per rule and offer the sankey a column nobody can read.
+    As a tail it stays searchable and displayed while grouping happens at the
+    family above it.
+
+    `namespace` picks the ruleset: `yara` for the vendored one, `rulezet` for a
+    mirrored rule. Which ruleset fired is per-function evidence, and the id is
+    the only per-function field there is.
     """
     cat = str(category or "unknown").strip().lower() or "unknown"
     fam = str(family or "unknown").strip().lower() or "unknown"
-    return f"yara:{cat}:{fam}:{rule_name}"
+    return canonical_tag_id(f"{namespace}:{cat}:{fam}{TAG_DETAIL}{rule_name}")
 
 
 def yara_rule_hits(matches, extra=None):
@@ -698,6 +931,70 @@ LEGACY_CAPABILITY = {
 }
 
 
+def modernize_tag_id(tag_id):
+    """A tag id in the old shape -> the same fact in the current one.
+
+    Separate from `migrate_tag`, which maps the *previous* vocabulary
+    (`flag:`/`llm:`) onto this one. This handles the later move: the detector out
+    of segment 2 and into the namespace, and per-function evidence out of a
+    level and into the detail tail.
+
+        origin:lib:libc:2.31:memcpy      -> fid:libc:2.31#memcpy
+        origin:stdlib:libstdc++:11       -> fid:libstdc++:11
+        origin:bundle:mirai:unknown      -> malware:mirai
+        yara:trojan:mirai:ELF_Mirai      -> yara:trojan:mirai#ELF_Mirai
+        rulezet:ELF_Mirai                -> rulezet:unknown#ELF_Mirai
+        cve:cve-2021-44228               -> cve:2021-44228
+
+    An id already in the current shape is returned unchanged, so the migration
+    is safe to run twice -- which it will be, because a corpus is re-tagged in
+    pieces and nobody tracks which pieces.
+
+    `rulezet:` loses nothing it had: the mirrored rule's category and family
+    were never in that id. They arrive on the `yara:` tag the same rule writes
+    when it fires, so the migrated id says `unknown` rather than inventing one.
+    """
+    # Deliberately not canonicalised first: a rule name is a *level* in the old
+    # id and a tail in the new one, and levels fold case. Normalising before the
+    # move would lowercase `ELF_Mirai` on its way to becoming a symbol.
+    raw = " ".join(str(tag_id or "").split())
+    if not raw:
+        return ""
+    body, detail = tag_body(raw)
+    parts = [p for p in body.split(":") if p]
+    if not parts:
+        return ""
+    head = parts[0].lower()
+
+    if head == "origin" and len(parts) >= 3:
+        kind, name, rest = parts[1], parts[2], parts[3:]
+        ns = ORIGIN_KIND_NAMESPACE.get(kind, "fid")
+        version = rest[0] if rest and rest[0] != ORIGIN_NO_VERSION else None
+        func = detail or (rest[1] if len(rest) > 1 else None)
+        levels = [ns, name] + ([version] if version else [])
+        out = ":".join(levels)
+        return canonical_tag_id(f"{out}{TAG_DETAIL}{func}" if func else out)
+
+    # `yara:<category>:<family>:<rule>` -- the rule name becomes the tail.
+    if head in (YARA_NAMESPACE, "rulezet") and not detail:
+        if head == "rulezet" and len(parts) == 2:
+            return canonical_tag_id(f"rulezet:unknown{TAG_DETAIL}{parts[1]}")
+        if len(parts) >= 4:
+            return canonical_tag_id(
+                ":".join(parts[:3]) + TAG_DETAIL + ":".join(parts[3:])
+            )
+
+    # `cve:cve-2021-44228` -- the namespace already says which registry.
+    if (
+        head in VULN_NAMESPACES
+        and len(parts) == 2
+        and parts[1].lower().startswith(head + "-")
+    ):
+        return canonical_tag_id(f"{head}:{parts[1][len(head) + 1:]}")
+
+    return canonical_tag_id(raw)
+
+
 def migrate_tag(tag_id):
     """Old tag id -> the list of new ids replacing it.
 
@@ -866,20 +1163,73 @@ def demo():
     assert not is_taxonomy_tag("category:network:invented")
     assert not is_taxonomy_tag("origin:lib:libc:2.31"), "model must not invent origins"
 
-    assert origin_tag("lib", "libc", "2.31", "memcpy") == "origin:lib:libc:2.31:memcpy"
-    assert origin_tag("lib", "libc") == "origin:lib:libc:unknown"
+    # The namespace names the detector, the first level names the library, and
+    # the function is a detail tail rather than a fifth level.
+    assert origin_tag("lib", "libc", "2.31", "memcpy") == "fid:libc:2.31#memcpy"
+    assert origin_tag("lib", "libc") == "fid:libc"
+    assert origin_tag("bundle", "mirai", None, "scanner") == "malware:mirai#scanner"
     assert (
-        origin_tag("bundle", "mirai", None, "scanner")
-        == "origin:bundle:mirai:unknown:scanner"
+        origin_tag("lib", "openssl", "3.0.2", "EVP_EncryptInit", detector="bsim")
+        == "bsim:openssl:3.0.2#EVP_EncryptInit"
+    ), "a second detector is a second namespace, so the two can be compared"
+    # A symbol keeps its case; a level does not.
+    assert origin_tag("lib", "Visual Studio", "2019", "atexit") == (
+        "fid:visual-studio:2019#atexit"
     )
+
     # A tag the analyzer builds must roll up the way the split engine expects.
+    assert origin_parent("fid:uclibc:0.9.30.1#xdrmem_getint32") == "fid:uclibc"
+    assert origin_parent("malware:mirai") == "malware:mirai"
+    assert origin_parent("severity:high") is None
+    assert origin_parent("") is None
+    # Legacy ids keep answering until the migration has run.
     assert (
         origin_parent("origin:lib:uclibc:0.9.30.1:xdrmem_getint32")
         == "origin:lib:uclibc"
     )
     assert origin_parent("origin:bundle:mirai:unknown") == "origin:bundle:mirai"
-    assert origin_parent("severity:high") is None
-    assert origin_parent("") is None
+
+    # `canonical_tag_id` normalises only what the query and index layers cannot
+    # carry, and leaves a source's own punctuation as data.
+    assert canonical_tag_id("  Origin:lib:Visual Studio:2019 ") == (
+        "origin:lib:visual-studio:2019"
+    )
+    assert canonical_tag_id('misp-galaxy:tool="Cobalt Strike"') == (
+        "misp-galaxy:tool=cobalt-strike"
+    )
+    assert canonical_tag_id("a::b") == "a:b", "an empty level is not a level"
+    assert canonical_tag_id("mirai") == "user:mirai"
+    assert canonical_tag_id("mitre:T1027.005") == "mitre:t1027.005", "a dot is data"
+    assert canonical_tag_id("fid:openssl:3.0.2#EVP_EncryptInit") == (
+        "fid:openssl:3.0.2#EVP_EncryptInit"
+    ), "a symbol keeps its case"
+    assert canonical_tag_id("   ") == ""
+
+    # The move to detector namespaces and detail tails, and it must be safe to
+    # run twice -- a corpus gets migrated in pieces and nobody tracks which.
+    assert modernize_tag_id("origin:lib:libc:2.31:memcpy") == "fid:libc:2.31#memcpy"
+    assert modernize_tag_id("origin:stdlib:libstdc++:11") == "fid:libstdc++:11"
+    assert modernize_tag_id("origin:bundle:mirai:unknown") == "malware:mirai"
+    assert modernize_tag_id("yara:trojan:mirai:ELF_Mirai") == (
+        "yara:trojan:mirai#ELF_Mirai"
+    ), "a rule name is a symbol on its way out of being a level"
+    assert modernize_tag_id("rulezet:ELF_Mirai") == "rulezet:unknown#ELF_Mirai"
+    assert modernize_tag_id("cve:cve-2021-44228") == "cve:2021-44228"
+    assert modernize_tag_id("category:network:c2") == "category:network:c2"
+    for already in ("fid:libc:2.31#memcpy", "yara:trojan:mirai#ELF_Mirai"):
+        assert modernize_tag_id(already) == already, already
+
+    # A scope names levels, so it is tested against levels. Selecting a library
+    # version came back empty because `startswith(prefix + ":")` reads the
+    # detail marker as being outside the version it hangs off.
+    assert tag_in_scope("fid:uclibc:0.9.30.1#xdrmem_getint32", "fid:uclibc:0.9.30.1")
+    assert tag_in_scope("fid:uclibc:0.9.30.1#xdrmem_getint32", "fid:uclibc")
+    assert tag_in_scope("fid:uclibc:0.9.30.1", "fid:uclibc:0.9.30.1")
+    assert tag_in_scope("origin:lib:uclibc:0.9.30.1:x", "origin:lib:uclibc")
+    # A sibling whose name merely starts with the same text is not in scope.
+    assert not tag_in_scope("fid:uclibcplus:1.0", "fid:uclibc")
+    assert not tag_in_scope("fid:musl:1.2#x", "fid:uclibc")
+    assert not tag_in_scope("", "fid:uclibc")
 
     assert namespaced("mytag") == "user:mytag"
     assert namespaced("category:network:c2") == "category:network:c2"
@@ -977,9 +1327,9 @@ def demo():
     }, mhits
 
     assert yara_tag("Ransomware", "LOCKBIT", "Win32_Ransomware_LockBit") == (
-        "yara:ransomware:lockbit:Win32_Ransomware_LockBit"
+        "yara:ransomware:lockbit#Win32_Ransomware_LockBit"
     )
-    assert yara_tag(None, None, "no_meta_rule") == "yara:unknown:unknown:no_meta_rule"
+    assert yara_tag(None, None, "no_meta_rule") == "yara:unknown:unknown#no_meta_rule"
     # yarahub-style meta: `family`, no `malware`, no `category`.
     import types
 
@@ -989,10 +1339,10 @@ def demo():
                 rule="ELF_Toriilike_persist", meta={"family": "Torii"}
             )
         )
-        == "yara:unknown:torii:ELF_Toriilike_persist"
+        == "yara:unknown:torii#ELF_Toriilike_persist"
     )
     assert (
-        namespaced("yara:ransomware:lockbit:x") == "yara:ransomware:lockbit:x"
+        namespaced("yara:ransomware:lockbit#x") == "yara:ransomware:lockbit#x"
     ), "a yara tag must not be buried under user:"
 
     # Shaped like yara-python's own Match/StringMatch/StringMatchInstance, not a
@@ -1035,12 +1385,12 @@ def demo():
     ]
     hits = yara_rule_hits(matches)
     assert hits == {
-        0x1000: {"yara:ransomware:lockbit:Win32_Ransomware_LockBit"},
-        0x2000: {"yara:ransomware:lockbit:Win32_Ransomware_LockBit"},
-        0x2500: {"yara:ransomware:lockbit:Win32_Ransomware_LockBit"},
-        0x3000: {"yara:unknown:unknown:homebrew_rule"},
-        0x4000: {"yara:trojan:mirai:Linux_Trojan_Mirai_268aac0b"},
-        0x5000: {"yara:unknown:unknown:odd_shape_rule"},
+        0x1000: {"yara:ransomware:lockbit#Win32_Ransomware_LockBit"},
+        0x2000: {"yara:ransomware:lockbit#Win32_Ransomware_LockBit"},
+        0x2500: {"yara:ransomware:lockbit#Win32_Ransomware_LockBit"},
+        0x3000: {"yara:unknown:unknown#homebrew_rule"},
+        0x4000: {"yara:trojan:mirai#Linux_Trojan_Mirai_268aac0b"},
+        0x5000: {"yara:unknown:unknown#odd_shape_rule"},
     }, hits
     assert yara_rule_hits([]) == {}
 
@@ -1048,13 +1398,13 @@ def demo():
     # rule is in it and is absent from every value in `hits`.
     file_tags = yara_file_tags(matches)
     assert file_tags == {
-        "yara:ransomware:lockbit:Win32_Ransomware_LockBit",
-        "yara:unknown:unknown:homebrew_rule",
-        "yara:packer:unknown:Win32_Packer_Themida",
-        "yara:trojan:mirai:Linux_Trojan_Mirai_268aac0b",
-        "yara:unknown:unknown:odd_shape_rule",
+        "yara:ransomware:lockbit#Win32_Ransomware_LockBit",
+        "yara:unknown:unknown#homebrew_rule",
+        "yara:packer:unknown#Win32_Packer_Themida",
+        "yara:trojan:mirai#Linux_Trojan_Mirai_268aac0b",
+        "yara:unknown:unknown#odd_shape_rule",
     }, file_tags
-    assert "yara:packer:unknown:Win32_Packer_Themida" not in set().union(*hits.values())
+    assert "yara:packer:unknown#Win32_Packer_Themida" not in set().union(*hits.values())
     assert yara_file_tags([]) == set()
 
     # The mirrored ruleset's tags ride in a sidecar keyed by the uuid YARA
@@ -1079,14 +1429,14 @@ def demo():
     # `rulezet:` carries the uuid, not the rule name -- the name is already in
     # the `yara:` tag right next to it.
     assert yara_file_tags(mirrored, sidecar) == {
-        "yara:trojan:mirai:Some_Rule",
+        "yara:trojan:mirai#Some_Rule",
         "mitre:t1027",
         "cve:cve-2021-44228",
         f"rulezet:{uuid_str}",
     }
     assert yara_rule_hits(mirrored, sidecar) == {
         0x7000: {
-            "yara:trojan:mirai:Some_Rule",
+            "yara:trojan:mirai#Some_Rule",
             "mitre:t1027",
             "cve:cve-2021-44228",
             f"rulezet:{uuid_str}",
@@ -1094,11 +1444,11 @@ def demo():
     }
     # No sidecar entry, and matches with no namespace at all, still work.
     assert yara_file_tags(mirrored, {"other": ["x"]}) == {
-        "yara:trojan:mirai:Some_Rule",
+        "yara:trojan:mirai#Some_Rule",
         f"rulezet:{uuid_str}",
     }
     assert yara_file_tags(matches[:1], sidecar) == {
-        "yara:ransomware:lockbit:Win32_Ransomware_LockBit"
+        "yara:ransomware:lockbit#Win32_Ransomware_LockBit"
     }
 
     # --- Source tag routing -------------------------------------------------
@@ -1181,10 +1531,25 @@ def demo():
         (75.52, 0, 0),
         (75.52, 0, 2),
         (76.91, 0, 0),
-        (120.52, 0, 1),
+        (122.73, 1, 2),
         (237.27, 0, 1),
         (99.82, 0, 0),
+        (99.82, 1, 0),
+        (99.82, 1, 1),
+        (99.82, 1, 1),
+        (54.0, 0, 0),
+        (54.0, 0, 1),
     ], [tag_style(t) for t in COLOR_VECTORS]
+
+    # The bug this rework exists to remove: two libraries must differ in hue,
+    # not merely in lightness, and a library must keep one hue at every depth it
+    # is displayed at -- as a card, as a tree node, as a version, as a symbol.
+    libc = [tag_style(f"fid:libc{s}")[0] for s in ("", ":2.31", ":2.31#memcpy")]
+    assert len(set(libc)) == 1, libc
+    assert tag_style("fid:libc")[0] != tag_style("fid:openssl")[0]
+    assert tag_style("fid:libc")[0] != tag_style("fid:visual-studio")[0]
+    # A detail tail changes nothing about the colour: it is not a level.
+    assert tag_style("fid:libc:2.31#memcpy") == tag_style("fid:libc:2.31#malloc")
 
     rules = prompt_rules()
     assert "severity:<level>" in rules and "key_exchange" in rules

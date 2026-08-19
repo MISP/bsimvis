@@ -11,6 +11,26 @@ from bsimvis.app.services.index_service import (
 )
 
 
+# Marks a colour a human actually chose. Three writers used to assign one off a
+# palette the first time a tag was seen -- two of them with `random.choice`, so
+# the value carries no evidence of where it came from. A stored colour wins over
+# the derived one in the UI, so that dice roll silently beat the namespace/hue
+# rule for every tag an analyzer wrote: `fid:uclibc` green, its own
+# `#ambiguous` red, no relation between a library and its versions.
+#
+# Only a colour carrying this marker is honoured now. Colours already stored
+# have no marker and cannot be told apart from the random ones, so they give way
+# to the derived colour -- on a vocabulary of thousands of analyzer tags, that
+# is the outcome a human wants anyway, and a deliberate choice is one click to
+# restore.
+COLOR_SOURCE_USER = "user"
+
+
+def _honoured_color(meta):
+    """Whether this metadata row's colour was chosen rather than rolled."""
+    return bool(meta.get("color")) and meta.get("color_source") == COLOR_SOURCE_USER
+
+
 def _normalize_collection(collection, entity_id=None):
     return resolve_origin_collection(collection, entity_id)
 
@@ -409,33 +429,22 @@ class TagService:
             return False
 
     def _ensure_tag_metadata(self, collection, tag):
-        """Ensures a tag has metadata (color) in the global index."""
+        """Ensures a tag has a metadata row in the global index.
+
+        Deliberately stores no colour. A tag's colour is derived from its id --
+        namespace picks the arc, the first level picks the hue, deeper levels
+        shade -- so a library reads as one colour everywhere it appears and two
+        libraries differ by hue rather than by luck. Rolling a palette entry per
+        tag here overrode all of that, which is why `fid:uclibc` came out green
+        and `fid:uclibc:0.9.30.1#ambiguous` red.
+
+        A stored colour now means exactly one thing: a human chose it, and the
+        UI still lets that win.
+        """
         collection = _normalize_collection(collection)
         meta_key = f"{collection}:tags_metadata"
         if not self.r.hexists(meta_key, tag):
-            palette = [
-                "#FF5555",
-                "#50FA7B",
-                "#F1FA8C",
-                "#BD93F9",
-                "#FF79C6",
-                "#8BE9FD",
-                "#FFB86C",
-                "#A6E22E",
-                "#66D9EF",
-                "#FFD700",
-                "#FF69B4",
-                "#7B68EE",
-                "#48D1CC",
-                "#00FF7F",
-                "#F4A460",
-            ]
-            import hashlib
-
-            tag_hash = int(hashlib.md5(tag.encode()).hexdigest(), 16)
-            color = palette[tag_hash % len(palette)]
-
-            self.r.hset(meta_key, tag, json.dumps({"color": color, "priority": 0}))
+            self.r.hset(meta_key, tag, json.dumps({"priority": 0}))
 
             # Propagate tag metadata to pools containing this collection
             associated_pools = self.r.smembers(f"{collection}:pools")
@@ -443,9 +452,7 @@ class TagService:
                 p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
                 pool_meta_key = f"global:pool:{p_id}:tags_metadata"
                 if not self.r.hexists(pool_meta_key, tag):
-                    self.r.hset(
-                        pool_meta_key, tag, json.dumps({"color": color, "priority": 0})
-                    )
+                    self.r.hset(pool_meta_key, tag, json.dumps({"priority": 0}))
 
     def get_tags(self, collection):
         """Returns the global tag index for a collection."""
@@ -463,6 +470,11 @@ class TagService:
         for k, v in raw_meta.items():
             tag_name = k.decode() if isinstance(k, bytes) else k
             meta = json.loads(v)
+            if meta.get("color") and not _honoured_color(meta):
+                # Rolled by the old auto-assign, not chosen. Dropped on read
+                # rather than migrated: the hash is rewritten by several paths,
+                # and a row nobody has recoloured needs no rewrite at all.
+                meta = {kk: vv for kk, vv in meta.items() if kk != "color"}
             results[tag_name] = meta
 
         return results
@@ -608,6 +620,10 @@ class TagService:
         raw = self.r.hget(meta_key, tag)
         meta = json.loads(raw) if raw else {"priority": 0}
         meta["color"] = color
+        # Marks it as chosen, which is what makes it beat the colour derived
+        # from the tag id. Without the marker it is indistinguishable from the
+        # palette rolls the old auto-assign left behind, and is ignored on read.
+        meta["color_source"] = COLOR_SOURCE_USER
         self.r.hset(meta_key, tag, json.dumps(meta))
 
         # Propagate to pools

@@ -49,7 +49,7 @@ rule Test_Condition_Only {
 }
 """
 
-CANARY = "yara:trojan:canary:Test_Xref_Canary"
+CANARY = "yara:trojan:canary#Test_Xref_Canary"
 
 
 def skip(msg):
@@ -86,7 +86,7 @@ def main():
         # The condition-only rule has no string instances, so it exists at file
         # level or not at all.
         file_tags = yara_file_tags(matches)
-        assert "yara:unknown:unknown:Test_Condition_Only" in file_tags, file_tags
+        assert "yara:unknown:unknown#Test_Condition_Only" in file_tags, file_tags
         assert CANARY in file_tags, file_tags
 
         import pyghidra

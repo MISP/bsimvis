@@ -69,9 +69,18 @@ const container = { innerHTML: '', clientWidth: 900, clientHeight: 500 };
 // Colours are a tag's identity now, so the graph asks `TagColor` for them. The
 // real derivation is checked in `test_tag_colors.js`; here a legible stub keeps
 // the assertions about *which* tag a node was coloured for.
+// The split helpers are not stubbed away: the tree's nesting is what the graph
+// folds along, so it has to be the real rule. This is the default config the
+// browser gets from `/api/tags/colors` -- colon levels, `#` starts the detail.
 const tagColorStub = {
     config: () => ({}),
     forTag: (id, o) => ((o && o.gray) ? `gray(${id})` : `color(${id})`),
+    groupId: (id) => String(id).split('#')[0],
+    levels: (id) => ({ segs: String(id).split('#')[0].split(':').filter(Boolean) }),
+    prefixes: (id) => {
+        const segs = String(id).split('#')[0].split(':').filter(Boolean);
+        return segs.slice(0, -1).map((_, i) => segs.slice(0, i + 1).join(':'));
+    },
 };
 const M = load(
     { addEventListener() {} },
@@ -99,58 +108,64 @@ const by = (gs) => Object.fromEntries(gs.map(g => [g.key, g]));
 M.setRows(rows);
 M.setAxis('origin', '');
 
-// Libraries open, each library folded: the two libc versions become one node,
-// and ssl -- which has a single version -- is already a leaf.
-M.setOpen(['libraries']);
+// Every key here is a tag id, and a real prefix of the rows it folds -- which is
+// what makes a node's colour, its index buckets and the scope it sends to the
+// backend the same string.
+//
+// Libraries open, each library folded: the two libc versions become one node.
+M.setOpen(['origin', 'origin:lib']);
 let g = by(M.fileSimSankeyGroups(rows, 'count'));
-assert.deepStrictEqual(Object.keys(g).sort(), ['libraries/libc', 'libraries/ssl', 'original']);
-assert.strictEqual(g['libraries/libc'].sharedA, 14);      // 10 + 4
-assert.strictEqual(g['libraries/libc'].sharedB, 13);      // 9 + 4
-assert.strictEqual(g['libraries/libc'].uniqA, 2);
-assert.strictEqual(g['libraries/libc'].uniqB, 1);
-assert.strictEqual(g['libraries/libc'].expandable, true); // version level below
-assert.strictEqual(g['libraries/libc'].label, 'libc');
-// Original holds its mass directly, so there is nothing under it to open.
-assert.strictEqual(g['original'].expandable, false);
-assert.strictEqual(g['original'].label, 'Original');
+assert.deepStrictEqual(
+    Object.keys(g).sort(),
+    ['origin:lib:libc', 'origin:lib:ssl', 'original_code']
+);
+assert.strictEqual(g['origin:lib:libc'].sharedA, 14);      // 10 + 4
+assert.strictEqual(g['origin:lib:libc'].sharedB, 13);      // 9 + 4
+assert.strictEqual(g['origin:lib:libc'].uniqA, 2);
+assert.strictEqual(g['origin:lib:libc'].uniqB, 1);
+assert.strictEqual(g['origin:lib:libc'].expandable, true); // version level below
+assert.strictEqual(g['origin:lib:libc'].label, 'libc');
+// An id with no levels holds its mass directly: nothing under it to open.
+assert.strictEqual(g['original_code'].expandable, false);
+assert.strictEqual(g['original_code'].label, 'original_code');
 
 // Features metric reads the weight_* fields instead of the bin counts.
 g = by(M.fileSimSankeyGroups(rows, 'features'));
-assert.strictEqual(g['libraries/libc'].sharedA, 140);
-assert.strictEqual(g['libraries/libc'].uniqA, 20);
-assert.strictEqual(g['original'].uniqA, 50);
+assert.strictEqual(g['origin:lib:libc'].sharedA, 140);
+assert.strictEqual(g['origin:lib:libc'].uniqA, 20);
+assert.strictEqual(g['original_code'].uniqA, 50);
 
-// Everything folded: the whole Libraries group draws as one node.
+// Everything folded: every origin tag draws as one node.
 M.setOpen([]);
 g = by(M.fileSimSankeyGroups(rows, 'count'));
-assert.deepStrictEqual(Object.keys(g).sort(), ['libraries', 'original']);
-assert.strictEqual(g['libraries'].sharedA, 17);           // 10 + 4 + 3
-assert.strictEqual(g['libraries'].tags, 3);
+assert.deepStrictEqual(Object.keys(g).sort(), ['origin', 'original_code']);
+assert.strictEqual(g['origin'].sharedA, 17);               // 10 + 4 + 3
+assert.strictEqual(g['origin'].tags, 3);
 
 // Drilling into one library splits only that library; its siblings stay folded.
 // A single global depth setting could not express this -- the tree can.
-M.setOpen(['libraries', 'libraries/libc']);
+M.setOpen(['origin', 'origin:lib', 'origin:lib:libc']);
 g = by(M.fileSimSankeyGroups(rows, 'count'));
 assert.deepStrictEqual(
     Object.keys(g).sort(),
-    ['libraries/ssl', 'origin:lib:libc:2.31', 'origin:lib:libc:2.35', 'original']
+    ['origin:lib:libc:2.31', 'origin:lib:libc:2.35', 'origin:lib:ssl', 'original_code']
 );
 assert.strictEqual(g['origin:lib:libc:2.31'].label, '2.31');
-assert.strictEqual(g['libraries/ssl'].label, 'ssl');
+assert.strictEqual(g['origin:lib:ssl'].label, 'ssl');
 
 // Sorted by total mass, biggest first, and zero-mass tags dropped.
 const withDead = rows.concat([row('origin:lib:dead:1.0')]);
 M.setRows(withDead);
-M.setOpen(['libraries']);
+M.setOpen(['origin', 'origin:lib']);
 const sorted = M.fileSimSankeyGroups(withDead, 'count');
-assert.strictEqual(sorted[0].key, 'libraries/libc');
-assert.ok(!sorted.some(x => x.key === 'libraries/dead'));
+assert.strictEqual(sorted[0].key, 'origin:lib:libc');
+assert.ok(!sorted.some(x => x.key === 'origin:lib:dead'));
 M.setRows(rows);
 
 // ---- Graph shape --------------------------------------------------------
 // Regression: a side node must carry exactly one category. One node feeding both
 // the shared and the unmatched bucket reads as "all of it is shared AND unique".
-M.setOpen(['libraries']);
+M.setOpen(['origin', 'origin:lib']);
 M.setScale('count');
 M.setAxis('origin', '');
 M.renderFileSimSankey({
@@ -177,7 +192,7 @@ captured.nodes.forEach(n => {
 });
 
 const nodeById = Object.fromEntries(captured.nodes.map(n => [n.id, n]));
-const idx = M.fileSimSankeyGroups(rows, 'count').findIndex(x => x.key === 'original');
+const idx = M.fileSimSankeyGroups(rows, 'count').findIndex(x => x.key === 'original_code');
 const linkVal = (from, to) => captured.links.find(l => l.source.id === from && l.target.id === to).value;
 // original_code: 7 shared / 5 unique in A, split across two left nodes. With no
 // second axis every group has exactly one shared bucket, hence the `_0` suffix.
@@ -208,7 +223,16 @@ assert.ok(nodeById[`fsk_as_${idx}`].sort < nodeById[`fsk_au_${idx}`].sort);
 // The backend stores one crossing, keyed by origin parent on the outside and by
 // the other three axes packed into the inner key. Every view is a marginal.
 const SEP = '\u001f';
-const jkey = (sev, cat, usr) => [sev, cat, usr].join(SEP);
+// One slot per FILESIM_JOINT_INNER axis, in that order. A key of the wrong
+// arity is dropped rather than mis-parsed, so this pads to the full width --
+// the fixture stopped at three when the axis list grew past it, and every
+// assertion below it had been silently reading an empty marginal since.
+const JOINT_INNER_WIDTH = 9;   // severity, category, user, capa, mitre, yara, family, vuln, ruleset
+const jkey = (sev, cat, usr) => {
+    const slots = new Array(JOINT_INNER_WIDTH).fill('');
+    [sev, cat, usr].forEach((v, i) => { slots[i] = v; });
+    return slots.join(SEP);
+};
 // Cells: [w_shared_a, w_shared_b, w_uniq_a, w_uniq_b, then the same as counts].
 const joint = {
     'origin:lib:libc:2.31': {
@@ -248,7 +272,7 @@ assert.strictEqual(mg['category:crypto']['severity:high'][4], 1);
 // The second axis: origin says whose code matched, behaviour says what that code
 // does. The stage only appears when the crossed axis has mass, and it must
 // conserve -- every unit leaving an origin node arrives at the shared node.
-M.setOpen(['libraries', 'libraries/libc']);
+M.setOpen(['origin', 'origin:lib', 'origin:lib:libc']);
 M.setScale('count');
 M.setAxis('origin', 'category');
 const crossed = M.fileSimJointMarginal(joint, 'origin', 'category');
@@ -257,7 +281,7 @@ const fi = fgroups.findIndex(x => x.key === 'origin:lib:libc:2.31');
 assert.strictEqual(fgroups[fi].flagA, 6);   // 4 network + 2 util
 assert.strictEqual(fgroups[fi].flagB, 5);
 // A group the crossed axis says nothing about carries no cells at all.
-assert.strictEqual(fgroups.find(x => x.key === 'libraries/ssl').flagA, 0);
+assert.strictEqual(fgroups.find(x => x.key === 'origin:lib:ssl').flagA, 0);
 
 captured = null;
 M.renderFileSimSankey({
@@ -340,11 +364,18 @@ const catRows = [
     row('category:util', { bins: { '10': [1, 10, 1, 10] } }),
 ];
 const catTree = M.fileSimTree(catRows, 'category');
-assert.deepStrictEqual(catTree.children.map(n => n.label), ['network', 'util']);
-assert.deepStrictEqual(catTree.children[0].children.map(n => n.label), ['c2', 'dns']);
+// Every level sorts by similarity, which is what Origin always did -- the axes
+// that used to sort their top level by mass now agree with it. `util` (1 vs 1,
+// 100%) leads `network` (mean of c2 100% and dns 50%, so 75%) despite carrying
+// a fraction of the mass.
+assert.deepStrictEqual(catTree.children.map(n => n.label), ['util', 'network']);
+const catNetwork = catTree.children.find(n => n.label === 'network');
+assert.deepStrictEqual(catNetwork.children.map(n => n.label), ['c2', 'dns']);
 // A node id is the tag id, which is what scopes the table and the flow.
-assert.strictEqual(catTree.children[0].children[0].id, 'category:network:c2');
-assert.strictEqual(catTree.children[0].a, 6);
+assert.strictEqual(catNetwork.children[0].id, 'category:network:c2');
+// The parent row is the merge of its leaves, so the branch rebuilds from them
+// rather than adding the row's own mass on top.
+assert.strictEqual(catNetwork.a, 6);
 
 // Severity is ordinal: its tree reads worst-first, not biggest-first.
 const sevTree = M.fileSimTree([

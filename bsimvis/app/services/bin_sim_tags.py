@@ -28,6 +28,8 @@ It adds no asymptotic cost: everything here is O(1) per already-matched edge.
 
 from collections import defaultdict
 
+from bsimvis.app.services.tag_taxonomy import TAG_AXES, tag_body
+
 # Two distinct kinds of "we can't attribute this to a library", kept apart on
 # purpose: UNTAGGED means at least one side carries no tag at all (no evidence),
 # MISMATCH means both sides are tagged but share nothing -- the interesting case,
@@ -105,27 +107,14 @@ AXES = (
     AXIS_VULN,
 )
 
-# namespace prefix -> axis. Priority is resolved separately (ORIGIN_PRIORITY),
-# because for `origin:` it depends on the *second* segment, not the first.
-# Several namespaces share `family` and `vuln`: an axis is a question, and
-# `misp:tool:cobalt-strike` and `runtime-packer:pe:upx` answer the same
-# one whatever taxonomy they came out of.
-TAG_NAMESPACES = {
-    "origin": AXIS_ORIGIN,
-    "severity": AXIS_SEVERITY,
-    "category": AXIS_CATEGORY,
-    "user": AXIS_USER,
-    "capa": AXIS_CAPA,
-    "mitre": AXIS_MITRE,
-    "yara": AXIS_YARA,
-    "rulezet": AXIS_RULESET,
-    "misp": AXIS_FAMILY,
-    "ms-caro-malware-full": AXIS_FAMILY,
-    "runtime-packer": AXIS_FAMILY,
-    "cve": AXIS_VULN,
-    "ghsa": AXIS_VULN,
-    "pysec": AXIS_VULN,
-}
+# namespace prefix -> axis, owned by `tag_taxonomy` because more than this
+# module needs it: the file view groups by axis too, and `color_config` ships
+# the same map to the browser. A second copy is how a tag ends up on one axis in
+# the tree and another in the graph.
+#
+# Priority is resolved separately (ORIGIN_PRIORITY), because a legacy `origin:`
+# id keeps its kind at the *second* segment rather than in the namespace.
+TAG_NAMESPACES = TAG_AXES
 
 # Priority only matters inside origin, where a function must resolve to one
 # source; the other axes overlay and never compete. Library tags outrank bundle
@@ -133,7 +122,21 @@ TAG_NAMESPACES = {
 # labels a whole binary: a statically linked memcpy inside a Mirai sample is
 # still libc's, and calling it Mirai's is how a libc floor turns into a fake
 # family attribution.
-ORIGIN_PRIORITY = {"lib": 100, "stdlib": 100, "bundle": 50}
+#
+# Keyed on the namespace, which is where the detector now lives. The legacy
+# `origin:<kind>:` ids resolve through their kind segment for as long as any
+# survive the migration.
+ORIGIN_PRIORITY = {
+    "fid": 100,
+    "bsim": 90,
+    "pkg": 60,
+    "malware": 50,
+    "original": 0,
+    # legacy `origin:<kind>:...`
+    "lib": 100,
+    "stdlib": 100,
+    "bundle": 50,
+}
 DEFAULT_ORIGIN_PRIORITY = 0
 
 # Origin ids are `origin:kind:name:version[:func]`. Bundles have no natural
@@ -219,10 +222,13 @@ def tag_priority(tag_id, tag_meta=None):
                 pass
     if tag_axis(tag_id) != AXIS_ORIGIN:
         return 0
-    # `origin:lib:...` vs `origin:bundle:...` -- the kind is the second segment.
+    # The namespace is the detector (`fid:libc:2.31`). Legacy `origin:` ids kept
+    # the kind at the second segment instead, so fall through to that.
     parts = str(tag_id).split(":")
-    kind = parts[1] if len(parts) > 1 else ""
-    return ORIGIN_PRIORITY.get(kind, DEFAULT_ORIGIN_PRIORITY)
+    head = parts[0]
+    if head == "origin":
+        head = parts[1] if len(parts) > 1 else ""
+    return ORIGIN_PRIORITY.get(head, DEFAULT_ORIGIN_PRIORITY)
 
 
 # Depth an axis rolls up to in the summary. Origin keeps
@@ -265,11 +271,17 @@ def tag_parent(tag_id):
     """
     if tag_id in (TAG_UNTAGGED, TAG_MISMATCH):
         return tag_id
-    parts = str(tag_id).split(":")
+    # A detail tail is per-function evidence, never a display row of its own:
+    # `fid:libc:2.31#memcpy` rolls up to the version it was matched under, the
+    # same way the old `origin:lib:libc:2.31:memcpy` did through depth alone.
+    body, detail = tag_body(tag_id)
+    if detail:
+        return body
+    parts = body.split(":")
     depth = _PARENT_DEPTH[tag_axis(tag_id)]
     if depth and len(parts) > depth:
         return ":".join(parts[:depth])
-    return tag_id
+    return body
 
 
 def split_axes(tags, tag_meta=None):
@@ -765,9 +777,14 @@ EMPTY_SUMMARIES = {
 
 
 # Origin namespaces whose mass counts as "library" rather than "code" for the
-# Code/Library score split. A tuple, not one string: the plan for more origin
-# namespaces (beyond `lib`) only needs another prefix added here.
-LIBRARY_ORIGIN_PREFIXES = ("origin:lib:",)
+# Code/Library score split.
+#
+# Every detector that identifies library code belongs here, not just the one in
+# use today: the namespace names who found it, so reading only `fid:` would make
+# the library score silently halve the day BSim starts tagging alongside Function
+# ID. `malware:` is deliberately absent -- a bundle names the sample, which is
+# the code under analysis rather than a library it links against.
+LIBRARY_ORIGIN_PREFIXES = ("fid:", "bsim:", "pkg:", "origin:lib:", "origin:stdlib:")
 
 
 def code_library_split(
@@ -916,6 +933,25 @@ def demo():
     )
     assert lib is None, lib
     assert abs(code - 0.4) < 1e-9, code
+
+    # Every library-identifying detector counts, not just the one in use today:
+    # the namespace names who found it, so reading only `fid:` would halve the
+    # library score the day BSim starts tagging alongside Function ID. A bundle
+    # is the sample under analysis, not a library it links against.
+    def _one(tag):
+        return code_library_split(
+            matched=[
+                {"func_a": "x", "func_b": "y", "similarity": 1.0, "avg_features": 10.0}
+            ],
+            unique_to_a=[],
+            unique_to_b=[],
+            fid_tags={"x": {tag: 1.0}, "y": {}},
+        )
+
+    for tag in ("fid:libc:2.31#memcpy", "bsim:libc:2.31", "origin:lib:libc:2.31"):
+        assert _one(tag)[0] == 1.0, tag
+    for tag in ("malware:mirai", "category:network:c2"):
+        assert _one(tag)[0] is None, tag
 
     print("bin_sim_tags demo OK")
 

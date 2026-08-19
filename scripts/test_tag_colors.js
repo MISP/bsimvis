@@ -52,9 +52,17 @@ TagColor.ready.then(() => {
         ['origin:lib:libc', 75.52, 0, 0],
         ['origin:lib:libc:2.31:memcpy', 75.52, 0, 2],
         ['category:network', 76.91, 0, 0],
-        ['capa:host-interaction:file-system:write', 120.52, 0, 1],
+        ['capa:host-interaction:file-system:write', 122.73, 1, 2],
         ['mitre:t1027.005', 237.27, 0, 1],
         ['cve:cve-2021-44228', 99.82, 0, 0],
+        // The current shape: the library carries the hue, its version and the
+        // matched symbol are shades of it, and a second library is a different
+        // hue rather than a lighter version of the same one.
+        ['fid:libc', 99.82, 1, 0],
+        ['fid:libc:2.31', 99.82, 1, 1],
+        ['fid:libc:2.31#memcpy', 99.82, 1, 1],
+        ['fid:openssl', 54.0, 0, 0],
+        ['yara:trojan:mirai#ELF_Mirai', 54.0, 0, 1],
     ];
     for (const [id, hue, tone, step] of expected) {
         assert.deepStrictEqual(TagColor.style(id), { hue, tone, step }, id);

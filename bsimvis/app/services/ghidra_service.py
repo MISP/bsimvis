@@ -31,7 +31,7 @@ _FID_LIBRARY_RE = re.compile(r"^Library:[ \t]*(\S+)(?:[ \t]+(\S+))?", re.MULTILI
 
 
 def fid_tags_from_plate_comment(comment, func_name):
-    """`origin:lib:...` tags for a function the FID analyzer already matched.
+    """`fid:` origin tags for a function the FID analyzer already matched.
 
     Free: the analyzer runs during auto-analysis either way, so reading its
     verdict costs a string parse instead of a per-function database query.
@@ -1026,20 +1026,17 @@ ghidra_service = GhidraService()
 if __name__ == "__main__":  # ponytail: one runnable check, no framework
     _PLATE = "Library Function - Single Match\n strcpy\nLibrary: libc 2.31 default"
 
-    assert fid_tags_from_plate_comment(_PLATE, "strcpy") == [
-        "origin:lib:libc:2.31:strcpy"
-    ]
+    # The namespace names the detector, the library is the first level, and the
+    # matched symbol is a detail tail rather than a level of its own.
+    assert fid_tags_from_plate_comment(_PLATE, "strcpy") == ["fid:libc:2.31#strcpy"]
     # Ghidra's placeholder name identifies nothing; the library still does.
-    assert fid_tags_from_plate_comment(_PLATE, "FUN_00401000") == [
-        "origin:lib:libc:2.31"
-    ]
+    assert fid_tags_from_plate_comment(_PLATE, "FUN_00401000") == ["fid:libc:2.31"]
     assert fid_tags_from_plate_comment(
         _PLATE.replace("Single Match", "Multiple Matches"), "strcpy"
-    ) == ["origin:lib:libc:2.31:ambiguous"]
-    # A library with no version still rolls up at the fixed origin depth.
-    assert fid_tags_from_plate_comment("Library: libc", "strcpy") == [
-        "origin:lib:libc:unknown:strcpy"
-    ]
+    ) == ["fid:libc:2.31#ambiguous"]
+    # A library with no version is a shorter id, not a filler segment claiming
+    # `unknown` -- depth is not fixed any more, so nothing needs the placeholder.
+    assert fid_tags_from_plate_comment("Library: libc", "strcpy") == ["fid:libc#strcpy"]
     # The bookmark the analyzer also writes carries no library line -- reading
     # it instead of the plate comment is what produced zero tags before.
     assert (

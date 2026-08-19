@@ -540,23 +540,11 @@ function initResizableCards() {
 // a group with one perfect and one absent library reads 50%, not "mostly fine".
 // ponytail: counts, not feature weights. Switch to weight_* if count proves noisy.
 
-// Tree grouping. `parse_tag_id` (bin_sim_tags.py) already hands us the first
-// namespace segment as `type`, so the tree is a pure prefix read with no mapping
-// table to drift from the data.
-const FILESIM_GROUPS = [
-    // Original has no library/version structure, so it is a leaf, not a group
-    // with one child called the same thing.
-    { key: 'original', label: 'Original', prefixes: ['original_code'], types: ['original_code'], flat: true },
-    { key: 'bundles', label: 'Bundles', prefixes: ['bundle'], types: ['bundle'] },
-    { key: 'libraries', label: 'Libraries', prefixes: ['lib', 'stdlib'], types: ['lib', 'stdlib'] },
-    // Anything the analyzer tagged but we have no namespace convention for.
-    { key: 'other', label: 'Other', prefixes: [], types: null },
-];
 
 // Selected tag node ids. Empty = the root "All" node = the whole pair.
 let fileSimSelection = new Set();
 // The one expansion state, shared by tree / summary / table / sankey.
-let fileSimTreeOpen = new Set(['root', 'libraries', 'bundles']);
+let fileSimTreeOpen = new Set(['root']);
 // 'summary' | 'all' | 'matched' | 'unique_a' | 'unique_b' -- the right pane's tabs.
 let fileSimTab = 'summary';
 // How All / Matched / Unmatched draw the same rows: as a table or as flow.
@@ -579,95 +567,17 @@ function fileSimSim(a, b) {
     return Math.max(a, b) > 0 ? Math.min(a, b) / Math.max(a, b) : 0;
 }
 
-// The namespaces feeding the family, vuln, and ruleset axes, i.e. bin_sim_tags's
-// TAG_NAMESPACES entries pointing at AXIS_FAMILY / AXIS_VULN / AXIS_RULESET.
-const FILESIM_NAMED_NAMESPACES = new Set(['misp', 'rulezet', 'ms-caro-malware-full', 'runtime-packer', 'cve', 'ghsa', 'pysec']);
-
-// type / name / version, from the row if the backend set them and from the tag
-// id otherwise. Same decomposition as parse_tag_id (bin_sim_tags.py), so a row
-// carrying only an id still lands in the right place instead of in Other.
-function fileSimTagParts(row) {
-    const tagId = row.tag_id || row.name || '';
-    if (tagId === 'original_code') return { tagId, type: 'original_code', name: 'Original code', version: '' };
-    const parts = tagId.split(':');
-    // Origin ids carry a kind segment (`origin:lib:libc:2.31`), so the displayed
-    // type is that kind rather than the literal `origin` -- the tree groups on
-    // it. A placeholder version reads as no version, same as parse_tag_id.
-    if (parts[0] === 'origin') {
-        const version = parts[3] || '';
-        return {
-            tagId,
-            type: row.type || parts[1],
-            name: row.name || parts[2] || parts[1],
-            version: row.version || (version === 'unknown' ? '' : version),
-        };
-    }
-    // Family and vuln ids name a thing rather than a group refined by a leaf,
-    // and vary in depth (`misp:tool:cobalt-strike`, `runtime-packer:pe:upx`,
-    // `cve:cve-2021-44228`), so the last segment is the name -- mirroring the
-    // same branch in parse_tag_id.
-    if (FILESIM_NAMED_NAMESPACES.has(parts[0])) {
-        return {
-            tagId,
-            type: row.type || (parts.length > 2 ? parts[1] : parts[0]),
-            name: row.name || parts[parts.length - 1],
-            version: '',
-        };
-    }
-    return {
-        tagId,
-        type: row.type || (parts.length > 1 ? parts[0] : 'user'),
-        name: row.name || (parts.length > 1 ? parts[1] : tagId),
-        version: row.version || (parts.length > 2 ? parts[2] : ''),
-    };
-}
 
 // `category:network` -> `network`, `category:network:c2` -> `c2`. The parent is
 // already on screen above the leaf, so repeating it in the leaf reads as noise.
 function fileSimLeafLabel(tagId) {
-    const parts = String(tagId).split(':');
-    return parts[parts.length - 1] || String(tagId);
+    const segs = TagColor.levels(tagId).segs;
+    return segs[segs.length - 1] || String(tagId);
 }
 
 // Severity is ordinal, so its tree reads worst-first rather than by mass.
 const FILESIM_SEVERITY_ORDER = ['high', 'medium', 'low', 'none'];
 
-// The other three axes are already rolled up to their display parent by the
-// backend (`category:network` carrying its leaves as `children`), so their tree
-// is that nesting read straight off the rows -- no grouping table of our own.
-// Origin is the odd one out: its rows are the deepest level and the tree adds
-// two levels *above* them, which is why it keeps its own builder.
-function fileSimAxisNodes(rows, axis) {
-    const nodes = [];
-    (rows || []).forEach(row => {
-        const [a, b] = tagSideCounts(row);
-        if (a === 0 && b === 0) return;
-        const kids = [];
-        (row.children || []).forEach(child => {
-            const [ca, cb] = tagSideCounts(child);
-            if (ca === 0 && cb === 0) return;
-            kids.push({
-                id: child.tag_id, label: fileSimLeafLabel(child.tag_id), prefix: child.tag_id,
-                a: ca, b: cb, sim: fileSimSim(ca, cb), children: [],
-                drift: child.drift || {}, tagIds: [child.tag_id],
-            });
-        });
-        kids.sort((x, y) => y.sim - x.sim);
-        nodes.push({
-            id: row.tag_id, label: fileSimLeafLabel(row.tag_id), prefix: row.tag_id,
-            a, b, sim: fileSimSim(a, b), children: kids, drift: row.drift || {},
-            tagIds: [row.tag_id, ...kids.map(k => k.id)],
-        });
-    });
-    if (axis === 'severity') {
-        const rank = (n) => {
-            const i = FILESIM_SEVERITY_ORDER.indexOf(n.label);
-            return i === -1 ? FILESIM_SEVERITY_ORDER.length : i;
-        };
-        return nodes.sort((x, y) => rank(x) - rank(y));
-    }
-    return nodes.sort((x, y) => (y.a + y.b) - (x.a + x.b));
-}
 
 // Family and vuln ids are a path, not a group refined by a leaf:
 // `ms-caro-malware-full:malware-platform:linux` is taxonomy, predicate, value,
@@ -677,24 +587,33 @@ function fileSimAxisNodes(rows, axis) {
 // which is also why the backend leaves these axes unrolled (_PARENT_DEPTH).
 // Depth is whatever the ids have, so `cve:` gets two levels and ms-caro three
 // with no per-namespace table anywhere.
+// The levels a tag id occupies, deepest last, every one of them a real tag id:
+// `['origin', 'origin:lib', 'origin:lib:libc', 'origin:lib:libc:2.31']`. Split
+// by `TagColor`, so the tree nests exactly where the search index buckets and
+// where the colour rule changes hue. A detail tail contributes no level, which
+// is what keeps a function name out of the sankey's columns.
+function fileSimTagChain(tagId) {
+    const chain = TagColor.prefixes(tagId);
+    chain.push(TagColor.groupId(tagId));
+    return chain;
+}
+
 function fileSimNestedNodes(rows) {
     const root = { children: new Map() };
-    (rows || []).forEach(row => {
-        const [a, b] = tagSideCounts(row);
+
+    const add = (tagId, a, b, drift) => {
         // A tag with no functions on either side is not evidence of
         // dissimilarity, so it must not drag its parent's mean down.
         if (a === 0 && b === 0) return;
-        const parts = String(row.tag_id).split(':');
         let node = root;
-        parts.forEach((seg, i) => {
-            const prefix = parts.slice(0, i + 1).join(':');
-            let next = node.children.get(seg);
+        fileSimTagChain(tagId).forEach(prefix => {
+            let next = node.children.get(prefix);
             if (!next) {
                 next = {
-                    id: prefix, label: seg, prefix, a: 0, b: 0,
-                    children: new Map(), drift: {}, tagIds: [],
+                    id: prefix, label: fileSimLeafLabel(prefix), prefix,
+                    a: 0, b: 0, children: new Map(), drift: {}, tagIds: [],
                 };
-                node.children.set(seg, next);
+                node.children.set(prefix, next);
             }
             // A branch carries the sum of the ids beneath it. A function tagged
             // both `...:malware-type:trojan` and `...:malware-platform:linux`
@@ -702,13 +621,30 @@ function fileSimNestedNodes(rows) {
             // above them -- the same double-count the category axis already has
             // wherever one function carries two tags of one group.
             next.a += a; next.b += b;
-            next.tagIds.push(row.tag_id);
-            Object.entries(row.drift || {}).forEach(([partner, w]) => {
+            next.tagIds.push(tagId);
+            Object.entries(drift || {}).forEach(([partner, w]) => {
                 next.drift[partner] = (next.drift[partner] || 0) + w;
             });
             node = next;
         });
+    };
+
+    (rows || []).forEach(row => {
+        // A parent row is the merge of its children (`bin_sim_tags.summary`),
+        // so feeding both would count the same mass twice. Take the leaves and
+        // let the trie rebuild every level above them.
+        const kids = row.children || [];
+        if (kids.length) {
+            kids.forEach(child => {
+                const [ca, cb] = tagSideCounts(child);
+                add(child.tag_id, ca, cb, child.drift);
+            });
+            return;
+        }
+        const [a, b] = tagSideCounts(row);
+        add(row.tag_id, a, b, row.drift);
     });
+
     return fileSimNestedFinish(root).children;
 }
 
@@ -728,83 +664,27 @@ function fileSimNestedFinish(node) {
     return node;
 }
 
-// tags_summary rows are already rolled up to `lib:libc:2.31`. The tree adds two
-// levels above that: the group (Libraries) and the library name (libc), so a
-// whole library folds to one row when reading the pair as a whole.
-function fileSimOriginNodes(rows) {
-    const groups = FILESIM_GROUPS.map(g => ({ ...g, id: g.key, children: [], a: 0, b: 0, tagIds: [] }));
-    const fallback = groups.find(g => g.key === 'other');
 
-    (rows || []).forEach(row => {
-        const [a, b] = tagSideCounts(row);
-        // A tag with no functions on either side is not evidence of
-        // dissimilarity, so it must not drag its parent's mean down.
-        if (a === 0 && b === 0) return;
-        const { tagId, type, name, version } = fileSimTagParts(row);
-        const group = groups.find(g => g.types && g.types.includes(type)) || fallback;
-        group.tagIds.push(tagId);
-
-        // Flat groups (Original) hold their mass directly -- no nesting level.
-        if (group.flat) {
-            group.a += a; group.b += b;
-            Object.entries(row.drift || {}).forEach(([partner, w]) => {
-                group.drift = group.drift || {};
-                group.drift[partner] = (group.drift[partner] || 0) + w;
-            });
-            return;
-        }
-
-        let lib = group.children.find(c => c.label === name);
-        if (!lib) {
-            // `lib:libc` catches every version and every function beneath it.
-            const prefix = tagId.split(':').slice(0, 2).join(':');
-            lib = { id: group.key + '/' + name, label: name, prefix, a: 0, b: 0, children: [], drift: {}, tagIds: [] };
-            group.children.push(lib);
-        }
-        lib.a += a; lib.b += b;
-        lib.tagIds.push(tagId);
-        Object.entries(row.drift || {}).forEach(([partner, w]) => {
-            lib.drift[partner] = (lib.drift[partner] || 0) + w;
-        });
-        // Only split by version when there is more than one to split.
-        lib.children.push({
-            id: tagId, label: version || name, prefix: tagId,
-            a, b, sim: fileSimSim(a, b), children: [], drift: row.drift || {}, tagIds: [tagId],
-        });
-    });
-
-    groups.forEach(g => {
-        if (g.flat) {
-            g.sim = fileSimSim(g.a, g.b);
-            g.prefix = g.prefixes[0];
-            g.drift = g.drift || {};
-            return;
-        }
-        g.children.forEach(lib => {
-            if (lib.children.length === 1) lib.children = [];   // no pointless nesting
-            lib.sim = fileSimSim(lib.a, lib.b);
-            lib.children.sort((x, y) => y.sim - x.sim);
-        });
-        g.children.sort((x, y) => y.sim - x.sim);
-        g.a = g.children.reduce((s, c) => s + c.a, 0);
-        g.b = g.children.reduce((s, c) => s + c.b, 0);
-        // A group is the mean of its children, so one absent library still shows.
-        g.sim = g.children.length
-            ? g.children.reduce((s, c) => s + c.sim, 0) / g.children.length
-            : 0;
-        g.drift = g.drift || {};
-    });
-
-    return groups.filter(g => g.children.length || g.a || g.b);
-}
-
-// One tree per axis, same shape and the same node ids everywhere: an id is a
-// tag id (or a synthetic origin group), so scoping, folding and the graph's
-// frontier all work the same whichever axis is being read.
+// One tree per axis, one builder for all of them: a node id is always a real
+// tag id, so its colour, its index buckets and its backend scope are the same
+// string. Origin used to have its own builder that minted ids like
+// `libraries/Visual Studio` -- which no colour rule and no index had ever seen,
+// so a library drew one colour in the tree and another on its own card.
 function fileSimTree(rows, axis) {
-    const live = axis === 'origin' ? fileSimOriginNodes(rows)
-               : (axis === 'family' || axis === 'vuln' || axis === 'ruleset') ? fileSimNestedNodes(rows)
-               : fileSimAxisNodes(rows, axis);
+    let live = fileSimNestedNodes(rows);
+    // The tab already names the namespace, so a lone top node just repeats it:
+    // an Origin tree that opens on "origin" before it says "libc" wastes the
+    // level. One level only, so a pair carrying nothing but libraries still
+    // opens on `lib` rather than being drilled down to a bare version number.
+    if (live.length === 1 && (live[0].children || []).length) live = live[0].children;
+    // Severity is ordinal: worst first reads better than biggest first.
+    if (axis === 'severity') {
+        const rank = (n) => {
+            const i = FILESIM_SEVERITY_ORDER.indexOf(n.label);
+            return i === -1 ? FILESIM_SEVERITY_ORDER.length : i;
+        };
+        live = live.slice().sort((x, y) => rank(x) - rank(y));
+    }
     return {
         id: 'root', label: 'All', prefix: null, children: live, drift: {},
         a: live.reduce((s, g) => s + g.a, 0),
@@ -829,12 +709,14 @@ function fileSimAxisKey() {
     return have.includes(fileSimAxisA) ? fileSimAxisA : (have[0] || 'origin');
 }
 
-// Origin needs its group level opened to say anything; the other axes have one
-// level under the root, so the root alone is enough.
+// Origin needs its group level opened to say anything -- a closed tree that
+// reads "lib" tells you nothing, "libc 40%" does. The ids are the tree's own,
+// so this asks the tree rather than naming nodes it hopes exist.
 function fileSimDefaultOpen() {
-    return fileSimAxisKey() === 'origin'
-        ? new Set(['root', 'libraries', 'bundles'])
-        : new Set(['root']);
+    const open = new Set(['root']);
+    if (fileSimAxisKey() !== 'origin') return open;
+    fileSimTreeRoot().children.forEach(n => open.add(n.id));
+    return open;
 }
 
 // Rebuilt per render: cheap (tens of rows) and always consistent with the cache.
@@ -865,7 +747,10 @@ function fileSimNodePrefixes(node) {
 function fileSimScopeRows(rows) {
     const prefixes = fileSimScopePrefixes();
     if (!prefixes.length) return rows;
-    return rows.filter(r => prefixes.some(p => r.tag_id === p || String(r.tag_id).startsWith(p + ':')));
+    // By levels, not by text: `startsWith(p + ':')` reads
+    // `fid:uclibc:0.9.30.1#xdrmem_getint32` as outside `fid:uclibc:0.9.30.1`,
+    // because the next character is the detail marker rather than a colon.
+    return rows.filter(r => prefixes.some(p => fileSimTagChain(r.tag_id).includes(p)));
 }
 
 // The tag prefixes the current selection sends to the backend. A group node has
@@ -1726,9 +1611,16 @@ function fileSimJointMarginal(joint, axisA, axisB) {
 // this to fold exactly where the tree folds instead of keeping its own frontier.
 // Depth is whatever the axis's tree has, so origin's three levels and the other
 // axes' one both work off the same walk.
+// Matched by levels rather than by `tagIds` membership: the tree is built from
+// the deepest rows it is given, because a parent row is the merge of its
+// children and feeding both would count the mass twice. So a node's `tagIds`
+// hold the leaves -- `fid:uclibc:0.9.30.1#memcpy` -- and never the parent id
+// `fid:uclibc:0.9.30.1` that the graph looks up. Asking whether the node is on
+// the id's own chain answers for both, and matches how a scope selects.
 function fileSimChainFor(tagId, node, chain = []) {
+    const levels = fileSimTagChain(tagId);
     for (const child of node.children || []) {
-        if (!(child.tagIds || []).includes(tagId)) continue;
+        if (!levels.includes(child.id)) continue;
         return fileSimChainFor(tagId, child, chain.concat(child));
     }
     return chain;

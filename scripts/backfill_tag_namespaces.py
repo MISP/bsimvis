@@ -19,7 +19,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from bsimvis.app.services.index_config import HIERARCHY_SEPARATORS, tag_ancestors
+from bsimvis.app.services.index_config import is_hierarchical, tag_ancestors
 from bsimvis.app.services.redis_client import get_redis
 
 
@@ -34,7 +34,7 @@ def registries(r, collection=None):
         key = _dec(key)
         # {coll}:reg:{level}:{field} — field is the last segment
         field = key.rsplit(":", 1)[-1]
-        if field in HIERARCHY_SEPARATORS:
+        if is_hierarchical(field):
             yield key, field
 
 

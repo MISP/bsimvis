@@ -1529,7 +1529,7 @@ class TagProvenance(Resource):
             "tag": {
                 "description": "Tag id; repeat for several, or pass a comma-separated `tags`",
                 "required": True,
-                "example": "yara:trojan:mirai:Linux_Trojan_Mirai",
+                "example": "yara:trojan:mirai#Linux_Trojan_Mirai",
             }
         }
     )

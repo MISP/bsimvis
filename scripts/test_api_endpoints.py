@@ -1554,8 +1554,9 @@ def run_all_tests():
                 "severity_hues",
                 "hue_depth",
                 "hue_depth_default",
-                "hue_split",
-                "hue_split_default",
+                "tag_separators",
+                "tag_separators_default",
+                "tag_detail",
                 "hue_shrink",
                 "hue_slots",
                 "tones",
@@ -4207,6 +4208,37 @@ def test_lib_tag_rollup():
             "derives unversioned lib: tags from function tags",
             file_lib_tags(r, coll, md5) == expected,
             f"got {sorted(file_lib_tags(r, coll, md5))}, want {sorted(expected)}",
+        )
+
+        # The shape a fresh upload writes: the detector is the namespace and the
+        # matched symbol is a detail tail. Seeded beside the legacy ids above,
+        # because a collection is migrated in pieces and both shapes have to roll
+        # up during the overlap.
+        modern = {
+            "00401300": ["fid:uclibc:0.9.30.1#xdrmem_getint32"],
+            "00401400": ["fid:musl:1.2.4#ambiguous", "bsim:openssl:3.0.2#EVP_new"],
+            # No version at all -- a shorter id, not an `unknown` placeholder.
+            "00401500": ["fid:zlib#deflate", "user:crypto"],
+        }
+        for addr, tags in modern.items():
+            func_id = f"{coll}:func:{md5}:{addr}"
+            r.set(
+                f"{func_id}:meta",
+                json.dumps({"function_name": f"f_{addr}", "tags": tags}),
+            )
+            r.sadd(f"{coll}:idx:file:functions:{md5}", func_id)
+
+        both = expected | {"fid:uclibc", "fid:musl", "bsim:openssl", "fid:zlib"}
+        got = file_lib_tags(r, coll, md5)
+        check(
+            "rolls up detector-namespaced tags alongside legacy origin: ids",
+            got == both,
+            f"got {sorted(got)}, want {sorted(both)}",
+        )
+        check(
+            "a detail tail never becomes a file-level library",
+            not any("#" in t for t in got),
+            f"got {sorted(t for t in got if '#' in t)}",
         )
 
         script = os.path.join(

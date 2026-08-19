@@ -55,12 +55,6 @@ window.FileView = {
                 .file-func-table th { text-align:left; padding:10px; border-bottom:1px solid var(--border); color:var(--subtle); text-transform:uppercase; font-size:0.75rem; letter-spacing:0.05em; }
                 .file-func-table td { padding:10px; border-bottom: 1px solid var(--border); vertical-align:middle; }
                 .file-func-table tr:hover { background: var(--hover); }
-
-                #nbr-filters input, #nbr-filters select {
-                    background: var(--bg); border: 1px solid var(--border); color: var(--text);
-                    padding: 4px; border-radius: 2px; box-sizing: border-box;
-                }
-                #nbr-filters input:focus, #nbr-filters select:focus { border-color: var(--accent); outline: none; }
                 
                 .file-func-table th.sortable { cursor: pointer; user-select: none; }
                 .file-func-table th.sortable:hover { color: var(--text); }
@@ -229,7 +223,7 @@ window.FileView = {
                 <!-- Neighbors Tab Panel -->
                 <div id="file-panel-neighbors" class="file-view-panel" style="display: none;">
                     <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); display: flex; flex-direction: column; gap: 15px;">
-                        <div id="nbr-filters" style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
+                        <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
                             <div style="display:flex; flex-direction:column; gap:2px;">
                                 <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Scope</label>
                                 <select id="nbr-scope" onchange="FileView.searchNeighbors()" style="font-size:0.7rem; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
@@ -246,53 +240,12 @@ window.FileView = {
                                 </select>
                             </div>
                             <div style="display:flex; flex-direction:column; gap:2px;">
-                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Min / Max Score</label>
-                                <div style="display:flex; gap:2px;">
-                                    <input type="number" id="nbr-min-score" value="0.9" step="0.05" min="0" max="1" style="width:60px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
-                                    <input type="number" id="nbr-max-score" placeholder="Max" step="0.05" min="0" max="1" style="width:60px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
-                                </div>
-                            </div>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
-                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">File Name</label>
-                                <input type="text" id="nbr-file-name" placeholder="Name..." style="width:120px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
-                            </div>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
-                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Arch</label>
-                                <input type="text" id="nbr-arch" placeholder="Arch..." style="width:80px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
-                            </div>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
-                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Min / Max Funcs</label>
-                                <div style="display:flex; gap:2px;">
-                                    <input type="number" id="nbr-min-funcs" placeholder="Min" min="0" style="width:55px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
-                                    <input type="number" id="nbr-max-funcs" placeholder="Max" min="0" style="width:55px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
-                                </div>
-                            </div>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
-                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Min / Max Coverage</label>
-                                <div style="display:flex; gap:2px;">
-                                    <input type="number" id="nbr-min-cov" placeholder="Min" step="0.1" min="0" max="1" style="width:55px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
-                                    <input type="number" id="nbr-max-cov" placeholder="Max" step="0.1" min="0" max="1" style="width:55px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
-                                </div>
-                            </div>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
-                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Min Shared Clusters</label>
-                                <input type="number" id="nbr-min-shared" placeholder="Min" min="0" style="width:60px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
-                            </div>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
-                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Tags (comma-separated)</label>
-                                <input type="text" id="nbr-file-tag" placeholder="file_tag..." style="width:110px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
-                            </div>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
-                                <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Exclude Tags</label>
-                                <input type="text" id="nbr-exclude-file-tag" placeholder="exclude_file_tag..." style="width:110px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
-                            </div>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
                                 <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Limit</label>
                                 <input type="number" id="nbr-limit" value="50" min="1" max="1000" style="width:60px; font-size:0.7rem;" oninput="FileView.debounceNeighborsSearch()">
                             </div>
                         </div>
                         <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
-                            <table class="file-func-table">
+                            <table id="nbr-results-table">
                                 <thead>
                                     <tr>
                                         <th>Score</th>
@@ -303,6 +256,39 @@ window.FileView = {
                                         <th>Coverage</th>
                                         <th>Shared</th>
                                         <th>Tags</th>
+                                    </tr>
+                                    <tr class="filter-row">
+                                        <th>
+                                            <div style="display:flex; align-items:center; gap:2px;">
+                                                <input type="number" id="nbr-min-score" placeholder="Min..." value="0.9" step="0.05" min="0" max="1" style="font-size:0.65rem; width:48%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()">
+                                                <span class="dim" style="font-size:0.6rem">-</span>
+                                                <input type="number" id="nbr-max-score" placeholder="Max..." step="0.05" min="0" max="1" style="font-size:0.65rem; width:48%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()">
+                                            </div>
+                                        </th>
+                                        <th><input type="text" id="nbr-file-name" placeholder="File Name..." style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()"></th>
+                                        <th></th>
+                                        <th><input type="text" id="nbr-arch" placeholder="Arch..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()"></th>
+                                        <th>
+                                            <div style="display:flex; align-items:center; gap:2px;">
+                                                <input type="number" id="nbr-min-funcs" placeholder="Min..." min="0" style="font-size:0.65rem; width:48%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()">
+                                                <span class="dim" style="font-size:0.6rem">-</span>
+                                                <input type="number" id="nbr-max-funcs" placeholder="Max..." min="0" style="font-size:0.65rem; width:48%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()">
+                                            </div>
+                                        </th>
+                                        <th>
+                                            <div style="display:flex; align-items:center; gap:2px;">
+                                                <input type="number" id="nbr-min-cov" placeholder="Min..." step="0.1" min="0" max="1" style="font-size:0.65rem; width:48%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()">
+                                                <span class="dim" style="font-size:0.6rem">-</span>
+                                                <input type="number" id="nbr-max-cov" placeholder="Max..." step="0.1" min="0" max="1" style="font-size:0.65rem; width:48%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()">
+                                            </div>
+                                        </th>
+                                        <th><input type="number" id="nbr-min-shared" placeholder="Min..." min="0" style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()"></th>
+                                        <th>
+                                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                                <input type="text" id="nbr-file-tag" placeholder="Tags..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()">
+                                                <input type="text" id="nbr-exclude-file-tag" placeholder="Exclude..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()">
+                                            </div>
+                                        </th>
                                     </tr>
                                 </thead>
                                 <tbody id="nbr-results-tbody">
@@ -927,6 +913,7 @@ window.FileView = {
             if (countEl) countEl.innerText = data.total ?? items.length;
             const countWrap = document.getElementById('nbr-count-wrap');
             if (countWrap) countWrap.style.display = 'inline';
+            if (window.TableSelection) new window.TableSelection('nbr-results-table');
         } catch (e) {
             console.error(e);
             tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading neighbors: ${e.message}</td></tr>`;

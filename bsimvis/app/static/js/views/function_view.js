@@ -48,12 +48,6 @@ window.FunctionView = {
                 .bsim-tab:hover { color:var(--text); background:rgba(255,255,255,0.04); }
                 .bsim-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
 
-                #fn-nbr-filters input, #fn-nbr-filters select {
-                    background: var(--bg); border: 1px solid var(--border); color: var(--text);
-                    padding: 4px; border-radius: 2px; box-sizing: border-box;
-                }
-                #fn-nbr-filters input:focus, #fn-nbr-filters select:focus { border-color: var(--accent); outline: none; }
-
                 .file-func-table { width:100%; border-collapse:collapse; font-size:0.8rem; }
                 .file-func-table th { text-align:left; padding:10px; border-bottom:1px solid var(--border); color:var(--subtle); text-transform:uppercase; font-size:0.75rem; letter-spacing:0.05em; }
                 .file-func-table td { padding:10px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:middle; }
@@ -64,13 +58,13 @@ window.FunctionView = {
                     <i class="fa-solid fa-spinner fa-spin"></i> Loading Function Code...
                 </div>
                 <div id="function-content" style="display:none; flex:1; flex-direction:column; overflow:hidden; height:100%;">
+                    <div id="meta-container"></div>
                     <div class="bsim-tabbar" id="function-view-tabs">
                         <button class="bsim-tab active" id="function-tab-btn-code" onclick="FunctionView.switchTab('code')">Code</button>
                         <button class="bsim-tab" id="function-tab-btn-neighbors" onclick="FunctionView.switchTab('neighbors')">Neighbors<span id="fn-nbr-count-wrap" style="display:none;"> (<span id="fn-nbr-count">0</span>)</span></button>
                     </div>
 
                     <div id="function-panel-code" class="function-view-panel" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
-                        <div id="meta-container"></div>
                         <div id="code-scroll" style="flex: 1; position: relative; overflow-y: auto; background: var(--card-bg);">
                             <div id="v-height" style="position: absolute; width: 1px; top: 0; left: 0; z-index: -1;"></div>
                             <div id="v-content" class="c-code-container" style="position: sticky; top: 0; width: 100%;"></div>
@@ -82,7 +76,7 @@ window.FunctionView = {
 
                     <div id="function-panel-neighbors" class="function-view-panel" style="display:none; flex:1; overflow-y:auto;">
                         <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
-                            <div id="fn-nbr-filters" style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
+                            <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
                                 <div style="display:flex; flex-direction:column; gap:2px;">
                                     <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Scope</label>
                                     <select id="fn-nbr-scope" onchange="FunctionView.searchNeighbors()" style="font-size:0.7rem; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
@@ -97,13 +91,6 @@ window.FunctionView = {
                                         <option value="jaccard">Jaccard</option>
                                         <option value="milvus_sparse">Milvus Sparse</option>
                                     </select>
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Min / Max Score</label>
-                                    <div style="display:flex; gap:2px;">
-                                        <input type="number" id="fn-nbr-min-score" value="0.9" step="0.05" min="0" max="1" style="width:60px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
-                                        <input type="number" id="fn-nbr-max-score" placeholder="Max" step="0.05" min="0" max="1" style="width:60px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
-                                    </div>
                                 </div>
                                 <div style="display:flex; flex-direction:column; gap:2px;">
                                     <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Cross Binary</label>
@@ -121,59 +108,12 @@ window.FunctionView = {
                                     </select>
                                 </div>
                                 <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Name</label>
-                                    <input type="text" id="fn-nbr-name" placeholder="Name..." style="width:120px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Namespace</label>
-                                    <input type="text" id="fn-nbr-namespace" placeholder="Namespace..." style="width:100px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Return Type</label>
-                                    <input type="text" id="fn-nbr-ret-type" placeholder="Return Type..." style="width:90px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Cluster UUID / Name</label>
-                                    <div style="display:flex; gap:2px;">
-                                        <input type="text" id="fn-nbr-cluster" placeholder="UUID..." style="width:70px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
-                                        <input type="text" id="fn-nbr-cluster-name" placeholder="Name..." style="width:70px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
-                                    </div>
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Min Cohesion</label>
-                                    <input type="number" id="fn-nbr-min-cohesion" placeholder="0.95" step="0.05" min="0" max="1" style="width:60px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Min Features</label>
-                                    <input type="number" id="fn-nbr-min-features" placeholder="0" min="0" style="width:60px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Note Owner</label>
-                                    <input type="text" id="fn-nbr-note-owner" placeholder="Owner..." style="width:90px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">File Name</label>
-                                    <input type="text" id="fn-nbr-file-name" placeholder="File Name..." style="width:110px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Language</label>
-                                    <input type="text" id="fn-nbr-language" placeholder="Lang..." style="width:80px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Tags (comma-separated)</label>
-                                    <input type="text" id="fn-nbr-func-tag" placeholder="func_tag..." style="width:110px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Exclude Tags</label>
-                                    <input type="text" id="fn-nbr-exclude-func-tag" placeholder="exclude_func_tag..." style="width:110px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:2px;">
                                     <label style="font-size:0.65rem; color:var(--subtle); text-transform:uppercase;">Limit</label>
                                     <input type="number" id="fn-nbr-limit" value="50" min="1" max="1000" style="width:60px; font-size:0.7rem;" oninput="FunctionView.debounceNeighborsSearch()">
                                 </div>
                             </div>
                             <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
-                                <table class="file-func-table">
+                                <table id="fn-nbr-results-table">
                                     <thead>
                                         <tr>
                                             <th>Score</th>
@@ -181,10 +121,44 @@ window.FunctionView = {
                                             <th>Addr</th>
                                             <th>Tags</th>
                                             <th>Clusters</th>
-                                            <th>Features</th>
+                                            <th>Feat</th>
                                             <th>Notes</th>
                                             <th>File</th>
                                             <th>MD5</th>
+                                        </tr>
+                                        <tr class="filter-row">
+                                            <th>
+                                                <div style="display:flex; align-items:center; gap:2px;">
+                                                    <input type="number" id="fn-nbr-min-score" placeholder="Min..." value="0.9" step="0.05" min="0" max="1" style="font-size:0.65rem; width:48%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                    <span class="dim" style="font-size:0.6rem">-</span>
+                                                    <input type="number" id="fn-nbr-max-score" placeholder="Max..." step="0.05" min="0" max="1" style="font-size:0.65rem; width:48%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                </div>
+                                            </th>
+                                            <th>
+                                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                                    <input type="text" id="fn-nbr-name" placeholder="Name..." style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                    <input type="text" id="fn-nbr-namespace" placeholder="Namespace..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                    <input type="text" id="fn-nbr-ret-type" placeholder="Return Type..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                </div>
+                                            </th>
+                                            <th></th>
+                                            <th>
+                                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                                    <input type="text" id="fn-nbr-func-tag" placeholder="Tags..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                    <input type="text" id="fn-nbr-exclude-func-tag" placeholder="Exclude..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                </div>
+                                            </th>
+                                            <th>
+                                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                                    <input type="text" id="fn-nbr-cluster" placeholder="UUID..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                    <input type="text" id="fn-nbr-cluster-name" placeholder="Name..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                    <input type="number" id="fn-nbr-min-cohesion" placeholder="Min Cohesion" step="0.05" min="0" max="1" style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                </div>
+                                            </th>
+                                            <th><input type="number" id="fn-nbr-min-features" placeholder="Min..." min="0" style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()"></th>
+                                            <th><input type="text" id="fn-nbr-note-owner" placeholder="Owner..." style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()"></th>
+                                            <th><input type="text" id="fn-nbr-file-name" placeholder="File Name..." style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()"></th>
+                                            <th></th>
                                         </tr>
                                     </thead>
                                     <tbody id="fn-nbr-results-tbody">
@@ -422,6 +396,7 @@ window.FunctionView = {
             if (countEl) countEl.innerText = data.total ?? items.length;
             const countWrap = document.getElementById('fn-nbr-count-wrap');
             if (countWrap) countWrap.style.display = 'inline';
+            if (window.TableSelection) new window.TableSelection('fn-nbr-results-table');
         } catch (e) {
             console.error(e);
             tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading neighbors: ${e.message}</td></tr>`;

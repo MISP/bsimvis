@@ -98,6 +98,61 @@ def build_threshold_clusters(edge_set, threshold: float) -> ThresholdUF:
     return uf
 
 
+class RedisUF:
+    """Same union-find semantics as ThresholdUF, backed by Redis so cluster
+    state survives across job runs instead of being rebuilt from scratch.
+
+    Nodes are function id strings (e.g. "<collection>:func:<md5>:<addr>"),
+    not the numpy int indices the full-build path uses -- an incremental run
+    only ever touches a handful of nodes, so there is no interning to gain.
+
+    A root's member set is stored at the SAME Redis key run_clustering's
+    full-build path already writes members to
+    (f"{collection}:cluster:{algo}:{root}:members"), and the root's own fid
+    doubles as its `cluster_id` -- no separate id-minting scheme needed, and
+    it stays stable across merges (the bigger side always keeps its key).
+    """
+
+    def __init__(self, r, parent_key, members_key_fn):
+        self.r = r
+        self.parent_key = parent_key  # hash: fid -> parent fid
+        self.members_key_fn = members_key_fn  # root fid -> redis set key
+
+    def find(self, fid):
+        parent = self.r.hget(self.parent_key, fid)
+        if parent is None:
+            self.r.hset(self.parent_key, fid, fid)
+            return fid
+        parent = parent.decode() if isinstance(parent, bytes) else parent
+        if parent == fid:
+            return fid
+        root = self.find(parent)
+        if root != parent:
+            self.r.hset(self.parent_key, fid, root)  # path compression
+        return root
+
+    def union(self, a, b):
+        """Union a and b. Returns (survivor_root, absorbed_root_or_None)."""
+        ra, rb = self.find(a), self.find(b)
+        if ra == rb:
+            return ra, None
+        sa = self.r.scard(self.members_key_fn(ra)) or 1
+        sb = self.r.scard(self.members_key_fn(rb)) or 1
+        if sa < sb:
+            ra, rb = rb, ra
+        self.r.hset(self.parent_key, rb, ra)
+        # A fresh singleton has no members set yet -- seed both sides with
+        # their own root before merging, so a first-ever union (two brand
+        # new nodes) still ends up with a size-2 set instead of an empty one.
+        self.r.sadd(self.members_key_fn(ra), ra)
+        self.r.sadd(self.members_key_fn(rb), rb)
+        self.r.sunionstore(
+            self.members_key_fn(ra), self.members_key_fn(ra), self.members_key_fn(rb)
+        )
+        self.r.delete(self.members_key_fn(rb))
+        return ra, rb
+
+
 def incremental_add(uf: ThresholdUF, new_edges, threshold: float) -> set:
     """Add new (src, dst, dist) triples to an existing UF, unioning only
     where the edge clears `threshold`.

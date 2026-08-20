@@ -787,10 +787,12 @@ def finalize_batch_upload():
 
     group_id = job_service.create_group(pipeline_ids, enqueue=False)
 
-    # 1. Clear old results in parallel before rebuilding
-    clear_tasks = [
-        (JobType.CLEAR_CLUSTER.value, {"collection": collection, "algo": algo}),
-    ]
+    # 1. Clear old results in parallel before rebuilding.
+    # Function clustering (CLUSTER_FUNCTIONS below) is NOT cleared here: under
+    # the default threshold_uf engine it updates incrementally in place, keyed
+    # off this batch_uuid, instead of wiping and rebuilding every cluster in
+    # the collection on every single upload.
+    clear_tasks = []
     if not skip_sim:
         clear_tasks.append(
             (JobType.CLEAR_BIN_SIM.value, {"collection": collection, "algo": algo})
@@ -799,9 +801,9 @@ def finalize_batch_upload():
             (JobType.CLEAR_BIN_CLUSTER.value, {"collection": collection, "algo": algo})
         )
 
-    clear_group_id = job_service.create_group(clear_tasks, enqueue=False)
-
-    master_tasks = [group_id, clear_group_id]
+    master_tasks = [group_id]
+    if clear_tasks:
+        master_tasks.append(job_service.create_group(clear_tasks, enqueue=False))
 
     # After the clears, we do clustering:
     master_tasks.append(

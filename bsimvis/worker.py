@@ -720,6 +720,9 @@ class Worker:
                 md5_a=md5_a,
                 md5_b=md5_b,
                 min_cohesion=min_cohesion,
+                batch_uuid=payload.get("batch_uuid"),
+                pairs_key=payload.get("pairs_key"),
+                offset=payload.get("offset", 0),
                 job_service=self.job_service,
                 job_id=job_id,
             )

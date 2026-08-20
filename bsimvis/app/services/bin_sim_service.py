@@ -127,6 +127,9 @@ class BinSimService:
         md5_a=None,
         md5_b=None,
         min_cohesion=0.5,
+        batch_uuid=None,
+        pairs_key=None,
+        offset=0,
         job_service=None,
         job_id=None,
     ):
@@ -148,13 +151,11 @@ class BinSimService:
         if md5_a and md5_b:
             binaries = [md5_a, md5_b]
         else:
-            # Get all md5s
             all_files_key = f"{collection}:all_files"
             file_keys = [
                 d.decode() if isinstance(d, bytes) else str(d)
                 for d in r.smembers(all_files_key)
             ]
-
             binaries = []
             for k in file_keys:
                 if k.endswith(":meta"):
@@ -164,21 +165,116 @@ class BinSimService:
                     binaries.append(parts[2])
             binaries = list(set(binaries))
 
-        # A container (APK, zip) has a file document but no code of its own, so
-        # it can only ever score 0 against everything. Keeping it out spares a
-        # row per container in every pair matrix.
         containers = lineage_service.container_md5s(collection, r)
         if containers:
             binaries = [m for m in binaries if m not in containers]
 
         num_binaries = len(binaries)
         if num_binaries < 2:
-            msg = "Not enough binaries to compare."
             if job_service and job_id:
-                job_service.add_log(job_id, msg)
+                job_service.add_log(job_id, "Not enough binaries to compare.")
                 job_service.update_progress(job_id, 100)
             return True
 
+        # Generate Pairs and Chunking
+        CHUNK_SIZE = 100
+        if offset == 0:
+            if md5_a and md5_b:
+                if md5_a < md5_b:
+                    pairs = [(md5_a, md5_b)]
+                else:
+                    pairs = [(md5_b, md5_a)]
+            else:
+                pairs = []
+                if batch_uuid:
+                    func_keys = r.smembers(f"{collection}:batch:{batch_uuid}:functions")
+                    batch_binaries = set(
+                        k.decode().split(":")[-2]
+                        for k in func_keys
+                        if len(k.split(":")) >= 3
+                    )
+                    batch_binaries = list(batch_binaries - set(containers))
+                    # pairs between batch and all binaries
+                    for b1 in batch_binaries:
+                        for b2 in binaries:
+                            if b1 == b2:
+                                continue
+                            if b1 < b2:
+                                pairs.append((b1, b2))
+                            else:
+                                pairs.append((b2, b1))
+                    pairs = list(set(pairs))
+                else:
+                    for i in range(len(binaries)):
+                        for j in range(i + 1, len(binaries)):
+                            b1, b2 = binaries[i], binaries[j]
+                            if b1 < b2:
+                                pairs.append((b1, b2))
+                            else:
+                                pairs.append((b2, b1))
+                # Sort pairs for determinism
+                pairs.sort()
+
+            if len(pairs) > CHUNK_SIZE:
+                pairs_key = f"{collection}:bin_sim_jobs:{job_id}:pairs"
+                # Store all pairs as JSON
+                r.set(pairs_key, json.dumps(pairs), ex=86400)
+            else:
+                pairs_key = None
+        else:
+            if not pairs_key:
+                return True
+            raw = r.get(pairs_key)
+            if not raw:
+                return True
+            pairs = json.loads(raw)
+
+        total_pairs = len(pairs)
+        if offset >= total_pairs:
+            if pairs_key:
+                r.delete(pairs_key)
+            return True
+
+        chunk_pairs = pairs[offset : offset + CHUNK_SIZE]
+
+        # Splice next chunk if needed
+        if offset + CHUNK_SIZE < total_pairs:
+            from bsimvis.app.services.job_service import JobType
+
+            next_payload = {
+                "collection": collection,
+                "algo": algo,
+                "md5_a": md5_a,
+                "md5_b": md5_b,
+                "min_cohesion": min_cohesion,
+                "batch_uuid": batch_uuid,
+                "pairs_key": pairs_key,
+                "offset": offset + CHUNK_SIZE,
+            }
+            if job_service and job_id:
+                job_service.splice_tasks(
+                    parent_id=(r.hget(f"job:{job_id}", "parent_id") or b"").decode()
+                    or job_id,
+                    after_id=job_id,
+                    new_tids=[(JobType.BUILD_BIN_SIM.value, next_payload)],
+                )
+        elif pairs_key:
+            r.delete(pairs_key)
+
+        pairs = chunk_pairs
+
+        # Re-derive binaries list so we only fetch metadata for binaries in this chunk
+        chunk_binaries = set()
+        for p in pairs:
+            chunk_binaries.update(p)
+        binaries = list(chunk_binaries)
+        num_binaries = len(binaries)
+
+        if job_service and job_id:
+            job_service.add_log(
+                job_id,
+                f"[*] Computing similarities for pairs {offset} to {offset+len(pairs)} out of {total_pairs}...",
+            )
         # 2. Build cluster frequency map for rarity
         # We need to know for each cluster, how many distinct binaries have it.
         if job_service and job_id:
@@ -340,28 +436,6 @@ class BinSimService:
 
         tag_meta_cache = load_tag_meta(r, collection) if fid_tags else {}
         tags_rev = read_tags_rev(r, collection)
-
-        # 4. Generate Pairs
-        pairs = []
-        if md5_a and md5_b:
-            if md5_a < md5_b:
-                pairs.append((md5_a, md5_b))
-            else:
-                pairs.append((md5_b, md5_a))
-        else:
-            for i in range(len(binaries)):
-                for j in range(i + 1, len(binaries)):
-                    b1, b2 = binaries[i], binaries[j]
-                    if b1 < b2:
-                        pairs.append((b1, b2))
-                    else:
-                        pairs.append((b2, b1))
-
-        num_pairs = len(pairs)
-        if job_service and job_id:
-            job_service.add_log(
-                job_id, f"[*] Computing similarities for {num_pairs} pairs..."
-            )
 
         # 5. Process Pairs (Direct Similarity Matching with Bipartite Greedy Selection)
         processed = 0

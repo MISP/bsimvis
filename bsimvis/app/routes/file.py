@@ -866,13 +866,6 @@ def finalize_batch_upload():
     # off this batch_uuid, instead of wiping and rebuilding every cluster in
     # the collection on every single upload.
     clear_tasks = []
-    if not skip_sim:
-        clear_tasks.append(
-            (JobType.CLEAR_BIN_SIM.value, {"collection": collection, "algo": algo})
-        )
-        clear_tasks.append(
-            (JobType.CLEAR_BIN_CLUSTER.value, {"collection": collection, "algo": algo})
-        )
 
     master_tasks = [group_id]
     if clear_tasks:

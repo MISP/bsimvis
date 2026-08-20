@@ -63,6 +63,19 @@ class ClusterService:
             min_sim = config_service.get("clustering.min_sim", 0.0)
         if min_features is None:
             min_features = config_service.get("clustering.min_features", 0)
+
+        engine = config_service.get("clustering.engine", "hdbscan")
+        if engine == "threshold_uf":
+            return self._run_clustering_threshold_uf(
+                collection,
+                algo=algo,
+                threshold=config_service.get("clustering.uf_threshold", 0.98),
+                min_sim=min_sim,
+                min_features=min_features,
+                job_service=job_service,
+                job_id=job_id,
+            )
+
         if hdbscan is None:
             logging.error(
                 "hdbscan library not installed. Please install it to use clustering."
@@ -748,6 +761,310 @@ class ClusterService:
             job_service.add_log(job_id, summary)
 
         return True
+
+    def _run_clustering_threshold_uf(
+        self,
+        collection,
+        algo,
+        threshold,
+        min_sim,
+        min_features,
+        job_service=None,
+        job_id=None,
+    ):
+        """Flat clustering via threshold Union-Find (see cluster_threshold.py).
+
+        Deterministic, exact-by-construction alternative to HDBSCAN: unions
+        whenever raw similarity clears `threshold`, so an edge at sim==1.0
+        always ends up in the same cluster -- no SVD embedding, no
+        mutual-reachability approximation. Flat (no hierarchy/tree/stability
+        concept), so persistence here is a strict subset of run_clustering's:
+        every function is in at most one cluster, membership is binary (not a
+        lambda-derived score), and there is no condensed tree to store.
+
+        Reuses the same Redis schema as run_clustering (members,
+        direct_members, meta, cluster:list, cluster_* indexes) so downstream
+        readers (search, bin-sim, _update_similarity_indexing, clear_clustering)
+        work unchanged regardless of which engine produced the clusters.
+        """
+        r = self.r
+        is_pool = collection.startswith("global:pool:")
+        if is_pool:
+            pool_id = collection[len("global:pool:") :]
+            sim_score_key = f"global:pool:{pool_id}:sim:score"
+            prefix = f"global:pool:{pool_id}:sim:"
+        else:
+            pool_id = None
+            sim_score_key = f"{collection}:sim:score:{algo}"
+            prefix = f"{collection}:sim:{algo}:"
+
+        msg = f"[threshold_uf] Fetching similarity pairs from {sim_score_key} (threshold={threshold})..."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        allowed_fids = None
+        if min_features > 0:
+            allowed_fids = sim_edges.collect_allowed_fids(
+                r, sim_score_key, prefix, is_pool, collection, min_features
+            )
+
+        edge_set = sim_edges.load_edges(
+            r,
+            sim_score_key,
+            prefix,
+            is_pool,
+            collection,
+            min_sim=min_sim,
+            allowed_fids=allowed_fids,
+        )
+        id_to_idx = edge_set.id_to_idx
+        idx_to_id = edge_set.idx_to_id
+
+        if edge_set.n_scanned == 0 or edge_set.src.size == 0:
+            logging.warning(f"No similarity edges found for {collection}:{algo}")
+            return True
+
+        num_nodes = len(id_to_idx)
+        msg = f"[threshold_uf] {num_nodes} functions, {edge_set.src.size} edges. Running union-find..."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        from bsimvis.app.services.cluster_threshold import build_threshold_clusters
+
+        start_fit = time.time()
+        uf = build_threshold_clusters(edge_set, threshold)
+        fit_time = time.time() - start_fit
+
+        cluster_members = {
+            label: [idx_to_id[i] for i in members]
+            for label, members in uf.clusters(min_size=2).items()
+        }
+        label_to_uuid = {c: uuid.uuid4().hex[:12] for c in cluster_members}
+
+        msg = f"[threshold_uf] union-find done in {fit_time:.2f}s. Found {len(cluster_members)} clusters."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        self._persist_flat_clusters(
+            collection,
+            algo,
+            id_to_idx,
+            idx_to_id,
+            edge_set,
+            cluster_members,
+            label_to_uuid,
+            is_pool,
+            pool_id,
+            job_service,
+            job_id,
+        )
+
+        self._update_similarity_indexing(
+            collection, algo, job_service=job_service, job_id=job_id
+        )
+
+        noise_count = num_nodes - sum(len(m) for m in cluster_members.values())
+        summary = f"Clustering complete (threshold_uf). Found {len(cluster_members)} clusters. Noise: {noise_count} functions."
+        logging.info(f"[+] {summary}")
+        if job_service and job_id:
+            job_service.add_log(job_id, summary)
+
+        return True
+
+    def _persist_flat_clusters(
+        self,
+        collection,
+        algo,
+        id_to_idx,
+        idx_to_id,
+        edge_set,
+        cluster_members,
+        label_to_uuid,
+        is_pool,
+        pool_id,
+        job_service,
+        job_id,
+    ):
+        """Persist flat (non-hierarchical) cluster membership + metadata.
+
+        Same Redis keys as run_clustering's persistence, minus everything
+        that only makes sense for a condensed tree (tree/tree_links,
+        birth/death lambdas, per-member membership *score* -- here membership
+        is binary, so scores are always 1.0).
+        """
+        func_tag_fields = [
+            f for f in self.get_native_fields("func", False) if f.startswith("cluster_")
+        ]
+
+        pipe = self.r.pipeline(transaction=False)
+
+        for c, members in cluster_members.items():
+            pipe.sadd(f"{collection}:cluster:{algo}:{c}:members", *members)
+            pipe.sadd(f"{collection}:cluster:{algo}:{c}:direct_members", *members)
+            if len(pipe) > 1000:
+                pipe.execute()
+        pipe.execute()
+
+        member_of = {
+            fid: c for c, members in cluster_members.items() for fid in members
+        }
+
+        for i, fid in enumerate(idx_to_id.values()):
+            if is_pool:
+                clusters_key = f"{collection}:{fid}:clusters"
+                scores_key = f"{collection}:{fid}:cluster_scores"
+            else:
+                clusters_key = f"{fid}:clusters"
+                scores_key = f"{fid}:cluster_scores"
+
+            c = member_of.get(fid)
+            pipe.delete(clusters_key)
+            pipe.delete(scores_key)
+            if c is not None:
+                pipe.sadd(clusters_key, c)
+                pipe.hset(scores_key, mapping={str(c): 1.0})
+
+            if i % 500 == 0:
+                pipe.execute()
+                if job_service and job_id:
+                    job_service.update_progress(
+                        job_id, int((i / max(1, len(idx_to_id))) * 50)
+                    )
+        pipe.execute()
+
+        for idx, (label, members) in enumerate(cluster_members.items()):
+            if "cluster_id" in func_tag_fields:
+                bucket_key = f"{collection}:idx:func:cluster_id:{str(label).lower()}"
+                pipe.sadd(bucket_key, *members)
+                pipe.sadd(f"{collection}:reg:func:cluster_id", bucket_key)
+            if "cluster_uuid" in func_tag_fields:
+                c_uuid = label_to_uuid[label]
+                bucket_key = f"{collection}:idx:func:cluster_uuid:{c_uuid.lower()}"
+                pipe.sadd(bucket_key, *members)
+                pipe.sadd(f"{collection}:reg:func:cluster_uuid", bucket_key)
+            if idx % 100 == 0:
+                pipe.execute()
+        pipe.execute()
+
+        # Metadata: name, cohesion, sample functions -- same shape as
+        # run_clustering's meta docs so search/UI read either engine's output
+        # identically. avg_stability/cluster_stability have no lambda-based
+        # meaning here; cohesion_score doubles for both fields.
+        all_member_fids = list(id_to_idx.keys())
+        all_member_meta = {}
+        for i in range(0, len(all_member_fids), 1000):
+            chunk = all_member_fids[i : i + 1000]
+            m_pipe = self.r.pipeline(transaction=False)
+            for fid in chunk:
+                m_pipe.get(f"{fid}:meta")
+            for fid, raw_meta in zip(chunk, m_pipe.execute()):
+                m = {}
+                if raw_meta:
+                    try:
+                        m = json.loads(raw_meta)
+                    except Exception:
+                        m = {}
+                all_member_meta[fid] = {
+                    "function_name": m.get("function_name"),
+                    "bsim_features_count": m.get("bsim_features_count", 0),
+                    "file_name": m.get("file_name"),
+                    "entrypoint_address": m.get("entrypoint_address"),
+                    "file_md5": m.get("file_md5"),
+                }
+
+        adj_sim = sim_edges.SimAdjacency(edge_set, len(id_to_idx))
+
+        for label, members in cluster_members.items():
+            names = [
+                all_member_meta.get(fid, {}).get("function_name")
+                for fid in members
+                if all_member_meta.get(fid, {}).get("function_name")
+            ]
+            feature_counts = [
+                all_member_meta.get(fid, {}).get("bsim_features_count", 0)
+                for fid in members
+            ]
+            default_name = (
+                Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
+            )
+            avg_features = float(np.mean(feature_counts)) if feature_counts else 0.0
+
+            member_indices = [id_to_idx[fid] for fid in members]
+            n_members = len(members)
+            if n_members > 1:
+                total_sim = adj_sim.cohesion_sum(member_indices)
+                cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
+            else:
+                cohesion_score = 1.0
+
+            unique_md5s = {
+                fid.split(":")[2] for fid in members if len(fid.split(":")) >= 3
+            }
+
+            samples = []
+            for fid in members[:5]:
+                m = all_member_meta.get(fid, {})
+                samples.append(
+                    {
+                        "function_id": fid,
+                        "function_name": m.get("function_name", "Unknown"),
+                        "entrypoint_address": m.get("entrypoint_address"),
+                        "file_md5": m.get("file_md5"),
+                        "file_name": m.get("file_name"),
+                        "collection": collection,
+                        "bsim_features_count": m.get("bsim_features_count", 0),
+                    }
+                )
+
+            meta = {
+                "cluster_id": int(label),
+                "snippet": all_member_meta.get(members[0], {}).get(
+                    "function_name", "unknown"
+                )
+                if members
+                else "unknown",
+                "cluster_uuid": label_to_uuid[label],
+                "cluster_name": default_name,
+                "avg_features": avg_features,
+                "cohesion_score": float(cohesion_score),
+                "avg_stability": float(cohesion_score),
+                "cluster_stability": float(cohesion_score),
+                "member_count": len(members),
+                "unique_files_count": len(unique_md5s),
+                "sample_functions": samples,
+                "created_at": int(time.time() * 1000),
+            }
+            for k, v in meta.items():
+                if isinstance(v, float) and not np.isfinite(v):
+                    meta[k] = 0.0
+            pipe.set(f"{collection}:cluster:{algo}:{label}:meta", json.dumps(meta))
+
+            if "cluster_name" in func_tag_fields:
+                bucket_key = (
+                    f"{collection}:idx:func:cluster_name:{default_name.lower()}"
+                )
+                pipe.sadd(bucket_key, *members)
+                pipe.sadd(f"{collection}:reg:func:cluster_name", bucket_key)
+
+            if job_service and job_id and (idx + 1) % 50 == 0:
+                job_service.update_progress(
+                    job_id, 50 + int(((idx + 1) / max(1, len(cluster_members))) * 50)
+                )
+        pipe.execute()
+
+        cluster_list_key = f"{collection}:cluster:list:{algo}"
+        self.r.delete(cluster_list_key)
+        if cluster_members:
+            self.r.sadd(cluster_list_key, *[str(k) for k in cluster_members.keys()])
+            if is_pool:
+                pool_cluster_list_key = f"global:pool:{pool_id}:cluster:list"
+                self.r.delete(pool_cluster_list_key)
+                self.r.sadd(
+                    pool_cluster_list_key, *[str(k) for k in cluster_members.keys()]
+                )
 
     def clear_clustering(
         self, collection, algo="unweighted_cosine", job_service=None, job_id=None

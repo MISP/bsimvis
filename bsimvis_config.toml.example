@@ -32,6 +32,11 @@
     description = "Decompile only"
     no_analysis = true
 [clustering]
+    # engine = "threshold_uf" swaps HDBSCAN for a deterministic, incremental-
+    # friendly threshold union-find (see cluster_threshold.py). Defaults to
+    # "hdbscan" for now -- PoC, not yet the default.
+    engine = "hdbscan"
+    uf_threshold = 0.98
     epsilon = 0.001
     min_cluster_size = 2
     min_samples = 1

@@ -708,7 +708,12 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                         const u = new URLSearchParams(params);
                         u.set('limit', 0); // Only return total count
                         if (paramKey) u.set(paramKey, paramVal);
-                        
+                        // collection/pool land in `params` later in refreshData (after the
+                        // await fetchTagMetadata call below); this timer can fire first on
+                        // a slow/remote backend, so set them from local scope directly.
+                        if (collection) u.set('collection', collection); else u.delete('collection');
+                        if (pool) u.set('pool', pool); else u.delete('pool');
+
                         const res = await fetch('/api/bin_sim/search?' + u.toString());
                         if (!res.ok) return;
                         const data = await res.json();

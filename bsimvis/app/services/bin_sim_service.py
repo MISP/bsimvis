@@ -693,9 +693,9 @@ class BinSimService:
             if processed % 100 == 0:
                 pipe.execute()
                 if job_service and job_id:
-                    pct = 10 + int(processed / num_pairs * 80)
+                    pct = 10 + int(processed / len(pairs) * 80)
                     job_service.update_progress(
-                        job_id, pct, f"Processed {processed}/{num_pairs} pairs"
+                        job_id, pct, f"Processed {processed}/{len(pairs)} pairs"
                     )
 
         pipe.execute()

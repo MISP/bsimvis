@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
+
 
 @dataclass
 class ThresholdUF:
@@ -151,6 +153,91 @@ class RedisUF:
         )
         self.r.delete(self.members_key_fn(rb))
         return ra, rb
+
+
+def build_single_linkage_tree(edge_set):
+    """Full single-linkage dendrogram via Kruskal's MST + Union-Find.
+
+    threshold_uf's flat clusters answer one question: same cluster or not,
+    at one fixed cut. This builds the full hierarchy instead -- exact/near
+    dups nest inside looser families nest inside looser families, all the
+    way down to whatever min_sim floor the edge set was built with.
+
+    Kruskal, not the hdbscan library's dense/SVD-embedded fit: process edges
+    strictly by similarity descending, union-find as usual, but keep going
+    past the first merge instead of stopping at one threshold, and record a
+    tree row every time an edge actually merges two different roots (an
+    edge connecting two nodes already in the same component is skipped --
+    same cycle-avoidance Kruskal always does). That produces one row per
+    (child, parent) tree edge with lambda_val = the raw similarity that
+    caused the merge -- the EXACT shape
+    bsimvis.app.services.cluster_common.hierarchical_membership() already
+    consumes (it was written against the hdbscan library's condensed_tree_
+    output, but never actually depends on the library, only on this shape
+    and "bigger lambda_val = tighter"). Raw similarity is used directly as
+    lambda_val instead of HDBSCAN's 1/distance -- same monotonic direction
+    (bigger = tighter), simpler, and avoids a divide-by-zero at distance 0.
+
+    O(E log E) for the sort, near-linear union-find for the rest. No dense
+    matrix, no SVD, no component-size branch -- the reason cluster_service.py
+    needs one for HDBSCAN (can't scale past ~5000 nodes densely) doesn't
+    apply here.
+
+    Multiple connected components become a forest, not a single tree, same
+    as run_clustering's HDBSCAN path -- stitched to one synthetic global
+    root at lambda_val=0.0 (the coarsest possible level, matching
+    hierarchical_membership's assumption that the root's birth is 0).
+
+    Returns (tree_rows, global_root_id, num_nodes). tree_rows is a list of
+    dicts with columns parent/child/lambda_val/child_size, ready for
+    pandas.DataFrame() the same way run_clustering already builds one.
+    """
+    num_nodes = len(edge_set.idx_to_id)
+
+    parent = list(range(num_nodes))
+    size = [1] * num_nodes
+    next_id = num_nodes
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    order = np.argsort(edge_set.dist, kind="stable")  # ascending distance = descending sim
+    rows = []
+    for k in order:
+        u, v = int(edge_set.src[k]), int(edge_set.dst[k])
+        ru, rv = find(u), find(v)
+        if ru == rv:
+            continue
+        sim = 1.0 - float(edge_set.dist[k])
+        new_id = next_id
+        next_id += 1
+        parent.append(new_id)
+        size.append(size[ru] + size[rv])
+        rows.append(
+            {"parent": new_id, "child": ru, "lambda_val": sim, "child_size": size[ru]}
+        )
+        rows.append(
+            {"parent": new_id, "child": rv, "lambda_val": sim, "child_size": size[rv]}
+        )
+        parent[ru] = new_id
+        parent[rv] = new_id
+
+    global_root_id = next_id
+    component_roots = sorted({find(i) for i in range(num_nodes)})
+    for root in component_roots:
+        rows.append(
+            {
+                "parent": global_root_id,
+                "child": root,
+                "lambda_val": 0.0,
+                "child_size": size[root],
+            }
+        )
+
+    return rows, global_root_id, num_nodes
 
 
 def incremental_add(uf: ThresholdUF, new_edges, threshold: float) -> set:
@@ -349,8 +436,104 @@ def demo_incremental_touches_only_new_edges():
     )
 
 
+def demo_single_linkage_tree():
+    """build_single_linkage_tree() output must be consumable by
+    cluster_common.hierarchical_membership() unchanged (same two scenarios
+    as its own _demo()), AND must correctly recover a tight subgroup nested
+    inside a looser one -- the thing threshold_uf's flat clusters can't
+    represent at all (S1/S2 have no such nesting; S3 here does).
+    """
+    import pandas as pd
+    from bsimvis.app.services.sim_edges import EdgeSet
+    from bsimvis.app.services.cluster_common import hierarchical_membership
+
+    def edges_from_matrix(sim):
+        n = len(sim)
+        src, dst, dist = [], [], []
+        for i in range(n):
+            for j in range(i + 1, n):
+                src.append(i)
+                dst.append(j)
+                dist.append(1.0 - sim[i][j])
+        idx = {i: i for i in range(n)}
+        return EdgeSet(
+            np.array(src), np.array(dst), np.array(dist, dtype=np.float32), idx, idx, n
+        )
+
+    def run(sim, min_size=2):
+        edges = edges_from_matrix(sim)
+        rows, global_root_id, n = build_single_linkage_tree(edges)
+        tree_df = pd.DataFrame(rows)
+        leaf_to_clusters, leaf_home = hierarchical_membership(
+            tree_df, n, global_root_id, min_size=min_size
+        )
+        members = {}
+        for leaf, cs in leaf_to_clusters.items():
+            for cid in cs:
+                members.setdefault(cid, set()).add(leaf)
+        return members, leaf_home, tree_df
+
+    # S1: A,B identical (.98), C only .75. cluster_common._demo (HDBSCAN)
+    # only ever sees ONE flat cut, so it expects just the tight pair with C
+    # shed as noise -- that was HDBSCAN's stability-based EOM selection
+    # picking one level, not a property of the data. A full single-linkage
+    # tree correctly keeps BOTH nested levels: {A,B} tight AND {A,B,C}
+    # coarse (C's own fall-lambda exactly equals the coarse group's
+    # formation lambda, so it's a genuine -- not noise -- member there).
+    # C's *home* (deepest cluster) is still the coarse group, not the tight
+    # pair, which is the actual "C isn't part of the tight pair" signal.
+    m, home, _ = run([[1, 0.98, 0.75], [0.98, 1, 0.75], [0.75, 0.75, 1]])
+    sets = sorted(sorted(v) for v in m.values())
+    assert sets == [[0, 1], [0, 1, 2]], f"S1 expected both nested levels, got {sets}"
+    assert home[2] != home[0], f"C's home cluster should differ from A/B's: {home}"
+
+    # S2: two families of 3 -> full hierarchy (parent-level six + two triples).
+    s2 = [
+        [1, 0.98, 0.98, 0.75, 0.75, 0.75],
+        [0.98, 1, 0.98, 0.75, 0.75, 0.75],
+        [0.98, 0.98, 1, 0.75, 0.75, 0.75],
+        [0.75, 0.75, 0.75, 1, 0.98, 0.98],
+        [0.75, 0.75, 0.75, 0.98, 1, 0.98],
+        [0.75, 0.75, 0.75, 0.98, 0.98, 1],
+    ]
+    m, home, _ = run(s2)
+    sets = sorted(sorted(v) for v in m.values())
+    assert [0, 1, 2] in sets and [3, 4, 5] in sets, f"missing tight families: {sets}"
+    assert [0, 1, 2, 3, 4, 5] in sets, f"missing parent level: {sets}"
+
+    # S3: the thing flat clustering structurally cannot do. A,B,C already
+    # loosely chained (.90) into one coarse group; D,E are a genuinely tight
+    # pair (.99) that ALSO sits inside that same coarse group via D-A=.90.
+    # A full single-linkage rebuild must still find {D,E} as its own tight
+    # node nested inside {A,B,C,D,E} -- not silently swallowed by the loose
+    # A-B-C chain the way a flat union-find (or a naive incremental add)
+    # would.
+    s3 = [
+        # A     B     C     D     E
+        [1.00, 0.90, 0.85, 0.90, 0.85],  # A
+        [0.90, 1.00, 0.90, 0.60, 0.55],  # B
+        [0.85, 0.90, 1.00, 0.55, 0.55],  # C
+        [0.90, 0.60, 0.55, 1.00, 0.99],  # D
+        [0.85, 0.55, 0.55, 0.99, 1.00],  # E
+    ]
+    m, home, tree_df = run(s3, min_size=2)
+    sets = sorted(sorted(v) for v in m.values())
+    assert [3, 4] in sets, f"expected {{D,E}} to surface as its own tight node: {sets}"
+    assert [0, 1, 2, 3, 4] in sets, f"expected the full coarse group too: {sets}"
+    # And the tight node's birth lambda must reflect ITS OWN edge (.99), not
+    # get diluted to the coarse group's (.90) -- proof it's a real nested
+    # node, not just a relabeling.
+    de_birth = tree_df[
+        (tree_df["child"].isin([3, 4])) & (tree_df["child_size"] == 1)
+    ]["lambda_val"]
+    assert (de_birth.round(2) == 0.99).all(), f"D,E should fall at .99: {de_birth.tolist()}"
+
+    print("single-linkage tree demo OK (including nested-subgroup recovery)")
+
+
 if __name__ == "__main__":
     _demo_parity_with_hdbscan_semantics()
     demo_incremental_touches_only_new_edges()
     demo_svd_sheds_exact_pair()
+    demo_single_linkage_tree()
     print("cluster_threshold PoC OK")

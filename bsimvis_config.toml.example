@@ -35,9 +35,14 @@
     # threshold_uf (default): deterministic, incremental union-find (see
     # cluster_threshold.py) -- exact by construction, and new uploads update
     # only the clusters they touch instead of rebuilding the whole collection.
+    # hierarchical_uf: full single-linkage hierarchy via Kruskal + union-find,
+    # same file. Full rebuild only (no incremental yet). cohesion_cut picks
+    # each function's assigned cluster: the shallowest surviving ancestor
+    # whose cohesion clears cohesion_cut, not just its deepest one.
     # hdbscan: legacy path, kept for comparison/rollback.
     engine = "threshold_uf"
     uf_threshold = 0.98
+    cohesion_cut = 0.9
     epsilon = 0.001
     min_cluster_size = 2
     min_samples = 1

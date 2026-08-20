@@ -198,7 +198,7 @@ class BinSimService:
                 if batch_uuid:
                     func_keys = r.smembers(f"{collection}:batch:{batch_uuid}:functions")
                     batch_binaries = set(
-                        k.decode().split(":")[-2]
+                        (k.decode() if isinstance(k, bytes) else k).split(":")[-2]
                         for k in func_keys
                         if len(k.split(":")) >= 3
                     )
@@ -261,8 +261,13 @@ class BinSimService:
                 "offset": offset + CHUNK_SIZE,
             }
             if job_service and job_id:
+                parent_raw = r.hget(f"job:{job_id}", "parent_id")
                 job_service.splice_tasks(
-                    parent_id=(r.hget(f"job:{job_id}", "parent_id") or b"").decode()
+                    parent_id=(
+                        parent_raw.decode()
+                        if isinstance(parent_raw, bytes)
+                        else parent_raw
+                    )
                     or job_id,
                     after_id=job_id,
                     new_tids=[(JobType.BUILD_BIN_SIM.value, next_payload)],

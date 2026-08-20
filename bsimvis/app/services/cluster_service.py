@@ -1066,7 +1066,13 @@ class ClusterService:
             chosen = qualifying[-1] if qualifying else chain[0]
             cluster_members.setdefault(chosen, []).append(idx_to_id[leaf])
 
-        label_to_uuid = {c: uuid.uuid4().hex[:12] for c in cluster_members}
+        # node_members (every ancestor a leaf survives to, not just the
+        # cohesion-cut winner) is what the hierarchy view actually needs
+        # metadata for -- tree_links exposes every one of these as a
+        # navigable parent/child, so every one needs a :meta doc or the UI
+        # shows a nameless stub. cluster_members stays the source of truth
+        # for a function's single "primary" cluster (search/tags), unaffected.
+        label_to_uuid = {c: uuid.uuid4().hex[:12] for c in node_members}
 
         msg = f"[hierarchical_uf] {len(cluster_members)} clusters at cohesion_cut={cohesion_cut}."
         logging.info(msg)
@@ -1081,6 +1087,7 @@ class ClusterService:
             adj_sim,
             all_member_meta_fids=list(id_to_idx.keys()),
             cluster_members=cluster_members,
+            node_members=node_members,
             node_cohesion=node_cohesion,
             label_to_uuid=label_to_uuid,
             tree_df=tree_df,
@@ -1115,6 +1122,7 @@ class ClusterService:
         adj_sim,
         all_member_meta_fids,
         cluster_members,
+        node_members,
         node_cohesion,
         label_to_uuid,
         tree_df,
@@ -1123,7 +1131,14 @@ class ClusterService:
         job_service,
         job_id,
     ):
-        """Persist the cohesion-cut cluster assignment + the full tree.
+        """Persist the full tree (every cohesion-candidate node) + the
+        cohesion-cut assignment.
+
+        Every node in `node_members` (every ancestor a leaf survives to) gets
+        a real :meta doc -- tree_links exposes all of them as navigable
+        parent/child, so a node with no :meta shows as a nameless stub in the
+        hierarchy view. `cluster_members` (the cohesion-cut winners) only
+        decides each function's single "primary" cluster for search/tags.
 
         Cluster ids here are the synthetic internal node ids
         build_single_linkage_tree() allocated (coarse nodes have no single
@@ -1135,6 +1150,10 @@ class ClusterService:
 
         # Tree + tree_links: same keys/shape run_clustering's HDBSCAN path
         # already writes, so the existing dendrogram UI works unchanged.
+        # Restricted to node_members so every link the UI can walk resolves
+        # to a real :meta doc -- raw tree_df also has pruned/non-surviving
+        # merges (shed noise, per hierarchical_membership's docstring) that
+        # were never real clusters to begin with.
         r.set(f"{collection}:cluster:tree:{algo}", tree_df.to_json(orient="records"))
         tree_links = [
             {
@@ -1144,7 +1163,7 @@ class ClusterService:
                 "size": int(row.child_size),
             }
             for row in tree_df.itertuples(index=False)
-            if int(row.child_size) > 1
+            if int(row.child_size) > 1 and int(row.child) in node_members
         ]
         r.set(f"{collection}:cluster:tree_links:{algo}", json.dumps(tree_links))
 
@@ -1154,9 +1173,11 @@ class ClusterService:
 
         pipe = r.pipeline(transaction=False)
 
-        for c, members in cluster_members.items():
+        for c, members in node_members.items():
             pipe.sadd(f"{collection}:cluster:{algo}:{c}:members", *members)
-            pipe.sadd(f"{collection}:cluster:{algo}:{c}:direct_members", *members)
+            direct = cluster_members.get(c)
+            if direct:
+                pipe.sadd(f"{collection}:cluster:{algo}:{c}:direct_members", *direct)
             if len(pipe) > 1000:
                 pipe.execute()
         pipe.execute()
@@ -1188,7 +1209,7 @@ class ClusterService:
                     )
         pipe.execute()
 
-        for idx, (label, members) in enumerate(cluster_members.items()):
+        for idx, (label, members) in enumerate(node_members.items()):
             if "cluster_id" in func_tag_fields:
                 bucket_key = f"{collection}:idx:func:cluster_id:{str(label).lower()}"
                 pipe.sadd(bucket_key, *members)
@@ -1217,7 +1238,7 @@ class ClusterService:
                         m = {}
                 all_member_meta[fid] = m
 
-        for label, members in cluster_members.items():
+        for label, members in node_members.items():
             names = [
                 all_member_meta.get(fid, {}).get("function_name")
                 for fid in members
@@ -1284,13 +1305,13 @@ class ClusterService:
 
         cluster_list_key = f"{collection}:cluster:list:{algo}"
         r.delete(cluster_list_key)
-        if cluster_members:
-            r.sadd(cluster_list_key, *[str(k) for k in cluster_members.keys()])
+        if node_members:
+            r.sadd(cluster_list_key, *[str(k) for k in node_members.keys()])
             if is_pool:
                 pool_cluster_list_key = f"global:pool:{pool_id}:cluster:list"
                 r.delete(pool_cluster_list_key)
                 r.sadd(
-                    pool_cluster_list_key, *[str(k) for k in cluster_members.keys()]
+                    pool_cluster_list_key, *[str(k) for k in node_members.keys()]
                 )
 
     def _persist_flat_clusters(

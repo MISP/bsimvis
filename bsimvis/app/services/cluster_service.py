@@ -865,8 +865,15 @@ class ClusterService:
         uf = build_threshold_clusters(edge_set, threshold)
         fit_time = time.time() - start_fit
 
+        # Root fid, not the numpy int label: a full rebuild and the
+        # incremental path (RedisUF, keyed on fid strings) must agree on
+        # cluster identity, or the two runs silently orphan each other's
+        # state the moment both ever touch the same collection. build_
+        # threshold_clusters() only ever picks an original leaf index as a
+        # root (union never invents a synthetic id), so idx_to_id[label] is
+        # always a real fid.
         cluster_members = {
-            label: [idx_to_id[i] for i in members]
+            idx_to_id[label]: [idx_to_id[i] for i in members]
             for label, members in uf.clusters(min_size=2).items()
         }
         label_to_uuid = {c: uuid.uuid4().hex[:12] for c in cluster_members}
@@ -875,6 +882,11 @@ class ClusterService:
         logging.info(msg)
         if job_service and job_id:
             job_service.add_log(job_id, msg)
+
+        # A full rebuild is the ground truth for this collection: wipe
+        # whatever's there first (any prior engine, any prior partial
+        # incremental state) so nothing orphaned survives underneath it.
+        self.clear_clustering(collection, algo, job_service=job_service, job_id=job_id)
 
         self._persist_flat_clusters(
             collection,
@@ -935,6 +947,20 @@ class ClusterService:
             if len(pipe) > 1000:
                 pipe.execute()
         pipe.execute()
+
+        # Seed RedisUF's state (cluster_threshold.py) so a later incremental
+        # upload -- which reads this exact parent/uuid hash -- recognizes
+        # these roots instead of treating every member as an untouched
+        # singleton. Pools never take the incremental path, so skip it there.
+        if not is_pool:
+            parent_key = f"{collection}:cluster:{algo}:uf:parent"
+            uuid_key = f"{collection}:cluster:{algo}:uf:uuid"
+            for c, members in cluster_members.items():
+                pipe.hset(parent_key, mapping={m: c for m in members})
+                pipe.hset(uuid_key, c, label_to_uuid[c])
+                if len(pipe) > 1000:
+                    pipe.execute()
+            pipe.execute()
 
         member_of = {
             fid: c for c, members in cluster_members.items() for fid in members
@@ -1048,7 +1074,7 @@ class ClusterService:
                 )
 
             meta = {
-                "cluster_id": int(label),
+                "cluster_id": label,
                 "snippet": all_member_meta.get(members[0], {}).get(
                     "function_name", "unknown"
                 )
@@ -1539,6 +1565,12 @@ class ClusterService:
         # 4. Delete tree and cluster list
         r.delete(f"{collection}:cluster:tree:{algo}")
         r.delete(f"{collection}:cluster:list:{algo}")
+
+        # threshold_uf's incremental state (RedisUF in cluster_threshold.py):
+        # without this, a "cleared" collection's next incremental upload would
+        # find stale parent/uuid entries and silently resurrect the old grouping.
+        r.delete(f"{collection}:cluster:{algo}:uf:parent")
+        r.delete(f"{collection}:cluster:{algo}:uf:uuid")
 
         if job_service and job_id:
             job_service.add_log(job_id, "Clustering data cleared successfully.")

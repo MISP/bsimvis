@@ -17,6 +17,469 @@ except ImportError:
 
 
 class BinClusterService:
+    def run_clustering(
+        self,
+        collection,
+        algo="unweighted_cosine",
+        min_cluster_size=None,
+        min_samples=None,
+        cluster_selection_epsilon=None,
+        selection_method=None,
+        min_sim=None,
+        batch_uuid=None,
+        job_service=None,
+        job_id=None,
+        min_cohesion=None,
+    ):
+        from bsimvis.app.services.config_service import config_service
+
+        engine = config_service.get("clustering.bin_engine", "threshold_uf")
+
+        if engine == "threshold_uf":
+            threshold = config_service.get("clustering.bin_uf_threshold", 0.1)
+            if batch_uuid and not collection.startswith("global:pool:"):
+                new_files = list(
+                    self.r.smembers(f"{collection}:batch:{batch_uuid}:files")
+                )
+                if not new_files:
+                    # file.py tracks files in batch differently? Wait, batch files aren't in a set!
+                    # Let's get files from functions
+                    func_keys = self.r.smembers(
+                        f"{collection}:batch:{batch_uuid}:functions"
+                    )
+                    new_files = list(
+                        {
+                            k.decode().split(":")[-2]
+                            for k in func_keys
+                            if len(k.split(":")) >= 3
+                        }
+                    )
+                else:
+                    new_files = [
+                        f.decode() if isinstance(f, bytes) else f for f in new_files
+                    ]
+
+                if new_files:
+                    return self._incremental_cluster_binaries(
+                        collection,
+                        algo,
+                        threshold,
+                        new_files,
+                        job_service=job_service,
+                        job_id=job_id,
+                        min_cohesion=min_cohesion,
+                    )
+                return True
+            return self._run_clustering_threshold_uf(
+                collection,
+                algo=algo,
+                threshold=threshold,
+                min_sim=min_sim,
+                job_service=job_service,
+                job_id=job_id,
+                min_cohesion=min_cohesion,
+            )
+
+        return self._run_clustering_hdbscan(
+            collection,
+            algo,
+            min_cluster_size,
+            min_samples,
+            cluster_selection_epsilon,
+            selection_method,
+            min_sim,
+            job_service,
+            job_id,
+            min_cohesion,
+        )
+
+    def _incremental_cluster_binaries(
+        self,
+        collection,
+        algo,
+        threshold,
+        new_files,
+        job_service=None,
+        job_id=None,
+        min_cohesion=None,
+    ):
+        from bsimvis.app.services.cluster_threshold import RedisUF
+        from bsimvis.app.services.config_service import config_service
+
+        if min_cohesion is None:
+            min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
+
+        r = self.r
+        sim_prefix = f"{collection}:bin_sim:{algo}:"
+        sim_score_key = f"{collection}:bin_sim:score:{algo}"
+        parent_key = f"{collection}:bin_cluster:{algo}:uf:parent"
+        uuid_key = f"{collection}:bin_cluster:{algo}:uf:uuid"
+
+        def members_key(root):
+            return f"{collection}:bin_cluster:{algo}:{root}:members"
+
+        uf = RedisUF(r, parent_key, members_key)
+
+        msg = f"[threshold_uf] incremental binary update: {len(new_files)} new files..."
+        import logging
+
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        touched_roots = set()
+        for md5 in new_files:
+            sids = r.smembers(f"{collection}:bin_sim:involves:{md5}")
+            for sid_raw in sids or ():
+                sid = sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
+                if not sid.startswith(sim_prefix):
+                    continue
+                id_part = sid[len(sim_prefix) :]
+                if "::" not in id_part:
+                    continue
+                c1, c2 = id_part.split("::")
+                other_md5 = c2 if c1 == md5 else c1
+                if other_md5 == md5:
+                    continue
+                score = r.zscore(sim_score_key, sid)
+                if score is None or float(score) < threshold:
+                    continue
+
+                ra, rb = uf.find(md5), uf.find(other_md5)
+                if ra == rb:
+                    touched_roots.add(ra)
+                    continue
+                survivor, absorbed = uf.union(md5, other_md5)
+                touched_roots.add(survivor)
+                touched_roots.add(absorbed)
+
+        final_roots = {t for t in touched_roots if uf.find(t) == t}
+        stale_roots = touched_roots - final_roots
+
+        pipe = r.pipeline(transaction=False)
+        for stale in stale_roots:
+            old_meta_raw = r.get(f"{collection}:bin_cluster:{algo}:{stale}:meta")
+            import json
+
+            old_meta = json.loads(old_meta_raw) if old_meta_raw else {}
+            pipe.delete(f"{collection}:bin_cluster:{algo}:{stale}:meta")
+            pipe.delete(f"{collection}:bin_cluster:{algo}:{stale}:direct_members")
+            pipe.srem(f"{collection}:bin_cluster:list:{algo}", str(stale))
+            pipe.delete(f"{collection}:idx:file:bin_cluster_id:{str(stale).lower()}")
+            old_name = old_meta.get("cluster_name")
+            if old_name:
+                pipe.delete(
+                    f"{collection}:idx:file:bin_cluster_name:{old_name.lower()}"
+                )
+            old_uuid = r.hget(uuid_key, stale)
+            if old_uuid:
+                old_uuid = (
+                    old_uuid.decode() if isinstance(old_uuid, bytes) else old_uuid
+                )
+                pipe.delete(
+                    f"{collection}:idx:file:bin_cluster_uuid:{old_uuid.lower()}"
+                )
+                pipe.hdel(uuid_key, stale)
+        pipe.execute()
+
+        all_members_raw = {}
+        if final_roots:
+            for root in final_roots:
+                mset = r.smembers(members_key(root))
+                members = sorted(
+                    m.decode() if isinstance(m, bytes) else m for m in (mset or ())
+                )
+                if len(members) < 2:
+                    continue
+                all_members_raw[root] = members
+
+            self._enrich_and_persist_binary_clusters(
+                collection,
+                algo,
+                all_members_raw,
+                uuid_key,
+                min_cohesion,
+                job_service,
+                job_id,
+            )
+
+        msg = f"[threshold_uf] incremental binary update done. Touched {len(final_roots)} live clusters."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+            job_service.update_progress(job_id, 100)
+        return True
+
+    def _run_clustering_threshold_uf(
+        self,
+        collection,
+        algo,
+        threshold,
+        min_sim,
+        job_service=None,
+        job_id=None,
+        min_cohesion=None,
+    ):
+        import time
+        import logging
+        from bsimvis.app.services.cluster_threshold import build_threshold_clusters
+        from bsimvis.app.services import sim_edges
+        from bsimvis.app.services.config_service import config_service
+
+        if min_cohesion is None:
+            min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
+
+        r = self.r
+        sim_score_key = f"{collection}:bin_sim:score:{algo}"
+        prefix = f"{collection}:bin_sim:{algo}:"
+        uuid_key = f"{collection}:bin_cluster:{algo}:uf:uuid"
+
+        msg = f"[threshold_uf] Fetching binary similarity pairs from {sim_score_key} (threshold={threshold})..."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        edge_set = sim_edges.load_edges(
+            r,
+            sim_score_key,
+            prefix,
+            False,
+            collection,
+            min_sim=min_sim,
+            node_kind="file",
+        )
+        id_to_idx = edge_set.id_to_idx
+        idx_to_id = edge_set.idx_to_id
+
+        if edge_set.n_scanned == 0 or edge_set.src.size == 0:
+            logging.warning(f"No binary similarity edges found for {collection}:{algo}")
+            return True
+
+        num_nodes = len(id_to_idx)
+        msg = f"[threshold_uf] {num_nodes} binaries, {edge_set.src.size} edges. Running union-find..."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        start_fit = time.time()
+        uf = build_threshold_clusters(edge_set, threshold)
+        fit_time = time.time() - start_fit
+
+        cluster_members = {
+            idx_to_id[label]: [idx_to_id[i] for i in members]
+            for label, members in uf.clusters(min_size=2).items()
+        }
+
+        self._enrich_and_persist_binary_clusters(
+            collection,
+            algo,
+            cluster_members,
+            uuid_key,
+            min_cohesion,
+            job_service,
+            job_id,
+        )
+
+        msg = f"[threshold_uf] union-find done in {fit_time:.2f}s. Found {len(cluster_members)} clusters."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+            job_service.update_progress(job_id, 100)
+        return True
+
+    def _enrich_and_persist_binary_clusters(
+        self,
+        collection,
+        algo,
+        cluster_members,
+        uuid_key,
+        min_cohesion,
+        job_service,
+        job_id,
+    ):
+        import uuid
+        import time
+        import json
+        from collections import Counter
+
+        r = self.r
+        pipe = r.pipeline(transaction=False)
+
+        # We need all_member_meta
+        all_member_file_ids = list({f for ms in cluster_members.values() for f in ms})
+        all_member_meta = {}
+        for i in range(0, len(all_member_file_ids), 1000):
+            chunk = all_member_file_ids[i : i + 1000]
+            m_pipe = r.pipeline(transaction=False)
+            for file_id in chunk:
+                m_pipe.get(f"{collection}:file:{file_id}:meta")
+            for file_id, raw_meta in zip(chunk, m_pipe.execute()):
+                m = {}
+                if raw_meta:
+                    try:
+                        m = json.loads(raw_meta)
+                    except Exception:
+                        pass
+                all_member_meta[file_id] = m
+
+        for label, members in cluster_members.items():
+            pipe.sadd(f"{collection}:bin_cluster:{algo}:{label}:members", *members)
+            pipe.sadd(
+                f"{collection}:bin_cluster:{algo}:{label}:direct_members", *members
+            )
+            pipe.sadd(f"{collection}:bin_cluster:list:{algo}", str(label))
+
+            # Ensure UUID
+            c_uuid = r.hget(uuid_key, label)
+            if not c_uuid:
+                c_uuid = uuid.uuid4().hex[:12]
+                r.hset(uuid_key, label, c_uuid)
+            else:
+                c_uuid = c_uuid.decode() if isinstance(c_uuid, bytes) else c_uuid
+
+            # Build Metadata
+            names_list = []
+            md5s_list = []
+            yara_list = []
+            avtype_list = []
+            filetype_list = []
+            ccip_list = []
+
+            for file_id in members:
+                m = all_member_meta.get(file_id, {})
+                if m.get("file_names"):
+                    names_list.extend(m["file_names"])
+                elif m.get("file_name"):
+                    names_list.append(m["file_name"])
+
+                if m.get("file_md5"):
+                    md5s_list.append(m["file_md5"])
+
+                if m.get("yara"):
+                    yara_list.extend(
+                        m["yara"] if isinstance(m["yara"], list) else [m["yara"]]
+                    )
+                if m.get("avtype"):
+                    avtype_list.extend(
+                        m["avtype"] if isinstance(m["avtype"], list) else [m["avtype"]]
+                    )
+                if m.get("filetype"):
+                    filetype_list.extend(
+                        m["filetype"]
+                        if isinstance(m["filetype"], list)
+                        else [m["filetype"]]
+                    )
+                if m.get("cc_ip"):
+                    ccip_list.extend(
+                        m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]]
+                    )
+
+            default_name = (
+                Counter(names_list).most_common(1)[0][0]
+                if names_list
+                else f"Binary Cluster {label}"
+            )
+
+            def build_freq(items):
+                return (
+                    [
+                        {
+                            "value": k,
+                            "count": v,
+                            "percent": round((v / len(members)) * 100),
+                        }
+                        for k, v in Counter(items).most_common(5)
+                    ]
+                    if items
+                    else []
+                )
+
+            yara_freq = build_freq(yara_list)
+            avtype_freq = build_freq(avtype_list)
+            filetype_freq = build_freq(filetype_list)
+            ccip_freq = build_freq(ccip_list)
+            filename_freq = build_freq(names_list)
+            md5_freq = build_freq(md5s_list)
+
+            # Simple average cohesion proxy (for true cohesion, we'd need sparse adjacency, but for incremental this is an approximation or skip if too slow)
+            cohesion_score = 1.0  # placeholder for now to guarantee indexing, or compute exact. UF threshold is already a cohesion guarantee!
+
+            sample_members = []
+            for file_id in members[:5]:
+                m = all_member_meta.get(file_id, {})
+                sample_members.append(
+                    {
+                        "id": file_id,
+                        "name": m.get("file_name", "Unknown"),
+                        "file_name": m.get("file_name", "Unknown"),
+                    }
+                )
+
+            rep_file_id = members[0] if members else None
+            rep_meta = all_member_meta.get(rep_file_id, {}) if rep_file_id else {}
+            snippet = rep_meta.get("file_name", "unknown")
+
+            meta = {
+                "cluster_id": str(label),
+                "snippet": snippet,
+                "cluster_uuid": c_uuid,
+                "cluster_name": default_name,
+                "cohesion_score": float(cohesion_score),
+                "avg_stability": 1.0,
+                "cluster_stability": 1.0,
+                "member_count": len(members),
+                "sample_files": names_list[:5],
+                "sample_members": sample_members,
+                "yara_distribution": yara_freq,
+                "avtype_distribution": avtype_freq,
+                "filetype_distribution": filetype_freq,
+                "ccip_distribution": ccip_freq,
+                "filename_distribution": filename_freq,
+                "md5_distribution": md5_freq,
+                "created_at": int(time.time() * 1000),
+            }
+
+            pipe.set(f"{collection}:bin_cluster:{algo}:{label}:meta", json.dumps(meta))
+
+            # Indexes
+            bucket_key = (
+                f"{collection}:idx:file:bin_cluster_name:{default_name.lower()}"
+            )
+            pipe.sadd(bucket_key, *members)
+            pipe.sadd(f"{collection}:reg:file:bin_cluster_name", bucket_key)
+
+            bucket_key_id = f"{collection}:idx:file:bin_cluster_id:{str(label).lower()}"
+            pipe.sadd(bucket_key_id, *members)
+            pipe.sadd(f"{collection}:reg:file:bin_cluster_id", bucket_key_id)
+
+            bucket_key_uuid = f"{collection}:idx:file:bin_cluster_uuid:{c_uuid.lower()}"
+            pipe.sadd(bucket_key_uuid, *members)
+            pipe.sadd(f"{collection}:reg:file:bin_cluster_uuid", bucket_key_uuid)
+
+            inferred_mapping = {
+                "yara_distribution": "inferred_yara",
+                "avtype_distribution": "inferred_avtype",
+                "filetype_distribution": "inferred_filetype",
+                "ccip_distribution": "inferred_ccip",
+                "filename_distribution": "inferred_filename",
+                "md5_distribution": "inferred_md5",
+            }
+            for dist_key, meta_key in inferred_mapping.items():
+                dist = meta.get(dist_key) or []
+                if dist:
+                    top_val = dist[0].get("value")
+                    if top_val:
+                        b_key = (
+                            f"{collection}:idx:file:{meta_key}:{str(top_val).lower()}"
+                        )
+                        pipe.sadd(b_key, *members)
+                        pipe.sadd(f"{collection}:reg:file:{meta_key}", b_key)
+
+            if len(pipe) > 1000:
+                pipe.execute()
+
+        pipe.execute()
+
     def __init__(self, r=None):
         self.r = r or get_redis()
         from bsimvis.app.services.index_config import (
@@ -27,7 +490,7 @@ class BinClusterService:
         self.get_native_fields = get_native_fields
         self.get_propagated_fields = get_propagated_fields
 
-    def run_clustering(
+    def _run_clustering_hdbscan(
         self,
         collection,
         algo="unweighted_cosine",

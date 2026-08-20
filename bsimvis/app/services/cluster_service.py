@@ -1049,8 +1049,8 @@ class ClusterService:
             member_indices = [id_to_idx[fid] for fid in members]
             n_members = len(members)
             if n_members > 1:
-                total_sim = adj_sim.cohesion_sum(member_indices)
-                cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
+                total_sim, pair_count = adj_sim.cohesion(member_indices)
+                cohesion_score = total_sim / pair_count if pair_count else 1.0
             else:
                 cohesion_score = 1.0
 
@@ -1285,6 +1285,12 @@ class ClusterService:
                 # Exact pairwise cohesion for clusters small enough that O(n^2)
                 # zscore lookups are cheap; bigger merges keep the previous
                 # score rather than paying for an exact recompute here.
+                # Denominator is pairs that actually have a computed
+                # similarity, not every combinatorial pair -- BSim only
+                # stores each function's top-K neighbours, so most pairs in a
+                # cluster were never directly compared. Counting those as 0%
+                # similar (the old bug) crushed a genuinely-0.99-cohesive
+                # cluster down to ~0.27 on real data (see debug session).
                 n_members = len(members)
                 if n_members <= 200:
                     total_sim = 0.0
@@ -1300,7 +1306,7 @@ class ClusterService:
                                 score = r.zscore(sim_score_key, sid_b)
                             if score is not None:
                                 total_sim += float(score)
-                            pairs += 1
+                                pairs += 1
                     cohesion_score = total_sim / pairs if pairs else 1.0
                 else:
                     old_meta_raw = r.get(f"{collection}:cluster:{algo}:{root}:meta")

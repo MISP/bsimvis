@@ -299,6 +299,47 @@ class SimAdjacency:
                 total += float(sims[member_set[idx]].sum())
         return total / 2.0
 
+    def cohesion(self, member_indices):
+        """(sum of similarities, count of pairs with an actual edge) over
+        every pair inside member_indices.
+
+        BSim similarity search only stores each function's top-K nearest
+        neighbours, not the full N^2 matrix -- most pairs inside a cluster
+        were simply never compared. cohesion_sum() (and its callers dividing
+        by the full n*(n-1)/2 combinatorial pair count) silently treats every
+        uncompared pair as 0% similar, which crushes a cluster that is
+        actually tight (e.g. avg 0.99 over the pairs that DO have data) down
+        to a misleadingly low score. This returns the count of pairs that
+        actually have data too, so callers can divide by that instead.
+        """
+        n = len(member_indices)
+        if n < 2:
+            return 0.0, 0
+
+        if n < 50:
+            total = 0.0
+            count = 0
+            for i in range(n):
+                u = member_indices[i]
+                for j in range(i + 1, n):
+                    s = self.get(u, member_indices[j], default=None)
+                    if s is not None:
+                        total += s
+                        count += 1
+            return total, count
+
+        member_set = np.zeros(self.indptr.size - 1, dtype=bool)
+        member_set[member_indices] = True
+        total = 0.0
+        count = 0
+        for u in member_indices:
+            idx, sims = self.neighbours(u)
+            if idx.size:
+                mask = member_set[idx]
+                total += float(sims[mask].sum())
+                count += int(mask.sum())
+        return total / 2.0, count // 2
+
 
 def build_adjacency(edges, num_nodes):
     """Symmetric 0/1 adjacency for connected-components, built without Python lists."""

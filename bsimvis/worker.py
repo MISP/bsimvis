@@ -656,6 +656,7 @@ class Worker:
                 selection_method=selection_method,
                 min_sim=min_sim,
                 min_features=min_features,
+                batch_uuid=batch_uuid,
                 job_service=self.job_service,
                 job_id=job_id,
             )

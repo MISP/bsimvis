@@ -15,6 +15,34 @@ from bsimvis.app.services.bin_sim_tags import (
 )
 
 
+BIN_SIM_TAG_FIELDS = (
+    "md5_a",
+    "md5_b",
+    "algo",
+    "file_name_a",
+    "file_tags_a",
+    "file_user_tags_a",
+    "architecture_a",
+    "file_name_b",
+    "file_tags_b",
+    "file_user_tags_b",
+    "architecture_b",
+)
+
+BIN_SIM_NUM_FIELDS = (
+    "score",
+    "score_code",
+    "score_library",
+    "score_content",
+    "coverage_a",
+    "coverage_b",
+    "shared_clusters",
+    "computed_at",
+    "functions_count_a",
+    "functions_count_b",
+)
+
+
 def _index_bin_sim_pair(pipe, collection, sid, doc, file_meta_a=None, file_meta_b=None):
     """Write secondary indexes for a bin_sim pair doc."""
 
@@ -56,16 +84,8 @@ def _index_bin_sim_pair(pipe, collection, sid, doc, file_meta_a=None, file_meta_
         tag_index("architecture_b", file_meta_b.get("language_id"))
 
     # Numeric indexes
-    num_index("score", doc.get("score"))
-    num_index("score_code", doc.get("score_code"))
-    num_index("score_library", doc.get("score_library"))
-    num_index("score_content", doc.get("score_content"))
-    num_index("coverage_a", doc.get("coverage_a"))
-    num_index("coverage_b", doc.get("coverage_b"))
-    num_index("shared_clusters", doc.get("shared_clusters"))
-    num_index("computed_at", doc.get("computed_at"))
-    num_index("functions_count_a", doc.get("functions_count_a"))
-    num_index("functions_count_b", doc.get("functions_count_b"))
+    for field in BIN_SIM_NUM_FIELDS:
+        num_index(field, doc.get(field))
 
     pipe.sadd(f"{collection}:all_bin_sims", sid)
 
@@ -99,18 +119,7 @@ def _unindex_bin_sim_pair(
         tag_unindex("file_user_tags_b", file_meta_b.get("user_tags"))
         tag_unindex("architecture_b", file_meta_b.get("language_id"))
 
-    for num_field in [
-        "score",
-        "score_code",
-        "score_library",
-        "score_content",
-        "coverage_a",
-        "coverage_b",
-        "shared_clusters",
-        "computed_at",
-        "functions_count_a",
-        "functions_count_b",
-    ]:
+    for num_field in BIN_SIM_NUM_FIELDS:
         pipe.zrem(f"{collection}:idx:bin_sim:{num_field}", sid)
 
     pipe.srem(f"{collection}:all_bin_sims", sid)
@@ -809,11 +818,27 @@ class BinSimService:
                     if cursor == 0:
                         break
 
-            r.delete(f"{collection}:bin_sim:score:{algo}")
-            r.delete(f"{collection}:bin_sim:score_code:{algo}")
-            r.delete(f"{collection}:bin_sim:score_library:{algo}")
-            r.delete(f"{collection}:bin_sim:score_content:{algo}")
             r.delete(f"{collection}:bin_sim:built:{algo}")
+            r.delete(f"{collection}:all_bin_sims")
+
+            # Actual secondary indexes live under idx:bin_sim:* / reg:bin_sim:*
+            # (written by _index_bin_sim_pair), not the bin_sim:score:{algo}-style
+            # keys above. Those were never populated by the writer, so clearing
+            # them was a no-op that left every idx:/reg: entry orphaned across
+            # every clear+rebuild cycle. ponytail: one algo per collection
+            # (assumed elsewhere in this codebase too), so wipe the whole index
+            # rather than filtering per-sid.
+            for field in BIN_SIM_NUM_FIELDS:
+                r.delete(f"{collection}:idx:bin_sim:{field}")
+            for field in BIN_SIM_TAG_FIELDS:
+                reg_key = f"{collection}:reg:bin_sim:{field}"
+                buckets = r.smembers(reg_key)
+                if buckets:
+                    bucket_keys = [
+                        b.decode() if isinstance(b, bytes) else b for b in buckets
+                    ]
+                    r.delete(*bucket_keys)
+                r.delete(reg_key)
 
         if job_service and job_id:
             job_service.update_progress(job_id, 100, "Cleared binary similarities.")

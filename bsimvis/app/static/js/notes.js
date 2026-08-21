@@ -415,10 +415,101 @@ async function loadSideGraph(funcId) {
                 }
             });
         }
+        setupGraphDropTarget(document.getElementById('pivotick-side-body'));
     } catch (err) {
         loader.innerHTML = `<div style="padding:20px; color:#f92672;"><i class="fa-solid fa-triangle-exclamation"></i> ${err.message}</div>`;
     }
 }
+
+function setupGraphDropTarget(el) {
+    if (!el || el._dropSetup) return;
+    el._dropSetup = true;
+
+    el.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    });
+
+    el.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        let rawData = e.dataTransfer.getData('application/bsimvis-nodes') || e.dataTransfer.getData('text/plain');
+        if (!rawData) return;
+        let ids = [];
+        try {
+            ids = JSON.parse(rawData);
+            if (!Array.isArray(ids)) ids = [ids];
+        } catch (err) {
+            ids = [rawData];
+        }
+        await addNodesToActiveGraph(ids);
+    });
+}
+
+async function addNodesToActiveGraph(ids) {
+    if (!Array.isArray(ids)) ids = [ids];
+    if (!ids.length) return;
+
+    let pInst = null;
+    if (typeof FunctionView !== 'undefined' && FunctionView.callGraphInstance) {
+        pInst = FunctionView.callGraphInstance;
+    } else {
+        if (!isGraphOpen) openGraphPanel(ids[0]);
+        pInst = sideGraphInstance;
+    }
+
+    let addedCount = 0;
+    for (const rawId of ids) {
+        let funcId = rawId;
+        if (typeof funcId === 'string' && funcId.includes(':func:')) {
+            try {
+                const res = await fetch(`/api/function/call_graph?id=${encodeURIComponent(funcId)}`);
+                if (!res.ok) continue;
+                const data = await res.json();
+                const node = data.node;
+                if (!node) continue;
+
+                if (pInst) {
+                    if (!pInst.getNode(node.id)) {
+                        pInst.addNode({
+                            id: node.id,
+                            data: { raw: node, kind: 'caller', depth: 1 },
+                            expanded: true
+                        });
+                        addedCount++;
+                    }
+                    for (const c of data.callers || []) {
+                        if (pInst.getNode(c.id)) {
+                            const edgeId = `${c.id}->${node.id}`;
+                            if (!pInst.edges.has(edgeId)) pInst.addEdge({ id: edgeId, from: c.id, to: node.id });
+                        }
+                    }
+                    for (const c of data.callees || []) {
+                        if (pInst.getNode(c.id)) {
+                            const edgeId = `${node.id}->${c.id}`;
+                            if (!pInst.edges.has(edgeId)) pInst.addEdge({ id: edgeId, from: node.id, to: c.id });
+                        }
+                    }
+                } else if (!sideGraphInstance) {
+                    await loadSideGraph(funcId);
+                    pInst = sideGraphInstance;
+                    addedCount++;
+                }
+            } catch (err) {
+                console.warn('Failed to fetch call graph for node', funcId, err);
+            }
+        }
+    }
+    if (addedCount > 0 && window.showToast) {
+        window.showToast(`Added ${addedCount} node(s) to graph`, 'success');
+    }
+}
+window.setupGraphDropTarget = setupGraphDropTarget;
+window.addNodesToActiveGraph = addNodesToActiveGraph;
+window.addSelectedNodesToActiveGraph = function() {
+    const ids = window.getSelectedTableIds ? window.getSelectedTableIds('function') : [];
+    if (ids.length) addNodesToActiveGraph(ids);
+    else if (window.showToast) window.showToast('No functions selected', 'info');
+};
 
 function openNotesPanel() { 
     isNotesOpen = true; 

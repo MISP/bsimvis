@@ -504,6 +504,7 @@ window.TableRenderers = {
             return `
             <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(funcId)}"
                 data-entity-data='${escapeAttr(JSON.stringify(f))}'
+                draggable="true" ondragstart="onTableRowDragStart(event)"
                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                 <td class="sim-cell" style="min-width: 300px;">
                     ${EntityRenderer.renderFunction(f, { hideNote: true })}
@@ -626,3 +627,21 @@ window.renderBatches = TableRenderers.renderBatches;
 window.renderFiles = TableRenderers.renderFiles;
 window.renderFunctions = TableRenderers.renderFunctions;
 window.renderGlobalFeatures = TableRenderers.renderGlobalFeatures;
+
+window.onTableRowDragStart = function(e) {
+    const tr = e.target.closest('tr');
+    if (!tr) return;
+    const id = tr.dataset.id || tr.getAttribute('data-id');
+    if (!id) return;
+
+    let selectedIds = [];
+    if (typeof window.getSelectedTableIds === 'function') {
+        selectedIds = window.getSelectedTableIds('function');
+    }
+    if (!selectedIds.includes(id)) {
+        selectedIds = [id];
+    }
+    e.dataTransfer.setData('text/plain', JSON.stringify(selectedIds));
+    e.dataTransfer.setData('application/bsimvis-nodes', JSON.stringify(selectedIds));
+    e.dataTransfer.effectAllowed = 'copy';
+};

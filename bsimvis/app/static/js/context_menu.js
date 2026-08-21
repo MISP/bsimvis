@@ -324,6 +324,10 @@
         const col = getCollectionFromHash();
         if (resolvedType === 'function') {
             actionsSubmenuHtml += `
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.addNodesToActiveGraph([${escapeAttr(jsString(norm.id))}])">
+                <i class="fa-solid fa-diagram-project" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Add to Call Graph</span>
+            </div>
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToDiff(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
                 <i class="fa-solid fa-plus-minus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Add to Diff</span>
@@ -340,6 +344,15 @@
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Code</span>
             </div>`;
+
+            if (window.getSelectedTableIds && window.getSelectedTableIds('function').length > 1) {
+                const count = window.getSelectedTableIds('function').length;
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.addSelectedNodesToActiveGraph()">
+                    <i class="fa-solid fa-network-wired" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>Add Selected to Graph (${count})</span>
+                </div>`;
+            }
 
             // LLM batch: the selected rows, or this function alone when nothing
             // is selected, so the default action needs no dialog.

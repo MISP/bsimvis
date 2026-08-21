@@ -3945,6 +3945,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Forward wheel/scroll events on the main content background to the active scrollable table/container inside it
 document.addEventListener('wheel', (e) => {
+    if (e.target.closest('#fn-cg-container')) return; // let Pivotick's own zoom-on-wheel handle the call graph
     let element = e.target;
     let isScrollableTarget = false;
     while (element && element !== document.body) {

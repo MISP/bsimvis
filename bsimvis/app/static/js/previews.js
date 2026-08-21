@@ -413,6 +413,7 @@
 
     // --- Wheel scroll intercept for preview tooltips ---
     window.addEventListener('wheel', e => {
+        if (e.target.closest && e.target.closest('#fn-cg-container')) return; // let Pivotick's own zoom-on-wheel handle the call graph
         const codeTooltip = document.getElementById('code-preview-tooltip');
         const diffTooltip = document.getElementById('diff-preview-tooltip');
         

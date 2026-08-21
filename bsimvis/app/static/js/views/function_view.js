@@ -414,20 +414,25 @@ window.FunctionView = {
     callGraphRenderNode(raw, kind) {
         const name = escapeHtml(raw?.name || (raw?.id || '').split(':').pop() || '?');
         const border = { self: 'var(--accent, #04d9ff)', caller: '#a6e22e', callee: '#f92672', external: 'var(--dim, #888)' }[kind] || '#fff';
+        const lineCss = 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
         const div = document.createElement('div');
-        div.style.cssText = `display:inline-block; max-width:240px; padding:4px 9px; border-radius:10px; border-left:3px solid ${border}; background:var(--card-bg, #222); font:11px/1.3 monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.4);`;
+        // Fixed, roughly square-ish width: Pivotick derives its edge-attachment radius from
+        // max(width,height)/2, so a wide single-line pill leaves a big gap between the chip and
+        // incoming arrows on the top/bottom — a two-line layout keeps that ratio sane.
+        div.style.cssText = `width:128px; padding:5px 8px; border-radius:8px; border-left:3px solid ${border}; background:var(--card-bg, #222); font:12px/1.35 monospace; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.4);`;
 
         if (!raw || raw.is_external) {
-            div.innerHTML = `<span style="color:${border};">${name}</span>${raw?.is_external ? ' <span style="color:var(--dim,#888); font-size:9px;">EXT</span>' : ''}`;
+            div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold;">${name}</div>${raw?.is_external ? `<div style="${lineCss} color:var(--dim,#888); font-size:9px;">EXT</div>` : ''}`;
             return div;
         }
 
         const params = (raw.parameters || []).map(p => (typeof p === 'object' && p !== null) ? (p.name || '...') : p);
         const paramHtml = params.map(p => `<span style="color:#ae81ff;">${escapeHtml(p)}</span>`).join('<span style="color:#fff;">, </span>');
         const nsHtml = raw.namespace ? `<span style="color:#fff; opacity:0.8;">${escapeHtml(raw.namespace)}::</span>` : '';
-        const retHtml = raw.return_type ? `<span style="color:#ae81ff;">${escapeHtml(raw.return_type)} </span>` : '';
+        const retHtml = raw.return_type ? `<span style="color:#ae81ff; opacity:0.85; font-size:9.5px;">${escapeHtml(raw.return_type)}</span>` : '';
 
-        div.innerHTML = `${retHtml}${nsHtml}<span style="color:${border}; font-weight:bold;">${name}</span><span style="color:#fff;">(</span>${paramHtml}<span style="color:#fff;">)</span>`;
+        div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold; font-size:12px;">${nsHtml}${name}</div>`
+            + `<div style="${lineCss} font-size:9.5px;">${retHtml} <span style="color:#fff; opacity:0.7;">(</span>${paramHtml}<span style="color:#fff; opacity:0.7;">)</span></div>`;
         return div;
     },
 

@@ -1325,7 +1325,7 @@ window.DiffView = {
             if (!res.ok) throw new Error('Call graph unavailable');
             const data = await res.json();
 
-            if (nameEl && data.node) nameEl.innerText = data.node.function_name || funcId;
+            if (nameEl && data.node) nameEl.innerText = data.node.name || funcId;
 
             const centerId = data.node.id;
             const nodes = [{ id: centerId, data: { raw: data.node, kind: 'self', depth: 0 }, expanded: true }];
@@ -1362,7 +1362,7 @@ window.DiffView = {
                             if (typeof FunctionView !== 'undefined' && FunctionView.callGraphRenderNode) {
                                 return FunctionView.callGraphRenderNode(d.raw, d.kind);
                             }
-                            return `<div>${d.raw?.function_name || node.id}</div>`;
+                            return `<div>${d.raw?.name || node.id}</div>`;
                         }
                     },
                     callbacks: {

@@ -540,11 +540,23 @@ window.FunctionView = {
                 const pairs = data.pairs || [];
 
                 for (const pair of pairs) {
-                    const f2 = pair.f2;
-                    if (!f2 || !f2.id) continue;
+                    // Real /api/similarity/search schema: id1/id2 + meta1/meta2 (not a "f2" object).
                     const f1_id = node.id;
-                    const f2_id = f2.id;
-                    if (f1_id === f2_id) continue;
+                    const isSelf1 = pair.id1 === f1_id;
+                    const f2_id = isSelf1 ? pair.id2 : pair.id1;
+                    const otherMeta = isSelf1 ? pair.meta2 : pair.meta1;
+                    const otherName = isSelf1 ? pair.name2 : pair.name1;
+                    if (!f2_id || !otherMeta || f1_id === f2_id) continue;
+                    const f2 = {
+                        id: f2_id,
+                        name: otherName,
+                        namespace: otherMeta.namespace,
+                        return_type: otherMeta.return_type,
+                        parameters: otherMeta.parameters,
+                        file_md5: otherMeta.file_md5,
+                        entrypoint: otherMeta.entrypoint_address,
+                        is_external: false,
+                    };
 
                     let node2 = pInstance.getNode(f2_id);
                     if (!node2 && pair.score >= 0.90) {

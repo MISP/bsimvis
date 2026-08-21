@@ -423,7 +423,7 @@ async function loadSideGraph(funcId) {
                         if (typeof FunctionView !== 'undefined' && FunctionView.callGraphRenderNode) {
                             return FunctionView.callGraphRenderNode(d.raw, d.kind);
                         }
-                        return `<div>${d.raw?.function_name || node.id}</div>`;
+                        return `<div>${d.raw?.name || node.id}</div>`;
                     },
                 },
                 callbacks: {
@@ -579,7 +579,7 @@ async function addNodesToActiveGraph(ids) {
                     if (!pInst.getNode(node.id)) {
                         pInst.addNode({
                             id: node.id,
-                            data: { raw: node, kind: 'caller', depth: 1 },
+                            data: { raw: node, kind: 'similar', depth: 1 },
                             expanded: true
                         });
                         addedCount++;

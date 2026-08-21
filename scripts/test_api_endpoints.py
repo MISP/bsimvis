@@ -2898,6 +2898,28 @@ def _check_namespace_filters(label, ns, bin_sim_expected=True):
             f"all={len(all_pairs)} tagged={len(rows)} excluded={len(excluded)}",
         )
 
+        # ── Anchored search: the tagged file is itself the fixed `md5` side ──
+        # file_md5 carries FILE_TAG. Excluding FILE_TAG must drop pairs whose
+        # *other* side carries it, not every pair -- the anchor legitimately
+        # carrying the excluded tag (e.g. browsing a packer:upx file's own
+        # Similar tab with packer:upx excluded) must not wipe its own results.
+        anchored = _search_rows(
+            "/api/bin_sim/search", dict(ns, md5=file_md5, limit=50), "results"
+        )
+        if not anchored:
+            vprint(f"     [skip] {label}: no bin_sim pairs anchored on file_md5")
+        else:
+            anchored_excluded = _search_rows(
+                "/api/bin_sim/search",
+                dict(ns, md5=file_md5, exclude_file_tag=FILE_TAG, limit=50),
+                "results",
+            )
+            check(
+                f"{label}: exclude_file_tag on an anchored search doesn't self-exclude",
+                len(anchored_excluded) == len(anchored),
+                f"anchored={len(anchored)} anchored+excluded={len(anchored_excluded)}",
+            )
+
 
 def test_search_filters_and_sorting():
     print(_color(f"\n{'='*60}", CYAN))

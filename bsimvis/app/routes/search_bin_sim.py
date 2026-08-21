@@ -57,14 +57,11 @@ def _bucket_union(r, collection, fields, val):
     return out
 
 
-def _file_tag_union(r, collection, val, fields=("tags", "user_tags"), is_pool=False):
-    """SIDs whose A or B binary carries a file tag matching `val` (substring).
-
-    The bin_sim file_tags_* buckets are a build-time snapshot of the file doc, so
-    they go stale the moment a tag is added or removed. Tag filters therefore
-    resolve through the file-level tag index — which the tag service keeps current
-    in collections and mirrors into every pool — and map file -> pairs through
-    bin_sim:involves. The denormalized fields stay, but for display only.
+def _tagged_files(r, collection, val, fields=("tags", "user_tags")):
+    """(origin_collection, md5) pairs for files whose tag (in `fields`) matches
+    `val` (substring). Shared by `_file_tag_union` (either-side pair search) and
+    the anchor-relative exclusion in `_collection_page`, which needs to know
+    which single side of a pair carries a tag rather than either.
     """
     val_l = val.lower()
     buckets = []
@@ -90,13 +87,30 @@ def _file_tag_union(r, collection, val, fields=("tags", "user_tags"), is_pool=Fa
         if res:
             file_ids.update(_dec(x) for x in res)
 
-    pipe = r.pipeline(transaction=False)
-    queried = False
+    out = set()
     for fid in file_ids:
         parts = fid.split(":")
         if len(parts) < 3 or parts[1] != "file":
             continue
-        f_coll, md5 = parts[0], parts[2]
+        out.add((parts[0], parts[2]))
+    return out
+
+
+def _file_tag_union(r, collection, val, fields=("tags", "user_tags"), is_pool=False):
+    """SIDs whose A or B binary carries a file tag matching `val` (substring).
+
+    The bin_sim file_tags_* buckets are a build-time snapshot of the file doc, so
+    they go stale the moment a tag is added or removed. Tag filters therefore
+    resolve through the file-level tag index — which the tag service keeps current
+    in collections and mirrors into every pool — and map file -> pairs through
+    bin_sim:involves. The denormalized fields stay, but for display only.
+    """
+    tagged = _tagged_files(r, collection, val, fields=fields)
+    if not tagged:
+        return set()
+
+    pipe = r.pipeline(transaction=False)
+    for f_coll, md5 in tagged:
         # Pool involves keys are qualified by origin collection; the same md5 can
         # appear in two member collections.
         pipe.smembers(
@@ -104,9 +118,6 @@ def _file_tag_union(r, collection, val, fields=("tags", "user_tags"), is_pool=Fa
             if is_pool
             else f"{collection}:bin_sim:involves:{md5}"
         )
-        queried = True
-    if not queried:
-        return set()
     out = set()
     for res in pipe.execute():
         if res:
@@ -294,11 +305,39 @@ def _collection_page(r, collection, algo, f, is_pool=False):
             candidates = set(
                 _dec(x) for x in r.smembers(f"{collection}:bin_sim:built:{algo}")
             )
-        for fields, vals in excl:
-            for v in vals:
-                candidates -= _file_tag_union(
-                    r, collection, v, fields=fields, is_pool=is_pool
-                )
+        if f["md5"]:
+            # The anchor file is one side of every candidate pair and may itself
+            # legitimately carry the excluded tag (e.g. browsing a UPX-packed
+            # file's own Similar tab with packer:upx excluded) -- an either-side
+            # exclusion would drop every one of its pairs. Exclude only pairs
+            # whose *other* side carries the tag.
+            anchor = f["md5"]
+            tagged_by_val = {
+                (fields, v): _tagged_files(r, collection, v, fields=fields)
+                for fields, vals in excl
+                for v in vals
+            }
+            drop = set()
+            for sid in candidates:
+                parsed = _split_sid(sid, algo_marker, collection, is_pool)
+                if not parsed:
+                    continue
+                coll_a, m_a, coll_b, m_b = parsed
+                if m_a == anchor:
+                    other = (coll_b, m_b)
+                elif m_b == anchor:
+                    other = (coll_a, m_a)
+                else:
+                    continue
+                if any(other in tagged for tagged in tagged_by_val.values()):
+                    drop.add(sid)
+            candidates -= drop
+        else:
+            for fields, vals in excl:
+                for v in vals:
+                    candidates -= _file_tag_union(
+                        r, collection, v, fields=fields, is_pool=is_pool
+                    )
 
     # --- Sort + paginate. The sort ZSET already holds SIDs in sorted order, so we
     # never fetch per-candidate scores or sort in Python. ---
@@ -524,6 +563,24 @@ def _pool_page(r, pool_id, algo, f):
         arch_b = meta_b.get("language_id", "")
         tags_a = meta_a.get("tags", []) + meta_a.get("user_tags", [])
         tags_b = meta_b.get("tags", []) + meta_b.get("user_tags", [])
+
+        # Which side is a candidate for exclusion. When the anchor md5 sits on
+        # exactly one side (browsing that file's own Similar tab), only the
+        # *other* side's tags may exclude the pair -- the anchor may itself
+        # legitimately carry the excluded tag (e.g. packer:upx). Ambiguous or
+        # anchorless searches fall back to the old either-side behavior.
+        anchor = f["md5"]
+        a_is_anchor = bool(anchor) and anchor in m_a.lower()
+        b_is_anchor = bool(anchor) and anchor in m_b.lower()
+        if a_is_anchor != b_is_anchor:
+            excl_tags = tags_b if a_is_anchor else tags_a
+            excl_static = meta_b.get("tags", []) if a_is_anchor else meta_a.get("tags", [])
+            excl_user = meta_b.get("user_tags", []) if a_is_anchor else meta_a.get("user_tags", [])
+        else:
+            excl_tags = tags_a + tags_b
+            excl_static = meta_a.get("tags", []) + meta_b.get("tags", [])
+            excl_user = meta_a.get("user_tags", []) + meta_b.get("user_tags", [])
+
         funcs_a = file_funcs_count.get((coll_a, m_a), 0)
         funcs_b = file_funcs_count.get((coll_b, m_b), 0)
         ld["functions_count_a"] = funcs_a
@@ -576,20 +633,15 @@ def _pool_page(r, pool_id, algo, f):
             if not all(tf in combined for tf in f["file_tag"]):
                 continue
         if f["exclude_file_tag"]:
-            combined = set(t.lower() for t in tags_a + tags_b)
+            combined = set(t.lower() for t in excl_tags)
             if any(tf in combined for tf in f["exclude_file_tag"]):
                 continue
         if f["exclude_file_static_tag"]:
-            static = set(
-                t.lower() for t in meta_a.get("tags", []) + meta_b.get("tags", [])
-            )
+            static = set(t.lower() for t in excl_static)
             if any(tf in static for tf in f["exclude_file_static_tag"]):
                 continue
         if f["exclude_file_user_tag"]:
-            usr = set(
-                t.lower()
-                for t in meta_a.get("user_tags", []) + meta_b.get("user_tags", [])
-            )
+            usr = set(t.lower() for t in excl_user)
             if any(tf in usr for tf in f["exclude_file_user_tag"]):
                 continue
         filtered.append(ld)

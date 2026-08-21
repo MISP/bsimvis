@@ -345,7 +345,7 @@ window.FunctionView = {
             const centerId = data.node.id;
             const nodes = [{
                 id: centerId,
-                data: { raw: data.node, kind: 'self' },
+                data: { raw: data.node, kind: 'self', depth: 0 },
                 expanded: true,
             }];
             const edges = [];
@@ -354,16 +354,16 @@ window.FunctionView = {
             for (const c of data.callers || []) {
                 if (!seen.has(c.id)) {
                     seen.add(c.id);
-                    nodes.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller' }, expanded: true });
+                    nodes.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: 1 }, expanded: true });
                 }
-                edges.push({ from: c.id, to: centerId });
+                edges.push({ id: `${c.id}->${centerId}`, from: c.id, to: centerId });
             }
             for (const c of data.callees || []) {
                 if (!seen.has(c.id)) {
                     seen.add(c.id);
-                    nodes.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee' }, expanded: true });
+                    nodes.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: 1 }, expanded: true });
                 }
-                edges.push({ from: centerId, to: c.id });
+                edges.push({ id: `${centerId}->${c.id}`, from: centerId, to: c.id });
             }
 
             loader.style.display = 'none';
@@ -379,11 +379,74 @@ window.FunctionView = {
                     },
                 },
                 callbacks: {
-                    onNodeClick: (e, node) => {
+                    onNodeClick: async (e, node) => {
                         const id = node.id;
+                        const d = node.getData() || {};
+                        if (d.kind === 'external' || d.raw?.is_external) {
+                            if (window.showToast) {
+                                window.showToast('Expansion not available for external functions', 'info');
+                            }
+                            this.navigateToFunction(id, true, e);
+                            return;
+                        }
                         if (id === centerId) return;
-                        const kind = node.getData()?.kind;
-                        this.navigateToFunction(id, kind === 'external', e);
+
+                        const depth = d.depth ?? 1;
+                        if (depth >= 3) {
+                            if (window.showToast) {
+                                window.showToast('Expansion depth limit (3) reached', 'warning');
+                            }
+                            return;
+                        }
+
+                        try {
+                            const res = await fetch(`/api/function/call_graph?id=${encodeURIComponent(id)}`);
+                            if (!res.ok) return;
+                            const cgData = await res.json();
+
+                            const pInstance = this.callGraphInstance;
+                            if (!pInstance) return;
+
+                            const newDepth = depth + 1;
+                            const callers = cgData.callers || [];
+                            const callees = cgData.callees || [];
+
+                            for (const c of callers) {
+                                if (!pInstance.getNode(c.id)) {
+                                    try {
+                                        pInstance.addNode({
+                                            id: c.id,
+                                            data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: newDepth }
+                                        });
+                                    } catch (err) {}
+                                }
+                                const edgeId = `${c.id}->${id}`;
+                                if (!pInstance.edges.has(edgeId)) {
+                                    try {
+                                        pInstance.addEdge({ id: edgeId, from: c.id, to: id });
+                                    } catch (err) {}
+                                }
+                            }
+
+                            for (const c of callees) {
+                                if (!pInstance.getNode(c.id)) {
+                                    try {
+                                        pInstance.addNode({
+                                            id: c.id,
+                                            data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: newDepth }
+                                        });
+                                    } catch (err) {}
+                                }
+                                const edgeId = `${id}->${c.id}`;
+                                if (!pInstance.edges.has(edgeId)) {
+                                    try {
+                                        pInstance.addEdge({ id: edgeId, from: id, to: c.id });
+                                    } catch (err) {}
+                                }
+                            }
+                        } catch (err) {
+                            console.error('Failed to expand call graph node:', err);
+                        }
                     },
                     onNodeHoverIn: (e, node) => {
                         const raw = node.getData()?.raw;

@@ -17,6 +17,8 @@ window.FunctionView = {
     id: '',
     neighborsLoaded: false,
     neighborsDebounceTimer: null,
+    callGraphLoaded: false,
+    graphController: null,
 
     async init(params, containerId) {
         this.params = params;
@@ -34,6 +36,11 @@ window.FunctionView = {
         this.id = `idx:${collection}:func:${file_md5}:${address}`;
         window.currentFuncId = `${collection}:func:${file_md5}:${address}`;
         this.neighborsLoaded = false;
+        this.callGraphLoaded = false;
+        if (this.graphController) {
+            this.graphController.destroy();
+            this.graphController = null;
+        }
 
         // Build initial layout
         this.container.innerHTML = `
@@ -62,6 +69,7 @@ window.FunctionView = {
                     <div class="bsim-tabbar" id="function-view-tabs">
                         <button class="bsim-tab active" id="function-tab-btn-code" onclick="FunctionView.switchTab('code')">Code</button>
                         <button class="bsim-tab" id="function-tab-btn-neighbors" onclick="FunctionView.switchTab('neighbors')">Similar<span id="fn-nbr-count-wrap" style="display:none;"> (<span id="fn-nbr-count">0</span>)</span></button>
+                        <button class="bsim-tab" id="function-tab-btn-callgraph" onclick="FunctionView.switchTab('callgraph')">Call Graph</button>
                     </div>
 
                     <div id="function-panel-code" class="function-view-panel" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
@@ -158,6 +166,19 @@ window.FunctionView = {
                                 </table>
                             </div>
                         </div>
+                    </div>
+
+                    <div id="function-panel-callgraph" class="function-view-panel" style="display:none; flex:1; overflow:hidden; position:relative;">
+                        <div id="fn-cg-toolbar" style="position:absolute; bottom:10px; left:15px; z-index:100; display:flex; align-items:center; gap:14px; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); padding:6px 12px; border-radius:6px; border:1px solid var(--border); font-size:0.75rem; max-width:calc(100% - 30px); flex-wrap:wrap;">
+                            <label style="cursor:pointer; display:flex; align-items:center; gap:5px; color:var(--text); flex-shrink:0;" title="Toggle high-confidence similarity edges">
+                                <input type="checkbox" id="fn-cg-sim-toggle" checked onchange="FunctionView.toggleSimilarityEdges(this.checked)">
+                                <span>Similarities ⚡</span>
+                            </label>
+                            <div style="width:1px; align-self:stretch; background:var(--border);"></div>
+                            <div id="fn-cg-legend" style="display:flex; align-items:center; gap:10px; color:var(--subtle); flex-wrap:wrap;">${FunctionView.renderLegendHTML()}</div>
+                        </div>
+                        <div id="fn-cg-loader" style="text-align:center; padding:50px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin"></i> Loading call graph...</div>
+                        <div id="fn-cg-container" style="display:none; width:100%; height:100%;"></div>
                     </div>
                 </div>
                 <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:var(--window-bg); padding:10px; border-radius:4px; border:1px solid var(--accent); color:var(--text); font-size:0.8rem; pointer-events:none;"></div>
@@ -314,6 +335,181 @@ window.FunctionView = {
 
         // ponytail: no hash-routing for tabs here -- #L<line> hash is already owned by scrollToLine()
         if (tabId === 'neighbors') this.loadNeighborsPanel();
+        if (tabId === 'callgraph') this.loadCallGraphPanel();
+    },
+
+    async loadCallGraphPanel() {
+        if (this.callGraphLoaded) return;
+        this.callGraphLoaded = true;
+
+        const loader = document.getElementById('fn-cg-loader');
+        const container = document.getElementById('fn-cg-container');
+
+        try {
+            loader.style.display = 'none';
+            container.style.display = 'block';
+
+            this.graphController = new PivotickGraphController(container, { collection: this.params.collection });
+            await this.graphController.addFunction(this.id, { asCenter: true });
+        } catch (err) {
+            console.error(err);
+            loader.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#f92672;"></i> ${err.message}`;
+        }
+    },
+
+    async toggleSimilarityEdges(show) {
+        if (!this.graphController) return;
+        await this.graphController.toggleSimilarity(show);
+    },
+
+    // Groups caller/callee entries into Pivotick native cluster (parent) nodes
+    // by file_md5, one per distinct binary -- 'self' and 'external' entries and
+    // anything added later (recursive expansion, similarity hits) stay loose,
+    // since Pivotick's children[] shape only exists at node-construction time,
+    // not via a documented "add to existing cluster" API.
+    // ponytail: only clusters the initial synchronous batch; deeper-expanded
+    // nodes render ungrouped. Revisit if that's confusing in practice.
+    buildClusteredNodes(entries) {
+        const groupable = entries.filter(n => n.data.kind !== 'external' && n.data.raw?.file_md5);
+        const binaries = new Set(groupable.map(n => n.data.raw.file_md5));
+        if (binaries.size < 2) return entries;
+
+        const byMd5 = new Map();
+        const result = [];
+        for (const n of entries) {
+            const md5 = n.data.raw?.file_md5;
+            if (n.data.kind === 'external' || !md5) {
+                result.push(n);
+                continue;
+            }
+            if (!byMd5.has(md5)) {
+                const cluster = {
+                    id: `cluster:${md5}`,
+                    data: { kind: 'binary-cluster', raw: { file_md5: md5, file_name: n.data.raw.file_name } },
+                    expanded: true,
+                    children: [],
+                };
+                byMd5.set(md5, cluster);
+                result.push(cluster);
+            }
+            byMd5.get(md5).children.push(n);
+        }
+        return result;
+    },
+
+    // Fetches a single function's current BSimVis notes and concatenates them
+    // into the markdown content of one Pivotick note bubble. Single source of
+    // truth for "what should this function's graph note bubble say right
+    // now" -- used both to seed a freshly-built graph and to live-refresh an
+    // already-open one when the BSimVis Notes panel changes something.
+    async fetchNoteContent(funcId) {
+        const apiParamsFn = window.getApiParams || (window.parent && window.parent.getApiParams);
+        if (!apiParamsFn) return null;
+        const collection = window.getCollectionFromId ? window.getCollectionFromId(funcId) : (this.params.collection || '');
+        try {
+            const apiParams = apiParamsFn(collection);
+            const res = await fetch(`/api/notes/list?${apiParams}&func_id=${encodeURIComponent(funcId)}`);
+            const data = await res.json();
+            if (data.status !== 'success' || !data.notes || !data.notes.length) return null;
+            return data.notes.map(nt => `**${nt.owner}**: ${nt.text}`).join('\n\n---\n\n');
+        } catch (e) { return null; }
+    },
+
+    // Fetches existing BSimVis notes for each visible node and turns them into
+    // Pivotick's native canvas notes (attachedElement links a note bubble to a
+    // node) so notes show up right on the graph instead of only in the side panel.
+    async fetchGraphNotes(entries) {
+        const targets = entries.filter(n => n.data.kind !== 'external' && n.data.kind !== 'binary-cluster');
+        const results = await Promise.all(targets.map(async n => {
+            const content = await this.fetchNoteContent(n.id);
+            if (!content) return null;
+            return { id: `bsimnote:${n.id}`, attachedElement: n.id, content, color: '#ffd700' };
+        }));
+        return results.filter(Boolean);
+    },
+
+    // Pivotick's own note bubbles are a first-class canvas feature (drag, edit,
+    // markdown render) separate from the BSimVis notes side panel. Forward edits
+    // made in the graph back into the same /api/notes/* store so both surfaces
+    // read from one source of truth instead of drifting apart.
+    wireNoteSync(pInstance) {
+        if (!pInstance || typeof pInstance.on !== 'function') return;
+        let timer = null;
+        const forward = (note) => {
+            const funcId = note?.attachedElement;
+            if (!funcId || typeof note.content !== 'string') return;
+            clearTimeout(timer);
+            timer = setTimeout(async () => {
+                const collection = window.getCollectionFromId ? window.getCollectionFromId(funcId) : (this.params.collection || '');
+                try {
+                    await fetch('/api/notes/add', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ collection, func_id: funcId, text: note.content, owner: 'user' }),
+                    });
+                    if (window.refreshFunctionRow) window.refreshFunctionRow(funcId);
+                } catch (e) { console.error('Failed to sync graph note to BSimVis notes:', e); }
+            }, 600);
+        };
+        pInstance.on('noteChange', forward);
+        pInstance.on('noteAdd', forward);
+    },
+
+    LEGEND_ITEMS: [
+        { color: 'var(--accent, #04d9ff)', label: 'Added function(s)' },
+        { color: '#a6e22e', label: 'Caller (calls this)' },
+        { color: '#f92672', label: 'Callee (called by this)' },
+        { color: 'var(--dim, #888)', label: 'External' },
+        { color: '#ae81ff', label: 'Similar to — % on edge', dashed: true },
+    ],
+
+    renderLegendHTML() {
+        return this.LEGEND_ITEMS.map(i => `<span style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
+            <span style="width:10px; height:${i.dashed ? '0' : '10px'}; ${i.dashed ? `border-top:2px dashed ${i.color};` : `border-radius:50%; background:${i.color};`}"></span>
+            ${escapeHtml(i.label)}
+        </span>`).join('');
+    },
+
+    renderEdgeLabel(edge) {
+        const d = (edge.getData && edge.getData()) || edge.data || {};
+        if (d.kind !== 'similarity' || typeof d.score !== 'number') return '';
+        const div = document.createElement('div');
+        div.style.cssText = 'background:#ae81ff; color:#1e1e2e; font:10px/1 monospace; font-weight:bold; padding:2px 6px; border-radius:8px; white-space:nowrap;';
+        div.textContent = Math.round(d.score * 100) + '%';
+        return div;
+    },
+
+    callGraphRenderNode(raw, kind) {
+        if (kind === 'binary-cluster') {
+            const label = escapeHtml(raw?.file_name || (raw?.file_md5 || '').slice(0, 10) || 'binary');
+            const div = document.createElement('div');
+            div.style.cssText = 'padding:6px 10px; border-radius:8px; border:2px dashed #66d9ef; background:var(--card-bg, #222); font:11px/1.3 monospace; color:#66d9ef; font-weight:bold; white-space:nowrap; display:flex; align-items:center; gap:5px;';
+            div.innerHTML = `<i class="fa-solid fa-file-binary"></i>${label}`;
+            return div;
+        }
+
+        const name = escapeHtml(raw?.name || (raw?.id || '').split(':').pop() || '?');
+        const border = { self: 'var(--accent, #04d9ff)', added: 'var(--accent, #04d9ff)', caller: '#a6e22e', callee: '#f92672', external: 'var(--dim, #888)', similar: '#ae81ff' }[kind] || '#fff';
+        const lineCss = 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+        const div = document.createElement('div');
+        // Fixed, roughly square-ish width: Pivotick derives its edge-attachment radius from
+        // max(width,height)/2, so a wide single-line pill leaves a big gap between the chip and
+        // incoming arrows on the top/bottom — a two-line layout keeps that ratio sane.
+        div.style.cssText = `width:128px; padding:5px 8px; border-radius:8px; border-left:3px solid ${border}; background:var(--card-bg, #222); font:12px/1.35 monospace; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.4);`;
+
+        if (!raw || raw.is_external) {
+            div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold;">${name}</div>${raw?.is_external ? `<div style="${lineCss} color:var(--dim,#888); font-size:9px;">EXT</div>` : ''}`;
+            return div;
+        }
+
+        const params = (raw.parameters || []).map(p => (typeof p === 'object' && p !== null) ? (p.name || '...') : p);
+        const paramHtml = params.map(p => `<span style="color:#ae81ff;">${escapeHtml(p)}</span>`).join('<span style="color:#fff;">, </span>');
+        const nsHtml = raw.namespace ? `<span style="color:#fff; opacity:0.8;">${escapeHtml(raw.namespace)}::</span>` : '';
+        const retHtml = raw.return_type ? `<span style="color:#ae81ff; opacity:0.85; font-size:9.5px;">${escapeHtml(raw.return_type)}</span>` : '';
+
+        div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold; font-size:12px;">${nsHtml}${name}</div>`
+            + `<div style="${lineCss} font-size:9.5px;">${retHtml} <span style="color:#fff; opacity:0.7;">(</span>${paramHtml}<span style="color:#fff; opacity:0.7;">)</span></div>`;
+        return div;
     },
 
     async loadNeighborsPanel() {
@@ -765,6 +961,11 @@ window.FunctionView = {
         this.funcTips = {};
         this.neighborsLoaded = false;
         if (this.neighborsDebounceTimer) clearTimeout(this.neighborsDebounceTimer);
+        this.callGraphLoaded = false;
+        if (this.graphController) {
+            this.graphController.destroy();
+            this.graphController = null;
+        }
 
         if (this._hashChangeListener) {
             window.removeEventListener('hashchange', this._hashChangeListener);

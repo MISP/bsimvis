@@ -24,9 +24,17 @@ let entityMode = 'func';
 // Panel State
 let isNotesOpen = false;
 let isAIOpen = false;
+let isGraphOpen = false;
+let isGraphLocked = false;
+let currentGraphFuncId = null;
+let sideGraphController = null;
 
 const NOTES_WIDTH = 500;
 const AI_WIDTH = 600;
+// Pivotick's own light-mode UI chrome (toolbar/rail/header) needs >600px in
+// both dimensions or it silently downgrades to the plainer 'viewer' mode --
+// keep this comfortably past that floor so the side panel actually gets it.
+const GRAPH_WIDTH = 640;
 
 async function showNotes(funcId, expand = true) {
     const isNewFunc = funcId !== currentNotesFuncId;
@@ -50,6 +58,11 @@ async function showNotes(funcId, expand = true) {
     // Load data if new function or not yet rendered
     if (isNewFunc || lastRenderedNotesFuncId !== funcId) {
         await refreshNotes(funcId);
+    }
+
+    // Also update graph panel if open and not locked
+    if (isGraphOpen && !isGraphLocked && funcId && entityMode !== 'file') {
+        loadSideGraph(funcId);
     }
     
     // Initialize LLM history object if missing
@@ -76,6 +89,14 @@ function createPanelsIfMissing() {
     handleContainer.id = 'panel-handles-container';
     document.body.appendChild(handleContainer);
 
+    // Pivotick Graph Handle
+    const graphHandle = document.createElement('div');
+    graphHandle.id = 'pivotick-panel-handle';
+    graphHandle.className = 'panel-handle graph';
+    graphHandle.innerHTML = '<i class="fa-solid fa-diagram-project"></i><span>GRAPH</span>';
+    graphHandle.onclick = toggleGraphPanel;
+    handleContainer.appendChild(graphHandle);
+
     // Notes Handle
     const notesHandle = document.createElement('div');
     notesHandle.id = 'notes-panel-handle';
@@ -91,6 +112,14 @@ function createPanelsIfMissing() {
     aiHandle.innerHTML = '<i class="fa-solid fa-robot"></i><span>AI INSIGHT</span>';
     aiHandle.onclick = toggleAIPanel;
     handleContainer.appendChild(aiHandle);
+
+    // Pivotick Graph Panel
+    const graphPanel = document.createElement('div');
+    graphPanel.id = 'pivotick-panel-v2';
+    graphPanel.className = 'side-panel-v2';
+    graphPanel.style.width = GRAPH_WIDTH + 'px';
+    graphPanel.style.right = -(GRAPH_WIDTH + 50) + 'px';
+    document.body.appendChild(graphPanel);
 
     // Notes Panel
     const notesPanel = document.createElement('div');
@@ -108,6 +137,7 @@ function createPanelsIfMissing() {
     aiPanel.style.right = -(AI_WIDTH + 50) + 'px';
     document.body.appendChild(aiPanel);
 
+    renderGraphPanelHTML(graphPanel);
     renderNotesPanelHTML(notesPanel);
     renderAIPanelHTML(aiPanel);
 }
@@ -157,6 +187,66 @@ function renderNotesPanelHTML(el) {
     });
 }
 
+let isPoolScope = false;
+let activePoolId = '';
+
+function toggleGraphScope() {
+    isPoolScope = !isPoolScope;
+    const txt = document.getElementById('pivotick-scope-text');
+    if (txt) {
+        txt.textContent = isPoolScope ? 'Pool Scope' : 'Collection';
+    }
+    const btn = document.getElementById('pivotick-scope-btn');
+    if (btn) {
+        btn.style.borderColor = isPoolScope ? '#ae81ff' : 'var(--border)';
+        btn.style.color = isPoolScope ? '#ae81ff' : 'var(--meta-text)';
+    }
+    if (window.showToast) {
+        window.showToast(`Graph traversal scope switched to ${isPoolScope ? 'Pool' : 'Collection'} mode`, 'info');
+    }
+    if (currentGraphFuncId && sideGraphController) {
+        sideGraphController.recenter(currentGraphFuncId);
+    }
+}
+window.toggleGraphScope = toggleGraphScope;
+
+window.toggleSideSimilarityEdges = async function(show) {
+    if (!sideGraphController) return;
+    await sideGraphController.toggleSimilarity(show);
+};
+
+function renderGraphPanelHTML(el) {
+    el.innerHTML = `
+        <div class="panel-v2-header">
+            <span style="display: flex; align-items: center; gap: 8px; font-size: 0.9rem; color: var(--accent, #60a5fa); font-weight: bold;">
+                <i class="fa-solid fa-diagram-project"></i> Call Graph
+            </span>
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <label style="cursor:pointer; display:flex; align-items:center; gap:5px; color:var(--text); font-size:0.75rem; background:var(--meta-bg); border:1px solid var(--border); padding:2px 6px; border-radius:4px;" title="Toggle high-confidence similarity edges">
+                    <input type="checkbox" id="fn-side-cg-sim-toggle" checked onchange="window.toggleSideSimilarityEdges && window.toggleSideSimilarityEdges(this.checked)" style="margin:0;">
+                    <span>Sims ⚡</span>
+                </label>
+                <button id="pivotick-scope-btn" onclick="toggleGraphScope()" title="Switch graph traversal between Collection and Pool scope" style="background: var(--meta-bg); border: 1px solid var(--border); color: var(--meta-text); padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; display: flex; align-items: center; gap: 5px;">
+                    <i class="fa-solid fa-layer-group"></i> <span id="pivotick-scope-text">${isPoolScope ? 'Pool Scope' : 'Collection'}</span>
+                </button>
+                <button id="pivotick-lock-btn" onclick="toggleGraphLock()" title="Lock graph to current function" style="background: var(--meta-bg); border: 1px solid var(--border); color: var(--meta-text); padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; display: flex; align-items: center; gap: 5px;">
+                    <i class="fa-solid fa-lock-open"></i> Unlocked
+                </button>
+                <button onclick="closeGraphPanel()" style="background: none; border: none; color: var(--subtle); cursor: pointer; font-size: 1.1rem; padding: 4px; display: flex; align-items: center;"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+        </div>
+        <div id="pivotick-side-body" style="flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; background: var(--bg);">
+            <div id="pivotick-side-loader" style="text-align: center; padding: 40px; color: var(--dim);">
+                <i class="fa-solid fa-spinner fa-spin"></i> Loading call graph...
+            </div>
+            <div id="pivotick-side-container" style="display: none; width: 100%; height: 100%; position: relative;"></div>
+            <div id="pivotick-side-legend" style="position:absolute; bottom:8px; left:8px; z-index:100; display:flex; flex-direction:column; gap:3px; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:0.65rem; color:var(--subtle);">
+                ${typeof FunctionView !== 'undefined' ? FunctionView.renderLegendHTML() : ''}
+            </div>
+        </div>
+    `;
+}
+
 function renderAIPanelHTML(el) {
     el.innerHTML = `
         <div class="panel-v2-header">
@@ -180,6 +270,7 @@ function renderAIPanelHTML(el) {
 function updateLayout() {
     const notesPanel = document.getElementById('notes-panel-v2');
     const aiPanel = document.getElementById('ai-panel-v2');
+    const graphPanel = document.getElementById('pivotick-panel-v2');
     
     let totalOffset = 0;
     
@@ -198,6 +289,14 @@ function updateLayout() {
     } else {
         if (notesPanel) notesPanel.style.right = -(NOTES_WIDTH + 50) + 'px';
     }
+
+    // Graph is to the left of Notes
+    if (isGraphOpen) {
+        if (graphPanel) graphPanel.style.right = totalOffset + 'px';
+        totalOffset += GRAPH_WIDTH;
+    } else {
+        if (graphPanel) graphPanel.style.right = -(GRAPH_WIDTH + 50) + 'px';
+    }
     
     document.body.style.paddingRight = totalOffset + 'px';
     
@@ -213,7 +312,7 @@ function updateLayout() {
             inFuncOrFileView = (restful.view === 'function' || restful.view === 'file');
         }
         
-        if (!inFuncOrFileView && !isNotesOpen && !isAIOpen) {
+        if (!inFuncOrFileView && !isNotesOpen && !isAIOpen && !isGraphOpen) {
             handleContainer.style.opacity = '0';
             handleContainer.style.pointerEvents = 'none';
         } else {
@@ -225,12 +324,145 @@ function updateLayout() {
     // Update handle active states
     const notesHandle = document.getElementById('notes-panel-handle');
     const aiHandle = document.getElementById('ai-panel-handle');
+    const graphHandle = document.getElementById('pivotick-panel-handle');
     if (notesHandle) notesHandle.classList.toggle('active', isNotesOpen);
     if (aiHandle) aiHandle.classList.toggle('active', isAIOpen);
+    if (graphHandle) {
+        graphHandle.classList.toggle('active', isGraphOpen);
+        graphHandle.classList.toggle('locked', isGraphLocked);
+    }
 }
 
+function toggleGraphPanel() { if (isGraphOpen) closeGraphPanel(); else openGraphPanel(currentNotesFuncId); }
 function toggleNotesPanel() { if (isNotesOpen) closeNotesPanel(); else openNotesPanel(); }
 function toggleAIPanel() { if (isAIOpen) closeAIPanel(); else openAIPanel(); }
+
+function openGraphPanel(funcId) {
+    isGraphOpen = true;
+    updateLayout();
+    const idToLoad = funcId || currentNotesFuncId || currentGraphFuncId;
+    if (idToLoad && (!sideGraphController || (!isGraphLocked && currentGraphFuncId !== idToLoad))) {
+        loadSideGraph(idToLoad);
+    }
+}
+function closeGraphPanel() { isGraphOpen = false; updateLayout(); }
+
+function toggleGraphLock() {
+    isGraphLocked = !isGraphLocked;
+    const lockBtn = document.getElementById('pivotick-lock-btn');
+    const handle = document.getElementById('pivotick-panel-handle');
+    if (lockBtn) {
+        lockBtn.innerHTML = isGraphLocked 
+            ? '<i class="fa-solid fa-lock" style="color:#f92672;"></i> Locked' 
+            : '<i class="fa-solid fa-lock-open"></i> Unlocked';
+    }
+    if (handle) handle.classList.toggle('locked', isGraphLocked);
+}
+
+async function loadSideGraph(funcId) {
+    if (!funcId) return;
+    currentGraphFuncId = funcId;
+    const container = document.getElementById('pivotick-side-container');
+    const loader = document.getElementById('pivotick-side-loader');
+    if (!container || !loader) return;
+
+    loader.style.display = 'block';
+    loader.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Loading call graph...';
+    container.style.display = 'none';
+
+    try {
+        loader.style.display = 'none';
+        container.style.display = 'block';
+
+        if (sideGraphController) {
+            await sideGraphController.recenter(funcId);
+        } else {
+            container.innerHTML = '';
+            sideGraphController = new PivotickGraphController(container, { collection: window.getCollectionFromId ? window.getCollectionFromId(funcId) : '' });
+            await sideGraphController.addFunction(funcId, { asCenter: true });
+            setupGraphDropTarget(document.getElementById('pivotick-side-body'), sideGraphController);
+        }
+    } catch (err) {
+        loader.style.display = 'block';
+        loader.innerHTML = `<div style="padding:20px; color:#f92672;"><i class="fa-solid fa-triangle-exclamation"></i> ${err.message}</div>`;
+    }
+}
+
+window.setupGraphDropTarget = function(el, controller) {
+    if (!el) return;
+    if (controller) el._graphController = controller;
+    if (el._dropSetup) return;
+    el._dropSetup = true;
+
+    el.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    });
+
+    el.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        let rawData = e.dataTransfer.getData('application/bsimvis-nodes') || e.dataTransfer.getData('text/plain');
+        if (!rawData) return;
+        let ids = [];
+        try {
+            ids = JSON.parse(rawData);
+            if (!Array.isArray(ids)) ids = [ids];
+        } catch (err) {
+            ids = [rawData];
+        }
+        // Drop lands on a specific container -- route to the controller that
+        // actually owns it instead of guessing which graph is "active",
+        // fixing drops silently going to a hidden tab's graph.
+        await addNodesToActiveGraph(ids, el._graphController);
+    });
+}
+
+// Which graph a table-selection "add to graph" click (no drop-target
+// element to anchor on) should target: whichever of the two graph surfaces
+// is actually visible right now.
+function getVisibleGraphController() {
+    const isVisible = (el) => !!el && el.offsetParent !== null;
+    const fvController = (typeof FunctionView !== 'undefined') ? FunctionView.graphController : null;
+    if (fvController && isVisible(document.getElementById('fn-cg-container'))) return fvController;
+    if (sideGraphController && isVisible(document.getElementById('pivotick-side-container'))) return sideGraphController;
+    return fvController || sideGraphController;
+}
+window.getVisibleGraphController = getVisibleGraphController;
+
+async function addNodesToActiveGraph(ids, controller) {
+    if (!Array.isArray(ids)) ids = [ids];
+    if (!ids.length) return;
+
+    let ctrl = controller || getVisibleGraphController();
+    if (!ctrl && !isGraphOpen) openGraphPanel(ids[0]);
+
+    let addedCount = 0;
+    for (const funcId of ids) {
+        if (typeof funcId !== 'string' || !funcId.includes(':func:')) continue;
+        try {
+            if (!ctrl) {
+                if (!sideGraphController) await loadSideGraph(funcId);
+                ctrl = sideGraphController;
+                addedCount++;
+                continue;
+            }
+            const before = ctrl.nodes.size;
+            await ctrl.addFunction(funcId);
+            if (ctrl.nodes.size > before) addedCount++;
+        } catch (err) {
+            console.warn('Failed to add node to graph', funcId, err);
+        }
+    }
+    if (addedCount > 0 && window.showToast) {
+        window.showToast(`Added ${addedCount} node(s) to graph`, 'success');
+    }
+}
+window.addNodesToActiveGraph = addNodesToActiveGraph;
+window.addSelectedNodesToActiveGraph = function() {
+    const ids = window.getSelectedTableIds ? window.getSelectedTableIds('function') : [];
+    if (ids.length) addNodesToActiveGraph(ids);
+    else if (window.showToast) window.showToast('No functions selected', 'info');
+};
 
 function openNotesPanel() { 
     isNotesOpen = true; 
@@ -499,6 +731,7 @@ async function saveNote(funcId) {
         if ((await res.json()).status === 'success') {
             textEl.value = '';
             await refreshNotes(funcId);
+            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
             if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
             if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         }
@@ -547,6 +780,7 @@ async function submitEditNote(funcId, noteId) {
         if (data.status === 'success') {
             currentEditingNoteId = null;
             await refreshNotes(funcId);
+            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
             if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
             if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         } else {
@@ -573,6 +807,7 @@ async function deleteNote(funcId, note_id) {
         });
         if ((await res.json()).status === 'success') {
             await refreshNotes(funcId);
+            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
             if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
             if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         }
@@ -732,6 +967,7 @@ async function saveMessageAsNote(funcId, index, btn) {
             await refreshNotes(funcId);
             btn.innerHTML = '<i class="fa-solid fa-check"></i> Saved';
             btn.disabled = true;
+            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
             if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
             if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         }
@@ -753,6 +989,7 @@ async function handleDroppedText(funcId, text) {
         });
         if ((await res.json()).status === 'success') {
             await refreshNotes(funcId);
+            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
             if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
             if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         }
@@ -764,6 +1001,11 @@ window.showNotes = showNotes;
 window.showFileNotes = showFileNotes;
 window.toggleNotesPanel = toggleNotesPanel;
 window.toggleAIPanel = toggleAIPanel;
+window.toggleGraphPanel = toggleGraphPanel;
+window.toggleGraphLock = toggleGraphLock;
+window.openGraphPanel = openGraphPanel;
+window.closeGraphPanel = closeGraphPanel;
+window.loadSideGraph = loadSideGraph;
 window.saveNote = saveNote;
 window.startEditNote = startEditNote;
 window.cancelEditNote = cancelEditNote;
@@ -879,5 +1121,16 @@ window.hideNoteTooltip = function() {
     if (tooltip) {
         tooltip.style.display = 'none';
         tooltip.classList.remove('showing');
+    }
+};
+
+window.addDiffEdgeBetweenNodes = function(funcId1, funcId2) {
+    const ctrl = getVisibleGraphController();
+    if (!ctrl || !ctrl.nodes.has(funcId1) || !ctrl.nodes.has(funcId2)) return;
+
+    const before = ctrl.edges.size;
+    ctrl.addCompareEdge(funcId1, funcId2);
+    if (ctrl.edges.size > before) {
+        if (window.showToast) window.showToast('Diff edge added between nodes', 'info');
     }
 };

@@ -1057,6 +1057,25 @@ class FunctionCallGraph(Resource):
         return get_function_call_graph()
 
 
+@ns_function.route("/relations")
+class FunctionRelations(Resource):
+    @ns_function.doc(
+        params={
+            "ids": "Comma-separated function ids to check relations among",
+            "collection": "Collection name",
+            "pool": "Pool ID (targets a cross-collection pool similarity index)",
+            "algo": "Similarity algorithm (default: unweighted_cosine)",
+            "min_score": "Minimum similarity score to include (default: 0.85)",
+            "new_ids": "Comma-separated subset of ids that are new -- only checks new_ids x ids instead of every pair",
+        }
+    )
+    def get(self):
+        """Bulk relation lookup: every direct-call edge and every similarity edge among an arbitrary set of already-known function ids."""
+        from bsimvis.app.routes.function_code import get_function_relations
+
+        return get_function_relations()
+
+
 @ns_function.route("/diff")
 class FunctionDiff(Resource):
     @ns_function.doc(

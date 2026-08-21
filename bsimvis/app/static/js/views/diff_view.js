@@ -28,6 +28,16 @@ window.DiffView = {
         this.params = params;
         this.container = document.getElementById(containerId);
 
+        // _cgLoaded / _diffControllers previously weren't reset here, so the
+        // graph tab silently kept showing a stale comparison's graphs after
+        // navigating to a new diff pair. Reset on every init like
+        // FunctionView does for its own call graph.
+        this._cgLoaded = false;
+        if (this._diffControllers) {
+            for (const c of Object.values(this._diffControllers)) { if (c) c.destroy(); }
+        }
+        this._diffControllers = {};
+
         // Save original globals from code_renderer.js
         this._originalToggleLock = window.toggleLock;
         this._originalClearAllLocks = window.clearAllLocks;
@@ -48,6 +58,7 @@ window.DiffView = {
         window.clearAllLocks = () => this.clearAllLocks();
         window.setHighlight = (hashString, state, target) => this.setHighlight(hashString, state, target);
         window.setChunkHighlight = (chunkId, state, target) => this.setChunkHighlight(chunkId, state, target);
+        window.switchDiffMode = (mode) => this.switchDiffMode(mode);
 
         // Build HTML Layout
         this.container.innerHTML = `
@@ -64,6 +75,14 @@ window.DiffView = {
                                 <option value="jaccard">Jaccard</option>
                                 <option value="milvus_sparse">Milvus Sparse</option>
                             </select>
+                            <div style="display:flex; align-items:center; gap:5px; margin-left:15px; border-left:1px solid var(--border); padding-left:15px;">
+                                <button id="btn-diff-mode-code" class="top-action-btn active" onclick="switchDiffMode('code')" style="font-size:0.8rem; padding:3px 8px;">
+                                    <i class="fa-solid fa-code"></i> Code Diff
+                                </button>
+                                <button id="btn-diff-mode-graph" class="top-action-btn" onclick="switchDiffMode('graph')" style="font-size:0.8rem; padding:3px 8px;">
+                                    <i class="fa-solid fa-diagram-project"></i> Call Graph Diff
+                                </button>
+                            </div>
                         </div>
                         <div style="display:flex; align-items:center; gap:15px;">
                             <div id="diff-queue-status" style="display:flex; align-items:center; gap:10px;"></div>
@@ -156,6 +175,27 @@ window.DiffView = {
                             <button class="floating-copy-btn" title="Copy right code with colors" onclick="copyDiffCode('r', this)">
                                 <i class="fas fa-copy"></i>
                             </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="bsim-graph-diff-wrap" style="display:none; flex:1; height:100%; width:100%; position:relative; min-height:500px;">
+                    <div style="display:flex; height:100%; width:100%; overflow-x:auto;">
+                        <div style="flex:1; min-width:600px; border-right:1px solid var(--border); display:flex; flex-direction:column; position:relative; background:var(--bg);">
+                            <div style="padding:6px 12px; background:var(--meta-bg); border-bottom:1px solid var(--border); font-weight:bold; font-size:0.8rem; color:var(--accent); display:flex; justify-content:space-between; align-items:center;">
+                                <span><i class="fa-solid fa-diagram-project"></i> Left Call Graph</span>
+                                <span id="diff-cg-left-name" style="font-size:0.75rem; font-weight:normal; color:var(--subtle);"></span>
+                            </div>
+                            <div id="diff-cg-left-loader" style="text-align:center; padding:40px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin"></i> Loading Left Graph...</div>
+                            <div id="diff-cg-left-container" style="display:none; width:100%; height:100%; flex:1; position:relative;"></div>
+                        </div>
+                        <div style="flex:1; min-width:600px; display:flex; flex-direction:column; position:relative; background:var(--bg);">
+                            <div style="padding:6px 12px; background:var(--meta-bg); border-bottom:1px solid var(--border); font-weight:bold; font-size:0.8rem; color:var(--accent); display:flex; justify-content:space-between; align-items:center;">
+                                <span><i class="fa-solid fa-diagram-project"></i> Right Call Graph</span>
+                                <span id="diff-cg-right-name" style="font-size:0.75rem; font-weight:normal; color:var(--subtle);"></span>
+                            </div>
+                            <div id="diff-cg-right-loader" style="text-align:center; padding:40px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin"></i> Loading Right Graph...</div>
+                            <div id="diff-cg-right-container" style="display:none; width:100%; height:100%; flex:1; position:relative;"></div>
                         </div>
                     </div>
                 </div>
@@ -1247,10 +1287,78 @@ window.DiffView = {
         }
     },
 
+    switchDiffMode(mode) {
+        const codeBtn = document.getElementById('btn-diff-mode-code');
+        const graphBtn = document.getElementById('btn-diff-mode-graph');
+        const scrollEl = document.getElementById('bsim-scroll');
+        const graphWrap = document.getElementById('bsim-graph-diff-wrap');
+
+        if (mode === 'graph') {
+            if (codeBtn) codeBtn.classList.remove('active');
+            if (graphBtn) graphBtn.classList.add('active');
+            if (scrollEl) scrollEl.style.display = 'none';
+            if (graphWrap) graphWrap.style.display = 'flex';
+            this.loadDiffCallGraphs();
+        } else {
+            if (graphBtn) graphBtn.classList.remove('active');
+            if (codeBtn) codeBtn.classList.add('active');
+            if (graphWrap) graphWrap.style.display = 'none';
+            if (scrollEl) scrollEl.style.display = 'flex';
+        }
+    },
+
+    async loadDiffCallGraphs() {
+        if (this._cgLoaded) return;
+        this._cgLoaded = true;
+
+        const p = this._getCurrentP() || this._parsePathUrl();
+        if (!p || !p.collection_a || !p.md5_a || !p.addr_a || !p.collection_b || !p.md5_b || !p.addr_b) return;
+
+        const id1 = `${p.collection_a}:func:${p.md5_a}:${p.addr_a}`;
+        const id2 = `${p.collection_b}:func:${p.md5_b}:${p.addr_b}`;
+
+        this._renderSingleDiffGraph('left', id1);
+        this._renderSingleDiffGraph('right', id2);
+    },
+
+    async _renderSingleDiffGraph(side, funcId) {
+        const loader = document.getElementById(`diff-cg-${side}-loader`);
+        const container = document.getElementById(`diff-cg-${side}-container`);
+        const nameEl = document.getElementById(`diff-cg-${side}-name`);
+        if (!loader || !container) return;
+
+        loader.style.display = 'block';
+        container.style.display = 'none';
+
+        try {
+            if (nameEl) {
+                const parts = funcId.split(':');
+                nameEl.innerText = parts[parts.length - 1] || funcId;
+            }
+
+            loader.style.display = 'none';
+            container.style.display = 'block';
+
+            const collection = funcId.split(':')[0];
+            const controller = new PivotickGraphController(container, { collection });
+            this._diffControllers[side] = controller;
+            await controller.addFunction(funcId, { asCenter: true });
+            if (nameEl) nameEl.innerText = controller.nodes.get(controller.centerId)?.raw?.name || funcId;
+        } catch (err) {
+            loader.style.display = 'block';
+            loader.innerHTML = `<div style="padding:20px; color:#f92672;"><i class="fa-solid fa-triangle-exclamation"></i> ${err.message}</div>`;
+        }
+    },
+
     destroy() {
         this.container = null;
         this.params = null;
-        
+
+        if (this._diffControllers) {
+            for (const c of Object.values(this._diffControllers)) { if (c) c.destroy(); }
+            this._diffControllers = {};
+        }
+
         if (this._selectionChangeListener) {
             document.removeEventListener('selectionchange', this._selectionChangeListener);
             delete this._selectionChangeListener;

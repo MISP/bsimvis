@@ -28,6 +28,16 @@ window.DiffView = {
         this.params = params;
         this.container = document.getElementById(containerId);
 
+        // _cgLoaded / _diffControllers previously weren't reset here, so the
+        // graph tab silently kept showing a stale comparison's graphs after
+        // navigating to a new diff pair. Reset on every init like
+        // FunctionView does for its own call graph.
+        this._cgLoaded = false;
+        if (this._diffControllers) {
+            for (const c of Object.values(this._diffControllers)) { if (c) c.destroy(); }
+        }
+        this._diffControllers = {};
+
         // Save original globals from code_renderer.js
         this._originalToggleLock = window.toggleLock;
         this._originalClearAllLocks = window.clearAllLocks;
@@ -170,8 +180,8 @@ window.DiffView = {
                 </div>
 
                 <div id="bsim-graph-diff-wrap" style="display:none; flex:1; height:100%; width:100%; position:relative; min-height:500px;">
-                    <div style="display:flex; height:100%; width:100%;">
-                        <div style="flex:1; border-right:1px solid var(--border); display:flex; flex-direction:column; position:relative; background:var(--bg);">
+                    <div style="display:flex; height:100%; width:100%; overflow-x:auto;">
+                        <div style="flex:1; min-width:600px; border-right:1px solid var(--border); display:flex; flex-direction:column; position:relative; background:var(--bg);">
                             <div style="padding:6px 12px; background:var(--meta-bg); border-bottom:1px solid var(--border); font-weight:bold; font-size:0.8rem; color:var(--accent); display:flex; justify-content:space-between; align-items:center;">
                                 <span><i class="fa-solid fa-diagram-project"></i> Left Call Graph</span>
                                 <span id="diff-cg-left-name" style="font-size:0.75rem; font-weight:normal; color:var(--subtle);"></span>
@@ -179,7 +189,7 @@ window.DiffView = {
                             <div id="diff-cg-left-loader" style="text-align:center; padding:40px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin"></i> Loading Left Graph...</div>
                             <div id="diff-cg-left-container" style="display:none; width:100%; height:100%; flex:1; position:relative;"></div>
                         </div>
-                        <div style="flex:1; display:flex; flex-direction:column; position:relative; background:var(--bg);">
+                        <div style="flex:1; min-width:600px; display:flex; flex-direction:column; position:relative; background:var(--bg);">
                             <div style="padding:6px 12px; background:var(--meta-bg); border-bottom:1px solid var(--border); font-weight:bold; font-size:0.8rem; color:var(--accent); display:flex; justify-content:space-between; align-items:center;">
                                 <span><i class="fa-solid fa-diagram-project"></i> Right Call Graph</span>
                                 <span id="diff-cg-right-name" style="font-size:0.75rem; font-weight:normal; color:var(--subtle);"></span>
@@ -1321,83 +1331,21 @@ window.DiffView = {
         container.style.display = 'none';
 
         try {
-            const res = await fetch(`/api/function/call_graph?id=${encodeURIComponent(funcId)}`);
-            if (!res.ok) throw new Error('Call graph unavailable');
-            const data = await res.json();
-
-            if (nameEl && data.node) nameEl.innerText = data.node.name || funcId;
-
-            const centerId = data.node.id;
-            const nodes = [{ id: centerId, data: { raw: data.node, kind: 'self', depth: 0 }, expanded: true }];
-            const edges = [];
-            const seen = new Set([centerId]);
-
-            for (const c of data.callers || []) {
-                if (!seen.has(c.id)) {
-                    seen.add(c.id);
-                    nodes.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: 1 }, expanded: true });
-                }
-                edges.push({ id: `${c.id}->${centerId}`, from: c.id, to: centerId });
-            }
-            for (const c of data.callees || []) {
-                if (!seen.has(c.id)) {
-                    seen.add(c.id);
-                    nodes.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: 1 }, expanded: true });
-                }
-                edges.push({ id: `${centerId}->${c.id}`, from: centerId, to: c.id });
+            if (nameEl) {
+                const parts = funcId.split(':');
+                nameEl.innerText = parts[parts.length - 1] || funcId;
             }
 
             loader.style.display = 'none';
             container.style.display = 'block';
-            container.innerHTML = '';
 
-            if (typeof Pivotick !== 'undefined') {
-                const pInst = new Pivotick(container, { nodes, edges }, {
-                    UI: { mode: 'viewer', tooltip: { enabled: false } },
-                    simulation: { useWorker: false },
-                    render: {
-                        nodeShape: 'rectangle',
-                        renderNode: (node) => {
-                            const d = node.getData() || {};
-                            if (typeof FunctionView !== 'undefined' && FunctionView.callGraphRenderNode) {
-                                return FunctionView.callGraphRenderNode(d.raw, d.kind);
-                            }
-                            return `<div>${d.raw?.name || node.id}</div>`;
-                        }
-                    },
-                    callbacks: {
-                        onNodeClick: async (e, node) => {
-                            const id = node.id;
-                            const d = node.getData() || {};
-                            if (d.kind === 'external' || d.raw?.is_external) return;
-                            if (id === centerId) return;
-                            const depth = d.depth ?? 1;
-                            if (depth >= 3) return;
-                            try {
-                                const r = await fetch(`/api/function/call_graph?id=${encodeURIComponent(id)}`);
-                                if (!r.ok) return;
-                                const cgData = await r.json();
-                                const newDepth = depth + 1;
-                                for (const c of cgData.callers || []) {
-                                    if (!pInst.getNode(c.id)) {
-                                        pInst.addNode({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: newDepth } });
-                                    }
-                                    const edgeId = `${c.id}->${id}`;
-                                    if (!pInst.edges.has(edgeId)) pInst.addEdge({ id: edgeId, from: c.id, to: id });
-                                }
-                                for (const c of cgData.callees || []) {
-                                    if (!pInst.getNode(c.id)) {
-                                        pInst.addNode({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: newDepth } });
-                                    }
-                                    const edgeId = `${id}->${c.id}`;
-                                    if (!pInst.edges.has(edgeId)) pInst.addEdge({ id: edgeId, from: id, to: c.id });
-                                }
-                            } catch (err) {}
-                        }
-                    }
-                });
-            }
+            const collection = funcId.split(':')[0];
+            const controller = new PivotickGraphController(container, { collection });
+            this._diffControllers[side] = controller;
+            await controller.addFunction(funcId, { asCenter: true });
+            if (nameEl) nameEl.innerText = controller.nodes.get(controller.centerId)?.raw?.name || funcId;
         } catch (err) {
+            loader.style.display = 'block';
             loader.innerHTML = `<div style="padding:20px; color:#f92672;"><i class="fa-solid fa-triangle-exclamation"></i> ${err.message}</div>`;
         }
     },
@@ -1405,7 +1353,12 @@ window.DiffView = {
     destroy() {
         this.container = null;
         this.params = null;
-        
+
+        if (this._diffControllers) {
+            for (const c of Object.values(this._diffControllers)) { if (c) c.destroy(); }
+            this._diffControllers = {};
+        }
+
         if (this._selectionChangeListener) {
             document.removeEventListener('selectionchange', this._selectionChangeListener);
             delete this._selectionChangeListener;

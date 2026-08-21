@@ -348,6 +348,140 @@ def get_function_call_graph():
         )
 
 
+def get_function_relations():
+    """Given an arbitrary working set of function ids (possibly spanning
+    multiple binaries), returns every direct-call edge and every
+    similarity edge among just those ids -- the bulk equivalent of asking
+    "does A connect to B" for every pair already in the set, instead of the
+    single-center depth-1 view get_function_call_graph gives."""
+    ids_param = request.args.get("ids", "")
+    ids = [i.strip() for i in ids_param.split(",") if i.strip()]
+    collection = request.args.get("collection")
+    pool = request.args.get("pool")
+    algo = request.args.get("algo", "unweighted_cosine")
+    min_score = float(request.args.get("min_score", 0.85))
+    new_ids_param = request.args.get("new_ids", "")
+    new_ids = {i.strip() for i in new_ids_param.split(",") if i.strip()}
+
+    if len(ids) < 2 or not collection:
+        return {"call_edges": [], "sim_edges": []}
+
+    try:
+        r = get_redis()
+        id_set = set(ids)
+
+        # --- call edges: pipeline :callees for every id, intersect against
+        # the working set. Callee sets are populated symmetrically at ingest,
+        # so this alone surfaces every directed edge with both endpoints in
+        # the set -- no need to also pipeline :callers.
+        pipe = r.pipeline(transaction=False)
+        for fid in ids:
+            pipe.smembers(f"{fid}:callees")
+        callee_results = pipe.execute()
+
+        call_edges = []
+        for fid, callee_bytes in zip(ids, callee_results):
+            for c in callee_bytes or []:
+                cid = c.decode() if isinstance(c, bytes) else c
+                if cid in id_set:
+                    call_edges.append({"from": fid, "to": cid})
+
+        # --- similarity edges: only pairs worth checking are (a) explicitly
+        # requested via new_ids x ids (cheap re-add-a-function case), or (b)
+        # every pair, when new_ids wasn't given (first resolve of a working set).
+        from bsimvis.app.services.similarity_service import SimilarityService
+
+        sim_collection = f"global:pool:{pool}" if pool else collection
+        svc = SimilarityService(r)
+
+        pairs = []
+        if new_ids:
+            others = [i for i in ids if i not in new_ids]
+            for a in new_ids:
+                for b in others:
+                    pairs.append((a, b))
+            new_id_list = list(new_ids)
+            for i in range(len(new_id_list)):
+                for j in range(i + 1, len(new_id_list)):
+                    pairs.append((new_id_list[i], new_id_list[j]))
+        else:
+            for i in range(len(ids)):
+                for j in range(i + 1, len(ids)):
+                    pairs.append((ids[i], ids[j]))
+
+        sid_pipe = r.pipeline(transaction=False)
+        sids = []
+        for a, b in pairs:
+            sid = svc._canonicalize_sid(sim_collection, a, b, algo)
+            sids.append(sid)
+            is_pool = sim_collection.startswith("global:pool:")
+            zset_key = (
+                f"{sim_collection}:sim:score"
+                if is_pool
+                else f"{sim_collection}:sim:score:{algo}"
+            )
+            sid_pipe.zscore(zset_key, sid)
+        scores = sid_pipe.execute()
+
+        misses = []
+        sim_edges = []
+        for (a, b), sid, score in zip(pairs, sids, scores):
+            if score is not None:
+                if float(score) >= min_score:
+                    sim_edges.append({"id1": a, "id2": b, "score": float(score)})
+                continue
+            # Two-tier pool lookup: retry at the base pool namespace before
+            # falling back to an exact per-pair computation.
+            if sim_collection.startswith("global:pool:") and ":col:" in sim_collection:
+                base_pool = sim_collection.split(":col:")[0]
+                base_sid = svc._canonicalize_sid(base_pool, a, b, algo)
+                base_score = r.zscore(f"{base_pool}:sim:score", base_sid)
+                if base_score is not None:
+                    if float(base_score) >= min_score:
+                        sim_edges.append({"id1": a, "id2": b, "score": float(base_score)})
+                    continue
+            misses.append((a, b))
+
+        # Cache misses: batch-fetch each unique id's feature vector once
+        # (not once per pair) and compute cosine/jaccard in Python.
+        if misses:
+            miss_ids = sorted({i for pair in misses for i in pair})
+            vec_pipe = r.pipeline(transaction=False)
+            for fid in miss_ids:
+                vec_pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+            vec_results = vec_pipe.execute()
+            vecs = {
+                fid: {h.decode() if isinstance(h, bytes) else h: float(s) for h, s in raw}
+                for fid, raw in zip(miss_ids, vec_results)
+                if raw
+            }
+            for a, b in misses:
+                d1, d2 = vecs.get(a), vecs.get(b)
+                if not d1 or not d2:
+                    continue
+                common = set(d1.keys()) & set(d2.keys())
+                if algo == "jaccard":
+                    sum_min = sum(min(d1[h], d2[h]) for h in common)
+                    union = sum(d1.values()) + sum(d2.values()) - sum_min
+                    score = (sum_min / union) if union > 0 else 0.0
+                else:
+                    dot = sum(d1[h] * d2[h] for h in common)
+                    norm1 = sum(v**2 for v in d1.values()) ** 0.5
+                    norm2 = sum(v**2 for v in d2.values()) ** 0.5
+                    score = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
+                if score >= min_score:
+                    sim_edges.append({"id1": a, "id2": b, "score": score})
+
+        return {"call_edges": call_edges, "sim_edges": sim_edges}
+    except Exception as e:
+        error_traceback = traceback.format_exc()
+        print(error_traceback)
+        return (
+            {"detail": str(e), "type": e.__class__.__name__, "traceback": error_traceback},
+            500,
+        )
+
+
 def get_file_call_graph():
     collection = request.args.get("collection")
     file_md5 = request.args.get("file_md5")

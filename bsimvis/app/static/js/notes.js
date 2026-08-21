@@ -27,11 +27,14 @@ let isAIOpen = false;
 let isGraphOpen = false;
 let isGraphLocked = false;
 let currentGraphFuncId = null;
-let sideGraphInstance = null;
+let sideGraphController = null;
 
 const NOTES_WIDTH = 500;
 const AI_WIDTH = 600;
-const GRAPH_WIDTH = 550;
+// Pivotick's own light-mode UI chrome (toolbar/rail/header) needs >600px in
+// both dimensions or it silently downgrades to the plainer 'viewer' mode --
+// keep this comfortably past that floor so the side panel actually gets it.
+const GRAPH_WIDTH = 640;
 
 async function showNotes(funcId, expand = true) {
     const isNewFunc = funcId !== currentNotesFuncId;
@@ -201,31 +204,15 @@ function toggleGraphScope() {
     if (window.showToast) {
         window.showToast(`Graph traversal scope switched to ${isPoolScope ? 'Pool' : 'Collection'} mode`, 'info');
     }
-    if (currentGraphFuncId) {
-        loadSideGraph(currentGraphFuncId);
+    if (currentGraphFuncId && sideGraphController) {
+        sideGraphController.recenter(currentGraphFuncId);
     }
 }
 window.toggleGraphScope = toggleGraphScope;
 
 window.toggleSideSimilarityEdges = async function(show) {
-    if (!sideGraphInstance) return;
-    const pInstance = sideGraphInstance;
-    pInstance._simEdgesEnabled = show;
-
-    if (!show) {
-        const toRemove = [];
-        for (const edge of pInstance.getEdges()) {
-            if (edge.data?.kind === 'similarity') toRemove.push(edge.id);
-        }
-        for (const id of toRemove) pInstance.removeEdge(id);
-        pInstance.onChange();
-        return;
-    }
-
-    if (typeof FunctionView !== 'undefined' && FunctionView.loadSimEdgesForNodes) {
-        const nodeIds = Array.from(pInstance.getMutableNodes()).map(n => n.id);
-        await FunctionView.loadSimEdgesForNodes(nodeIds, pInstance);
-    }
+    if (!sideGraphController) return;
+    await sideGraphController.toggleSimilarity(show);
 };
 
 function renderGraphPanelHTML(el) {
@@ -354,7 +341,7 @@ function openGraphPanel(funcId) {
     isGraphOpen = true;
     updateLayout();
     const idToLoad = funcId || currentNotesFuncId || currentGraphFuncId;
-    if (idToLoad && (!sideGraphInstance || (!isGraphLocked && currentGraphFuncId !== idToLoad))) {
+    if (idToLoad && (!sideGraphController || (!isGraphLocked && currentGraphFuncId !== idToLoad))) {
         loadSideGraph(idToLoad);
     }
 }
@@ -384,107 +371,27 @@ async function loadSideGraph(funcId) {
     container.style.display = 'none';
 
     try {
-        const res = await fetch(`/api/function/call_graph?id=${encodeURIComponent(funcId)}`);
-        if (!res.ok) throw new Error('Call graph data unavailable');
-        const data = await res.json();
-
-        const centerId = data.node.id;
-        const flatEntries = [{
-            id: centerId,
-            data: { raw: data.node, kind: 'self', depth: 0 },
-            expanded: true,
-        }];
-        const edges = [];
-        const seen = new Set([centerId]);
-
-        for (const c of data.callers || []) {
-            if (!seen.has(c.id)) {
-                seen.add(c.id);
-                flatEntries.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: 1 }, expanded: true });
-            }
-            edges.push({ id: `${c.id}->${centerId}`, from: c.id, to: centerId });
-        }
-        for (const c of data.callees || []) {
-            if (!seen.has(c.id)) {
-                seen.add(c.id);
-                flatEntries.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: 1 }, expanded: true });
-            }
-            edges.push({ id: `${centerId}->${c.id}`, from: centerId, to: c.id });
-        }
-
-        const hasFV = typeof FunctionView !== 'undefined';
-        const nodes = hasFV ? FunctionView.buildClusteredNodes(flatEntries) : flatEntries;
-        const notes = hasFV ? await FunctionView.fetchGraphNotes(flatEntries) : [];
-
         loader.style.display = 'none';
         container.style.display = 'block';
-        container.innerHTML = '';
 
-        if (typeof Pivotick !== 'undefined') {
-            sideGraphInstance = new Pivotick(container, { nodes, edges, notes }, {
-                UI: { mode: 'light', tooltip: { enabled: false } },
-                simulation: { useWorker: false },
-                render: {
-                    nodeShape: 'rectangle',
-                    renderNode: (node) => {
-                        const d = node.getData() || {};
-                        if (hasFV && FunctionView.callGraphRenderNode) {
-                            return FunctionView.callGraphRenderNode(d.raw, d.kind);
-                        }
-                        return `<div>${d.raw?.name || node.id}</div>`;
-                    },
-                    renderLabel: (edge) => (hasFV ? FunctionView.renderEdgeLabel(edge) : ''),
-                },
-                callbacks: {
-                    onNodeHoverIn: (e, node) => {
-                        const raw = node.getData()?.raw;
-                        if (!raw || raw.is_external) return;
-                        if (window.showCodePreview) {
-                            window.showCodePreview(raw.id, raw.name, raw.entrypoint, '', 0, e);
-                        }
-                    },
-                    onNodeHoverOut: (e) => {
-                        if (window.hideCodePreview) window.hideCodePreview(e);
-                    },
-                    onCanvasMousemove: (e) => {
-                        if (window.moveCodePreview) window.moveCodePreview(e);
-                    },
-                    onEdgeClick: (e, edge) => {
-                        const d = edge.getData() || {};
-                        const fromId = edge.from?.id || edge.source?.id;
-                        const toId = edge.to?.id || edge.target?.id;
-                        if (fromId && toId) {
-                            if (d.kind === 'diff' || edge.id?.startsWith('diff:') || d.kind === 'similarity') {
-                                if (typeof window.openDiffDirectly === 'function') {
-                                    window.openDiffDirectly(fromId, '', toId, '', e);
-                                } else {
-                                    window.location.hash = `#/diff/${encodeURIComponent(fromId)}/${encodeURIComponent(toId)}`;
-                                }
-                            }
-                        }
-                    },
-                    onNodeClick: hasFV
-                        ? FunctionView.makeExpandCollapseHandler(() => sideGraphInstance, centerId)
-                        : async () => {},
-                }
-            });
-
-            sideGraphInstance._simEdgesEnabled = true;
-            if (hasFV) FunctionView.wireNoteSync(sideGraphInstance);
-
-            if (hasFV && FunctionView.loadSimEdgesForNodes) {
-                const nodeIds = flatEntries.map(n => n.id);
-                FunctionView.loadSimEdgesForNodes(nodeIds, sideGraphInstance);
-            }
+        if (sideGraphController) {
+            await sideGraphController.recenter(funcId);
+        } else {
+            container.innerHTML = '';
+            sideGraphController = new PivotickGraphController(container, { collection: window.getCollectionFromId ? window.getCollectionFromId(funcId) : '' });
+            await sideGraphController.addFunction(funcId, { asCenter: true });
+            setupGraphDropTarget(document.getElementById('pivotick-side-body'), sideGraphController);
         }
-        setupGraphDropTarget(document.getElementById('pivotick-side-body'));
     } catch (err) {
+        loader.style.display = 'block';
         loader.innerHTML = `<div style="padding:20px; color:#f92672;"><i class="fa-solid fa-triangle-exclamation"></i> ${err.message}</div>`;
     }
 }
 
-window.setupGraphDropTarget = function(el) {
-    if (!el || el._dropSetup) return;
+window.setupGraphDropTarget = function(el, controller) {
+    if (!el) return;
+    if (controller) el._graphController = controller;
+    if (el._dropSetup) return;
     el._dropSetup = true;
 
     el.addEventListener('dragover', (e) => {
@@ -503,69 +410,53 @@ window.setupGraphDropTarget = function(el) {
         } catch (err) {
             ids = [rawData];
         }
-        await addNodesToActiveGraph(ids);
+        // Drop lands on a specific container -- route to the controller that
+        // actually owns it instead of guessing which graph is "active",
+        // fixing drops silently going to a hidden tab's graph.
+        await addNodesToActiveGraph(ids, el._graphController);
     });
 }
 
-async function addNodesToActiveGraph(ids) {
+// Which graph a table-selection "add to graph" click (no drop-target
+// element to anchor on) should target: whichever of the two graph surfaces
+// is actually visible right now.
+function getVisibleGraphController() {
+    const isVisible = (el) => !!el && el.offsetParent !== null;
+    const fvController = (typeof FunctionView !== 'undefined') ? FunctionView.graphController : null;
+    if (fvController && isVisible(document.getElementById('fn-cg-container'))) return fvController;
+    if (sideGraphController && isVisible(document.getElementById('pivotick-side-container'))) return sideGraphController;
+    return fvController || sideGraphController;
+}
+window.getVisibleGraphController = getVisibleGraphController;
+
+async function addNodesToActiveGraph(ids, controller) {
     if (!Array.isArray(ids)) ids = [ids];
     if (!ids.length) return;
 
-    let pInst = null;
-    if (typeof FunctionView !== 'undefined' && FunctionView.callGraphInstance) {
-        pInst = FunctionView.callGraphInstance;
-    } else {
-        if (!isGraphOpen) openGraphPanel(ids[0]);
-        pInst = sideGraphInstance;
-    }
+    let ctrl = controller || getVisibleGraphController();
+    if (!ctrl && !isGraphOpen) openGraphPanel(ids[0]);
 
     let addedCount = 0;
-    for (const rawId of ids) {
-        let funcId = rawId;
-        if (typeof funcId === 'string' && funcId.includes(':func:')) {
-            try {
-                const res = await fetch(`/api/function/call_graph?id=${encodeURIComponent(funcId)}`);
-                if (!res.ok) continue;
-                const data = await res.json();
-                const node = data.node;
-                if (!node) continue;
-
-                if (pInst) {
-                    if (!pInst.getNode(node.id)) {
-                        pInst.addNode({
-                            id: node.id,
-                            data: { raw: node, kind: 'similar', depth: 1 },
-                            expanded: true
-                        });
-                        addedCount++;
-                    }
-                    for (const c of data.callers || []) {
-                        if (pInst.getNode(c.id)) {
-                            const edgeId = `${c.id}->${node.id}`;
-                            if (!pInst.edges.has(edgeId)) pInst.addEdge({ id: edgeId, from: c.id, to: node.id });
-                        }
-                    }
-                    for (const c of data.callees || []) {
-                        if (pInst.getNode(c.id)) {
-                            const edgeId = `${node.id}->${c.id}`;
-                            if (!pInst.edges.has(edgeId)) pInst.addEdge({ id: edgeId, from: node.id, to: c.id });
-                        }
-                    }
-                } else if (!sideGraphInstance) {
-                    await loadSideGraph(funcId);
-                    pInst = sideGraphInstance;
-                    addedCount++;
-                }
-            } catch (err) {
-                console.warn('Failed to fetch call graph for node', funcId, err);
+    for (const funcId of ids) {
+        if (typeof funcId !== 'string' || !funcId.includes(':func:')) continue;
+        try {
+            if (!ctrl) {
+                if (!sideGraphController) await loadSideGraph(funcId);
+                ctrl = sideGraphController;
+                addedCount++;
+                continue;
             }
+            const before = ctrl.nodes.size;
+            await ctrl.addFunction(funcId);
+            if (ctrl.nodes.size > before) addedCount++;
+        } catch (err) {
+            console.warn('Failed to add node to graph', funcId, err);
         }
     }
     if (addedCount > 0 && window.showToast) {
         window.showToast(`Added ${addedCount} node(s) to graph`, 'success');
     }
 }
-window.setupGraphDropTarget = setupGraphDropTarget;
 window.addNodesToActiveGraph = addNodesToActiveGraph;
 window.addSelectedNodesToActiveGraph = function() {
     const ids = window.getSelectedTableIds ? window.getSelectedTableIds('function') : [];
@@ -840,6 +731,7 @@ async function saveNote(funcId) {
         if ((await res.json()).status === 'success') {
             textEl.value = '';
             await refreshNotes(funcId);
+            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
             if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
             if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         }
@@ -888,6 +780,7 @@ async function submitEditNote(funcId, noteId) {
         if (data.status === 'success') {
             currentEditingNoteId = null;
             await refreshNotes(funcId);
+            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
             if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
             if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         } else {
@@ -914,6 +807,7 @@ async function deleteNote(funcId, note_id) {
         });
         if ((await res.json()).status === 'success') {
             await refreshNotes(funcId);
+            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
             if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
             if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         }
@@ -1073,6 +967,7 @@ async function saveMessageAsNote(funcId, index, btn) {
             await refreshNotes(funcId);
             btn.innerHTML = '<i class="fa-solid fa-check"></i> Saved';
             btn.disabled = true;
+            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
             if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
             if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         }
@@ -1094,6 +989,7 @@ async function handleDroppedText(funcId, text) {
         });
         if ((await res.json()).status === 'success') {
             await refreshNotes(funcId);
+            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
             if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
             if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         }
@@ -1229,25 +1125,12 @@ window.hideNoteTooltip = function() {
 };
 
 window.addDiffEdgeBetweenNodes = function(funcId1, funcId2) {
-    let pInst = null;
-    if (typeof FunctionView !== 'undefined' && FunctionView.callGraphInstance) {
-        pInst = FunctionView.callGraphInstance;
-    } else if (typeof sideGraphInstance !== 'undefined' && sideGraphInstance) {
-        pInst = sideGraphInstance;
-    }
-    if (!pInst) return;
-    if (!pInst.getNode(funcId1) || !pInst.getNode(funcId2)) return;
+    const ctrl = getVisibleGraphController();
+    if (!ctrl || !ctrl.nodes.has(funcId1) || !ctrl.nodes.has(funcId2)) return;
 
-    const edgeId = `diff:${[funcId1, funcId2].sort().join('<->')}`;
-    if (!pInst.edges.has(edgeId)) {
-        pInst.addEdge({
-            id: edgeId,
-            from: funcId1,
-            to: funcId2,
-            directed: false,
-            data: { kind: 'diff', func1: funcId1, func2: funcId2 },
-            style: { edge: { strokeColor: '#fd971f', dashed: true, strokeWidth: 3 } }
-        });
+    const before = ctrl.edges.size;
+    ctrl.addCompareEdge(funcId1, funcId2);
+    if (ctrl.edges.size > before) {
         if (window.showToast) window.showToast('Diff edge added between nodes', 'info');
     }
 };

@@ -169,6 +169,12 @@ window.FunctionView = {
                     </div>
 
                     <div id="function-panel-callgraph" class="function-view-panel" style="display:none; flex:1; overflow:hidden; position:relative;">
+                        <div id="fn-cg-toolbar" style="position:absolute; top:10px; right:15px; z-index:100; display:flex; align-items:center; gap:12px; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); padding:6px 12px; border-radius:6px; border:1px solid var(--border); font-size:0.8rem;">
+                            <label style="cursor:pointer; display:flex; align-items:center; gap:5px; color:var(--text);" title="Toggle high-confidence similarity edges">
+                                <input type="checkbox" id="fn-cg-sim-toggle" onchange="FunctionView.toggleSimilarityEdges(this.checked)">
+                                <span>Similarities ⚡</span>
+                            </label>
+                        </div>
                         <div id="fn-cg-loader" style="text-align:center; padding:50px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin"></i> Loading call graph...</div>
                         <div id="fn-cg-container" style="display:none; width:100%; height:100%;"></div>
                     </div>
@@ -469,14 +475,85 @@ window.FunctionView = {
         }
     },
 
-    // Colored HTML signature chip for a call-graph node. Pivotick's built-in SVG text label has
-    // a hard ~17-char width ceiling before its head+tail ellipsis mangles a full signature into
-    // noise (the "FUN...34"-looking truncation) — so nodes are rendered as small HTML chips via
-    // Pivotick's `render.renderNode` hook instead, reusing the same type/param colors as
-    // call_graph.js and previews.js (purple types, white punctuation, accent-colored name).
+    async toggleSimilarityEdges(show) {
+        if (!this.callGraphInstance) return;
+        const pInstance = this.callGraphInstance;
+
+        if (!show) {
+            const edgeKeys = Array.from(pInstance.edges.keys());
+            for (const key of edgeKeys) {
+                if (key.startsWith('sim:')) {
+                    try { pInstance.removeEdge(key); } catch (e) {}
+                }
+            }
+            return;
+        }
+
+        await this.loadSimilarityEdgesForGraph();
+    },
+
+    async loadSimilarityEdgesForGraph() {
+        if (!this.callGraphInstance) return;
+        const pInstance = this.callGraphInstance;
+        const nodes = Array.from(pInstance.nodes.values());
+
+        for (const node of nodes) {
+            const raw = node.getData()?.raw;
+            if (!raw || raw.is_external) continue;
+
+            const collection = this.params.collection || raw.collection || 'main';
+            const md5 = raw.file_md5 || this.params.md5 || this.params.file_md5;
+            const address = raw.address || raw.entrypoint || this.params.address;
+            if (!md5 || !address) continue;
+
+            try {
+                const res = await fetch(`/api/similarity/search?collection=${encodeURIComponent(collection)}&md5=${encodeURIComponent(md5)}&address=${encodeURIComponent(address)}&min_score=0.85&limit=10`);
+                if (!res.ok) continue;
+                const data = await res.json();
+                const pairs = data.pairs || [];
+
+                for (const pair of pairs) {
+                    const f2 = pair.f2;
+                    if (!f2 || !f2.id) continue;
+                    const f1_id = node.id;
+                    const f2_id = f2.id;
+                    if (f1_id === f2_id) continue;
+
+                    let node2 = pInstance.getNode(f2_id);
+                    if (!node2 && pair.score >= 0.90) {
+                        try {
+                            node2 = pInstance.addNode({
+                                id: f2_id,
+                                data: { raw: f2, kind: 'similar', depth: (node.getData()?.depth ?? 1) + 1 }
+                            });
+                        } catch (e) {}
+                    }
+
+                    if (pInstance.getNode(f2_id)) {
+                        const edgeId = `sim:${[f1_id, f2_id].sort().join('<->')}`;
+                        if (!pInstance.edges.has(edgeId)) {
+                            try {
+                                pInstance.addEdge({
+                                    id: edgeId,
+                                    from: f1_id,
+                                    to: f2_id,
+                                    directed: false,
+                                    data: { kind: 'similarity', score: pair.score },
+                                    style: { edge: { strokeColor: '#ae81ff', dashed: true, strokeWidth: 2 } }
+                                });
+                            } catch (e) {}
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('Error loading sim edges:', e);
+            }
+        }
+    },
+
     callGraphRenderNode(raw, kind) {
         const name = escapeHtml(raw?.name || (raw?.id || '').split(':').pop() || '?');
-        const border = { self: 'var(--accent, #04d9ff)', caller: '#a6e22e', callee: '#f92672', external: 'var(--dim, #888)' }[kind] || '#fff';
+        const border = { self: 'var(--accent, #04d9ff)', caller: '#a6e22e', callee: '#f92672', external: 'var(--dim, #888)', similar: '#ae81ff' }[kind] || '#fff';
         const lineCss = 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
         const div = document.createElement('div');
         // Fixed, roughly square-ish width: Pivotick derives its edge-attachment radius from

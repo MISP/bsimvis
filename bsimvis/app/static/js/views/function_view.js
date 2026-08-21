@@ -388,7 +388,6 @@ window.FunctionView = {
                     onNodeClick: async (e, node) => {
                         const id = node.id;
                         const d = node.getData() || {};
-                        if (d.kind === 'external' || d.raw?.is_external) {
                         if (d.kind === 'external' || d.raw?.is_external) return;
 
                         if (id === centerId) return;

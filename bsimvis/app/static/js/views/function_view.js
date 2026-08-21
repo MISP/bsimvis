@@ -473,8 +473,11 @@ window.FunctionView = {
     renderEdgeLabel(edge) {
         const d = (edge.getData && edge.getData()) || edge.data || {};
         if (d.kind !== 'similarity' || typeof d.score !== 'number') return '';
+        // A solid filled pill on every similarity edge reads as visual noise once
+        // there's more than a couple of them -- an outlined, low-contrast tag is
+        // still readable but doesn't compete with the nodes for attention.
         const div = document.createElement('div');
-        div.style.cssText = 'background:#ae81ff; color:#1e1e2e; font:10px/1 monospace; font-weight:bold; padding:2px 6px; border-radius:8px; white-space:nowrap;';
+        div.style.cssText = 'background:rgba(30,30,46,0.75); color:#ae81ff; border:1px solid rgba(174,129,255,0.5); font:9px/1 monospace; padding:1px 5px; border-radius:6px; white-space:nowrap;';
         div.textContent = Math.round(d.score * 100) + '%';
         return div;
     },
@@ -491,11 +494,14 @@ window.FunctionView = {
         const name = escapeHtml(raw?.name || (raw?.id || '').split(':').pop() || '?');
         const border = { self: 'var(--accent, #04d9ff)', added: 'var(--accent, #04d9ff)', caller: '#a6e22e', callee: '#f92672', external: 'var(--dim, #888)', similar: '#ae81ff' }[kind] || '#fff';
         const lineCss = 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+        const fileName = raw?.file_name ? escapeHtml(raw.file_name) : '';
+        const fileHtml = fileName ? `<div style="${lineCss} color:var(--dim,#888); opacity:0.75; font-size:8.5px; margin-top:1px;"><i class="fa-solid fa-file-binary" style="margin-right:3px;"></i>${fileName}</div>` : '';
         const div = document.createElement('div');
-        // Fixed, roughly square-ish width: Pivotick derives its edge-attachment radius from
-        // max(width,height)/2, so a wide single-line pill leaves a big gap between the chip and
-        // incoming arrows on the top/bottom — a two-line layout keeps that ratio sane.
-        div.style.cssText = `width:128px; padding:5px 8px; border-radius:8px; border-left:3px solid ${border}; background:var(--card-bg, #222); font:12px/1.35 monospace; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.4);`;
+        // Wide enough that a typical name+signature fits without truncating --
+        // still fixed-width (not auto) since Pivotick derives its edge-attachment
+        // radius from max(width,height)/2, so a wildly variable box width throws
+        // off the anchor point on tall/short neighbors.
+        div.style.cssText = `width:190px; padding:5px 8px; border-radius:8px; border-left:3px solid ${border}; background:var(--card-bg, #222); font:12px/1.35 monospace; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.4);`;
 
         if (!raw || raw.is_external) {
             div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold;">${name}</div>${raw?.is_external ? `<div style="${lineCss} color:var(--dim,#888); font-size:9px;">EXT</div>` : ''}`;
@@ -508,7 +514,8 @@ window.FunctionView = {
         const retHtml = raw.return_type ? `<span style="color:#ae81ff; opacity:0.85; font-size:9.5px;">${escapeHtml(raw.return_type)}</span>` : '';
 
         div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold; font-size:12px;">${nsHtml}${name}</div>`
-            + `<div style="${lineCss} font-size:9.5px;">${retHtml} <span style="color:#fff; opacity:0.7;">(</span>${paramHtml}<span style="color:#fff; opacity:0.7;">)</span></div>`;
+            + `<div style="${lineCss} font-size:9.5px;">${retHtml} <span style="color:#fff; opacity:0.7;">(</span>${paramHtml}<span style="color:#fff; opacity:0.7;">)</span></div>`
+            + fileHtml;
         return div;
     },
 

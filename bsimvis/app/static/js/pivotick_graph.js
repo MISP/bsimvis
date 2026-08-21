@@ -92,10 +92,6 @@ class PivotickGraphController {
         const entry = this.nodes.get(id);
         if (!entry || entry.kind === 'external') return;
         const depth = entry.depth ?? 1;
-        if (depth >= 3) {
-            if (window.showToast) window.showToast('Expansion depth limit (3) reached', 'warning');
-            return;
-        }
 
         const res = await fetch(`/api/function/call_graph?id=${encodeURIComponent(id)}`);
         if (!res.ok) return;
@@ -342,6 +338,12 @@ class PivotickGraphController {
         const self = this;
         return {
             UI: { mode: 'light', tooltip: { enabled: false } },
+            // Call graphs are a hierarchy radiating out from the center function,
+            // not a free-floating network -- the force layout's default produced
+            // a hairball of crossing arrows even on small graphs. Tree-Radial is
+            // one of Pivotick's own built-in layouts (View panel > Layout); users
+            // can still switch back to Force from there if they prefer it.
+            layout: { type: 'tree', horizontal: false },
             simulation: { useWorker: false },
             render: {
                 nodeShape: 'rectangle',

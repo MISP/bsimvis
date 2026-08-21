@@ -146,7 +146,7 @@ window.FileView = {
                     <button class="bsim-tab" id="file-tab-btn-functions" onclick="FileView.switchTab('functions')">Functions (<span id="functions-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-clusters" onclick="FileView.switchTab('clusters')">Clusters (<span id="cluster-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-extracted_from" onclick="FileView.switchTab('extracted_from')" style="display: none;">Extracted From</button>
-                    <button class="bsim-tab" id="file-tab-btn-neighbors" onclick="FileView.switchTab('neighbors')">Neighbors<span id="nbr-count-wrap" style="display:none;"> (<span id="nbr-count">0</span>)</span></button>
+                    <button class="bsim-tab" id="file-tab-btn-neighbors" onclick="FileView.switchTab('neighbors')">Similar<span id="nbr-count-wrap" style="display:none;"> (<span id="nbr-count">0</span>)</span></button>
                 </div>
 
                 <!-- Files Tab Panel -->
@@ -257,7 +257,7 @@ window.FileView = {
                     <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); display: flex; flex-direction: column; gap: 15px;">
                         <div class="filter-bar" style="gap:20px; padding:0;">
                             <div class="search-input-wrapper">
-                                <input type="text" id="nbr-q" placeholder="Search neighbors by keywords..." oninput="FileView.debounceNeighborsSearch()">
+                                <input type="text" id="nbr-q" placeholder="Search similar files by keywords..." oninput="FileView.debounceNeighborsSearch()">
                                 <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="FileView.searchNeighbors()" title="Search"></i>
                             </div>
                         </div>
@@ -325,7 +325,7 @@ window.FileView = {
                                     </tr>
                                 </thead>
                                 <tbody id="nbr-results-tbody">
-                                    <tr><td colspan="8" style="text-align: center; color: var(--dim); padding: 20px;">Loading neighbors...</td></tr>
+                                    <tr><td colspan="8" style="text-align: center; color: var(--dim); padding: 20px;">Loading similar files...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -905,7 +905,7 @@ window.FileView = {
     async searchNeighbors() {
         const tbody = document.getElementById('nbr-results-tbody');
         if (!tbody) return;
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--dim); padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading neighbors...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--dim); padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading similar files...</td></tr>';
 
         const collection = this.params.collection || '';
         const file_md5 = this.params.md5 || this.params.file_md5;
@@ -945,7 +945,7 @@ window.FileView = {
             const data = await res.json();
             const items = data.items || data.results || [];
             const html = window.renderBinSimPairs ? window.renderBinSimPairs(items, 0, file_md5) : '';
-            tbody.innerHTML = html || '<tr><td colspan="8" style="text-align: center; color: var(--dim); padding: 20px;">No neighbors found.</td></tr>';
+            tbody.innerHTML = html || '<tr><td colspan="8" style="text-align: center; color: var(--dim); padding: 20px;">No similar files found.</td></tr>';
             const countEl = document.getElementById('nbr-count');
             if (countEl) countEl.innerText = data.total ?? items.length;
             const countWrap = document.getElementById('nbr-count-wrap');
@@ -954,7 +954,7 @@ window.FileView = {
             this.refreshNeighborPillCounts(qs);
         } catch (e) {
             console.error(e);
-            tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading neighbors: ${e.message}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading similar files: ${e.message}</td></tr>`;
         }
     },
 

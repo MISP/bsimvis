@@ -885,6 +885,13 @@ class JobService:
         """
         if not new_tids:
             return True
+        # new_tids is (jtype, payload) task defs, same shape create_pipeline/
+        # create_group take -- task_ids stores resolved job-id strings, so these
+        # need the same _resolve_task() pass (creates the child job, points its
+        # parent_id at parent_id) before they're spliced in. Resolve once, up
+        # front: doing it inside the WATCH retry loop would create a duplicate
+        # orphaned child job on every WatchError retry.
+        resolved_tids = [self._resolve_task(t, parent_id) for t in new_tids]
         key = f"job:{parent_id}"
         for _ in range(retries):
             try:
@@ -897,9 +904,11 @@ class JobService:
                     existing = json.loads(raw)
                     try:
                         idx = existing.index(after_id)
-                        updated = existing[: idx + 1] + new_tids + existing[idx + 1 :]
+                        updated = (
+                            existing[: idx + 1] + resolved_tids + existing[idx + 1 :]
+                        )
                     except ValueError:
-                        updated = existing + new_tids
+                        updated = existing + resolved_tids
                     pipe.multi()
                     pipe.hset(key, "task_ids", json.dumps(updated))
                     pipe.execute()

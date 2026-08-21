@@ -345,7 +345,7 @@ window.FunctionView = {
             const centerId = data.node.id;
             const nodes = [{
                 id: centerId,
-                data: { label: data.node.name || centerId.split(':').pop(), kind: 'self' },
+                data: { raw: data.node, kind: 'self' },
                 expanded: true,
             }];
             const edges = [];
@@ -354,14 +354,14 @@ window.FunctionView = {
             for (const c of data.callers || []) {
                 if (!seen.has(c.id)) {
                     seen.add(c.id);
-                    nodes.push({ id: c.id, data: { label: c.name || c.id, kind: c.is_external ? 'external' : 'caller' }, expanded: true });
+                    nodes.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller' }, expanded: true });
                 }
                 edges.push({ from: c.id, to: centerId });
             }
             for (const c of data.callees || []) {
                 if (!seen.has(c.id)) {
                     seen.add(c.id);
-                    nodes.push({ id: c.id, data: { label: c.name || c.id, kind: c.is_external ? 'external' : 'callee' }, expanded: true });
+                    nodes.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee' }, expanded: true });
                 }
                 edges.push({ from: centerId, to: c.id });
             }
@@ -370,18 +370,12 @@ window.FunctionView = {
             container.style.display = 'block';
 
             this.callGraphInstance = new Pivotick(container, { nodes, edges }, {
-                UI: { mode: 'viewer' },
+                UI: { mode: 'viewer', tooltip: { enabled: false } },
                 simulation: { useWorker: false },
                 render: {
-                    nodeTypeAccessor: (node) => node.getData()?.kind,
-                    nodeStyleMap: {
-                        self: { color: 'var(--accent, #04d9ff)', size: 26 },
-                        caller: { color: '#a6e22e' },
-                        callee: { color: '#f92672' },
-                        external: { color: 'var(--dim, #888)' },
-                    },
-                    defaultNodeStyle: {
-                        text: (node) => node.getData()?.label || '',
+                    renderNode: (node) => {
+                        const d = node.getData() || {};
+                        return FunctionView.callGraphRenderNode(d.raw, d.kind);
                     },
                 },
                 callbacks: {
@@ -391,12 +385,50 @@ window.FunctionView = {
                         const kind = node.getData()?.kind;
                         this.navigateToFunction(id, kind === 'external', e);
                     },
+                    onNodeHoverIn: (e, node) => {
+                        const raw = node.getData()?.raw;
+                        if (!raw || raw.is_external) return;
+                        if (window.showCodePreview) {
+                            window.showCodePreview(raw.id, raw.name, raw.entrypoint, '', 0, e);
+                        }
+                    },
+                    onNodeHoverOut: (e) => {
+                        if (window.hideCodePreview) window.hideCodePreview(e);
+                    },
+                    onCanvasMousemove: (e) => {
+                        if (window.moveCodePreview) window.moveCodePreview(e);
+                    },
                 },
             });
         } catch (err) {
             console.error(err);
             loader.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#f92672;"></i> ${err.message}`;
         }
+    },
+
+    // Colored HTML signature chip for a call-graph node. Pivotick's built-in SVG text label has
+    // a hard ~17-char width ceiling before its head+tail ellipsis mangles a full signature into
+    // noise (the "FUN...34"-looking truncation) — so nodes are rendered as small HTML chips via
+    // Pivotick's `render.renderNode` hook instead, reusing the same type/param colors as
+    // call_graph.js and previews.js (purple types, white punctuation, accent-colored name).
+    callGraphRenderNode(raw, kind) {
+        const name = escapeHtml(raw?.name || (raw?.id || '').split(':').pop() || '?');
+        const border = { self: 'var(--accent, #04d9ff)', caller: '#a6e22e', callee: '#f92672', external: 'var(--dim, #888)' }[kind] || '#fff';
+        const div = document.createElement('div');
+        div.style.cssText = `display:inline-block; max-width:240px; padding:4px 9px; border-radius:10px; border-left:3px solid ${border}; background:var(--card-bg, #222); font:11px/1.3 monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.4);`;
+
+        if (!raw || raw.is_external) {
+            div.innerHTML = `<span style="color:${border};">${name}</span>${raw?.is_external ? ' <span style="color:var(--dim,#888); font-size:9px;">EXT</span>' : ''}`;
+            return div;
+        }
+
+        const params = (raw.parameters || []).map(p => (typeof p === 'object' && p !== null) ? (p.name || '...') : p);
+        const paramHtml = params.map(p => `<span style="color:#ae81ff;">${escapeHtml(p)}</span>`).join('<span style="color:#fff;">, </span>');
+        const nsHtml = raw.namespace ? `<span style="color:#fff; opacity:0.8;">${escapeHtml(raw.namespace)}::</span>` : '';
+        const retHtml = raw.return_type ? `<span style="color:#ae81ff;">${escapeHtml(raw.return_type)} </span>` : '';
+
+        div.innerHTML = `${retHtml}${nsHtml}<span style="color:${border}; font-weight:bold;">${name}</span><span style="color:#fff;">(</span>${paramHtml}<span style="color:#fff;">)</span>`;
+        return div;
     },
 
     async loadNeighborsPanel() {

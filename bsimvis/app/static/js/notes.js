@@ -184,13 +184,39 @@ function renderNotesPanelHTML(el) {
     });
 }
 
+let isPoolScope = false;
+let activePoolId = '';
+
+function toggleGraphScope() {
+    isPoolScope = !isPoolScope;
+    const txt = document.getElementById('pivotick-scope-text');
+    if (txt) {
+        txt.textContent = isPoolScope ? 'Pool Scope' : 'Collection';
+    }
+    const btn = document.getElementById('pivotick-scope-btn');
+    if (btn) {
+        btn.style.borderColor = isPoolScope ? '#ae81ff' : 'var(--border)';
+        btn.style.color = isPoolScope ? '#ae81ff' : 'var(--meta-text)';
+    }
+    if (window.showToast) {
+        window.showToast(`Graph traversal scope switched to ${isPoolScope ? 'Pool' : 'Collection'} mode`, 'info');
+    }
+    if (currentGraphFuncId) {
+        loadSideGraph(currentGraphFuncId);
+    }
+}
+window.toggleGraphScope = toggleGraphScope;
+
 function renderGraphPanelHTML(el) {
     el.innerHTML = `
         <div class="panel-v2-header">
             <span style="display: flex; align-items: center; gap: 8px; font-size: 0.9rem; color: var(--accent, #60a5fa); font-weight: bold;">
                 <i class="fa-solid fa-diagram-project"></i> Call Graph
             </span>
-            <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <button id="pivotick-scope-btn" onclick="toggleGraphScope()" title="Switch graph traversal between Collection and Pool scope" style="background: var(--meta-bg); border: 1px solid var(--border); color: var(--meta-text); padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; display: flex; align-items: center; gap: 5px;">
+                    <i class="fa-solid fa-layer-group"></i> <span id="pivotick-scope-text">${isPoolScope ? 'Pool Scope' : 'Collection'}</span>
+                </button>
                 <button id="pivotick-lock-btn" onclick="toggleGraphLock()" title="Lock graph to current function" style="background: var(--meta-bg); border: 1px solid var(--border); color: var(--meta-text); padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; display: flex; align-items: center; gap: 5px;">
                     <i class="fa-solid fa-lock-open"></i> Unlocked
                 </button>
@@ -376,6 +402,20 @@ async function loadSideGraph(funcId) {
                     },
                 },
                 callbacks: {
+                    onEdgeClick: (e, edge) => {
+                        const d = edge.getData() || {};
+                        const fromId = edge.from?.id || edge.source?.id;
+                        const toId = edge.to?.id || edge.target?.id;
+                        if (fromId && toId) {
+                            if (d.kind === 'diff' || edge.id?.startsWith('diff:') || d.kind === 'similarity') {
+                                if (typeof window.openDiffDirectly === 'function') {
+                                    window.openDiffDirectly(fromId, '', toId, '', e);
+                                } else {
+                                    window.location.hash = `#/diff/${encodeURIComponent(fromId)}/${encodeURIComponent(toId)}`;
+                                }
+                            }
+                        }
+                    },
                     onNodeClick: async (e, node) => {
                         const id = node.id;
                         const d = node.getData() || {};
@@ -384,6 +424,29 @@ async function loadSideGraph(funcId) {
                             return;
                         }
                         if (id === centerId) return;
+
+                        // Toggle expansion/collapse
+                        if (d.expanded) {
+                            // Collapse children added at deeper levels
+                            const pInst = sideGraphInstance;
+                            if (pInst) {
+                                const currentDepth = d.depth ?? 1;
+                                const toRemove = [];
+                                for (const n of pInst.getMutableNodes()) {
+                                    const nd = n.getData() || {};
+                                    if (nd.expandedFrom === id || (nd.depth > currentDepth && (pInst.getConnectedNodes(n.id).some(c => c.id === id)))) {
+                                        toRemove.push(n.id);
+                                    }
+                                }
+                                for (const rId of toRemove) {
+                                    pInst.removeNode(rId);
+                                }
+                                d.expanded = false;
+                                pInst.onChange();
+                                return;
+                            }
+                        }
+
                         const depth = d.depth ?? 1;
                         if (depth >= 3) {
                             if (window.showToast) window.showToast('Expansion depth limit (3) reached', 'warning');
@@ -398,18 +461,19 @@ async function loadSideGraph(funcId) {
                             const newDepth = depth + 1;
                             for (const c of cgData.callers || []) {
                                 if (!pInst.getNode(c.id)) {
-                                    pInst.addNode({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: newDepth } });
+                                    pInst.addNode({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: newDepth, expandedFrom: id } });
                                 }
                                 const edgeId = `${c.id}->${id}`;
                                 if (!pInst.edges.has(edgeId)) pInst.addEdge({ id: edgeId, from: c.id, to: id });
                             }
                             for (const c of cgData.callees || []) {
                                 if (!pInst.getNode(c.id)) {
-                                    pInst.addNode({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: newDepth } });
+                                    pInst.addNode({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: newDepth, expandedFrom: id } });
                                 }
                                 const edgeId = `${id}->${c.id}`;
                                 if (!pInst.edges.has(edgeId)) pInst.addEdge({ id: edgeId, from: id, to: c.id });
                             }
+                            d.expanded = true;
                         } catch (err) {}
                     }
                 }
@@ -1163,5 +1227,29 @@ window.hideNoteTooltip = function() {
     if (tooltip) {
         tooltip.style.display = 'none';
         tooltip.classList.remove('showing');
+    }
+};
+
+window.addDiffEdgeBetweenNodes = function(funcId1, funcId2) {
+    let pInst = null;
+    if (typeof FunctionView !== 'undefined' && FunctionView.callGraphInstance) {
+        pInst = FunctionView.callGraphInstance;
+    } else if (typeof sideGraphInstance !== 'undefined' && sideGraphInstance) {
+        pInst = sideGraphInstance;
+    }
+    if (!pInst) return;
+    if (!pInst.getNode(funcId1) || !pInst.getNode(funcId2)) return;
+
+    const edgeId = `diff:${[funcId1, funcId2].sort().join('<->')}`;
+    if (!pInst.edges.has(edgeId)) {
+        pInst.addEdge({
+            id: edgeId,
+            from: funcId1,
+            to: funcId2,
+            directed: false,
+            data: { kind: 'diff', func1: funcId1, func2: funcId2 },
+            style: { edge: { strokeColor: '#fd971f', dashed: true, strokeWidth: 3 } }
+        });
+        if (window.showToast) window.showToast('Diff edge added between nodes', 'info');
     }
 };

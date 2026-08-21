@@ -352,6 +352,14 @@
                     <i class="fa-solid fa-network-wired" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                     <span>Add Selected to Graph (${count})</span>
                 </div>`;
+                if (count === 2) {
+                    const sel = window.getSelectedTableIds('function');
+                    actionsSubmenuHtml += `
+                    <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.openDiffDirectly(${escapeAttr(jsString(sel[0]))}, '', ${escapeAttr(jsString(sel[1]))}, '', event)">
+                        <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8; color: #fd971f;"></i>
+                        <span>Compare Selected (Diff)</span>
+                    </div>`;
+                }
             }
 
             // LLM batch: the selected rows, or this function alone when nothing

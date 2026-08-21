@@ -389,40 +389,53 @@ window.FunctionView = {
                         const id = node.id;
                         const d = node.getData() || {};
                         if (d.kind === 'external' || d.raw?.is_external) {
-                            if (window.showToast) {
-                                window.showToast('Expansion not available for external functions', 'info');
-                            }
-                            this.navigateToFunction(id, true, e);
-                            return;
-                        }
+                        if (d.kind === 'external' || d.raw?.is_external) return;
+
                         if (id === centerId) return;
+
+                        // Toggle expansion/collapse
+                        if (d.expanded) {
+                            const pInstance = FunctionView.callGraphInstance;
+                            if (pInstance) {
+                                const currentDepth = d.depth ?? 1;
+                                const toRemove = [];
+                                for (const n of pInstance.getMutableNodes()) {
+                                    const nd = n.getData() || {};
+                                    if (nd.expandedFrom === id || (nd.depth > currentDepth && (pInstance.getConnectedNodes(n.id).some(c => c.id === id)))) {
+                                        toRemove.push(n.id);
+                                    }
+                                }
+                                for (const rId of toRemove) {
+                                    pInstance.removeNode(rId);
+                                }
+                                d.expanded = false;
+                                pInstance.onChange();
+                                return;
+                            }
+                        }
 
                         const depth = d.depth ?? 1;
                         if (depth >= 3) {
-                            if (window.showToast) {
-                                window.showToast('Expansion depth limit (3) reached', 'warning');
-                            }
+                            if (window.showToast) window.showToast('Expansion depth limit (3) reached', 'warning');
                             return;
                         }
 
                         try {
                             const res = await fetch(`/api/function/call_graph?id=${encodeURIComponent(id)}`);
                             if (!res.ok) return;
-                            const cgData = await res.json();
-
-                            const pInstance = this.callGraphInstance;
+                            const data = await res.json();
+                            const callers = data.callers || [];
+                            const callees = data.callees || [];
+                            const pInstance = FunctionView.callGraphInstance;
                             if (!pInstance) return;
 
                             const newDepth = depth + 1;
-                            const callers = cgData.callers || [];
-                            const callees = cgData.callees || [];
-
                             for (const c of callers) {
                                 if (!pInstance.getNode(c.id)) {
                                     try {
                                         pInstance.addNode({
                                             id: c.id,
-                                            data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: newDepth }
+                                            data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: newDepth, expandedFrom: id }
                                         });
                                     } catch (err) {}
                                 }
@@ -433,13 +446,12 @@ window.FunctionView = {
                                     } catch (err) {}
                                 }
                             }
-
                             for (const c of callees) {
                                 if (!pInstance.getNode(c.id)) {
                                     try {
                                         pInstance.addNode({
                                             id: c.id,
-                                            data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: newDepth }
+                                            data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: newDepth, expandedFrom: id }
                                         });
                                     } catch (err) {}
                                 }
@@ -450,6 +462,7 @@ window.FunctionView = {
                                     } catch (err) {}
                                 }
                             }
+                            d.expanded = true;
                         } catch (err) {
                             console.error('Failed to expand call graph node:', err);
                         }
@@ -480,23 +493,19 @@ window.FunctionView = {
         const pInstance = this.callGraphInstance;
 
         if (!show) {
-            const edgeKeys = Array.from(pInstance.edges.keys());
-            for (const key of edgeKeys) {
-                if (key.startsWith('sim:')) {
-                    try { pInstance.removeEdge(key); } catch (e) {}
-                }
+            const toRemove = [];
+            for (const edge of pInstance.getEdges()) {
+                if (edge.data?.kind === 'similarity') toRemove.push(edge.id);
             }
+            for (const id of toRemove) pInstance.removeEdge(id);
+            pInstance.onChange();
             return;
         }
 
-        await this.loadSimilarityEdgesForGraph();
+        await this.loadSimEdgesForNodes(pInstance.getNodes(), pInstance);
     },
 
-    async loadSimilarityEdgesForGraph() {
-        if (!this.callGraphInstance) return;
-        const pInstance = this.callGraphInstance;
-        const nodes = Array.from(pInstance.nodes.values());
-
+    async loadSimEdgesForNodes(nodes, pInstance) {
         for (const node of nodes) {
             const raw = node.getData()?.raw;
             if (!raw || raw.is_external) continue;
@@ -507,7 +516,13 @@ window.FunctionView = {
             if (!md5 || !address) continue;
 
             try {
-                const res = await fetch(`/api/similarity/search?collection=${encodeURIComponent(collection)}&md5=${encodeURIComponent(md5)}&address=${encodeURIComponent(address)}&min_score=0.85&limit=10`);
+                let simUrl = `/api/similarity/search?md5=${encodeURIComponent(md5)}&address=${encodeURIComponent(address)}&min_score=0.85&limit=10`;
+                if (typeof isPoolScope !== 'undefined' && isPoolScope && typeof activePoolId !== 'undefined' && activePoolId) {
+                    simUrl += `&pool=${encodeURIComponent(activePoolId)}`;
+                } else {
+                    simUrl += `&collection=${encodeURIComponent(collection)}`;
+                }
+                const res = await fetch(simUrl);
                 if (!res.ok) continue;
                 const data = await res.json();
                 const pairs = data.pairs || [];

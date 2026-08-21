@@ -276,6 +276,11 @@ window.FileView = {
                                 <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Limit</h3>
                                 <input type="number" id="nbr-limit" value="50" min="1" max="1000" style="width:70px; font-size:0.8rem; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:5px;" oninput="FileView.debounceNeighborsSearch()">
                             </div>
+                            <div class="home-card" style="padding:16px; min-width:160px;">
+                                <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Packer</h3>
+                                <input type="hidden" id="nbr-hide-packed" value="">
+                                <div id="nbr-hide-packed-pill" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+                            </div>
                         </div>
                         <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
                             <table id="nbr-results-table">
@@ -893,6 +898,7 @@ window.FileView = {
         if (scopeEl) scopeEl.value = poolId ? 'pool' : 'collection';
         this.renderScopePills();
         this.renderScoreTypePills();
+        this.renderHidePackedPill();
 
         await this.searchNeighbors();
     },
@@ -938,6 +944,12 @@ window.FileView = {
         const tagList = (id) => (document.getElementById(id)?.value || '').split(',').map(s => s.trim()).filter(Boolean);
         tagList('nbr-file-tag').forEach(t => qs.append('file_tag', t));
         tagList('nbr-exclude-file-tag').forEach(t => qs.append('exclude_file_tag', t));
+        // Anchored on this file's own md5 -- exclude_file_tag only drops the
+        // *other* side of a pair (search_bin_sim.py), so this stays correct even
+        // when file_md5 itself is UPX-packed.
+        if (document.getElementById('nbr-hide-packed')?.value === 'true') {
+            qs.append('exclude_file_tag', 'packer:upx');
+        }
 
         try {
             const res = await fetch(`/api/bin_sim/search?${qs.toString()}`);
@@ -989,6 +1001,21 @@ window.FileView = {
         const el = document.getElementById('nbr-score-type');
         if (el) el.value = v;
         this.renderScoreTypePills();
+        this.searchNeighbors();
+    },
+
+    renderHidePackedPill() {
+        const el = document.getElementById('nbr-hide-packed-pill');
+        if (!el || !window.binSimPillStyle) return;
+        const active = document.getElementById('nbr-hide-packed')?.value === 'true';
+        el.innerHTML = `<span class="bsim-tag-pill" style="${window.binSimPillStyle(active, 'var(--danger, #dc2626)')}" title="Hide candidates that are themselves UPX-packed -- packer stub matches are nice for reference but drown out real payload similarity" onclick="FileView.toggleNeighborHidePacked()"><i class="fa-solid fa-box-archive"></i>Hide Packed</span>`;
+    },
+
+    toggleNeighborHidePacked() {
+        const el = document.getElementById('nbr-hide-packed');
+        if (!el) return;
+        el.value = el.value === 'true' ? '' : 'true';
+        this.renderHidePackedPill();
         this.searchNeighbors();
     },
 

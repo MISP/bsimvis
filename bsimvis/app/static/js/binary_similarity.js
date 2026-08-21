@@ -2470,6 +2470,7 @@ function applyBinSimSearch() {
         'md5': 'bsim-md5',
         'arch': 'bsim-arch',
         'containers': 'bsim-containers',
+        'hide_packed': 'bsim-hide-packed',
         'min_funcs': 'bsim-min-funcs',
         'max_funcs': 'bsim-max-funcs',
         'min_coverage': 'bsim-min-cov',
@@ -2503,6 +2504,15 @@ function applyBinSimSearch() {
             params.append(key, quoteFilterValue(val, card.dataset.literal !== 'false'));
         });
     });
+
+    // "Hide Packed" composes on top of whatever the tag-filter cards hold above --
+    // it always excludes packer:upx, so it must be appended after the card loop
+    // rebuilds exclude_file_tag from scratch. Anchored searches (md5 set) only
+    // drop the *other* side of a pair, so this stays safe on a packed file's own
+    // Similar tab (see search_bin_sim.py _collection_page / _pool_page).
+    if (params.get('hide_packed') === 'true') {
+        params.append('exclude_file_tag', 'packer:upx');
+    }
 
     if (typeof navigate === 'function') {
         navigate(viewKey, params);

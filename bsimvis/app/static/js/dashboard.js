@@ -697,6 +697,13 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                             </div>
                             ${binSimNodeTypeTagsHtml(p)}
                         </div>
+                        <div class="home-card" style="padding: 16px; min-width: 220px;">
+                            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
+                                <h3 style="margin: 0; font-size: 0.9rem; color: var(--text);">Packer</h3>
+                                <span class="home-tip" tabindex="0" data-tip="A UPX-packed binary is analyzed and compared as real code (packed-vs-unpacked is a normal diff), so it can otherwise dominate a search with packer-stub matches that say nothing about the payload's capabilities. Hide it to see only unpacked code."><i class="fa-solid fa-circle-info"></i></span>
+                            </div>
+                            ${binSimHidePackedTagHtml(p)}
+                        </div>
                     </div>
                 </div>
             `;
@@ -733,6 +740,27 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                 // Fetch for Node Types
                 fetchCount('containers', 'none', 'bsim-count-nt-file');
                 fetchCount('containers', 'both', 'bsim-count-nt-container');
+
+                // Hide Packed count: fetchCount only sets one key=val pair, but this
+                // filter is client-side sugar for exclude_file_tag (see
+                // applyBinSimSearch), so append it directly rather than teaching
+                // fetchCount a param it can't forward to the backend.
+                (async () => {
+                    try {
+                        const u = new URLSearchParams(params);
+                        u.set('limit', 0);
+                        if (collection) u.set('collection', collection); else u.delete('collection');
+                        if (pool) u.set('pool', pool); else u.delete('pool');
+                        u.append('exclude_file_tag', 'packer:upx');
+                        const res = await fetch('/api/bin_sim/search?' + u.toString());
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        if (data && data.total !== undefined) {
+                            const el = document.getElementById('bsim-count-hide-packed');
+                            if (el) el.innerText = '(' + data.total.toLocaleString() + ')';
+                        }
+                    } catch (e) {}
+                })();
             }, 50);
             
             // Collapse hero text on table scroll
@@ -1129,6 +1157,24 @@ function binSimNodeTypeTagsHtml(p) {
         </div>`;
 }
 
+// Independent of Node Type: it hides pairs where either side is UPX-packed,
+// regardless of File/Container. Packed binaries are still real files with
+// their own similarity document (not containers), so they aren't covered by
+// the Node Type partition and need their own switch.
+function binSimHidePackedTagHtml(p) {
+    const active = p.get('hide_packed') === 'true';
+    return `<input type="hidden" id="bsim-hide-packed" value="${active ? 'true' : ''}">
+        <span id="bsim-hide-packed-pill" onclick="toggleBinSimHidePacked()" style="${binSimPillStyle(active, 'var(--danger, #dc2626)')}" title="Hide pairs where either binary is UPX-packed -- packer stub matches are nice for reference but drown out the payload's real capabilities"><i class="fa-solid fa-box-archive"></i>Hide Packed <span id="bsim-count-hide-packed" style="font-size:0.75rem; opacity:0.8; font-weight:normal;"></span></span>`;
+}
+
+function toggleBinSimHidePacked() {
+    const el = document.getElementById('bsim-hide-packed');
+    if (!el) return;
+    el.value = el.value === 'true' ? '' : 'true';
+    if (window.applyBinSimSearch) window.applyBinSimSearch();
+}
+window.toggleBinSimHidePacked = toggleBinSimHidePacked;
+
 function setBinSimScoreType(v) {
     const el = document.getElementById('bsim-score-type');
     if (el) el.value = v;
@@ -1166,6 +1212,12 @@ function syncBinSimTags(p) {
     const contEl = document.getElementById('bsim-nt-container');
     if (fileEl) fileEl.setAttribute('style', binSimPillStyle(fileActive, 'var(--info, #3b82f6)'));
     if (contEl) contEl.setAttribute('style', binSimPillStyle(containerActive, 'var(--warning, #d97706)'));
+
+    const hidePacked = p.get('hide_packed') === 'true';
+    const hiddenP = document.getElementById('bsim-hide-packed');
+    if (hiddenP) hiddenP.value = hidePacked ? 'true' : '';
+    const pillP = document.getElementById('bsim-hide-packed-pill');
+    if (pillP) pillP.setAttribute('style', binSimPillStyle(hidePacked, 'var(--danger, #dc2626)'));
 }
 
 // Same card/pill treatment as the bin-sim hero, applied to the

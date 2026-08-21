@@ -336,6 +336,7 @@ class PivotickGraphController {
             } else {
                 this.pInstance.setData(nodes, edges, notes);
             }
+            this._growClusterCircles();
             return;
         }
 
@@ -353,6 +354,39 @@ class PivotickGraphController {
         this.pInstance.onChange();
     }
 
+    // Pivotick sizes an expanded cluster's circle off each child's
+    // getCircleRadius() (confirmed by reading the bundle's
+    // getRadiusForClusterNode: sqrt(childCount) * 2 * avg(childRadius+16) + 50)
+    // -- meant for its own small default circle nodes. Our custom rectangular
+    // ~190x60 cards never get a circleRadius set (nothing in Pivotick's public
+    // node-construction API accepts one), so it stays at Node's built-in
+    // default of 10px and every cluster is computed as if it only needed to
+    // fit tiny dots, not real cards -- that's the actual "not enough space"
+    // cause. setCircleRadius() is a public method on the live node, so bump
+    // it directly on each cluster's children after (re)building and trigger
+    // a re-render; reaches into the same undocumented-but-public internals
+    // (noteManager, _simEdgesEnabled) already used elsewhere here.
+    static CLUSTER_CHILD_RADIUS = 70;
+
+    _growClusterCircles() {
+        if (!this.pInstance) return;
+        try {
+            let touched = false;
+            for (const node of this.pInstance.getMutableNodes()) {
+                if (typeof node.hasChildren !== 'function' || !node.hasChildren()) continue;
+                for (const child of node.children || []) {
+                    if (typeof child.setCircleRadius === 'function') {
+                        child.setCircleRadius(PivotickGraphController.CLUSTER_CHILD_RADIUS);
+                        touched = true;
+                    }
+                }
+            }
+            if (touched) this.pInstance.onChange();
+        } catch (err) {
+            console.error('Failed to resize cluster circles:', err);
+        }
+    }
+
     _pivotickOptions() {
         const self = this;
         return {
@@ -361,8 +395,8 @@ class PivotickGraphController {
             // not a free-floating network -- the force layout's default produced
             // a hairball of crossing arrows even on small graphs. Tree-Radial is
             // one of Pivotick's own built-in layouts (View panel > Layout); users
-            // can still switch back to Force from there if they prefer it.
-            layout: { type: 'tree', horizontal: false },
+            // can still switch back to Force/Tree-Vertical from there if they prefer it.
+            layout: { type: 'tree', radial: true },
             simulation: { useWorker: false },
             render: {
                 nodeShape: 'rectangle',
@@ -371,6 +405,10 @@ class PivotickGraphController {
                     return FunctionView.callGraphRenderNode(d.raw, d.kind);
                 },
                 renderLabel: (edge) => FunctionView.renderEdgeLabel(edge),
+                // Straight lines on a dense radial graph cross right through
+                // node bodies and each other. Curved (arc) edges bow around
+                // that clutter and are much easier to trace by eye.
+                defaultEdgeStyle: { curveStyle: 'curved' },
             },
             callbacks: {
                 onNodeClick: async (e, node) => {

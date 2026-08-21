@@ -261,13 +261,15 @@ class BinSimService:
                 "offset": offset + CHUNK_SIZE,
             }
             if job_service and job_id:
-                parent_raw = r.hget(f"job:{job_id}", "parent_id")
+                # job:* hashes live on job_service's queue redis, not bin_sim_service's
+                # data redis (self.r/`r` here) -- looking this up on `r` always misses,
+                # parent_id silently falls back to job_id itself (a leaf task with no
+                # task_ids), and splice_tasks no-ops. That's why chunked builds always
+                # stopped after exactly one CHUNK_SIZE chunk.
                 job_service.splice_tasks(
                     parent_id=(
-                        parent_raw.decode()
-                        if isinstance(parent_raw, bytes)
-                        else parent_raw
-                    )
+                        job_service.r.hget(f"job:{job_id}", "parent_id") or b""
+                    ).decode()
                     or job_id,
                     after_id=job_id,
                     new_tids=[(JobType.BUILD_BIN_SIM.value, next_payload)],

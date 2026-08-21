@@ -169,11 +169,13 @@ window.FunctionView = {
                     </div>
 
                     <div id="function-panel-callgraph" class="function-view-panel" style="display:none; flex:1; overflow:hidden; position:relative;">
-                        <div id="fn-cg-toolbar" style="position:absolute; top:10px; right:15px; z-index:100; display:flex; align-items:center; gap:12px; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); padding:6px 12px; border-radius:6px; border:1px solid var(--border); font-size:0.8rem;">
-                            <label style="cursor:pointer; display:flex; align-items:center; gap:5px; color:var(--text);" title="Toggle high-confidence similarity edges">
-                                <input type="checkbox" id="fn-cg-sim-toggle" onchange="FunctionView.toggleSimilarityEdges(this.checked)">
+                        <div id="fn-cg-toolbar" style="position:absolute; bottom:10px; left:15px; z-index:100; display:flex; align-items:center; gap:14px; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); padding:6px 12px; border-radius:6px; border:1px solid var(--border); font-size:0.75rem; max-width:calc(100% - 30px); flex-wrap:wrap;">
+                            <label style="cursor:pointer; display:flex; align-items:center; gap:5px; color:var(--text); flex-shrink:0;" title="Toggle high-confidence similarity edges">
+                                <input type="checkbox" id="fn-cg-sim-toggle" checked onchange="FunctionView.toggleSimilarityEdges(this.checked)">
                                 <span>Similarities ⚡</span>
                             </label>
+                            <div style="width:1px; align-self:stretch; background:var(--border);"></div>
+                            <div id="fn-cg-legend" style="display:flex; align-items:center; gap:10px; color:var(--subtle); flex-wrap:wrap;">${FunctionView.renderLegendHTML()}</div>
                         </div>
                         <div id="fn-cg-loader" style="text-align:center; padding:50px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin"></i> Loading call graph...</div>
                         <div id="fn-cg-container" style="display:none; width:100%; height:100%;"></div>
@@ -349,7 +351,7 @@ window.FunctionView = {
             const data = await res.json();
 
             const centerId = data.node.id;
-            const nodes = [{
+            const flatEntries = [{
                 id: centerId,
                 data: { raw: data.node, kind: 'self', depth: 0 },
                 expanded: true,
@@ -360,23 +362,26 @@ window.FunctionView = {
             for (const c of data.callers || []) {
                 if (!seen.has(c.id)) {
                     seen.add(c.id);
-                    nodes.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: 1 }, expanded: true });
+                    flatEntries.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: 1 }, expanded: true });
                 }
                 edges.push({ id: `${c.id}->${centerId}`, from: c.id, to: centerId });
             }
             for (const c of data.callees || []) {
                 if (!seen.has(c.id)) {
                     seen.add(c.id);
-                    nodes.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: 1 }, expanded: true });
+                    flatEntries.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: 1 }, expanded: true });
                 }
                 edges.push({ id: `${centerId}->${c.id}`, from: centerId, to: c.id });
             }
 
+            const nodes = this.buildClusteredNodes(flatEntries);
+            const notes = await this.fetchGraphNotes(flatEntries);
+
             loader.style.display = 'none';
             container.style.display = 'block';
 
-            this.callGraphInstance = new Pivotick(container, { nodes, edges }, {
-                UI: { mode: 'viewer', tooltip: { enabled: false } },
+            this.callGraphInstance = new Pivotick(container, { nodes, edges, notes }, {
+                UI: { mode: 'light', tooltip: { enabled: false } },
                 simulation: { useWorker: false },
                 render: {
                     nodeShape: 'rectangle',
@@ -384,89 +389,10 @@ window.FunctionView = {
                         const d = node.getData() || {};
                         return FunctionView.callGraphRenderNode(d.raw, d.kind);
                     },
+                    renderLabel: (edge) => FunctionView.renderEdgeLabel(edge),
                 },
                 callbacks: {
-                    onNodeClick: async (e, node) => {
-                        const id = node.id;
-                        const d = node.getData() || {};
-                        if (d.kind === 'external' || d.raw?.is_external) return;
-
-                        if (id === centerId) return;
-
-                        // Toggle expansion/collapse
-                        if (d.expanded) {
-                            const pInstance = FunctionView.callGraphInstance;
-                            if (pInstance) {
-                                const currentDepth = d.depth ?? 1;
-                                const toRemove = [];
-                                for (const n of pInstance.getMutableNodes()) {
-                                    const nd = n.getData() || {};
-                                    if (nd.expandedFrom === id || (nd.depth > currentDepth && (pInstance.getConnectedNodes(n.id).some(c => c.id === id)))) {
-                                        toRemove.push(n.id);
-                                    }
-                                }
-                                for (const rId of toRemove) {
-                                    pInstance.removeNode(rId);
-                                }
-                                d.expanded = false;
-                                pInstance.onChange();
-                                return;
-                            }
-                        }
-
-                        const depth = d.depth ?? 1;
-                        if (depth >= 3) {
-                            if (window.showToast) window.showToast('Expansion depth limit (3) reached', 'warning');
-                            return;
-                        }
-
-                        try {
-                            const res = await fetch(`/api/function/call_graph?id=${encodeURIComponent(id)}`);
-                            if (!res.ok) return;
-                            const data = await res.json();
-                            const callers = data.callers || [];
-                            const callees = data.callees || [];
-                            const pInstance = FunctionView.callGraphInstance;
-                            if (!pInstance) return;
-
-                            const newDepth = depth + 1;
-                            for (const c of callers) {
-                                if (!pInstance.getNode(c.id)) {
-                                    try {
-                                        pInstance.addNode({
-                                            id: c.id,
-                                            data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: newDepth, expandedFrom: id }
-                                        });
-                                    } catch (err) {}
-                                }
-                                const edgeId = `${c.id}->${id}`;
-                                if (!pInstance.edges.has(edgeId)) {
-                                    try {
-                                        pInstance.addEdge({ id: edgeId, from: c.id, to: id });
-                                    } catch (err) {}
-                                }
-                            }
-                            for (const c of callees) {
-                                if (!pInstance.getNode(c.id)) {
-                                    try {
-                                        pInstance.addNode({
-                                            id: c.id,
-                                            data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: newDepth, expandedFrom: id }
-                                        });
-                                    } catch (err) {}
-                                }
-                                const edgeId = `${id}->${c.id}`;
-                                if (!pInstance.edges.has(edgeId)) {
-                                    try {
-                                        pInstance.addEdge({ id: edgeId, from: id, to: c.id });
-                                    } catch (err) {}
-                                }
-                            }
-                            d.expanded = true;
-                        } catch (err) {
-                            console.error('Failed to expand call graph node:', err);
-                        }
-                    },
+                    onNodeClick: this.makeExpandCollapseHandler(() => FunctionView.callGraphInstance, centerId),
                     onNodeHoverIn: (e, node) => {
                         const raw = node.getData()?.raw;
                         if (!raw || raw.is_external) return;
@@ -482,11 +408,14 @@ window.FunctionView = {
                     },
                 },
             });
-            
+
+            this.callGraphInstance._simEdgesEnabled = true;
+            this.wireNoteSync(this.callGraphInstance);
+
             // Auto-load similarity edges
-            const nodeIds = nodes.map(n => n.id);
+            const nodeIds = flatEntries.map(n => n.id);
             this.loadSimEdgesForNodes(nodeIds, this.callGraphInstance);
-            
+
             if (typeof window.setupGraphDropTarget === 'function') {
                 window.setupGraphDropTarget(container);
             }
@@ -499,6 +428,7 @@ window.FunctionView = {
     async toggleSimilarityEdges(show) {
         if (!this.callGraphInstance) return;
         const pInstance = this.callGraphInstance;
+        pInstance._simEdgesEnabled = show;
 
         if (!show) {
             const toRemove = [];
@@ -590,7 +520,200 @@ window.FunctionView = {
         }
     },
 
+    // Groups caller/callee entries into Pivotick native cluster (parent) nodes
+    // by file_md5, one per distinct binary -- 'self' and 'external' entries and
+    // anything added later (recursive expansion, similarity hits) stay loose,
+    // since Pivotick's children[] shape only exists at node-construction time,
+    // not via a documented "add to existing cluster" API.
+    // ponytail: only clusters the initial synchronous batch; deeper-expanded
+    // nodes render ungrouped. Revisit if that's confusing in practice.
+    buildClusteredNodes(entries) {
+        const groupable = entries.filter(n => n.data.kind !== 'self' && n.data.kind !== 'external' && n.data.raw?.file_md5);
+        const binaries = new Set(groupable.map(n => n.data.raw.file_md5));
+        if (binaries.size < 2) return entries;
+
+        const byMd5 = new Map();
+        const result = [];
+        for (const n of entries) {
+            const md5 = n.data.raw?.file_md5;
+            if (n.data.kind === 'self' || n.data.kind === 'external' || !md5) {
+                result.push(n);
+                continue;
+            }
+            if (!byMd5.has(md5)) {
+                const cluster = {
+                    id: `cluster:${md5}`,
+                    data: { kind: 'binary-cluster', raw: { file_md5: md5, file_name: n.data.raw.file_name } },
+                    expanded: true,
+                    children: [],
+                };
+                byMd5.set(md5, cluster);
+                result.push(cluster);
+            }
+            byMd5.get(md5).children.push(n);
+        }
+        return result;
+    },
+
+    // Fetches existing BSimVis notes for each visible node and turns them into
+    // Pivotick's native canvas notes (attachedElement links a note bubble to a
+    // node) so notes show up right on the graph instead of only in the side panel.
+    async fetchGraphNotes(entries) {
+        const apiParamsFn = window.getApiParams || (window.parent && window.parent.getApiParams);
+        if (!apiParamsFn) return [];
+        const targets = entries.filter(n => n.data.kind !== 'external' && n.data.kind !== 'binary-cluster');
+        const results = await Promise.all(targets.map(async n => {
+            const collection = window.getCollectionFromId ? window.getCollectionFromId(n.id) : (this.params.collection || '');
+            try {
+                const apiParams = apiParamsFn(collection);
+                const res = await fetch(`/api/notes/list?${apiParams}&func_id=${encodeURIComponent(n.id)}`);
+                const data = await res.json();
+                if (data.status !== 'success' || !data.notes || !data.notes.length) return null;
+                const content = data.notes.map(nt => `**${nt.owner}**: ${nt.text}`).join('\n\n---\n\n');
+                return { id: `bsimnote:${n.id}`, attachedElement: n.id, content, color: '#ffd700' };
+            } catch (e) { return null; }
+        }));
+        return results.filter(Boolean);
+    },
+
+    // Pivotick's own note bubbles are a first-class canvas feature (drag, edit,
+    // markdown render) separate from the BSimVis notes side panel. Forward edits
+    // made in the graph back into the same /api/notes/* store so both surfaces
+    // read from one source of truth instead of drifting apart.
+    wireNoteSync(pInstance) {
+        if (!pInstance || typeof pInstance.on !== 'function') return;
+        let timer = null;
+        const forward = (note) => {
+            const funcId = note?.attachedElement;
+            if (!funcId || typeof note.content !== 'string') return;
+            clearTimeout(timer);
+            timer = setTimeout(async () => {
+                const collection = window.getCollectionFromId ? window.getCollectionFromId(funcId) : (this.params.collection || '');
+                try {
+                    await fetch('/api/notes/add', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ collection, func_id: funcId, text: note.content, owner: 'user' }),
+                    });
+                    if (window.refreshFunctionRow) window.refreshFunctionRow(funcId);
+                } catch (e) { console.error('Failed to sync graph note to BSimVis notes:', e); }
+            }, 600);
+        };
+        pInstance.on('noteChange', forward);
+        pInstance.on('noteAdd', forward);
+    },
+
+    // Shared onNodeClick for both the Call Graph tab and the notes-panel side
+    // graph: expand/collapse callers+callees, and keep pulling in similarity
+    // edges as the graph grows (not just at initial load) so a 'similar' node
+    // is just as expandable as a caller/callee.
+    makeExpandCollapseHandler(getInstance, centerId) {
+        return async (e, node) => {
+            const id = node.id;
+            const d = node.getData() || {};
+            if (d.kind === 'external' || d.raw?.is_external) {
+                if (window.showToast) window.showToast('External node cannot be expanded', 'info');
+                return;
+            }
+            if (id === centerId) return;
+            const pInstance = getInstance();
+            if (!pInstance) return;
+
+            if (d.expanded) {
+                const currentDepth = d.depth ?? 1;
+                const toRemove = [];
+                for (const n of pInstance.getMutableNodes()) {
+                    const nd = n.getData() || {};
+                    if (nd.expandedFrom === id || (nd.depth > currentDepth && pInstance.getConnectedNodes(n.id).some(c => c.id === id))) {
+                        toRemove.push(n.id);
+                    }
+                }
+                for (const rId of toRemove) pInstance.removeNode(rId);
+                d.expanded = false;
+                pInstance.onChange();
+                return;
+            }
+
+            const depth = d.depth ?? 1;
+            if (depth >= 3) {
+                if (window.showToast) window.showToast('Expansion depth limit (3) reached', 'warning');
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/function/call_graph?id=${encodeURIComponent(id)}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                const newDepth = depth + 1;
+                const newIds = [];
+                for (const c of data.callers || []) {
+                    if (!pInstance.getNode(c.id)) {
+                        try {
+                            pInstance.addNode({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: newDepth, expandedFrom: id } });
+                            newIds.push(c.id);
+                        } catch (err) {}
+                    }
+                    const edgeId = `${c.id}->${id}`;
+                    if (!pInstance.edges.has(edgeId)) {
+                        try { pInstance.addEdge({ id: edgeId, from: c.id, to: id }); } catch (err) {}
+                    }
+                }
+                for (const c of data.callees || []) {
+                    if (!pInstance.getNode(c.id)) {
+                        try {
+                            pInstance.addNode({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: newDepth, expandedFrom: id } });
+                            newIds.push(c.id);
+                        } catch (err) {}
+                    }
+                    const edgeId = `${id}->${c.id}`;
+                    if (!pInstance.edges.has(edgeId)) {
+                        try { pInstance.addEdge({ id: edgeId, from: id, to: c.id }); } catch (err) {}
+                    }
+                }
+                d.expanded = true;
+
+                if (pInstance._simEdgesEnabled !== false && newIds.length) {
+                    FunctionView.loadSimEdgesForNodes(newIds, pInstance);
+                }
+            } catch (err) {
+                console.error('Failed to expand call graph node:', err);
+            }
+        };
+    },
+
+    LEGEND_ITEMS: [
+        { color: 'var(--accent, #04d9ff)', label: 'This function' },
+        { color: '#a6e22e', label: 'Caller (calls this)' },
+        { color: '#f92672', label: 'Callee (called by this)' },
+        { color: 'var(--dim, #888)', label: 'External' },
+        { color: '#ae81ff', label: 'Similar to — % on edge', dashed: true },
+    ],
+
+    renderLegendHTML() {
+        return this.LEGEND_ITEMS.map(i => `<span style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
+            <span style="width:10px; height:${i.dashed ? '0' : '10px'}; ${i.dashed ? `border-top:2px dashed ${i.color};` : `border-radius:50%; background:${i.color};`}"></span>
+            ${escapeHtml(i.label)}
+        </span>`).join('');
+    },
+
+    renderEdgeLabel(edge) {
+        const d = (edge.getData && edge.getData()) || edge.data || {};
+        if (d.kind !== 'similarity' || typeof d.score !== 'number') return '';
+        const div = document.createElement('div');
+        div.style.cssText = 'background:#ae81ff; color:#1e1e2e; font:10px/1 monospace; font-weight:bold; padding:2px 6px; border-radius:8px; white-space:nowrap;';
+        div.textContent = Math.round(d.score * 100) + '%';
+        return div;
+    },
+
     callGraphRenderNode(raw, kind) {
+        if (kind === 'binary-cluster') {
+            const label = escapeHtml(raw?.file_name || (raw?.file_md5 || '').slice(0, 10) || 'binary');
+            const div = document.createElement('div');
+            div.style.cssText = 'padding:6px 10px; border-radius:8px; border:2px dashed #66d9ef; background:var(--card-bg, #222); font:11px/1.3 monospace; color:#66d9ef; font-weight:bold; white-space:nowrap; display:flex; align-items:center; gap:5px;';
+            div.innerHTML = `<i class="fa-solid fa-file-binary"></i>${label}`;
+            return div;
+        }
+
         const name = escapeHtml(raw?.name || (raw?.id || '').split(':').pop() || '?');
         const border = { self: 'var(--accent, #04d9ff)', caller: '#a6e22e', callee: '#f92672', external: 'var(--dim, #888)', similar: '#ae81ff' }[kind] || '#fff';
         const lineCss = 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';

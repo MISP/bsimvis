@@ -53,6 +53,24 @@ def get_enriched_nodes(collection, md5, addr):
                         "is_external": False,
                     }
 
+        # File names for binary grouping in the call graph -- one extra pipeline
+        # keyed by md5 (parsed out of "collection:func:md5:addr") so nodes from a
+        # different binary than the center function can be labeled/clustered.
+        file_md5s = sorted({fid.split(":")[2] for fid in all_ids if not fid.startswith("ext:") and len(fid.split(":")) > 2})
+        file_name_map = {}
+        if file_md5s:
+            fpipe = r.pipeline(transaction=False)
+            for m in file_md5s:
+                fpipe.get(f"{collection}:file:{m}:meta")
+            for m, raw in zip(file_md5s, fpipe.execute()):
+                if not raw:
+                    continue
+                fmeta = raw.decode() if isinstance(raw, bytes) else raw
+                if isinstance(fmeta, str):
+                    fmeta = json.loads(fmeta)
+                if fmeta:
+                    file_name_map[m] = fmeta.get("file_name")
+
         def build_node_info(fid):
             if fid.startswith("ext:"):
                 name = fid.split(":", 1)[1]
@@ -62,6 +80,7 @@ def get_enriched_nodes(collection, md5, addr):
                     "entrypoint": None,
                     "is_external": True,
                 }
+            file_md5 = fid.split(":")[2] if len(fid.split(":")) > 2 else md5
             info = meta_map.get(fid)
             if info:
                 return {
@@ -72,6 +91,8 @@ def get_enriched_nodes(collection, md5, addr):
                     "return_type": info.get("return_type"),
                     "parameters": info.get("parameters"),
                     "is_external": False,
+                    "file_md5": file_md5,
+                    "file_name": file_name_map.get(file_md5),
                 }
             # Fallback
             addr_part = fid.split(":")[-1]
@@ -80,6 +101,8 @@ def get_enriched_nodes(collection, md5, addr):
                 "name": f"func_{addr_part}",
                 "entrypoint": addr_part,
                 "is_external": False,
+                "file_md5": file_md5,
+                "file_name": file_name_map.get(file_md5),
             }
 
         return {

@@ -210,6 +210,7 @@ window.toggleGraphScope = toggleGraphScope;
 window.toggleSideSimilarityEdges = async function(show) {
     if (!sideGraphInstance) return;
     const pInstance = sideGraphInstance;
+    pInstance._simEdgesEnabled = show;
 
     if (!show) {
         const toRemove = [];
@@ -252,6 +253,9 @@ function renderGraphPanelHTML(el) {
                 <i class="fa-solid fa-spinner fa-spin"></i> Loading call graph...
             </div>
             <div id="pivotick-side-container" style="display: none; width: 100%; height: 100%; position: relative;"></div>
+            <div id="pivotick-side-legend" style="position:absolute; bottom:8px; left:8px; z-index:100; display:flex; flex-direction:column; gap:3px; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:0.65rem; color:var(--subtle);">
+                ${typeof FunctionView !== 'undefined' ? FunctionView.renderLegendHTML() : ''}
+            </div>
         </div>
     `;
 }
@@ -385,7 +389,7 @@ async function loadSideGraph(funcId) {
         const data = await res.json();
 
         const centerId = data.node.id;
-        const nodes = [{
+        const flatEntries = [{
             id: centerId,
             data: { raw: data.node, kind: 'self', depth: 0 },
             expanded: true,
@@ -396,35 +400,40 @@ async function loadSideGraph(funcId) {
         for (const c of data.callers || []) {
             if (!seen.has(c.id)) {
                 seen.add(c.id);
-                nodes.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: 1 }, expanded: true });
+                flatEntries.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: 1 }, expanded: true });
             }
             edges.push({ id: `${c.id}->${centerId}`, from: c.id, to: centerId });
         }
         for (const c of data.callees || []) {
             if (!seen.has(c.id)) {
                 seen.add(c.id);
-                nodes.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: 1 }, expanded: true });
+                flatEntries.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: 1 }, expanded: true });
             }
             edges.push({ id: `${centerId}->${c.id}`, from: centerId, to: c.id });
         }
+
+        const hasFV = typeof FunctionView !== 'undefined';
+        const nodes = hasFV ? FunctionView.buildClusteredNodes(flatEntries) : flatEntries;
+        const notes = hasFV ? await FunctionView.fetchGraphNotes(flatEntries) : [];
 
         loader.style.display = 'none';
         container.style.display = 'block';
         container.innerHTML = '';
 
         if (typeof Pivotick !== 'undefined') {
-            sideGraphInstance = new Pivotick(container, { nodes, edges }, {
-                UI: { mode: 'viewer', tooltip: { enabled: false } },
+            sideGraphInstance = new Pivotick(container, { nodes, edges, notes }, {
+                UI: { mode: 'light', tooltip: { enabled: false } },
                 simulation: { useWorker: false },
                 render: {
                     nodeShape: 'rectangle',
                     renderNode: (node) => {
                         const d = node.getData() || {};
-                        if (typeof FunctionView !== 'undefined' && FunctionView.callGraphRenderNode) {
+                        if (hasFV && FunctionView.callGraphRenderNode) {
                             return FunctionView.callGraphRenderNode(d.raw, d.kind);
                         }
                         return `<div>${d.raw?.name || node.id}</div>`;
                     },
+                    renderLabel: (edge) => (hasFV ? FunctionView.renderEdgeLabel(edge) : ''),
                 },
                 callbacks: {
                     onNodeHoverIn: (e, node) => {
@@ -454,71 +463,17 @@ async function loadSideGraph(funcId) {
                             }
                         }
                     },
-                    onNodeClick: async (e, node) => {
-                        const id = node.id;
-                        const d = node.getData() || {};
-                        if (d.kind === 'external' || d.raw?.is_external) {
-                            if (window.showToast) window.showToast('External node cannot be expanded', 'info');
-                            return;
-                        }
-                        if (id === centerId) return;
-
-                        // Toggle expansion/collapse
-                        if (d.expanded) {
-                            // Collapse children added at deeper levels
-                            const pInst = sideGraphInstance;
-                            if (pInst) {
-                                const currentDepth = d.depth ?? 1;
-                                const toRemove = [];
-                                for (const n of pInst.getMutableNodes()) {
-                                    const nd = n.getData() || {};
-                                    if (nd.expandedFrom === id || (nd.depth > currentDepth && (pInst.getConnectedNodes(n.id).some(c => c.id === id)))) {
-                                        toRemove.push(n.id);
-                                    }
-                                }
-                                for (const rId of toRemove) {
-                                    pInst.removeNode(rId);
-                                }
-                                d.expanded = false;
-                                pInst.onChange();
-                                return;
-                            }
-                        }
-
-                        const depth = d.depth ?? 1;
-                        if (depth >= 3) {
-                            if (window.showToast) window.showToast('Expansion depth limit (3) reached', 'warning');
-                            return;
-                        }
-                        try {
-                            const r = await fetch(`/api/function/call_graph?id=${encodeURIComponent(id)}`);
-                            if (!r.ok) return;
-                            const cgData = await r.json();
-                            const pInst = sideGraphInstance;
-                            if (!pInst) return;
-                            const newDepth = depth + 1;
-                            for (const c of cgData.callers || []) {
-                                if (!pInst.getNode(c.id)) {
-                                    pInst.addNode({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: newDepth, expandedFrom: id } });
-                                }
-                                const edgeId = `${c.id}->${id}`;
-                                if (!pInst.edges.has(edgeId)) pInst.addEdge({ id: edgeId, from: c.id, to: id });
-                            }
-                            for (const c of cgData.callees || []) {
-                                if (!pInst.getNode(c.id)) {
-                                    pInst.addNode({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: newDepth, expandedFrom: id } });
-                                }
-                                const edgeId = `${id}->${c.id}`;
-                                if (!pInst.edges.has(edgeId)) pInst.addEdge({ id: edgeId, from: id, to: c.id });
-                            }
-                            d.expanded = true;
-                        } catch (err) {}
-                    }
+                    onNodeClick: hasFV
+                        ? FunctionView.makeExpandCollapseHandler(() => sideGraphInstance, centerId)
+                        : async () => {},
                 }
             });
-            
-            if (typeof FunctionView !== 'undefined' && FunctionView.loadSimEdgesForNodes) {
-                const nodeIds = nodes.map(n => n.id);
+
+            sideGraphInstance._simEdgesEnabled = true;
+            if (hasFV) FunctionView.wireNoteSync(sideGraphInstance);
+
+            if (hasFV && FunctionView.loadSimEdgesForNodes) {
+                const nodeIds = flatEntries.map(n => n.id);
                 FunctionView.loadSimEdgesForNodes(nodeIds, sideGraphInstance);
             }
         }

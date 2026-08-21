@@ -330,6 +330,7 @@ def get_function_call_graph():
             "namespace": meta.get("namespace"),
             "return_type": meta.get("return_type"),
             "file_md5": md5,
+            "file_name": meta.get("file_name"),
             "is_external": False,
         }
 

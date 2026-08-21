@@ -1353,7 +1353,7 @@ window.DiffView = {
 
             if (typeof Pivotick !== 'undefined') {
                 const pInst = new Pivotick(container, { nodes, edges }, {
-                    UI: { mode: 'light', tooltip: { enabled: false } },
+                    UI: { mode: 'viewer', tooltip: { enabled: false } },
                     simulation: { useWorker: false },
                     render: {
                         nodeShape: 'rectangle',

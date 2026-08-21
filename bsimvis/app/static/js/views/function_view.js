@@ -376,7 +376,7 @@ window.FunctionView = {
             container.style.display = 'block';
 
             this.callGraphInstance = new Pivotick(container, { nodes, edges }, {
-                UI: { mode: 'light', tooltip: { enabled: false } },
+                UI: { mode: 'viewer', tooltip: { enabled: false } },
                 simulation: { useWorker: false },
                 render: {
                     nodeShape: 'rectangle',
@@ -514,8 +514,12 @@ window.FunctionView = {
     },
 
     async loadSimEdgesForNodes(nodes, pInstance) {
-        for (const node of nodes) {
-            const raw = node.getData()?.raw;
+        for (let node of nodes) {
+            if (typeof node === 'string' || typeof node === 'number') {
+                node = pInstance.getNode(node);
+                if (!node) continue;
+            }
+            const raw = node.getData?.()?.raw;
             if (!raw || raw.is_external) continue;
 
             const collection = this.params.collection || raw.collection || 'main';

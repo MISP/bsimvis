@@ -207,6 +207,26 @@ function toggleGraphScope() {
 }
 window.toggleGraphScope = toggleGraphScope;
 
+window.toggleSideSimilarityEdges = async function(show) {
+    if (!sideGraphInstance) return;
+    const pInstance = sideGraphInstance;
+
+    if (!show) {
+        const toRemove = [];
+        for (const edge of pInstance.getEdges()) {
+            if (edge.data?.kind === 'similarity') toRemove.push(edge.id);
+        }
+        for (const id of toRemove) pInstance.removeEdge(id);
+        pInstance.onChange();
+        return;
+    }
+
+    if (typeof FunctionView !== 'undefined' && FunctionView.loadSimEdgesForNodes) {
+        const nodeIds = Array.from(pInstance.getMutableNodes()).map(n => n.id);
+        await FunctionView.loadSimEdgesForNodes(nodeIds, pInstance);
+    }
+};
+
 function renderGraphPanelHTML(el) {
     el.innerHTML = `
         <div class="panel-v2-header">
@@ -214,6 +234,10 @@ function renderGraphPanelHTML(el) {
                 <i class="fa-solid fa-diagram-project"></i> Call Graph
             </span>
             <div style="display: flex; align-items: center; gap: 6px;">
+                <label style="cursor:pointer; display:flex; align-items:center; gap:5px; color:var(--text); font-size:0.75rem; background:var(--meta-bg); border:1px solid var(--border); padding:2px 6px; border-radius:4px;" title="Toggle high-confidence similarity edges">
+                    <input type="checkbox" id="fn-side-cg-sim-toggle" checked onchange="window.toggleSideSimilarityEdges && window.toggleSideSimilarityEdges(this.checked)" style="margin:0;">
+                    <span>Sims ⚡</span>
+                </label>
                 <button id="pivotick-scope-btn" onclick="toggleGraphScope()" title="Switch graph traversal between Collection and Pool scope" style="background: var(--meta-bg); border: 1px solid var(--border); color: var(--meta-text); padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; display: flex; align-items: center; gap: 5px;">
                     <i class="fa-solid fa-layer-group"></i> <span id="pivotick-scope-text">${isPoolScope ? 'Pool Scope' : 'Collection'}</span>
                 </button>
@@ -390,7 +414,7 @@ async function loadSideGraph(funcId) {
 
         if (typeof Pivotick !== 'undefined') {
             sideGraphInstance = new Pivotick(container, { nodes, edges }, {
-                UI: { mode: 'light', tooltip: { enabled: false } },
+                UI: { mode: 'viewer', tooltip: { enabled: false } },
                 simulation: { useWorker: false },
                 render: {
                     nodeShape: 'rectangle',

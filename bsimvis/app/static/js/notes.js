@@ -24,9 +24,14 @@ let entityMode = 'func';
 // Panel State
 let isNotesOpen = false;
 let isAIOpen = false;
+let isGraphOpen = false;
+let isGraphLocked = false;
+let currentGraphFuncId = null;
+let sideGraphInstance = null;
 
 const NOTES_WIDTH = 500;
 const AI_WIDTH = 600;
+const GRAPH_WIDTH = 550;
 
 async function showNotes(funcId, expand = true) {
     const isNewFunc = funcId !== currentNotesFuncId;
@@ -50,6 +55,11 @@ async function showNotes(funcId, expand = true) {
     // Load data if new function or not yet rendered
     if (isNewFunc || lastRenderedNotesFuncId !== funcId) {
         await refreshNotes(funcId);
+    }
+
+    // Also update graph panel if open and not locked
+    if (isGraphOpen && !isGraphLocked && funcId && entityMode !== 'file') {
+        loadSideGraph(funcId);
     }
     
     // Initialize LLM history object if missing
@@ -76,6 +86,14 @@ function createPanelsIfMissing() {
     handleContainer.id = 'panel-handles-container';
     document.body.appendChild(handleContainer);
 
+    // Pivotick Graph Handle
+    const graphHandle = document.createElement('div');
+    graphHandle.id = 'pivotick-panel-handle';
+    graphHandle.className = 'panel-handle graph';
+    graphHandle.innerHTML = '<i class="fa-solid fa-diagram-project"></i><span>GRAPH</span>';
+    graphHandle.onclick = toggleGraphPanel;
+    handleContainer.appendChild(graphHandle);
+
     // Notes Handle
     const notesHandle = document.createElement('div');
     notesHandle.id = 'notes-panel-handle';
@@ -91,6 +109,14 @@ function createPanelsIfMissing() {
     aiHandle.innerHTML = '<i class="fa-solid fa-robot"></i><span>AI INSIGHT</span>';
     aiHandle.onclick = toggleAIPanel;
     handleContainer.appendChild(aiHandle);
+
+    // Pivotick Graph Panel
+    const graphPanel = document.createElement('div');
+    graphPanel.id = 'pivotick-panel-v2';
+    graphPanel.className = 'side-panel-v2';
+    graphPanel.style.width = GRAPH_WIDTH + 'px';
+    graphPanel.style.right = -(GRAPH_WIDTH + 50) + 'px';
+    document.body.appendChild(graphPanel);
 
     // Notes Panel
     const notesPanel = document.createElement('div');
@@ -108,6 +134,7 @@ function createPanelsIfMissing() {
     aiPanel.style.right = -(AI_WIDTH + 50) + 'px';
     document.body.appendChild(aiPanel);
 
+    renderGraphPanelHTML(graphPanel);
     renderNotesPanelHTML(notesPanel);
     renderAIPanelHTML(aiPanel);
 }
@@ -157,6 +184,28 @@ function renderNotesPanelHTML(el) {
     });
 }
 
+function renderGraphPanelHTML(el) {
+    el.innerHTML = `
+        <div class="panel-v2-header">
+            <span style="display: flex; align-items: center; gap: 8px; font-size: 0.9rem; color: var(--accent, #60a5fa); font-weight: bold;">
+                <i class="fa-solid fa-diagram-project"></i> Call Graph
+            </span>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <button id="pivotick-lock-btn" onclick="toggleGraphLock()" title="Lock graph to current function" style="background: var(--meta-bg); border: 1px solid var(--border); color: var(--meta-text); padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; display: flex; align-items: center; gap: 5px;">
+                    <i class="fa-solid fa-lock-open"></i> Unlocked
+                </button>
+                <button onclick="closeGraphPanel()" style="background: none; border: none; color: var(--subtle); cursor: pointer; font-size: 1.1rem; padding: 4px; display: flex; align-items: center;"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+        </div>
+        <div id="pivotick-side-body" style="flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; background: var(--bg);">
+            <div id="pivotick-side-loader" style="text-align: center; padding: 40px; color: var(--dim);">
+                <i class="fa-solid fa-spinner fa-spin"></i> Loading call graph...
+            </div>
+            <div id="pivotick-side-container" style="display: none; width: 100%; height: 100%; position: relative;"></div>
+        </div>
+    `;
+}
+
 function renderAIPanelHTML(el) {
     el.innerHTML = `
         <div class="panel-v2-header">
@@ -180,6 +229,7 @@ function renderAIPanelHTML(el) {
 function updateLayout() {
     const notesPanel = document.getElementById('notes-panel-v2');
     const aiPanel = document.getElementById('ai-panel-v2');
+    const graphPanel = document.getElementById('pivotick-panel-v2');
     
     let totalOffset = 0;
     
@@ -198,6 +248,14 @@ function updateLayout() {
     } else {
         if (notesPanel) notesPanel.style.right = -(NOTES_WIDTH + 50) + 'px';
     }
+
+    // Graph is to the left of Notes
+    if (isGraphOpen) {
+        if (graphPanel) graphPanel.style.right = totalOffset + 'px';
+        totalOffset += GRAPH_WIDTH;
+    } else {
+        if (graphPanel) graphPanel.style.right = -(GRAPH_WIDTH + 50) + 'px';
+    }
     
     document.body.style.paddingRight = totalOffset + 'px';
     
@@ -213,7 +271,7 @@ function updateLayout() {
             inFuncOrFileView = (restful.view === 'function' || restful.view === 'file');
         }
         
-        if (!inFuncOrFileView && !isNotesOpen && !isAIOpen) {
+        if (!inFuncOrFileView && !isNotesOpen && !isAIOpen && !isGraphOpen) {
             handleContainer.style.opacity = '0';
             handleContainer.style.pointerEvents = 'none';
         } else {
@@ -225,12 +283,142 @@ function updateLayout() {
     // Update handle active states
     const notesHandle = document.getElementById('notes-panel-handle');
     const aiHandle = document.getElementById('ai-panel-handle');
+    const graphHandle = document.getElementById('pivotick-panel-handle');
     if (notesHandle) notesHandle.classList.toggle('active', isNotesOpen);
     if (aiHandle) aiHandle.classList.toggle('active', isAIOpen);
+    if (graphHandle) {
+        graphHandle.classList.toggle('active', isGraphOpen);
+        graphHandle.classList.toggle('locked', isGraphLocked);
+    }
 }
 
+function toggleGraphPanel() { if (isGraphOpen) closeGraphPanel(); else openGraphPanel(currentNotesFuncId); }
 function toggleNotesPanel() { if (isNotesOpen) closeNotesPanel(); else openNotesPanel(); }
 function toggleAIPanel() { if (isAIOpen) closeAIPanel(); else openAIPanel(); }
+
+function openGraphPanel(funcId) {
+    isGraphOpen = true;
+    updateLayout();
+    const idToLoad = funcId || currentNotesFuncId || currentGraphFuncId;
+    if (idToLoad && (!sideGraphInstance || (!isGraphLocked && currentGraphFuncId !== idToLoad))) {
+        loadSideGraph(idToLoad);
+    }
+}
+function closeGraphPanel() { isGraphOpen = false; updateLayout(); }
+
+function toggleGraphLock() {
+    isGraphLocked = !isGraphLocked;
+    const lockBtn = document.getElementById('pivotick-lock-btn');
+    const handle = document.getElementById('pivotick-panel-handle');
+    if (lockBtn) {
+        lockBtn.innerHTML = isGraphLocked 
+            ? '<i class="fa-solid fa-lock" style="color:#f92672;"></i> Locked' 
+            : '<i class="fa-solid fa-lock-open"></i> Unlocked';
+    }
+    if (handle) handle.classList.toggle('locked', isGraphLocked);
+}
+
+async function loadSideGraph(funcId) {
+    if (!funcId) return;
+    currentGraphFuncId = funcId;
+    const container = document.getElementById('pivotick-side-container');
+    const loader = document.getElementById('pivotick-side-loader');
+    if (!container || !loader) return;
+
+    loader.style.display = 'block';
+    loader.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Loading call graph...';
+    container.style.display = 'none';
+
+    try {
+        const res = await fetch(`/api/function/call_graph?id=${encodeURIComponent(funcId)}`);
+        if (!res.ok) throw new Error('Call graph data unavailable');
+        const data = await res.json();
+
+        const centerId = data.node.id;
+        const nodes = [{
+            id: centerId,
+            data: { raw: data.node, kind: 'self', depth: 0 },
+            expanded: true,
+        }];
+        const edges = [];
+        const seen = new Set([centerId]);
+
+        for (const c of data.callers || []) {
+            if (!seen.has(c.id)) {
+                seen.add(c.id);
+                nodes.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: 1 }, expanded: true });
+            }
+            edges.push({ id: `${c.id}->${centerId}`, from: c.id, to: centerId });
+        }
+        for (const c of data.callees || []) {
+            if (!seen.has(c.id)) {
+                seen.add(c.id);
+                nodes.push({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: 1 }, expanded: true });
+            }
+            edges.push({ id: `${centerId}->${c.id}`, from: centerId, to: c.id });
+        }
+
+        loader.style.display = 'none';
+        container.style.display = 'block';
+        container.innerHTML = '';
+
+        if (typeof Pivotick !== 'undefined') {
+            sideGraphInstance = new Pivotick(container, { nodes, edges }, {
+                UI: { mode: 'viewer', tooltip: { enabled: false } },
+                simulation: { useWorker: false },
+                render: {
+                    renderNode: (node) => {
+                        const d = node.getData() || {};
+                        if (typeof FunctionView !== 'undefined' && FunctionView.callGraphRenderNode) {
+                            return FunctionView.callGraphRenderNode(d.raw, d.kind);
+                        }
+                        return `<div>${d.raw?.function_name || node.id}</div>`;
+                    },
+                },
+                callbacks: {
+                    onNodeClick: async (e, node) => {
+                        const id = node.id;
+                        const d = node.getData() || {};
+                        if (d.kind === 'external' || d.raw?.is_external) {
+                            if (window.showToast) window.showToast('External node cannot be expanded', 'info');
+                            return;
+                        }
+                        if (id === centerId) return;
+                        const depth = d.depth ?? 1;
+                        if (depth >= 3) {
+                            if (window.showToast) window.showToast('Expansion depth limit (3) reached', 'warning');
+                            return;
+                        }
+                        try {
+                            const r = await fetch(`/api/function/call_graph?id=${encodeURIComponent(id)}`);
+                            if (!r.ok) return;
+                            const cgData = await r.json();
+                            const pInst = sideGraphInstance;
+                            if (!pInst) return;
+                            const newDepth = depth + 1;
+                            for (const c of cgData.callers || []) {
+                                if (!pInst.getNode(c.id)) {
+                                    pInst.addNode({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'caller', depth: newDepth } });
+                                }
+                                const edgeId = `${c.id}->${id}`;
+                                if (!pInst.edges.has(edgeId)) pInst.addEdge({ id: edgeId, from: c.id, to: id });
+                            }
+                            for (const c of cgData.callees || []) {
+                                if (!pInst.getNode(c.id)) {
+                                    pInst.addNode({ id: c.id, data: { raw: c, kind: c.is_external ? 'external' : 'callee', depth: newDepth } });
+                                }
+                                const edgeId = `${id}->${c.id}`;
+                                if (!pInst.edges.has(edgeId)) pInst.addEdge({ id: edgeId, from: id, to: c.id });
+                            }
+                        } catch (err) {}
+                    }
+                }
+            });
+        }
+    } catch (err) {
+        loader.innerHTML = `<div style="padding:20px; color:#f92672;"><i class="fa-solid fa-triangle-exclamation"></i> ${err.message}</div>`;
+    }
+}
 
 function openNotesPanel() { 
     isNotesOpen = true; 
@@ -764,6 +952,11 @@ window.showNotes = showNotes;
 window.showFileNotes = showFileNotes;
 window.toggleNotesPanel = toggleNotesPanel;
 window.toggleAIPanel = toggleAIPanel;
+window.toggleGraphPanel = toggleGraphPanel;
+window.toggleGraphLock = toggleGraphLock;
+window.openGraphPanel = openGraphPanel;
+window.closeGraphPanel = closeGraphPanel;
+window.loadSideGraph = loadSideGraph;
 window.saveNote = saveNote;
 window.startEditNote = startEditNote;
 window.cancelEditNote = cancelEditNote;

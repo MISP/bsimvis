@@ -205,8 +205,25 @@ class PivotickGraphController {
     // Opt-in "find more functions like this one" -- discovers new nodes
     // (unlike refreshRelations, which only wires up what's already present)
     // and always funnels them through addFunction so they dedup normally.
+    //
+    // In dense corpora (e.g. many near-identical malware samples) every node
+    // can have a dozen 90%+ matches -- firing this for center + every
+    // caller/callee on a single load flooded graphs with 100+ loose nodes,
+    // one per near-duplicate binary, which is what actually produced the
+    // messy clusters (force-laid-out internals with way too many members),
+    // not a lack of layout options. Capped per-node and per-batch so a
+    // normal load stays small; MAX_AUTO_SIMILAR_PER_BATCH is a blunt but
+    // simple backstop -- revisit if users want more auto-pulled in by default.
+    static MAX_SIMILAR_PER_NODE = 3;
+    static MAX_AUTO_SIMILAR_PER_BATCH = 15;
+
     async _discoverSimilar(ids) {
+        let added = 0;
         for (const id of ids) {
+            if (added >= PivotickGraphController.MAX_AUTO_SIMILAR_PER_BATCH) {
+                if (window.showToast) window.showToast('More similar functions exist -- use the Similar tab to explore them all', 'info');
+                break;
+            }
             const entry = this.nodes.get(id);
             if (!entry || entry.kind === 'external') continue;
             const collection = this.getCollection();
@@ -214,10 +231,11 @@ class PivotickGraphController {
             const address = entry.raw.entrypoint || entry.raw.address;
             if (!collection || !md5 || !address) continue;
             try {
-                const res = await fetch(`/api/similarity/search?md5=${encodeURIComponent(md5)}&address=${encodeURIComponent(address)}&collection=${encodeURIComponent(collection)}&min_score=0.90&limit=10`);
+                const res = await fetch(`/api/similarity/search?md5=${encodeURIComponent(md5)}&address=${encodeURIComponent(address)}&collection=${encodeURIComponent(collection)}&min_score=0.90&limit=${PivotickGraphController.MAX_SIMILAR_PER_NODE}`);
                 if (!res.ok) continue;
                 const data = await res.json();
                 for (const pair of data.pairs || []) {
+                    if (added >= PivotickGraphController.MAX_AUTO_SIMILAR_PER_BATCH) break;
                     const isSelf1 = pair.id1 === id;
                     const otherId = isSelf1 ? pair.id2 : pair.id1;
                     const otherMeta = isSelf1 ? pair.meta2 : pair.meta1;
@@ -233,6 +251,7 @@ class PivotickGraphController {
                         kind: 'similar', depth: (entry.depth ?? 1) + 1, expandedFrom: id,
                     });
                     this._addEdge(id, otherId, 'similarity', { score: pair.score });
+                    added++;
                 }
             } catch (err) { console.error('Error discovering similar functions:', err); }
         }

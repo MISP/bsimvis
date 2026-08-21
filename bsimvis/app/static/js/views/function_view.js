@@ -17,6 +17,8 @@ window.FunctionView = {
     id: '',
     neighborsLoaded: false,
     neighborsDebounceTimer: null,
+    callGraphLoaded: false,
+    callGraphInstance: null,
 
     async init(params, containerId) {
         this.params = params;
@@ -34,6 +36,11 @@ window.FunctionView = {
         this.id = `idx:${collection}:func:${file_md5}:${address}`;
         window.currentFuncId = `${collection}:func:${file_md5}:${address}`;
         this.neighborsLoaded = false;
+        this.callGraphLoaded = false;
+        if (this.callGraphInstance) {
+            this.callGraphInstance.destroy();
+            this.callGraphInstance = null;
+        }
 
         // Build initial layout
         this.container.innerHTML = `
@@ -62,6 +69,7 @@ window.FunctionView = {
                     <div class="bsim-tabbar" id="function-view-tabs">
                         <button class="bsim-tab active" id="function-tab-btn-code" onclick="FunctionView.switchTab('code')">Code</button>
                         <button class="bsim-tab" id="function-tab-btn-neighbors" onclick="FunctionView.switchTab('neighbors')">Similar<span id="fn-nbr-count-wrap" style="display:none;"> (<span id="fn-nbr-count">0</span>)</span></button>
+                        <button class="bsim-tab" id="function-tab-btn-callgraph" onclick="FunctionView.switchTab('callgraph')">Call Graph</button>
                     </div>
 
                     <div id="function-panel-code" class="function-view-panel" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
@@ -158,6 +166,11 @@ window.FunctionView = {
                                 </table>
                             </div>
                         </div>
+                    </div>
+
+                    <div id="function-panel-callgraph" class="function-view-panel" style="display:none; flex:1; overflow:hidden; position:relative;">
+                        <div id="fn-cg-loader" style="text-align:center; padding:50px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin"></i> Loading call graph...</div>
+                        <div id="fn-cg-container" style="display:none; width:100%; height:100%;"></div>
                     </div>
                 </div>
                 <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:var(--window-bg); padding:10px; border-radius:4px; border:1px solid var(--accent); color:var(--text); font-size:0.8rem; pointer-events:none;"></div>
@@ -314,6 +327,76 @@ window.FunctionView = {
 
         // ponytail: no hash-routing for tabs here -- #L<line> hash is already owned by scrollToLine()
         if (tabId === 'neighbors') this.loadNeighborsPanel();
+        if (tabId === 'callgraph') this.loadCallGraphPanel();
+    },
+
+    async loadCallGraphPanel() {
+        if (this.callGraphLoaded) return;
+        this.callGraphLoaded = true;
+
+        const loader = document.getElementById('fn-cg-loader');
+        const container = document.getElementById('fn-cg-container');
+
+        try {
+            const res = await fetch(`/api/function/call_graph?id=${encodeURIComponent(this.id)}`);
+            if (!res.ok) throw new Error('Call graph not found');
+            const data = await res.json();
+
+            const centerId = data.node.id;
+            const nodes = [{
+                id: centerId,
+                data: { label: data.node.name || centerId.split(':').pop(), kind: 'self' },
+                expanded: true,
+            }];
+            const edges = [];
+            const seen = new Set([centerId]);
+
+            for (const c of data.callers || []) {
+                if (!seen.has(c.id)) {
+                    seen.add(c.id);
+                    nodes.push({ id: c.id, data: { label: c.name || c.id, kind: c.is_external ? 'external' : 'caller' }, expanded: true });
+                }
+                edges.push({ from: c.id, to: centerId });
+            }
+            for (const c of data.callees || []) {
+                if (!seen.has(c.id)) {
+                    seen.add(c.id);
+                    nodes.push({ id: c.id, data: { label: c.name || c.id, kind: c.is_external ? 'external' : 'callee' }, expanded: true });
+                }
+                edges.push({ from: centerId, to: c.id });
+            }
+
+            loader.style.display = 'none';
+            container.style.display = 'block';
+
+            this.callGraphInstance = new Pivotick(container, { nodes, edges }, {
+                UI: { mode: 'viewer' },
+                simulation: { useWorker: false },
+                render: {
+                    nodeTypeAccessor: (node) => node.getData()?.kind,
+                    nodeStyleMap: {
+                        self: { color: 'var(--accent, #04d9ff)', size: 26 },
+                        caller: { color: '#a6e22e' },
+                        callee: { color: '#f92672' },
+                        external: { color: 'var(--dim, #888)' },
+                    },
+                    defaultNodeStyle: {
+                        text: (node) => node.getData()?.label || '',
+                    },
+                },
+                callbacks: {
+                    onNodeClick: (e, node) => {
+                        const id = node.id;
+                        if (id === centerId) return;
+                        const kind = node.getData()?.kind;
+                        this.navigateToFunction(id, kind === 'external', e);
+                    },
+                },
+            });
+        } catch (err) {
+            console.error(err);
+            loader.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#f92672;"></i> ${err.message}`;
+        }
     },
 
     async loadNeighborsPanel() {
@@ -765,6 +848,11 @@ window.FunctionView = {
         this.funcTips = {};
         this.neighborsLoaded = false;
         if (this.neighborsDebounceTimer) clearTimeout(this.neighborsDebounceTimer);
+        this.callGraphLoaded = false;
+        if (this.callGraphInstance) {
+            this.callGraphInstance.destroy();
+            this.callGraphInstance = null;
+        }
 
         if (this._hashChangeListener) {
             window.removeEventListener('hashchange', this._hashChangeListener);

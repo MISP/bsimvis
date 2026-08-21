@@ -629,9 +629,21 @@ window.renderFunctions = TableRenderers.renderFunctions;
 window.renderGlobalFeatures = TableRenderers.renderGlobalFeatures;
 
 window.onTableRowDragStart = function(e) {
+    let id = null;
     const tr = e.target.closest('tr');
-    if (!tr) return;
-    const id = tr.dataset.id || tr.getAttribute('data-id');
+    if (tr) id = tr.dataset.id || tr.getAttribute('data-id');
+    if (!id) {
+        const ef = e.target.closest('.entity-function');
+        if (ef) {
+            const dataStr = ef.getAttribute('data-entity-data');
+            if (dataStr) {
+                try {
+                    const data = JSON.parse(dataStr);
+                    id = data.id || data.function_id;
+                } catch(err){}
+            }
+        }
+    }
     if (!id) return;
 
     let selectedIds = [];

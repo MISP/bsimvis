@@ -390,9 +390,10 @@ async function loadSideGraph(funcId) {
 
         if (typeof Pivotick !== 'undefined') {
             sideGraphInstance = new Pivotick(container, { nodes, edges }, {
-                UI: { mode: 'viewer', tooltip: { enabled: false } },
+                UI: { mode: 'light', tooltip: { enabled: false } },
                 simulation: { useWorker: false },
                 render: {
+                    nodeShape: 'rectangle',
                     renderNode: (node) => {
                         const d = node.getData() || {};
                         if (typeof FunctionView !== 'undefined' && FunctionView.callGraphRenderNode) {
@@ -402,6 +403,19 @@ async function loadSideGraph(funcId) {
                     },
                 },
                 callbacks: {
+                    onNodeHoverIn: (e, node) => {
+                        const raw = node.getData()?.raw;
+                        if (!raw || raw.is_external) return;
+                        if (window.showCodePreview) {
+                            window.showCodePreview(raw.id, raw.name, raw.entrypoint, '', 0, e);
+                        }
+                    },
+                    onNodeHoverOut: (e) => {
+                        if (window.hideCodePreview) window.hideCodePreview(e);
+                    },
+                    onCanvasMousemove: (e) => {
+                        if (window.moveCodePreview) window.moveCodePreview(e);
+                    },
                     onEdgeClick: (e, edge) => {
                         const d = edge.getData() || {};
                         const fromId = edge.from?.id || edge.source?.id;
@@ -478,6 +492,11 @@ async function loadSideGraph(funcId) {
                     }
                 }
             });
+            
+            if (typeof FunctionView !== 'undefined' && FunctionView.loadSimEdgesForNodes) {
+                const nodeIds = nodes.map(n => n.id);
+                FunctionView.loadSimEdgesForNodes(nodeIds, sideGraphInstance);
+            }
         }
         setupGraphDropTarget(document.getElementById('pivotick-side-body'));
     } catch (err) {
@@ -485,7 +504,7 @@ async function loadSideGraph(funcId) {
     }
 }
 
-function setupGraphDropTarget(el) {
+window.setupGraphDropTarget = function(el) {
     if (!el || el._dropSetup) return;
     el._dropSetup = true;
 

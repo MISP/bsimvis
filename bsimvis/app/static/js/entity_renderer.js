@@ -45,6 +45,7 @@ window.EntityRenderer = {
             <div class="entity-function" style="display:flex; align-items:center; gap:8px; overflow:hidden; width: 100%;" 
                  title="${escapeAttr(fInfo.fullSig)}"
                  data-entity-data='${escapeAttr(JSON.stringify(f))}'
+                 draggable="true" ondragstart="typeof onTableRowDragStart === 'function' && onTableRowDragStart(event)"
                  oncontextmenu='EntityRenderer.handleContextMenu(event, "function", this)'>
                 <b class="entity-name" style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
                    onmouseenter="typeof showCodePreview === 'function' && showCodePreview(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, ${escapeAttr(jsString(entry))}, ${escapeAttr(jsString(file_md5))}, ${Number(featCount) || 0}, event)" 

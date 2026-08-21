@@ -1353,9 +1353,10 @@ window.DiffView = {
 
             if (typeof Pivotick !== 'undefined') {
                 const pInst = new Pivotick(container, { nodes, edges }, {
-                    UI: { mode: 'viewer', tooltip: { enabled: false } },
+                    UI: { mode: 'light', tooltip: { enabled: false } },
                     simulation: { useWorker: false },
                     render: {
+                        nodeShape: 'rectangle',
                         renderNode: (node) => {
                             const d = node.getData() || {};
                             if (typeof FunctionView !== 'undefined' && FunctionView.callGraphRenderNode) {

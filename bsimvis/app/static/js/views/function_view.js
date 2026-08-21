@@ -376,9 +376,10 @@ window.FunctionView = {
             container.style.display = 'block';
 
             this.callGraphInstance = new Pivotick(container, { nodes, edges }, {
-                UI: { mode: 'viewer', tooltip: { enabled: false } },
+                UI: { mode: 'light', tooltip: { enabled: false } },
                 simulation: { useWorker: false },
                 render: {
+                    nodeShape: 'rectangle',
                     renderNode: (node) => {
                         const d = node.getData() || {};
                         return FunctionView.callGraphRenderNode(d.raw, d.kind);
@@ -481,6 +482,14 @@ window.FunctionView = {
                     },
                 },
             });
+            
+            // Auto-load similarity edges
+            const nodeIds = nodes.map(n => n.id);
+            this.loadSimEdgesForNodes(nodeIds, this.callGraphInstance);
+            
+            if (typeof window.setupGraphDropTarget === 'function') {
+                window.setupGraphDropTarget(container);
+            }
         } catch (err) {
             console.error(err);
             loader.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#f92672;"></i> ${err.message}`;

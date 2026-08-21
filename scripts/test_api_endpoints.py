@@ -1432,6 +1432,20 @@ def run_all_tests():
     if func_id1:
         test_endpoint("GET", "/api/function/code", params={"id": func_id1})
         test_endpoint("GET", "/api/function/features", params={"id": func_id1})
+        cg_body = test_endpoint(
+            "GET", "/api/function/call_graph", params={"id": func_id1}
+        )
+        if cg_body:
+            check(
+                "function/call_graph: node/callers/callees keys present",
+                "node" in cg_body and "callers" in cg_body and "callees" in cg_body,
+                f"keys={list(cg_body.keys())}",
+            )
+            check(
+                "function/call_graph: node.id matches requested function",
+                cg_body.get("node", {}).get("id") == func_id1,
+                f"node.id={cg_body.get('node', {}).get('id')} vs {func_id1}",
+            )
     if func_id1 and func_id2:
         test_endpoint(
             "GET", "/api/function/diff", params={"id1": func_id1, "id2": func_id2}

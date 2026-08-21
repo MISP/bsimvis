@@ -280,6 +280,73 @@ def get_function_code():
         )
 
 
+def get_function_call_graph():
+    """Depth-1 call graph for a single function: itself plus its direct
+    callers/callees, without the decompiled-code cost of get_function_code."""
+    func_id = request.args.get("id")
+    if not func_id:
+        return {"detail": "Missing function id"}, 400
+
+    try:
+        if ":func:" in func_id:
+            if func_id.startswith("idx:"):
+                collection, rest = func_id[4:].split(":func:", 1)
+            else:
+                collection, rest = func_id.split(":func:", 1)
+            parts = rest.split(":")
+            md5 = parts[0]
+            addr = parts[1]
+        elif ":function:" in func_id:
+            if func_id.startswith("idx:"):
+                collection, rest = func_id[4:].split(":function:", 1)
+            else:
+                collection, rest = func_id.split(":function:", 1)
+            parts = rest.split(":")
+            md5 = parts[0]
+            addr = parts[1]
+        else:
+            parts = func_id.split(":")
+            if len(parts) < 4:
+                return {"detail": f"Invalid ID format: {func_id}"}, 400
+            if parts[0] == "idx":
+                collection = parts[1]
+                md5 = parts[3]
+                addr = parts[4]
+            else:
+                collection = parts[0]
+                md5 = parts[2]
+                addr = parts[3]
+
+        _, _, meta, _ = fetch_function_data(collection, md5, addr, meta_only=True)
+        if not meta:
+            return {"detail": "Function not found"}, 404
+
+        nodes = get_enriched_nodes(collection, md5, addr)
+
+        node = {
+            "id": f"{collection}:func:{md5}:{addr}",
+            "name": meta.get("function_name"),
+            "entrypoint": meta.get("entrypoint_address", addr),
+            "namespace": meta.get("namespace"),
+            "return_type": meta.get("return_type"),
+            "file_md5": md5,
+            "is_external": False,
+        }
+
+        return {"node": node, "callers": nodes["callers"], "callees": nodes["callees"]}
+    except Exception as e:
+        error_traceback = traceback.format_exc()
+        print(error_traceback)
+        return (
+            {
+                "detail": str(e),
+                "type": e.__class__.__name__,
+                "traceback": error_traceback,
+            },
+            500,
+        )
+
+
 def get_file_call_graph():
     collection = request.args.get("collection")
     file_md5 = request.args.get("file_md5")

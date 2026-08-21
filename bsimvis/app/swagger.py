@@ -1047,6 +1047,16 @@ class FunctionCode(Resource):
         return get_function_code()
 
 
+@ns_function.route("/call_graph")
+class FunctionCallGraph(Resource):
+    @ns_function.doc(params={"id": "Function ID (idx:col:func:md5:addr)"})
+    def get(self):
+        """Returns the function plus its direct callers/callees (depth 1), without decompiled code."""
+        from bsimvis.app.routes.function_code import get_function_call_graph
+
+        return get_function_call_graph()
+
+
 @ns_function.route("/diff")
 class FunctionDiff(Resource):
     @ns_function.doc(

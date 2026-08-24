@@ -6,6 +6,7 @@ from collections import Counter
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services import sim_edges
+from bsimvis.app.services.cluster_utils import default_bin_cluster_name
 
 _EMPTY_I = np.empty(0, dtype=np.int32)
 _EMPTY_F = np.empty(0, dtype=np.float32)
@@ -388,10 +389,8 @@ class BinClusterService:
                         m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]]
                     )
 
-            default_name = (
-                Counter(names_list).most_common(1)[0][0]
-                if names_list
-                else f"Binary Cluster {label}"
+            default_name = default_bin_cluster_name(
+                names_list, avtype_list, yara_list, f"Binary Cluster {label}"
             )
 
             def build_freq(items):
@@ -1179,10 +1178,8 @@ class BinClusterService:
                         m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]]
                     )
 
-            default_name = (
-                Counter(names_list).most_common(1)[0][0]
-                if names_list
-                else f"Binary Cluster {label}"
+            default_name = default_bin_cluster_name(
+                names_list, avtype_list, yara_list, f"Binary Cluster {label}"
             )
 
             def build_freq(items):

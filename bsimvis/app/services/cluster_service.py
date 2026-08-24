@@ -6,7 +6,10 @@ import uuid
 from collections import Counter, defaultdict
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.cluster_utils import pick_best_shared_cluster
+from bsimvis.app.services.cluster_utils import (
+    pick_best_shared_cluster,
+    default_bin_cluster_name,
+)
 from bsimvis.app.services import mem_util, sim_edges
 
 # Above this many nodes a dense size^2 float64 distance matrix stops being
@@ -2884,10 +2887,8 @@ class ClusterService:
                         m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]]
                     )
 
-            default_name = (
-                Counter(names_list).most_common(1)[0][0]
-                if names_list
-                else f"Pool File Cluster {c_uuid}"
+            default_name = default_bin_cluster_name(
+                names_list, avtype_list, yara_list, f"Pool File Cluster {c_uuid}"
             )
 
             def build_freq(items):

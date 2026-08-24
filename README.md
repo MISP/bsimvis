@@ -143,19 +143,32 @@ Full endpoint reference in [doc/api_documentation.md](doc/api_documentation.md);
 
 ## Binary upload
 
+One call is the whole story: analysis, indexing, and per-file similarity all
+run as part of this one job, and the collection's function/binary clusters
+rebuild automatically a short while after uploads to it go quiet
+(`clustering.idle_debounce_seconds` in `bsimvis_config.toml`, default 30s) --
+see [Batch upload](#batch-upload-optional) below for why you don't need to
+call anything else, even for many files at once.
+
 ```
 # upload to /api/file/upload
 curl -X POST --data-binary "@/path/to/file" \
   "http://localhost:5000/api/file/upload?collection=main&file_name=my_binary&profile=fast"
 
-# Follow pipeline with response
+# Response
 {
     "status": "processing",
     "file_md5": "b7680c697c69aff3cd8f44fffcb7d683",
-    "pipeline_id": "pipe_f4f87081-ab7d-4077",
-    "message": "Binary uploaded. Analysis pipeline started."
+    "pipeline_id": "b2e1a4c0-...",
+    "message": "Binary uploaded. Analysis started."
 }
 ```
+
+Add `&priority=high` to jump this file's analysis ahead of other pending jobs
+on the shared worker pool -- useful when another collection has a long-running
+job tying up workers and you need one file processed fast regardless. It does
+not preempt a job already running, only reorders what an idle worker picks up
+next.
 
 ## Ghidra project upload 
 
@@ -171,34 +184,34 @@ curl -X POST --data-binary @$gpr_name.gpr.zip \
   "http://localhost:5000/api/file/upload?file_name=$gpr_name&collection=main&profile=fast"
 ```
 
-## Batch upload + finalize
+## Batch upload (optional)
 
-Upload multiple files under one `batch_uuid`, then call `batch_finalize` once to cluster and build binary similarity for the whole batch instead of per-file:
+Just upload each file with plain `POST /api/file/upload` calls, in a loop or
+in parallel -- no `batch_uuid`, no finalize call needed. Every collection has
+its own lane: all the files you upload analyze fully in parallel across
+workers, and once uploads to that collection go quiet, the lane
+automatically groups everything uploaded in that window, clears old
+cluster/bin_sim results, and rebuilds function clusters, binary similarity,
+and binary clusters -- once, covering the whole batch:
 
 ```
-batch_uuid=$(python3 -c "import uuid; print(uuid.uuid4().hex)")
-
-# Upload each file with skip_sim, sharing the batch_uuid; collect the returned pipeline_ids
 for f in /path/to/*.bin; do
   curl -s -X POST --data-binary "@$f" \
-    "http://localhost:5000/api/file/upload?collection=main&file_name=$(basename $f)&batch_uuid=$batch_uuid&skip_sim=true"
+    "http://localhost:5000/api/file/upload?collection=main&file_name=$(basename $f)"
 done
-# -> {"status": "processing", "file_md5": "...", "pipeline_id": "pipe_...", "batch_uuid": "..."}
-
-# Finalize: pass every pipeline_id collected above
-curl -X POST -H "Content-Type: application/json" \
-  -d '{"pipeline_ids": ["pipe_a", "pipe_b"], "batch_uuid": "'"$batch_uuid"'", "collection": "main", "algo": "unweighted_cosine"}' \
-  "http://localhost:5000/api/file/upload/batch_finalize"
-
-# Response
-{
-    "status": "success",
-    "master_pipeline_id": "pipe_....",
-    "batch_uuid": "..."
-}
+# each upload analyzes immediately; clustering fires on its own ~30s after the last one
 ```
 
-`batch_finalize` groups the given pipelines, clears old cluster/bin_sim results, then runs function clustering, binary similarity build, binary clustering, and indexing in order. Pass `skip_sim: true` to skip the binary similarity steps. See [doc/api_documentation.md](doc/api_documentation.md#post-apifileuploadbatch_finalize) for full parameters.
+`POST /api/cluster/rebuild_all` and `POST /api/file/upload/batch_finalize`
+(explicit `pipeline_ids` list, `batch_uuid` grouping) still work for forcing
+a rebuild right now instead of waiting, or for scripts that already manage
+their own batching -- they queue behind whatever's currently active for that
+collection instead of racing it (a collection's lane only ever runs one
+clear/rebuild at a time; two overlapping requests used to corrupt each
+other's results). Add `"priority": "high"` to jump an explicit request ahead
+of other rebuilds already queued for that same collection. See
+[doc/api_documentation.md](doc/api_documentation.md#post-apifileuploadbatch_finalize)
+for `batch_finalize`'s full parameters.
 
 ## Follow pipeline progress
 
@@ -217,13 +230,23 @@ curl -s "http://localhost:5000/api/jobs/pipe_f4f87081-ab7d-4077"
 
 ## Build function clusters and Binary similarities
 
-```
-# With all binaries uploaded and ingestion pipeline completed
-# Or periodically schedule 
+Runs automatically after uploads to a collection go quiet (see
+[Batch upload](#batch-upload-optional) above). Call this directly to force it
+right now instead of waiting -- it queues behind whatever's currently active
+for that collection rather than running concurrently with it:
 
+```
 curl -X POST -H "Content-Type: application/json" \
  -d '{"collection": "main", "algo": "unweighted_cosine"}' \
  http://localhost:5000/api/cluster/rebuild_all
+
+# Response -- pipeline_id is pollable via GET /api/jobs/{pipeline_id} either way,
+# whether it started immediately or is waiting behind another active rebuild
+{
+    "job_id": "b2e1a4c0-...",
+    "pipeline_id": "b2e1a4c0-...",
+    "status": "queued"
+}
 ```
 
 # CLI tool

@@ -3,6 +3,7 @@ import time
 import json
 from enum import Enum
 from .redis_client import get_queue_redis, get_redis
+from .config_service import config_service
 
 
 class JobStatus(Enum):
@@ -76,7 +77,7 @@ class JobService:
             pass
         return None
 
-    def create_job(self, job_type, payload, parent_id=None, is_subtask=False):
+    def create_job(self, job_type, payload, parent_id=None, is_subtask=False, enqueue=True):
         """Creates a job record and returns the job_id."""
         job_id = str(uuid.uuid4())
         timestamp = int(time.time() * 1000)
@@ -97,6 +98,8 @@ class JobService:
                 job_data["collection"] = payload["collection"]
             elif "pool_id" in payload:
                 job_data["collection"] = f"pool:{payload['pool_id']}"
+            if "priority" in payload:
+                job_data["priority"] = payload["priority"]
 
         # Store job metadata as a Hash
         self.r.hset(f"job:{job_id}", mapping=job_data)
@@ -114,7 +117,7 @@ class JobService:
                 self.r.ltrim(f"jobs:collection:{coll}", 0, 999)
 
         # If it's not a subtask of a pipeline (or it's the first subtask), enqueue it
-        if not is_subtask:
+        if not is_subtask and enqueue:
             self.enqueue_job(job_id)
 
         return job_id
@@ -281,6 +284,150 @@ class JobService:
 
         return group_id
 
+    # --- Per-collection lane -------------------------------------------------
+    # One rule, no job-type classification: for a given collection, exactly one
+    # top-level unit (job/pipeline/group with no parent) runs at a time.
+    # Concurrency only exists inside a group's own members. See
+    # /home/thomas/.claude/plans/synthetic-dancing-harbor.md.
+
+    _ADVANCE_LANE_LUA = """
+    local nxt = redis.call('lpop', KEYS[2])
+    if nxt then
+      redis.call('set', KEYS[1], nxt)
+    else
+      redis.call('del', KEYS[1])
+    end
+    return nxt
+    """
+
+    def _lane_key(self, collection, suffix):
+        return f"lane:{collection}:{suffix}"
+
+    def _touch_active_lanes(self, collection):
+        self.r.sadd("active_lanes", collection)
+
+    def _maybe_clear_active_lanes(self, collection):
+        if (
+            not self.r.exists(self._lane_key(collection, "active"))
+            and self.r.llen(self._lane_key(collection, "pending")) == 0
+            and not self.r.exists(self._lane_key(collection, "wave_deadline"))
+        ):
+            self.r.srem("active_lanes", collection)
+
+    def submit_to_lane(self, collection, tasks_or_id, priority=False):
+        """Submits a top-level unit (a task list, or an already-created job/
+        pipeline/group id) to run for this collection. Dispatches immediately
+        if the lane is idle; otherwise queues (front if priority) and runs
+        once the currently active unit finishes. Always returns a pollable
+        id -- nothing is rejected, dropped, or silently merged."""
+        if isinstance(tasks_or_id, str):
+            unit_id = tasks_or_id
+        else:
+            unit_id = self.create_pipeline(tasks_or_id, enqueue=False)
+
+        self._touch_active_lanes(collection)
+        active_key = self._lane_key(collection, "active")
+        if self.r.set(active_key, unit_id, nx=True):
+            self.start_job(unit_id)
+        else:
+            pending_key = self._lane_key(collection, "pending")
+            if priority:
+                self.r.lpush(pending_key, unit_id)
+            else:
+                self.r.rpush(pending_key, unit_id)
+        return unit_id
+
+    def advance_lane(self, collection):
+        """Called whenever a collection's active lane unit reaches a terminal
+        state. Promotes the next pending unit, if any. The single
+        serialization point -- no job-type awareness at all."""
+        active_key = self._lane_key(collection, "active")
+        pending_key = self._lane_key(collection, "pending")
+        next_id = self.r.eval(self._ADVANCE_LANE_LUA, 2, active_key, pending_key)
+        if next_id:
+            next_id = next_id.decode() if isinstance(next_id, bytes) else next_id
+            self.start_job(next_id)
+        self._maybe_clear_active_lanes(collection)
+
+    def open_or_extend_wave(self, collection, job_id, debounce_seconds):
+        """Records an upload's job_id into the collection's currently-open
+        debounce window, purely for later grouping -- it does NOT delay the
+        job itself. The caller enqueues it normally (analysis starts
+        immediately, fully parallel across workers, same as today); this only
+        controls when the collection's next auto-cluster fires. Deliberately
+        a fixed deadline from the first arrival (SETNX), not a sliding one --
+        otherwise a collection under steady upload traffic would never seal."""
+        self._touch_active_lanes(collection)
+        wave_key = self._lane_key(collection, "wave")
+        deadline_key = self._lane_key(collection, "wave_deadline")
+        self.r.rpush(wave_key, job_id)
+        self.r.setnx(deadline_key, int(time.time() * 1000) + debounce_seconds * 1000)
+
+    def seal_wave(self, collection):
+        """Seals the open wave (if any) into a group, wraps it with the
+        standard cluster/bin_sim rebuild steps, and submits that pipeline to
+        the lane. This *is* automatic clustering-after-batch -- no separate
+        finalize call needed.
+
+        Members were already enqueued and may have started, or even finished,
+        running before this fires (open_or_extend_wave never delays them) --
+        create_group(..., enqueue=True) is required here, not enqueue=False:
+        for an already-terminal member, start_job's own status recheck
+        retroactively fires advance_parent now that parent_id is set, exactly
+        as if it had just completed. Without enqueue=True a fast file that
+        finishes before the debounce window closes would leave the group's
+        barrier permanently unfired."""
+        wave_key = self._lane_key(collection, "wave")
+        deadline_key = self._lane_key(collection, "wave_deadline")
+        members = self.r.lrange(wave_key, 0, -1)
+        self.r.delete(wave_key, deadline_key)
+        if not members:
+            self._maybe_clear_active_lanes(collection)
+            return None
+        members = [m.decode() if isinstance(m, bytes) else m for m in members]
+        group_id = self.create_group(members, enqueue=True)
+        # Lazy import: cluster.py imports JobService, so a module-level import
+        # here would be circular.
+        from bsimvis.app.routes.cluster import build_rebuild_all_tasks
+
+        algo = config_service.get("similarity.algo", "unweighted_cosine")
+        tasks = [group_id] + build_rebuild_all_tasks(collection, algo, skip_sim=False)
+        return self.submit_to_lane(collection, tasks)
+
+    def tick_lanes(self):
+        """Idle-loop sweep (called from Worker.run()'s idle branch): seals any
+        wave past its deadline, and self-heals a lane whose active unit has
+        gone stale (crashed worker) instead of relying on a fixed lock TTL."""
+        lane_stale_ms = config_service.get("clustering.lane_stale_seconds", 1800) * 1000
+        now_ms = int(time.time() * 1000)
+
+        for collection in self.r.smembers("active_lanes"):
+            collection = (
+                collection.decode() if isinstance(collection, bytes) else collection
+            )
+            deadline_raw = self.r.get(self._lane_key(collection, "wave_deadline"))
+            if deadline_raw and now_ms - safe_int(deadline_raw) >= 0:
+                self.seal_wave(collection)
+
+            active_id = self.r.get(self._lane_key(collection, "active"))
+            if not active_id:
+                self._maybe_clear_active_lanes(collection)
+                continue
+            active_id = active_id.decode() if isinstance(active_id, bytes) else active_id
+            job = self.r.hgetall(f"job:{active_id}")
+            status = job.get("status")
+            updated_at = job.get("updated_at")
+            if (
+                status in (JobStatus.PENDING.value, JobStatus.RUNNING.value)
+                and updated_at
+                and now_ms - safe_int(updated_at) > lane_stale_ms
+            ):
+                self.add_log(
+                    active_id,
+                    "Lane self-heal: active unit stale (worker likely crashed), promoting next.",
+                )
+                self.advance_lane(collection)
+
     def enqueue_job(self, job_id, is_continuation=False):
         """Pushes a job ID onto the appropriate priority queue.
 
@@ -311,7 +458,7 @@ class JobService:
             JobType.SYNC_MILVUS.value,
         ]
 
-        if jtype in high_priority_types:
+        if jtype in high_priority_types or job.get("priority") == "high":
             self.r.lpush("jobs:pending:high", job_id)
         else:
             if is_continuation:
@@ -379,9 +526,14 @@ class JobService:
         self.r.hset(f"job:{job_id}", "status", JobStatus.COMPLETED.value)
         self.update_progress(job_id, 100)
 
-        parent_id = self.r.hget(f"job:{job_id}", "parent_id")
+        data = self.r.hgetall(f"job:{job_id}")
+        parent_id = data.get("parent_id")
         if parent_id:
             self.advance_parent(parent_id, job_id)
+        else:
+            collection = data.get("collection")
+            if collection:
+                self.advance_lane(collection)
 
     def advance_parent(self, parent_id, finished_job_id):
         """Advances the parent job based on its type (pipeline sequence or group barrier)."""
@@ -460,6 +612,10 @@ class JobService:
                 self.advance_parent(parent_id, job_id)
             else:
                 self.fail_job(parent_id, f"Failed because sub-task {job_id} failed.")
+        else:
+            collection = self.r.hget(f"job:{job_id}", "collection")
+            if collection:
+                self.advance_lane(collection)
 
     def get_job_status(self, job_id):
         """Returns the full job or pipeline status."""
@@ -596,6 +752,11 @@ class JobService:
         self.r.lpush(
             f"job_log:{job_id}", f"[{int(time.time()*1000)}] Job cancelled by user."
         )
+
+        if not data.get("parent_id"):
+            collection = data.get("collection")
+            if collection:
+                self.advance_lane(collection)
 
         # Cancel all subtasks recursively
         if "task_ids" in data:

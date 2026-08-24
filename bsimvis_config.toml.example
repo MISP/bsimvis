@@ -38,6 +38,12 @@
     min_sim = 0.0
     min_features = 0
     min_cohesion = 0.5
+    # Seconds of upload quiet on a collection before its lane auto-fires a
+    # full clear+cluster+bin_sim rebuild (see the per-collection job lane).
+    idle_debounce_seconds = 30
+    # A lane's active unit stays "stuck" only this long before the idle sweep
+    # self-heals it (crashed worker) and promotes the next pending unit.
+    lane_stale_seconds = 1800
 
 [similarity]
     top_k = 1000

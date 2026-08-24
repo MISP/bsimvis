@@ -77,6 +77,7 @@ class Worker:
                     )
 
                 if not job_id:
+                    self.job_service.tick_lanes()
                     continue
 
                 # Fetch job metadata
@@ -160,50 +161,18 @@ class Worker:
             files.extend(self._collect_project_files(sub))
         return files
 
-    def _post_chunk(
-        self,
-        chunk,
-        idx,
-        is_final,
-        collection,
-        file_md5,
-        file_meta,
-        skip_sim,
-        payload,
-        hosts,
-        job_id,
-        splice_into_parent=True,
-    ):
-        import requests
-
-        chunk_payload = {
-            "collection": collection,
-            "file_md5": file_md5,
-            "chunk_index": idx,
-            "is_final": is_final,
-            "skip_sim": skip_sim,
-            "file_metadata": file_meta if idx == 0 else None,
-            "functions": chunk,
-        }
-        if splice_into_parent:
-            chunk_payload["parent_job_id"] = job_id
-
-        for opt in ["top_k", "min_score", "min_features", "algo"]:
-            if opt in payload:
-                chunk_payload[opt] = payload[opt]
-        for api_host in hosts:
-            url = f"http://{api_host}/api/file/upload_chunk"
-            resp = requests.post(url, json=chunk_payload, timeout=300)
-            resp.raise_for_status()
-            return resp.json()
-
-    def _stream_program_chunks(
-        self, program, payload, hosts, job_id, splice_into_parent=True
-    ):
+    def _index_streamed_program(self, program, payload, job_id):
+        """Analyzes and indexes one program's functions in-process, chunk by
+        chunk -- bounding RAM the same way the old chunked-upload endpoint
+        did, but without spawning a job or HTTP call per chunk. Replaces the
+        old _post_chunk/self-HTTP-call design, which spliced dynamically
+        created jobs into this job's own running pipeline and, as a
+        consequence, ran BUILD_SIM/INDEX_SIM twice per upload. See Item D in
+        /home/thomas/.claude/plans/synthetic-dancing-harbor.md."""
         collection = payload.get("collection", "main")
         skip_sim = payload.get("skip_sim", False)
+        batch_uuid = payload.get("batch_uuid")
 
-        # Initialize stream generator with job context for real-time progress
         generator = ghidra_service.stream_bsim_data(
             program,
             payload,
@@ -227,49 +196,105 @@ class Worker:
 
         file_md5 = file_meta.get("file_md5")
 
-        # Look-ahead: send each chunk immediately without buffering all of them.
-        # Holding one chunk behind lets us detect the final chunk on arrival of the next.
-        idx = 0
-        prev_chunk = None
+        num_functions = 0
+        total_features = 0
         for chunk in generator:
-            if prev_chunk is not None:
-                self._post_chunk(
-                    prev_chunk,
-                    idx - 1,
-                    False,
-                    collection,
-                    file_md5,
-                    file_meta,
-                    skip_sim,
-                    payload,
-                    hosts,
-                    job_id,
-                    splice_into_parent=splice_into_parent,
-                )
-                self.job_service.update_progress(job_id, 80, f"Uploaded chunk {idx}")
-            prev_chunk = chunk
-            idx += 1
+            if not chunk:
+                continue
+            num_functions += len(chunk)
+            total_features += sum(
+                f.get("function_metadata", {}).get("bsim_features_count", 0)
+                for f in chunk
+            )
+            self.processing_service.index_functions(
+                collection,
+                None,
+                self.job_service,
+                job_id,
+                functions_list=chunk,
+                file_meta=file_meta,
+                file_md5=file_md5,
+                batch_uuid=batch_uuid,
+            )
+            self.job_service.update_progress(
+                job_id, 80, f"Indexed {num_functions} functions for {file_md5}"
+            )
 
-        # Send the final chunk (or empty sentinel when the program has no functions)
-        final_chunk = prev_chunk if prev_chunk is not None else []
-        final_idx = max(idx - 1, 0)
-        res = self._post_chunk(
-            final_chunk,
-            final_idx,
-            True,
+        self.processing_service.index_metadata(
             collection,
-            file_md5,
-            file_meta,
-            skip_sim,
-            payload,
-            hosts,
+            None,
+            self.job_service,
             job_id,
-            splice_into_parent=splice_into_parent,
+            file_meta=file_meta,
+            num_functions=num_functions,
+            total_features=total_features,
         )
-        self.job_service.update_progress(job_id, 100, f"Uploaded chunk {idx}/{idx}")
 
-        pipeline_id = res.get("pipeline_id") if isinstance(res, dict) else None
-        return pipeline_id
+        # Same function-id resolution the INDEX_FEATURES dispatch used.
+        batch_func_set = f"{collection}:idx:file:functions:{file_md5}"
+        raw_ids = list(self.r_data.smembers(batch_func_set))
+        function_ids = [
+            fid.replace(":meta", "") if fid.endswith(":meta") else fid
+            for fid in raw_ids
+        ]
+        self.feature_service.index_functions(
+            collection, function_ids, self.job_service, job_id
+        )
+
+        if not skip_sim:
+            algo = payload.get(
+                "algo", config_service.get("similarity.algo", "unweighted_cosine")
+            )
+            top_k = payload.get(
+                "top_k", config_service.get("similarity.top_k", 1000)
+            )
+            # Collection-sticky: first build locks these; later payload values
+            # ignored so the BSim-vs-hash split stays stable.
+            from bsimvis.app.services.collection_config import resolve_and_lock
+
+            min_score = resolve_and_lock(
+                collection, "min_score", payload.get("min_score")
+            )
+            min_features = resolve_and_lock(
+                collection, "min_features", payload.get("min_features")
+            )
+            index_depth = payload.get("index_depth", "minimal")
+
+            if algo == "milvus_sparse":
+                from bsimvis.app.services.milvus_service import milvus_service
+
+                if milvus_service.enabled:
+                    milvus_service.sync_collection(
+                        collection, self.r_data, self.job_service, job_id
+                    )
+
+            self.similarity_service.build_batch(
+                collection,
+                batch_uuid=batch_uuid,
+                md5=file_md5,
+                algo=algo,
+                top_k=top_k,
+                min_score=min_score,
+                min_features=min_features,
+                job_service=self.job_service,
+                job_id=job_id,
+                index_depth=index_depth,
+                skip_write=payload.get("skip_write", False),
+            )
+            self.similarity_service.index_similarities(
+                collection,
+                algo=algo,
+                pool_id=payload.get("pool_id"),
+                md5=file_md5,
+                batch_uuid=batch_uuid,
+                job_service=self.job_service,
+                job_id=job_id,
+            )
+
+        self.job_service.update_progress(
+            job_id, 100, f"Indexing complete for {file_md5}"
+        )
+        return file_md5
 
     def _dispatch(self, jtype, payload, job_id):
         """Dispatcher for background jobs."""
@@ -304,21 +329,8 @@ class Worker:
                 with open(temp_path, "wb") as f:
                     f.write(raw_bytes)
 
-                # 3. Run Analysis & Stream Chunks directly to API
-                app_host = os.getenv("APP_HOST", "localhost")
-                app_port = os.getenv("APP_PORT", "5000")
-                fallback_host = f"{app_host}:{app_port}"
-
-                # Check environment variables first, then fallback to config
-                hosts = (
-                    fallback_host
-                    if os.getenv("APP_PORT")
-                    else config_service.get("bsimvis.host", fallback_host)
-                )
-                if isinstance(hosts, str):
-                    hosts = [hosts]
-
-                # We will analyze using stream_bsim_data
+                # 3. Run analysis, then index in-process (see
+                # _index_streamed_program)
                 if temp_path.endswith(".gpr.zip"):
                     self.job_service.add_log(
                         job_id, f"Extracting Ghidra project archive {orig_name}..."
@@ -352,7 +364,6 @@ class Worker:
                     project = GhidraProject.openProject(
                         Path(gpr_path).parent, Path(gpr_path).stem
                     )
-                    pipeline_ids = []
                     try:
                         root_folder = project.getProjectData().getRootFolder()
                         files = self._collect_project_files(root_folder)
@@ -381,55 +392,13 @@ class Worker:
                                     payload.get("profile", "fast"),
                                     force_reanalysis=False,
                                 )
-                                pipe_id = self._stream_program_chunks(
-                                    program,
-                                    payload,
-                                    hosts,
-                                    job_id,
-                                    splice_into_parent=True,
-                                )
-                                if pipe_id:
-                                    pipeline_ids.append(pipe_id)
+                                # Indexed in-process, one program at a time --
+                                # each program still gets its own file entry
+                                # (own md5), just no per-program job/pipeline.
+                                self._index_streamed_program(program, payload, job_id)
                             finally:
                                 if program:
                                     program.release(project)
-
-                        if pipeline_ids:
-                            group_id = self.job_service.create_group(
-                                pipeline_ids, enqueue=False
-                            )
-                            parent_pipeline_id = self.r_queue.hget(
-                                f"job:{job_id}", "parent_id"
-                            )
-                            if parent_pipeline_id:
-                                parent_pipeline_id = (
-                                    parent_pipeline_id.decode()
-                                    if isinstance(parent_pipeline_id, bytes)
-                                    else parent_pipeline_id
-                                )
-                                pipe_data = self.r_queue.hgetall(
-                                    f"job:{parent_pipeline_id}"
-                                )
-                                if pipe_data and "task_ids" in pipe_data:
-                                    existing_tids = json.loads(pipe_data["task_ids"])
-                                    try:
-                                        idx = existing_tids.index(job_id)
-                                        updated_tids = (
-                                            existing_tids[: idx + 1]
-                                            + [group_id]
-                                            + existing_tids[idx + 1 :]
-                                        )
-                                    except ValueError:
-                                        updated_tids = existing_tids + [group_id]
-                                    self.r_queue.hset(
-                                        f"job:{parent_pipeline_id}",
-                                        "task_ids",
-                                        json.dumps(updated_tids),
-                                    )
-                                    self.job_service.add_log(
-                                        parent_pipeline_id,
-                                        f"Spliced child pipelines group {group_id} into pipeline.",
-                                    )
                     finally:
                         project.close()
                 else:
@@ -474,7 +443,7 @@ class Worker:
                                 payload.get("profile", "fast"),
                                 force_reanalysis=True,
                             )
-                            self._stream_program_chunks(program, payload, hosts, job_id)
+                            self._index_streamed_program(program, payload, job_id)
                         finally:
                             if "program" in locals() and program:
                                 program.release(project)

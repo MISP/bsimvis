@@ -666,6 +666,9 @@ def _sankey_summary(diff_data):
             k: diff_data.get(k)
             for k in (
                 "score",
+                "score_code",
+                "score_library",
+                "score_content",
                 "is_container_pair",
                 "coverage_a",
                 "coverage_b",
@@ -728,6 +731,9 @@ def _sankey_summary(diff_data):
         k: diff_data.get(k)
         for k in (
             "score",
+            "score_code",
+            "score_library",
+            "score_content",
             "file_metadata_a",
             "file_metadata_b",
             *SUMMARY_FIELDS,

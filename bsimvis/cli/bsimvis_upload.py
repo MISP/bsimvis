@@ -283,6 +283,8 @@ def _perform_raw_upload(raw_bytes, file_name, args):
                 params["skip_sim"] = True
             if getattr(args, "enable", None):
                 params["enable"] = args.enable
+            if getattr(args, "disable", None):
+                params["disable"] = args.disable
             if getattr(args, "archive_password", None) is not None:
                 params["archive_password"] = args.archive_password
 
@@ -898,9 +900,19 @@ def cli_main():
         choices=["FunctionID", "capa", "yara", "rulezet"],
         metavar="MODULE",
         default=[],
-        help="Enable an analysis module (repeatable, all off by default): "
-        "FunctionID (library tagging), capa, yara (vendored rules), "
-        "rulezet (mirrored rules)",
+        help="Enable an analysis module for this run (repeatable), on top of "
+        "the server's [analysis_modules].enabled default: FunctionID "
+        "(library tagging), capa, yara (vendored rules), rulezet (mirrored "
+        "rules)",
+    )
+    decomp_args.add_argument(
+        "--disable",
+        action="append",
+        choices=["FunctionID", "capa", "yara", "rulezet"],
+        metavar="MODULE",
+        default=[],
+        help="Disable an analysis module for this run (repeatable), even if "
+        "the server's [analysis_modules].enabled default turns it on",
     )
 
     jvm_options = parser.add_argument_group("JVM Options")

@@ -4501,6 +4501,51 @@ def test_skip_modules_payload():
         f"payload: {payload}",
     )
 
+    # `disable` must win over `enable` for the same module -- it's the escape
+    # hatch for a module the instance config turns on by default.
+    with open(TEST_BINARY, "rb") as fh:
+        raw2 = fh.read() + uuid.uuid4().bytes
+
+    body2 = test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={
+            "collection": COLLECTION,
+            "file_name": "skip_modules_test_bin_2",
+            "batch_name": "skip modules test",
+            "skip_sim": "true",
+            "enqueue": "false",
+            "enable": ["capa", "rulezet"],
+            "disable": ["capa"],
+        },
+        raw_body=raw2,
+        headers={"Content-Type": "application/octet-stream"},
+        label="POST /api/file/upload?enable=capa&enable=rulezet&disable=capa",
+    )
+    if body2:
+        job2 = requests.get(
+            f"{BASE_URL}/api/jobs/{body2.get('pipeline_id')}", timeout=10
+        ).json()
+        ghidra_task2 = next(
+            (t for t in job2.get("sub_tasks", []) if t.get("type") == "ghidra_analyze"),
+            None,
+        )
+        payload2 = (
+            json.loads(ghidra_task2["payload"])
+            if ghidra_task2 and ghidra_task2.get("payload")
+            else {}
+        )
+        check(
+            "disable=capa wins over enable=capa",
+            payload2.get("skip_capa") is True,
+            f"payload: {payload2}",
+        )
+        check(
+            "enable=rulezet still applies alongside disable=capa",
+            payload2.get("skip_rulezet") is False,
+            f"payload: {payload2}",
+        )
+
 
 # ---------------------------------------------------------------------------
 # Step 5 – Print summary

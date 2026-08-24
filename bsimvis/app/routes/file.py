@@ -509,11 +509,17 @@ def _ingest_raw_binary(
             val.lower() in ("true", "1") if isinstance(val, str) else bool(val)
         )
 
-    # Analysis modules are opt-in: every one of them costs more than the whole
-    # rest of the job on a typical sample (doc/bench-fid-cost.md), so an upload
-    # that names none of them runs none of them. The worker still speaks
-    # `skip_*`, so the inversion happens here and nowhere else.
-    enabled = set(request.args.getlist("enable"))
+    # Analysis modules default to `[analysis_modules].enabled` in the instance
+    # config (doc/bench-fid-cost.md has the per-module cost that motivated
+    # making them opt-in in the first place). A request can widen or narrow
+    # that default per-upload via `enable`/`disable` without touching the
+    # config. The worker still speaks `skip_*`, so the inversion happens here
+    # and nowhere else.
+    from bsimvis.app.services.config_service import config_service
+
+    enabled = set(config_service.get("analysis_modules.enabled", []))
+    enabled |= set(request.args.getlist("enable"))
+    enabled -= set(request.args.getlist("disable"))
     analysis_payload["skip_function_id"] = "FunctionID" not in enabled
     analysis_payload["skip_capa"] = "capa" not in enabled
     analysis_payload["skip_yara"] = "yara" not in enabled

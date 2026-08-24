@@ -529,9 +529,19 @@ def main():
         choices=["FunctionID", "capa", "yara", "rulezet"],
         metavar="MODULE",
         default=[],
-        help="Enable an analysis module (repeatable, all off by default): "
-        "FunctionID (library tagging), capa, yara (vendored rules), "
-        "rulezet (mirrored rules)",
+        help="Enable an analysis module for this run (repeatable), on top of "
+        "the server's [analysis_modules].enabled default: FunctionID "
+        "(library tagging), capa, yara (vendored rules), rulezet (mirrored "
+        "rules)",
+    )
+    decomp_args.add_argument(
+        "--disable",
+        action="append",
+        choices=["FunctionID", "capa", "yara", "rulezet"],
+        metavar="MODULE",
+        default=[],
+        help="Disable an analysis module for this run (repeatable), even if "
+        "the server's [analysis_modules].enabled default turns it on",
     )
 
     jvm_options = upload_parser.add_argument_group("JVM Options")

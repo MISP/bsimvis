@@ -61,6 +61,15 @@
     # filters. Slowest phase of a clustering run; set false to skip it.
     propagate_sim_indexes = true
 
+[analysis_modules]
+    # Function-tagging modules run during analysis, off by default: each one
+    # costs more than the rest of the job on a typical sample
+    # (doc/bench-fid-cost.md). List the ones every upload should run unless
+    # overridden per-request via `enable`/`disable` (CLI: --enable/--disable;
+    # API: repeatable `enable`/`disable` query params on /api/file/upload).
+    # Choices: "FunctionID", "capa", "yara", "rulezet".
+    enabled = []
+
 [similarity]
     top_k = 1000
     min_score = 0.9

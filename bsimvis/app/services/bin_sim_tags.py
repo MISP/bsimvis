@@ -68,8 +68,10 @@ TAG_MISMATCH = "tag_mismatch"
 #               off `family` because a CVE names a bug in someone else's
 #               software, not the thing the rule is looking for.
 #
-# `mbc:` had an axis here that nothing ever wrote. The namespace stays reserved
-# in tag_taxonomy; the axis comes back when a producer does.
+#   mbc      -- Malware Behavior Catalog objective/behavior, written by capa's
+#               own MBC mapping (`tag_taxonomy.capa_meta_tags`). Answers the
+#               same question as `category`/`capa`/`yara` in a fourth
+#               vocabulary, so it gets its own axis for the same reason they do.
 #
 # Splitting one flat tag space by `conf / len(tags)` mixed them: a single
 # behaviour tag on a libc function used to halve libc's mass, and the same tag on
@@ -87,6 +89,7 @@ AXIS_CATEGORY = "category"
 AXIS_USER = "user"
 AXIS_CAPA = "capa"
 AXIS_MITRE = "mitre"
+AXIS_MBC = "mbc"
 AXIS_YARA = "yara"
 AXIS_FAMILY = "family"
 AXIS_VULN = "vuln"
@@ -101,6 +104,7 @@ AXES = (
     AXIS_USER,
     AXIS_CAPA,
     AXIS_MITRE,
+    AXIS_MBC,
     AXIS_YARA,
     AXIS_RULESET,
     AXIS_FAMILY,
@@ -154,7 +158,7 @@ DEFAULT_AXIS = AXIS_USER
 # schema is stale no matter what its `tags_rev` says -- without this, a doc
 # written by the two-axis code and one written here are indistinguishable, and
 # the UI silently renders an axis that was never computed.
-SPLIT_SCHEMA = 5
+SPLIT_SCHEMA = 6
 
 # Similarity is bucketed into fixed 5% bins so the UI can re-aggregate to any of
 # its 5/10/20/25% split settings without the backend knowing which is selected.
@@ -578,6 +582,7 @@ JOINT_INNER_AXES = (
     AXIS_USER,
     AXIS_CAPA,
     AXIS_MITRE,
+    AXIS_MBC,
     AXIS_YARA,
     AXIS_RULESET,
     AXIS_FAMILY,
@@ -761,6 +766,7 @@ SUMMARY_FIELDS = (
     "user_summary",
     "capa_summary",
     "mitre_summary",
+    "mbc_summary",
     "yara_summary",
     "family_summary",
     "vuln_summary",

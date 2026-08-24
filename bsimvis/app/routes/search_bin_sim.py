@@ -67,12 +67,16 @@ def _tagged_files(r, collection, val, fields=("tags", "user_tags")):
     buckets = []
     for field in fields:
         reg = f"{collection}:reg:file:{field}"
+        prefix = f"{collection}:idx:file:{field}:"
         try:
             for b in r.sscan_iter(reg, match=f"*{val_l}*", count=1000):
                 bs = _dec(b)
                 # bucket key is {ns}:idx:file:{field}:{tag} — match the tag only,
                 # so a value colliding with the prefix can't drag in every bucket.
-                if val_l in bs.rsplit(":", 1)[-1].lower():
+                # A tag itself carries colons (`packer:upx`), so this must strip
+                # the known prefix rather than split on the last `:` -- that used
+                # to chop `packer:upx` down to `upx` and lose the match entirely.
+                if bs.startswith(prefix) and val_l in bs[len(prefix):].lower():
                     buckets.append(bs)
         except Exception as e:
             logging.warning(f"file tag registry SSCAN failed for {reg}: {e}")

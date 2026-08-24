@@ -223,7 +223,7 @@ def search_files():
         t3 = t2  # default: no cluster fetch
         if unique_cluster_ids:
             is_pool = pool_id is not None
-            algo = "unweighted_cosine"  # Assuming default algo
+            algo = request.args.get("algo", "unweighted_cosine")
             c_pipe = r.pipeline(transaction=False)
             c_list = list(unique_cluster_ids)
             for cid in c_list:

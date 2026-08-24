@@ -1971,6 +1971,16 @@ class ClusterService:
                 pct = int((i / total_clusters) * 100)
                 job_service.update_progress(job_id, pct)
 
+        # Clear name/uuid index buckets. These are shared per-cluster (not
+        # per-member), so the per-member _unindex_tag loop above never
+        # touches them -- left stale otherwise, a rebuilt cluster's old
+        # cluster_uuid bucket keeps "matching" functions that no longer
+        # carry that cluster in their live cluster_scores, which is why
+        # min_cohesion filtering on /functions silently drops it (mirrors
+        # bin_cluster_service.clear_clusters, which already does this).
+        self._clear_indexes_via_registry(collection, "func", "cluster_name")
+        self._clear_indexes_via_registry(collection, "func", "cluster_uuid")
+
         # 4. Delete tree and cluster list
         r.delete(f"{collection}:cluster:tree:{algo}")
         r.delete(f"{collection}:cluster:list:{algo}")

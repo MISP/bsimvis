@@ -562,7 +562,7 @@ def search_functions():
 
         # Phase 3: Fetch Cluster Metadata (DEDUPLICATED), filtered by min_cohesion
         cluster_meta_map = {}
-        algo = "unweighted_cosine"  # Default algo
+        algo = request.args.get("algo", "unweighted_cosine")
         if unique_cluster_ids:
             c_pipe = r.pipeline(transaction=False)
             c_list = list(unique_cluster_ids)

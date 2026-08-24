@@ -105,7 +105,8 @@ CAPA_NAMESPACE = "capa"
 # `misp-galaxy:mitre-attack-pattern` tags it recovers. Flat rather than the
 # `mitre:<tactic>:<technique>` once reserved here: a technique belongs to several
 # tactics at once, so a tactic segment would have to pick one arbitrarily.
-# `mbc:<objective>:<behavior>` is still reserved, with no producer yet.
+# `mbc:<objective>:<behavior>`, written by capa's own MBC mapping
+# (`capa_meta_tags`) -- capa is the producer this namespace was reserved for.
 MITRE_NAMESPACE = "mitre"
 MBC_NAMESPACE = "mbc"
 
@@ -157,6 +158,7 @@ TAG_AXES = {
     "user": "user",
     "capa": "capa",
     "mitre": "mitre",
+    "mbc": "mbc",
     "yara": "yara",
     "rulezet": "ruleset",
     "misp": "family",

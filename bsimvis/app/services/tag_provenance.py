@@ -207,7 +207,12 @@ def match_rows(matches, extra=None):
 
             try:
                 uuid.UUID(ns)
-                tags.add(f"rulezet:{match.rule}")
+                # The uuid is the tag, matching what `_match_tags` actually
+                # writes onto the entity (`rulezet:<uuid>`) -- this used to add
+                # `rulezet:<rule name>` instead, so the row's own `tags` list
+                # never matched the tag a caller looks provenance up by, and
+                # the origin/preview tooltip came back empty.
+                tags.add(f"rulezet:{ns}")
             except ValueError:
                 pass
             rows[ns] = {

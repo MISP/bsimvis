@@ -1550,6 +1550,7 @@ const FILESIM_AXES = {
     user: { field: 'user_summary', label: 'User' },
     capa: { field: 'capa_summary', label: 'Capa' },
     mitre: { field: 'mitre_summary', label: 'ATT&CK' },
+    mbc: { field: 'mbc_summary', label: 'MBC' },
     yara: { field: 'yara_summary', label: 'YARA' },
     family: { field: 'family_summary', label: 'Family' },
     vuln: { field: 'vuln_summary', label: 'Vulnerability' },
@@ -1563,7 +1564,7 @@ let fileSimAxisB = 'category';
 // origin is the outer key, the rest are packed into the inner key in this order.
 const FILESIM_AXIS_SEP = '\u001f';
 const FILESIM_COMBO_SEP = ' + ';
-const FILESIM_JOINT_INNER = ['severity', 'category', 'user', 'capa', 'mitre',
+const FILESIM_JOINT_INNER = ['severity', 'category', 'user', 'capa', 'mitre', 'mbc',
                              'yara', 'family', 'vuln', 'ruleset'];
 
 // `category:network:c2` reads as "network c2"; `severity:high` as "high". A

@@ -36,6 +36,9 @@ from bsimvis.app.services.lua_manager import lua_manager
 from bsimvis.app.services.ghidra_service import ghidra_service
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.metadata_service import staged_metadata
+from bsimvis.app.services.processing_service import ProcessingService
+from bsimvis.app.services.feature_service import FeatureService
+from bsimvis.app.services.similarity_service import SimilarityService
 
 
 def _peak_rss():
@@ -60,6 +63,9 @@ class GhidraAnalyzer:
         self.r_data = get_redis()
         self.r_raw = get_raw_redis()
         self.job_service = JobService()
+        self.processing_service = ProcessingService(self.r_data)
+        self.feature_service = FeatureService(self.r_data)
+        self.similarity_service = SimilarityService(self.r_data)
         lua_manager.init_app()
         max_heap_mb = config_service.get("ghidra.max_heap_mb", 1536)
         jvm_args = list(config_service.get("ghidra.jvm_args", []) or [])
@@ -76,43 +82,6 @@ class GhidraAnalyzer:
         for sub in folder.getFolders():
             files.extend(self._collect_project_files(sub))
         return files
-
-    def _post_chunk(
-        self,
-        chunk,
-        idx,
-        is_final,
-        collection,
-        file_md5,
-        file_meta,
-        skip_sim,
-        payload,
-        hosts,
-        job_id,
-        splice_into_parent=True,
-    ):
-        import requests
-
-        chunk_payload = {
-            "collection": collection,
-            "file_md5": file_md5,
-            "chunk_index": idx,
-            "is_final": is_final,
-            "skip_sim": skip_sim,
-            "file_metadata": file_meta if idx == 0 else None,
-            "functions": chunk,
-        }
-        if splice_into_parent:
-            chunk_payload["parent_job_id"] = job_id
-
-        for opt in ["top_k", "min_score", "min_features", "algo"]:
-            if opt in payload:
-                chunk_payload[opt] = payload[opt]
-        for api_host in hosts:
-            url = f"http://{api_host}/api/file/upload_chunk"
-            resp = requests.post(url, json=chunk_payload, timeout=300)
-            resp.raise_for_status()
-            return resp.json()
 
     def _capa_tags_for_program(self, capa_json_path, program):
         """capa's JSON -> `(tags by entry point hex, rule ids by entry point, doc)`.
@@ -253,11 +222,10 @@ class GhidraAnalyzer:
                 funcs.append(func)
         return funcs
 
-    def _stream_program_chunks(
-        self, program, payload, hosts, job_id, splice_into_parent=True
-    ):
+    def _index_streamed_program(self, program, payload, job_id):
         collection = payload.get("collection", "main")
         skip_sim = payload.get("skip_sim", False)
+        batch_uuid = payload.get("batch_uuid")
 
         # Initialize stream generator with job context for real-time progress
         generator = ghidra_service.stream_bsim_data(
@@ -283,54 +251,100 @@ class GhidraAnalyzer:
 
         file_md5 = file_meta.get("file_md5")
 
-        # Look-ahead: send each chunk immediately without buffering all of them.
-        # Holding one chunk behind lets us detect the final chunk on arrival of the next.
-        idx = 0
-        prev_chunk = None
+        num_functions = 0
+        total_features = 0
         for chunk in generator:
-            # Cancellation was only ever checked before a job started; a long
-            # decompilation ignored it entirely. Chunk boundaries are the natural
-            # place to notice.
             if self.job_service.is_cancelled(job_id):
                 raise RuntimeError(f"Job {job_id} cancelled during streaming")
-            if prev_chunk is not None:
-                self._post_chunk(
-                    prev_chunk,
-                    idx - 1,
-                    False,
-                    collection,
-                    file_md5,
-                    file_meta,
-                    skip_sim,
-                    payload,
-                    hosts,
-                    job_id,
-                    splice_into_parent=splice_into_parent,
-                )
-                self.job_service.update_progress(job_id, 80, f"Uploaded chunk {idx}")
-            prev_chunk = chunk
-            idx += 1
+            if not chunk:
+                continue
+            num_functions += len(chunk)
+            total_features += sum(
+                f.get("function_metadata", {}).get("bsim_features_count", 0)
+                for f in chunk
+            )
+            self.processing_service.index_functions(
+                collection,
+                None,
+                self.job_service,
+                job_id,
+                functions_list=chunk,
+                file_meta=file_meta,
+                file_md5=file_md5,
+                batch_uuid=batch_uuid,
+            )
+            self.job_service.update_progress(
+                job_id, 80, f"Indexed {num_functions} functions for {file_md5}"
+            )
 
-        # Send the final chunk (or empty sentinel when the program has no functions)
-        final_chunk = prev_chunk if prev_chunk is not None else []
-        final_idx = max(idx - 1, 0)
-        res = self._post_chunk(
-            final_chunk,
-            final_idx,
-            True,
+        self.processing_service.index_metadata(
             collection,
-            file_md5,
-            file_meta,
-            skip_sim,
-            payload,
-            hosts,
+            None,
+            self.job_service,
             job_id,
-            splice_into_parent=splice_into_parent,
+            file_meta=file_meta,
+            num_functions=num_functions,
+            total_features=total_features,
         )
-        self.job_service.update_progress(job_id, 100, f"Uploaded chunk {idx}/{idx}")
 
-        pipeline_id = res.get("pipeline_id") if isinstance(res, dict) else None
-        return pipeline_id
+        raw_ids = self.r_data.smembers(f"{collection}:idx:file:functions:{file_md5}")
+        function_ids = [
+            fid.replace(":meta", "") if fid.endswith(":meta") else fid
+            for fid in raw_ids
+        ]
+        self.feature_service.index_functions(
+            collection, function_ids, self.job_service, job_id
+        )
+
+        if not skip_sim:
+            algo = payload.get(
+                "algo", config_service.get("similarity.algo", "unweighted_cosine")
+            )
+            top_k = payload.get("top_k", config_service.get("similarity.top_k", 1000))
+            from bsimvis.app.services.collection_config import resolve_and_lock
+
+            min_score = resolve_and_lock(
+                collection, "min_score", payload.get("min_score")
+            )
+            min_features = resolve_and_lock(
+                collection, "min_features", payload.get("min_features")
+            )
+
+            if algo == "milvus_sparse":
+                from bsimvis.app.services.milvus_service import milvus_service
+
+                if milvus_service.enabled:
+                    milvus_service.sync_collection(
+                        collection, self.r_data, self.job_service, job_id
+                    )
+
+            self.similarity_service.build_batch(
+                collection,
+                batch_uuid=batch_uuid,
+                md5=file_md5,
+                algo=algo,
+                top_k=top_k,
+                min_score=min_score,
+                min_features=min_features,
+                job_service=self.job_service,
+                job_id=job_id,
+                index_depth=payload.get("index_depth", "minimal"),
+                skip_write=payload.get("skip_write", False),
+            )
+            self.similarity_service.index_similarities(
+                collection,
+                algo=algo,
+                pool_id=payload.get("pool_id"),
+                md5=file_md5,
+                batch_uuid=batch_uuid,
+                job_service=self.job_service,
+                job_id=job_id,
+            )
+
+        self.job_service.update_progress(
+            job_id, 100, f"Indexing complete for {file_md5}"
+        )
+        return file_md5
 
     def run(self, payload, job_id):
         """Body moved verbatim from Worker._dispatch's GHIDRA_ANALYZE branch."""
@@ -402,21 +416,7 @@ class GhidraAnalyzer:
                     stderr=capa_err,
                 )
 
-            # 3. Run Analysis & Stream Chunks directly to API
-            app_host = os.getenv("APP_HOST", "localhost")
-            app_port = os.getenv("APP_PORT", "5000")
-            fallback_host = f"{app_host}:{app_port}"
-
-            # Check environment variables first, then fallback to config
-            hosts = (
-                fallback_host
-                if os.getenv("APP_PORT")
-                else config_service.get("bsimvis.host", fallback_host)
-            )
-            if isinstance(hosts, str):
-                hosts = [hosts]
-
-            # We will analyze using stream_bsim_data
+            # 3. Analyze and index in this crash-isolated child process.
             if temp_path.endswith(".gpr.zip"):
                 self.job_service.add_log(
                     job_id, f"Extracting Ghidra project archive {orig_name}..."
@@ -450,7 +450,6 @@ class GhidraAnalyzer:
                 project = GhidraProject.openProject(
                     Path(gpr_path).parent, Path(gpr_path).stem
                 )
-                pipeline_ids = []
                 # A project holds many programs but the upload carried one CSV
                 # row, keyed by the .gpr.zip's md5. Its facts still apply to
                 # every program in it; its `file_name` does not -- forcing it
@@ -499,39 +498,10 @@ class GhidraAnalyzer:
                                     **(payload.get("file_metadata_extra") or {}),
                                     **own_meta,
                                 }
-                            pipe_id = self._stream_program_chunks(
-                                program,
-                                prog_payload,
-                                hosts,
-                                job_id,
-                                splice_into_parent=True,
-                            )
-                            if pipe_id:
-                                pipeline_ids.append(pipe_id)
+                            self._index_streamed_program(program, prog_payload, job_id)
                         finally:
                             if program:
                                 program.release(project)
-
-                    if pipeline_ids:
-                        group_id = self.job_service.create_group(
-                            pipeline_ids, enqueue=False
-                        )
-                        parent_pipeline_id = self.r_queue.hget(
-                            f"job:{job_id}", "parent_id"
-                        )
-                        if parent_pipeline_id:
-                            parent_pipeline_id = (
-                                parent_pipeline_id.decode()
-                                if isinstance(parent_pipeline_id, bytes)
-                                else parent_pipeline_id
-                            )
-                            if self.job_service.splice_tasks(
-                                parent_pipeline_id, job_id, [group_id]
-                            ):
-                                self.job_service.add_log(
-                                    parent_pipeline_id,
-                                    f"Spliced child pipelines group {group_id} into pipeline.",
-                                )
                 finally:
                     project.close()
             else:
@@ -709,9 +679,7 @@ class GhidraAnalyzer:
                                     # resolved to that function, which is the
                                     # whole point -- 4 rules instead of the
                                     # ~5k the tag carries ruleset-wide.
-                                    hits = {
-                                        f"{collection}:file:{file_md5}": list(rows)
-                                    }
+                                    hits = {f"{collection}:file:{file_md5}": list(rows)}
                                     for addr, ids in self._funcs_by_offset(
                                         tag_provenance.match_offsets(matches),
                                         program,
@@ -741,7 +709,7 @@ class GhidraAnalyzer:
                                 k: sorted(v) for k, v in yara_tags_by_addr.items()
                             }
 
-                        self._stream_program_chunks(program, payload, hosts, job_id)
+                        self._index_streamed_program(program, payload, job_id)
                     finally:
                         # close() releases every program importProgram() registered
                         # and disposes the project's LocalFileSystem, which is what

@@ -41,28 +41,43 @@ def build_cluster():
 
 
 def rebuild_cluster():
-    """Enqueues a clear + cluster pipeline."""
+    """Submits a clear + cluster-functions-only pipeline to the collection's
+    lane (no bin_sim rebuild -- use rebuild_all_pipeline for that)."""
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
-    min_cluster_size = data.get(
-        "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
-    )
+    priority = str(data.get("priority", "")).lower() == "high"
 
-    tasks = [
-        (
-            JobType.CLEAR_CLUSTER,
-            {
-                "collection": collection,
-                "algo": algo,
-            },
-        ),
+    tasks = build_rebuild_all_tasks(collection, algo, skip_sim=True, data=data)
+    pipeline_id = job_service.submit_to_lane(collection, tasks, priority=priority)
+    return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "queued"}
+
+
+def build_rebuild_all_tasks(collection, algo, skip_sim=False, data=None):
+    """The one definition of 'what a full collection rebuild looks like':
+    clear clusters -> [clear/rebuild bin_sim] -> cluster functions ->
+    [build bin_sim -> cluster binaries -> index sim]. Shared by
+    rebuild_all_pipeline and JobService.seal_wave's automatic
+    clustering-after-batch, so there's a single source of truth."""
+    data = data or {}
+
+    tasks = [(JobType.CLEAR_CLUSTER, {"collection": collection, "algo": algo})]
+    if not skip_sim:
+        tasks.append((JobType.CLEAR_BIN_SIM, {"collection": collection, "algo": algo}))
+        tasks.append(
+            (JobType.CLEAR_BIN_CLUSTER, {"collection": collection, "algo": algo})
+        )
+
+    tasks.append(
         (
             JobType.CLUSTER_FUNCTIONS,
             {
                 "collection": collection,
                 "algo": algo,
-                "min_cluster_size": min_cluster_size,
+                "min_cluster_size": data.get(
+                    "min_cluster_size",
+                    config_service.get("clustering.min_cluster_size", 2),
+                ),
                 "min_samples": data.get(
                     "min_samples", config_service.get("clustering.min_samples", 1)
                 ),
@@ -80,96 +95,68 @@ def rebuild_cluster():
                     "min_features", config_service.get("clustering.min_features", 0)
                 ),
             },
-        ),
-    ]
+        )
+    )
 
-    pipeline_id = job_service.create_pipeline(tasks)
-    return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
+    if not skip_sim:
+        tasks.append(
+            (
+                JobType.BUILD_BIN_SIM,
+                {
+                    "collection": collection,
+                    "algo": algo,
+                    "min_cohesion": data.get("min_cohesion", 0.5),
+                },
+            )
+        )
+        tasks.append(
+            (
+                JobType.CLUSTER_BINARIES,
+                {
+                    "collection": collection,
+                    "algo": algo,
+                    "min_cluster_size": data.get(
+                        "min_cluster_size",
+                        config_service.get("clustering.min_cluster_size", 2),
+                    ),
+                    "min_samples": data.get(
+                        "min_samples", config_service.get("clustering.min_samples", 1)
+                    ),
+                    "epsilon": data.get(
+                        "epsilon", config_service.get("clustering.epsilon", 0.1)
+                    ),
+                    "selection_method": data.get(
+                        "selection_method",
+                        config_service.get("clustering.selection_method", "eom"),
+                    ),
+                    "min_sim": data.get(
+                        "min_sim", config_service.get("clustering.min_sim", 0.0)
+                    ),
+                    "min_cohesion": data.get(
+                        "min_cohesion",
+                        config_service.get("clustering.min_cohesion", 0.5),
+                    ),
+                },
+            )
+        )
+        tasks.append((JobType.INDEX_SIM, {"collection": collection, "algo": algo}))
+
+    return tasks
 
 
 def rebuild_all_pipeline():
-    """Enqueues a full re-analysis pipeline: clear clusters -> clear bin_sim -> cluster functions -> build bin_sim."""
+    """Submits a full re-analysis pipeline to the collection's lane: clear
+    clusters -> clear bin_sim -> cluster functions -> build bin_sim ->
+    cluster binaries -> index sim. Queues behind whatever's already active
+    for this collection instead of racing it."""
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
+    priority = str(data.get("priority", "")).lower() == "high"
 
-    tasks = [
-        (JobType.CLEAR_CLUSTER, {"collection": collection, "algo": algo}),
-        (JobType.CLEAR_BIN_SIM, {"collection": collection, "algo": algo}),
-        (JobType.CLEAR_BIN_CLUSTER, {"collection": collection, "algo": algo}),
-        (
-            JobType.CLUSTER_FUNCTIONS,
-            {
-                "collection": collection,
-                "algo": algo,
-                "min_cluster_size": data.get(
-                    "min_cluster_size",
-                    config_service.get("clustering.min_cluster_size", 2),
-                ),
-                "min_samples": data.get(
-                    "min_samples", config_service.get("clustering.min_samples", 1)
-                ),
-                "epsilon": data.get(
-                    "epsilon", config_service.get("clustering.epsilon", 0.1)
-                ),
-                "selection_method": data.get(
-                    "selection_method",
-                    config_service.get("clustering.selection_method", "eom"),
-                ),
-                "min_sim": data.get(
-                    "min_sim", config_service.get("clustering.min_sim", 0.0)
-                ),
-                "min_features": data.get(
-                    "min_features", config_service.get("clustering.min_features", 0)
-                ),
-            },
-        ),
-        (
-            JobType.BUILD_BIN_SIM,
-            {
-                "collection": collection,
-                "algo": algo,
-                "min_cohesion": data.get("min_cohesion", 0.5),
-            },
-        ),
-        (
-            JobType.CLUSTER_BINARIES,
-            {
-                "collection": collection,
-                "algo": algo,
-                "min_cluster_size": data.get(
-                    "min_cluster_size",
-                    config_service.get("clustering.min_cluster_size", 2),
-                ),
-                "min_samples": data.get(
-                    "min_samples", config_service.get("clustering.min_samples", 1)
-                ),
-                "epsilon": data.get(
-                    "epsilon", config_service.get("clustering.epsilon", 0.1)
-                ),
-                "selection_method": data.get(
-                    "selection_method",
-                    config_service.get("clustering.selection_method", "eom"),
-                ),
-                "min_sim": data.get(
-                    "min_sim", config_service.get("clustering.min_sim", 0.0)
-                ),
-                "min_cohesion": data.get(
-                    "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
-                ),
-            },
-        ),
-        (
-            JobType.INDEX_SIM,
-            {
-                "collection": collection,
-                "algo": algo,
-            },
-        ),
-    ]
-
-    pipeline_id = job_service.create_pipeline(tasks)
-    return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
+    tasks = build_rebuild_all_tasks(collection, algo, skip_sim=False, data=data)
+    pipeline_id = job_service.submit_to_lane(collection, tasks, priority=priority)
+    return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "queued"}
 
 
 def clear_cluster():

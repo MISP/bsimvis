@@ -8,6 +8,7 @@ from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.metadata_service import stage_metadata, staged_metadata
 from bsimvis.app.services.processing_service import ProcessingService
+from bsimvis.app.services.config_service import config_service
 import logging
 import time
 import uuid
@@ -146,7 +147,10 @@ def upload_file_data():
         if enqueue:
             pipeline_tasks.append((JobType.ENRICH_FEATURES, {"collection": collection}))
 
-        pipeline_id = job_service.create_pipeline(pipeline_tasks, enqueue=enqueue)
+        if enqueue:
+            pipeline_id = job_service.submit_to_lane(collection, pipeline_tasks)
+        else:
+            pipeline_id = job_service.create_pipeline(pipeline_tasks, enqueue=False)
 
         return {
             "status": "processing" if enqueue else "queued",
@@ -185,25 +189,14 @@ def upload_chunk():
         skip_sim = data.get("skip_sim", False)
         file_metadata = data.get("file_metadata")
         functions = data.get("functions", [])
-        parent_job_id = data.get("parent_job_id")
-
         if not file_md5:
             return {"error": "Missing file_md5 in chunk"}, 400
 
         r_data = get_redis()
-        r_queue = job_service.r  # Queue Redis - where job metadata lives
-
-        parent_pipeline_id = None
-        if parent_job_id:
-            val = r_queue.hget(f"job:{parent_job_id}", "parent_id")
-            if val:
-                parent_pipeline_id = val.decode() if isinstance(val, bytes) else val
-
-        suffix = f":{parent_job_id}" if parent_job_id else ""
-        meta_store_key = f"{collection}:file:{file_md5}:chunk_meta{suffix}"
-        chunk_jobs_key = f"{collection}:file:{file_md5}:chunk_jobs{suffix}"
-        features_counter_key = f"{collection}:file:{file_md5}:total_features{suffix}"
-        functions_counter_key = f"{collection}:file:{file_md5}:total_functions{suffix}"
+        meta_store_key = f"{collection}:file:{file_md5}:chunk_meta"
+        chunk_jobs_key = f"{collection}:file:{file_md5}:chunk_jobs"
+        features_counter_key = f"{collection}:file:{file_md5}:total_features"
+        functions_counter_key = f"{collection}:file:{file_md5}:total_functions"
 
         # 1. Save file metadata once (chunk 0)
         stored_meta = None
@@ -228,16 +221,9 @@ def upload_chunk():
                 "file_md5": file_md5,
                 "batch_uuid": batch_uuid,
             }
-            # is_subtask defers enqueueing so we can push as a continuation:
-            # chunk indexing lands on the tail of jobs:pending, which workers pop
-            # first. Without this the chunk jobs queue up behind every
-            # already-pending GHIDRA_ANALYZE, so a 30-file batch finishes all
-            # analysis before a single function is navigable.
+            # enqueue=False defers enqueueing so we can push as a continuation.
             chunk_job_id = job_service.create_job(
-                JobType.INDEX_FUNCTIONS,
-                job_payload,
-                parent_id=parent_job_id,
-                is_subtask=bool(parent_job_id),
+                JobType.INDEX_FUNCTIONS, job_payload, enqueue=False
             )
             job_service.enqueue_job(chunk_job_id, is_continuation=True)
 
@@ -337,29 +323,12 @@ def upload_chunk():
                         )
                     )
 
-            if parent_pipeline_id:
-                # Splice tasks into parent pipeline
-                new_tids = [
-                    job_service._resolve_task(task, parent_pipeline_id)
-                    for task in pipeline_tasks
-                ]
-
-                # Atomic: chunks arrive in parallel, and a plain read-modify-write
-                # of the task_ids blob silently drops one of two concurrent splices.
-                if job_service.splice_tasks(
-                    parent_pipeline_id, parent_job_id, new_tids
-                ):
-                    job_service.add_log(
-                        parent_pipeline_id,
-                        f"Spliced {len(new_tids)} ordered indexing tasks into pipeline.",
-                    )
-            else:
-                pipeline_id = job_service.create_pipeline(pipeline_tasks, enqueue=True)
-                return {
-                    "status": "success",
-                    "chunk_index": chunk_index,
-                    "pipeline_id": pipeline_id,
-                }
+            pipeline_id = job_service.submit_to_lane(collection, pipeline_tasks)
+            return {
+                "status": "success",
+                "chunk_index": chunk_index,
+                "pipeline_id": pipeline_id,
+            }
 
         return {"status": "success", "chunk_index": chunk_index}
     except Exception as e:
@@ -380,7 +349,7 @@ def _ingest_raw_binary(
     root_md5=None,
     extra_tags=(),
 ):
-    """Stores one binary and queues its analysis pipeline.
+    """Stores one binary and queues its analysis job.
 
     Returns the per-file result dict, or ({"error": ...}, status) on failure.
     Shared by plain uploads and by every binary unpacking produced.
@@ -549,7 +518,7 @@ def _ingest_raw_binary(
 
     # parent_md5 / parent_file_name are already declared index fields at the
     # file, func and sim levels, so lineage rides the existing metadata merge
-    # in ghidra_job._stream_program_chunks -- no schema change needed.
+    # in ghidra_job._index_streamed_program -- no schema change needed.
     if parent_md5:
         extra_meta["parent_md5"] = parent_md5
         extra_meta["parent_file_name"] = parent_file_name
@@ -559,41 +528,27 @@ def _ingest_raw_binary(
     if extra_meta:
         analysis_payload["file_metadata_extra"] = extra_meta
 
-    # Trigger Pipeline: Analysis -> Indexing -> Similarity
-    pipeline_tasks = [(JobType.GHIDRA_ANALYZE, analysis_payload)]
+    priority = request.args.get("priority", "").lower() == "high"
+    if priority:
+        analysis_payload["priority"] = "high"
 
-    # Pre-register similarity jobs so the pipeline doesn't finish early
-    is_gpr_zip = file_name.endswith(".gpr.zip")
-    if not analysis_payload.get("skip_sim") and not is_gpr_zip:
-        algo = analysis_payload.get("algo")
-        build_sim_payload = {
-            "collection": collection,
-            "file_id": None,
-            "md5": file_md5,
-            "algo": algo,
-            "top_k": analysis_payload.get("top_k"),
-            "min_score": analysis_payload.get("min_score"),
-            "min_features": analysis_payload.get("min_features"),
-        }
-        if algo == "milvus_sparse" and milvus_service.enabled:
-            pipeline_tasks.append((JobType.SYNC_MILVUS, {"collection": collection}))
-        pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
-        pipeline_tasks.append(
-            (
-                JobType.INDEX_SIM,
-                {"collection": collection, "md5": file_md5, "algo": algo},
-            )
+    job_id = job_service.create_job(
+        JobType.GHIDRA_ANALYZE, analysis_payload, enqueue=enqueue
+    )
+    if enqueue:
+        job_service.open_or_extend_wave(
+            collection,
+            job_id,
+            config_service.get("clustering.idle_debounce_seconds", 30),
         )
-
-    pipeline_id = job_service.create_pipeline(pipeline_tasks, enqueue=enqueue)
 
     return {
         "status": "processing" if enqueue else "queued",
         "file_md5": file_md5,
         "file_name": file_name,
-        "pipeline_id": pipeline_id,
+        "pipeline_id": job_id,
         "batch_uuid": batch_uuid,
-        "message": "Binary uploaded. Analysis pipeline started.",
+        "message": "Binary uploaded. Analysis started.",
     }
 
 
@@ -926,10 +881,11 @@ def finalize_batch_upload():
         )
     )
 
-    master_id = job_service.create_pipeline(master_tasks, enqueue=True)
+    priority = str(data.get("priority", "")).lower() == "high"
+    master_id = job_service.submit_to_lane(collection, master_tasks, priority=priority)
 
     return {
-        "status": "success",
+        "status": "queued",
         "master_pipeline_id": master_id,
         "batch_uuid": batch_uuid,
     }

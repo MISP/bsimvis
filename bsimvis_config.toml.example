@@ -61,6 +61,13 @@
     # filters. Slowest phase of a clustering run; set false to skip it.
     propagate_sim_indexes = true
 
+    # Seconds of upload quiet on a collection before its lane auto-fires a
+    # full clear+cluster+bin_sim rebuild (see the per-collection job lane).
+    idle_debounce_seconds = 30
+    # A lane's active unit stays "stuck" only this long before the idle sweep
+    # self-heals it (crashed worker) and promotes the next pending unit.
+    lane_stale_seconds = 1800
+
 [analysis_modules]
     # Function-tagging modules run during analysis, off by default: each one
     # costs more than the rest of the job on a typical sample

@@ -207,6 +207,7 @@ class Worker:
                     )
 
                 if not job_id:
+                    self.job_service.tick_lanes()
                     continue
 
                 # Fetch job metadata

@@ -104,11 +104,14 @@ Full call graph for a file.
 - **Params:** `collection`, `file_md5`.
 
 ### `POST /api/file/upload`
-Uploads a raw binary for server-side Ghidra analysis. Params accepted as query or form.
+Uploads a raw binary for server-side Ghidra analysis. One job does analysis,
+indexing, and (unless `skip_sim`) per-file similarity build, all in-process —
+no follow-up call is needed for the file's own data. Params accepted as query or form.
 - **Config:** `collection`, `file_name`, `profile` (`fast`/`full`), `min_func_len` (default 10), `processor` (force Ghidra Language ID), `cspec` (force Compiler Spec ID).
 - **Similarity:** `algo` (`jaccard`/`unweighted_cosine`/`milvus_sparse`), `top_k`, `min_score`, `min_features`, `skip_sim`.
-- **Metadata:** `batch_uuid` (generated server-side if omitted), `batch_name` (default `Ghidra Batch`), `tags` (repeatable), `related_md5` (repeatable), `file_metadata_extra` (JSON object merged into the file document — this is how `parent_md5`, `parent_file_name` and `related_file_name` are supplied; all four parent/related fields are indexed and searchable at file, function and similarity level).
-- **Scheduling:** `enqueue` (default `true`; `false` creates the pipeline without starting it, for batch uploads finalized later).
+- **Metadata:** `batch_uuid` (generated server-side if omitted, kept for tagging/lookup — no longer required for batching, see below), `batch_name` (default `Ghidra Batch`), `tags` (repeatable), `related_md5` (repeatable), `file_metadata_extra` (JSON object merged into the file document — this is how `parent_md5`, `parent_file_name` and `related_file_name` are supplied; all four parent/related fields are indexed and searchable at file, function and similarity level).
+- **Scheduling:** `enqueue` (default `true`; `false` creates the job without starting it). `priority` (`high` to jump this file's analysis ahead of other pending jobs on the shared worker pool; doesn't preempt a job already running).
+- **Clustering:** every upload is recorded in its collection's job lane; once uploads to that collection go quiet (`clustering.idle_debounce_seconds`, default 30s), the lane automatically clears and rebuilds that collection's function/binary clusters covering everything uploaded since the last rebuild. See `POST /api/cluster/rebuild_all` and `POST /api/file/upload/batch_finalize` to force this immediately instead.
 - **Returns:** `status`, `file_md5`, `pipeline_id`, `batch_uuid`.
 
 ### `POST /api/file/upload_file_data`
@@ -121,8 +124,14 @@ Uploads pre-analyzed JSON metadata + function feature maps from client-side extr
 Uploads a chunk of function analysis data (streaming path to avoid memory bloat).
 
 ### `POST /api/file/upload/batch_finalize`
-Finalizes a multi-file batch upload by orchestrating a master pipeline.
-- **Body:** `pipeline_ids` (required), `batch_uuid`, `collection`, `algo`, `skip_sim`, `min_cohesion`.
+Finalizes a multi-file batch upload by orchestrating a master pipeline. Optional now
+that uploads auto-cluster on their own after a quiet period (see `POST /api/file/upload`)
+— use this to force it immediately for an explicit set of pipeline/job ids instead of
+waiting. Submitted through the collection's job lane: queues behind whatever's currently
+active for that collection rather than running concurrently with it (two overlapping
+finalize/rebuild calls used to race and corrupt each other's cluster/bin_sim results).
+- **Body:** `pipeline_ids` (required), `batch_uuid`, `collection`, `algo`, `skip_sim`, `min_cohesion`, `priority` (`high` to jump ahead of other rebuilds already queued for this collection).
+- **Returns:** `status` (`"queued"`), `master_pipeline_id`, `batch_uuid`. `master_pipeline_id` is pollable via `GET /api/jobs/{id}` whether it started immediately or is waiting on another active rebuild.
 
 ### `PATCH /api/file/<file_md5>/metadata`
 Partially updates metadata for a file and triggers propagation.
@@ -256,10 +265,19 @@ Enqueues a clustering job.
 - **Body:** `collection`, `algo`, `min_cluster_size` (default 2), `min_samples` (default 1), `epsilon` (default 0.1), `selection_method` (default `eom`), `min_sim` (default 0.0), `min_features` (default 0).
 
 ### `POST /api/cluster/rebuild`
-Clear + cluster pipeline. Same body as build.
+Clear + cluster pipeline (function clusters only, no bin_sim rebuild). Same body as
+build, plus `priority` (`high` to jump ahead of other rebuilds already queued for this
+collection). Submitted through the collection's job lane — see `rebuild_all` below.
 
 ### `POST /api/cluster/rebuild_all`
-Full re-analysis pipeline: function clusters + binary similarity. Same body as build.
+Full re-analysis pipeline: clear + function clusters + binary similarity + binary
+clusters. Same body as build, plus `priority`. Submitted through the collection's job
+lane: at most one rebuild runs per `(collection, algo)` at a time — a second call while
+one is active queues behind it instead of racing it (this used to corrupt cluster/bin_sim
+results when two rebuilds overlapped). Also fires automatically after uploads to a
+collection go quiet, so this endpoint is for forcing it now, not required routine
+maintenance. Returns `{"job_id", "pipeline_id", "status": "queued"}` — `pipeline_id` is
+pollable via `GET /api/jobs/{id}` whether it started immediately or is waiting.
 
 ### `POST /api/cluster/clear`
 Enqueues a cluster clear job. Body: `collection`, `algo`.

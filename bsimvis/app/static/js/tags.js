@@ -653,12 +653,12 @@ window.moveClusterCardTooltip = function(e) {
 
 window.renderClusterCards = (clusters, isBinary = false) => {
     if (!clusters || clusters.length === 0) return '';
-    
-    const threshold = typeof UIParams !== 'undefined' ? UIParams.cohesionThreshold : 0.5;
-    const validClusters = clusters.filter(c => (c.cohesion_score || 0) >= threshold);
-    if (validClusters.length === 0) return '';
 
-    const sorted = [...validClusters].sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
+    // No client-side cohesion re-filter here: the server already applied
+    // min_cohesion when building this list. A second, independently-defaulted
+    // threshold (UIParams.cohesionThreshold, 0.95) silently dropped clusters
+    // the caller had already asked the API to include.
+    const sorted = [...clusters].sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
     
     const renderCard = (c, isHidden = false) => {
         const name = c.cluster_name || `Cluster ${c.cluster_id}`;

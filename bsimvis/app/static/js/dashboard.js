@@ -388,8 +388,13 @@ function clearFilters() {
         if (params.has(k)) newParams.set(k, params.get(k));
     });
 
-    // Set default cohesion threshold
-    newParams.set('min_cohesion', '0.95');
+    // Set default cohesion threshold. 'clusters'/'bin-clusters' reset to a
+    // strict browse default; 'functions'/'files' get their own 0.5 default
+    // from navigate() below -- forcing 0.95 here for every view hid clusters
+    // between 0.5 and 0.95 cohesion after a Clear Filters click anywhere.
+    if (viewKey === 'clusters' || viewKey === 'bin-clusters') {
+        newParams.set('min_cohesion', '0.95');
+    }
 
     currentOffset = 0;
     isEndOfResults = false;
@@ -3064,7 +3069,6 @@ window.addEventListener('hashchange', (e) => {
 
 // UI Settings
 const UIParams = {
-    cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.95,
     colorByTag: localStorage.getItem('colorByTag') === 'true',
     includeHeaders: localStorage.getItem('includeHeaders') === 'true',
     useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? false : localStorage.getItem('useFloatingWindows') === 'true',
@@ -3115,18 +3119,6 @@ function updateUIParams() {
             window.graphInstance.refreshColors();
         }
     }
-}
-
-function filterClusterRowsByCohesion(threshold) {
-    const rows = document.querySelectorAll('#table-body tr[data-cluster-id]');
-    rows.forEach(row => {
-        // Cohesion is in the 6th column (index 5)
-        const cohesionSpan = row.querySelectorAll('td')[5]?.querySelector('span.dim');
-        if (cohesionSpan) {
-            const score = parseFloat(cohesionSpan.textContent);
-            row.style.display = (score < threshold) ? 'none' : '';
-        }
-    });
 }
 
 function refreshClusterCards() {

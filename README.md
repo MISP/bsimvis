@@ -171,6 +171,35 @@ curl -X POST --data-binary @$gpr_name.gpr.zip \
   "http://localhost:5000/api/file/upload?file_name=$gpr_name&collection=main&profile=fast"
 ```
 
+## Batch upload + finalize
+
+Upload multiple files under one `batch_uuid`, then call `batch_finalize` once to cluster and build binary similarity for the whole batch instead of per-file:
+
+```
+batch_uuid=$(python3 -c "import uuid; print(uuid.uuid4().hex)")
+
+# Upload each file with skip_sim, sharing the batch_uuid; collect the returned pipeline_ids
+for f in /path/to/*.bin; do
+  curl -s -X POST --data-binary "@$f" \
+    "http://localhost:5000/api/file/upload?collection=main&file_name=$(basename $f)&batch_uuid=$batch_uuid&skip_sim=true"
+done
+# -> {"status": "processing", "file_md5": "...", "pipeline_id": "pipe_...", "batch_uuid": "..."}
+
+# Finalize: pass every pipeline_id collected above
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"pipeline_ids": ["pipe_a", "pipe_b"], "batch_uuid": "'"$batch_uuid"'", "collection": "main", "algo": "unweighted_cosine"}' \
+  "http://localhost:5000/api/file/upload/batch_finalize"
+
+# Response
+{
+    "status": "success",
+    "master_pipeline_id": "pipe_....",
+    "batch_uuid": "..."
+}
+```
+
+`batch_finalize` groups the given pipelines, clears old cluster/bin_sim results, then runs function clustering, binary similarity build, binary clustering, and indexing in order. Pass `skip_sim: true` to skip the binary similarity steps. See [doc/api_documentation.md](doc/api_documentation.md#post-apifileuploadbatch_finalize) for full parameters.
+
 ## Follow pipeline progress
 
 ```

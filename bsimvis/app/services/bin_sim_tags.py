@@ -259,6 +259,7 @@ _PARENT_DEPTH = {
     AXIS_USER: 2,
     AXIS_CAPA: 2,
     AXIS_MITRE: 2,
+    AXIS_MBC: 2,
     AXIS_YARA: 2,
     AXIS_RULESET: 2,
     AXIS_FAMILY: None,

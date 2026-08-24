@@ -41,6 +41,12 @@
     # whose cohesion clears cohesion_cut, not just its deepest one.
     # hdbscan: legacy path, kept for comparison/rollback.
     engine = "threshold_uf"
+    # Same three engines, over binary (file) similarity instead of function
+    # similarity -- see bin_cluster_service.py. bin_* keys below tune it;
+    # non-bin_-prefixed keys above (cohesion_cut, epsilon, min_cluster_size,
+    # etc.) are shared with the func-level engines.
+    bin_engine = "threshold_uf"
+    bin_uf_threshold = 0.1
     uf_threshold = 0.98
     cohesion_cut = 0.9
     epsilon = 0.001

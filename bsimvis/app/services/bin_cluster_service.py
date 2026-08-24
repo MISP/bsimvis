@@ -35,6 +35,20 @@ class BinClusterService:
 
         engine = config_service.get("clustering.bin_engine", "threshold_uf")
 
+        if engine == "hierarchical_uf":
+            # Full rebuild only, same reasoning as func-level hierarchical_uf
+            # in cluster_service.py -- single-linkage merges are monotonic,
+            # no incremental path yet.
+            return self._run_clustering_hierarchical_uf(
+                collection,
+                algo=algo,
+                min_sim=min_sim,
+                min_cluster_size=min_cluster_size,
+                job_service=job_service,
+                job_id=job_id,
+                min_cohesion=min_cohesion,
+            )
+
         if engine == "threshold_uf":
             threshold = config_service.get("clustering.bin_uf_threshold", 0.1)
             if batch_uuid and not collection.startswith("global:pool:"):
@@ -490,6 +504,110 @@ class BinClusterService:
         self.get_native_fields = get_native_fields
         self.get_propagated_fields = get_propagated_fields
 
+    def _tree_lambdas(self, tree_df):
+        """Birth/death lambda per cluster id, from a condensed/single-linkage
+        tree_df (columns parent/child/lambda_val/child_size)."""
+        root_id = tree_df["parent"].min()
+        birth_lambdas = {root_id: 0.0}
+        for row in tree_df.itertuples(index=False):
+            if row.child_size > 1:
+                birth_lambdas[int(row.child)] = float(row.lambda_val)
+
+        death_lambdas = {}
+        for row in tree_df.itertuples(index=False):
+            p = int(row.parent)
+            l = float(row.lambda_val)
+            if p not in death_lambdas or l > death_lambdas[p]:
+                death_lambdas[p] = l
+
+        return birth_lambdas, death_lambdas
+
+    def _run_clustering_hierarchical_uf(
+        self,
+        collection,
+        algo="unweighted_cosine",
+        min_sim=None,
+        min_cluster_size=None,
+        job_service=None,
+        job_id=None,
+        min_cohesion=None,
+    ):
+        """Full single-linkage hierarchy via Kruskal + Union-Find over binary
+        similarity pairs (cluster_threshold.build_single_linkage_tree) --
+        binary counterpart of cluster_service._run_clustering_hierarchical_uf.
+        No epsilon pruning (raw-similarity lambda, not HDBSCAN's
+        inverse-density one); persistence is otherwise identical to the
+        HDBSCAN path via the shared _persist_hierarchical_binary_clusters.
+        """
+        from bsimvis.app.services.config_service import config_service
+        from bsimvis.app.services.cluster_threshold import build_single_linkage_tree
+        import pandas as pd
+
+        if min_cluster_size is None:
+            min_cluster_size = config_service.get("clustering.min_cluster_size", 2)
+        if min_sim is None:
+            min_sim = config_service.get("clustering.min_sim", 0.0)
+        if min_cohesion is None:
+            min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
+
+        r = self.r
+        sim_score_key = f"{collection}:bin_sim:score:{algo}"
+        prefix = f"{collection}:bin_sim:{algo}:"
+
+        msg = f"[hierarchical_uf] Fetching binary similarity pairs from {sim_score_key}..."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        edge_set = sim_edges.load_edges(
+            r,
+            sim_score_key,
+            prefix,
+            False,
+            collection,
+            min_sim=min_sim,
+            node_kind="file",
+        )
+        id_to_idx = edge_set.id_to_idx
+        idx_to_id = edge_set.idx_to_id
+
+        if edge_set.n_scanned == 0 or edge_set.src.size == 0:
+            logging.warning(f"No binary similarity edges found for {collection}:{algo}")
+            return True
+
+        num_nodes = len(id_to_idx)
+        msg = f"[hierarchical_uf] {num_nodes} binaries, {edge_set.src.size} edges. Building single-linkage tree..."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        start_fit = time.time()
+        tree_rows, global_root_id, _ = build_single_linkage_tree(edge_set)
+        tree_df = pd.DataFrame(tree_rows)
+        fit_time = time.time() - start_fit
+        msg = f"[hierarchical_uf] tree built in {fit_time:.2f}s, {len(tree_df)} rows."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        birth_lambdas, _ = self._tree_lambdas(tree_df)
+
+        return self._persist_hierarchical_binary_clusters(
+            collection,
+            algo,
+            edge_set,
+            id_to_idx,
+            idx_to_id,
+            tree_df,
+            global_root_id,
+            num_nodes,
+            min_cluster_size,
+            min_cohesion,
+            birth_lambdas,
+            job_service,
+            job_id,
+        )
+
     def _run_clustering_hdbscan(
         self,
         collection,
@@ -749,20 +867,7 @@ class BinClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        # 1. Birth lambdas for all clusters
-        root_id = tree_df["parent"].min()
-        birth_lambdas = {root_id: 0.0}
-        for row in tree_df.itertuples(index=False):
-            if row.child_size > 1:
-                birth_lambdas[int(row.child)] = float(row.lambda_val)
-
-        # 2. Death lambdas for all clusters
-        death_lambdas = {}
-        for row in tree_df.itertuples(index=False):
-            p = int(row.parent)
-            l = float(row.lambda_val)
-            if p not in death_lambdas or l > death_lambdas[p]:
-                death_lambdas[p] = l
+        birth_lambdas, death_lambdas = self._tree_lambdas(tree_df)
 
         # Pruning tree based on cluster_selection_epsilon (if > 0)
         pruned_clusters = set()
@@ -814,6 +919,45 @@ class BinClusterService:
             import pandas as pd
 
             tree_df = pd.DataFrame(pruned_rows)
+
+        return self._persist_hierarchical_binary_clusters(
+            collection,
+            algo,
+            edge_set,
+            id_to_idx,
+            idx_to_id,
+            tree_df,
+            global_root_id,
+            num_nodes,
+            min_cluster_size,
+            min_cohesion,
+            birth_lambdas,
+            job_service,
+            job_id,
+        )
+
+    def _persist_hierarchical_binary_clusters(
+        self,
+        collection,
+        algo,
+        edge_set,
+        id_to_idx,
+        idx_to_id,
+        tree_df,
+        global_root_id,
+        num_nodes,
+        min_cluster_size,
+        min_cohesion,
+        birth_lambdas,
+        job_service,
+        job_id,
+    ):
+        """Shared tail for every hierarchical binary engine (HDBSCAN,
+        hierarchical_uf): given a condensed/single-linkage tree_df (columns
+        parent/child/lambda_val/child_size) and its fitted birth_lambdas,
+        extract clusters, compute stability + cohesion, and persist.
+        """
+        r = self.r
 
         # 4. Extract Condensed Tree for UI
         tree_json = tree_df.to_json(orient="records")

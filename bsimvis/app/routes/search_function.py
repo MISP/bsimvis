@@ -14,6 +14,7 @@ from bsimvis.app.services.index_service import (
 )
 from bsimvis.app.services.lua_manager import lua_manager
 from bsimvis.app.services.query_syntax import resolve_targets
+from bsimvis.app.services.config_service import config_service
 
 DEFAULT_LIMIT = 100
 DEFAULT_POOL_LIMIT = 1000000
@@ -56,7 +57,11 @@ def search_functions():
             offset = int(request.args.get("offset", 0))
             limit = int(request.args.get("limit", DEFAULT_LIMIT))
             pool_limit = int(request.args.get("pool_limit", DEFAULT_POOL_LIMIT))
-            min_cohesion = float(request.args.get("min_cohesion", 0.95))
+            min_cohesion = float(
+                request.args.get(
+                    "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
+                )
+            )
         except ValueError:
             return {"error": "Invalid numeric parameter"}, 400
 

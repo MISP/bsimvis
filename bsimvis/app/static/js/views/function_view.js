@@ -555,7 +555,7 @@ window.FunctionView = {
 
         qs.set('algo', document.getElementById('fn-nbr-algo')?.value || 'unweighted_cosine');
         qs.set('min_score', document.getElementById('fn-nbr-min-score')?.value || '0.9');
-        qs.set('min_cohesion', document.getElementById('fn-nbr-min-cohesion')?.value || '0.95');
+        qs.set('min_cohesion', document.getElementById('fn-nbr-min-cohesion')?.value || '0.5');
         qs.set('min_features', document.getElementById('fn-nbr-min-features')?.value || '0');
 
         const setIfVal = (id, key) => {

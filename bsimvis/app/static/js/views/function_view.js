@@ -369,16 +369,23 @@ window.FunctionView = {
     // not via a documented "add to existing cluster" API.
     // ponytail: only clusters the initial synchronous batch; deeper-expanded
     // nodes render ungrouped. Revisit if that's confusing in practice.
+    //
+    // Only 'similar'/'added' matches get grouped -- the center function and
+    // its direct callers/callees are the actual subject of the graph, and
+    // clustering them away (even when they happen to share a binary with a
+    // similarity match) hid the very thing the user came to look at.
+    CLUSTERABLE_KINDS: new Set(['similar', 'added']),
+
     buildClusteredNodes(entries) {
-        const groupable = entries.filter(n => n.data.kind !== 'external' && n.data.raw?.file_md5);
+        const groupable = entries.filter(n => this.CLUSTERABLE_KINDS.has(n.data.kind) && n.data.raw?.file_md5);
         const binaries = new Set(groupable.map(n => n.data.raw.file_md5));
-        if (binaries.size < 2) return entries;
+        if (binaries.size < 1) return entries;
 
         const byMd5 = new Map();
         const result = [];
         for (const n of entries) {
             const md5 = n.data.raw?.file_md5;
-            if (n.data.kind === 'external' || !md5) {
+            if (!this.CLUSTERABLE_KINDS.has(n.data.kind) || !md5) {
                 result.push(n);
                 continue;
             }
@@ -423,7 +430,7 @@ window.FunctionView = {
         const results = await Promise.all(targets.map(async n => {
             const content = await this.fetchNoteContent(n.id);
             if (!content) return null;
-            return { id: `bsimnote:${n.id}`, attachedElement: n.id, content, color: '#ffd700' };
+            return { id: `bsimnote:${n.id}`, attachedElement: { type: 'node', id: n.id }, content, color: '#ffd700' };
         }));
         return results.filter(Boolean);
     },
@@ -436,7 +443,7 @@ window.FunctionView = {
         if (!pInstance || typeof pInstance.on !== 'function') return;
         let timer = null;
         const forward = (note) => {
-            const funcId = note?.attachedElement;
+            const funcId = note?.attachedElement?.id;
             if (!funcId || typeof note.content !== 'string') return;
             clearTimeout(timer);
             timer = setTimeout(async () => {
@@ -470,24 +477,24 @@ window.FunctionView = {
         </span>`).join('');
     },
 
-    renderEdgeLabel(edge) {
-        const d = (edge.getData && edge.getData()) || edge.data || {};
-        if (d.kind !== 'similarity' || typeof d.score !== 'number') return '';
-        // A solid filled pill on every similarity edge reads as visual noise once
-        // there's more than a couple of them -- an outlined, low-contrast tag is
-        // still readable but doesn't compete with the nodes for attention.
-        const div = document.createElement('div');
-        div.style.cssText = 'background:rgba(30,30,46,0.75); color:#ae81ff; border:1px solid rgba(174,129,255,0.5); font:9px/1 monospace; padding:1px 5px; border-radius:6px; white-space:nowrap;';
-        div.textContent = Math.round(d.score * 100) + '%';
-        return div;
+    renderEdgeLabel() {
+        // Pivotick's defaultEdgeRender always allocates a label foreignObject
+        // whenever renderLabel is configured at all, regardless of what it
+        // returns -- an empty Element is what actually collapses the box to
+        // 0x0 (a returned '' or null still leaves a text node, which fails
+        // the auto-measure's Element check and leaves the box at its
+        // default size). Score pills read as noise on a dense graph; drop
+        // them entirely per explicit request.
+        return document.createElement('span');
     },
 
     callGraphRenderNode(raw, kind) {
         if (kind === 'binary-cluster') {
-            const label = escapeHtml(raw?.file_name || (raw?.file_md5 || '').slice(0, 10) || 'binary');
+            const hasRealName = raw?.file_name && raw.file_name !== raw?.file_md5;
+            const label = escapeHtml(hasRealName ? raw.file_name : (raw?.file_md5 || '').slice(0, 10) || 'binary');
             const div = document.createElement('div');
-            div.style.cssText = 'padding:6px 10px; border-radius:8px; border:2px dashed #66d9ef; background:var(--card-bg, #222); font:11px/1.3 monospace; color:#66d9ef; font-weight:bold; white-space:nowrap; display:flex; align-items:center; gap:5px;';
-            div.innerHTML = `<i class="fa-solid fa-file-binary"></i>${label}`;
+            div.style.cssText = 'padding:6px 10px; border-radius:8px; border:2px dashed #66d9ef; background:var(--card-bg, #222); font:11px/1.3 monospace; color:#66d9ef; font-weight:bold; white-space:nowrap;';
+            div.textContent = label;
             return div;
         }
 

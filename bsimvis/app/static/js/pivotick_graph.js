@@ -261,6 +261,11 @@ class PivotickGraphController {
     async toggleSimilarity(show) {
         this._simEdgesEnabled = show;
         if (!show) {
+            // Similarity nodes only exist because a similarity edge pulled
+            // them in -- leaving them behind once that edge is hidden orphans
+            // them on the graph with no visible reason to be there.
+            const similarIds = [...this.nodes.entries()].filter(([, n]) => n.kind === 'similar').map(([id]) => id);
+            for (const id of similarIds) this.removeFunction(id, { skipRender: true });
             for (const [eid, e] of this.edges) {
                 if (e.kind === 'similarity') this.edges.delete(eid);
             }
@@ -337,6 +342,8 @@ class PivotickGraphController {
                 this.pInstance.setData(nodes, edges, notes);
             }
             this._growClusterCircles();
+            this._positionFreshNotes(notes);
+            this.pInstance.onChange();
             return;
         }
 
@@ -366,17 +373,37 @@ class PivotickGraphController {
     // it directly on each cluster's children after (re)building and trigger
     // a re-render; reaches into the same undocumented-but-public internals
     // (noteManager, _simEdgesEnabled) already used elsewhere here.
-    static CLUSTER_CHILD_RADIUS = 70;
+    static CLUSTER_CHILD_RADIUS = 95;
 
+    // Pivotick draws a dashed "cluster area" circle behind ANY node with
+    // hasChildren() === true -- not just our binary clusters -- sized off
+    // each child's getCircleRadius() (getRadiusForClusterNode: sqrt(n) * 2 *
+    // avg(childRadius+16) + 50). Our custom rectangular cards never get a
+    // circleRadius (nothing in Pivotick's public node-construction API
+    // accepts one), so it defaults to Node's built-in 10px and every real
+    // cluster is sized as if it only needed to fit tiny dots. Fix that for
+    // real binary-cluster nodes; hide the ghost circle entirely for anything
+    // else (Pivotick's own internal grouping, not ours).
     _growClusterCircles() {
         if (!this.pInstance) return;
         try {
             let touched = false;
             for (const node of this.pInstance.getMutableNodes()) {
                 if (typeof node.hasChildren !== 'function' || !node.hasChildren()) continue;
-                for (const child of node.children || []) {
-                    if (typeof child.setCircleRadius === 'function') {
-                        child.setCircleRadius(PivotickGraphController.CLUSTER_CHILD_RADIUS);
+                const isBinaryCluster = node.getData?.()?.kind === 'binary-cluster';
+                if (isBinaryCluster) {
+                    for (const child of node.children || []) {
+                        if (typeof child.setCircleRadius === 'function') {
+                            child.setCircleRadius(PivotickGraphController.CLUSTER_CHILD_RADIUS);
+                            touched = true;
+                        }
+                    }
+                    if (this._fixClusterHeaderSize(node)) touched = true;
+                } else {
+                    const el = typeof node.getGraphElement === 'function' ? node.getGraphElement() : null;
+                    const circle = el?.querySelector(':scope > circle.pvt-cluster-area');
+                    if (circle && circle.style.display !== 'none') {
+                        circle.style.display = 'none';
                         touched = true;
                     }
                 }
@@ -384,6 +411,70 @@ class PivotickGraphController {
             if (touched) this.pInstance.onChange();
         } catch (err) {
             console.error('Failed to resize cluster circles:', err);
+        }
+    }
+
+    // Pivotick's own requestAnimationFrame auto-sizing (measure the rendered
+    // foreignObject's first child, call node.setBoxSize()) reliably fails to
+    // ever shrink a binary-cluster header -- it stays stuck near its default
+    // regardless of label length. Measure the label ourselves and set the
+    // foreignObject/box size directly as a workaround.
+    _measureClusterLabelWidth(text) {
+        if (!this._labelMeasureCtx) this._labelMeasureCtx = document.createElement('canvas').getContext('2d');
+        this._labelMeasureCtx.font = '11px monospace';
+        return this._labelMeasureCtx.measureText(text).width;
+    }
+
+    _fixClusterHeaderSize(node) {
+        const el = typeof node.getGraphElement === 'function' ? node.getGraphElement() : null;
+        const fo = el?.querySelector(':scope > foreignObject');
+        const label = fo?.firstElementChild?.textContent;
+        if (!fo || !label) return false;
+        const w = Math.ceil(this._measureClusterLabelWidth(label)) + 24;
+        const h = 28;
+        if (fo.getAttribute('width') === String(w) && fo.getAttribute('height') === String(h)) return false;
+        fo.setAttribute('width', w);
+        fo.setAttribute('height', h);
+        fo.setAttribute('x', -w / 2);
+        fo.setAttribute('y', -h / 2);
+        if (typeof node.setBoxSize === 'function') node.setBoxSize(w, h);
+        return true;
+    }
+
+    // DOM-measured on-screen center of a node, converted back into
+    // zoom/pan-local coordinate space -- works for cluster children, which
+    // have no numeric model x/y at all, unlike getNode()'s coordinates which
+    // only exist for top-level (non-nested) nodes.
+    _readNodeScreenPosition(node) {
+        const el = typeof node.getGraphElement === 'function' ? node.getGraphElement() : null;
+        const svg = el?.closest('svg');
+        if (!svg) return null;
+        const zoomLayer = svg.querySelector('.zoom-layer') || svg;
+        const ctm = zoomLayer.getScreenCTM?.();
+        if (!ctm) return null;
+        const rect = el.getBoundingClientRect();
+        const pt = svg.createSVGPoint();
+        pt.x = rect.x + rect.width / 2;
+        pt.y = rect.y + rect.height / 2;
+        const local = pt.matrixTransform(ctm.inverse());
+        return { x: local.x, y: local.y };
+    }
+
+    // Notes default to (0,0) and Pivotick's note-edge connector renders
+    // nothing when note and node coincide -- place a freshly-attached note
+    // just outside its node's circle instead of on top of it.
+    static NOTE_MARGIN = 24;
+
+    _positionFreshNotes(notes) {
+        if (!this.pInstance?.noteManager) return;
+        for (const n of notes) {
+            const note = this.pInstance.noteManager.getNote(n.id);
+            let node = this.pInstance.getMutableNode?.(n.attachedElement?.id);
+            while (node && typeof node.x !== 'number' && node.parentNode) node = node.parentNode;
+            if (!note || !node || typeof node.x !== 'number' || typeof node.y !== 'number') continue;
+            const radius = (typeof node.getCircleRadius === 'function' && node.getCircleRadius()) || 0;
+            const offset = radius + PivotickGraphController.NOTE_MARGIN;
+            note.setPosition(node.x + offset, node.y - offset);
         }
     }
 
@@ -405,12 +496,29 @@ class PivotickGraphController {
                     return FunctionView.callGraphRenderNode(d.raw, d.kind);
                 },
                 renderLabel: (edge) => FunctionView.renderEdgeLabel(edge),
-                // Straight lines on a dense radial graph cross right through
-                // node bodies and each other. Curved (arc) edges bow around
-                // that clutter and are much easier to trace by eye.
-                defaultEdgeStyle: { curveStyle: 'curved' },
+                // Pivotick's curved-edge arc radius is literally the raw
+                // node-to-node distance (linkArc() does Math.hypot(dx,dy)),
+                // not anything shape-aware -- on this radial layout that bows
+                // edges into huge flying-saucer arcs. Only the straight-line
+                // renderer consults getNodeBorderRadius(), which is what
+                // actually anchors an arrowhead to a rectangular card's edge
+                // instead of its center.
+                defaultEdgeStyle: { curveStyle: 'straight' },
             },
             callbacks: {
+                // Cluster children never get real top-level x/y (they only
+                // exist inside Pivotick's internal nested sub-layout), so any
+                // similarity edge routed to one goes stale the instant its
+                // cluster is dragged. Recompute a usable position every drag
+                // tick from the live DOM instead of the model.
+                onNodeDragging: (e, node) => {
+                    if (node?.getData?.()?.kind !== 'binary-cluster' || !Array.isArray(node.children)) return;
+                    for (const child of node.children) {
+                        const pos = self._readNodeScreenPosition(child);
+                        if (pos) { child.x = pos.x; child.y = pos.y; }
+                    }
+                    self.pInstance.onChange();
+                },
                 onNodeClick: async (e, node) => {
                     const id = node.id;
                     const d = node.getData() || {};
@@ -453,7 +561,9 @@ class PivotickGraphController {
             if (content) { existing.setContent(content); this.pInstance.onChange(); }
             else { this.pInstance.noteManager.removeNote(existing); this.pInstance.onChange(); }
         } else if (content) {
-            this.pInstance.noteManager?.addNote({ id: noteId, attachedElement: funcId, content, color: '#ffd700' }, true);
+            const attachedElement = { type: 'node', id: funcId };
+            this.pInstance.noteManager?.addNote({ id: noteId, attachedElement, content, color: '#ffd700' }, true);
+            this._positionFreshNotes([{ id: noteId, attachedElement }]);
             this.pInstance.onChange();
         }
     }

@@ -247,6 +247,8 @@ window.showTooltip = (e, tag, coll) => {
                     <span style="color:var(--dim)">Functions:</span> <b style="color:var(--accent)">${stats.function}</b>
                     <span style="color:var(--dim)">Files:</span> <b style="color:var(--accent)">${stats.file}</b>
                     <span style="color:var(--dim)">Similarities:</span> <b style="color:var(--accent)">${stats.similarity}</b>
+                    <span style="color:var(--dim)">Function clusters:</span> <b style="color:var(--accent)">${stats.cluster || 0}</b>
+                    <span style="color:var(--dim)">File clusters:</span> <b style="color:var(--accent)">${stats.bin_cluster || 0}</b>
                 </div>
                 <div style="margin-top:8px; font-size:0.65rem; color:var(--dim); font-style:italic;">Right-click tag to customize</div>
             `;
@@ -1099,6 +1101,15 @@ async function startAddTag(event, etype, eid) {
     };
 }
 
+function clusterTagContext(etype) {
+    if (etype !== 'cluster' && etype !== 'bin_cluster') return {};
+    const params = new URLSearchParams(window.location.hash.split('?')[1] || window.location.search);
+    return {
+        algo: params.get('algo') || 'unweighted_cosine',
+        node_type: params.get('node_type') || 'file'
+    };
+}
+
 async function confirmAddTag(etype, eid, tag, container) {
     const params = new URLSearchParams(window.location.hash.split('?')[1] || window.location.search);
     const colStr = params.get('collection');
@@ -1155,7 +1166,13 @@ async function confirmAddTag(etype, eid, tag, container) {
             const res = await fetch('/api/tags/add', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ collection: col, entity_type: t.etype, entity_id: t.eid, tag })
+                body: JSON.stringify({
+                    collection: col,
+                    entity_type: t.etype,
+                    entity_id: t.eid,
+                    tag,
+                    ...clusterTagContext(t.etype)
+                })
             });
 
             if (res.ok) {
@@ -1271,7 +1288,13 @@ async function removeTag(event, etype, eid, tag) {
             const res = await fetch('/api/tags/remove', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ collection: col, entity_type: t.etype, entity_id: t.eid, tag })
+                body: JSON.stringify({
+                    collection: col,
+                    entity_type: t.etype,
+                    entity_id: t.eid,
+                    tag,
+                    ...clusterTagContext(t.etype)
+                })
             });
             if (res.ok) {
                 const editorsToUpdate = (t.etype === 'function' || t.etype === 'file')

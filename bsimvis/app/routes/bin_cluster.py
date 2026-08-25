@@ -195,8 +195,10 @@ def list_bin_clusters():
     if is_pool:
         collection = f"global:pool:{pool_id}"
         cluster_list_key = f"global:pool:{pool_id}:bin_cluster:list"
+        meta_prefix = f"global:pool:{pool_id}:bin_cluster:"
     else:
         cluster_list_key = f"{collection}:bin_cluster:list:{algo}"
+        meta_prefix = f"{collection}:bin_cluster:{algo}:"
 
     cids_raw = r.smembers(cluster_list_key)
     all_meta_keys = []
@@ -268,13 +270,23 @@ def list_bin_clusters():
             f"BIN_CLUSTERS | smembers+fetch {len(all_meta_keys)} metas: {time.perf_counter()-t_fetch:.3f}s"
         )
 
+        # ponytail: stale UUID annotations are inert and sparse; prune them in
+        # build finalization only if historical tagged-cluster churn grows.
+        annotations = {
+            key.decode() if isinstance(key, bytes) else key: value
+            for key, value in (r.hgetall(f"{collection}:cluster_tags") or {}).items()
+        }
         meta_map = {}
-        for meta in raw_metas:
+        for meta_key, meta in zip(all_meta_keys, raw_metas):
             if not meta:
                 continue
             m = json.loads(meta) if not isinstance(meta, dict) else meta
             if isinstance(m, str):
                 m = json.loads(m)
+            tag_field = f"bin_cluster:{algo}:{m.get('cluster_uuid')}"
+            raw_tags = annotations.get(tag_field)
+            m["user_tags"] = json.loads(raw_tags) if raw_tags else []
+            m["tag_id"] = meta_key[len(meta_prefix) : -len(":meta")]
             cid = str(m.get("cluster_id", ""))
             meta_map[cid] = m
 
@@ -282,6 +294,7 @@ def list_bin_clusters():
         for cid, m in meta_map.items():
             cuuid = str(m.get("cluster_uuid", ""))
             cname = str(m.get("cluster_name", ""))
+            user_tags = [str(tag) for tag in m.get("user_tags", [])]
 
             if q:
                 keywords = [k for k in q.split() if k]
@@ -292,7 +305,7 @@ def list_bin_clusters():
                         for item in m.get("yara_distribution", [])
                         if item.get("value")
                     ]
-                    search_targets = [cid, cuuid, cname] + yara_values
+                    search_targets = [cid, cuuid, cname, *user_tags] + yara_values
                     if not any(kw in v.lower() for v in search_targets):
                         match = False
                         break
@@ -440,6 +453,8 @@ def list_bin_clusters():
                 "cluster_id": m.get("cluster_id"),
                 "cluster_uuid": m.get("cluster_uuid"),
                 "cluster_name": m.get("cluster_name"),
+                "tag_id": m.get("tag_id", m.get("cluster_id")),
+                "user_tags": m.get("user_tags", []),
                 "is_custom_name": m.get("is_custom_name", False),
                 "avg_stability": m.get("avg_stability", 0.0),
                 "cohesion_score": m.get("cohesion_score", 0),

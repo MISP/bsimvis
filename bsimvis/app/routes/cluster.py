@@ -6,6 +6,7 @@ from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.index_service import get_pool_id
+from bsimvis.app.services.query_syntax import parse_filter_value
 
 job_service = JobService()
 
@@ -225,6 +226,16 @@ def list_clusters():
     # Filtering
     format_arg = request.args.get("format")
     q = request.args.get("q", "").lower().strip()
+    tag_filters = [
+        parse_filter_value("user_tags", value)
+        for value in request.args.getlist("cluster_tag")
+        if value.strip()
+    ]
+    exclude_tag_filters = [
+        parse_filter_value("user_tags", value)
+        for value in request.args.getlist("exclude_cluster_tag")
+        if value.strip()
+    ]
     cluster_id_q = request.args.get("cluster_id", "").lower()
     cluster_uuid_q = request.args.get("cluster_uuid", "").lower()
     cluster_name_q = request.args.get("cluster_name", "").lower()
@@ -267,6 +278,7 @@ def list_clusters():
         collection = f"global:pool:{pool_id}"
 
     cluster_list_key = f"{collection}:cluster:list:{algo}"
+    meta_prefix = f"{collection}:cluster:{algo}:"
 
     cids_raw = r.smembers(cluster_list_key)
     all_meta_keys = []
@@ -329,13 +341,23 @@ def list_clusters():
             f"CLUSTERS | smembers+fetch {len(all_meta_keys)} metas: {time.perf_counter()-t_fetch:.3f}s"
         )
 
+        # ponytail: stale UUID annotations are inert and sparse; prune them in
+        # build finalization only if historical tagged-cluster churn grows.
+        annotations = {
+            key.decode() if isinstance(key, bytes) else key: value
+            for key, value in (r.hgetall(f"{collection}:cluster_tags") or {}).items()
+        }
         meta_map = {}
-        for meta in raw_metas:
+        for meta_key, meta in zip(all_meta_keys, raw_metas):
             if not meta:
                 continue
             m = json.loads(meta) if not isinstance(meta, dict) else meta
             if isinstance(m, str):
                 m = json.loads(m)
+            tag_field = f"cluster:{algo}:{m.get('cluster_uuid')}"
+            raw_tags = annotations.get(tag_field)
+            m["user_tags"] = json.loads(raw_tags) if raw_tags else []
+            m["tag_id"] = meta_key[len(meta_prefix) : -len(":meta")]
             cid = str(m.get("cluster_id", ""))
             meta_map[cid] = m
 
@@ -343,17 +365,29 @@ def list_clusters():
         for cid, m in meta_map.items():
             cuuid = str(m.get("cluster_uuid", ""))
             cname = str(m.get("cluster_name", ""))
+            user_tags = [str(tag).lower() for tag in m.get("user_tags", [])]
 
             # Global keyword search
             if q:
                 keywords = [k for k in q.split() if k]
                 match = True
                 for kw in keywords:
-                    if not any(kw in v.lower() for v in [cid, cuuid, cname]):
+                    if not any(
+                        kw in v.lower() for v in [cid, cuuid, cname, *user_tags]
+                    ):
                         match = False
                         break
                 if not match:
                     continue
+
+            if any(
+                not any(spec.matches(tag) for tag in user_tags) for spec in tag_filters
+            ):
+                continue
+            if any(
+                spec.matches(tag) for spec in exclude_tag_filters for tag in user_tags
+            ):
+                continue
 
             if cluster_id_q and cluster_id_q not in cid.lower():
                 continue
@@ -526,6 +560,8 @@ def list_clusters():
                 "cluster_id": m.get("cluster_id"),
                 "cluster_uuid": m.get("cluster_uuid"),
                 "cluster_name": m.get("cluster_name"),
+                "tag_id": m.get("tag_id", m.get("cluster_id")),
+                "user_tags": m.get("user_tags", []),
                 "avg_stability": m.get("avg_stability", 0.0),
                 "avg_features": m.get("avg_features", 0),
                 "cohesion_score": m.get("cohesion_score", 0),

@@ -468,6 +468,227 @@ def resolve_ids():
             vprint(f"     cluster_uuid = {cluster_uuid}")
 
 
+def test_cluster_tags():
+    """Cluster tags persist once on cluster metadata and remain searchable."""
+    from redis import Redis
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" Cluster tags", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    r = Redis(
+        host=os.getenv("KVROCKS_HOST", "localhost"),
+        port=int(os.getenv("KVROCKS_PORT", "6666")),
+        decode_responses=True,
+    )
+    algo = "unweighted_cosine"
+    pool_id = f"cluster_tags_{uuid.uuid4().hex[:8]}"
+    tag = f"cluster-bookmark-{uuid.uuid4().hex[:8]}"
+    fixtures = [
+        {
+            "type": "cluster",
+            "collection": COLLECTION,
+            "path": "/api/cluster/list",
+            "id": "tag-test-function",
+            "key": f"{COLLECTION}:cluster:{algo}:tag-test-function:meta",
+            "list": f"{COLLECTION}:cluster:list:{algo}",
+        },
+        {
+            "type": "bin_cluster",
+            "collection": COLLECTION,
+            "path": "/api/bin_cluster/list",
+            "id": "tag-test-file",
+            "key": f"{COLLECTION}:bin_cluster:{algo}:tag-test-file:meta",
+            "list": f"{COLLECTION}:bin_cluster:list:{algo}",
+        },
+        {
+            "type": "cluster",
+            "collection": f"pool:{pool_id}",
+            "path": "/api/cluster/list",
+            "id": "tag-test-pool",
+            "key": f"global:pool:{pool_id}:cluster:{algo}:tag-test-pool:meta",
+            "list": f"global:pool:{pool_id}:cluster:list:{algo}",
+        },
+        {
+            "type": "bin_cluster",
+            "collection": f"pool:{pool_id}",
+            "path": "/api/bin_cluster/list",
+            "id": "tag-test-pool-file",
+            "tag_id": "uuid-tag-test-pool-file",
+            "key": f"global:pool:{pool_id}:bin_cluster:uuid-tag-test-pool-file:meta",
+            "list": f"global:pool:{pool_id}:bin_cluster:list",
+        },
+    ]
+
+    try:
+        for item in fixtures:
+            r.set(
+                item["key"],
+                json.dumps(
+                    {
+                        "cluster_id": item["id"],
+                        "cluster_uuid": f"uuid-{item['id']}",
+                        "cluster_name": f"Cluster {item['id']}",
+                        "member_count": 2,
+                    }
+                ),
+            )
+            r.sadd(item["list"], item.get("tag_id", item["id"]))
+
+            added = test_endpoint(
+                "POST",
+                "/api/tags/add",
+                data={
+                    "collection": item["collection"],
+                    "entity_type": item["type"],
+                    "entity_id": item.get("tag_id", item["id"]),
+                    "tag": tag,
+                    "algo": algo,
+                },
+                label=f"POST /api/tags/add ({item['type']})",
+            )
+            check(
+                f"{item['type']} tag add succeeds",
+                (added or {}).get("status") == "success",
+                str(added),
+            )
+
+            # Recluster writers replace metadata; annotations must survive it.
+            rebuilt_meta = json.loads(r.get(item["key"]))
+            rebuilt_meta["cluster_name"] += " rebuilt"
+            r.set(item["key"], json.dumps(rebuilt_meta))
+
+            listed = test_endpoint(
+                "GET",
+                item["path"],
+                params={
+                    "collection": item["collection"],
+                    "algo": algo,
+                    "q": tag,
+                    "show_parents": "false",
+                    "show_children": "false",
+                },
+                label=f"GET {item['path']} (tag search)",
+            )
+            rows = (listed or {}).get("results", [])
+            tagged = next(
+                (row for row in rows if str(row.get("cluster_id")) == item["id"]), None
+            )
+            check(
+                f"{item['type']} tag is returned by cluster search",
+                tagged is not None and tag in tagged.get("user_tags", []),
+                str(rows[:2]),
+            )
+
+            tag_params = {
+                "collection": item["collection"],
+                "algo": algo,
+                "cluster_tag": '"' + tag + '"',
+            }
+            included = requests.get(
+                BASE_URL + item["path"], params=tag_params, timeout=20
+            ).json()
+            check(
+                "{} exact tag filter includes the cluster".format(item["type"]),
+                any(
+                    str(row.get("cluster_id")) == item["id"]
+                    for row in included.get("results", [])
+                ),
+                str(included.get("results", [])[:2]),
+            )
+            tag_params.pop("cluster_tag")
+            tag_params["exclude_cluster_tag"] = '"' + tag + '"'
+            excluded = requests.get(
+                BASE_URL + item["path"], params=tag_params, timeout=20
+            ).json()
+            check(
+                "{} exclude tag filter removes the cluster".format(item["type"]),
+                not any(
+                    str(row.get("cluster_id")) == item["id"]
+                    for row in excluded.get("results", [])
+                ),
+                str(excluded.get("results", [])[:2]),
+            )
+
+            if item is fixtures[0]:
+                replaced_meta = json.loads(r.get(item["key"]))
+                replaced_meta["cluster_uuid"] = "uuid-replacement-cluster"
+                r.set(item["key"], json.dumps(replaced_meta))
+                replaced = requests.get(
+                    f"{BASE_URL}{item['path']}",
+                    params={"collection": item["collection"], "algo": algo, "q": tag},
+                    timeout=20,
+                ).json()
+                check(
+                    "replacement cluster does not inherit the old UUID's tag",
+                    not replaced.get("results"),
+                    str(replaced.get("results", [])[:2]),
+                )
+                stale_stats = requests.get(
+                    f"{BASE_URL}/api/tags/stats",
+                    params={"collection": item["collection"], "tag": tag},
+                    timeout=20,
+                ).json()
+                check(
+                    "replacement cluster does not leave phantom tag statistics",
+                    stale_stats.get("cluster") == 0,
+                    str(stale_stats),
+                )
+                replaced_meta["cluster_uuid"] = f"uuid-{item['id']}"
+                r.set(item["key"], json.dumps(replaced_meta))
+                requests.post(
+                    f"{BASE_URL}/api/tags/add",
+                    json={
+                        "collection": item["collection"],
+                        "entity_type": item["type"],
+                        "entity_id": item.get("tag_id", item["id"]),
+                        "tag": tag,
+                        "algo": algo,
+                    },
+                    timeout=20,
+                ).raise_for_status()
+
+            removed = test_endpoint(
+                "POST",
+                "/api/tags/remove",
+                data={
+                    "collection": item["collection"],
+                    "entity_type": item["type"],
+                    "entity_id": item.get("tag_id", item["id"]),
+                    "tag": tag,
+                    "algo": algo,
+                },
+                label=f"POST /api/tags/remove ({item['type']})",
+            )
+            check(
+                f"{item['type']} tag remove succeeds",
+                (removed or {}).get("status") == "success",
+                str(removed),
+            )
+
+            after_remove = requests.get(
+                f"{BASE_URL}{item['path']}",
+                params={"collection": item["collection"], "algo": algo, "q": tag},
+                timeout=20,
+            ).json()
+            check(
+                f"{item['type']} tag is absent after removal",
+                not any(
+                    str(row.get("cluster_id")) == item["id"]
+                    for row in after_remove.get("results", [])
+                ),
+                str(after_remove.get("results", [])[:2]),
+            )
+    finally:
+        for item in fixtures:
+            r.srem(item["list"], item.get("tag_id", item["id"]))
+            r.delete(item["key"])
+        r.delete(f"{COLLECTION}:cluster_tags")
+        r.delete(f"global:pool:{pool_id}:cluster_tags")
+        r.hdel(f"{COLLECTION}:tags_metadata", tag)
+        r.hdel(f"global:pool:{pool_id}:tags_metadata", tag)
+
+
 def test_cluster_response_contract():
     """Guards the response shape the unified search and homepage read.
 
@@ -482,9 +703,7 @@ def test_cluster_response_contract():
     print(_color(f"{'='*60}", CYAN))
 
     for path in ("/api/cluster/list", "/api/bin_cluster/list"):
-        body = test_endpoint(
-            "GET", path, params={"collection": COLLECTION, "limit": 5}
-        )
+        body = test_endpoint("GET", path, params={"collection": COLLECTION, "limit": 5})
         rows = body.get("results") if isinstance(body, dict) else None
         check(
             f"{path} pages under 'results'",
@@ -1231,7 +1450,9 @@ def run_all_tests():
         and home_stats.get("totals", {}).get("files", 0) >= 1,
         str(home_stats.get("totals") if isinstance(home_stats, dict) else home_stats),
     )
-    insights = test_endpoint("GET", "/api/index/home/insights", params={"refresh": "true"})
+    insights = test_endpoint(
+        "GET", "/api/index/home/insights", params={"refresh": "true"}
+    )
     check(
         "home insights returns its three panels",
         isinstance(insights, dict)
@@ -1247,7 +1468,9 @@ def run_all_tests():
         params={"q": COLLECTION, "limit": 3},
         label="GET /api/search/unified?q=<collection>",
     )
-    kinds = {g["kind"] for g in uni.get("groups", [])} if isinstance(uni, dict) else set()
+    kinds = (
+        {g["kind"] for g in uni.get("groups", [])} if isinstance(uni, dict) else set()
+    )
     check(
         "unified search finds the collection by name",
         "collections" in kinds,
@@ -4591,6 +4814,7 @@ if __name__ == "__main__":
 
     # run_all_tests() stays last: it deletes the collection on its way out.
     STEPS = [
+        test_cluster_tags,
         test_cluster_response_contract,
         test_pool_annotation_propagation,
         test_search_filters_and_sorting,

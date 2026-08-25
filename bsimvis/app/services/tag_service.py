@@ -6,10 +6,10 @@ import logging
 from .redis_client import get_redis
 from bsimvis.app.services.index_config import tag_ancestors
 from bsimvis.app.services.index_service import (
+    get_pool_id,
     resolve_origin_collection,
     to_pool_indexed_id,
 )
-
 
 # Marks a colour a human actually chose. Three writers used to assign one off a
 # palette the first time a tag was seen -- two of them with `random.choice`, so
@@ -94,12 +94,38 @@ def _to_pool_ids(ids, lvl, pool_id):
     return out
 
 
+def _cluster_tag_field(entity_type, algo, node_type, meta):
+    if entity_type == "bin_cluster" and node_type == "container":
+        algo = f"{algo}:container"
+    cluster_uuid = meta.get("cluster_uuid")
+    return f"{entity_type}:{algo}:{cluster_uuid}" if cluster_uuid else None
+
+
 class TagService:
     def __init__(self, r=None):
         self.r = r or get_redis()
 
-    def _resolve_doc_id(self, collection, entity_type, entity_id):
+    def _resolve_doc_id(
+        self,
+        collection,
+        entity_type,
+        entity_id,
+        algo="unweighted_cosine",
+        node_type="file",
+    ):
         """Resolves a frontend ID into a backend Redis key."""
+        pool_id = get_pool_id(collection)
+        if entity_type == "cluster":
+            if pool_id:
+                return f"global:pool:{pool_id}:cluster:{algo}:{entity_id}:meta"
+            return f"{collection}:cluster:{algo}:{entity_id}:meta"
+        if entity_type == "bin_cluster":
+            if pool_id:
+                return f"global:pool:{pool_id}:bin_cluster:{entity_id}:meta"
+            if node_type == "container":
+                algo = f"{algo}:container"
+            return f"{collection}:bin_cluster:{algo}:{entity_id}:meta"
+
         collection = _normalize_collection(collection, entity_id)
         resolved_id = entity_id.replace(":function:", ":func:")
         if ":col:" in resolved_id:
@@ -175,19 +201,50 @@ class TagService:
             p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
             bump_tags_rev(self.r, f"global:pool:{p_id}")
 
-    def add_user_tag(self, collection, entity_type, entity_id, tag):
-        """
-        Adds a user tag to an entity (file, function, or similarity).
-        """
-        collection = _normalize_collection(collection, entity_id)
+    def add_user_tag(
+        self,
+        collection,
+        entity_type,
+        entity_id,
+        tag,
+        algo="unweighted_cosine",
+        node_type="file",
+    ):
+        """Adds a user tag to an entity."""
+        is_cluster = entity_type in ("cluster", "bin_cluster")
+        pool_id = get_pool_id(collection)
+        if is_cluster and pool_id:
+            collection = f"global:pool:{pool_id}"
+        elif not is_cluster:
+            collection = _normalize_collection(collection, entity_id)
         r = self.r
         tag = tag.strip()
         if not tag:
             return False
-        self._bump_tag_rev(collection)
+        if not is_cluster:
+            self._bump_tag_rev(collection)
 
         try:
-            doc_id = self._resolve_doc_id(collection, entity_type, entity_id)
+            doc_id = self._resolve_doc_id(
+                collection, entity_type, entity_id, algo, node_type
+            )
+
+            if is_cluster:
+                data = self._get_doc(doc_id)
+                field = (
+                    _cluster_tag_field(entity_type, algo, node_type, data)
+                    if data
+                    else None
+                )
+                if not field:
+                    return False
+                raw_tags = r.hget(f"{collection}:cluster_tags", field)
+                user_tags = json.loads(raw_tags) if raw_tags else []
+                if tag not in user_tags:
+                    user_tags.append(tag)
+                    r.hset(f"{collection}:cluster_tags", field, json.dumps(user_tags))
+                    self._ensure_tag_metadata(collection, tag)
+                return True
 
             data = self._get_doc(doc_id)
             if not data:
@@ -242,14 +299,50 @@ class TagService:
             logging.error(f"TagService: Error adding tag to {entity_id}: {e}")
             return False
 
-    def remove_user_tag(self, collection, entity_type, entity_id, tag):
+    def remove_user_tag(
+        self,
+        collection,
+        entity_type,
+        entity_id,
+        tag,
+        algo="unweighted_cosine",
+        node_type="file",
+    ):
         """Removes a user tag from an entity."""
-        collection = _normalize_collection(collection, entity_id)
+        is_cluster = entity_type in ("cluster", "bin_cluster")
+        pool_id = get_pool_id(collection)
+        if is_cluster and pool_id:
+            collection = f"global:pool:{pool_id}"
+        elif not is_cluster:
+            collection = _normalize_collection(collection, entity_id)
         r = self.r
         tag = tag.strip()
-        self._bump_tag_rev(collection)
+        if not is_cluster:
+            self._bump_tag_rev(collection)
         try:
-            doc_id = self._resolve_doc_id(collection, entity_type, entity_id)
+            doc_id = self._resolve_doc_id(
+                collection, entity_type, entity_id, algo, node_type
+            )
+
+            if is_cluster:
+                data = self._get_doc(doc_id)
+                field = (
+                    _cluster_tag_field(entity_type, algo, node_type, data)
+                    if data
+                    else None
+                )
+                if not field:
+                    return False
+                key = f"{collection}:cluster_tags"
+                raw_tags = r.hget(key, field)
+                user_tags = json.loads(raw_tags) if raw_tags else []
+                if tag in user_tags:
+                    user_tags.remove(tag)
+                    if user_tags:
+                        r.hset(key, field, json.dumps(user_tags))
+                    else:
+                        r.hdel(key, field)
+                return True
 
             json_field = "user_tags"
             data = self._get_doc(doc_id)
@@ -575,7 +668,13 @@ class TagService:
             return None
 
         self._bump_tag_rev(collection)
-        removed = {"function": 0, "file": 0, "similarity": 0}
+        removed = {
+            "function": 0,
+            "file": 0,
+            "similarity": 0,
+            "cluster": 0,
+            "bin_cluster": 0,
+        }
         for lvl, etype in self.LVL_TO_ETYPE.items():
             user_ids = self._tagged_ids(collection, lvl, "user_tags", tag)
             if user_ids:
@@ -587,6 +686,20 @@ class TagService:
                 self._strip_static_tag(collection, lvl, static_ids, tag)
                 removed[etype] += len(static_ids)
 
+        sidecar_key = f"{collection}:cluster_tags"
+        for field, raw_tags in self.r.hgetall(sidecar_key).items():
+            field = field.decode() if isinstance(field, bytes) else field
+            user_tags = json.loads(raw_tags)
+            if tag not in user_tags:
+                continue
+            user_tags.remove(tag)
+            etype = "bin_cluster" if field.startswith("bin_cluster:") else "cluster"
+            removed[etype] += 1
+            if user_tags:
+                self.r.hset(sidecar_key, field, json.dumps(user_tags))
+            else:
+                self.r.hdel(sidecar_key, field)
+
         self.r.hdel(f"{collection}:tags_metadata", tag)
         for p_id in self.r.smembers(f"{collection}:pools"):
             p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
@@ -594,12 +707,71 @@ class TagService:
 
         return removed
 
-    def get_tag_stats(self, collection, tag):
+    def get_cluster_tag_stats(self, collection):
+        """Return live cluster counts for every tag in one metadata pass."""
+        collection = _normalize_collection(collection)
+        r = self.r
+        annotations = {
+            field.decode() if isinstance(field, bytes) else field: raw_tags
+            for field, raw_tags in r.hgetall(f"{collection}:cluster_tags").items()
+        }
+        groups = set()
+        for field in annotations:
+            entity_type, identity = field.split(":", 1)
+            algo, _cluster_uuid = identity.rsplit(":", 1)
+            groups.add((entity_type, algo))
+
+        active_fields = set()
+        for entity_type, algo in groups:
+            if entity_type == "cluster":
+                list_key = f"{collection}:cluster:list:{algo}"
+                meta_prefix = f"{collection}:cluster:{algo}:"
+            elif collection.startswith("global:pool:"):
+                list_key = f"{collection}:bin_cluster:list"
+                meta_prefix = f"{collection}:bin_cluster:"
+            else:
+                list_key = f"{collection}:bin_cluster:list:{algo}"
+                meta_prefix = f"{collection}:bin_cluster:{algo}:"
+
+            cluster_ids = r.smembers(list_key)
+            pipe = r.pipeline(transaction=False)
+            for cluster_id in cluster_ids:
+                cluster_id = (
+                    cluster_id.decode() if isinstance(cluster_id, bytes) else cluster_id
+                )
+                pipe.get(f"{meta_prefix}{cluster_id}:meta")
+            for raw_meta in pipe.execute():
+                if not raw_meta:
+                    continue
+                meta = json.loads(raw_meta)
+                cluster_uuid = meta.get("cluster_uuid")
+                if cluster_uuid:
+                    active_fields.add(f"{entity_type}:{algo}:{cluster_uuid}")
+
+        stats = {}
+        for field, raw_tags in annotations.items():
+            if field not in active_fields:
+                continue
+            entity_type = (
+                "bin_cluster" if field.startswith("bin_cluster:") else "cluster"
+            )
+            for tag in json.loads(raw_tags):
+                counts = stats.setdefault(tag, {"cluster": 0, "bin_cluster": 0})
+                counts[entity_type] += 1
+        return stats
+
+    def get_tag_stats(self, collection, tag, cluster_stats=None):
         """Returns count breakdown by entity type for a given tag."""
         collection = _normalize_collection(collection)
         r = self.r
         tag_lower = tag.lower()
-        stats = {"function": 0, "file": 0, "similarity": 0}
+        stats = {
+            "function": 0,
+            "file": 0,
+            "similarity": 0,
+            "cluster": 0,
+            "bin_cluster": 0,
+        }
 
         for lvl in ["func", "file", "sim"]:
             for field in ["tags", "user_tags"]:
@@ -612,6 +784,10 @@ class TagService:
                         else "file" if lvl == "file" else "similarity"
                     )
                     stats[etype] += count
+
+        if cluster_stats is None:
+            cluster_stats = self.get_cluster_tag_stats(collection)
+        stats.update(cluster_stats.get(tag, {}))
         return stats
 
     def set_tag_color(self, collection, tag, color):

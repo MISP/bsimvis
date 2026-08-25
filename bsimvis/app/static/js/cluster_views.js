@@ -102,7 +102,11 @@ class ClusterHierarchy extends D3BaseLayout {
         let updated = false;
 
         this.root.each(d => {
-            if (d.data && etype === 'function' && d.data.runtime_members) {
+            if (d.data && etype === 'cluster' && String(d.data.tag_id || d.data.id) === String(eid)) {
+                d.data.user_tags = d.data.user_tags || [];
+                mutate(d.data.user_tags, tag, add);
+                updated = true;
+            } else if (d.data && etype === 'function' && d.data.runtime_members) {
                 d.data.runtime_members.forEach(m => {
                     const altEid = eid.includes(':func:') ? eid.replace(':func:', ':function:') : eid.replace(':function:', ':func:');
                     if (m.function_id === eid || m.function_id === altEid) {
@@ -440,6 +444,8 @@ class ClusterHierarchy extends D3BaseLayout {
                 parent: m.parent ? String(m.parent) : null,
                 name: m.cluster_name || `Cluster ${m.cluster_id}`,
                 uuid: m.cluster_uuid,
+                tag_id: m.tag_id || String(m.cluster_id),
+                user_tags: m.user_tags || [],
                 size: m.count || 0,
                 stability: m.avg_stability || 0.0,
                 cohesion: m.cohesion_score || 0.0,
@@ -1183,7 +1189,8 @@ class ClusterHierarchy extends D3BaseLayout {
                 <div class="hier-tooltip-container">
                     <div class="hier-left-col" style="padding: 12px;">
                         <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
-                        <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
+                        <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:6px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
+                        <div style="margin-bottom:10px;">${EntityRenderer.renderTag('cluster', d.data.tag_id || d.data.id, [], d.data.user_tags || [])}</div>
                         
                         <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
                             <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--subtle);">
@@ -1408,7 +1415,11 @@ class ClusterPacking {
         let updated = false;
 
         this.root.each(d => {
-            if (d.data && etype === 'function' && d.data.runtime_members) {
+            if (d.data && etype === 'cluster' && String(d.data.tag_id || d.data.id) === String(eid)) {
+                d.data.user_tags = d.data.user_tags || [];
+                mutate(d.data.user_tags, tag, add);
+                updated = true;
+            } else if (d.data && etype === 'function' && d.data.runtime_members) {
                 d.data.runtime_members.forEach(m => {
                     const altEid = eid.includes(':func:') ? eid.replace(':func:', ':function:') : eid.replace(':function:', ':func:');
                     if (m.function_id === eid || m.function_id === altEid) {
@@ -1716,6 +1727,8 @@ class ClusterPacking {
                 parent: m.parent ? String(m.parent) : null,
                 name: m.cluster_name || `Cluster ${m.cluster_id}`,
                 uuid: m.cluster_uuid,
+                tag_id: m.tag_id || String(m.cluster_id),
+                user_tags: m.user_tags || [],
                 size: m.count || 0,
                 stability: m.avg_stability || 0.0,
                 cohesion: m.cohesion_score || 0.0,
@@ -2217,7 +2230,8 @@ class ClusterPacking {
                 <div class="hier-tooltip-container">
                     <div class="hier-left-col" style="padding: 12px;">
                         <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
-                        <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
+                        <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:6px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
+                        <div style="margin-bottom:10px;">${EntityRenderer.renderTag('cluster', d.data.tag_id || d.data.id, [], d.data.user_tags || [])}</div>
                         
                         <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
                             <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--subtle);">

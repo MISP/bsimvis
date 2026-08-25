@@ -129,6 +129,7 @@
             } else {
                 resolvedType = type;
                 norm.id = data.id || data.cluster_id;
+                norm.tag_id = data.tag_id || norm.id;
                 norm.uuid = data.uuid || data.cluster_uuid;
                 norm.name = data.name || data.cluster_name || norm.uuid || norm.id;
             }
@@ -187,9 +188,11 @@
         html += `<div class="context-menu-header">${headerTitle}</div>`;
 
         // -- Bookmark & Ignore (Pinned at the Top) --
-        if (resolvedType === 'function' || resolvedType === 'file' || resolvedType === 'similarity') {
+        if (['function', 'file', 'similarity', 'cluster', 'bin_cluster'].includes(resolvedType)) {
             const etype = resolvedType;
-            const eid = (resolvedType === 'function') ? norm.id : ((resolvedType === 'file') ? norm.id : norm.sid);
+            const eid = resolvedType === 'similarity'
+                ? norm.sid
+                : ((resolvedType === 'cluster' || resolvedType === 'bin_cluster') ? norm.tag_id : norm.id);
             const userTags = getEntityUserTags(etype, eid);
             const tags = getEntityStaticTags(etype, eid, data);
             
@@ -1130,6 +1133,11 @@
                             cm.data.file_user_tags = cm.data.file_user_tags || [];
                             if (action === 'add' && !cm.data.file_user_tags.includes(tag)) cm.data.file_user_tags.push(tag);
                             if (action === 'remove') cm.data.file_user_tags = cm.data.file_user_tags.filter(x => x !== tag);
+                        } else if ((cm.type === 'cluster' || cm.type === 'bin_cluster') && t.etype === cm.type &&
+                            String(cm.data.tag_id || cm.data.id || cm.data.cluster_id) === String(t.eid)) {
+                            cm.data.user_tags = cm.data.user_tags || [];
+                            if (action === 'add' && !cm.data.user_tags.includes(tag)) cm.data.user_tags.push(tag);
+                            if (action === 'remove') cm.data.user_tags = cm.data.user_tags.filter(x => x !== tag);
                         } else if ((cm.type === 'similarity' || cm.type === 'link') && t.etype === 'similarity') {
                             cm.data.user_tags = cm.data.user_tags || [];
                             if (action === 'add' && !cm.data.user_tags.includes(tag)) cm.data.user_tags.push(tag);

@@ -1615,10 +1615,19 @@ class TagAdd(Resource):
             {
                 "collection": fields.String(required=True, example="main"),
                 "entity_type": fields.String(
-                    required=True, enum=["file", "function", "similarity"]
+                    required=True,
+                    enum=[
+                        "file",
+                        "function",
+                        "similarity",
+                        "cluster",
+                        "bin_cluster",
+                    ],
                 ),
                 "entity_id": fields.String(required=True, example="16c2addf..."),
                 "tag": fields.String(required=True, example="vulnerable"),
+                "algo": fields.String(example="unweighted_cosine"),
+                "node_type": fields.String(enum=["file", "container"]),
             },
         )
     )
@@ -1659,6 +1668,8 @@ class TagRemove(Resource):
                 "entity_type": fields.String(required=True),
                 "entity_id": fields.String(required=True),
                 "tag": fields.String(required=True),
+                "algo": fields.String(example="unweighted_cosine"),
+                "node_type": fields.String(enum=["file", "container"]),
             },
         )
     )
@@ -1911,6 +1922,8 @@ class ClusterList(Resource):
             "cluster_id": "Filter by cluster ID",
             "cluster_uuid": "Filter by cluster UUID",
             "cluster_name": "Filter by cluster name",
+            "cluster_tag": "Require a cluster user tag; repeat for AND filtering",
+            "exclude_cluster_tag": "Exclude clusters carrying this user tag",
             "show_members": "Whether to return direct member IDs/names (true/false)",
         }
     )
@@ -2055,6 +2068,8 @@ class BinClusterList(Resource):
             "cluster_id": "Filter by cluster ID",
             "cluster_uuid": "Filter by cluster UUID",
             "cluster_name": "Filter by cluster name",
+            "cluster_tag": "Require a cluster user tag; repeat for AND filtering",
+            "exclude_cluster_tag": "Exclude clusters carrying this user tag",
             "show_members": "Whether to return direct member IDs/names (true/false)",
         }
     )

@@ -127,7 +127,11 @@ class BinClusterHierarchy {
         let updated = false;
 
         this.root.each(d => {
-            if (d.data && etype === 'file' && d.data.runtime_files) {
+            if (d.data && etype === 'bin_cluster' && String(d.data.tag_id || d.data.id) === String(eid)) {
+                d.data.user_tags = d.data.user_tags || [];
+                mutate(d.data.user_tags, tag, add);
+                updated = true;
+            } else if (d.data && etype === 'file' && d.data.runtime_files) {
                 d.data.runtime_files.forEach(m => {
                     if (m.id === eid || m.md5 === eid || (m.id && m.id.endsWith(eid))) {
                         m.file_user_tags = m.file_user_tags || [];
@@ -399,6 +403,8 @@ class BinClusterHierarchy {
                     parent: m.parent ? String(m.parent) : null,
                     name: displayName,
                     uuid: m.cluster_uuid,
+                    tag_id: m.tag_id || String(m.cluster_id),
+                    user_tags: m.user_tags || [],
                     size: m.count || 0,
                     stability: m.avg_stability || 0.0,
                     cohesion: m.cohesion_score || 0.0,
@@ -731,7 +737,8 @@ class BinClusterHierarchy {
                 <div class="hier-tooltip-container" style="display:flex; flex-direction:row; min-width:450px; height:320px; background:var(--window-bg);">
                     <div class="hier-left-col" style="flex:1; padding:15px; border-right:1px solid var(--border); display:flex; flex-direction:column;">
                         <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
-                        <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
+                        <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:6px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
+                        <div style="margin-bottom:10px;">${EntityRenderer.renderTag('bin_cluster', d.data.tag_id || d.data.id, [], d.data.user_tags || [])}</div>
                         
                         <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
                             <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--subtle);">
@@ -995,7 +1002,11 @@ class BinClusterPacking {
         let updated = false;
 
         this.root.each(d => {
-            if (d.data && etype === 'file' && d.data.runtime_files) {
+            if (d.data && etype === 'bin_cluster' && String(d.data.tag_id || d.data.id) === String(eid)) {
+                d.data.user_tags = d.data.user_tags || [];
+                mutate(d.data.user_tags, tag, add);
+                updated = true;
+            } else if (d.data && etype === 'file' && d.data.runtime_files) {
                 d.data.runtime_files.forEach(m => {
                     if (m.id === eid || m.md5 === eid || (m.id && m.id.endsWith(eid))) {
                         m.file_user_tags = m.file_user_tags || [];
@@ -1251,6 +1262,8 @@ class BinClusterPacking {
                     parent: m.parent ? String(m.parent) : null,
                     name: displayName,
                     uuid: m.cluster_uuid,
+                    tag_id: m.tag_id || String(m.cluster_id),
+                    user_tags: m.user_tags || [],
                     size: m.count || 0,
                     stability: m.avg_stability || 0.0,
                     cohesion: m.cohesion_score || 0.0,

@@ -580,6 +580,36 @@ def test_cluster_tags():
                 str(rows[:2]),
             )
 
+            tag_params = {
+                "collection": item["collection"],
+                "algo": algo,
+                "cluster_tag": '"' + tag + '"',
+            }
+            included = requests.get(
+                BASE_URL + item["path"], params=tag_params, timeout=20
+            ).json()
+            check(
+                "{} exact tag filter includes the cluster".format(item["type"]),
+                any(
+                    str(row.get("cluster_id")) == item["id"]
+                    for row in included.get("results", [])
+                ),
+                str(included.get("results", [])[:2]),
+            )
+            tag_params.pop("cluster_tag")
+            tag_params["exclude_cluster_tag"] = '"' + tag + '"'
+            excluded = requests.get(
+                BASE_URL + item["path"], params=tag_params, timeout=20
+            ).json()
+            check(
+                "{} exclude tag filter removes the cluster".format(item["type"]),
+                not any(
+                    str(row.get("cluster_id")) == item["id"]
+                    for row in excluded.get("results", [])
+                ),
+                str(excluded.get("results", [])[:2]),
+            )
+
             if item is fixtures[0]:
                 replaced_meta = json.loads(r.get(item["key"]))
                 replaced_meta["cluster_uuid"] = "uuid-replacement-cluster"

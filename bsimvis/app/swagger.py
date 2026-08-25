@@ -1922,6 +1922,8 @@ class ClusterList(Resource):
             "cluster_id": "Filter by cluster ID",
             "cluster_uuid": "Filter by cluster UUID",
             "cluster_name": "Filter by cluster name",
+            "cluster_tag": "Require a cluster user tag; repeat for AND filtering",
+            "exclude_cluster_tag": "Exclude clusters carrying this user tag",
             "show_members": "Whether to return direct member IDs/names (true/false)",
         }
     )
@@ -2066,6 +2068,8 @@ class BinClusterList(Resource):
             "cluster_id": "Filter by cluster ID",
             "cluster_uuid": "Filter by cluster UUID",
             "cluster_name": "Filter by cluster name",
+            "cluster_tag": "Require a cluster user tag; repeat for AND filtering",
+            "exclude_cluster_tag": "Exclude clusters carrying this user tag",
             "show_members": "Whether to return direct member IDs/names (true/false)",
         }
     )

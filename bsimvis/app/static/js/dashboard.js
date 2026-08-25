@@ -316,13 +316,14 @@ const routes = {
         api: '/api/cluster/list',
         headers: [
             { label: 'UUID', sort: 'cluster_uuid', width: '10%' },
-            { label: 'Name', sort: 'cluster_name', width: '25%' },
+            { label: 'Name', sort: 'cluster_name', width: '18%' },
             { label: 'Functions', sort: 'count', width: '12%' },
             { label: 'Stability', sort: 'stability', width: '8%' },
             { label: 'Avg Feat', sort: 'features', width: '8%' },
             { label: 'Cohesion', sort: 'cohesion', width: '8%' },
             { label: 'Created', width: '11%' },
-            { label: 'Sample Functions', width: '18%' }
+            { label: 'Tags', width: '14%' },
+            { label: 'Sample Functions', width: '11%' }
         ],
         renderer: renderClusters
     },
@@ -352,12 +353,13 @@ const routes = {
         api: '/api/bin_cluster/list',
         headers: [
             { label: 'UUID', sort: 'cluster_uuid', width: '10%' },
-            { label: 'Name', sort: 'cluster_name', width: '25%' },
+            { label: 'Name', sort: 'cluster_name', width: '20%' },
             { label: 'Binaries', sort: 'count', width: '12%' },
             { label: 'Stability', sort: 'stability', width: '8%' },
             { label: 'Cohesion', sort: 'cohesion', width: '8%' },
             { label: 'Created', width: '11%' },
-            { label: 'Sample Binaries', width: '18%' }
+            { label: 'Tags', width: '16%' },
+            { label: 'Sample Binaries', width: '15%' }
         ],
         renderer: renderBinClusters
     },
@@ -531,8 +533,8 @@ function closeFilterActionsDropdown() {
 
 // Add a NOT exclude tag card for 'ignore' to all visible tag filter containers
 function addNotIgnoreFilters() {
-    const tagContainerIds = ['sim', 'func', 'file', 'bin-sim'];
-    const typeMap = { 'sim': 'sim_tag', 'func': 'func_tag', 'file': 'file_tag', 'bin-sim': 'file_tag' };
+    const tagContainerIds = ["sim", "func", "file", "bin-sim", "cluster", "bin-cluster"];
+    const typeMap = { "sim": "sim_tag", "func": "func_tag", "file": "file_tag", "bin-sim": "file_tag", "cluster": "cluster_tag", "bin-cluster": "cluster_tag" };
     let added = 0;
     tagContainerIds.forEach(key => {
         const container = document.getElementById(`tag-container-${key}`);
@@ -1745,6 +1747,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <th><input type="number" id="flt-cluster-min-features" value="${escapeAttr(p.get('min_features') || '0')}" min="0" title="Min Features" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th><input type="number" id="flt-cluster-min-cohesion" value="${escapeAttr(p.get('min_cohesion') || '0')}" step="0.1" min="0" max="1" title="Min Cohesion" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th></th>
+                    <th style="position:relative"><div class="tag-filter-container" id="tag-container-cluster"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'cluster')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('cluster', 'cluster_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-cluster-func-name" placeholder="Func Name..." value="${escapeAttr(p.get('func_name') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-func-addr" placeholder="Func Addr..." value="${escapeAttr(p.get('func_addr') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
@@ -1793,6 +1796,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <th><input type="number" id="flt-bin-cluster-min-stability" value="${escapeAttr(p.get('min_stability') || '0')}" step="0.1" min="0" title="Min Stability" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-cohesion" value="${escapeAttr(p.get('min_cohesion') || '0')}" step="0.1" min="0" max="1" placeholder="Min" title="Min Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-cohesion" value="${escapeAttr(p.get('max_cohesion') || '')}" step="0.1" min="0" max="1" placeholder="Max" title="Max Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
                     <th></th>
+                    <th style="position:relative"><div class="tag-filter-container" id="tag-container-bin-cluster"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'bin-cluster')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bin-cluster', 'cluster_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-file-md5" placeholder="MD5..." value="${escapeAttr(p.get('file_md5') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
@@ -1992,7 +1996,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
     // Re-inject tags for all views that support them
     setTimeout(() => {
         // Always clear existing cards first to avoid duplicates when navigating same-view
-        ['sim', 'func', 'file', 'bin-sim'].forEach(key => {
+        ["sim", "func", "file", "bin-sim", "cluster", "bin-cluster"].forEach(key => {
             const container = document.getElementById(`tag-container-${key}`);
             if (container) container.querySelectorAll('.tag-filter-card').forEach(c => c.remove());
         });
@@ -2001,7 +2005,9 @@ function updateUI(viewKey, collection, params, route, force = false) {
             { key: 'sim', fields: ['sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag'] },
             { key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
             { key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'] },
-            { key: 'bin-sim', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] }
+            { key: 'bin-sim', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
+            { key: "cluster", fields: ["cluster_tag", "exclude_cluster_tag"] },
+            { key: "bin-cluster", fields: ["cluster_tag", "exclude_cluster_tag"] }
         ];
         tagFields.forEach(col => {
             col.fields.forEach(f => {
@@ -2430,6 +2436,7 @@ function triggerTagSearch() {
     else if (viewKey === 'files') debouncedSearch(applyAdvancedFileSearch);
     else if (viewKey === 'features-global') debouncedSearch(applyAdvancedFeatureSearch);
     else if (viewKey === 'clusters') debouncedSearch(applyClusterSearch);
+    else if (viewKey === "bin-clusters") debouncedSearch(applyBinClusterSearch);
 }
 
 function applyAdvancedFeatureSearch() {
@@ -2498,7 +2505,7 @@ function handleTagAdd(event, columnId) {
         event.preventDefault();
         const val = event.target.value.replace(',', '').trim();
         if (val) {
-            let type = (columnId === 'sim' ? 'sim_tag' : (columnId === 'func' ? 'func_tag' : 'file_tag'));
+            let type = (columnId === "sim" ? "sim_tag" : ((columnId === "cluster" || columnId === "bin-cluster") ? "cluster_tag" : (columnId === "func" ? "func_tag" : "file_tag")));
             createTagCard(columnId, type, val, false, false);
             event.target.value = '';
             triggerTagSearch();
@@ -3522,7 +3529,9 @@ function renderClusters(items) {
             data-entity-data='${escapeAttr(JSON.stringify({
             cluster_id: c.cluster_id,
             cluster_uuid: c.cluster_uuid,
-            cluster_name: c.cluster_name
+            cluster_name: c.cluster_name,
+            user_tags: c.user_tags || [],
+            tag_id: c.tag_id
         }))}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'cluster', this)">
             <td class="mono cluster-uuid-id-cell" data-uuid="${escapeAttr(c.cluster_uuid)}" data-id="${escapeAttr(c.cluster_id)}">
@@ -3566,6 +3575,7 @@ function renderClusters(items) {
                 </div>
             </td>
             <td class="dim">${formatDate(c.created_at)}</td>
+            <td>${EntityRenderer.renderTag('cluster', c.tag_id || c.cluster_id, [], c.user_tags || [], { maxTags: 4 })}</td>
             <td style="min-width: 350px;">
                 <div style="display:flex; flex-direction:column; gap:2px; width: 100%;">
                     ${sampleMembersHtml}
@@ -3604,6 +3614,13 @@ function applyClusterSearch() {
     if (fFuncName) params.set('func_name', fFuncName); else params.delete('func_name');
     if (fFuncAddr) params.set('func_addr', fFuncAddr); else params.delete('func_addr');
     if (fFileName) params.set('file_name', fFileName); else params.delete('file_name');
+
+    params.delete("cluster_tag");
+    params.delete("exclude_cluster_tag");
+    document.querySelectorAll("#tag-container-cluster .tag-filter-card").forEach(card => {
+        const key = (card.dataset.exclude === "true" ? "exclude_" : "") + card.dataset.type;
+        params.append(key, quoteFilterValue(card.dataset.value, card.dataset.literal !== "false"));
+    });
 
     const countLimit = document.getElementById('sim-limit')?.value;
     params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
@@ -3694,7 +3711,9 @@ function renderBinClusters(items) {
             data-entity-data='${escapeAttr(JSON.stringify({
             cluster_id: c.cluster_id,
             cluster_uuid: c.cluster_uuid,
-            cluster_name: displayName
+            cluster_name: displayName,
+            user_tags: c.user_tags || [],
+            tag_id: c.tag_id
         }))}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
             <td class="mono cluster-uuid-id-cell" data-uuid="${escapeAttr(c.cluster_uuid)}" data-id="${escapeAttr(c.cluster_id)}">
@@ -3740,6 +3759,7 @@ function renderBinClusters(items) {
                 </div>
             </td>
             <td class="dim">${formatDate(c.created_at)}</td>
+            <td>${EntityRenderer.renderTag('bin_cluster', c.tag_id || c.cluster_id, [], c.user_tags || [], { maxTags: 4 })}</td>
             <td style="min-width: 250px;">
                 <div style="display:flex; flex-direction:column; gap:2px; width: 100%;">
                     ${sampleMembersHtml}
@@ -3778,6 +3798,13 @@ function applyBinClusterSearch() {
     if (ccohMax) params.set('max_cohesion', ccohMax); else params.delete('max_cohesion');
     if (fFileName) params.set('file_name', fFileName); else params.delete('file_name');
     if (fFileMd5) params.set('file_md5', fFileMd5); else params.delete('file_md5');
+
+    params.delete("cluster_tag");
+    params.delete("exclude_cluster_tag");
+    document.querySelectorAll("#tag-container-bin-cluster .tag-filter-card").forEach(card => {
+        const key = (card.dataset.exclude === "true" ? "exclude_" : "") + card.dataset.type;
+        params.append(key, quoteFilterValue(card.dataset.value, card.dataset.literal !== "false"));
+    });
 
     currentOffset = 0;
     isEndOfResults = false;

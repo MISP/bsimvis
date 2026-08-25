@@ -6,6 +6,7 @@ from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.index_service import get_pool_id
+from bsimvis.app.services.query_syntax import parse_filter_value
 
 job_service = JobService()
 
@@ -225,6 +226,16 @@ def list_clusters():
     # Filtering
     format_arg = request.args.get("format")
     q = request.args.get("q", "").lower().strip()
+    tag_filters = [
+        parse_filter_value("user_tags", value)
+        for value in request.args.getlist("cluster_tag")
+        if value.strip()
+    ]
+    exclude_tag_filters = [
+        parse_filter_value("user_tags", value)
+        for value in request.args.getlist("exclude_cluster_tag")
+        if value.strip()
+    ]
     cluster_id_q = request.args.get("cluster_id", "").lower()
     cluster_uuid_q = request.args.get("cluster_uuid", "").lower()
     cluster_name_q = request.args.get("cluster_name", "").lower()
@@ -354,7 +365,7 @@ def list_clusters():
         for cid, m in meta_map.items():
             cuuid = str(m.get("cluster_uuid", ""))
             cname = str(m.get("cluster_name", ""))
-            user_tags = [str(tag) for tag in m.get("user_tags", [])]
+            user_tags = [str(tag).lower() for tag in m.get("user_tags", [])]
 
             # Global keyword search
             if q:
@@ -368,6 +379,15 @@ def list_clusters():
                         break
                 if not match:
                     continue
+
+            if any(
+                not any(spec.matches(tag) for tag in user_tags) for spec in tag_filters
+            ):
+                continue
+            if any(
+                spec.matches(tag) for spec in exclude_tag_filters for tag in user_tags
+            ):
+                continue
 
             if cluster_id_q and cluster_id_q not in cid.lower():
                 continue

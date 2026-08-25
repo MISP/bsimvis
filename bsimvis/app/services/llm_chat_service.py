@@ -77,11 +77,16 @@ class LLMChatService:
     def _save_history(self, session_id, history):
         self.r.set(_session_key(session_id), json.dumps(history), ex=SESSION_TTL)
 
-    def start_session(self, collection, custom_system_prompt=None):
+    def start_session(self, collection, custom_system_prompt=None, context=None):
         self._load_config()
         session_id = str(uuid.uuid4())
         system = custom_system_prompt or self.system_prompt
         system += f"\n\nDefault collection for tool calls: '{collection}' (pass this unless the analyst names another)."
+        if context:
+            # e.g. "Analyst is currently viewing function X" -- lets a chat
+            # panel opened on a specific function/file start scoped without
+            # the analyst having to name it in their first message.
+            system += f"\n\n{context}"
         history = [{"role": "system", "content": system, "ts": int(time.time())}]
         self._save_history(session_id, history)
         return session_id

@@ -24,7 +24,9 @@ def start_chat_session():
         return {"error": "Missing collection"}, 400
 
     session_id = llm_chat_service.start_session(
-        collection, custom_system_prompt=data.get("system_prompt")
+        collection,
+        custom_system_prompt=data.get("system_prompt"),
+        context=data.get("context"),
     )
     return {"session_id": session_id}
 

@@ -15,8 +15,12 @@ let currentNotesFuncId = null;
 let lastRenderedNotesFuncId = null;
 let lastRenderedAIFuncId = null;
 let currentEditingNoteId = null;
-let chatHistories = {}; 
+let chatHistories = {};
 let llmAbortController = null;
+// funcId -> agent chat session_id (in-memory only, same lifetime as
+// chatHistories -- a reload starts a fresh session, same as it starts a
+// fresh visible transcript today).
+let chatSessions = {};
 
 // 'func' for function notes, 'file' for file notes
 let entityMode = 'func';
@@ -917,32 +921,66 @@ function updateChatMessageUI(msgEl, content, index, funcId) {
     if (historyEl && isAtBottom) historyEl.scrollTop = historyEl.scrollHeight;
 }
 
+async function ensureChatSession(funcId) {
+    if (chatSessions[funcId]) return chatSessions[funcId];
+    const collection = window.getCollectionFromId(funcId);
+    const isFile = entityMode === 'file';
+    const context = isFile
+        ? `Analyst is currently viewing file ${funcId}. Assume questions refer to it unless the analyst names another file or function.`
+        : `Analyst is currently viewing function ${funcId}. Assume questions refer to it unless the analyst names another function.`;
+    const res = await fetch("/api/llm/chat/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collection, context })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    chatSessions[funcId] = data.session_id;
+    return data.session_id;
+}
+
 async function sendLLMChat() {
     const inputEl = document.getElementById("llm-input");
     const text = inputEl.value.trim();
     if (!text || !currentNotesFuncId) return;
-    addChatMessage(currentNotesFuncId, "user", text);
+    const funcId = currentNotesFuncId;
+    addChatMessage(funcId, "user", text);
     inputEl.value = "";
     const sendBtn = document.getElementById("llm-send-btn");
     const stopBtn = document.getElementById("llm-stop-btn");
+    const statusEl = document.getElementById("llm-status");
     if (sendBtn) sendBtn.style.display = "none";
     if (stopBtn) stopBtn.style.display = "block";
+    if (statusEl) statusEl.innerText = "Agent investigating (may look up related functions)...";
     llmAbortController = new AbortController();
+    // The agent runs to completion server-side (including every tool call)
+    // before responding, so there is nothing to stream -- unlike the old
+    // /api/llm/chat this can take several seconds to a minute rather than
+    // starting to type back immediately.
+    const msgEl = addChatMessage(funcId, "ai", "_investigating..._");
+    const msgIndex = chatHistories[funcId].length - 1;
     try {
-        const response = await fetch("/api/llm/chat", {
+        const sessionId = await ensureChatSession(funcId);
+        const response = await fetch(`/api/llm/chat/session/${sessionId}/message`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ messages: chatHistories[currentNotesFuncId] }),
+            body: JSON.stringify({ message: text }),
             signal: llmAbortController.signal
         });
-        const msgEl = addChatMessage(currentNotesFuncId, "ai", "");
-        const msgIndex = chatHistories[currentNotesFuncId].length - 1;
-        const reply = await readStream(response, (text) => updateChatMessageUI(msgEl, text, msgIndex, currentNotesFuncId));
+        const data = await response.json();
+        if (data.error) throw new Error(data.error);
+        let content = data.reply || "_(no reply)_";
+        if (data.tool_calls && data.tool_calls.length) {
+            const names = data.tool_calls.map(tc => `\`${tc.name}\``).join(', ');
+            content = `> 🔧 looked up: ${names}\n\n${content}`;
+        }
+        updateChatMessageUI(msgEl, content, msgIndex, funcId);
     } catch (err) {
-        if (err.name !== 'AbortError') addChatMessage(currentNotesFuncId, "ai", "Error: " + err.message);
+        if (err.name !== 'AbortError') updateChatMessageUI(msgEl, "Error: " + err.message, msgIndex, funcId);
     } finally {
         if (sendBtn) sendBtn.style.display = "block";
         if (stopBtn) stopBtn.style.display = "none";
+        if (statusEl) statusEl.innerText = "";
     }
 }
 

@@ -2605,6 +2605,11 @@ class LLMChatSession(Resource):
                 "system_prompt": fields.String(
                     description="Overrides the default analyst system prompt"
                 ),
+                "context": fields.String(
+                    description="Appended to the system prompt, e.g. "
+                    "'Analyst is currently viewing function X.' so a "
+                    "panel opened on a specific function can start scoped."
+                ),
             },
         )
     )

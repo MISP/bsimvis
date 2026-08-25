@@ -11,19 +11,42 @@ Wrappers call the existing Flask view functions in-process via
 (the same trick `routes/llm.py:_resolve_filters_to_ids` already uses) -- so a
 schema or filter-syntax change in those views does not have to be mirrored
 here.
+
+Two different callers, two different Flask situations: the chat agent always
+runs inside a live HTTP request (an app context already exists), but the
+batch orchestrator runs inside `worker.py` -- a plain Python process with no
+Flask app at all. `current_app` only resolves inside an *already active*
+context, so it works for the former and raises for the latter. `_context_app`
+reuses the live app when there is one and lazily builds a standalone instance
+(cached per worker process) when there is not.
 """
 
 import json
 import logging
 from urllib.parse import parse_qs
 
-from flask import current_app
+from flask import current_app, has_app_context
 from werkzeug.datastructures import MultiDict
 
 from bsimvis.app.services.function_service import fetch_function_data
 from bsimvis.app.services.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
+
+_standalone_app = None
+
+
+def _context_app():
+    """A Flask app to build a `test_request_context` on, whether or not one
+    is already running this call (see module docstring)."""
+    if has_app_context():
+        return current_app._get_current_object()
+    global _standalone_app
+    if _standalone_app is None:
+        from bsimvis.app import create_app
+
+        _standalone_app = create_app()
+    return _standalone_app
 
 
 def parse_func_id(func_id):
@@ -81,7 +104,7 @@ def get_call_graph(func_id):
     """Direct callers/callees of one function (names + ids only, no code)."""
     from bsimvis.app.routes.function_code import get_function_call_graph
 
-    with current_app.test_request_context(
+    with _context_app().test_request_context(
         "/api/function/call_graph", query_string={"id": func_id}
     ):
         result = get_function_call_graph()
@@ -105,7 +128,7 @@ def get_function_relations(func_ids, collection, algo="unweighted_cosine", min_s
         "algo": algo,
         "min_score": str(min_score),
     }
-    with current_app.test_request_context("/api/function/relations", query_string=qs):
+    with _context_app().test_request_context("/api/function/relations", query_string=qs):
         result = _relations()
     if isinstance(result, tuple):
         return {"error": (result[0] or {}).get("detail", "relations lookup failed")}
@@ -125,7 +148,7 @@ def get_similar_functions(collection, md5, address, min_score=0.9, limit=10, poo
     }
     if pool:
         qs["pool"] = pool
-    with current_app.test_request_context("/api/similarity/search", query_string=qs):
+    with _context_app().test_request_context("/api/similarity/search", query_string=qs):
         result = similarity_search()
     if isinstance(result, tuple):
         return {"error": (result[0] or {}).get("error", "similarity search failed")}
@@ -144,7 +167,7 @@ def search_functions(collection, filters_qs="", limit=25):
     args.setlist("collection", [collection])
     args.setlist("limit", [str(limit)])
     args.setlist("offset", ["0"])
-    with current_app.test_request_context(
+    with _context_app().test_request_context(
         "/api/function/search", query_string=args.to_dict(flat=False)
     ):
         result = _search()

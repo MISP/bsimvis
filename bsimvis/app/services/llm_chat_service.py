@@ -127,9 +127,20 @@ class LLMChatService:
                 logger.error(f"LLMChatService: chat call failed: {e}")
                 return {"error": str(e)}
 
-            msg = response.get("message", {}) if isinstance(response, dict) else {}
+            # `response` is an ollama `ChatResponse` (dict-like via `.get`, not
+            # an actual dict) -- match the `.get(...)` pattern the rest of
+            # llm_service.py uses rather than guarding with `isinstance(dict)`,
+            # which is always false for it and silently drops every reply.
+            msg = response.get("message", {})
             content = msg.get("content", "") or ""
-            raw_calls = msg.get("tool_calls") or []
+            # Ollama returns tool calls as pydantic ToolCall objects, not plain
+            # dicts -- json.dumps (in _save_history, on the very next line that
+            # stores one) would raise on them, so normalise once here rather
+            # than downstream.
+            raw_calls = [
+                tc.model_dump() if hasattr(tc, "model_dump") else tc
+                for tc in (msg.get("tool_calls") or [])
+            ]
 
             if not raw_calls:
                 history.append(

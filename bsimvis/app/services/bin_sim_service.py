@@ -1,8 +1,6 @@
 import time
 import json
 import logging
-import math
-from collections import defaultdict
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services import lineage_service
 from bsimvis.app.services.bin_sim_tags import (
@@ -289,19 +287,11 @@ class BinSimService:
                 job_id,
                 f"[*] Computing similarities for pairs {offset} to {offset+len(pairs)} out of {total_pairs}...",
             )
-        # 2. Build cluster frequency map for rarity
-        # We need to know for each cluster, how many distinct binaries have it.
-        if job_service and job_id:
-            job_service.add_log(job_id, "[*] Precomputing cluster rarities...")
-
-        binary_cluster_maps = {}
-        cluster_binary_count_job = defaultdict(int)
+        # 2. Load each binary's function IDs + counts (needed below for coverage,
+        # bsim_features_count, and the diff doc's functions_count_a/b).
         binary_fids = {}
-        # ponytail: reverse map fid -> set(cluster labels) so matched pairs can be tagged with a cluster
-        fid_clusters = defaultdict(set)
-
         binary_func_counts = {}
-        for i, md5 in enumerate(binaries):
+        for md5 in binaries:
             func_set_key = f"{collection}:idx:file:functions:{md5}"
             raw_ids = r.smembers(func_set_key)
             binary_func_counts[md5] = len(raw_ids)
@@ -314,105 +304,6 @@ class BinSimService:
                 for fid in raw_ids
             ]
             binary_fids[md5] = set(fids)
-
-            # Map of cid -> set of function IDs for this binary
-            b_cluster_map = defaultdict(set)
-
-            if fids:
-                pipe = r.pipeline(transaction=False)
-                for fid in fids:
-                    if collection.startswith("global:pool:"):
-                        pipe.smembers(f"{collection}:{fid}:clusters")
-                    else:
-                        pipe.smembers(f"{fid}:clusters")
-
-                results = pipe.execute()
-
-                for idx, fid in enumerate(fids):
-                    clusters_res = results[idx]
-                    if clusters_res:
-                        for c_raw in clusters_res:
-                            cid = (
-                                c_raw.decode()
-                                if isinstance(c_raw, bytes)
-                                else str(c_raw)
-                            )
-                            b_cluster_map[cid].add(fid)
-                            fid_clusters[fid].add(cid)
-
-            binary_cluster_maps[md5] = b_cluster_map
-            for cid in b_cluster_map.keys():
-                cluster_binary_count_job[cid] += 1
-
-            if job_service and job_id and (i + 1) % 50 == 0:
-                job_service.update_progress(
-                    job_id,
-                    int((i + 1) / num_binaries * 10),
-                    f"Loading cluster maps: {i+1}/{num_binaries}",
-                )
-
-        # Load cluster metadata (uuid/name/cohesion) for every cluster seen, so matched
-        # function pairs can be tagged with their best-matching function cluster.
-        # `algo` names the function similarity these clusters were built from, so
-        # bin_sim reads and writes inside that same namespace.
-        cluster_meta = {}
-        all_labels = list(cluster_binary_count_job.keys())
-        if all_labels:
-            pipe = r.pipeline(transaction=False)
-            for lbl in all_labels:
-                pipe.get(f"{collection}:cluster:{algo}:{lbl}:meta")
-            for lbl, res in zip(all_labels, pipe.execute()):
-                if not res:
-                    continue
-                m = json.loads(res.decode() if isinstance(res, bytes) else res)
-                if isinstance(m, str):
-                    m = json.loads(m)
-                if isinstance(m, dict):
-                    cluster_meta[lbl] = m
-
-        def _pick_label(candidates):
-            """Among candidate cluster labels, pick the one with tightest cohesion."""
-            best = None
-            best_coh = -1.0
-            for lbl in candidates:
-                meta = cluster_meta.get(lbl)
-                if not meta:
-                    continue
-                coh = float(meta.get("cohesion_score", 0.0))
-                if coh > best_coh:
-                    best_coh = coh
-                    best = lbl
-            return best
-
-        def pick_cluster_label(fid_a, fid_b):
-            """Best function cluster label for a matched pair: prefer a cluster both
-            share, else any cluster either belongs to; tie-break on tightest cohesion.
-            """
-            la = fid_clusters.get(fid_a, set())
-            lb = fid_clusters.get(fid_b, set())
-            shared = la & lb
-            return _pick_label(shared if shared else (la | lb))
-
-        def pick_cluster(fid_a, fid_b):
-            """Best-matching cluster meta for a matched pair (name/uuid for the UI)."""
-            lbl = pick_cluster_label(fid_a, fid_b)
-            return cluster_meta.get(lbl) if lbl else None
-
-        def get_col_rarity(cid):
-            # Rarity from how many distinct binaries in the collection share this
-            # function cluster: a rarer cluster => higher score. Primary source is the
-            # collection-wide unique_files_count (set during HDBSCAN); fall back to the
-            # local job count when that field is missing, and to maximal rarity when the
-            # function belongs to no cluster at all.
-            if not cid:
-                # ponytail: no cluster => function does not recur across the collection,
-                # so treat it as maximally rare. Upgrade path: per-function similarity
-                # neighbour count if a cheaper signal than clustering is ever stored.
-                return 1.0
-            global_count = cluster_meta.get(cid, {}).get(
-                "unique_files_count", cluster_binary_count_job.get(cid, 0)
-            )
-            return min(1.0, 1.0 / math.log(1 + global_count + 1))
 
         # 3. Load function metadata (for bsim_features_count & names)
         func_meta_cache = {}

@@ -158,23 +158,114 @@ def get_similar_functions(collection, md5, address, min_score=0.9, limit=10, poo
     }
 
 
+_TAG_FILTER_KEYS = (
+    "tag",
+    "static_tag",
+    "user_tag",
+    "func_tag",
+    "func_static_tag",
+    "func_user_tag",
+)
+
+
+def search_tags(collection, q="", limit=25):
+    """Substring search over the tag vocabulary itself (not functions) --
+    exact tag strings and how many entities carry each.
+
+    A YARA/capa tag carries a rule-name detail tail the family-level id
+    doesn't have, e.g. `yara:trojan:cristalloaders` is stored (and only
+    matched by search_functions' `tag=` filter) as the full
+    `yara:trojan:cristalloaders#Windows_Trojan_CristalLoaders_652f19ab`.
+    Use this to find a tag's real stored form before filtering by it, rather
+    than assuming a clean family-level guess will match.
+    """
+    from bsimvis.app.routes.tags import list_tags
+
+    qs = {"collection": collection, "q": q, "sort_by": "total_count", "sort_order": "desc"}
+    with _context_app().test_request_context("/api/tags/list", query_string=qs):
+        result = list_tags()
+    if isinstance(result, tuple):
+        return {"error": (result[0] or {}).get("error", "tag search failed")}
+    items = (result.get("items") if isinstance(result, dict) else None) or []
+    return {
+        "tags": [
+            {"tag": i.get("tag"), "function_count": i.get("function_count"), "total_count": i.get("total_count")}
+            for i in items[:limit]
+        ]
+    }
+
+
+def _expand_tag_filter_values(collection, args):
+    """For each tag-axis filter value with no exact vocabulary hit, swaps in
+    every real tag it's a prefix of (see `search_tags` docstring for why this
+    matters). Returns the swapped-in tags for reporting, or None if nothing
+    changed."""
+    from bsimvis.app.routes.tags import list_tags
+
+    expanded = []
+    for key in _TAG_FILTER_KEYS:
+        values = args.getlist(key)
+        if not values:
+            continue
+        resolved = []
+        for v in values:
+            with _context_app().test_request_context(
+                "/api/tags/list", query_string={"collection": collection, "q": v}
+            ):
+                result = list_tags()
+            items = (result.get("items") if isinstance(result, dict) else None) or []
+            tag_names = [i.get("tag") for i in items]
+            if v in tag_names:
+                resolved.append(v)
+                continue
+            prefix_matches = [t for t in tag_names if t and t.startswith(v)]
+            if prefix_matches:
+                resolved.extend(prefix_matches)
+                expanded.extend(prefix_matches)
+            else:
+                resolved.append(v)
+        args.setlist(key, resolved)
+    return expanded or None
+
+
 def search_functions(collection, filters_qs="", limit=25):
     """Function search using the same filter query string the search UI sends
     (e.g. `tag=capa:crypto&name=decrypt`)."""
     from bsimvis.app.routes.search_function import search_functions as _search
 
+    def _run(query_args):
+        query_args.setlist("collection", [collection])
+        query_args.setlist("limit", [str(limit)])
+        query_args.setlist("offset", ["0"])
+        with _context_app().test_request_context(
+            "/api/function/search", query_string=query_args.to_dict(flat=False)
+        ):
+            return _search()
+
     args = MultiDict(parse_qs(filters_qs, keep_blank_values=True))
-    args.setlist("collection", [collection])
-    args.setlist("limit", [str(limit)])
-    args.setlist("offset", ["0"])
-    with _context_app().test_request_context(
-        "/api/function/search", query_string=args.to_dict(flat=False)
-    ):
-        result = _search()
+    result = _run(args)
     if isinstance(result, tuple):
         return {"error": (result[0] or {}).get("error", "search failed")}
+
     funcs = result.get("functions") or []
-    return {
+    note = None
+    # Zero hits with a tag filter present is exactly the shape of the
+    # exact-match-only gap described in search_tags -- retry once against
+    # each filter value's real stored form before reporting a genuine miss.
+    if not funcs and any(args.getlist(k) for k in _TAG_FILTER_KEYS):
+        expanded = _expand_tag_filter_values(collection, args)
+        if expanded:
+            result = _run(args)
+            if isinstance(result, tuple):
+                return {"error": (result[0] or {}).get("error", "search failed")}
+            funcs = result.get("functions") or []
+            if funcs:
+                note = (
+                    "The requested tag filter had no exact match; expanded to "
+                    f"stored tag(s) it's a prefix of: {', '.join(expanded)}"
+                )
+
+    out = {
         "total": result.get("total", len(funcs)),
         "functions": [
             {
@@ -186,6 +277,9 @@ def search_functions(collection, filters_qs="", limit=25):
             for f in funcs
         ],
     }
+    if note:
+        out["note"] = note
+    return out
 
 
 def get_file_info(collection, file_md5):
@@ -300,7 +394,16 @@ TOOLS = [
                 "Search functions in a collection by tag/name/namespace, e.g. "
                 "to find every function tagged capa:crypto, or every function "
                 "named like 'decrypt*'. filters_qs uses the same query-string "
-                "syntax as the app's function search (tag=, name=, namespace=)."
+                "syntax as the app's function search (tag=, name=, namespace=). "
+                "A tag filter must match the tag's exact stored string -- a "
+                "YARA tag in particular can carry a rule-name detail tail you "
+                "won't guess (the real tag is "
+                "'yara:trojan:cristalloaders#Windows_Trojan_CristalLoaders_652f19ab', "
+                "not the clean 'yara:trojan:cristalloaders'). A zero-result "
+                "tag filter here automatically retries once against any real "
+                "tag it's a prefix of, but search_tags is the reliable way to "
+                "find a tag's exact stored form up front rather than relying "
+                "on that fallback."
             ),
             "parameters": {
                 "type": "object",
@@ -313,6 +416,34 @@ TOOLS = [
                     "limit": {"type": "integer", "default": 25},
                 },
                 "required": ["collection"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_tags",
+            "description": (
+                "Substring search over the tag VOCABULARY itself (not "
+                "functions) -- returns exact tag strings and how many "
+                "entities carry each. Use this before search_functions'  "
+                "tag filter whenever you're not certain of a tag's exact "
+                "stored form (YARA rule tags especially -- they carry a "
+                "'#RuleName' detail tail the family-level id doesn't have), "
+                "or to check whether a tag/rule/family you're guessing at "
+                "exists in this collection at all."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "collection": {"type": "string"},
+                    "q": {
+                        "type": "string",
+                        "description": "Substring to match against tag names, e.g. 'cristalloaders'",
+                    },
+                    "limit": {"type": "integer", "default": 25},
+                },
+                "required": ["collection", "q"],
             },
         },
     },
@@ -371,6 +502,7 @@ DISPATCH = {
     "search_functions": lambda a: search_functions(
         a["collection"], a.get("filters_qs", ""), a.get("limit", 25)
     ),
+    "search_tags": lambda a: search_tags(a["collection"], a["q"], a.get("limit", 25)),
     "get_file_info": lambda a: get_file_info(a["collection"], a["file_md5"]),
     "get_cluster_info": lambda a: get_cluster_info(
         a["collection"], a["cluster_id"], a.get("algo", "unweighted_cosine")

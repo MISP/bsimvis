@@ -120,6 +120,7 @@ def load_edges(
     collection,
     min_sim=0.0,
     allowed_fids=None,
+    excluded_fids=None,
     node_kind="func",
     id_fn=None,
 ):
@@ -128,6 +129,10 @@ def load_edges(
     Semantics preserved exactly from the original inline version, including the
     subtle one: a node is registered in id_to_idx even when its edge is then
     dropped by min_sim, so an isolated node still exists in the graph.
+
+    `excluded_fids` drops an edge (and keeps the node out of id_to_idx
+    entirely) when either side names one -- e.g. container md5s, which must
+    never enter a file-cluster graph even via a stray same-sample edge.
     """
     src, dst = array("i"), array("i")
     dist = array("f")
@@ -143,6 +148,10 @@ def load_edges(
 
         if allowed_fids is not None and (
             fid1 not in allowed_fids or fid2 not in allowed_fids
+        ):
+            continue
+        if excluded_fids is not None and (
+            fid1 in excluded_fids or fid2 in excluded_fids
         ):
             continue
 

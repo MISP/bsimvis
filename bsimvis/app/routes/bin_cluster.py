@@ -149,6 +149,13 @@ def list_bin_clusters():
     t_start = time.perf_counter()
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
+    # Containers and files cluster in two separate graphs (a container holds
+    # no code of its own, so it can never share a similarity edge with a
+    # file) and persist under two separate key namespaces -- see
+    # BinClusterService._persist_hierarchical_binary_clusters. node_type
+    # picks which one this listing reads.
+    node_type = request.args.get("node_type", "file").strip().lower()
+    algo = f"{algo}:container" if node_type == "container" else algo
 
     # Filtering
     format_arg = request.args.get("format")
@@ -560,6 +567,8 @@ def get_bin_cluster_tree():
     """Returns the condensed tree for binary clustering."""
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
+    node_type = request.args.get("node_type", "file").strip().lower()
+    algo = f"{algo}:container" if node_type == "container" else algo
 
     pool_id = request.args.get("pool") or get_pool_id(collection)
     is_pool = pool_id is not None
@@ -582,6 +591,8 @@ def update_bin_cluster_meta():
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
+    node_type = (data.get("node_type") or "file").strip().lower()
+    algo = f"{algo}:container" if node_type == "container" else algo
     cluster_id = data.get("cluster_id")
     cluster_name = data.get("cluster_name")
 
@@ -649,6 +660,8 @@ def list_bin_cluster_members():
     """Lists all file IDs in a specific binary cluster."""
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
+    node_type = request.args.get("node_type", "file").strip().lower()
+    algo = f"{algo}:container" if node_type == "container" else algo
     cluster_id = request.args.get("cluster_id")
     limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
@@ -702,6 +715,12 @@ def get_bin_cluster_files():
     collection = request.args.get("collection")
     cluster_uuid = request.args.get("cluster_uuid")
     algo = request.args.get("algo", "unweighted_cosine")
+    # The primary lookup below (idx:file:bin_cluster_uuid:*) needs no
+    # node_type at all -- uuids are random and never collide between the
+    # file and container namespaces. Only the fallback meta-scan, keyed by
+    # algo, needs it.
+    node_type = request.args.get("node_type", "file").strip().lower()
+    algo = f"{algo}:container" if node_type == "container" else algo
 
     pool_id = request.args.get("pool") or get_pool_id(collection)
     is_pool = pool_id is not None

@@ -120,6 +120,7 @@ class BinClusterService:
     ):
         from bsimvis.app.services.cluster_threshold import RedisUF
         from bsimvis.app.services.config_service import config_service
+        from bsimvis.app.services import lineage_service
 
         if min_cohesion is None:
             min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
@@ -127,13 +128,24 @@ class BinClusterService:
         r = self.r
         sim_prefix = f"{collection}:bin_sim:{algo}:"
         sim_score_key = f"{collection}:bin_sim:score:{algo}"
-        parent_key = f"{collection}:bin_cluster:{algo}:uf:parent"
         uuid_key = f"{collection}:bin_cluster:{algo}:uf:uuid"
 
         def members_key(root):
             return f"{collection}:bin_cluster:{algo}:{root}:members"
 
-        uf = RedisUF(r, parent_key, members_key)
+        # Two forests, not one: a container (APK/ZIP wrapper) and a plain
+        # file are never the same md5, so roots from the two never collide
+        # in members_key/uuid_key -- but they still need separate `parent`
+        # union-find state, or a stray cross-type edge could walk a find()
+        # from file-space into container-space. Each side still clusters
+        # normally against its own kind (container-rollup pairs keep forming
+        # container clusters); they just never merge into one cluster.
+        uf_file = RedisUF(
+            r, f"{collection}:bin_cluster:{algo}:uf:parent", members_key
+        )
+        uf_container = RedisUF(
+            r, f"{collection}:bin_cluster:{algo}:container:uf:parent", members_key
+        )
 
         msg = f"[threshold_uf] incremental binary update: {len(new_files)} new files..."
         import logging
@@ -142,8 +154,11 @@ class BinClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
+        containers = lineage_service.container_md5s(collection, r)
+
         touched_roots = set()
         for md5 in new_files:
+            uf = uf_container if md5 in containers else uf_file
             sids = r.smembers(f"{collection}:bin_sim:involves:{md5}")
             for sid_raw in sids or ():
                 sid = sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
@@ -154,7 +169,10 @@ class BinClusterService:
                     continue
                 c1, c2 = id_part.split("::")
                 other_md5 = c2 if c1 == md5 else c1
-                if other_md5 == md5:
+                # Same-type only: a container never unions with a file, even
+                # via a stray edge that shouldn't exist upstream in the first
+                # place -- see the container_sim_service guard this backs up.
+                if other_md5 == md5 or (other_md5 in containers) != (md5 in containers):
                     continue
                 score = r.zscore(sim_score_key, sid)
                 if score is None or float(score) < threshold:
@@ -168,7 +186,11 @@ class BinClusterService:
                 touched_roots.add(survivor)
                 touched_roots.add(absorbed)
 
-        final_roots = {t for t in touched_roots if uf.find(t) == t}
+        final_roots = {
+            t
+            for t in touched_roots
+            if (uf_container if t in containers else uf_file).find(t) == t
+        }
         stale_roots = touched_roots - final_roots
 
         pipe = r.pipeline(transaction=False)
@@ -238,7 +260,7 @@ class BinClusterService:
         import time
         import logging
         from bsimvis.app.services.cluster_threshold import build_threshold_clusters
-        from bsimvis.app.services import sim_edges
+        from bsimvis.app.services import sim_edges, lineage_service
         from bsimvis.app.services.config_service import config_service
 
         if min_cohesion is None:
@@ -254,52 +276,76 @@ class BinClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        edge_set = sim_edges.load_edges(
-            r,
-            sim_score_key,
-            prefix,
-            False,
-            collection,
-            min_sim=min_sim,
-            node_kind="file",
-        )
-        id_to_idx = edge_set.id_to_idx
-        idx_to_id = edge_set.idx_to_id
-
-        if edge_set.n_scanned == 0 or edge_set.src.size == 0:
-            logging.warning(f"No binary similarity edges found for {collection}:{algo}")
-            return True
-
-        num_nodes = len(id_to_idx)
-        msg = f"[threshold_uf] {num_nodes} binaries, {edge_set.src.size} edges. Running union-find..."
-        logging.info(msg)
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
-
-        start_fit = time.time()
-        uf = build_threshold_clusters(edge_set, threshold)
-        fit_time = time.time() - start_fit
-
-        cluster_members = {
-            idx_to_id[label]: [idx_to_id[i] for i in members]
-            for label, members in uf.clusters(min_size=2).items()
+        # Containers and files never share a cluster graph -- a container
+        # holds no code of its own, so an edge naming one is either a
+        # container-rollup pair (belongs with other containers) or a stray
+        # same-sample edge (a bug upstream, not a real similarity). Run the
+        # two node types as two independent graphs; fid strings already
+        # embed the md5, so a file cluster's key can never collide with a
+        # container cluster's even though both persist under the same algo.
+        container_fids = {
+            f"{collection}:file:{m}"
+            for m in lineage_service.container_md5s(collection, r)
         }
 
-        self._enrich_and_persist_binary_clusters(
-            collection,
-            algo,
-            cluster_members,
-            uuid_key,
-            min_cohesion,
-            job_service,
-            job_id,
-        )
+        total_clusters = 0
+        for pass_name, edge_kwargs in (
+            ("file", {"excluded_fids": container_fids}),
+            ("container", {"allowed_fids": container_fids}),
+        ):
+            if pass_name == "container" and not container_fids:
+                continue
 
-        msg = f"[threshold_uf] union-find done in {fit_time:.2f}s. Found {len(cluster_members)} clusters."
-        logging.info(msg)
+            edge_set = sim_edges.load_edges(
+                r,
+                sim_score_key,
+                prefix,
+                False,
+                collection,
+                min_sim=min_sim,
+                node_kind="file",
+                **edge_kwargs,
+            )
+            id_to_idx = edge_set.id_to_idx
+            idx_to_id = edge_set.idx_to_id
+
+            if edge_set.n_scanned == 0 or edge_set.src.size == 0:
+                continue
+
+            num_nodes = len(id_to_idx)
+            msg = f"[threshold_uf/{pass_name}] {num_nodes} binaries, {edge_set.src.size} edges. Running union-find..."
+            logging.info(msg)
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+
+            start_fit = time.time()
+            uf = build_threshold_clusters(edge_set, threshold)
+            fit_time = time.time() - start_fit
+
+            cluster_members = {
+                idx_to_id[label]: [idx_to_id[i] for i in members]
+                for label, members in uf.clusters(min_size=2).items()
+            }
+
+            self._enrich_and_persist_binary_clusters(
+                collection,
+                algo,
+                cluster_members,
+                uuid_key,
+                min_cohesion,
+                job_service,
+                job_id,
+            )
+            total_clusters += len(cluster_members)
+
+            msg = f"[threshold_uf/{pass_name}] union-find done in {fit_time:.2f}s. Found {len(cluster_members)} clusters."
+            logging.info(msg)
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+
         if job_service and job_id:
-            job_service.add_log(job_id, msg)
             job_service.update_progress(job_id, 100)
+        logging.info(f"[threshold_uf] {total_clusters} total clusters persisted.")
         return True
 
     def _enrich_and_persist_binary_clusters(
@@ -540,6 +586,7 @@ class BinClusterService:
         """
         from bsimvis.app.services.config_service import config_service
         from bsimvis.app.services.cluster_threshold import build_single_linkage_tree
+        from bsimvis.app.services import lineage_service
         import pandas as pd
 
         if min_cluster_size is None:
@@ -558,54 +605,75 @@ class BinClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        edge_set = sim_edges.load_edges(
-            r,
-            sim_score_key,
-            prefix,
-            False,
-            collection,
-            min_sim=min_sim,
-            node_kind="file",
-        )
-        id_to_idx = edge_set.id_to_idx
-        idx_to_id = edge_set.idx_to_id
+        # Container clusters and file clusters are built as two independent
+        # trees -- see _persist_hierarchical_binary_clusters for why they
+        # can't share a label namespace.
+        container_fids = {
+            f"{collection}:file:{m}"
+            for m in lineage_service.container_md5s(collection, r)
+        }
 
-        if edge_set.n_scanned == 0 or edge_set.src.size == 0:
-            logging.warning(f"No binary similarity edges found for {collection}:{algo}")
-            return True
+        for node_type, edge_kwargs in (
+            ("file", {"excluded_fids": container_fids}),
+            ("container", {"allowed_fids": container_fids}),
+        ):
+            if node_type == "container" and not container_fids:
+                continue
 
-        num_nodes = len(id_to_idx)
-        msg = f"[hierarchical_uf] {num_nodes} binaries, {edge_set.src.size} edges. Building single-linkage tree..."
-        logging.info(msg)
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
+            edge_set = sim_edges.load_edges(
+                r,
+                sim_score_key,
+                prefix,
+                False,
+                collection,
+                min_sim=min_sim,
+                node_kind="file",
+                **edge_kwargs,
+            )
+            id_to_idx = edge_set.id_to_idx
+            idx_to_id = edge_set.idx_to_id
 
-        start_fit = time.time()
-        tree_rows, global_root_id, _ = build_single_linkage_tree(edge_set)
-        tree_df = pd.DataFrame(tree_rows)
-        fit_time = time.time() - start_fit
-        msg = f"[hierarchical_uf] tree built in {fit_time:.2f}s, {len(tree_df)} rows."
-        logging.info(msg)
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
+            if edge_set.n_scanned == 0 or edge_set.src.size == 0:
+                logging.warning(
+                    f"No binary similarity edges found for {collection}:{algo} ({node_type})"
+                )
+                continue
 
-        birth_lambdas, _ = self._tree_lambdas(tree_df)
+            num_nodes = len(id_to_idx)
+            msg = f"[hierarchical_uf/{node_type}] {num_nodes} binaries, {edge_set.src.size} edges. Building single-linkage tree..."
+            logging.info(msg)
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
 
-        return self._persist_hierarchical_binary_clusters(
-            collection,
-            algo,
-            edge_set,
-            id_to_idx,
-            idx_to_id,
-            tree_df,
-            global_root_id,
-            num_nodes,
-            min_cluster_size,
-            min_cohesion,
-            birth_lambdas,
-            job_service,
-            job_id,
-        )
+            start_fit = time.time()
+            tree_rows, global_root_id, _ = build_single_linkage_tree(edge_set)
+            tree_df = pd.DataFrame(tree_rows)
+            fit_time = time.time() - start_fit
+            msg = f"[hierarchical_uf/{node_type}] tree built in {fit_time:.2f}s, {len(tree_df)} rows."
+            logging.info(msg)
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+
+            birth_lambdas, _ = self._tree_lambdas(tree_df)
+
+            self._persist_hierarchical_binary_clusters(
+                collection,
+                algo,
+                edge_set,
+                id_to_idx,
+                idx_to_id,
+                tree_df,
+                global_root_id,
+                num_nodes,
+                min_cluster_size,
+                min_cohesion,
+                birth_lambdas,
+                job_service,
+                job_id,
+                node_type=node_type,
+            )
+
+        return True
 
     def _run_clustering_hdbscan(
         self,
@@ -624,6 +692,7 @@ class BinClusterService:
         Runs HDBSCAN clustering on similarity pairs stored in Kvrocks.
         """
         from bsimvis.app.services.config_service import config_service
+        from bsimvis.app.services import lineage_service
 
         if min_cluster_size is None:
             min_cluster_size = config_service.get("clustering.min_cluster_size", 2)
@@ -656,284 +725,303 @@ class BinClusterService:
 
         prefix = f"{collection}:bin_sim:{algo}:"
 
-        # 2. Stream the ZSET straight into typed edge arrays.
-        # sid format: {coll}:bin_sim:{algo}:{md5_a}::{md5_b}
-        # Same fix as cluster_service.run_clustering: building a `pairs` list of
-        # every member string and then a second list of edge tuples cost 2.15 GiB
-        # on a real 5.4M-pair set, against a 3 GB per-worker cap.
-        edge_set = sim_edges.load_edges(
-            r,
-            sim_score_key,
-            prefix,
-            False,
-            collection,
-            min_sim=min_sim,
-            node_kind="file",
-        )
-        id_to_idx = edge_set.id_to_idx
-        idx_to_id = edge_set.idx_to_id
+        # Container clusters and file clusters are built as two independent
+        # trees -- see _persist_hierarchical_binary_clusters for why they
+        # can't share a label namespace.
+        container_fids = {
+            f"{collection}:file:{m}"
+            for m in lineage_service.container_md5s(collection, r)
+        }
 
-        msg = f"Fetched {edge_set.n_scanned} binary similarity pairs."
-        logging.info(f"[+] {msg}")
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
+        for node_type, edge_kwargs in (
+            ("file", {"excluded_fids": container_fids}),
+            ("container", {"allowed_fids": container_fids}),
+        ):
+            if node_type == "container" and not container_fids:
+                continue
 
-        if edge_set.n_scanned == 0:
-            logging.warning(f"No binary similarity pairs found for {collection}:{algo}")
-            return True
-
-        if edge_set.src.size == 0:
-            logging.warning(
-                f"No valid edges found for {collection}:{algo} after parsing {edge_set.n_scanned} binary pairs."
+            # 2. Stream the ZSET straight into typed edge arrays.
+            # sid format: {coll}:bin_sim:{algo}:{md5_a}::{md5_b}
+            # Same fix as cluster_service.run_clustering: building a `pairs` list of
+            # every member string and then a second list of edge tuples cost 2.15 GiB
+            # on a real 5.4M-pair set, against a 3 GB per-worker cap.
+            edge_set = sim_edges.load_edges(
+                r,
+                sim_score_key,
+                prefix,
+                False,
+                collection,
+                min_sim=min_sim,
+                **edge_kwargs,
+                node_kind="file",
             )
+            id_to_idx = edge_set.id_to_idx
+            idx_to_id = edge_set.idx_to_id
+
+            msg = f"Fetched {edge_set.n_scanned} binary similarity pairs."
+            logging.info(f"[+] {msg}")
             if job_service and job_id:
-                job_service.add_log(
-                    job_id,
-                    f"Error: No valid similarity edges found after parsing {edge_set.n_scanned} binary pairs. Check filters.",
-                )
-            return True
+                job_service.add_log(job_id, msg)
 
-        num_nodes = len(id_to_idx)
-        msg = f"Building binary graph with {num_nodes} files and {edge_set.src.size} similarity edges..."
-        logging.info(f"[*] {msg}")
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
-
-        import scipy.sparse as sp
-        from scipy.sparse.csgraph import connected_components
-        import pandas as pd
-
-        msg = f"Shattering binary graph into connected components to avoid OOM..."
-        logging.info(f"[*] {msg}")
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
-
-        adj_matrix = sim_edges.build_adjacency(edge_set, num_nodes)
-        n_components, labels = connected_components(csgraph=adj_matrix, directed=False)
-        del adj_matrix
-
-        comp_to_nodes = {}
-        for i, comp_id in enumerate(labels):
-            if comp_id not in comp_to_nodes:
-                comp_to_nodes[comp_id] = []
-            comp_to_nodes[comp_id].append(i)
-
-        # Views into one sorted permutation, not a dict of tuple lists.
-        comp_to_edges = sim_edges.group_edges_by_component(edge_set, labels)
-
-        msg = f"Found {n_components} connected components. Running local HDBSCAN..."
-        logging.info(f"[*] {msg}")
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
-
-        global_tree_rows = []
-        global_root_id = num_nodes
-        next_cluster_id = num_nodes + 1
-        comp_roots = []
-
-        # One scratch buffer for global-index -> component-local-index, reused
-        # across components.
-        gmap = np.full(num_nodes, -1, dtype=np.int32)
-
-        start_fit = time.time()
-
-        for comp_id, comp_nodes in comp_to_nodes.items():
-            size = len(comp_nodes)
-            if size < min_cluster_size:
-                for node in comp_nodes:
-                    comp_roots.append((node, 1))
+            if edge_set.n_scanned == 0:
+                logging.warning(f"No binary similarity pairs found for {collection}:{algo} ({node_type})")
                 continue
 
-            sub_id_to_global = {
-                i: global_idx for i, global_idx in enumerate(comp_nodes)
-            }
-
-            # Global index -> component-local index, vectorised.
-            comp_nodes_arr = np.asarray(comp_nodes, dtype=np.int32)
-            gmap[comp_nodes_arr] = np.arange(size, dtype=np.int32)
-            e_src, e_dst, e_dist = comp_to_edges.get(
-                comp_id, (_EMPTY_I, _EMPTY_I, _EMPTY_F)
-            )
-            ui = gmap[e_src]
-            vi = gmap[e_dst]
-
-            if size >= 5000:
-                from scipy.sparse.linalg import svds
-
-                sim = 1.0 - e_dist
-                rows_sp = np.concatenate([ui, vi])
-                cols_sp = np.concatenate([vi, ui])
-                data_sp = np.concatenate([sim, sim])
-
-                comp_matrix = sp.csr_matrix(
-                    (data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32
+            if edge_set.src.size == 0:
+                logging.warning(
+                    f"No valid edges found for {collection}:{algo} ({node_type}) after parsing {edge_set.n_scanned} binary pairs."
                 )
-                comp_matrix.setdiag(1.0)
-
-                k = min(50, size - 1)
-                u, s, vt = svds(comp_matrix, k=k)
-                embeddings = u @ np.diag(np.sqrt(s))
-                del comp_matrix, rows_sp, cols_sp, data_sp
-
-                clusterer = hdbscan.HDBSCAN(
-                    min_cluster_size=min(min_cluster_size, size),
-                    min_samples=min(min_samples, size),
-                    cluster_selection_epsilon=cluster_selection_epsilon,
-                    cluster_selection_method=selection_method,
-                    metric="euclidean",
-                    gen_min_span_tree=True,
-                )
-                clusterer.fit(embeddings)
-            else:
-                # float64 up front: HDBSCAN's precomputed path needs float64, so
-                # building float32 and converting at fit time held both matrices
-                # alive at once. Same fix as cluster_service.
-                sub_dist = np.ones((size, size), dtype=np.float64)
-                np.fill_diagonal(sub_dist, 0)
-
-                if ui.size:
-                    sub_dist[ui, vi] = e_dist
-                    sub_dist[vi, ui] = e_dist
-
-                clusterer = hdbscan.HDBSCAN(
-                    min_cluster_size=min(min_cluster_size, size),
-                    min_samples=min(min_samples, size),
-                    cluster_selection_epsilon=cluster_selection_epsilon,
-                    cluster_selection_method=selection_method,
-                    metric="precomputed",
-                    gen_min_span_tree=True,
-                )
-                clusterer.fit(sub_dist)
-
-            local_tree_df = clusterer.condensed_tree_.to_pandas()
-            if local_tree_df.empty:
-                for node in comp_nodes:
-                    comp_roots.append((node, 1))
+                if job_service and job_id:
+                    job_service.add_log(
+                        job_id,
+                        f"Error: No valid similarity edges found after parsing {edge_set.n_scanned} binary pairs. Check filters.",
+                    )
                 continue
 
-            sub_internal_to_global = {}
-            # Ensure local root maps to a single global internal ID
-            local_root_sub = local_tree_df["parent"].min()
+            num_nodes = len(id_to_idx)
+            msg = f"Building binary graph with {num_nodes} files and {edge_set.src.size} similarity edges..."
+            logging.info(f"[*] {msg}")
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
 
-            for row in local_tree_df.itertuples(index=False):
-                parent = int(row.parent)
-                child = int(row.child)
-
-                if parent not in sub_internal_to_global:
-                    sub_internal_to_global[parent] = next_cluster_id
-                    next_cluster_id += 1
-
-                if child < size:  # Leaf
-                    global_child = sub_id_to_global[child]
-                else:  # Internal
-                    if child not in sub_internal_to_global:
-                        sub_internal_to_global[child] = next_cluster_id
-                        next_cluster_id += 1
-                    global_child = sub_internal_to_global[child]
-
-                global_tree_rows.append(
-                    {
-                        "parent": sub_internal_to_global[parent],
-                        "child": global_child,
-                        "lambda_val": float(row.lambda_val),
-                        "child_size": int(row.child_size),
-                    }
-                )
-
-            comp_roots.append((sub_internal_to_global[local_root_sub], size))
-
-        # Stitch all roots to a synthetic global root at lambda 1.0 (distance 1.0)
-        for comp_root, size in comp_roots:
-            global_tree_rows.append(
-                {
-                    "parent": global_root_id,
-                    "child": comp_root,
-                    "lambda_val": 1.0,
-                    "child_size": size,
-                }
-            )
-
-        tree_df = pd.DataFrame(global_tree_rows)
-        fit_time = time.time() - start_fit
-
-        msg = f"HDBSCAN fit completed in {fit_time:.2f}s."
-        logging.info(f"[+] {msg}")
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
-
-        msg = f"Global condensed tree has {len(tree_df)} rows."
-        logging.info(f"[*] {msg}")
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
-
-        birth_lambdas, death_lambdas = self._tree_lambdas(tree_df)
-
-        # Pruning tree based on cluster_selection_epsilon (if > 0)
-        pruned_clusters = set()
-        if cluster_selection_epsilon and cluster_selection_epsilon > 0.0:
-            lambda_threshold = 1.0 / cluster_selection_epsilon
-            for c, b_lambda in birth_lambdas.items():
-                if b_lambda > lambda_threshold:
-                    pruned_clusters.add(c)
-
-        child_to_parent = dict(zip(tree_df["child"], tree_df["parent"]))
-
-        def get_nearest_non_pruned_ancestor(node):
-            curr = node
-            while curr in child_to_parent:
-                p = child_to_parent[curr]
-                if p not in pruned_clusters:
-                    return p
-                curr = p
-            return None
-
-        # Build a pruned tree DataFrame
-        if pruned_clusters:
-            pruned_rows = []
-            for row in tree_df.itertuples(index=False):
-                parent = int(row.parent)
-                child = int(row.child)
-                child_size = int(row.child_size)
-                lambda_val = float(row.lambda_val)
-
-                if parent in pruned_clusters:
-                    ancestor = get_nearest_non_pruned_ancestor(parent)
-                    if ancestor is not None:
-                        parent = ancestor
-                    else:
-                        continue  # Skip if no ancestor
-
-                if child_size > 1:
-                    if child in pruned_clusters:
-                        continue
-
-                pruned_rows.append(
-                    {
-                        "parent": parent,
-                        "child": child,
-                        "lambda_val": lambda_val,
-                        "child_size": child_size,
-                    }
-                )
+            import scipy.sparse as sp
+            from scipy.sparse.csgraph import connected_components
             import pandas as pd
 
-            tree_df = pd.DataFrame(pruned_rows)
+            msg = f"Shattering binary graph into connected components to avoid OOM..."
+            logging.info(f"[*] {msg}")
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
 
-        return self._persist_hierarchical_binary_clusters(
-            collection,
-            algo,
-            edge_set,
-            id_to_idx,
-            idx_to_id,
-            tree_df,
-            global_root_id,
-            num_nodes,
-            min_cluster_size,
-            min_cohesion,
-            birth_lambdas,
-            job_service,
-            job_id,
-        )
+            adj_matrix = sim_edges.build_adjacency(edge_set, num_nodes)
+            n_components, labels = connected_components(csgraph=adj_matrix, directed=False)
+            del adj_matrix
+
+            comp_to_nodes = {}
+            for i, comp_id in enumerate(labels):
+                if comp_id not in comp_to_nodes:
+                    comp_to_nodes[comp_id] = []
+                comp_to_nodes[comp_id].append(i)
+
+            # Views into one sorted permutation, not a dict of tuple lists.
+            comp_to_edges = sim_edges.group_edges_by_component(edge_set, labels)
+
+            msg = f"Found {n_components} connected components. Running local HDBSCAN..."
+            logging.info(f"[*] {msg}")
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+
+            global_tree_rows = []
+            global_root_id = num_nodes
+            next_cluster_id = num_nodes + 1
+            comp_roots = []
+
+            # One scratch buffer for global-index -> component-local-index, reused
+            # across components.
+            gmap = np.full(num_nodes, -1, dtype=np.int32)
+
+            start_fit = time.time()
+
+            for comp_id, comp_nodes in comp_to_nodes.items():
+                size = len(comp_nodes)
+                if size < min_cluster_size:
+                    for node in comp_nodes:
+                        comp_roots.append((node, 1))
+                    continue
+
+                sub_id_to_global = {
+                    i: global_idx for i, global_idx in enumerate(comp_nodes)
+                }
+
+                # Global index -> component-local index, vectorised.
+                comp_nodes_arr = np.asarray(comp_nodes, dtype=np.int32)
+                gmap[comp_nodes_arr] = np.arange(size, dtype=np.int32)
+                e_src, e_dst, e_dist = comp_to_edges.get(
+                    comp_id, (_EMPTY_I, _EMPTY_I, _EMPTY_F)
+                )
+                ui = gmap[e_src]
+                vi = gmap[e_dst]
+
+                if size >= 5000:
+                    from scipy.sparse.linalg import svds
+
+                    sim = 1.0 - e_dist
+                    rows_sp = np.concatenate([ui, vi])
+                    cols_sp = np.concatenate([vi, ui])
+                    data_sp = np.concatenate([sim, sim])
+
+                    comp_matrix = sp.csr_matrix(
+                        (data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32
+                    )
+                    comp_matrix.setdiag(1.0)
+
+                    k = min(50, size - 1)
+                    u, s, vt = svds(comp_matrix, k=k)
+                    embeddings = u @ np.diag(np.sqrt(s))
+                    del comp_matrix, rows_sp, cols_sp, data_sp
+
+                    clusterer = hdbscan.HDBSCAN(
+                        min_cluster_size=min(min_cluster_size, size),
+                        min_samples=min(min_samples, size),
+                        cluster_selection_epsilon=cluster_selection_epsilon,
+                        cluster_selection_method=selection_method,
+                        metric="euclidean",
+                        gen_min_span_tree=True,
+                    )
+                    clusterer.fit(embeddings)
+                else:
+                    # float64 up front: HDBSCAN's precomputed path needs float64, so
+                    # building float32 and converting at fit time held both matrices
+                    # alive at once. Same fix as cluster_service.
+                    sub_dist = np.ones((size, size), dtype=np.float64)
+                    np.fill_diagonal(sub_dist, 0)
+
+                    if ui.size:
+                        sub_dist[ui, vi] = e_dist
+                        sub_dist[vi, ui] = e_dist
+
+                    clusterer = hdbscan.HDBSCAN(
+                        min_cluster_size=min(min_cluster_size, size),
+                        min_samples=min(min_samples, size),
+                        cluster_selection_epsilon=cluster_selection_epsilon,
+                        cluster_selection_method=selection_method,
+                        metric="precomputed",
+                        gen_min_span_tree=True,
+                    )
+                    clusterer.fit(sub_dist)
+
+                local_tree_df = clusterer.condensed_tree_.to_pandas()
+                if local_tree_df.empty:
+                    for node in comp_nodes:
+                        comp_roots.append((node, 1))
+                    continue
+
+                sub_internal_to_global = {}
+                # Ensure local root maps to a single global internal ID
+                local_root_sub = local_tree_df["parent"].min()
+
+                for row in local_tree_df.itertuples(index=False):
+                    parent = int(row.parent)
+                    child = int(row.child)
+
+                    if parent not in sub_internal_to_global:
+                        sub_internal_to_global[parent] = next_cluster_id
+                        next_cluster_id += 1
+
+                    if child < size:  # Leaf
+                        global_child = sub_id_to_global[child]
+                    else:  # Internal
+                        if child not in sub_internal_to_global:
+                            sub_internal_to_global[child] = next_cluster_id
+                            next_cluster_id += 1
+                        global_child = sub_internal_to_global[child]
+
+                    global_tree_rows.append(
+                        {
+                            "parent": sub_internal_to_global[parent],
+                            "child": global_child,
+                            "lambda_val": float(row.lambda_val),
+                            "child_size": int(row.child_size),
+                        }
+                    )
+
+                comp_roots.append((sub_internal_to_global[local_root_sub], size))
+
+            # Stitch all roots to a synthetic global root at lambda 1.0 (distance 1.0)
+            for comp_root, size in comp_roots:
+                global_tree_rows.append(
+                    {
+                        "parent": global_root_id,
+                        "child": comp_root,
+                        "lambda_val": 1.0,
+                        "child_size": size,
+                    }
+                )
+
+            tree_df = pd.DataFrame(global_tree_rows)
+            fit_time = time.time() - start_fit
+
+            msg = f"HDBSCAN fit completed in {fit_time:.2f}s."
+            logging.info(f"[+] {msg}")
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+
+            msg = f"Global condensed tree has {len(tree_df)} rows."
+            logging.info(f"[*] {msg}")
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+
+            birth_lambdas, death_lambdas = self._tree_lambdas(tree_df)
+
+            # Pruning tree based on cluster_selection_epsilon (if > 0)
+            pruned_clusters = set()
+            if cluster_selection_epsilon and cluster_selection_epsilon > 0.0:
+                lambda_threshold = 1.0 / cluster_selection_epsilon
+                for c, b_lambda in birth_lambdas.items():
+                    if b_lambda > lambda_threshold:
+                        pruned_clusters.add(c)
+
+            child_to_parent = dict(zip(tree_df["child"], tree_df["parent"]))
+
+            def get_nearest_non_pruned_ancestor(node):
+                curr = node
+                while curr in child_to_parent:
+                    p = child_to_parent[curr]
+                    if p not in pruned_clusters:
+                        return p
+                    curr = p
+                return None
+
+            # Build a pruned tree DataFrame
+            if pruned_clusters:
+                pruned_rows = []
+                for row in tree_df.itertuples(index=False):
+                    parent = int(row.parent)
+                    child = int(row.child)
+                    child_size = int(row.child_size)
+                    lambda_val = float(row.lambda_val)
+
+                    if parent in pruned_clusters:
+                        ancestor = get_nearest_non_pruned_ancestor(parent)
+                        if ancestor is not None:
+                            parent = ancestor
+                        else:
+                            continue  # Skip if no ancestor
+
+                    if child_size > 1:
+                        if child in pruned_clusters:
+                            continue
+
+                    pruned_rows.append(
+                        {
+                            "parent": parent,
+                            "child": child,
+                            "lambda_val": lambda_val,
+                            "child_size": child_size,
+                        }
+                    )
+                import pandas as pd
+
+                tree_df = pd.DataFrame(pruned_rows)
+
+            self._persist_hierarchical_binary_clusters(
+                collection,
+                algo,
+                edge_set,
+                id_to_idx,
+                idx_to_id,
+                tree_df,
+                global_root_id,
+                num_nodes,
+                min_cluster_size,
+                min_cohesion,
+                birth_lambdas,
+                job_service,
+                job_id,
+                node_type=node_type,
+            )
+
+        return True
 
     def _persist_hierarchical_binary_clusters(
         self,
@@ -950,20 +1038,33 @@ class BinClusterService:
         birth_lambdas,
         job_service,
         job_id,
+        node_type="file",
     ):
         """Shared tail for every hierarchical binary engine (HDBSCAN,
         hierarchical_uf): given a condensed/single-linkage tree_df (columns
         parent/child/lambda_val/child_size) and its fitted birth_lambdas,
         extract clusters, compute stability + cohesion, and persist.
+
+        `node_type` picks which node kind this tree/cluster_members belong to
+        ("file" or "container"). Cluster labels here are synthetic ints
+        (tree-node ids / component counters), NOT globally unique fids like
+        the union-find engines use -- a file pass and a container pass each
+        number their own clusters from scratch, so without a distinct key
+        namespace per node_type, e.g. label 5 from one pass would silently
+        overwrite label 5's members from the other. `algo_ns` carries that
+        namespace into every algo-scoped key; `label_key` does the same for
+        the one index (`bin_cluster_id`) that isn't algo-scoped at all today.
         """
         r = self.r
+        algo_ns = f"{algo}:container" if node_type == "container" else algo
+        label_key = (lambda label: f"c{label}") if node_type == "container" else str
 
         # 4. Extract Condensed Tree for UI
         tree_json = tree_df.to_json(orient="records")
-        tree_key = f"{collection}:bin_cluster:tree:{algo}"
+        tree_key = f"{collection}:bin_cluster:tree:{algo_ns}"
         r.set(tree_key, tree_json)
 
-        cluster_tree_key = f"{collection}:bin_cluster:tree_links:{algo}"
+        cluster_tree_key = f"{collection}:bin_cluster:tree_links:{algo_ns}"
         tree_links = []
         for row in tree_df.itertuples(index=False):
             if int(row.child_size) > 1:
@@ -1027,7 +1128,7 @@ class BinClusterService:
         pipe = r.pipeline(transaction=False)
 
         for c, members in cluster_members.items():
-            pipe.sadd(f"{collection}:bin_cluster:{algo}:{c}:members", *members)
+            pipe.sadd(f"{collection}:bin_cluster:{algo_ns}:{c}:members", *members)
             if len(pipe) > 1000:
                 pipe.execute()
         pipe.execute()
@@ -1040,7 +1141,7 @@ class BinClusterService:
                 direct_members.setdefault(p, []).append(idx_to_id[leaf])
 
         for c, d_members in direct_members.items():
-            pipe.sadd(f"{collection}:bin_cluster:{algo}:{c}:direct_members", *d_members)
+            pipe.sadd(f"{collection}:bin_cluster:{algo_ns}:{c}:direct_members", *d_members)
             if len(pipe) > 1000:
                 pipe.execute()
         pipe.execute()
@@ -1076,7 +1177,7 @@ class BinClusterService:
         for idx, (label, members) in enumerate(cluster_members.items()):
             if "bin_cluster_id" in file_tag_fields:
                 bucket_key = (
-                    f"{collection}:idx:file:bin_cluster_id:{str(label).lower()}"
+                    f"{collection}:idx:file:bin_cluster_id:{label_key(label).lower()}"
                 )
                 pipe.sadd(bucket_key, *members)
                 pipe.sadd(f"{collection}:reg:file:bin_cluster_id", bucket_key)
@@ -1237,7 +1338,11 @@ class BinClusterService:
             snippet = rep_meta.get("file_name", "unknown")
 
             meta = {
-                "cluster_id": int(label),
+                # int for the default (file) pass -- unchanged shape for
+                # existing callers; the container pass's "c"-prefixed id
+                # can't be an int, so it stays a string there.
+                "cluster_id": int(label) if node_type == "file" else label_key(label),
+                "node_type": node_type,
                 "snippet": snippet,
                 "cluster_uuid": label_to_uuid[label],
                 "cluster_name": default_name,
@@ -1260,7 +1365,7 @@ class BinClusterService:
                 if isinstance(v, float):
                     if not np.isfinite(v):
                         meta[k] = 0.0
-            pipe.set(f"{collection}:bin_cluster:{algo}:{label}:meta", json.dumps(meta))
+            pipe.set(f"{collection}:bin_cluster:{algo_ns}:{label}:meta", json.dumps(meta))
 
             if "bin_cluster_name" in file_tag_fields:
                 bucket_key = (
@@ -1299,7 +1404,7 @@ class BinClusterService:
 
         pipe.execute()
 
-        cluster_list_key = f"{collection}:bin_cluster:list:{algo}"
+        cluster_list_key = f"{collection}:bin_cluster:list:{algo_ns}"
         r.delete(cluster_list_key)
         if cluster_members:
             r.sadd(cluster_list_key, *[str(k) for k in cluster_members.keys()])
@@ -1315,67 +1420,79 @@ class BinClusterService:
         self, collection, algo="unweighted_cosine", job_service=None, job_id=None
     ):
         """
-        Clears all binary clustering data for a collection and algorithm.
+        Clears all binary clustering data for a collection and algorithm --
+        both the file-cluster and container-cluster namespaces (see
+        _persist_hierarchical_binary_clusters for why they're separate keys).
         """
         r = self.r
 
-        cluster_list_key = f"{collection}:bin_cluster:list:{algo}"
-        cids_raw = r.smembers(cluster_list_key)
-        all_meta_keys = []
-        if cids_raw:
-            all_meta_keys = [
-                f"{collection}:bin_cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
-                for cid in cids_raw
-            ]
-        else:
-            pattern = f"{collection}:bin_cluster:{algo}:*:meta"
-            cursor = 0
-            while True:
-                cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
-                all_meta_keys.extend(
-                    [k.decode() if isinstance(k, bytes) else k for k in keys]
-                )
-                if cursor == 0:
-                    break
-
-        cluster_ids = []
-        prefix = f"{collection}:bin_cluster:{algo}:"
-        for k in all_meta_keys:
-            cid = k[len(prefix) : -len(":meta")]
-            cluster_ids.append(cid)
-
-        total_clusters = len(cluster_ids)
-        if job_service and job_id:
-            job_service.add_log(
-                job_id,
-                f"Cleaning up binary clustering data for {total_clusters} clusters...",
-            )
-
         from bsimvis.app.services.index_service import _unindex_tag
 
-        for i, cid in enumerate(cluster_ids):
-            members_key = f"{collection}:bin_cluster:{algo}:{cid}:members"
-            members = r.smembers(members_key)
-            if members:
-                pipe = r.pipeline(transaction=False)
-                for j, mid_raw in enumerate(members):
-                    mid = mid_raw.decode() if isinstance(mid_raw, bytes) else mid_raw
-                    _unindex_tag(pipe, collection, "file", "bin_cluster_id", cid, mid)
-                    pipe.delete(f"{mid}:bin_clusters")
+        for algo_ns in (algo, f"{algo}:container"):
+            cluster_list_key = f"{collection}:bin_cluster:list:{algo_ns}"
+            cids_raw = r.smembers(cluster_list_key)
+            all_meta_keys = []
+            if cids_raw:
+                all_meta_keys = [
+                    f"{collection}:bin_cluster:{algo_ns}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
+                    for cid in cids_raw
+                ]
+            else:
+                pattern = f"{collection}:bin_cluster:{algo_ns}:*:meta"
+                cursor = 0
+                while True:
+                    cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
+                    all_meta_keys.extend(
+                        [k.decode() if isinstance(k, bytes) else k for k in keys]
+                    )
+                    if cursor == 0:
+                        break
 
-                    if j % 500 == 0:
-                        pipe.execute()
-                pipe.execute()
+            cluster_ids = []
+            prefix = f"{collection}:bin_cluster:{algo_ns}:"
+            for k in all_meta_keys:
+                cid = k[len(prefix) : -len(":meta")]
+                cluster_ids.append(cid)
 
-            r.delete(f"{collection}:bin_cluster:{algo}:{cid}:members")
-            r.delete(f"{collection}:bin_cluster:{algo}:{cid}:direct_members")
-            r.delete(f"{collection}:bin_cluster:{algo}:{cid}:meta")
+            total_clusters = len(cluster_ids)
+            if job_service and job_id:
+                job_service.add_log(
+                    job_id,
+                    f"Cleaning up binary clustering data for {total_clusters} clusters ({algo_ns})...",
+                )
 
-            if job_service and job_id and i % 10 == 0:
-                pct = int((i / total_clusters) * 100)
-                job_service.update_progress(job_id, pct)
+            for i, cid in enumerate(cluster_ids):
+                members_key = f"{collection}:bin_cluster:{algo_ns}:{cid}:members"
+                members = r.smembers(members_key)
+                if members:
+                    pipe = r.pipeline(transaction=False)
+                    for j, mid_raw in enumerate(members):
+                        mid = (
+                            mid_raw.decode() if isinstance(mid_raw, bytes) else mid_raw
+                        )
+                        _unindex_tag(
+                            pipe, collection, "file", "bin_cluster_id", cid, mid
+                        )
+                        pipe.delete(f"{mid}:bin_clusters")
 
-        # Clear named-based indexes
+                        if j % 500 == 0:
+                            pipe.execute()
+                    pipe.execute()
+
+                r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:members")
+                r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:direct_members")
+                r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:meta")
+
+                if job_service and job_id and total_clusters and i % 10 == 0:
+                    pct = int((i / total_clusters) * 100)
+                    job_service.update_progress(job_id, pct)
+
+            r.delete(f"{collection}:bin_cluster:tree:{algo_ns}")
+            r.delete(f"{collection}:bin_cluster:list:{algo_ns}")
+            r.delete(f"{collection}:bin_cluster:tree_links:{algo_ns}")
+
+        # Clear named-based indexes (shared bucket space across both
+        # namespaces -- cid/uuid values never collide, see the write side).
         self._clear_indexes_via_registry(collection, "file", "bin_cluster_name")
         self._clear_indexes_via_registry(collection, "file", "bin_cluster_uuid")
         self._clear_indexes_via_registry(collection, "file", "bin_cluster_id")
@@ -1387,10 +1504,6 @@ class BinClusterService:
         self._clear_indexes_via_registry(collection, "file", "inferred_ccip")
         self._clear_indexes_via_registry(collection, "file", "inferred_filename")
         self._clear_indexes_via_registry(collection, "file", "inferred_md5")
-
-        r.delete(f"{collection}:bin_cluster:tree:{algo}")
-        r.delete(f"{collection}:bin_cluster:list:{algo}")
-        r.delete(f"{collection}:bin_cluster:tree_links:{algo}")
 
         if job_service and job_id:
             job_service.add_log(job_id, "Binary clustering data cleared successfully.")

@@ -4,6 +4,18 @@ from bsimvis.app.services.redis_client import get_redis
 import logging
 
 
+def _collection_of(source):
+    """Return the canonical collection namespace for request data."""
+    pool = source.get("pool") or source.get("pool_id")
+    if pool:
+        return f"global:pool:{pool}"
+
+    collection = source.get("collection")
+    if collection and collection.startswith("pool:"):
+        return f"global:{collection}"
+    return collection
+
+
 def add_tag():
     """
     Adds a user_tag to an entity.
@@ -15,13 +27,7 @@ def add_tag():
     }
     """
     data = request.json or {}
-    collection = data.get("collection")
-    pool = data.get("pool") or data.get("pool_id")
-    if pool and not (
-        collection
-        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
-    ):
-        collection = f"global:pool:{pool}"
+    collection = _collection_of(data)
 
     etype = data.get("entity_type")
     entry_id = data.get("entity_id")
@@ -30,10 +36,17 @@ def add_tag():
     if not all([collection, etype, entry_id, tag]):
         return {"error": "Missing parameters"}, 400
 
-    if etype not in ["file", "function", "similarity"]:
+    if etype not in ["file", "function", "similarity", "cluster", "bin_cluster"]:
         return {"error": "Invalid entity type"}, 400
 
-    success = tag_service.add_user_tag(collection, etype, entry_id, tag)
+    success = tag_service.add_user_tag(
+        collection,
+        etype,
+        entry_id,
+        tag,
+        data.get("algo", "unweighted_cosine"),
+        data.get("node_type", "file"),
+    )
     if success:
         return {"status": "success", "tag": tag}
     else:
@@ -51,13 +64,7 @@ def add_bulk_tags():
     }
     """
     data = request.json or {}
-    collection = data.get("collection")
-    pool = data.get("pool") or data.get("pool_id")
-    if pool and not (
-        collection
-        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
-    ):
-        collection = f"global:pool:{pool}"
+    collection = _collection_of(data)
 
     etype = data.get("entity_type")
     entity_ids = data.get("entity_ids")
@@ -78,13 +85,7 @@ def add_bulk_tags():
 def remove_tag():
     """Removes a user_tag from an entity."""
     data = request.json or {}
-    collection = data.get("collection")
-    pool = data.get("pool") or data.get("pool_id")
-    if pool and not (
-        collection
-        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
-    ):
-        collection = f"global:pool:{pool}"
+    collection = _collection_of(data)
 
     etype = data.get("entity_type")
     entry_id = data.get("entity_id")
@@ -93,7 +94,17 @@ def remove_tag():
     if not all([collection, etype, entry_id, tag]):
         return {"error": "Missing parameters"}, 400
 
-    success = tag_service.remove_user_tag(collection, etype, entry_id, tag)
+    if etype not in ["file", "function", "similarity", "cluster", "bin_cluster"]:
+        return {"error": "Invalid entity type"}, 400
+
+    success = tag_service.remove_user_tag(
+        collection,
+        etype,
+        entry_id,
+        tag,
+        data.get("algo", "unweighted_cosine"),
+        data.get("node_type", "file"),
+    )
     if success:
         return {"status": "success", "tag": tag}
     else:
@@ -103,13 +114,7 @@ def remove_tag():
 def remove_bulk_tags():
     """Removes a user_tag from multiple entities."""
     data = request.json or {}
-    collection = data.get("collection")
-    pool = data.get("pool") or data.get("pool_id")
-    if pool and not (
-        collection
-        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
-    ):
-        collection = f"global:pool:{pool}"
+    collection = _collection_of(data)
 
     etype = data.get("entity_type")
     entity_ids = data.get("entity_ids")
@@ -129,13 +134,7 @@ def remove_bulk_tags():
 
 def get_metadata():
     """Returns all tag metadata for a collection."""
-    collection = request.args.get("collection")
-    pool = request.args.get("pool") or request.args.get("pool_id")
-    if pool and not (
-        collection
-        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
-    ):
-        collection = f"global:pool:{pool}"
+    collection = _collection_of(request.args)
 
     if not collection:
         return {"error": "Missing collection"}, 400
@@ -146,13 +145,7 @@ def get_metadata():
 
 def get_tag_stats():
     """Returns statistics for a specific tag."""
-    collection = request.args.get("collection")
-    pool = request.args.get("pool") or request.args.get("pool_id")
-    if pool and not (
-        collection
-        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
-    ):
-        collection = f"global:pool:{pool}"
+    collection = _collection_of(request.args)
 
     tag = request.args.get("tag")
 
@@ -165,13 +158,7 @@ def get_tag_stats():
 
 def get_tags():
     """Returns the global tag index for a collection."""
-    collection = request.args.get("collection", "main")
-    pool = request.args.get("pool") or request.args.get("pool_id")
-    if pool and not (
-        collection
-        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
-    ):
-        collection = f"global:pool:{pool}"
+    collection = _collection_of(request.args) or "main"
 
     tags = tag_service.get_tags(collection)
     return tags
@@ -270,13 +257,7 @@ def get_color_config():
 def set_color():
     """Sets a custom color for a tag."""
     data = request.json or {}
-    collection = data.get("collection")
-    pool = data.get("pool") or data.get("pool_id")
-    if pool and not (
-        collection
-        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
-    ):
-        collection = f"global:pool:{pool}"
+    collection = _collection_of(data)
 
     tag = data.get("tag")
     color = data.get("color")
@@ -291,13 +272,7 @@ def set_color():
 def set_priority():
     """Sets a custom priority for a tag."""
     data = request.json or {}
-    collection = data.get("collection")
-    pool = data.get("pool") or data.get("pool_id")
-    if pool and not (
-        collection
-        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
-    ):
-        collection = f"global:pool:{pool}"
+    collection = _collection_of(data)
 
     tag = data.get("tag")
     priority = data.get("priority")
@@ -309,18 +284,6 @@ def set_priority():
     return {"status": "success"}
 
 
-def _collection_of(source):
-    """Collection from a request payload/args, applying the pool prefix rule."""
-    collection = source.get("collection")
-    pool = source.get("pool") or source.get("pool_id")
-    if pool and not (
-        collection
-        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
-    ):
-        collection = f"global:pool:{pool}"
-    return collection
-
-
 def list_tags():
     """Tag vocabulary for a collection, with usage counts, as a sortable list."""
     collection = _collection_of(request.args)
@@ -328,13 +291,14 @@ def list_tags():
         return {"error": "Missing collection"}, 400
 
     meta = tag_service.get_collection_tags(collection)
+    cluster_stats = tag_service.get_cluster_tag_stats(collection)
     q = (request.args.get("q") or "").lower().strip()
 
     items = []
     for tag, m in meta.items():
         if q and q not in tag.lower():
             continue
-        stats = tag_service.get_tag_stats(collection, tag)
+        stats = tag_service.get_tag_stats(collection, tag, cluster_stats)
         items.append(
             {
                 "tag": tag,

@@ -107,7 +107,11 @@ class ProcessingService:
                 existing_status = json.loads(existing_raw).get("status")
             except (ValueError, TypeError):
                 pass
-        coll_file_meta["status"] = existing_status or "analyzing"
+        
+        if coll_file_meta.get("is_container"):
+            coll_file_meta["status"] = "analyzed"
+        else:
+            coll_file_meta["status"] = existing_status or "analyzing"
 
         pipe = self.r.pipeline(transaction=False)
 

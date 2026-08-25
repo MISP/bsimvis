@@ -38,6 +38,7 @@ from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.metadata_service import staged_metadata
 from bsimvis.app.services.processing_service import ProcessingService
 from bsimvis.app.services.feature_service import FeatureService
+from bsimvis.app.services.index_service import update_file_status
 from bsimvis.app.services.similarity_service import SimilarityService
 
 
@@ -295,6 +296,14 @@ class GhidraAnalyzer:
         self.feature_service.index_functions(
             collection, function_ids, self.job_service, job_id
         )
+        # Last stage of core analysis (before the optional similarity
+        # stages): library tags become file tags, and the file's status
+        # stops being "analyzing". Streaming now runs this in-process
+        # instead of dispatching a separate INDEX_FEATURES job, so these
+        # two calls -- worker.py's old post-INDEX_FEATURES steps -- have to
+        # happen here or they never happen at all.
+        self.processing_service.rollup_lib_tags(collection, file_md5)
+        update_file_status(self.r_data, collection, file_md5, "analyzed")
 
         if not skip_sim:
             algo = payload.get(

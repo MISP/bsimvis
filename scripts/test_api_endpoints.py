@@ -3803,6 +3803,138 @@ def test_tag_vocabulary_and_llm_batch():
     check("invalid action refused", "error" in (bad or {}), str(bad))
 
 
+def test_llm_agentic_analysis():
+    """Agentic LLM analysis module: chat sessions and context-aware batch
+    tagging (/api/llm/chat/*, /api/llm/contextual_batch*).
+
+    Ollama may not be reachable in a test environment, so -- same split as
+    test_tag_vocabulary_and_llm_batch -- this covers session/job plumbing
+    (creation, lookup, validation, cancellation), not generated content.
+    """
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3d – Agentic LLM analysis (chat + contextual batch)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not func_id1:
+        print(
+            _color("\n[SKIP] No uploaded file – agentic analysis checks skipped.", YELLOW)
+        )
+        return
+
+    # --- chat session lifecycle (no message sent: that needs a live Ollama) ---
+    started = test_endpoint(
+        "POST",
+        "/api/llm/chat/session",
+        data={"collection": COLLECTION},
+        label="POST /api/llm/chat/session",
+    )
+    session_id = (started or {}).get("session_id")
+    check("chat session created", bool(session_id), str(started))
+
+    if session_id:
+        got = test_endpoint(
+            "GET",
+            f"/api/llm/chat/session/{session_id}",
+            label="GET /api/llm/chat/session/<id>",
+        )
+        check(
+            "fresh session has no analyst-facing messages yet",
+            isinstance(got, dict) and got.get("messages") == [],
+            str(got),
+        )
+
+    missing = test_endpoint(
+        "GET",
+        "/api/llm/chat/session/not-a-real-session",
+        expected_ok=False,
+        label="GET /api/llm/chat/session/<id> (unknown)",
+    )
+    check("unknown session id returns error", "error" in (missing or {}), str(missing))
+
+    no_collection = test_endpoint(
+        "POST",
+        "/api/llm/chat/session",
+        data={},
+        expected_ok=False,
+        label="POST /api/llm/chat/session (missing collection)",
+    )
+    check(
+        "chat session without collection refused",
+        "error" in (no_collection or {}),
+        str(no_collection),
+    )
+
+    # --- contextual batch: explicit ids ---
+    ctx_started = test_endpoint(
+        "POST",
+        "/api/llm/contextual_batch",
+        data={
+            "collection": COLLECTION,
+            "func_ids": [func_id1],
+            "actions": ["notes", "tags"],
+        },
+        label="POST /api/llm/contextual_batch (func_ids)",
+    )
+    ctx_job_id = (ctx_started or {}).get("job_id")
+    check("contextual batch job created", bool(ctx_job_id), str(ctx_started))
+    check(
+        "contextual batch total matches selection",
+        (ctx_started or {}).get("total") == 1,
+        str(ctx_started),
+    )
+
+    if ctx_job_id:
+        status = test_endpoint("GET", f"/api/llm/contextual_batch/{ctx_job_id}")
+        check(
+            "contextual batch status exposes counts and errors",
+            isinstance(status, dict) and "counts" in status and "errors" in status,
+            str(status)[:200],
+        )
+        cancelled = test_endpoint(
+            "POST",
+            f"/api/llm/contextual_batch/{ctx_job_id}/cancel",
+            label="POST /api/llm/contextual_batch/<id>/cancel",
+        )
+        check(
+            "contextual batch cancel accepted",
+            (cancelled or {}).get("status") == "cancelled",
+            str(cancelled),
+        )
+
+    # --- contextual batch: filter-based selection resolves server-side ---
+    ctx_filtered = test_endpoint(
+        "POST",
+        "/api/llm/contextual_batch",
+        data={
+            "collection": COLLECTION,
+            "filters": f"file_md5={file_md5}",
+            "actions": ["notes"],
+        },
+        label="POST /api/llm/contextual_batch (filters)",
+    )
+    check(
+        "contextual batch filter selection resolved to functions",
+        (ctx_filtered or {}).get("total", 0) > 0,
+        str(ctx_filtered),
+    )
+    if (ctx_filtered or {}).get("job_id"):
+        test_endpoint(
+            "POST",
+            f"/api/llm/contextual_batch/{ctx_filtered['job_id']}/cancel",
+            label="POST /api/llm/contextual_batch/<id>/cancel (filters)",
+        )
+
+    # --- empty selection is refused rather than starting a vacuous job ---
+    empty = test_endpoint(
+        "POST",
+        "/api/llm/contextual_batch",
+        data={"collection": COLLECTION, "func_ids": []},
+        expected_ok=False,
+        label="POST /api/llm/contextual_batch (no func_ids or filters)",
+    )
+    check("empty selection refused", "error" in (empty or {}), str(empty))
+
+
 def test_pool_collection_equivalence():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3d – Pool vs collection equivalence", BOLD))
@@ -4819,6 +4951,7 @@ if __name__ == "__main__":
         test_pool_annotation_propagation,
         test_search_filters_and_sorting,
         test_tag_vocabulary_and_llm_batch,
+        test_llm_agentic_analysis,
         test_bin_sim_diff_cache,
         test_pool_collection_equivalence,
         test_archive_upload,

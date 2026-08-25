@@ -46,6 +46,7 @@ class JobType(Enum):
     BUILD_POOL_BIN_SIM = "build_pool_bin_sim"
     CLUSTER_POOL_BINARIES = "cluster_pool_binaries"
     LLM_BATCH = "llm_batch"
+    LLM_CONTEXTUAL_BATCH = "llm_contextual_batch"
 
 
 # Lease-based claims. A worker refreshes its lease while it holds a job; if the
@@ -511,6 +512,7 @@ class JobService:
             # User-initiated LLM batches are interactive work: they must not sit
             # behind a Ghidra analysis or a sim build for hours.
             JobType.LLM_BATCH.value,
+            JobType.LLM_CONTEXTUAL_BATCH.value,
         ]
 
         if jtype in high_priority_types or job.get("priority") == "high":

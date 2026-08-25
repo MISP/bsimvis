@@ -784,6 +784,20 @@ class Worker:
                 job_id=job_id,
             )
 
+        elif jtype == JobType.LLM_CONTEXTUAL_BATCH.value:
+            from bsimvis.app.services.analysis_orchestrator import analysis_orchestrator
+
+            return analysis_orchestrator.run_contextual_batch(
+                collection,
+                payload.get("func_ids") or [],
+                actions=payload.get("actions") or ["notes", "tags"],
+                overwrite=payload.get("overwrite", False),
+                custom_prompt=payload.get("custom_prompt"),
+                job_service=self.job_service,
+                job_id=job_id,
+                unit_max_size=payload.get("unit_max_size"),
+            )
+
         elif jtype == JobType.DELETE_COLLECTION.value:
             return self.processing_service.delete_collection(
                 collection, self.job_service, job_id

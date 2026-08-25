@@ -2591,6 +2591,105 @@ class LLMBatchCancel(Resource):
         return batch_cancel(job_id)
 
 
+# --- Agentic analysis: interactive tool-using chat + context-aware batch ---
+
+
+@ns_llm.route("/chat/session")
+class LLMChatSession(Resource):
+    @ns_llm.expect(
+        api.model(
+            "LLMChatSessionStart",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "pool": fields.String(description="Pool id, alternative to collection"),
+                "system_prompt": fields.String(
+                    description="Overrides the default analyst system prompt"
+                ),
+            },
+        )
+    )
+    def post(self):
+        """Starts a new interactive analyst chat session with tool access to
+        the collection (function lookup, call graph, similarity, tags)."""
+        from bsimvis.app.routes.llm_analysis import start_chat_session
+
+        return start_chat_session()
+
+
+@ns_llm.route("/chat/session/<string:session_id>")
+class LLMChatSessionGet(Resource):
+    def get(self, session_id):
+        """Returns the message history for a chat session."""
+        from bsimvis.app.routes.llm_analysis import get_chat_session
+
+        return get_chat_session(session_id)
+
+
+@ns_llm.route("/chat/session/<string:session_id>/message")
+class LLMChatMessage(Resource):
+    @ns_llm.expect(
+        api.model(
+            "LLMChatMessage",
+            {"message": fields.String(required=True, example="Does this function look like a fake installer?")},
+        )
+    )
+    def post(self, session_id):
+        """Sends an analyst message; the model may call tools to look up
+        functions/call-graph/similarity/tags before answering. Runs to
+        completion (all tool calls resolved) and returns the final reply."""
+        from bsimvis.app.routes.llm_analysis import chat_message
+
+        return chat_message(session_id)
+
+
+@ns_llm.route("/contextual_batch")
+class LLMContextualBatch(Resource):
+    @ns_llm.expect(
+        api.model(
+            "LLMContextualBatchRequest",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "func_ids": fields.List(
+                    fields.String, description="Explicit function ids"
+                ),
+                "filters": fields.String(
+                    description="Function-search query string (alternative to func_ids)"
+                ),
+                "actions": fields.List(
+                    fields.String, enum=["notes", "tags"], example=["notes", "tags"]
+                ),
+                "overwrite": fields.Boolean(default=False),
+                "custom_prompt": fields.String,
+            },
+        )
+    )
+    def post(self):
+        """Starts a background context-aware LLM tagging job: partitions the
+        selection by call-graph locality (bottom-up, mutually-recursive
+        groups combined) instead of judging each function in isolation."""
+        from bsimvis.app.routes.llm_analysis import contextual_batch
+
+        return contextual_batch()
+
+
+@ns_llm.route("/contextual_batch/<string:job_id>")
+class LLMContextualBatchStatus(Resource):
+    def get(self, job_id):
+        """Progress, per-function state and errors for a contextual batch job."""
+        from bsimvis.app.routes.llm_analysis import contextual_batch_status
+
+        return contextual_batch_status(job_id)
+
+
+@ns_llm.route("/contextual_batch/<string:job_id>/cancel")
+class LLMContextualBatchCancel(Resource):
+    def post(self, job_id):
+        """Cancels a contextual batch job."""
+        from bsimvis.app.routes.llm_analysis import contextual_batch_cancel
+
+        return contextual_batch_cancel(job_id)
+
+
 # --- Pool Namespace ---
 
 pool_func_sim_params_model = api.model(

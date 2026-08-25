@@ -308,8 +308,6 @@ def list_clusters():
     child_to_parent = {}
     parent_to_children = {}
     if links_raw:
-        import json
-
         try:
             links = json.loads(links_raw)
             child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
@@ -337,8 +335,6 @@ def list_clusters():
                 continue
             m = json.loads(meta) if not isinstance(meta, dict) else meta
             if isinstance(m, str):
-                import json
-
                 m = json.loads(m)
             cid = str(m.get("cluster_id", ""))
             meta_map[cid] = m
@@ -558,8 +554,6 @@ def list_clusters():
 
     # 4. Fetch direct members for ONLY the clusters in the current page
     if show_members and page:
-        import json
-
         p_pipe = r.pipeline(transaction=False)
         page_cids = [str(c["cluster_id"]) for c in page]
         db_collection = f"global:pool:{pool_id}" if is_pool else collection
@@ -853,8 +847,6 @@ def get_cluster_functions():
     for fid in page:
         pipe.get(f"{fid}:meta")
     raw_metas = pipe.execute()
-
-    import json
 
     functions = []
     for fid, meta in zip(page, raw_metas):

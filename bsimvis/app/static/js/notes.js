@@ -15,12 +15,15 @@ let currentNotesFuncId = null;
 let lastRenderedNotesFuncId = null;
 let lastRenderedAIFuncId = null;
 let currentEditingNoteId = null;
+// AI Insight is one ongoing conversation per collection, not per function --
+// the analyst pivots between functions while the agent keeps its memory of
+// what it already looked at. Notes and Graph stay per-entity (a note is
+// attached to one function/file; a call graph is centered on one function),
+// so only these two are keyed by collection.
 let chatHistories = {};
 let llmAbortController = null;
-// funcId -> agent chat session_id (in-memory only, same lifetime as
-// chatHistories -- a reload starts a fresh session, same as it starts a
-// fresh visible transcript today).
-let chatSessions = {};
+let chatSessions = {}; // collection -> agent chat session_id (in-memory only)
+let lastChatFocusId = {}; // collection -> last funcId the chat was told about, for the "now viewing X" divider
 
 // 'func' for function notes, 'file' for file notes
 let entityMode = 'func';
@@ -40,16 +43,29 @@ const AI_WIDTH = 600;
 // keep this comfortably past that floor so the side panel actually gets it.
 const GRAPH_WIDTH = 640;
 
+/** Collection the AI Insight chat should use right now: the focused entity's
+ * collection when one is focused, otherwise whatever collection/pool the
+ * current page is for. Null only when there's truly no collection context
+ * (e.g. the bare home/collections-list page). */
+function getChatScopeCollection() {
+    if (currentNotesFuncId) return window.getCollectionFromId(currentNotesFuncId);
+    if (typeof window.getRoutingState !== 'function') return null;
+    const routing = window.getRoutingState();
+    if (routing.collection) return routing.collection;
+    if (routing.pool) return `global:pool:${routing.pool}`;
+    return null;
+}
+
 async function showNotes(funcId, expand = true) {
     const isNewFunc = funcId !== currentNotesFuncId;
     currentNotesFuncId = funcId;
     // ponytail: the id carries the entity kind, so derive it instead of trusting
     // the sticky flag showFileNotes() sets (stale after navigating file -> function)
     entityMode = String(funcId).split(':')[1] === 'file' ? 'file' : 'func';
-    
+
     // Ensure panels exist
     createPanelsIfMissing();
-    
+
     // Expand if requested
     if (expand) {
         openNotesPanel();
@@ -57,8 +73,13 @@ async function showNotes(funcId, expand = true) {
         if (isAIOpen) openAIPanel();
     } else {
         updateLayout();
+        // AI Insight may already be open on a shared, collection-scoped
+        // conversation while the analyst clicks through other functions --
+        // mark the pivot in that thread even though the panel isn't
+        // (re)opening, so a later question doesn't need to restate it.
+        if (isAIOpen && isNewFunc) noteChatFocusChange(funcId);
     }
-    
+
     // Load data if new function or not yet rendered
     if (isNewFunc || lastRenderedNotesFuncId !== funcId) {
         await refreshNotes(funcId);
@@ -67,11 +88,6 @@ async function showNotes(funcId, expand = true) {
     // Also update graph panel if open and not locked
     if (isGraphOpen && !isGraphLocked && funcId && entityMode !== 'file') {
         loadSideGraph(funcId);
-    }
-    
-    // Initialize LLM history object if missing
-    if (!chatHistories[funcId]) {
-        chatHistories[funcId] = [];
     }
 
     // Add key listeners
@@ -309,14 +325,13 @@ function updateLayout() {
     if (handleContainer) {
         handleContainer.style.right = totalOffset + 'px';
         
-        // Hide handles if collapsed and not in file/function view
-        let inFuncOrFileView = false;
-        if (typeof window.parseRestfulPath === 'function') {
-            const restful = window.parseRestfulPath();
-            inFuncOrFileView = (restful.view === 'function' || restful.view === 'file');
-        }
-        
-        if (!inFuncOrFileView && !isNotesOpen && !isAIOpen && !isGraphOpen) {
+        // Hide handles if collapsed and there's no collection to talk about at
+        // all (e.g. the bare home/collections-list page). Any page inside a
+        // collection keeps them available, not just a function/file's own
+        // page -- that's what makes AI Insight reachable globally.
+        const hasCollectionContext = !!getChatScopeCollection();
+
+        if (!hasCollectionContext && !isNotesOpen && !isAIOpen && !isGraphOpen) {
             handleContainer.style.opacity = '0';
             handleContainer.style.pointerEvents = 'none';
         } else {
@@ -476,16 +491,36 @@ function openNotesPanel() {
     }
 }
 function closeNotesPanel() { isNotesOpen = false; updateLayout(); }
-function openAIPanel() { 
-    isAIOpen = true; 
-    updateLayout(); 
-    
-    // Trigger summary if empty
-    if (currentNotesFuncId && (!chatHistories[currentNotesFuncId] || chatHistories[currentNotesFuncId].length === 0)) {
-        chatHistories[currentNotesFuncId] = [];
-        generateSummary(currentNotesFuncId);
-    } else if (currentNotesFuncId && lastRenderedAIFuncId !== currentNotesFuncId) {
-        renderChatHistory(currentNotesFuncId);
+
+/** Local-only "-- now viewing X --" marker, no LLM call. Lets the analyst
+ * see where the conversation's focus moved without spending a summarize
+ * call on every function they merely glance at while the panel is open. */
+function noteChatFocusChange(funcId) {
+    const collection = getChatScopeCollection();
+    if (!collection || lastChatFocusId[collection] === funcId) return;
+    lastChatFocusId[collection] = funcId;
+    if (chatHistories[collection] && chatHistories[collection].length > 0) {
+        addChatMessage(collection, "ai", `_— now viewing \`${funcId}\` —_`);
+    }
+}
+
+function openAIPanel() {
+    isAIOpen = true;
+    updateLayout();
+
+    const collection = getChatScopeCollection();
+    if (!collection) return; // no collection/entity context available at all yet
+
+    if (currentNotesFuncId) lastChatFocusId[collection] = currentNotesFuncId;
+
+    if (!chatHistories[collection] || chatHistories[collection].length === 0) {
+        chatHistories[collection] = [];
+        // Only worth an automatic summarize call when a specific function or
+        // file is actually focused -- opening the dock from a list/dashboard
+        // page with nothing selected just shows the empty conversation.
+        if (currentNotesFuncId) generateSummary(currentNotesFuncId);
+    } else if (lastRenderedAIFuncId !== collection) {
+        renderChatHistory(collection);
     }
 }
 function closeAIPanel() { isAIOpen = false; updateLayout(); }
@@ -842,6 +877,10 @@ async function generateSummary(funcId) {
     const isFile = entityMode === 'file';
     const endpoint = isFile ? "/api/llm/summarize_file" : "/api/llm/summarize";
     const body = isFile ? { file_id: funcId } : { func_id: funcId };
+    // The summary posts into the shared, collection-scoped conversation, not
+    // a per-function one -- this function still summarizes one function/file,
+    // it just writes the result where the rest of the chat lives.
+    const chatKey = getChatScopeCollection();
 
     llmAbortController = new AbortController();
     try {
@@ -851,11 +890,11 @@ async function generateSummary(funcId) {
             body: JSON.stringify(body),
             signal: llmAbortController.signal
         });
-        const msgEl = addChatMessage(funcId, "ai", "");
-        const msgIndex = chatHistories[funcId].length - 1;
-        const summary = await readStream(response, (text) => updateChatMessageUI(msgEl, text, msgIndex, funcId));
+        const msgEl = addChatMessage(chatKey, "ai", "");
+        const msgIndex = chatHistories[chatKey].length - 1;
+        const summary = await readStream(response, (text) => updateChatMessageUI(msgEl, text, msgIndex, chatKey));
     } catch (err) {
-        if (err.name !== 'AbortError') addChatMessage(funcId, "ai", "Error: " + err.message);
+        if (err.name !== 'AbortError') addChatMessage(chatKey, "ai", "Error: " + err.message);
     } finally {
         if (statusEl) statusEl.innerText = "";
         if (sendBtn) sendBtn.style.display = "block";
@@ -863,45 +902,45 @@ async function generateSummary(funcId) {
     }
 }
 
-function renderChatHistory(funcId) {
+function renderChatHistory(chatKey) {
     const historyEl = document.getElementById("llm-chat-history");
     if (!historyEl) return;
     historyEl.innerHTML = "";
-    (chatHistories[funcId] || []).forEach((msg, index) => {
+    (chatHistories[chatKey] || []).forEach((msg, index) => {
         const msgEl = document.createElement("div");
         msgEl.className = `chat-msg ${msg.role === "assistant" ? "ai" : "user"}`;
-        updateChatMessageUI(msgEl, msg.content, index, funcId);
+        updateChatMessageUI(msgEl, msg.content, index, chatKey);
         historyEl.appendChild(msgEl);
     });
     historyEl.scrollTop = historyEl.scrollHeight;
-    lastRenderedAIFuncId = funcId;
+    lastRenderedAIFuncId = chatKey;
 }
 
-function addChatMessage(funcId, role, content) {
+function addChatMessage(chatKey, role, content) {
     const historyEl = document.getElementById("llm-chat-history");
     if (!historyEl) return;
     const isAtBottom = historyEl.scrollHeight - historyEl.scrollTop <= historyEl.clientHeight + 5;
-    
-    if (!chatHistories[funcId]) chatHistories[funcId] = [];
-    const index = chatHistories[funcId].length;
-    chatHistories[funcId].push({ role: role === "ai" ? "assistant" : "user", content: content });
+
+    if (!chatHistories[chatKey]) chatHistories[chatKey] = [];
+    const index = chatHistories[chatKey].length;
+    chatHistories[chatKey].push({ role: role === "ai" ? "assistant" : "user", content: content });
 
     const msgEl = document.createElement("div");
     msgEl.className = `chat-msg ${role}`;
-    updateChatMessageUI(msgEl, content, index, funcId);
+    updateChatMessageUI(msgEl, content, index, chatKey);
     historyEl.appendChild(msgEl);
-    
+
     if (isAtBottom || role === 'user') historyEl.scrollTop = historyEl.scrollHeight;
     return msgEl;
 }
 
-function updateChatMessageUI(msgEl, content, index, funcId) {
+function updateChatMessageUI(msgEl, content, index, chatKey) {
     const historyEl = document.getElementById("llm-chat-history");
     const isAtBottom = historyEl ? (historyEl.scrollHeight - historyEl.scrollTop <= historyEl.clientHeight + 5) : false;
-    
+
     // Save to history object so re-renders don't lose progress
-    if (funcId && chatHistories[funcId] && chatHistories[funcId][index]) {
-        chatHistories[funcId][index].content = content;
+    if (chatKey && chatHistories[chatKey] && chatHistories[chatKey][index]) {
+        chatHistories[chatKey][index].content = content;
     }
 
     let html = renderNoteMarkdown(content);
@@ -921,30 +960,37 @@ function updateChatMessageUI(msgEl, content, index, funcId) {
     if (historyEl && isAtBottom) historyEl.scrollTop = historyEl.scrollHeight;
 }
 
-async function ensureChatSession(funcId) {
-    if (chatSessions[funcId]) return chatSessions[funcId];
-    const collection = window.getCollectionFromId(funcId);
-    const isFile = entityMode === 'file';
-    const context = isFile
-        ? `Analyst is currently viewing file ${funcId}. Assume questions refer to it unless the analyst names another file or function.`
-        : `Analyst is currently viewing function ${funcId}. Assume questions refer to it unless the analyst names another function.`;
+async function ensureChatSession(collection) {
+    if (chatSessions[collection]) return chatSessions[collection];
     const res = await fetch("/api/llm/chat/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collection, context })
+        body: JSON.stringify({ collection })
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
-    chatSessions[funcId] = data.session_id;
+    chatSessions[collection] = data.session_id;
     return data.session_id;
+}
+
+/** What to tell the agent about the analyst's current focus, prepended to
+ * every outgoing message (not just at session start) since the same session
+ * now spans however many functions/files the analyst pivots through. */
+function currentFocusContextLine() {
+    if (!currentNotesFuncId) {
+        return "(No specific function or file is currently focused -- this is a general question about the collection.)";
+    }
+    const kind = entityMode === 'file' ? 'file' : 'function';
+    return `(Analyst is currently viewing ${kind} ${currentNotesFuncId}. Assume this question refers to it unless stated otherwise.)`;
 }
 
 async function sendLLMChat() {
     const inputEl = document.getElementById("llm-input");
     const text = inputEl.value.trim();
-    if (!text || !currentNotesFuncId) return;
-    const funcId = currentNotesFuncId;
-    addChatMessage(funcId, "user", text);
+    const chatKey = getChatScopeCollection();
+    if (!text || !chatKey) return;
+    lastChatFocusId[chatKey] = currentNotesFuncId;
+    addChatMessage(chatKey, "user", text);
     inputEl.value = "";
     const sendBtn = document.getElementById("llm-send-btn");
     const stopBtn = document.getElementById("llm-stop-btn");
@@ -957,14 +1003,17 @@ async function sendLLMChat() {
     // before responding, so there is nothing to stream -- unlike the old
     // /api/llm/chat this can take several seconds to a minute rather than
     // starting to type back immediately.
-    const msgEl = addChatMessage(funcId, "ai", "_investigating..._");
-    const msgIndex = chatHistories[funcId].length - 1;
+    const msgEl = addChatMessage(chatKey, "ai", "_investigating..._");
+    const msgIndex = chatHistories[chatKey].length - 1;
     try {
-        const sessionId = await ensureChatSession(funcId);
+        const sessionId = await ensureChatSession(chatKey);
+        // Context travels with the message, not just the session start, so a
+        // question two functions later still tells the agent what's in view.
+        const apiMessage = `${currentFocusContextLine()}\n\n${text}`;
         const response = await fetch(`/api/llm/chat/session/${sessionId}/message`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: text }),
+            body: JSON.stringify({ message: apiMessage }),
             signal: llmAbortController.signal
         });
         const data = await response.json();
@@ -974,9 +1023,9 @@ async function sendLLMChat() {
             const names = data.tool_calls.map(tc => `\`${tc.name}\``).join(', ');
             content = `> 🔧 looked up: ${names}\n\n${content}`;
         }
-        updateChatMessageUI(msgEl, content, msgIndex, funcId);
+        updateChatMessageUI(msgEl, content, msgIndex, chatKey);
     } catch (err) {
-        if (err.name !== 'AbortError') updateChatMessageUI(msgEl, "Error: " + err.message, msgIndex, funcId);
+        if (err.name !== 'AbortError') updateChatMessageUI(msgEl, "Error: " + err.message, msgIndex, chatKey);
     } finally {
         if (sendBtn) sendBtn.style.display = "block";
         if (stopBtn) stopBtn.style.display = "none";
@@ -987,14 +1036,19 @@ async function sendLLMChat() {
 function stopLLMGeneration() { if (llmAbortController) llmAbortController.abort(); }
 
 async function saveMessageAsNote(funcId, index, btn) {
-    const history = chatHistories[funcId];
+    // funcId here is the entity the button's onclick was rendered with
+    // (currentNotesFuncId at render time) -- the chat thread itself is keyed
+    // by collection, so look the message content up via that.
+    if (!funcId) { alert('No function or file is focused to attach this note to.'); return; }
+    const collection = window.getCollectionFromId(funcId);
+    const history = chatHistories[collection];
     if (!history || !history[index]) return;
     const isFile = entityMode === 'file';
     const endpoint = isFile ? '/api/notes/file/add' : '/api/notes/add';
     const idKey = isFile ? 'file_id' : 'func_id';
     try {
         const pool = getActivePool();
-        const payload = { collection: window.getCollectionFromId(funcId), [idKey]: funcId, text: history[index].content, owner: "llm" };
+        const payload = { collection, [idKey]: funcId, text: history[index].content, owner: "llm" };
         if (pool) payload.pool = pool;
         const res = await fetch(endpoint, {
             method: "POST",
@@ -1056,26 +1110,22 @@ window.toggleContentExpand = toggleContentExpand;
 window.showNotePanel = function(id, e) { if (typeof showNotes === 'function') showNotes(id); };
 window.showFileNotePanel = function(id, e) { if (typeof showFileNotes === 'function') showFileNotes(id); };
 
-// Connect layout updates with SPA navigation
+// Connect layout updates with SPA navigation. Graph/Notes/AI Insight are
+// global now: navigating to a different page (functions list, cluster view,
+// dashboard) inside the same collection no longer force-closes them -- only
+// leaving the collection entirely (handled by getChatScopeCollection/
+// updateLayout's visibility check) hides the handle rail.
 document.addEventListener('DOMContentLoaded', () => {
     if (typeof window.refreshData === 'function') {
         const origRefresh = window.refreshData;
         window.refreshData = async function(...args) {
-            // Check view and collapse panels if navigating away from function/file views
-            let inFuncOrFileView = false;
-            if (typeof window.parseRestfulPath === 'function') {
-                const restful = window.parseRestfulPath();
-                inFuncOrFileView = (restful.view === 'function' || restful.view === 'file');
-            }
-            if (!inFuncOrFileView) {
-                isNotesOpen = false;
-                isAIOpen = false;
-            }
             const res = await origRefresh.apply(this, args);
+            createPanelsIfMissing();
             updateLayout();
             return res;
         };
     }
+    createPanelsIfMissing();
     updateLayout();
 });
 

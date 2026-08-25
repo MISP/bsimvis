@@ -806,6 +806,35 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                     <i class="fa-solid fa-cloud-arrow-up"></i> Upload Binaries
                 </a>`);
         }
+    } else if (viewKey === 'bin-clusters') {
+        const gridHeader = document.getElementById('grid-header');
+        if (gridHeader) {
+            const p = new URLSearchParams(params);
+            const viewMode = p.get('view') || 'table';
+            if (viewMode === 'table') {
+                const nodeType = p.get('node_type') || 'file';
+                const fileActive = nodeType === 'file';
+                const containerActive = nodeType === 'container';
+                gridHeader.innerHTML = `
+                    <div style="padding: 24px; border-bottom: 1px solid var(--border); background: var(--bg); display: flex; flex-direction: column;">
+                        <div style="display: flex; gap: 24px; flex-wrap: wrap;">
+                            <div class="home-card" style="padding: 16px; min-width: 300px;">
+                                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
+                                    <h3 style="margin: 0; font-size: 0.9rem; color: var(--text);">Node Type</h3>
+                                    <span class="home-tip" tabindex="0" data-tip="Switch between viewing single-file clusters and top-level container clusters."><i class="fa-solid fa-circle-info"></i></span>
+                                </div>
+                                <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                                    <span class="bsim-nt-pill" onclick="changeBinClusterNodeType('file')" style="${binSimPillStyle(fileActive, 'var(--info, #3b82f6)')}" title="View file clusters"><i class="fa-solid fa-file"></i>File</span>
+                                    <span class="bsim-nt-pill" onclick="changeBinClusterNodeType('container')" style="${binSimPillStyle(containerActive, 'var(--warning, #d97706)')}" title="View container clusters"><i class="fa-solid fa-box"></i>Container</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                gridHeader.innerHTML = '';
+            }
+        }
     } else {
         const gridHeader = document.getElementById('grid-header');
         if (gridHeader) gridHeader.innerHTML = '';
@@ -1754,6 +1783,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 thead.innerHTML = headHtml;
             } else if (path === 'bin-clusters') {
                 const nameType = p.get('cluster_name_type') || 'file';
+                const nodeType = p.get('node_type') || 'file';
                 if (dataTable) dataTable.style.tableLayout = 'fixed';
                 if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
                 headHtml += `<tr class="filter-row">
@@ -3773,12 +3803,13 @@ async function renameBinCluster(clusterId, currentName) {
 
     const { collection, params } = getRoutingState();
     const algo = params.get('algo') || 'unweighted_cosine';
+    const nodeType = params.get('node_type') || 'file';
 
     try {
         const res = await fetch('/api/bin_cluster/meta', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection, algo, cluster_id: clusterId, cluster_name: newName })
+            body: JSON.stringify({ collection, algo, node_type: nodeType, cluster_id: clusterId, cluster_name: newName })
         });
         const data = await res.json();
         if (data.status === 'success') {
@@ -5279,3 +5310,14 @@ window.applyJobSearch = applyJobSearch;
 
 
 
+
+window.changeBinClusterNodeType = function(type) {
+    const { params } = getRoutingState();
+    if (type !== 'file') {
+        params.set('node_type', type);
+    } else {
+        params.delete('node_type');
+    }
+    const path = parseRestfulPath();
+    navigate(path.view || 'bin-clusters', params);
+};

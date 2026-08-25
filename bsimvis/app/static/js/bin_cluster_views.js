@@ -166,11 +166,18 @@ class BinClusterHierarchy {
         this.params.show_members = params.get('show_members') === 'true';
         this.params.color_by_md5 = params.get('color_by_md5') === 'true';
         this.params.q = params.get('q') || '';
+        this.params.node_type = params.get('node_type') || 'file';
 
         const hierControls = `
             <div style="position:absolute; top:20px; left:20px; z-index:10; background:var(--window-bg); padding:15px; border-radius:8px; border:1px solid var(--border); width:240px; backdrop-filter:blur(10px);">
                 <div style="font-size:0.85rem; color:var(--text); font-weight:bold; margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:5px;">Tree Filters</div>
                 
+                <!-- Node Type -->
+                <div style="margin-bottom:15px; display:flex; gap:8px;">
+                    <span class="bsim-nt-pill" onclick="window.toggleHierNodeType('file'); document.getElementById('hier-refresh-btn').click()" id="hier-nt-file" style="${this.params.node_type === 'file' ? 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--info, #3b82f6); color:var(--info, #3b82f6); background:var(--info, #3b82f6)22;' : 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--border); color:var(--subtle); background:var(--window-tray, transparent);'}" title="File clusters"><i class="fa-solid fa-file"></i>File</span>
+                    <span class="bsim-nt-pill" onclick="window.toggleHierNodeType('container'); document.getElementById('hier-refresh-btn').click()" id="hier-nt-container" style="${this.params.node_type === 'container' ? 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--warning, #d97706); color:var(--warning, #d97706); background:var(--warning, #d97706)22;' : 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--border); color:var(--subtle); background:var(--window-tray, transparent);'}" title="Container clusters"><i class="fa-solid fa-box"></i>Container</span>
+                </div>
+
                 <!-- Search -->
                 <div style="margin-bottom:15px;">
                     <div class="search-input-wrapper" style="width:100%; background: var(--hover); border:1px solid var(--border);">
@@ -351,6 +358,7 @@ class BinClusterHierarchy {
             p.set('show_children', this.params.show_children);
             p.set('show_members', this.params.show_members ? 'true' : 'false');
             p.set('color_by_md5', this.params.color_by_md5 ? 'true' : 'false');
+            p.set('node_type', this.params.node_type);
             
             if (typeof navigate === 'function') {
                 navigate(parseRestfulPath().view || 'bin-clusters', p);
@@ -373,6 +381,7 @@ class BinClusterHierarchy {
             queryParams.set('show_parents', this.params.show_parents !== false);
             queryParams.set('show_children', this.params.show_children !== false);
             queryParams.set('show_members', this.params.show_members === true);
+            queryParams.set('node_type', this.params.node_type);
 
             const url = `/api/bin_cluster/list?` + queryParams.toString();
             const res = await fetch(url, { signal });
@@ -699,7 +708,8 @@ class BinClusterHierarchy {
         if (!d.data.runtime_members && d.data.uuid && d.data.uuid !== 'root') {
             try {
                 const col = getCurrentCollection();
-                const res = await fetch(`/api/bin_cluster/files?collection=${col}&cluster_uuid=${d.data.uuid}&limit=100`);
+                const nodeType = this.params && this.params.node_type ? this.params.node_type : 'file';
+                const res = await fetch(`/api/bin_cluster/files?collection=${col}&cluster_uuid=${d.data.uuid}&node_type=${nodeType}&limit=100`);
                 const data = await res.json();
                 d.data.runtime_members = data.files;
                 this.renderTooltip(tooltip, d);
@@ -1023,10 +1033,17 @@ class BinClusterPacking {
         this.params.show_members = params.get('show_members') === 'true';
         this.params.color_by_md5 = params.get('color_by_md5') === 'true';
         this.params.q = params.get('q') || '';
+        this.params.node_type = params.get('node_type') || 'file';
 
         const packControls = `
             <div style="position:absolute; top:20px; left:20px; z-index:10; background:var(--window-bg); padding:15px; border-radius:8px; border:1px solid var(--border); width:240px; backdrop-filter:blur(10px);">
                 <div style="font-size:0.85rem; color:var(--text); font-weight:bold; margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:5px;">Packing Filters</div>
+                
+                <!-- Node Type -->
+                <div style="margin-bottom:15px; display:flex; gap:8px;">
+                    <span class="bsim-nt-pill" onclick="window.togglePackNodeType('file'); document.getElementById('bin-pack-refresh-btn').click()" id="pack-nt-file" style="${this.params.node_type === 'file' ? 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--info, #3b82f6); color:var(--info, #3b82f6); background:var(--info, #3b82f6)22;' : 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--border); color:var(--subtle); background:var(--window-tray, transparent);'}" title="File clusters"><i class="fa-solid fa-file"></i>File</span>
+                    <span class="bsim-nt-pill" onclick="window.togglePackNodeType('container'); document.getElementById('bin-pack-refresh-btn').click()" id="pack-nt-container" style="${this.params.node_type === 'container' ? 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--warning, #d97706); color:var(--warning, #d97706); background:var(--warning, #d97706)22;' : 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--border); color:var(--subtle); background:var(--window-tray, transparent);'}" title="Container clusters"><i class="fa-solid fa-box"></i>Container</span>
+                </div>
 
                 <!-- Search -->
                 <div style="margin-bottom:15px;">
@@ -1194,6 +1211,7 @@ class BinClusterPacking {
             p.set('show_children', this.params.show_children);
             p.set('show_members', this.params.show_members ? 'true' : 'false');
             p.set('color_by_md5', this.params.color_by_md5 ? 'true' : 'false');
+            p.set('node_type', this.params.node_type);
             if (typeof navigate === 'function') {
                 navigate(parseRestfulPath().view || 'bin-clusters', p);
             } else if (window.parent && typeof window.parent.navigate === 'function') {
@@ -1215,6 +1233,7 @@ class BinClusterPacking {
             queryParams.set('show_parents', this.params.show_parents !== false);
             queryParams.set('show_children', this.params.show_children !== false);
             queryParams.set('show_members', this.params.show_members === true);
+            queryParams.set('node_type', this.params.node_type);
 
             const url = `/api/bin_cluster/list?` + queryParams.toString();
             const res = await fetch(url, { signal });
@@ -1497,7 +1516,8 @@ class BinClusterPacking {
         if (!d.data.runtime_members && d.data.uuid && d.data.uuid !== 'root') {
             try {
                 const col = getCurrentCollection();
-                const res = await fetch(`/api/bin_cluster/files?collection=${col}&cluster_uuid=${d.data.uuid}&limit=100`);
+                const nodeType = this.params && this.params.node_type ? this.params.node_type : 'file';
+                const res = await fetch(`/api/bin_cluster/files?collection=${col}&cluster_uuid=${d.data.uuid}&node_type=${nodeType}&limit=100`);
                 const data = await res.json();
                 d.data.runtime_members = data.files;
                 if (this._activeD === d) this.renderTooltip(tooltip, d);
@@ -1522,3 +1542,14 @@ class BinClusterPacking {
         if (window.hideBinaryPreview) window.hideBinaryPreview();
     }
 }
+
+window.toggleHierNodeType = function(type) {
+    if (window.binHierarchyInstance) {
+        window.binHierarchyInstance.params.node_type = type;
+    }
+};
+window.togglePackNodeType = function(type) {
+    if (window.binPackingInstance) {
+        window.binPackingInstance.params.node_type = type;
+    }
+};

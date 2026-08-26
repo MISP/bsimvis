@@ -26,6 +26,7 @@ from bsimvis.app.services.cluster_utils import (
 )
 from bsimvis.app.services.tag_taxonomy import tag_in_scope
 from bsimvis.app.services import container_sim_service, lineage_service
+from bsimvis.app.services.bin_sim_service import BinSimService, bin_sim_service
 import json
 
 job_service = JobService()
@@ -554,24 +555,6 @@ def _diff_cache_put(key, doc):
             _DIFF_CACHE.popitem(last=False)
 
 
-def find_bin_sim_sid(
-    r, collection, md5_a, md5_b, coll_b=None, pool_id=None, algo="unweighted_cosine"
-):
-    """Resolve the exact stored pair ID without hydrating its diff."""
-    coll_b = coll_b or collection
-    if pool_id:
-        pipe = r.pipeline(transaction=False)
-        pipe.smembers(f"global:pool:{pool_id}:bin_sim:involves:{collection}:{md5_a}")
-        pipe.smembers(f"global:pool:{pool_id}:bin_sim:involves:{coll_b}:{md5_b}")
-        res_a, res_b = pipe.execute()
-        a = {x.decode() if isinstance(x, bytes) else x for x in (res_a or set())}
-        b = {x.decode() if isinstance(x, bytes) else x for x in (res_b or set())}
-        common = a & b
-        return next(iter(common), None)
-    md5_a, md5_b = sorted((md5_a, md5_b))
-    return f"{collection}:bin_sim:{algo}:{md5_a}::{md5_b}"
-
-
 def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=None):
     """Retrieve binary similarity diff for a pair."""
     if collection is None:
@@ -595,7 +578,7 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     # stored doc; the response must still come back in the caller's order.
     req_coll_a, req_md5_a, req_coll_b, req_md5_b = coll_a, md5_a, coll_b, md5_b
 
-    sid = find_bin_sim_sid(r, collection, md5_a, md5_b, coll_b, pool_id, algo)
+    sid = bin_sim_service.find_pair_sid(collection, md5_a, md5_b, coll_b, pool_id, algo)
     if not sid:
         return {
             "status": "not_found",
@@ -870,33 +853,18 @@ def _function_address(fid, fmeta):
         return None
 
 
-def _add_injection_ranking(rows, diff_data, fmeta):
+def _add_injection_ranking(rows, diff_data, fmeta, reference_maxima=None):
     """Rank unique code for triage; this is not evidence of injection."""
     if diff_data.get("is_container_pair"):
         return
 
-    diff = diff_data.get("diff") or {}
-    side_fids = {
-        "a": [m.get("func_a") for m in diff.get("matched", [])]
-        + [u.get("func_id") for u in diff.get("unique_to_a", [])],
-        "b": [m.get("func_b") for m in diff.get("matched", [])]
-        + [u.get("func_id") for u in diff.get("unique_to_b", [])],
-    }
-    maxima = {}
-    for side, fids in side_fids.items():
-        addresses = [
-            address
-            for fid in fids
-            if (address := _function_address(fid, fmeta)) is not None
-        ]
-        maxima[side] = max(addresses) if addresses else None
-
+    maxima = reference_maxima or {}
     for row in rows:
         if row.get("state") not in ("uniq_a", "uniq_b"):
             continue
         reference_side = "b" if row["state"] == "uniq_a" else "a"
         address = _function_address(row.get("func_id"), fmeta)
-        reference_max = maxima[reference_side]
+        reference_max = maxima.get(reference_side)
         row["appended"] = (
             address > reference_max
             if address is not None and reference_max is not None
@@ -956,7 +924,16 @@ def _page_diff(diff_data, table, r=None, collection=None, algo=None, pool_id=Non
     """
     rows = _diff_rows(diff_data, table)
     fmeta = diff_data.get("functions_metadata", {})
-    _add_injection_ranking(rows, diff_data, fmeta)
+    maxima = {}
+    rank_service = BinSimService(r) if r is not None else None
+    states = {row.get("state") for row in rows}
+    coll_a = diff_data.get("coll_a") or collection
+    coll_b = diff_data.get("coll_b") or collection
+    if r is not None and "uniq_a" in states:
+        maxima["b"] = rank_service.max_file_entrypoint(coll_b, diff_data.get("md5_b"))
+    if r is not None and "uniq_b" in states:
+        maxima["a"] = rank_service.max_file_entrypoint(coll_a, diff_data.get("md5_a"))
+    _add_injection_ranking(rows, diff_data, fmeta, maxima)
 
     # The pair's own key, so the row can carry the pair's tags and be tagged back.
     # Pure string work, so it costs nothing to do for every row.

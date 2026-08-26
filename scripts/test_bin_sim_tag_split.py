@@ -383,6 +383,9 @@ class _FakeRedis:
     def __init__(self, docs):
         self.docs = docs
 
+    def smembers(self, key):
+        return set()
+
     def pipeline(self, transaction=False):
         return _FakePipe(self.docs)
 

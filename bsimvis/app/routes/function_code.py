@@ -6,6 +6,7 @@ from bsimvis.app.services.index_service import (
     enrich_pool_data,
 )
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.bin_sim_service import bin_sim_service
 from bsimvis.app.services.node_service import get_enriched_nodes
 import traceback
 import json
@@ -438,9 +439,7 @@ def get_function_relations():
                 base_score = r.zscore(f"{base_pool}:sim:score", base_sid)
                 if base_score is not None:
                     if float(base_score) >= min_score:
-                        sim_edges.append(
-                            {"id1": a, "id2": b, "score": float(base_score)}
-                        )
+                        sim_edges.append({"id1": a, "id2": b, "score": float(base_score)})
                     continue
             misses.append((a, b))
 
@@ -453,9 +452,7 @@ def get_function_relations():
                 vec_pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
             vec_results = vec_pipe.execute()
             vecs = {
-                fid: {
-                    h.decode() if isinstance(h, bytes) else h: float(s) for h, s in raw
-                }
+                fid: {h.decode() if isinstance(h, bytes) else h: float(s) for h, s in raw}
                 for fid, raw in zip(miss_ids, vec_results)
                 if raw
             }
@@ -472,9 +469,7 @@ def get_function_relations():
                     dot = sum(d1[h] * d2[h] for h in common)
                     norm1 = sum(v**2 for v in d1.values()) ** 0.5
                     norm2 = sum(v**2 for v in d2.values()) ** 0.5
-                    score = (
-                        (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
-                    )
+                    score = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
                 if score >= min_score:
                     sim_edges.append({"id1": a, "id2": b, "score": score})
 
@@ -483,11 +478,7 @@ def get_function_relations():
         error_traceback = traceback.format_exc()
         print(error_traceback)
         return (
-            {
-                "detail": str(e),
-                "type": e.__class__.__name__,
-                "traceback": error_traceback,
-            },
+            {"detail": str(e), "type": e.__class__.__name__, "traceback": error_traceback},
             500,
         )
 
@@ -512,24 +503,18 @@ def get_file_call_graph():
         r = get_redis()
         retain_set = None
         if retain:
-            from bsimvis.app.routes.bin_sim import get_bin_sim
-
-            pair = get_bin_sim(
-                collection=collection,
-                md5_a=file_md5,
-                md5_b=retain,
-                coll_b=request.args.get("retain_collection", collection),
-                pool_id=request.args.get("pool"),
+            _, pair, retain_set = bin_sim_service.unique_functions_for_pair(
+                collection,
+                file_md5,
+                retain,
+                request.args.get("retain_collection", collection),
+                request.args.get("pool"),
+                request.args.get("algo", "unweighted_cosine"),
             )
-            if isinstance(pair, tuple):
-                return pair
+            if not pair:
+                return {"detail": "Similarity not calculated for this pair"}, 404
             if pair.get("is_container_pair"):
                 return {"detail": "Container pairs have no function call graph"}, 400
-            retain_set = {
-                row.get("func_id")
-                for row in (pair.get("diff") or {}).get("unique_to_a", [])
-                if row.get("func_id")
-            }
             func_ids = sorted(retain_set)
         else:
             func_ids_bytes = (

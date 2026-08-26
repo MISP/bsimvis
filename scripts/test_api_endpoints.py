@@ -4136,9 +4136,7 @@ def test_llm_agentic_analysis():
 
     if not file_md5 or not func_id1:
         print(
-            _color(
-                "\n[SKIP] No uploaded file – agentic analysis checks skipped.", YELLOW
-            )
+            _color("\n[SKIP] No uploaded file – agentic analysis checks skipped.", YELLOW)
         )
         return
 
@@ -4478,6 +4476,58 @@ def test_pool_collection_equivalence():
                     else f"single={_json.dumps(n_s)[:200]} pool={_json.dumps(n_p)[:200]}"
                 ),
             )
+
+        if p_doc:
+            paused = test_endpoint("POST", "/api/jobs/pause")
+            job_id = None
+            try:
+                if check(
+                    "pool pair analysis: worker fleet paused",
+                    bool((paused or {}).get("paused")),
+                    str(paused),
+                ):
+                    started = test_endpoint(
+                        "POST",
+                        "/api/llm/pair_analysis",
+                        data={
+                            "collection": sep_arm,
+                            "coll_b": sep_linux,
+                            "md5_a": md5_arm,
+                            "md5_b": md5_linux,
+                            "pool_id": eq_pool,
+                            "algo": EQ_ALGO,
+                            "threshold": 0.9,
+                            "include_unique": True,
+                            "include_unchanged": True,
+                            "skip_fid_tagged": False,
+                            "actions": ["notes"],
+                        },
+                    )
+                    job_id = (started or {}).get("job_id")
+                    check(
+                        "pool pair analysis: cross-collection pair enqueued",
+                        bool(job_id)
+                        and int((started or {}).get("total") or 0) > 0
+                        and (started or {}).get("sid") == pool_bs_key,
+                        str(started),
+                    )
+                    if job_id:
+                        job = test_endpoint("GET", f"/api/jobs/{job_id}")
+                        payload = (job or {}).get("payload") or {}
+                        check(
+                            "pool pair analysis: namespace and origins preserved",
+                            (job or {}).get("type") == "llm_pair_analysis"
+                            and payload.get("collection") == sep_arm
+                            and payload.get("coll_b") == sep_linux
+                            and payload.get("pool_id") == eq_pool
+                            and payload.get("sid") == pool_bs_key
+                            and payload.get("pair_collection")
+                            == f"global:pool:{eq_pool}",
+                            str(job)[:400],
+                        )
+                        test_endpoint("POST", f"/api/jobs/{job_id}/cancel")
+            finally:
+                test_endpoint("DELETE", "/api/jobs/pause")
 
         # ── 3. function similarity: pairs, scores, docs ───────────────────
         single_map, single_sids = {}, {}
@@ -5300,6 +5350,7 @@ if __name__ == "__main__":
         "test_retained_call_graph": ["test_search_filters_and_sorting"],
         "test_diff_injection_score": ["test_search_filters_and_sorting"],
     }
+
     # Resolved before the prelude: a mistyped --only should fail now, not after
     # several minutes of uploading and analysing binaries.
     steps = STEPS

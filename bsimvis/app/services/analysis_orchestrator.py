@@ -97,16 +97,28 @@ def _pair_report_rules():
 
 def _pair_report_prompt(pair, summaries, candidates):
     reason_by_fid = {row["func_id"]: row for row in candidates}
+    shared = sorted(
+        (pair.get("diff") or {}).get("matched") or [],
+        key=lambda row: float(row.get("similarity") or 0),
+        reverse=True,
+    )[:12]
     lines = [
-        "Compare these two binaries using only the supplied per-function findings.",
+        "Compare these two binaries using only the supplied evidence.",
         f"A: {pair.get('coll_a', '')}:{pair.get('md5_a')}",
         f"B: {pair.get('coll_b', '')}:{pair.get('md5_b')}",
         f"Stored similarity score: {pair.get('score')}",
         "Uniqueness is not evidence of maliciousness; it only selected a function for review.",
+        "Matched-function similarity establishes correspondence, not behavior or intent.",
         "If evidence is insufficient, state inconclusive instead of guessing.",
         "",
-        "Findings:",
+        "Representative shared matches (correspondence only):",
     ]
+    for row in shared:
+        lines.append(
+            f"- {row.get('func_a')} <-> {row.get('func_b')} "
+            f"similarity={float(row.get('similarity') or 0):.3f}"
+        )
+    lines.extend(["", "Analyzed function findings:"])
     for fid, finding in summaries.items():
         selected = reason_by_fid.get(fid, {})
         context = selected.get("reason", "selected")
@@ -349,11 +361,7 @@ def _agentic_summarize(collection, func_name, code_with_context, custom_prompt):
             result = _without_annotations(call_tool(name, args))
             messages.append({"role": "tool", "content": json.dumps(result)[:8000]})
 
-    return (
-        None,
-        [],
-        "agentic fallback stopped after too many tool calls without a final answer",
-    )
+    return None, [], "agentic fallback stopped after too many tool calls without a final answer"
 
 
 # --- per-collection redis bookkeeping (shared shape with llm_batch_service) --
@@ -453,10 +461,7 @@ class AnalysisOrchestrator:
         if not summary and not tags:
             return "failed", "empty LLM response"
 
-        summaries[func_id] = {
-            "func_name": data["func_name"],
-            "summary": _one_liner(summary),
-        }
+        summaries[func_id] = {"func_name": data["func_name"], "summary": _one_liner(summary)}
         applied = self._write_result(
             collection, func_id, data["func_name"], summary, tags, actions, overwrite
         )
@@ -524,13 +529,7 @@ class AnalysisOrchestrator:
                 "summary": _one_liner(summary),
             }
             applied = self._write_result(
-                collection,
-                m["func_id"],
-                m["func_name"],
-                summary,
-                tags,
-                actions,
-                overwrite,
+                collection, m["func_id"], m["func_name"], summary, tags, actions, overwrite
             )
             out[m["func_id"]] = ("done", ", ".join(applied) if applied else None)
         return out
@@ -550,10 +549,7 @@ class AnalysisOrchestrator:
         agentic=False,
         summaries_out=None,
     ):
-        actions = [a for a in (actions or []) if a in ("notes", "tags")] or [
-            "notes",
-            "tags",
-        ]
+        actions = [a for a in (actions or []) if a in ("notes", "tags")] or ["notes", "tags"]
         total = len(func_ids)
         if not total:
             if job_service and job_id:
@@ -568,9 +564,7 @@ class AnalysisOrchestrator:
         units = partition_call_graph(collection, func_ids)
 
         relations = (
-            get_function_relations(func_ids, collection)
-            if len(func_ids) > 1
-            else {"call_edges": []}
+            get_function_relations(func_ids, collection) if len(func_ids) > 1 else {"call_edges": []}
         )
         adj = {}
         for edge in relations.get("call_edges", []):
@@ -601,11 +595,7 @@ class AnalysisOrchestrator:
                 for a in actions
             ):
                 for fid in unit:
-                    (
-                        self._record(job_id, fid, "skipped", "already enriched")
-                        if job_id
-                        else None
-                    )
+                    self._record(job_id, fid, "skipped", "already enriched") if job_id else None
                     if summaries_out is not None:
                         notes = [
                             n
@@ -675,6 +665,46 @@ class AnalysisOrchestrator:
             )
         return True
 
+    def pair_candidates(
+        self,
+        pair,
+        threshold=0.9,
+        include_unique=True,
+        include_unchanged=False,
+        skip_fid_tagged=True,
+        min_complexity=0,
+    ):
+        candidates = _select_pair_candidates(
+            pair.get("diff") or {}, threshold, include_unique, include_unchanged
+        )
+        pipe = self.r.pipeline(transaction=False)
+        for row in candidates:
+            pipe.get(_resolve_doc_id(row["func_id"]))
+        filtered = []
+        for row, meta_raw in zip(candidates, pipe.execute()):
+            if not meta_raw:
+                continue
+            meta = json.loads(meta_raw)
+            if isinstance(meta, list):
+                meta = meta[0] if meta else {}
+            if int(meta.get("bsim_features_count") or 0) < min_complexity:
+                continue
+            tags = (meta.get("tags") or []) + (meta.get("user_tags") or [])
+            if skip_fid_tagged and any(
+                isinstance(tag, str) and (tag == "fid" or tag.startswith("fid:"))
+                for tag in tags
+            ):
+                continue
+            filtered.append(row)
+        cap = max_batch_size()
+        if cap > 0 and len(filtered) > cap:
+            raise ValueError(
+                f"Pair selection has {len(filtered)} functions, over the batch cap of {cap}"
+            )
+        if not filtered:
+            raise ValueError("Pair selection resolved to zero functions")
+        return filtered
+
     def run_pair_analysis(
         self,
         sid,
@@ -698,37 +728,14 @@ class AnalysisOrchestrator:
         if isinstance(pair, str):
             pair = json.loads(pair)
 
-        candidates = _select_pair_candidates(
-            pair.get("diff") or {}, threshold, include_unique, include_unchanged
+        candidates = self.pair_candidates(
+            pair,
+            threshold,
+            include_unique,
+            include_unchanged,
+            skip_fid_tagged,
+            min_complexity,
         )
-        pipe = self.r.pipeline(transaction=False)
-        for row in candidates:
-            pipe.get(_resolve_doc_id(row["func_id"]))
-        filtered = []
-        for row, meta_raw in zip(candidates, pipe.execute()):
-            if not meta_raw:
-                continue
-            meta = json.loads(meta_raw)
-            if isinstance(meta, list):
-                meta = meta[0] if meta else {}
-            if int(meta.get("bsim_features_count") or 0) < min_complexity:
-                continue
-            tags = (meta.get("tags") or []) + (meta.get("user_tags") or [])
-            if skip_fid_tagged and any(
-                isinstance(tag, str) and (tag == "fid" or tag.startswith("fid:"))
-                for tag in tags
-            ):
-                continue
-            filtered.append(row)
-        candidates = filtered
-
-        cap = max_batch_size()
-        if cap > 0 and len(candidates) > cap:
-            raise ValueError(
-                f"Pair selection has {len(candidates)} functions, over the batch cap of {cap}"
-            )
-        if not candidates:
-            raise ValueError("Pair selection resolved to zero functions")
 
         focus = (
             "This function was selected for a binary comparison because it is unique "
@@ -745,21 +752,27 @@ class AnalysisOrchestrator:
             origin = row["func_id"].split(":func:", 1)[0]
             grouped.setdefault(origin, []).append(row["func_id"])
         ok = True
-        for origin, func_ids in grouped.items():
-            ok = (
-                self.run_contextual_batch(
-                    origin,
-                    func_ids,
-                    actions=actions,
-                    overwrite=overwrite,
-                    custom_prompt=focus,
-                    job_service=job_service,
-                    job_id=job_id,
-                    agentic=True,
-                    summaries_out=summaries,
+        try:
+            for origin, func_ids in grouped.items():
+                ok = (
+                    self.run_contextual_batch(
+                        origin,
+                        func_ids,
+                        actions=actions,
+                        overwrite=overwrite,
+                        custom_prompt=focus,
+                        job_service=job_service,
+                        job_id=job_id,
+                        agentic=True,
+                        summaries_out=summaries,
+                    )
+                    and ok
                 )
-                and ok
-            )
+        finally:
+            if "tags" in (actions or ["notes", "tags"]):
+                from bsimvis.app.services.bin_sim_service import bin_sim_service
+
+                bin_sim_service.resplit_bin_sim(pair_collection, algo=algo, sid=sid)
         if not ok:
             return False
 
@@ -777,10 +790,6 @@ class AnalysisOrchestrator:
                 job_service.add_log(job_id, f"Pair report generation failed: {report}")
             return False
 
-        if "tags" in (actions or ["notes", "tags"]):
-            from bsimvis.app.services.bin_sim_service import bin_sim_service
-
-            bin_sim_service.resplit_bin_sim(pair_collection, algo=algo, sid=sid)
         if job_service and job_id:
             job_service.r.hset(f"job:{job_id}", "report", report)
             job_service.add_log(job_id, "Binary comparison report written to the job.")
@@ -827,9 +836,7 @@ class AnalysisOrchestrator:
         file_info = get_file_info(collection, file_md5)
         if "error" in file_info:
             if job_service and job_id:
-                job_service.add_log(
-                    job_id, f"File report skipped: {file_info['error']}"
-                )
+                job_service.add_log(job_id, f"File report skipped: {file_info['error']}")
             return
 
         report = llm_service.chat(

@@ -273,11 +273,9 @@ def file_analysis():
 
 def pair_analysis():
     """Queue evidence-bound analysis of one stored binary comparison."""
-    from bsimvis.app.routes.bin_sim import find_bin_sim_sid
-    from bsimvis.app.services.analysis_orchestrator import _select_pair_candidates
+    from bsimvis.app.services.analysis_orchestrator import analysis_orchestrator
+    from bsimvis.app.services.bin_sim_service import bin_sim_service
     from bsimvis.app.services.job_service import JobService, JobType
-    from bsimvis.app.services.redis_client import get_redis
-    import json as _json
 
     data = request.json or {}
     collection = data.get("collection")
@@ -304,24 +302,28 @@ def pair_analysis():
         return {"error": "min_complexity must be zero or greater"}, 400
 
     algo = data.get("algo", "unweighted_cosine")
-    r = get_redis()
-    sid = find_bin_sim_sid(r, collection, md5_a, md5_b, coll_b, pool_id, algo)
-    raw = r.get(sid) if sid else None
-    if not raw:
+    sid, pair = bin_sim_service.load_pair(
+        collection, md5_a, md5_b, coll_b, pool_id, algo
+    )
+    if not pair:
         return {"error": "Similarity not calculated for this pair"}, 404
 
-    pair = _json.loads(raw)
-    if isinstance(pair, str):
-        pair = _json.loads(pair)
     include_unique = data.get("include_unique", True) is not False
     include_unchanged = bool(data.get("include_unchanged"))
-    total = len(
-        _select_pair_candidates(
-            pair.get("diff") or {}, threshold, include_unique, include_unchanged
+    skip_fid_tagged = data.get("skip_fid_tagged", True) is not False
+    try:
+        total = len(
+            analysis_orchestrator.pair_candidates(
+                pair,
+                threshold,
+                include_unique,
+                include_unchanged,
+                skip_fid_tagged,
+                min_complexity,
+            )
         )
-    )
-    if not total:
-        return {"error": "Pair selection resolved to zero functions"}, 400
+    except ValueError as error:
+        return {"error": str(error)}, 413 if "batch cap" in str(error) else 400
 
     pair_collection = f"global:pool:{pool_id}" if pool_id else collection
     payload = {
@@ -336,7 +338,7 @@ def pair_analysis():
         "threshold": threshold,
         "include_unique": include_unique,
         "include_unchanged": include_unchanged,
-        "skip_fid_tagged": data.get("skip_fid_tagged", True) is not False,
+        "skip_fid_tagged": skip_fid_tagged,
         "min_complexity": min_complexity,
         "actions": actions,
         "overwrite": bool(data.get("overwrite")),

@@ -3,6 +3,7 @@
 import json
 from unittest.mock import patch
 
+from bsimvis.app.services.bin_sim_service import BinSimService
 from bsimvis.app.services.analysis_orchestrator import (
     AnalysisOrchestrator,
     _pair_report_prompt,
@@ -35,7 +36,20 @@ def test_pair_candidates_default_to_changed_and_unique():
 
 def test_pair_report_prompt_forbids_guessing_from_diff_shape():
     prompt = _pair_report_prompt(
-        {"md5_a": "ma", "md5_b": "mb", "score": 0.4},
+        {
+            "md5_a": "ma",
+            "md5_b": "mb",
+            "score": 0.4,
+            "diff": {
+                "matched": [
+                    {
+                        "func_a": "a:func:ma:30",
+                        "func_b": "b:func:mb:40",
+                        "similarity": 0.99,
+                    }
+                ]
+            },
+        },
         {
             "a:func:ma:10": {
                 "func_name": "f",
@@ -48,6 +62,8 @@ def test_pair_report_prompt_forbids_guessing_from_diff_shape():
     assert "uniqueness is not evidence of maliciousness" in lower
     assert "state inconclusive" in lower
     assert "cite" in lower and "function" in lower
+    assert "a:func:ma:30 <-> b:func:mb:40" in prompt
+    assert "correspondence only" in lower
 
 
 def test_pair_run_groups_origins_writes_report_and_resplits_exact_sid():
@@ -138,6 +154,35 @@ def test_pair_run_groups_origins_writes_report_and_resplits_exact_sid():
     assert all(fid in chat.call_args.args[0][1]["content"] for fid in fids)
     assert job_service.r.values[("job:j1", "report")] == "report"
     resplit.assert_called_once_with("global:pool:p", algo="uc", sid=sid)
+
+    with (
+        patch(
+            "bsimvis.app.services.analysis_orchestrator.llm_service.chat",
+            return_value="Error: unavailable",
+        ),
+        patch(
+            "bsimvis.app.services.bin_sim_service.bin_sim_service.resplit_bin_sim"
+        ) as failed_report_resplit,
+    ):
+        assert not runner.run_pair_analysis(
+            sid, "global:pool:p", algo="uc", job_service=job_service, job_id="j2"
+        )
+    failed_report_resplit.assert_called_once_with("global:pool:p", algo="uc", sid=sid)
+
+
+def test_max_file_entrypoint_reads_the_full_file_index():
+    class Redis:
+        def smembers(self, key):
+            assert key == "clean:idx:file:functions:reference"
+            return {
+                b"clean:func:reference:10",
+                b"clean:func:reference:180021a90",
+                b"malformed",
+            }
+
+    assert BinSimService(Redis()).max_file_entrypoint("clean", "reference") == int(
+        "180021a90", 16
+    )
 
 
 if __name__ == "__main__":

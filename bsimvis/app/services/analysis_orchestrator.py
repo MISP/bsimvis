@@ -602,7 +602,10 @@ class AnalysisOrchestrator:
             return
 
         report = llm_service.chat(
-            [{"role": "user", "content": _file_report_prompt(file_info, summaries)}]
+            [
+                {"role": "system", "content": _file_report_rules()},
+                {"role": "user", "content": _file_report_prompt(file_info, summaries)},
+            ]
         )
         if not report or report.startswith("Error:"):
             if job_service and job_id:
@@ -619,17 +622,21 @@ class AnalysisOrchestrator:
             job_service.add_log(job_id, "Whole-file report written as a file note.")
 
 
+def _file_report_rules():
+    return tag_taxonomy.analysis_rules() + (
+        "For a whole-file report, do not introduce a capability absent from the "
+        "per-function findings. Compression, syscalls, an entry point, malformed-input "
+        "handling, and non-returning control flow are not malicious indicators by "
+        "themselves. Cite the function that supports every capability and assessment "
+        "claim."
+    )
+
+
 def _file_report_prompt(file_info, summaries):
     lines = [
-        "You are a senior reverse engineer evaluating possible malware behaviour. "
         "Synthesize a whole-file report from "
         "per-function findings already produced for this binary -- do not "
         "re-derive them, just interpret what they add up to.",
-        tag_taxonomy.analysis_rules(),
-        "Do not introduce a capability absent from the per-function findings. "
-        "Compression, syscalls, an entry point, malformed-input handling, and "
-        "non-returning control flow are not malicious indicators by themselves. "
-        "Cite the function that supports every capability and assessment claim.",
         "",
         f"File: {file_info.get('file_name')} (md5={file_info.get('file_md5')})",
     ]
@@ -682,8 +689,9 @@ def _selfcheck():
     )
     assert "MIPS:LE:32:default" in evidence and evidence.endswith("Code:\nx")
 
+    report_rules = _file_report_rules()
     report = _file_report_prompt({"file_name": "x", "function_count": 1}, {})
-    assert "not evidence of a packer" in report and "inconclusive" in report
+    assert "not evidence of a packer" in report_rules and "inconclusive" in report
 
     # A cycle collapses into one unit.
     adj = {"a": ["b"], "b": ["a"]}

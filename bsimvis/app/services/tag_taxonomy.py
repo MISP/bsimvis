@@ -894,8 +894,12 @@ def analysis_rules():
         "returns are unknown; code after it may be unreachable. Do not label a loop "
         "after such a syscall as a watchdog, idle loop, keep-alive, busy-wait, or CPU "
         "hang. A decoder or compression routine is not evidence of a packer, dropper, "
-        "payload, or obfuscation by itself. Use uncertainty only to state what cannot "
-        "be determined, not to list speculative possibilities.\n"
+        "payload, or obfuscation by itself; do not mention how malware might use an "
+        "otherwise generic routine. `halt_baddata` and decompiler warnings are recovery "
+        "artifacts unless a real callee body establishes their semantics. Do not call "
+        "post-syscall code executed, dead, final, or a placeholder when syscall return "
+        "behaviour is unknown. Use uncertainty only to state what cannot be determined, "
+        "not to list speculative possibilities.\n"
     )
 
 
@@ -1596,6 +1600,7 @@ def demo():
     assert "process cloning/amplification" in rules
     assert "numeric constant do not identify an API" in rules
     assert "instruction code field" in rules and "not evidence of a packer" in rules
+    assert "recovery artifacts" in rules and "post-syscall code" in rules
     print("tag_taxonomy demo OK")
 
 

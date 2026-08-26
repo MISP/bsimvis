@@ -25,7 +25,10 @@ class LLMService:
             client = Client(host=self.ollama_url)
             response = client.chat(
                 model=self.model,
-                messages=[{"role": "user", "content": full_prompt}],
+                messages=[
+                    {"role": "system", "content": tag_taxonomy.analysis_rules()},
+                    {"role": "user", "content": full_prompt},
+                ],
                 stream=False,
                 think=False,
                 options={"num_predict": -1, "temperature": 0.1},
@@ -67,16 +70,16 @@ class LLMService:
                 "If the function is trivial, write 'TAGS: severity:none, category:util:init'."
             )
 
-        full_prompt = (
-            f"{prompt}\n\n{tag_rule}\n\n"
-            f"Function Name: {function_name}\n\nCode:\n{code}"
-        )
+        full_prompt = f"{prompt}\n\nFunction Name: {function_name}\n\nCode:\n{code}"
 
         try:
             client = Client(host=self.ollama_url)
             response = client.chat(
                 model=self.model,
-                messages=[{"role": "user", "content": full_prompt}],
+                messages=[
+                    {"role": "system", "content": tag_rule},
+                    {"role": "user", "content": full_prompt},
+                ],
                 stream=False,
                 think=False,
                 options={"num_predict": -1, "temperature": 0.1},
@@ -145,7 +148,10 @@ class LLMService:
             client = Client(host=self.ollama_url)
             response = client.chat(
                 model=self.model,
-                messages=[{"role": "user", "content": full_prompt}],
+                messages=[
+                    {"role": "system", "content": tag_taxonomy.analysis_rules()},
+                    {"role": "user", "content": full_prompt},
+                ],
                 stream=True,
                 think=False,
                 options={"num_predict": -1, "temperature": 0.1},

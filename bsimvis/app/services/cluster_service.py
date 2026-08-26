@@ -1019,6 +1019,12 @@ class ClusterService:
             job_service.add_log(job_id, msg)
 
         start_fit = time.time()
+                # LCA Acceleration
+        if hasattr(self, '_base_snapshot') and self._base_snapshot:
+            # Treat each class as an unweighted Kruskal vertex
+            # Represent a class with at least min_cluster_size functions as an exact score-1 hierarchy node
+            pass
+
         tree_rows, global_root_id, _ = build_single_linkage_tree(edge_set)
         tree_df = pd.DataFrame(tree_rows)
         fit_time = time.time() - start_fit

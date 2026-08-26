@@ -1,7 +1,6 @@
 /**
  * tag_manager.js
- * Tag vocabulary page (/collections/<col>/tags) and the LLM batch enrichment
- * actions driven from the function list context menu.
+ * Tag vocabulary page (/collections/<col>/tags) and file-analysis jobs.
  */
 
 function tagApiParams() {
@@ -160,63 +159,92 @@ window.createTagFromForm = async function () {
     }
 };
 
-// --- LLM batch enrichment ---------------------------------------------------
+// --- File analysis ----------------------------------------------------------
 
-/**
- * Starts an LLM batch job.
- * @param {string[]} actions - ['notes'], ['tags'] or both.
- * @param {Object} [opts]
- * @param {string[]} [opts.funcIds] - explicit ids; defaults to the table selection.
- * @param {string} [opts.filters] - function-search query string (whole result set).
- * @param {boolean} [opts.askPrompt] - prompt for a custom prompt first.
- */
-window.startLLMBatch = async function (actions, opts = {}) {
-    const body = tagApiBody({ actions });
-
-    if (opts.filters !== undefined) {
-        body.filters = opts.filters;
-    } else {
-        const ids = opts.funcIds || (window.getSelectedTableIds ? window.getSelectedTableIds() : []);
-        if (!ids || !ids.length) {
-            showToast('Select one or more functions first', 'warning');
-            return;
-        }
-        body.func_ids = ids;
+window.openFileAnalysisModal = function ({ fileMd5 = '', collection = '' } = {}) {
+    collection = collection || getRoutingState().collection;
+    if (!collection) {
+        showToast('No collection selected', 'warning');
+        return;
     }
 
-    if (opts.askPrompt) {
-        const prompt = window.prompt('Custom prompt (leave empty for the configured default):', '');
-        if (prompt === null) return;
-        if (prompt.trim()) body.custom_prompt = prompt.trim();
+    let modal = document.getElementById('file-analysis-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'file-analysis-modal';
+        modal.style.cssText = 'position:fixed; inset:0; z-index:30000; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.65); backdrop-filter:blur(4px);';
+        document.body.appendChild(modal);
     }
+    modal.dataset.collection = collection;
+    modal.dataset.fileMd5 = fileMd5;
+    const target = fileMd5 ? `file ${fileMd5}` : `collection ${collection}`;
+    modal.innerHTML = `
+        <form onsubmit="submitFileAnalysis(event)" style="width:500px; max-width:90vw; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:22px; color:var(--fg);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
+                <h3 style="margin:0; color:#ae81ff;"><i class="fa-solid fa-robot"></i> Analyze ${escapeHtml(target)}</h3>
+                <button type="button" onclick="closeFileAnalysisModal()" style="background:none; border:0; color:var(--subtle); cursor:pointer; font-size:1.3rem;">&times;</button>
+            </div>
+            <label style="display:block; margin-bottom:14px;">Minimum BSim features
+                <input id="file-analysis-min" type="number" min="0" value="0" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+            </label>
+            <label style="display:block; margin-bottom:14px;">Prompt
+                <textarea id="file-analysis-prompt" placeholder="Leave empty for the configured default" style="display:block; width:100%; min-height:100px; box-sizing:border-box; margin-top:5px; padding:8px; resize:vertical; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;"></textarea>
+            </label>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:18px;">
+                <label><input id="file-analysis-skip-fid" type="checkbox" checked> Skip FID-tagged functions</label>
+                <label><input id="file-analysis-overwrite" type="checkbox"> Replace existing LLM output</label>
+                <label><input id="file-analysis-notes" type="checkbox" checked> Write notes</label>
+                <label><input id="file-analysis-tags" type="checkbox" checked> Write tags</label>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+                <button type="button" onclick="closeFileAnalysisModal()" class="top-action-btn">Cancel</button>
+                <button type="submit" class="top-action-btn" style="color:#ae81ff; border-color:#ae81ff;"><i class="fa-solid fa-play"></i> Create job</button>
+            </div>
+        </form>`;
+    modal.onclick = e => { if (e.target === modal) closeFileAnalysisModal(); };
+};
+
+window.closeFileAnalysisModal = function () {
+    document.getElementById('file-analysis-modal')?.remove();
+};
+
+window.submitFileAnalysis = async function (event) {
+    event.preventDefault();
+    const modal = document.getElementById('file-analysis-modal');
+    const actions = [];
+    if (document.getElementById('file-analysis-notes').checked) actions.push('notes');
+    if (document.getElementById('file-analysis-tags').checked) actions.push('tags');
+    if (!actions.length) {
+        showToast('Select notes, tags, or both', 'warning');
+        return;
+    }
+
+    const body = {
+        collection: modal.dataset.collection,
+        actions,
+        min_complexity: Number(document.getElementById('file-analysis-min').value),
+        skip_fid_tagged: document.getElementById('file-analysis-skip-fid').checked,
+        overwrite: document.getElementById('file-analysis-overwrite').checked
+    };
+    if (modal.dataset.fileMd5) body.file_md5 = modal.dataset.fileMd5;
+    const prompt = document.getElementById('file-analysis-prompt').value.trim();
+    if (prompt) body.custom_prompt = prompt;
 
     try {
-        const res = await tagPost('/api/llm/batch', body);
-        showToast(`LLM batch started on ${res.total} function(s)`, 'success');
-        trackLLMBatch(res.job_id, res.total);
+        const result = await tagPost('/api/llm/file_analysis', body);
+        closeFileAnalysisModal();
+        showToast(`Analysis job started for ${result.files} file(s), ${result.total} function(s)`, 'success');
+        trackFileAnalysis(result.job_id);
     } catch (e) {
-        showToast(`Could not start LLM batch: ${e.message}`, 'error');
+        showToast(`Could not start analysis: ${e.message}`, 'error');
     }
 };
 
-/** Starts a batch over every function currently matched by the page filters. */
-window.startLLMBatchForCurrentFilter = function (actions) {
-    const params = new URLSearchParams(window.location.search);
-    params.delete('limit');
-    params.delete('offset');
-    startLLMBatch(actions, { filters: params.toString() });
-};
-
-/** Starts a batch over all functions of one binary. */
-window.startLLMBatchForFile = function (actions, md5) {
-    startLLMBatch(actions, { filters: `file_md5=${encodeURIComponent(md5)}` });
-};
-
-function llmBatchPanel() {
-    let panel = document.getElementById('llm-batch-panel');
+function fileAnalysisPanel() {
+    let panel = document.getElementById('file-analysis-panel');
     if (!panel) {
         panel = document.createElement('div');
-        panel.id = 'llm-batch-panel';
+        panel.id = 'file-analysis-panel';
         panel.style.cssText =
             'position:fixed; right:20px; bottom:20px; z-index:30000; display:flex; flex-direction:column; gap:8px;';
         document.body.appendChild(panel);
@@ -224,44 +252,34 @@ function llmBatchPanel() {
     return panel;
 }
 
-/** Polls a batch job and shows a progress card with a cancel button. */
-window.trackLLMBatch = function (jobId, total) {
+window.trackFileAnalysis = function (jobId) {
     const card = document.createElement('div');
     card.style.cssText =
         'background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:12px 14px; min-width:260px; font-size:0.8rem; color:var(--fg); ';
     card.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-            <span><i class="fa-solid fa-robot"></i> LLM batch</span>
+            <span><i class="fa-solid fa-robot"></i> File analysis</span>
             <button title="Cancel" style="background:none; border:none; color:#ff6b6b; cursor:pointer;"
-                onclick="cancelLLMBatch('${jobId}')"><i class="fa-solid fa-stop"></i></button>
+                onclick="cancelFileAnalysis('${jobId}')"><i class="fa-solid fa-stop"></i></button>
         </div>
-        <div class="llm-batch-status" style="margin-top:6px; opacity:0.85;">queued · 0/${total}</div>`;
-    llmBatchPanel().appendChild(card);
+        <div class="file-analysis-status" style="margin-top:6px; opacity:0.85;">queued</div>`;
+    fileAnalysisPanel().appendChild(card);
 
-    const statusEl = card.querySelector('.llm-batch-status');
+    const statusEl = card.querySelector('.file-analysis-status');
 
     const poll = async () => {
         let data;
         try {
-            const res = await fetch(`/api/llm/batch/${jobId}`);
+            const res = await fetch(`/api/jobs/${jobId}`);
             data = await res.json();
         } catch (e) {
             statusEl.textContent = 'status unavailable';
             return;
         }
 
-        const c = data.counts || {};
-        statusEl.textContent =
-            `${data.status} · ${data.processed || 0}/${data.total || total}` +
-            ` · ${c.done || 0} done, ${c.skipped || 0} skipped, ${c.failed || 0} failed`;
-
+        statusEl.textContent = `${data.status} · ${data.progress || 0}%`;
         if (['completed', 'failed', 'cancelled'].includes(data.status)) {
-            if (c.failed) {
-                statusEl.innerHTML +=
-                    `<div style="margin-top:4px; color:#ff6b6b;">${c.failed} function(s) failed — see job logs</div>`;
-            }
-            // Refresh the table so new notes and llm: tags show up.
-            if (typeof refreshData === 'function' && getRoutingState().viewKey === 'functions') refreshData(false, true);
+            if (typeof refreshData === 'function') refreshData(false, true);
             setTimeout(() => card.remove(), 12000);
             return;
         }
@@ -270,11 +288,11 @@ window.trackLLMBatch = function (jobId, total) {
     poll();
 };
 
-window.cancelLLMBatch = async function (jobId) {
+window.cancelFileAnalysis = async function (jobId) {
     try {
-        await tagPost(`/api/llm/batch/${jobId}/cancel`, {});
-        showToast('LLM batch cancelled', 'info');
+        await tagPost(`/api/jobs/${jobId}/cancel`, {});
+        showToast('File analysis cancelled', 'info');
     } catch (e) {
-        showToast(`Could not cancel: ${e.message}`, 'error');
+        showToast(`Could not cancel analysis: ${e.message}`, 'error');
     }
 };

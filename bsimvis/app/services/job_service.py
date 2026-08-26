@@ -1137,6 +1137,7 @@ class JobService:
 
                             target = (
                                 payload.get("md5")
+                                or payload.get("file_md5")
                                 or payload.get("file_id")
                                 or payload.get("batch_uuid")
                                 or ""

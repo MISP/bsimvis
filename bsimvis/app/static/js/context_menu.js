@@ -365,15 +365,6 @@
                 }
             }
 
-            // LLM batch: the selected rows, or this function alone when nothing
-            // is selected, so the default action needs no dialog.
-            const llmIds = `(window.getSelectedTableIds && window.getSelectedTableIds('function').length ? window.getSelectedTableIds('function') : [${jsString(norm.id)}])`;
-            actionsSubmenuHtml += renderLLMSubmenu([
-                { label: 'Summary', icon: 'fa-note-sticky', actions: "['notes']", opts: `{ funcIds: ${llmIds} }` },
-                { label: 'Tags', icon: 'fa-tags', actions: "['tags']", opts: `{ funcIds: ${llmIds} }` },
-                { label: 'Summary + tags', icon: 'fa-wand-magic-sparkles', actions: "['notes','tags']", opts: `{ funcIds: ${llmIds} }` },
-                { label: '… with custom prompt', icon: 'fa-pen-nib', actions: "['notes','tags']", opts: `{ funcIds: ${llmIds}, askPrompt: true }` }
-            ]);
         } else if (resolvedType === 'file') {
             const cgUrl = Nav.buildUIUrl(col, ['call_graph', norm.md5]);
             const funcsUrl = Nav.buildUIUrl(col, ['functions']) + '?file_md5=' + encodeURIComponent(norm.md5);
@@ -404,14 +395,7 @@
                 <span>Similar Files (by container)</span>
             </div>
             `;
-            // Whole-binary enrichment: same LLM entries, resolved from the file
-            // filter instead of a row selection.
-            actionsSubmenuHtml += renderLLMSubmenu([
-                { label: 'Summary (all functions)', icon: 'fa-note-sticky', actions: "['notes']", opts: `{ filters: ${jsString('file_md5=' + norm.md5)} }` },
-                { label: 'Tags (all functions)', icon: 'fa-tags', actions: "['tags']", opts: `{ filters: ${jsString('file_md5=' + norm.md5)} }` },
-                { label: 'Summary + tags (all functions)', icon: 'fa-wand-magic-sparkles', actions: "['notes','tags']", opts: `{ filters: ${jsString('file_md5=' + norm.md5)} }` },
-                { label: '… with custom prompt', icon: 'fa-pen-nib', actions: "['notes','tags']", opts: `{ filters: ${jsString('file_md5=' + norm.md5)}, askPrompt: true }` }
-            ]);
+            actionsSubmenuHtml += renderFileAnalysisSubmenu(norm.md5);
         } else if (resolvedType === 'similarity') {
             actionsSubmenuHtml += `
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly(${escapeAttr(jsString(norm.id1))}, ${escapeAttr(jsString(norm.name1 || ''))}, ${escapeAttr(jsString(norm.id2))}, ${escapeAttr(jsString(norm.name2 || ''))}, event)">
@@ -437,15 +421,6 @@
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Functions</span>
             </div>`;
-            // Same whole-scope enrichment a file offers, resolved from the
-            // cluster's member filter instead of an md5.
-            const clFilter = jsString('cluster_uuid=' + encodeURIComponent(norm.uuid));
-            actionsSubmenuHtml += renderLLMSubmenu([
-                { label: 'Summary (all members)', icon: 'fa-note-sticky', actions: "['notes']", opts: `{ filters: ${clFilter} }` },
-                { label: 'Tags (all members)', icon: 'fa-tags', actions: "['tags']", opts: `{ filters: ${clFilter} }` },
-                { label: 'Summary + tags (all members)', icon: 'fa-wand-magic-sparkles', actions: "['notes','tags']", opts: `{ filters: ${clFilter} }` },
-                { label: '… with custom prompt', icon: 'fa-pen-nib', actions: "['notes','tags']", opts: `{ filters: ${clFilter}, askPrompt: true }` }
-            ]);
         } else if (resolvedType === 'bin_cluster') {
             const fileClusterUrl = Nav.buildUIUrl(col, ['files']) + '?bin_cluster_uuid=' + encodeURIComponent(norm.uuid);
             actionsSubmenuHtml += `
@@ -457,25 +432,6 @@
                 <i class="fa-solid fa-folder-open" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Files</span>
             </div>`;
-        }
-
-        // A cell selection can hold functions the clicked row is not itself one of
-        // (both function columns of a bin diff row, which is a bin_cluster). Offer
-        // the batch on those too.
-        if (resolvedType !== 'function' && window.getSelectedTableIds) {
-            const selFuncs = window.getSelectedTableIds('function');
-            if (selFuncs.length) {
-                // Read the selection back at click time: inlining the ids would
-                // put double quotes inside the onclick attribute.
-                const ids = "window.getSelectedTableIds('function')";
-                const n = selFuncs.length;
-                actionsSubmenuHtml += renderLLMSubmenu([
-                    { label: `Summary (${n} selected)`, icon: 'fa-note-sticky', actions: "['notes']", opts: `{ funcIds: ${ids} }` },
-                    { label: `Tags (${n} selected)`, icon: 'fa-tags', actions: "['tags']", opts: `{ funcIds: ${ids} }` },
-                    { label: `Summary + tags (${n} selected)`, icon: 'fa-wand-magic-sparkles', actions: "['notes','tags']", opts: `{ funcIds: ${ids} }` },
-                    { label: '… with custom prompt', icon: 'fa-pen-nib', actions: "['notes','tags']", opts: `{ funcIds: ${ids}, askPrompt: true }` }
-                ]);
-            }
         }
 
         if (actionsSubmenuHtml) {
@@ -704,14 +660,7 @@
         return [];
     }
 
-    /** Renders the "LLM ▸" entry nested inside the Actions submenu. */
-    function renderLLMSubmenu(items) {
-        const entries = items.map(i => `
-            <div class="context-menu-item" onclick="${escapeAttr(`event.stopPropagation(); window.closeGraphContextMenu(); startLLMBatch(${i.actions}, ${i.opts})`)}">
-                <i class="fa-solid ${i.icon}" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-                <span>${escapeHtml(i.label)}</span>
-            </div>`).join('');
-
+    function renderFileAnalysisSubmenu(md5) {
         return `
             <div class="context-menu-item submenu-trigger" style="position: relative;">
                 <i class="fa-solid fa-robot" style="width: 16px; text-align: center; opacity: 0.8;"></i>
@@ -719,7 +668,10 @@
                 <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
 
                 <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 200px; background: var(--card-bg); border: 1px solid var(--border); z-index: 20006;">
-                    ${entries}
+                    <div class="context-menu-item" onclick="${escapeAttr(`event.stopPropagation(); window.closeGraphContextMenu(); openFileAnalysisModal({ fileMd5: ${jsString(md5)} })`)}">
+                        <i class="fa-solid fa-file-waveform" style="width:16px; text-align:center; opacity:.8;"></i>
+                        <span>Analyze whole file</span>
+                    </div>
                 </div>
             </div>`;
     }

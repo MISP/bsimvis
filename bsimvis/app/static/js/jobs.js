@@ -122,7 +122,7 @@ async function refreshActiveJobsByTarget() {
             if (!['pending', 'running', 'queued'].includes(job.status)) return;
             let payload = job.payload;
             try { if (typeof payload === 'string') payload = JSON.parse(payload); } catch (e) { payload = {}; }
-            const targets = [job.target, job.collection, payload && payload.batch_uuid, payload && payload.md5, payload && payload.file_id].filter(Boolean);
+            const targets = [job.target, job.collection, payload && payload.batch_uuid, payload && payload.md5, payload && payload.file_md5, payload && payload.file_id].filter(Boolean);
             targets.forEach(t => { map[t] = job; });
         });
         window.activeJobsByTarget = map;

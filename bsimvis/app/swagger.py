@@ -2635,7 +2635,12 @@ class LLMChatMessage(Resource):
     @ns_llm.expect(
         api.model(
             "LLMChatMessage",
-            {"message": fields.String(required=True, example="Does this function look like a fake installer?")},
+            {
+                "message": fields.String(
+                    required=True,
+                    example="Does this function look like a fake installer?",
+                )
+            },
         )
     )
     def post(self, session_id):
@@ -2703,7 +2708,11 @@ class LLMFileAnalysis(Resource):
             {
                 "collection": fields.String(required=True, example="main"),
                 "pool": fields.String(description="Pool id, alternative to collection"),
-                "file_md5": fields.String(required=True, example="16c2addf..."),
+                "file_md5": fields.String(
+                    required=False,
+                    example="16c2addf...",
+                    description="File to analyse; omit to analyse every file in the collection",
+                ),
                 "actions": fields.List(
                     fields.String, enum=["notes", "tags"], example=["notes", "tags"]
                 ),
@@ -2727,11 +2736,7 @@ class LLMFileAnalysis(Resource):
         )
     )
     def post(self):
-        """Starts a full-file agentic LLM analysis: every function in the file
-        (minus configurable pre-filters) gets a context-aware tagging/notes
-        pass, escalating to a tool-using pass when context alone isn't
-        enough, then folds every finding into one whole-file report saved as
-        a file note."""
+        """Starts agentic LLM analysis for one file or every file in a collection."""
         from bsimvis.app.routes.llm_analysis import file_analysis
 
         return file_analysis()

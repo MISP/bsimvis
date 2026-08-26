@@ -165,7 +165,9 @@ def contextual_batch_cancel(job_id):
 
 
 def file_analysis():
-    """Starts a full-file agentic LLM analysis: every function in the file
+    """Starts agentic LLM analysis for one file or every file in a collection.
+
+    Every function in each file
     (minus configurable pre-filters) gets the same context-aware tagging/notes
     pass as `contextual_batch`, escalating to a tool-using pass when a
     function's purpose isn't clear from context alone, then folds every
@@ -178,6 +180,7 @@ def file_analysis():
     """
     from bsimvis.app.services.analysis_orchestrator import max_batch_size
     from bsimvis.app.services.job_service import JobService, JobType
+    from bsimvis.app.services.redis_client import get_redis
     from bsimvis.app.routes.llm import _resolve_filters_to_ids
 
     data = request.json or {}
@@ -189,46 +192,79 @@ def file_analysis():
     ):
         collection = f"global:pool:{pool}"
     file_md5 = data.get("file_md5")
-    if not collection or not file_md5:
-        return {"error": "Missing collection or file_md5"}, 400
+    if not collection:
+        return {"error": "Missing collection"}, 400
 
-    min_complexity = int(data.get("min_complexity") or 0)
-    filters_qs = f"md5={file_md5}"
-    if data.get("skip_fid_tagged", True):
-        # "fid" (bare, no colon) is the indexed ancestor bucket covering every
-        # fid:<name>[:<version>][#<func>] tag -- see tag_taxonomy.tag_prefixes.
-        filters_qs += "&exclude_tag=fid"
-    if min_complexity > 0:
-        filters_qs += f"&min_features={min_complexity}"
+    actions = data.get("actions") or ["notes", "tags"]
+    invalid = [action for action in actions if action not in ("notes", "tags")]
+    if invalid:
+        return {"error": f"Invalid actions: {', '.join(invalid)}"}, 400
+    try:
+        min_complexity = int(data.get("min_complexity") or 0)
+    except (TypeError, ValueError):
+        return {"error": "min_complexity must be an integer"}, 400
+    if min_complexity < 0:
+        return {"error": "min_complexity must be zero or greater"}, 400
 
     cap = max_batch_size()
-    func_ids, error = _resolve_filters_to_ids(collection, filters_qs, cap)
-    if error:
-        return {"error": error}, 400
-    func_ids = [f for f in dict.fromkeys(func_ids) if f]
-    if not func_ids:
-        return {"error": "Selection resolved to zero functions (after filters)"}, 400
 
-    if cap > 0 and len(func_ids) > cap:
+    def payload_for(md5):
+        filters_qs = f"md5={md5}"
+        if data.get("skip_fid_tagged", True):
+            filters_qs += "&exclude_tag=fid"
+        if min_complexity:
+            filters_qs += f"&min_features={min_complexity}"
+        func_ids, error = _resolve_filters_to_ids(collection, filters_qs, cap)
+        if error:
+            return None, error
+        func_ids = [fid for fid in dict.fromkeys(func_ids) if fid]
+        if cap > 0 and len(func_ids) > cap:
+            return None, (
+                f"File {md5} has {len(func_ids)} functions after filters, over "
+                f"the batch cap of {cap}. Raise llm.batch_max, or set it to 0 "
+                "for no cap."
+            )
+        if not func_ids:
+            return None, None
         return {
-            "error": (
-                f"File has {len(func_ids)} functions after filters, over the batch "
-                f"cap of {cap}. Raise llm.batch_max, or set it to 0 for no cap."
-            ),
-            "count": len(func_ids),
-            "cap": cap,
-        }, 413
-
-    job_service = JobService()
-    job_id = job_service.create_job(
-        JobType.LLM_FILE_ANALYSIS,
-        {
             "collection": collection,
-            "file_md5": file_md5,
+            "file_md5": md5,
             "func_ids": func_ids,
-            "actions": data.get("actions") or ["notes", "tags"],
+            "actions": actions,
             "overwrite": bool(data.get("overwrite")),
             "custom_prompt": data.get("custom_prompt"),
-        },
+        }, None
+
+    job_service = JobService()
+    if file_md5:
+        payload, error = payload_for(file_md5)
+        if error:
+            return {"error": error}, 413 if "batch cap" in error else 400
+        if not payload:
+            return {
+                "error": "Selection resolved to zero functions (after filters)"
+            }, 400
+        job_id = job_service.create_job(JobType.LLM_FILE_ANALYSIS, payload)
+        return {"job_id": job_id, "total": len(payload["func_ids"]), "files": 1}
+
+    file_ids = get_redis().sscan_iter(f"{collection}:all_files")
+    # ponytail: group creation still holds one small task payload per file;
+    # switch to a discovery/continuation job only if huge collections make setup slow.
+    md5s = sorted(
+        (raw.decode() if isinstance(raw, bytes) else str(raw)).rsplit(":file:", 1)[-1]
+        for raw in file_ids
     )
-    return {"job_id": job_id, "total": len(func_ids)}
+    tasks = []
+    total = 0
+    for md5 in md5s:
+        payload, error = payload_for(md5)
+        if error:
+            return {"error": error}, 413 if "batch cap" in error else 400
+        if payload:
+            tasks.append((JobType.LLM_FILE_ANALYSIS, payload))
+            total += len(payload["func_ids"])
+    if not tasks:
+        return {"error": "Collection resolved to zero functions (after filters)"}, 400
+
+    job_id = job_service.create_group(tasks)
+    return {"job_id": job_id, "total": total, "files": len(tasks)}

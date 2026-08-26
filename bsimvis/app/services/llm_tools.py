@@ -90,6 +90,8 @@ def get_function(func_id):
         "code": code_res["code"],
         "namespace": meta.get("namespace"),
         "return_type": meta.get("return_type"),
+        "language_id": meta.get("language_id"),
+        "decompiler_id": meta.get("decompiler_id"),
         "file_name": meta.get("file_name"),
         "file_md5": md5,
         # `tags`: static/system findings written at ingest (capa:, yara:,

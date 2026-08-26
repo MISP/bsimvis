@@ -889,7 +889,11 @@ def prompt_rules():
         "obfuscation from syntax alone. In particular, a rendered syscall argument is "
         "not necessarily the syscall number; require architecture/register evidence. "
         "Decompiler warnings, dead code, and infinite loops indicate uncertainty, not "
-        "malice by themselves. State important uncertainty instead of filling gaps.\n"
+        "malice by themselves. An unnamed `FUN_...` callee and a numeric constant do "
+        "not identify an API, mutex, protocol, packer, or persistence mechanism. Never "
+        "invent names or intent for them. State that the purpose is unknown when the "
+        "visible operations and resolved callees do not establish it; do not fill the "
+        "gap with possible malicious interpretations.\n"
         "Then, on a final line starting with 'TAGS:', tag the function. "
         "Emit exactly one severity tag, and at most 2 category tags.\n"
         f"Severity -- format `severity:<level>`, <level> MUST be one of: "
@@ -904,7 +908,9 @@ def prompt_rules():
         "does not by itself raise severity.\n"
         "Category -- format `category:<group>:<leaf>`, where <group>:<leaf> MUST "
         f"be one of: {groups}. Emit categories only for behaviour evidenced by this "
-        "function or its supplied call context, not for plausible intent."
+        "function or its supplied call context, not for plausible intent. Every "
+        "non-none severity and category must be justified by a specific visible "
+        "operation or resolved callee in the summary."
     )
 
 
@@ -1574,6 +1580,7 @@ def demo():
     assert "not software vulnerability" in rules
     assert "rendered syscall argument is not necessarily the syscall number" in rules
     assert "process cloning/amplification" in rules
+    assert "numeric constant do not identify an API" in rules
     print("tag_taxonomy demo OK")
 
 

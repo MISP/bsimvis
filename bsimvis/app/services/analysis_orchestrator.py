@@ -170,6 +170,15 @@ def _one_liner(summary):
     return first[:SUMMARY_CONTEXT_CHARS]
 
 
+def _code_evidence(data):
+    language = data.get("language_id") or "unknown"
+    decompiler = data.get("decompiler_id") or "unknown"
+    return (
+        f"Target architecture (Ghidra language_id): {language}\n"
+        f"Decompiler: {decompiler}\nCode:\n{data['code']}"
+    )
+
+
 # --- agentic fallback ----------------------------------------------------
 
 
@@ -342,7 +351,8 @@ class AnalysisOrchestrator:
             return "failed", data["error"]
 
         context = _context_block([func_id], adj, summaries)
-        code_with_context = f"{context}\nCode:\n{data['code']}" if context else data["code"]
+        evidence = _code_evidence(data)
+        code_with_context = f"{context}\n{evidence}" if context else evidence
 
         prompt = _agentic_prompt(custom_prompt) if agentic else custom_prompt
         summary, tags, err = llm_service.summarize_and_tag(
@@ -395,7 +405,8 @@ class AnalysisOrchestrator:
 
         context = _context_block(unit, adj, summaries)
         combined_code = "\n\n".join(
-            f"// --- {m['func_name']} ({m['func_id']}) ---\n{m['code']}" for m in members
+            f"// --- {m['func_name']} ({m['func_id']}) ---\n{_code_evidence(m)}"
+            for m in members
         )
         header = (
             f"{context}\nThe following {len(members)} functions call each other "
@@ -659,6 +670,11 @@ def _selfcheck():
     units = _tarjan_scc(["a", "b", "c"], adj)
     flat = [u[0] for u in units]
     assert flat.index("c") < flat.index("b") < flat.index("a"), flat
+
+    evidence = _code_evidence(
+        {"language_id": "MIPS:LE:32:default", "decompiler_id": "ghidra", "code": "x"}
+    )
+    assert "MIPS:LE:32:default" in evidence and evidence.endswith("Code:\nx")
 
     # A cycle collapses into one unit.
     adj = {"a": ["b"], "b": ["a"]}

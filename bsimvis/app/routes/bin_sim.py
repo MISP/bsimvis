@@ -554,6 +554,24 @@ def _diff_cache_put(key, doc):
             _DIFF_CACHE.popitem(last=False)
 
 
+def find_bin_sim_sid(
+    r, collection, md5_a, md5_b, coll_b=None, pool_id=None, algo="unweighted_cosine"
+):
+    """Resolve the exact stored pair ID without hydrating its diff."""
+    coll_b = coll_b or collection
+    if pool_id:
+        pipe = r.pipeline(transaction=False)
+        pipe.smembers(f"global:pool:{pool_id}:bin_sim:involves:{collection}:{md5_a}")
+        pipe.smembers(f"global:pool:{pool_id}:bin_sim:involves:{coll_b}:{md5_b}")
+        res_a, res_b = pipe.execute()
+        a = {x.decode() if isinstance(x, bytes) else x for x in (res_a or set())}
+        b = {x.decode() if isinstance(x, bytes) else x for x in (res_b or set())}
+        common = a & b
+        return next(iter(common), None)
+    md5_a, md5_b = sorted((md5_a, md5_b))
+    return f"{collection}:bin_sim:{algo}:{md5_a}::{md5_b}"
+
+
 def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=None):
     """Retrieve binary similarity diff for a pair."""
     if collection is None:
@@ -577,33 +595,15 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     # stored doc; the response must still come back in the caller's order.
     req_coll_a, req_md5_a, req_coll_b, req_md5_b = coll_a, md5_a, coll_b, md5_b
 
-    if pool_id:
-        # For pool pairs, look up the SID via the 'involves' index to avoid
-        # guessing the ordering used at storage time.
-        involves_a = f"global:pool:{pool_id}:bin_sim:involves:{coll_a}:{md5_a}"
-        involves_b = f"global:pool:{pool_id}:bin_sim:involves:{coll_b}:{md5_b}"
-        pipe = r.pipeline(transaction=False)
-        pipe.smembers(involves_a)
-        pipe.smembers(involves_b)
-        res_a, res_b = pipe.execute()
-
-        sids_a = {s.decode() if isinstance(s, bytes) else s for s in (res_a or set())}
-        sids_b = {s.decode() if isinstance(s, bytes) else s for s in (res_b or set())}
-        common = sids_a & sids_b
-
-        if not common:
-            return {
-                "status": "not_found",
-                "message": "Similarity not calculated for this pair",
-            }, 404
-
-        sid = next(iter(common))
-    else:
-        # Non-pool: canonical ordering md5_a < md5_b
-        if md5_a > md5_b:
-            md5_a, md5_b = md5_b, md5_a
-            coll_a, coll_b = coll_b, coll_a
-        sid = f"{collection}:bin_sim:{algo}:{md5_a}::{md5_b}"
+    sid = find_bin_sim_sid(r, collection, md5_a, md5_b, coll_b, pool_id, algo)
+    if not sid:
+        return {
+            "status": "not_found",
+            "message": "Similarity not calculated for this pair",
+        }, 404
+    if not pool_id and md5_a > md5_b:
+        md5_a, md5_b = md5_b, md5_a
+        coll_a, coll_b = coll_b, coll_a
 
     key = (sid, req_md5_a, req_coll_a, req_coll_b, algo, pool_id)
     # A resplit runs in the worker, so this process cannot be told to drop its

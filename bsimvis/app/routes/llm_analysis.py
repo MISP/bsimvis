@@ -269,3 +269,78 @@ def file_analysis():
 
     job_id = job_service.create_group(tasks)
     return {"job_id": job_id, "total": total, "files": len(tasks)}
+
+
+def pair_analysis():
+    """Queue evidence-bound analysis of one stored binary comparison."""
+    from bsimvis.app.routes.bin_sim import find_bin_sim_sid
+    from bsimvis.app.services.analysis_orchestrator import _select_pair_candidates
+    from bsimvis.app.services.job_service import JobService, JobType
+    from bsimvis.app.services.redis_client import get_redis
+    import json as _json
+
+    data = request.json or {}
+    collection = data.get("collection")
+    coll_b = data.get("coll_b") or collection
+    md5_a, md5_b = data.get("md5_a"), data.get("md5_b")
+    pool_id = data.get("pool") or data.get("pool_id")
+    if not collection or not md5_a or not md5_b:
+        return {"error": "collection, md5_a and md5_b are required"}, 400
+
+    actions = data.get("actions") or ["notes", "tags"]
+    invalid = [action for action in actions if action not in ("notes", "tags")]
+    if invalid:
+        return {"error": f"Invalid actions: {', '.join(invalid)}"}, 400
+    try:
+        threshold = float(data.get("threshold", 0.9))
+        min_complexity = int(data.get("min_complexity") or 0)
+    except (TypeError, ValueError):
+        return {
+            "error": "threshold must be a number and min_complexity an integer"
+        }, 400
+    if not 0 <= threshold <= 1:
+        return {"error": "threshold must be between 0 and 1"}, 400
+    if min_complexity < 0:
+        return {"error": "min_complexity must be zero or greater"}, 400
+
+    algo = data.get("algo", "unweighted_cosine")
+    r = get_redis()
+    sid = find_bin_sim_sid(r, collection, md5_a, md5_b, coll_b, pool_id, algo)
+    raw = r.get(sid) if sid else None
+    if not raw:
+        return {"error": "Similarity not calculated for this pair"}, 404
+
+    pair = _json.loads(raw)
+    if isinstance(pair, str):
+        pair = _json.loads(pair)
+    include_unique = data.get("include_unique", True) is not False
+    include_unchanged = bool(data.get("include_unchanged"))
+    total = len(
+        _select_pair_candidates(
+            pair.get("diff") or {}, threshold, include_unique, include_unchanged
+        )
+    )
+    if not total:
+        return {"error": "Pair selection resolved to zero functions"}, 400
+
+    pair_collection = f"global:pool:{pool_id}" if pool_id else collection
+    payload = {
+        "collection": collection,
+        "coll_b": coll_b,
+        "md5_a": md5_a,
+        "md5_b": md5_b,
+        "pool_id": pool_id,
+        "sid": sid,
+        "pair_collection": pair_collection,
+        "algo": algo,
+        "threshold": threshold,
+        "include_unique": include_unique,
+        "include_unchanged": include_unchanged,
+        "skip_fid_tagged": data.get("skip_fid_tagged", True) is not False,
+        "min_complexity": min_complexity,
+        "actions": actions,
+        "overwrite": bool(data.get("overwrite")),
+        "custom_prompt": data.get("custom_prompt"),
+    }
+    job_id = JobService().create_job(JobType.LLM_PAIR_ANALYSIS, payload)
+    return {"job_id": job_id, "total": total, "sid": sid}

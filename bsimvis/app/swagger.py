@@ -2771,6 +2771,43 @@ class LLMFileAnalysisCancel(Resource):
         return contextual_batch_cancel(job_id)
 
 
+@ns_llm.route("/pair_analysis")
+class LLMPairAnalysis(Resource):
+    @ns_llm.expect(
+        api.model(
+            "LLMPairAnalysisRequest",
+            {
+                "collection": fields.String(required=True),
+                "coll_b": fields.String,
+                "md5_a": fields.String(required=True),
+                "md5_b": fields.String(required=True),
+                "pool": fields.String(
+                    description="Pool id for a cross-collection pair"
+                ),
+                "algo": fields.String(default="unweighted_cosine"),
+                "threshold": fields.Float(
+                    default=0.9,
+                    description="Analyse matched functions below this similarity",
+                ),
+                "include_unique": fields.Boolean(default=True),
+                "include_unchanged": fields.Boolean(default=False),
+                "skip_fid_tagged": fields.Boolean(default=True),
+                "min_complexity": fields.Integer(default=0),
+                "actions": fields.List(
+                    fields.String, enum=["notes", "tags"], example=["notes", "tags"]
+                ),
+                "overwrite": fields.Boolean(default=False),
+                "custom_prompt": fields.String,
+            },
+        )
+    )
+    def post(self):
+        """Analyse differences, similarities and malicious functions in one pair."""
+        from bsimvis.app.routes.llm_analysis import pair_analysis
+
+        return pair_analysis()
+
+
 # --- Pool Namespace ---
 
 pool_func_sim_params_model = api.model(

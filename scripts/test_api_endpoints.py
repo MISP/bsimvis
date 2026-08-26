@@ -3403,6 +3403,84 @@ def test_bin_sim_diff_cache():
     _check_diff_cache_expiry()
 
 
+def test_llm_pair_analysis_job():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-bis-2 – LLM pair analysis job contract", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    missing = requests.post(
+        f"{BASE_URL}/api/llm/pair_analysis",
+        json={"collection": COLLECTION, "md5_a": file_md5},
+        timeout=30,
+    )
+    check(
+        "pair analysis rejects a missing second file",
+        missing.status_code == 400,
+        f"HTTP {missing.status_code}: {missing.text[:120]}",
+    )
+    invalid = requests.post(
+        f"{BASE_URL}/api/llm/pair_analysis",
+        json={
+            "collection": COLLECTION,
+            "md5_a": file_md5,
+            "md5_b": file_md5_2,
+            "threshold": 1.2,
+        },
+        timeout=30,
+    )
+    check(
+        "pair analysis validates the similarity threshold",
+        invalid.status_code == 400,
+        f"HTTP {invalid.status_code}: {invalid.text[:120]}",
+    )
+
+    paused = test_endpoint("POST", "/api/jobs/pause", label="POST /api/jobs/pause")
+    if not check(
+        "worker fleet paused before pair enqueue",
+        bool((paused or {}).get("paused")),
+        str(paused),
+    ):
+        test_endpoint("DELETE", "/api/jobs/pause", label="DELETE /api/jobs/pause")
+        return
+
+    job_id = None
+    try:
+        started = test_endpoint(
+            "POST",
+            "/api/llm/pair_analysis",
+            data={
+                "collection": COLLECTION,
+                "md5_a": file_md5,
+                "md5_b": file_md5_2,
+                "threshold": 0.9,
+                "include_unique": True,
+                "include_unchanged": False,
+                "actions": ["notes", "tags"],
+            },
+        )
+        job_id = (started or {}).get("job_id")
+        check(
+            "pair analysis enqueues candidates",
+            bool(job_id) and int((started or {}).get("total") or 0) > 0,
+            str(started),
+        )
+        if job_id:
+            job = test_endpoint("GET", f"/api/jobs/{job_id}")
+            payload = (job or {}).get("payload") or {}
+            check(
+                "pair job preserves exact pair and analysis settings",
+                (job or {}).get("type") == "llm_pair_analysis"
+                and payload.get("md5_a") == file_md5
+                and payload.get("md5_b") == file_md5_2
+                and payload.get("threshold") == 0.9
+                and payload.get("sid") == (started or {}).get("sid"),
+                str(job)[:300],
+            )
+            test_endpoint("POST", f"/api/jobs/{job_id}/cancel")
+    finally:
+        test_endpoint("DELETE", "/api/jobs/pause", label="DELETE /api/jobs/pause")
+
+
 def test_exact_pair_resplit():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-bis-2 – exact pair tag resplit", BOLD))
@@ -5196,6 +5274,7 @@ if __name__ == "__main__":
         test_tag_vocabulary_and_llm_batch,
         test_llm_agentic_analysis,
         test_bin_sim_diff_cache,
+        test_llm_pair_analysis_job,
         test_exact_pair_resplit,
         test_pool_collection_equivalence,
         test_diff_injection_score,
@@ -5216,6 +5295,7 @@ if __name__ == "__main__":
     STEP_DEPS = {
         # Issues the /api/bin_sim/build whose doc the diff cache step reads.
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
+        "test_llm_pair_analysis_job": ["test_search_filters_and_sorting"],
         "test_exact_pair_resplit": ["test_search_filters_and_sorting"],
         "test_retained_call_graph": ["test_search_filters_and_sorting"],
         "test_diff_injection_score": ["test_search_filters_and_sorting"],

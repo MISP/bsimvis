@@ -217,7 +217,8 @@ def file_analysis():
         func_ids, error = _resolve_filters_to_ids(collection, filters_qs, cap)
         if error:
             return None, error
-        func_ids = [fid for fid in dict.fromkeys(func_ids) if fid]
+        marker = f":func:{md5}:"
+        func_ids = [fid for fid in dict.fromkeys(func_ids) if fid and marker in fid]
         if cap > 0 and len(func_ids) > cap:
             return None, (
                 f"File {md5} has {len(func_ids)} functions after filters, over "

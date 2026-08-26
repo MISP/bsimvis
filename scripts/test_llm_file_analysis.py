@@ -29,7 +29,11 @@ def test_collection_creates_one_file_job_per_nonempty_file():
         md5 = filters.split("md5=", 1)[1].split("&", 1)[0]
         if md5 == "empty":
             return [], None
-        return [f"sample:func:{md5}:1", f"sample:func:{md5}:2"], None
+        return [
+            f"sample:func:{md5}:1",
+            "sample:func:related:9",
+            f"sample:func:{md5}:2",
+        ], None
 
     with (
         app.test_request_context(

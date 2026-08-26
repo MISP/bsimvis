@@ -3477,6 +3477,139 @@ def _check_diff_injection_ranking():
     )
 
 
+def test_retained_call_graph():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-quater – retained unique call graph", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    diff_a = test_endpoint(
+        "GET",
+        "/api/diff",
+        params={
+            "collection_a": COLLECTION,
+            "md5_a": file_md5,
+            "md5_b": file_md5_2,
+            "table": "unique_to_a",
+            "limit": 0,
+        },
+        label="GET /api/diff unique_to_a (retained graph source)",
+    )
+    expected_a = {row["func_id"] for row in (diff_a or {}).get("items", [])}
+    if not check(
+        "retained graph: fixture has unique target functions",
+        bool(expected_a),
+        "unique_to_a returned no functions",
+    ):
+        return
+
+    graph = test_endpoint(
+        "GET",
+        "/api/file/call_graph",
+        params={
+            "collection": COLLECTION,
+            "file_md5": file_md5,
+            "retain": file_md5_2,
+        },
+        label="GET /api/file/call_graph?retain=reference",
+    )
+    nodes = (graph or {}).get("nodes", [])
+    edges = (graph or {}).get("edges", [])
+    node_ids = [node["id"] for node in nodes]
+    check(
+        "retained graph: nodes equal the target unique set",
+        set(node_ids) == expected_a,
+        f"missing={list(expected_a - set(node_ids))[:3]} extra={list(set(node_ids) - expected_a)[:3]}",
+    )
+    check(
+        "retained graph: every edge is induced within the unique set",
+        all(
+            e.get("source") in expected_a and e.get("target") in expected_a
+            for e in edges
+        ),
+        f"bad edges: {[e for e in edges if e.get('source') not in expected_a or e.get('target') not in expected_a][:3]}",
+    )
+
+    degree = {fid: 0 for fid in expected_a}
+    for edge in edges:
+        degree[edge["source"]] += 1
+        degree[edge["target"]] += 1
+    check(
+        "retained graph: unique_degree matches returned edges",
+        all(node.get("unique_degree") == degree[node["id"]] for node in nodes),
+        f"first rows: {nodes[:3]}",
+    )
+    expected_order = sorted(
+        nodes,
+        key=lambda n: (
+            -degree[n["id"]],
+            -int(n.get("features_count") or 0),
+            n["id"],
+        ),
+    )
+    check(
+        "retained graph: nodes are ranked by degree then features",
+        node_ids == [node["id"] for node in expected_order]
+        and [node.get("rank") for node in nodes] == list(range(1, len(nodes) + 1)),
+        f"first ids: {node_ids[:5]}",
+    )
+
+    limited = test_endpoint(
+        "GET",
+        "/api/file/call_graph",
+        params={
+            "collection": COLLECTION,
+            "file_md5": file_md5,
+            "retain": file_md5_2,
+            "max_nodes": 2,
+        },
+        label="GET /api/file/call_graph?retain=reference&max_nodes=2",
+    )
+    limited_nodes = (limited or {}).get("nodes", [])
+    limited_ids = {node["id"] for node in limited_nodes}
+    check(
+        "retained graph: max_nodes keeps the ranked prefix",
+        [node["id"] for node in limited_nodes] == node_ids[:2],
+        f"got={[node['id'] for node in limited_nodes]} want={node_ids[:2]}",
+    )
+    check(
+        "retained graph: truncated edges remain induced",
+        all(
+            e.get("source") in limited_ids and e.get("target") in limited_ids
+            for e in (limited or {}).get("edges", [])
+        ),
+        f"limited edges: {(limited or {}).get('edges', [])}",
+    )
+
+    diff_b = test_endpoint(
+        "GET",
+        "/api/diff",
+        params={
+            "collection_a": COLLECTION,
+            "md5_a": file_md5,
+            "md5_b": file_md5_2,
+            "table": "unique_to_b",
+            "limit": 0,
+        },
+        label="GET /api/diff unique_to_b (reverse retained graph source)",
+    )
+    expected_b = {row["func_id"] for row in (diff_b or {}).get("items", [])}
+    reverse = test_endpoint(
+        "GET",
+        "/api/file/call_graph",
+        params={
+            "collection": COLLECTION,
+            "file_md5": file_md5_2,
+            "retain": file_md5,
+        },
+        label="GET /api/file/call_graph?retain=reference (reversed)",
+    )
+    check(
+        "retained graph: reversing the pair selects the opposite unique side",
+        {node["id"] for node in (reverse or {}).get("nodes", [])} == expected_b,
+        f"expected {len(expected_b)} reverse nodes",
+    )
+
+
 def _check_diff_cache_expiry():
     """Sliding-idle / hard-ceiling expiry, driven directly rather than by sleeping.
 
@@ -5031,6 +5164,7 @@ if __name__ == "__main__":
         test_bin_sim_diff_cache,
         test_pool_collection_equivalence,
         test_diff_injection_score,
+        test_retained_call_graph,
         test_archive_upload,
         test_unpack_upload,
         test_lineage,
@@ -5047,6 +5181,7 @@ if __name__ == "__main__":
     STEP_DEPS = {
         # Issues the /api/bin_sim/build whose doc the diff cache step reads.
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
+        "test_retained_call_graph": ["test_search_filters_and_sorting"],
         "test_diff_injection_score": ["test_search_filters_and_sorting"],
     }
     # Resolved before the prelude: a mistyped --only should fail now, not after

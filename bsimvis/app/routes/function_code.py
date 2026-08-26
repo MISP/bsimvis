@@ -438,7 +438,9 @@ def get_function_relations():
                 base_score = r.zscore(f"{base_pool}:sim:score", base_sid)
                 if base_score is not None:
                     if float(base_score) >= min_score:
-                        sim_edges.append({"id1": a, "id2": b, "score": float(base_score)})
+                        sim_edges.append(
+                            {"id1": a, "id2": b, "score": float(base_score)}
+                        )
                     continue
             misses.append((a, b))
 
@@ -451,7 +453,9 @@ def get_function_relations():
                 vec_pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
             vec_results = vec_pipe.execute()
             vecs = {
-                fid: {h.decode() if isinstance(h, bytes) else h: float(s) for h, s in raw}
+                fid: {
+                    h.decode() if isinstance(h, bytes) else h: float(s) for h, s in raw
+                }
                 for fid, raw in zip(miss_ids, vec_results)
                 if raw
             }
@@ -468,7 +472,9 @@ def get_function_relations():
                     dot = sum(d1[h] * d2[h] for h in common)
                     norm1 = sum(v**2 for v in d1.values()) ** 0.5
                     norm2 = sum(v**2 for v in d2.values()) ** 0.5
-                    score = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
+                    score = (
+                        (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
+                    )
                 if score >= min_score:
                     sim_edges.append({"id1": a, "id2": b, "score": score})
 
@@ -477,7 +483,11 @@ def get_function_relations():
         error_traceback = traceback.format_exc()
         print(error_traceback)
         return (
-            {"detail": str(e), "type": e.__class__.__name__, "traceback": error_traceback},
+            {
+                "detail": str(e),
+                "type": e.__class__.__name__,
+                "traceback": error_traceback,
+            },
             500,
         )
 
@@ -486,16 +496,49 @@ def get_file_call_graph():
     collection = request.args.get("collection")
     file_md5 = request.args.get("file_md5")
 
+    retain = request.args.get("retain")
+    max_nodes = request.args.get("max_nodes")
     if not collection or not file_md5:
         return {"detail": "Missing collection or file_md5"}, 400
 
+    if max_nodes is not None:
+        try:
+            max_nodes = int(max_nodes)
+        except (TypeError, ValueError):
+            return {"detail": "max_nodes must be an integer"}, 400
+        if max_nodes < 1:
+            return {"detail": "max_nodes must be at least 1"}, 400
     try:
         r = get_redis()
-        # Get all functions in file
-        func_ids_bytes = r.smembers(f"{collection}:idx:file:functions:{file_md5}") or []
-        func_ids = [
-            fid.decode() if isinstance(fid, bytes) else fid for fid in func_ids_bytes
-        ]
+        retain_set = None
+        if retain:
+            from bsimvis.app.routes.bin_sim import get_bin_sim
+
+            pair = get_bin_sim(
+                collection=collection,
+                md5_a=file_md5,
+                md5_b=retain,
+                coll_b=request.args.get("retain_collection", collection),
+                pool_id=request.args.get("pool"),
+            )
+            if isinstance(pair, tuple):
+                return pair
+            if pair.get("is_container_pair"):
+                return {"detail": "Container pairs have no function call graph"}, 400
+            retain_set = {
+                row.get("func_id")
+                for row in (pair.get("diff") or {}).get("unique_to_a", [])
+                if row.get("func_id")
+            }
+            func_ids = sorted(retain_set)
+        else:
+            func_ids_bytes = (
+                r.smembers(f"{collection}:idx:file:functions:{file_md5}") or []
+            )
+            func_ids = [
+                fid.decode() if isinstance(fid, bytes) else fid
+                for fid in func_ids_bytes
+            ]
 
         if not func_ids:
             return {"nodes": [], "edges": []}
@@ -547,6 +590,8 @@ def get_file_call_graph():
 
             callees = [c.decode() if isinstance(c, bytes) else c for c in callee_bytes]
             for callee_id in callees:
+                if retain_set is not None and callee_id not in retain_set:
+                    continue
                 edges.append({"source": fid, "target": callee_id})
                 if callee_id.startswith("ext:"):
                     if callee_id not in external_nodes:
@@ -609,6 +654,30 @@ def get_file_call_graph():
                     "is_unindexed": False,
                 }
             )
+
+        if retain_set is not None:
+            degree = {fid: 0 for fid in retain_set}
+            for edge in edges:
+                degree[edge["source"]] += 1
+                degree[edge["target"]] += 1
+            nodes.sort(
+                key=lambda node: (
+                    -degree[node["id"]],
+                    -int(node.get("features_count") or 0),
+                    node["id"],
+                )
+            )
+            for rank, node in enumerate(nodes, 1):
+                node["unique_degree"] = degree[node["id"]]
+                node["rank"] = rank
+            if max_nodes is not None:
+                nodes = nodes[:max_nodes]
+                selected = {node["id"] for node in nodes}
+                edges = [
+                    edge
+                    for edge in edges
+                    if edge["source"] in selected and edge["target"] in selected
+                ]
 
         return {"nodes": nodes, "edges": edges}
     except Exception as e:

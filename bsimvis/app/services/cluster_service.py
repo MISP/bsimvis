@@ -1019,13 +1019,116 @@ class ClusterService:
             job_service.add_log(job_id, msg)
 
         start_fit = time.time()
-                # LCA Acceleration
-        if hasattr(self, '_base_snapshot') and self._base_snapshot:
-            # Treat each class as an unweighted Kruskal vertex
-            # Represent a class with at least min_cluster_size functions as an exact score-1 hierarchy node
-            pass
+        
+        # LCA Acceleration
+        from bsimvis.app.services.config_service import config_service
+        backend = config_service.get("similarity.discovery_backend", "none")
+        is_lca = backend in ("wgpu", "rust_cpu")
+        
+        if is_lca:
+            from bsimvis.app.services.graph_service import graph_service
+            import numpy as np
+            gen = graph_service.get_active_generation(collection)
+            class_edges = graph_service.get_edges_for_gen(collection, gen)
+            
+            vclass_ids = set()
+            for u, v, s in class_edges:
+                vclass_ids.add(str(u))
+                vclass_ids.add(str(v))
+                
+            pipe = r.pipeline(transaction=False)
+            vclass_list = list(vclass_ids)
+            for vid in vclass_list:
+                pipe.smembers(f"{collection}:vclass:{vid}:functions")
+            res = pipe.execute()
+            
+            class_members = []
+            valid_classes = []
+            func_to_id = {}
+            funcs_list = []
+            for i, mems in enumerate(res):
+                decoded = [m.decode() if isinstance(m, bytes) else m for m in mems]
+                if decoded:
+                    valid_classes.append(vclass_list[i])
+                    class_members.append(decoded)
+                    for f in decoded:
+                        if f not in func_to_id:
+                            func_to_id[f] = len(funcs_list)
+                            funcs_list.append(f)
+                            
+            num_funcs = len(funcs_list)
+            num_classes = len(valid_classes)
+            vclass_to_idx = {v: i for i, v in enumerate(valid_classes)}
+            
+            srcs, dsts, dists = [], [], []
+            for u, v, s in class_edges:
+                u_str, v_str = str(u), str(v)
+                if u_str in vclass_to_idx and v_str in vclass_to_idx:
+                    srcs.append(vclass_to_idx[u_str])
+                    dsts.append(vclass_to_idx[v_str])
+                    dists.append(1.0 - s)
+                    
+            from bsimvis.app.services.sim_edges import EdgeSet
+            class_edge_set = EdgeSet(np.array(srcs, dtype=np.int32), np.array(dsts, dtype=np.int32), np.array(dists, dtype=np.float32), vclass_to_idx, {i:v for v,i in vclass_to_idx.items()}, len(srcs))
+            class_tree_rows, class_root_id, _ = build_single_linkage_tree(class_edge_set)
+            
+            tree_rows = []
+            next_node = num_funcs
+            class_node_map = {}
+            node_sizes = {i: 1 for i in range(num_funcs)}
+            
+            for c_idx in range(num_classes):
+                mems = class_members[c_idx]
+                if len(mems) >= min_cluster_size:
+                    c_node = next_node
+                    next_node += 1
+                    class_node_map[c_idx] = c_node
+                    sz = len(mems)
+                    node_sizes[c_node] = sz
+                    for f in mems:
+                        f_id = func_to_id[f]
+                        tree_rows.append({"parent": c_node, "child": f_id, "lambda_val": 1.0, "child_size": 1})
+                else:
+                    if len(mems) == 1:
+                        class_node_map[c_idx] = func_to_id[mems[0]]
+                    elif len(mems) > 1:
+                        curr = func_to_id[mems[0]]
+                        sz = 1
+                        for f in mems[1:]:
+                            f_id = func_to_id[f]
+                            p = next_node
+                            next_node += 1
+                            sz += 1
+                            node_sizes[p] = sz
+                            tree_rows.append({"parent": p, "child": curr, "lambda_val": 1.0, "child_size": sz - 1})
+                            tree_rows.append({"parent": p, "child": f_id, "lambda_val": 1.0, "child_size": 1})
+                            curr = p
+                        class_node_map[c_idx] = curr
+                        
+            for row in class_tree_rows:
+                p = row["parent"]
+                c = row["child"]
+                l = row["lambda_val"]
+                if p not in class_node_map:
+                    class_node_map[p] = next_node
+                    next_node += 1
+                    node_sizes[class_node_map[p]] = 0
+                    
+                new_p = class_node_map[p]
+                new_c = class_node_map[c]
+                
+                c_sz = node_sizes[new_c]
+                node_sizes[new_p] += c_sz
+                
+                tree_rows.append({"parent": new_p, "child": new_c, "lambda_val": l, "child_size": c_sz})
+                
+            global_root_id = class_node_map.get(class_root_id, next_node - 1)
+            num_nodes = num_funcs
+            id_to_idx = func_to_id
+            idx_to_id = {v:k for k,v in func_to_id.items()}
+        else:
+            tree_rows, global_root_id, _ = build_single_linkage_tree(edge_set)
 
-        tree_rows, global_root_id, _ = build_single_linkage_tree(edge_set)
         tree_df = pd.DataFrame(tree_rows)
         fit_time = time.time() - start_fit
         msg = f"[hierarchical_uf] tree built in {fit_time:.2f}s, {len(tree_df)} rows."

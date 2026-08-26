@@ -340,14 +340,6 @@ class ProcessingService:
                 zset_mapping = {item["hash"]: item["tf"] for item in vec_tf_list}
                 pipe.zadd(f"{base_func_key}:vec:tf", zset_mapping)
                 
-                # Vector Class hashing
-                import hashlib
-                sorted_items = sorted(zset_mapping.items(), key=lambda x: x[0])
-                raw_str = ",".join(f"{k}:{v}" for k, v in sorted_items)
-                vec_hash = hashlib.sha256(raw_str.encode()).hexdigest()
-                
-                pipe.sadd(f"{collection}:vclass:{vec_hash}:functions", base_func_key)
-                pipe.hset(f"{collection}:vclass_map", base_func_key, vec_hash)
 
             # --- Secondary Indexing ---
             save_function(pipe, collection, file_md5, addr, func_meta)

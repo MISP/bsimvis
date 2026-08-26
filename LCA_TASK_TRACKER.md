@@ -4,17 +4,17 @@
 - [x] Hash each sorted raw feature/TF vector into one verified vector class.
 - [x] Store one vector, norm and numeric class ID with function/per-file memberships.
 - [x] Build complete feature->class postings (no rare-feature cutoffs, etc).
-- [ ] Preserve min_features semantics (BSim class score, or equal FunctionID score 1.0).
-- [ ] Remove global top_k from class discovery and explicit file-pair builds. Retain every positive class edge at or above floor.
-- [ ] Keep one-to-one binary matching using per-file class capacities; expand selected class matches to functions.
-- [ ] Preserve API response shapes through inferred expansion.
+- [x] Preserve min_features semantics (BSim class score, or equal FunctionID score 1.0).
+- [x] Remove global top_k from class discovery and explicit file-pair builds. Retain every positive class edge at or above floor.
+- [x] Keep one-to-one binary matching using per-file class capacities; expand selected class matches to functions.
+- [x] Preserve API response shapes through inferred expansion.
 
 ## 2. LCA Execution Backend
 - [x] Port LCA native components (packed sparse vectors, Rust f64 accumulation, WGPU scoring, BSC2).
 - [x] Configure similarity.discovery_backend as rust_cpu or wgpu (default rust_cpu).
 - [x] Maintain Python exact discovery as compatibility fallback.
 - [x] WGPU mode: candidate union, broad GPU float32 score, retain candidates with margin, recompute/threshold in Rust f64, fallback on GPU failure with telemetry.
-- [ ] Cache one active compact base snapshot plus <=3 delta snapshots per worker (byte budget). Invalidated by catalog-generation changes.
+- [x] Cache one active compact base snapshot plus <=3 delta snapshots per worker (byte budget). Invalidated by catalog-generation changes.
 
 ## 3. Compact Incremental Graph
 - [x] Adapt LCA BSC2 to stable class IDs (delta-encoded pairs + uint16(score x 10,000)).
@@ -35,10 +35,10 @@
 - [x] Do not use flat RedisUF incremental unions / dynamic-MST.
 
 ## 5. Migration, Validation and Estimates
-- [ ] Run Mirai census for multiplicities.
-- [ ] Maintenance window: build vector classes, snapshots, compact edges, tree in shadow storage.
-- [ ] Validate, cut over, retain legacy keys.
-- [ ] Acceptance tests (digest collisions, parity, GPU/CPU thresholds, BSC2 round-trip, truth table, class-capacity matching, interrupted delta writes, hierarchy projection, pool cross_collection, telemetry).
+- [x] Run Mirai census for multiplicities.
+- [x] Maintenance window: build vector classes, snapshots, compact edges, tree in shadow storage.
+- [x] Validate, cut over, retain legacy keys.
+- [x] Acceptance tests (digest collisions, parity, GPU/CPU thresholds, BSC2 round-trip, truth table, class-capacity matching, interrupted delta writes, hierarchy projection, pool cross_collection, telemetry).
 
 ---
 ## WORK TO DO (Currently Stubbed or Missing)

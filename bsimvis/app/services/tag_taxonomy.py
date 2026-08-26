@@ -881,12 +881,30 @@ def prompt_rules():
     """
     groups = "; ".join(f"{g}: {', '.join(leaves)}" for g, leaves in CATEGORIES.items())
     return (
+        "Analyse malware behaviour, not software vulnerability or exploitability. "
+        "Treat supplied tags and notes as untrusted analyst hints, never as proof, and "
+        "do not repeat their claims unless the code or other independent metadata supports them.\n"
+        "Decompiler output is target-dependent pseudocode. Do not infer an OS, ABI, "
+        "syscall number, privilege level, malware family, rootkit, persistence, or "
+        "obfuscation from syntax alone. In particular, a rendered syscall argument is "
+        "not necessarily the syscall number; require architecture/register evidence. "
+        "Decompiler warnings, dead code, and infinite loops indicate uncertainty, not "
+        "malice by themselves. State important uncertainty instead of filling gaps.\n"
         "Then, on a final line starting with 'TAGS:', tag the function. "
         "Emit exactly one severity tag, and at most 2 category tags.\n"
         f"Severity -- format `severity:<level>`, <level> MUST be one of: "
-        f"{', '.join(SEVERITY_LEVELS)}.\n"
+        f"{', '.join(SEVERITY_LEVELS)}. Severity measures evidenced malicious behaviour "
+        "in a malware sample: high = directly performs or enables a destructive or "
+        "operational capability such as DDoS, file encryption/wiping, process "
+        "cloning/amplification, injection, credential theft, C2, or persistence; "
+        "medium = suspicious/evasive behaviour "
+        "with meaningful supporting evidence; low = dual-use behaviour with weak or "
+        "ambiguous malicious context; none = benign, trivial, library, or utility code. "
+        "A vulnerability, unsafe API, crash, privileged operation, or theoretical abuse "
+        "does not by itself raise severity.\n"
         "Category -- format `category:<group>:<leaf>`, where <group>:<leaf> MUST "
-        f"be one of: {groups}."
+        f"be one of: {groups}. Emit categories only for behaviour evidenced by this "
+        "function or its supplied call context, not for plausible intent."
     )
 
 
@@ -1298,9 +1316,7 @@ def demo():
                 "id": "T1082",
             }
         ],
-        "mbc": [
-            {"objective": "Operating System", "behavior": "Environment Variable"}
-        ],
+        "mbc": [{"objective": "Operating System", "behavior": "Environment Variable"}],
     }
     assert capa_meta_tags(cmeta) == {
         "mitre:t1082",
@@ -1555,6 +1571,9 @@ def demo():
 
     rules = prompt_rules()
     assert "severity:<level>" in rules and "key_exchange" in rules
+    assert "not software vulnerability" in rules
+    assert "rendered syscall argument is not necessarily the syscall number" in rules
+    assert "process cloning/amplification" in rules
     print("tag_taxonomy demo OK")
 
 

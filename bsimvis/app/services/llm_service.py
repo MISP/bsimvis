@@ -120,17 +120,16 @@ class LLMService:
                 continue
             tags.append(t)
 
-        if vocabulary:
-            allowed = {v.lower(): v for v in vocabulary}
+        allowed = {v.lower(): v for v in vocabulary or []}
 
-            def is_allowed(t):
-                # Always allow a tag from the fixed taxonomy, otherwise the tag
-                # has to be one the collection registered. `is_taxonomy_tag`
-                # rejects `origin:` on purpose: a hallucinated library
-                # attribution must not enter through the summarisation path.
-                return tag_taxonomy.is_taxonomy_tag(t) or t in allowed
+        def is_allowed(t):
+            # Always allow a tag from the fixed taxonomy, otherwise the tag
+            # has to be one the collection registered. `is_taxonomy_tag`
+            # rejects `origin:` on purpose: a hallucinated library
+            # attribution must not enter through the summarisation path.
+            return tag_taxonomy.is_taxonomy_tag(t) or t in allowed
 
-            tags = [allowed.get(t, t) for t in tags if is_allowed(t)]
+        tags = [allowed.get(t, t) for t in tags if is_allowed(t)]
 
         # Dedupe, preserve order.
         seen = set()
@@ -356,6 +355,9 @@ def _selfcheck():
     assert split(
         "x\n**TAGS:** `category:crypto:cipher`, category:crypto:cipher, [category:util:parser]"
     )[1] == ["category:crypto:cipher", "category:util:parser"]
+
+    # Invented tags are rejected even when no custom vocabulary was supplied.
+    assert split("x\nTAGS: vulnerable, category:network:telepathy")[1] == []
 
     # A vocabulary constrains *custom* tags but never the fixed taxonomy, and it
     # restores the collection's canonical casing for its own entries.

@@ -9,7 +9,6 @@ use pyo3::types::{PyAny, PyDict, PyList};
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 
-#[cfg(feature = "async-db")]
 #[cfg(feature = "gpu")]
 mod gpu;
 

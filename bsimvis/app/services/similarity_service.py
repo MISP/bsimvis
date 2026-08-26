@@ -52,6 +52,9 @@ class SimilarityService:
 
     def build_lca_snapshot(self, collection, algo="unweighted_cosine", workers=4):
         import bsimvis_similarity_native as sn
+        from bsimvis.app.services.config_service import config_service
+        import logging
+
         r = self.r
         vclass_keys = r.keys(f"{collection}:vclass:*:vec:tf")
         if not vclass_keys:
@@ -72,16 +75,25 @@ class SimilarityService:
             vectors.append(parsed)
             
         scorer = sn.ExactScorer(vectors)
-        
-        # Use select_target_block for similarities
         indices = list(range(len(vectors)))
-        # Assuming top_k=50, min_score=0.7
-        edges_raw = scorer.select_target_block(indices, indices, algo, workers, 50, 0.7)
         
-        # Store edges using delta-encoded class-ID pairs
-        # stubbed out edge storing logic
+        backend = config_service.get("similarity.discovery_backend", "rust_cpu")
+        min_score = config_service.get("similarity.min_score", 0.9)
+        top_k = 0 # No top_k for discovery
+        
+        edges_raw = None
+        if backend == "wgpu" and hasattr(scorer, "select_target_block_wgpu"):
+            try:
+                edges_raw = scorer.select_target_block_wgpu(indices, indices, algo, workers, top_k, min_score, 0.05)
+                # Recompute and threshold in Rust f64 is done by the backend/we can also pass it to CPU scorer to be safe, but select_target_block_wgpu returns accurate scores.
+            except Exception as e:
+                logging.error(f"WGPU fallback on GPU failure with telemetry: {e}")
+                edges_raw = None
+                
+        if edges_raw is None:
+            edges_raw = scorer.select_target_block(indices, indices, algo, workers, top_k, min_score)
+            
         self._base_snapshot = edges_raw
-
     def _reset_read_caches(self):
         """Drop per-build read caches (call at each top-level build entry so a
         later build never sees posting lists/norms stale from a prior ingestion)."""
@@ -1881,8 +1893,7 @@ class SimilarityService:
                 if candidates:
                     # Sort and limit combined candidates (from all collections)
                     candidates.sort(key=lambda x: x["score"], reverse=True)
-                    candidates = candidates[:top_k]
-
+                    # 
                     parts = fid.split(":")
                     md5 = parts[2] if len(parts) >= 3 else "unknown"
                     discovery_results.append((fid, md5, "", t_total, candidates))
@@ -2169,8 +2180,7 @@ class SimilarityService:
             for fid, t_total, candidates in candidates_by_fid:
                 if candidates:
                     candidates.sort(key=lambda x: x["score"], reverse=True)
-                    candidates = candidates[:top_k]
-
+                    # 
                     parts = fid.split(":")
                     md5 = parts[2] if len(parts) >= 3 else "unknown"
                     discovery_results.append((fid, md5, "", t_total, candidates))

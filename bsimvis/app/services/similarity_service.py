@@ -41,8 +41,14 @@ class SimilarityService:
         # ponytail: LRU-bounded by total cached pairs (~hundreds of MB) so a huge
         # collection can't OOM the cache. Raise/lower if RAM vs hit-rate needs it.
         self._pl_budget = 5_000_000
-        self._norm_cache = {}  # func_id -> vector norm (float)
-        self._count_cache = {}  # (count_idx_key, func_id) -> feature count (float)
+        self._norm_cache = {}  # v_id -> vector norm (float)
+        self._count_cache = {}  # (count_idx_key, v_id) -> feature count (float)
+        
+        # LCA Acceleration Graph Cache
+        self._base_snapshot = None
+        self._delta_snapshots = []
+        self._snapshot_budget_bytes = 1024 * 1024 * 500 # 500MB
+
 
     def _reset_read_caches(self):
         """Drop per-build read caches (call at each top-level build entry so a

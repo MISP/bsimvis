@@ -64,7 +64,7 @@ function renderBinarySimilarityView(params) {
     let html = `
         <div id="bin-sim-results" style="display:none; flex:1; flex-direction:column; padding:20px; min-height:0; overflow-y:auto;">
             <!-- Similarity Hero (prominent, score-colored) -->
-            <div id="bin-sim-hero" style="border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 16px; background: var(--card-bg);">
+            <div id="bin-sim-hero" style="position:relative; border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 16px; background: var(--card-bg);">
                 <span style="color: var(--subtle); text-transform: uppercase; font-size: 0.8rem; font-weight: bold; letter-spacing: 0.08em;">Binary Similarity</span>
                 <span id="bin-sim-score-val" style="font-family: 'Consolas', monospace; font-weight: 800; font-size: 2.4rem; line-height: 1; color: var(--accent);">--%</span>
             </div>
@@ -438,6 +438,10 @@ function initResizableCards() {
                     </div>
                     <div style="display:flex; gap:16px; margin-left:8px; border-left:1px solid var(--border); padding-left:24px;">${small}</div>
                 </div>
+                <button class="top-action-btn" onclick="openPairAnalysisModal()"
+                    style="position:absolute; right:18px; display:flex; align-items:center; gap:7px; color:#ae81ff; border-color:#ae81ff;"
+                    title="Analyze this comparison with evidence-bound automatic function tagging">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> Analyze comparison</button>
             `;
         }
 
@@ -1724,6 +1728,162 @@ window.toggleFileSimNs = function(key) {
 // recompute rather than a reason to invalidate the pair. Pinned to the hero
 // corner as a small amber pill, not a full-width row, so it stands out by
 // color instead of by size.
+// --- Pair analysis ---------------------------------------------------------
+
+window.openPairAnalysisModal = function() {
+    if (!binSimCtx) {
+        showToast('No comparison loaded', 'warning');
+        return;
+    }
+    const ctx = binSimCtx;
+    let modal = document.getElementById('pair-analysis-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'pair-analysis-modal';
+        modal.style.cssText = 'position:fixed; inset:0; z-index:30000; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.65); backdrop-filter:blur(4px);';
+        document.body.appendChild(modal);
+    }
+    modal.innerHTML = `
+        <form onsubmit="submitPairAnalysis(event)" style="width:540px; max-width:92vw; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:22px; color:var(--fg);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                <h3 style="margin:0; color:#ae81ff;"><i class="fa-solid fa-wand-magic-sparkles"></i> Analyze comparison</h3>
+                <button type="button" onclick="closePairAnalysisModal()" style="background:none; border:0; color:var(--subtle); cursor:pointer; font-size:1.3rem;">&times;</button>
+            </div>
+            <div style="font-size:.75rem; color:var(--subtle); margin-bottom:14px; word-break:break-all;">${escapeHtml(ctx.md5a)} vs ${escapeHtml(ctx.md5b)}</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+                <label>Changed-match threshold
+                    <input id="pair-analysis-threshold" type="number" min="0" max="1" step="0.01" value="0.90" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+                </label>
+                <label>Minimum BSim features
+                    <input id="pair-analysis-min" type="number" min="0" value="0" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+                </label>
+            </div>
+            <label style="display:block; margin-bottom:14px;">Prompt
+                <textarea id="pair-analysis-prompt" placeholder="Optional analyst focus" style="display:block; width:100%; min-height:90px; box-sizing:border-box; margin-top:5px; padding:8px; resize:vertical; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;"></textarea>
+            </label>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-bottom:18px; font-size:.84rem;">
+                <label><input id="pair-analysis-unique" type="checkbox" checked> Analyze unique functions</label>
+                <label title="Slower: also sends high-similarity matches"><input id="pair-analysis-unchanged" type="checkbox"> Include unchanged matches</label>
+                <label><input id="pair-analysis-skip-fid" type="checkbox" checked> Skip FID-tagged functions</label>
+                <label><input id="pair-analysis-overwrite" type="checkbox"> Replace existing LLM output</label>
+                <label><input id="pair-analysis-notes" type="checkbox" checked> Write notes</label>
+                <label><input id="pair-analysis-tags" type="checkbox" checked> Write tags + refresh split</label>
+            </div>
+            <div style="font-size:.72rem; color:var(--subtle); margin-bottom:16px;">Unique and low-similarity functions are triage candidates, not evidence of maliciousness.</div>
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+                <button type="button" onclick="closePairAnalysisModal()" class="top-action-btn">Cancel</button>
+                <button type="submit" class="top-action-btn" style="color:#ae81ff; border-color:#ae81ff;"><i class="fa-solid fa-play"></i> Create job</button>
+            </div>
+        </form>`;
+    modal.onclick = event => { if (event.target === modal) closePairAnalysisModal(); };
+};
+
+window.closePairAnalysisModal = function() {
+    document.getElementById('pair-analysis-modal')?.remove();
+};
+
+window.submitPairAnalysis = async function(event) {
+    event.preventDefault();
+    const actions = [];
+    if (document.getElementById('pair-analysis-notes').checked) actions.push('notes');
+    if (document.getElementById('pair-analysis-tags').checked) actions.push('tags');
+    if (!actions.length) {
+        showToast('Select notes, tags, or both', 'warning');
+        return;
+    }
+    const ctx = { ...binSimCtx };
+    const body = {
+        collection: ctx.collection,
+        coll_b: ctx.collB,
+        md5_a: ctx.md5a,
+        md5_b: ctx.md5b,
+        pool: ctx.poolId || undefined,
+        threshold: Number(document.getElementById('pair-analysis-threshold').value),
+        min_complexity: Number(document.getElementById('pair-analysis-min').value),
+        include_unique: document.getElementById('pair-analysis-unique').checked,
+        include_unchanged: document.getElementById('pair-analysis-unchanged').checked,
+        skip_fid_tagged: document.getElementById('pair-analysis-skip-fid').checked,
+        overwrite: document.getElementById('pair-analysis-overwrite').checked,
+        actions,
+    };
+    const prompt = document.getElementById('pair-analysis-prompt').value.trim();
+    if (prompt) body.custom_prompt = prompt;
+
+    try {
+        const result = await tagPost('/api/llm/pair_analysis', body);
+        closePairAnalysisModal();
+        showToast(`Comparison analysis queued for ${result.total} candidate function(s)`, 'success');
+        trackPairAnalysis(result.job_id, ctx);
+    } catch (error) {
+        showToast(`Could not start comparison analysis: ${error.message}`, 'error');
+    }
+};
+
+window.trackPairAnalysis = function(jobId, ctx) {
+    const card = document.createElement('div');
+    card.style.cssText = 'background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:12px 14px; min-width:280px; font-size:.8rem; color:var(--fg);';
+    card.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <span><i class="fa-solid fa-wand-magic-sparkles"></i> Comparison analysis</span>
+            <button title="Cancel" style="background:none; border:none; color:#ff6b6b; cursor:pointer;" onclick="cancelPairAnalysis('${jobId}')"><i class="fa-solid fa-stop"></i></button>
+        </div>
+        <div class="pair-analysis-status" style="margin-top:6px; opacity:.85;">queued</div>`;
+    fileAnalysisPanel().appendChild(card);
+    const status = card.querySelector('.pair-analysis-status');
+
+    const poll = async () => {
+        try {
+            const response = await fetch(`/api/jobs/${jobId}`);
+            const job = await response.json();
+            status.textContent = `${job.status} · ${job.progress || 0}%`;
+            if (job.status === 'completed') {
+                if (binSimCtx && binSimCtx.md5a === ctx.md5a && binSimCtx.md5b === ctx.md5b) {
+                    fetchAndRenderBinaryDiff(ctx.collection, ctx.md5a, ctx.md5b, ctx.collB, ctx.poolId);
+                }
+                if (job.report) openPairAnalysisReport(job.report);
+                setTimeout(() => card.remove(), 30000);
+                return;
+            }
+            if (['failed', 'cancelled'].includes(job.status)) {
+                status.textContent = `${job.status}${job.error ? ` · ${job.error}` : ''}`;
+                setTimeout(() => card.remove(), 30000);
+                return;
+            }
+            setTimeout(poll, 2000);
+        } catch (error) {
+            status.textContent = 'status unavailable';
+        }
+    };
+    poll();
+};
+
+window.cancelPairAnalysis = async function(jobId) {
+    try {
+        await tagPost(`/api/jobs/${jobId}/cancel`, {});
+        showToast('Comparison analysis cancelled', 'info');
+    } catch (error) {
+        showToast(`Could not cancel analysis: ${error.message}`, 'error');
+    }
+};
+
+window.openPairAnalysisReport = function(report) {
+    document.getElementById('pair-analysis-report')?.remove();
+    const modal = document.createElement('div');
+    modal.id = 'pair-analysis-report';
+    modal.style.cssText = 'position:fixed; inset:0; z-index:30001; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.65); backdrop-filter:blur(4px);';
+    modal.innerHTML = `
+        <div style="width:760px; max-width:92vw; max-height:86vh; overflow:auto; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:22px; color:var(--fg);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                <h3 style="margin:0; color:#ae81ff;">Comparison analysis</h3>
+                <button onclick="document.getElementById('pair-analysis-report')?.remove()" style="background:none; border:0; color:var(--subtle); cursor:pointer; font-size:1.3rem;">&times;</button>
+            </div>
+            <pre style="white-space:pre-wrap; word-break:break-word; font:inherit; line-height:1.55; margin:0;">${escapeHtml(report)}</pre>
+        </div>`;
+    modal.onclick = event => { if (event.target === modal) modal.remove(); };
+    document.body.appendChild(modal);
+};
+
+
 let binSimResplitPoll = null;
 const BSIM_RESPLIT_AMBER = '#f0ad4e';
 

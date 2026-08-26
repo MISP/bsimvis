@@ -3306,7 +3306,7 @@ def test_search_filters_and_sorting():
 DIFF_TABLES = ("all", "matched", "unique_to_a", "unique_to_b")
 
 
-def _diff_page(md5_a, md5_b, table):
+def _diff_page(md5_a, md5_b, table, sort_col="similarity"):
     """One page of /api/bin_sim/diff, or None if the request failed."""
     try:
         resp = requests.get(
@@ -3316,7 +3316,7 @@ def _diff_page(md5_a, md5_b, table):
                 "md5_a": md5_a,
                 "md5_b": md5_b,
                 "table": table,
-                "sort_col": "similarity",
+                "sort_col": sort_col,
                 "limit": 50,
             },
             timeout=60,
@@ -3401,6 +3401,80 @@ def test_bin_sim_diff_cache():
     )
 
     _check_diff_cache_expiry()
+
+
+def test_diff_injection_score():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-ter – unique function injection ranking", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+    _check_diff_injection_ranking()
+
+
+def _check_diff_injection_ranking():
+    """Unique rows expose the ranking used by comparison analysis."""
+    page = _diff_page(file_md5, file_md5_2, "unique_to_a", "injection_score")
+    rows = (page or {}).get("items") or []
+    if not check(
+        "diff ranking: fixture has unique functions",
+        bool(rows),
+        "unique_to_a returned no rows",
+    ):
+        return
+
+    ref_graph = test_endpoint(
+        "GET",
+        "/api/file/call_graph",
+        params={"collection": COLLECTION, "file_md5": file_md5_2},
+        label="GET /api/file/call_graph (reference maximum for diff ranking)",
+    )
+    ref_addrs = [
+        int(n["entrypoint"], 16)
+        for n in (ref_graph or {}).get("nodes", [])
+        if n.get("entrypoint")
+    ]
+    if not check(
+        "diff ranking: reference graph has comparable addresses",
+        bool(ref_addrs),
+        "reference graph returned no function addresses",
+    ):
+        return
+
+    ref_max = max(ref_addrs)
+    expected = []
+    flags_ok = True
+    fields_ok = True
+    for row in rows:
+        fields_ok &= "appended" in row and "injection_score" in row
+        addr = int(row["func_id"].rsplit(":", 1)[-1], 16)
+        appended = addr > ref_max
+        flags_ok &= row.get("appended") is appended
+        expected.append(
+            float(row.get("avg_features") or 0)
+            * float(row.get("sim_rarity") or 0)
+            * (2 if appended else 1)
+        )
+
+    check(
+        "diff ranking: unique rows expose appended and injection_score",
+        fields_ok,
+        f"first row: {rows[0]}",
+    )
+    check(
+        "diff ranking: appended is relative to the reference file maximum",
+        flags_ok,
+        f"reference max: {ref_max:x}",
+    )
+    actual = [float(row["injection_score"]) for row in rows]
+    check(
+        "diff ranking: score follows the documented formula",
+        all(abs(a - e) < 1e-9 for a, e in zip(actual, expected)),
+        f"actual={actual[:5]} expected={expected[:5]}",
+    )
+    check(
+        "diff ranking: sort_col=injection_score orders descending",
+        actual == sorted(actual, reverse=True),
+        f"scores={actual[:10]}",
+    )
 
 
 def _check_diff_cache_expiry():
@@ -3817,7 +3891,9 @@ def test_llm_agentic_analysis():
 
     if not file_md5 or not func_id1:
         print(
-            _color("\n[SKIP] No uploaded file – agentic analysis checks skipped.", YELLOW)
+            _color(
+                "\n[SKIP] No uploaded file – agentic analysis checks skipped.", YELLOW
+            )
         )
         return
 
@@ -4954,6 +5030,7 @@ if __name__ == "__main__":
         test_llm_agentic_analysis,
         test_bin_sim_diff_cache,
         test_pool_collection_equivalence,
+        test_diff_injection_score,
         test_archive_upload,
         test_unpack_upload,
         test_lineage,
@@ -4970,8 +5047,8 @@ if __name__ == "__main__":
     STEP_DEPS = {
         # Issues the /api/bin_sim/build whose doc the diff cache step reads.
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
+        "test_diff_injection_score": ["test_search_filters_and_sorting"],
     }
-
     # Resolved before the prelude: a mistyped --only should fail now, not after
     # several minutes of uploading and analysing binaries.
     steps = STEPS

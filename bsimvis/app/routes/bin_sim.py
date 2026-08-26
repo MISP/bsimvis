@@ -859,6 +859,53 @@ def _row_tags(item, fmeta):
     return tags
 
 
+def _function_address(fid, fmeta):
+    value = (fmeta.get(fid) or {}).get("entrypoint_address")
+    if value is None and fid:
+        value = fid.rsplit(":", 1)[-1]
+    try:
+        return int(str(value).strip(), 16)
+    except (TypeError, ValueError):
+        return None
+
+
+def _add_injection_ranking(rows, diff_data, fmeta):
+    """Rank unique code for triage; this is not evidence of injection."""
+    if diff_data.get("is_container_pair"):
+        return
+
+    diff = diff_data.get("diff") or {}
+    side_fids = {
+        "a": [m.get("func_a") for m in diff.get("matched", [])]
+        + [u.get("func_id") for u in diff.get("unique_to_a", [])],
+        "b": [m.get("func_b") for m in diff.get("matched", [])]
+        + [u.get("func_id") for u in diff.get("unique_to_b", [])],
+    }
+    maxima = {}
+    for side, fids in side_fids.items():
+        addresses = [
+            address
+            for fid in fids
+            if (address := _function_address(fid, fmeta)) is not None
+        ]
+        maxima[side] = max(addresses) if addresses else None
+
+    for row in rows:
+        if row.get("state") not in ("uniq_a", "uniq_b"):
+            continue
+        reference_side = "b" if row["state"] == "uniq_a" else "a"
+        address = _function_address(row.get("func_id"), fmeta)
+        reference_max = maxima[reference_side]
+        row["appended"] = (
+            address > reference_max
+            if address is not None and reference_max is not None
+            else None
+        )
+        features = float(row.get("avg_features") or 0)
+        rarity = float(row.get("sim_rarity") or 0)
+        row["injection_score"] = features * rarity * (2 if row["appended"] else 1)
+
+
 def _fold_key(item, fmeta):
     """Name that folds duplicate copies together, or None to stand alone.
 
@@ -908,6 +955,7 @@ def _page_diff(diff_data, table, r=None, collection=None, algo=None, pool_id=Non
     """
     rows = _diff_rows(diff_data, table)
     fmeta = diff_data.get("functions_metadata", {})
+    _add_injection_ranking(rows, diff_data, fmeta)
 
     # The pair's own key, so the row can carry the pair's tags and be tagged back.
     # Pure string work, so it costs nothing to do for every row.
@@ -972,9 +1020,7 @@ def _page_diff(diff_data, table, r=None, collection=None, algo=None, pool_id=Non
             return False
         if tag_scope:
             tags = _row_tags(item, fmeta)
-            if not any(
-                tag_in_scope(t, p) for t in tags for p in tag_scope
-            ):
+            if not any(tag_in_scope(t, p) for t in tags for p in tag_scope):
                 return False
         if fold_name is not None and _fold_key(item, fmeta) != fold_name:
             return False

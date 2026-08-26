@@ -222,6 +222,7 @@ def resplit_bin_sim():
         JobType.RESPLIT_BIN_SIM.value,
         {
             "collection": data.get("collection", "main"),
+            "sid": data.get("sid"),
             "algo": data.get("algo", "unweighted_cosine"),
             "md5": data.get("md5"),
         },

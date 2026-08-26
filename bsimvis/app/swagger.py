@@ -212,6 +212,7 @@ bin_sim_clear_model = api.model(
         "collection": fields.String(default="main"),
         "algo": fields.String(default="unweighted_cosine"),
         "md5": fields.String(),
+        "sid": fields.String(description="Exact stored pair ID to resplit"),
     },
 )
 

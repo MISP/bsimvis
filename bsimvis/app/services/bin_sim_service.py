@@ -832,6 +832,7 @@ class BinSimService:
         collection,
         algo="unweighted_cosine",
         md5=None,
+        sid=None,
         job_service=None,
         job_id=None,
     ):
@@ -852,9 +853,12 @@ class BinSimService:
         # naming one of them can change; everything else would be rewritten to
         # an identical value. `md5` takes one or several -- the pair view sends
         # both of its sides. Omit it and the whole collection is resplit.
-        wanted = [md5] if isinstance(md5, str) else list(md5 or ())
-        if wanted:
-            sids = [s for s in sids if any(m and m in s for m in wanted)]
+        if sid is not None:
+            sids = [sid] if sid in set(sids) else []
+        else:
+            wanted = [md5] if isinstance(md5, str) else list(md5 or ())
+            if wanted:
+                sids = [s for s in sids if any(m and m in s for m in wanted)]
         total = len(sids)
         if not total:
             if job_service and job_id:

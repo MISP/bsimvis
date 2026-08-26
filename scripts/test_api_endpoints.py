@@ -3403,6 +3403,40 @@ def test_bin_sim_diff_cache():
     _check_diff_cache_expiry()
 
 
+def test_exact_pair_resplit():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-bis-2 – exact pair tag resplit", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – resplit check skipped.", YELLOW))
+        return
+
+    before = {table: _diff_page(file_md5, file_md5_2, table) for table in DIFF_TABLES}
+    md5_a, md5_b = sorted((file_md5, file_md5_2))
+    sid = f"{COLLECTION}:bin_sim:unweighted_cosine:{md5_a}::{md5_b}"
+    started = test_endpoint(
+        "POST",
+        "/api/bin_sim/resplit",
+        data={
+            "collection": COLLECTION,
+            "algo": "unweighted_cosine",
+            "sid": sid,
+        },
+        label="POST /api/bin_sim/resplit (exact sid)",
+    )
+    completed = isinstance(started, dict) and wait_for_pipeline(
+        started.get("job_id"), banner=" STEP 3c – Wait for exact pair resplit"
+    )
+    check("exact pair resplit job completes", completed, str(started))
+    after = {table: _diff_page(file_md5, file_md5_2, table) for table in DIFF_TABLES}
+    check(
+        "exact pair resplit preserves similarity diff rows",
+        before == after,
+        "paged diff changed after tag-only resplit",
+    )
+
+
 def test_diff_injection_score():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-ter – unique function injection ranking", BOLD))
@@ -5162,6 +5196,7 @@ if __name__ == "__main__":
         test_tag_vocabulary_and_llm_batch,
         test_llm_agentic_analysis,
         test_bin_sim_diff_cache,
+        test_exact_pair_resplit,
         test_pool_collection_equivalence,
         test_diff_injection_score,
         test_retained_call_graph,
@@ -5181,6 +5216,7 @@ if __name__ == "__main__":
     STEP_DEPS = {
         # Issues the /api/bin_sim/build whose doc the diff cache step reads.
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
+        "test_exact_pair_resplit": ["test_search_filters_and_sorting"],
         "test_retained_call_graph": ["test_search_filters_and_sorting"],
         "test_diff_injection_score": ["test_search_filters_and_sorting"],
     }

@@ -744,6 +744,7 @@ class Worker:
                 collection,
                 algo=payload.get("algo", "unweighted_cosine"),
                 md5=payload.get("md5"),
+                sid=payload.get("sid"),
                 job_service=self.job_service,
                 job_id=job_id,
             )

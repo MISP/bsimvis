@@ -186,6 +186,18 @@ def _needs_more_context(summary):
     return bool(summary) and summary.strip().strip("*# ").upper() == NEED_CONTEXT_MARKER
 
 
+def _without_annotations(value):
+    if isinstance(value, dict):
+        return {
+            key: _without_annotations(item)
+            for key, item in value.items()
+            if key not in ("notes", "user_tags", "file_user_tags")
+        }
+    if isinstance(value, list):
+        return [_without_annotations(item) for item in value]
+    return value
+
+
 def _agentic_prompt(custom_prompt):
     base = custom_prompt or llm_service.default_prompt
     return (
@@ -264,7 +276,7 @@ def _agentic_summarize(collection, func_name, code_with_context, custom_prompt):
                     args = json.loads(args)
                 except Exception:
                     args = {}
-            result = call_tool(name, args)
+            result = _without_annotations(call_tool(name, args))
             messages.append({"role": "tool", "content": json.dumps(result)[:8000]})
 
     return None, [], "agentic fallback stopped after too many tool calls without a final answer"
@@ -688,6 +700,9 @@ def _selfcheck():
         {"language_id": "MIPS:LE:32:default", "decompiler_id": "ghidra", "code": "x"}
     )
     assert "MIPS:LE:32:default" in evidence and evidence.endswith("Code:\nx")
+    assert _without_annotations(
+        {"notes": ["old"], "nested": [{"user_tags": ["severity:high"], "x": 1}]}
+    ) == {"nested": [{"x": 1}]}
 
     report_rules = _file_report_rules()
     report = _file_report_prompt({"file_name": "x", "function_count": 1}, {})

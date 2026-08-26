@@ -899,7 +899,11 @@ def analysis_rules():
         "artifacts unless a real callee body establishes their semantics. Do not call "
         "post-syscall code executed, dead, final, or a placeholder when syscall return "
         "behaviour is unknown. Use uncertainty only to state what cannot be determined, "
-        "not to list speculative possibilities.\n"
+        "not to list speculative possibilities. Do not describe hypothetical security "
+        "impact, malformed-input outcomes, or general ways malware could use the code. "
+        "If an output format requests IMPACT, include only side effects directly visible "
+        "in the supplied evidence, or write `None observed`. Before answering, remove any "
+        "claim that contradicts these rules.\n"
     )
 
 
@@ -1601,6 +1605,7 @@ def demo():
     assert "numeric constant do not identify an API" in rules
     assert "instruction code field" in rules and "not evidence of a packer" in rules
     assert "recovery artifacts" in rules and "post-syscall code" in rules
+    assert "None observed" in rules and "remove any claim" in rules
     print("tag_taxonomy demo OK")
 
 

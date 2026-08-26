@@ -67,7 +67,7 @@ class LLMService:
             tag_rule = (
                 f"{base_rule}\n"
                 "Example: TAGS: severity:medium, category:crypto:cipher, category:network:c2. "
-                "If the function is trivial, write 'TAGS: severity:none, category:util:init'."
+                "If the purpose is unknown, write only 'TAGS: severity:none'."
             )
 
         full_prompt = f"{prompt}\n\nFunction Name: {function_name}\n\nCode:\n{code}"

@@ -1,0 +1,24 @@
+[package]
+name = "bsimvis-similarity-native"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "bsimvis_similarity_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.24", features = ["extension-module"] }
+rayon = "1.10"
+bytemuck = { version = "1.24", features = ["derive"], optional = true }
+pollster = { version = "0.4", optional = true }
+wgpu = { version = "30.0", optional = true }
+
+[features]
+gpu = ["dep:bytemuck", "dep:pollster", "dep:wgpu"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

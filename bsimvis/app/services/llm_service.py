@@ -231,6 +231,16 @@ class LLMService:
             )
         ):
             tags.remove("category:impact:ddos")
+        if "category:network:c2" in tags and not any(
+            evidence in summary.lower()
+            for evidence in (
+                "c2",
+                "command-and-control",
+                "operator-controlled",
+                "controller",
+            )
+        ):
+            tags.remove("category:network:c2")
 
         return summary, tags
 
@@ -510,6 +520,9 @@ def _selfcheck():
     assert (s, t) == ("Its purpose is unknown.", [])
     assert split(
         "Actively probes randomized addresses.\nseverity:high\ncategory:network:scan\ncategory:impact:ddos"
+    )[1] == ["severity:high", "category:network:scan"]
+    assert split(
+        "Exchanges commands with scanned hosts.\nseverity:high\ncategory:network:scan\ncategory:network:c2"
     )[1] == ["severity:high", "category:network:scan"]
 
     class FakeClient:

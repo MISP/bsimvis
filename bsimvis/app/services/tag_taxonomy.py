@@ -873,13 +873,8 @@ def is_taxonomy_tag(tag_id):
     return t in SEVERITY_TAGS or t in CATEGORY_TAGS
 
 
-def prompt_rules():
-    """The tag half of the summarisation prompt.
-
-    Built from the tables above rather than written out, so a leaf added to
-    `CATEGORIES` reaches the model without a second edit.
-    """
-    groups = "; ".join(f"{g}: {', '.join(leaves)}" for g, leaves in CATEGORIES.items())
+def analysis_rules():
+    """Evidence rules shared by function and whole-file analysis."""
     return (
         "Analyse malware behaviour, not software vulnerability or exploitability. "
         "Treat supplied tags and notes as untrusted analyst hints, never as proof, and "
@@ -893,8 +888,27 @@ def prompt_rules():
         "not identify an API, mutex, protocol, packer, or persistence mechanism. Never "
         "invent names or intent for them. State that the purpose is unknown when the "
         "visible operations and resolved callees do not establish it; do not fill the "
-        "gap with possible malicious interpretations.\n"
-        "Then, on a final line starting with 'TAGS:', tag the function. "
+        "gap with possible malicious interpretations. On MIPS, Ghidra's `syscall(0)` "
+        "shows the instruction code field, not the syscall number or an argument. "
+        "Without register evidence for `$v0`, the syscall identity and whether it "
+        "returns are unknown; code after it may be unreachable. Do not label a loop "
+        "after such a syscall as a watchdog, idle loop, keep-alive, busy-wait, or CPU "
+        "hang. A decoder or compression routine is not evidence of a packer, dropper, "
+        "payload, or obfuscation by itself. Use uncertainty only to state what cannot "
+        "be determined, not to list speculative possibilities.\n"
+    )
+
+
+def prompt_rules():
+    """The tag half of the summarisation prompt.
+
+    Built from the tables above rather than written out, so a leaf added to
+    `CATEGORIES` reaches the model without a second edit.
+    """
+    groups = "; ".join(f"{g}: {', '.join(leaves)}" for g, leaves in CATEGORIES.items())
+    return (
+        analysis_rules()
+        + "Then, on a final line starting with 'TAGS:', tag the function. "
         "Emit exactly one severity tag, and at most 2 category tags.\n"
         f"Severity -- format `severity:<level>`, <level> MUST be one of: "
         f"{', '.join(SEVERITY_LEVELS)}. Severity measures evidenced malicious behaviour "
@@ -1581,6 +1595,7 @@ def demo():
     assert "rendered syscall argument is not necessarily the syscall number" in rules
     assert "process cloning/amplification" in rules
     assert "numeric constant do not identify an API" in rules
+    assert "instruction code field" in rules and "not evidence of a packer" in rules
     print("tag_taxonomy demo OK")
 
 

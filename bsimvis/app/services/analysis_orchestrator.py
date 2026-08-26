@@ -621,9 +621,15 @@ class AnalysisOrchestrator:
 
 def _file_report_prompt(file_info, summaries):
     lines = [
-        "You are a senior malware analyst. Synthesize a whole-file report from "
+        "You are a senior reverse engineer evaluating possible malware behaviour. "
+        "Synthesize a whole-file report from "
         "per-function findings already produced for this binary -- do not "
         "re-derive them, just interpret what they add up to.",
+        tag_taxonomy.analysis_rules(),
+        "Do not introduce a capability absent from the per-function findings. "
+        "Compression, syscalls, an entry point, malformed-input handling, and "
+        "non-returning control flow are not malicious indicators by themselves. "
+        "Cite the function that supports every capability and assessment claim.",
         "",
         f"File: {file_info.get('file_name')} (md5={file_info.get('file_md5')})",
     ]
@@ -653,7 +659,7 @@ def _file_report_prompt(file_info, summaries):
         "**NOTABLE FUNCTIONS**: [the few functions most worth an analyst's attention, and why]"
     )
     lines.append(
-        "**ASSESSMENT**: [benign / suspicious / malicious -- and why, citing the evidence above]"
+        "**ASSESSMENT**: [benign / suspicious / malicious / inconclusive -- and why, citing the evidence above]"
     )
     return "\n".join(lines)
 
@@ -675,6 +681,9 @@ def _selfcheck():
         {"language_id": "MIPS:LE:32:default", "decompiler_id": "ghidra", "code": "x"}
     )
     assert "MIPS:LE:32:default" in evidence and evidence.endswith("Code:\nx")
+
+    report = _file_report_prompt({"file_name": "x", "function_count": 1}, {})
+    assert "not evidence of a packer" in report and "inconclusive" in report
 
     # A cycle collapses into one unit.
     adj = {"a": ["b"], "b": ["a"]}

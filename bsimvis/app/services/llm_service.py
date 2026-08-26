@@ -28,7 +28,7 @@ class LLMService:
                 messages=[{"role": "user", "content": full_prompt}],
                 stream=False,
                 think=False,
-                options={"num_predict": -1, "temperature": 0.3},
+                options={"num_predict": -1, "temperature": 0.1},
             )
             msg = response.get("message", {})
             return msg.get("content", "") or msg.get("thinking", "")
@@ -79,7 +79,7 @@ class LLMService:
                 messages=[{"role": "user", "content": full_prompt}],
                 stream=False,
                 think=False,
-                options={"num_predict": -1, "temperature": 0.3},
+                options={"num_predict": -1, "temperature": 0.1},
             )
             msg = response.get("message", {})
             text = msg.get("content", "") or msg.get("thinking", "")

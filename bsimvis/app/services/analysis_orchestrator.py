@@ -202,8 +202,8 @@ def _agentic_prompt(custom_prompt):
     base = custom_prompt or llm_service.default_prompt
     return (
         f"{base}\n\nIf this function's purpose is genuinely unclear from the code and "
-        "the context given -- not just non-trivial, but actually ambiguous -- reply "
-        f"with exactly '{NEED_CONTEXT_MARKER}' as your entire response and nothing else. "
+        "the context given -- not just non-trivial, but actually ambiguous -- set the "
+        f"summary to exactly '{NEED_CONTEXT_MARKER}' and emit no tags. "
         "A follow-up pass will then let you look up its call graph, BSim neighbours, and "
         "file/cluster metadata before judging it."
     )
@@ -249,7 +249,7 @@ def _agentic_summarize(collection, func_name, code_with_context, custom_prompt):
                 tools=TOOLS,
                 stream=False,
                 think=False,
-                options={"num_predict": -1, "temperature": 0.2},
+                options={"num_predict": 512, "temperature": 0.1},
             )
         except Exception as e:
             return None, [], str(e)

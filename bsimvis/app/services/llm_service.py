@@ -1,3 +1,4 @@
+import json
 import logging
 from ollama import Client
 from bsimvis.app.services import tag_taxonomy
@@ -13,7 +14,7 @@ class LLMService:
         self.model = config_service.get("llm.model", "qwen3.6:35b")
         self.default_prompt = config_service.get(
             "llm.prompt",
-            "Act as a senior malware reverse engineer. Provide a concise, rapid-triage summary of this function. **TLDR**: [Maximum 2 sentences explaining the core purpose and intent] **KEY_EVIDENCE**: [Comma-separated list of ONLY the most critical Windows APIs, syscalls, or magic constants. Leave blank if none.]",
+            "Act as a senior malware reverse engineer. In at most two sentences, state the function's observed purpose and the decisive code evidence. If its purpose cannot be established, say so without suggesting possibilities. Do not discuss vulnerabilities or hypothetical impact.",
         )
 
     def summarize_function(self, function_name, code, custom_prompt=None):
@@ -42,13 +43,7 @@ class LLMService:
     def summarize_and_tag(
         self, function_name, code, vocabulary=None, custom_prompt=None
     ):
-        """One LLM call returning both a summary and tags.
-
-        Halves the token cost versus two calls. Tags come back on a single
-        `TAGS:` line; if that line is missing or unparseable the summary is
-        still returned with an empty tag list -- a note without tags beats
-        failing the whole function.
-        """
+        """One bounded LLM call returning both a summary and validated tags."""
         self._load_config()
         prompt = custom_prompt or self.default_prompt
 
@@ -61,16 +56,50 @@ class LLMService:
             tag_rule = (
                 f"{base_rule}\n"
                 f"Additionally, you MAY include these specific custom tags if highly relevant: {', '.join(vocabulary)}. "
-                "Example: TAGS: severity:medium, category:crypto:cipher, custom_tag_name"
+                "Example tags: severity:medium, category:crypto:cipher, custom_tag_name."
             )
         else:
             tag_rule = (
                 f"{base_rule}\n"
-                "Example: TAGS: severity:medium, category:crypto:cipher, category:network:c2. "
-                "If the purpose is unknown, write only 'TAGS: severity:none'."
+                "Example tags: severity:medium, category:crypto:cipher, category:network:c2."
             )
 
-        full_prompt = f"{prompt}\n\nFunction Name: {function_name}\n\nCode:\n{code}"
+        full_prompt = (
+            f"{prompt}\n\nFunction Name: {function_name}\n\nCode:\n{code}\n\n"
+            "Return the required severity verdict and put category/custom tags only in "
+            "the tags field, never inside summary. Keep summary under 90 words and "
+            "include only observed behavior and decisive evidence."
+        )
+        custom_tags = [
+            tag
+            for tag in (vocabulary or [])
+            if tag.split(":", 1)[0].lower() not in ("severity", "category")
+        ]
+        allowed_tags = list(
+            dict.fromkeys(tag_taxonomy.CATEGORY_TAGS + tuple(custom_tags))
+        )
+        response_format = {
+            "type": "object",
+            "properties": {
+                "severity": {
+                    "type": "string",
+                    "description": "Observed malware severity; unknown when purpose is unresolved.",
+                    "enum": ["unknown", *tag_taxonomy.SEVERITY_LEVELS],
+                },
+                "tags": {
+                    "type": "array",
+                    "description": "All classification tags; empty when purpose is unresolved.",
+                    "items": {"type": "string", "enum": allowed_tags},
+                    "maxItems": 3,
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Observed behavior and evidence only; never include tag IDs.",
+                },
+            },
+            "required": ["severity", "tags", "summary"],
+            "additionalProperties": False,
+        }
 
         try:
             client = Client(host=self.ollama_url)
@@ -82,7 +111,8 @@ class LLMService:
                 ],
                 stream=False,
                 think=False,
-                options={"num_predict": -1, "temperature": 0.1},
+                format=response_format,
+                options={"num_predict": 256, "temperature": 0.1},
             )
             msg = response.get("message", {})
             text = msg.get("content", "") or msg.get("thinking", "")
@@ -91,38 +121,39 @@ class LLMService:
             return None, [], str(e)
 
         summary, tags = self._split_summary_tags(text, vocabulary)
-        if summary and not tags:
-            try:
-                retry = client.chat(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": tag_rule},
-                        {
-                            "role": "user",
-                            "content": (
-                                "Return only the required TAGS: line for this completed "
-                                f"analysis of {function_name}:\n\n{summary}"
-                            ),
-                        },
-                    ],
-                    stream=False,
-                    think=False,
-                    options={"num_predict": 100, "temperature": 0.0},
-                )
-                retry_msg = retry.get("message", {})
-                retry_text = retry_msg.get("content", "") or retry_msg.get(
-                    "thinking", ""
-                )
-                _, tags = self._split_summary_tags(retry_text, vocabulary)
-            except Exception as e:
-                logging.warning(f"LLMService tag retry failed: {e}")
         return summary, tags, None
 
     @staticmethod
     def _split_summary_tags(text, vocabulary=None):
-        """Splits an LLM response into (summary, tags) on the last TAGS: line."""
+        """Parses structured output, with the old TAGS line as a fallback."""
         if not text:
             return "", []
+
+        try:
+            value = json.loads(text)
+            if isinstance(value, dict) and isinstance(value.get("summary"), str):
+                raw_tags = value.get("tags")
+                if isinstance(raw_tags, list):
+                    summary_lines = value["summary"].strip().splitlines()
+                    embedded_tags = []
+                    while summary_lines:
+                        candidate = summary_lines[-1].strip().strip("*`[] ").lower()
+                        if candidate.startswith(("severity:", "category:")):
+                            embedded_tags.insert(0, candidate)
+                            summary_lines.pop()
+                            continue
+                        if not candidate and embedded_tags:
+                            summary_lines.pop()
+                            continue
+                        break
+                    raw_tags = [*raw_tags, *embedded_tags]
+                    summary_text = "\n".join(summary_lines).strip()
+                    severity = value.get("severity")
+                    if severity in tag_taxonomy.SEVERITY_LEVELS:
+                        raw_tags = [f"severity:{severity}", *raw_tags]
+                    text = f"{summary_text}\nTAGS: {','.join(map(str, raw_tags))}"
+        except (TypeError, ValueError):
+            pass
 
         lines = text.strip().splitlines()
         tag_idx = None
@@ -134,7 +165,24 @@ class LLMService:
                 break
 
         if tag_idx is None:
-            return text.strip(), []
+            # Some Ollama servers ignore `format` but still append one bare tag
+            # per line. Accept only a trailing reserved-namespace block.
+            bare_tags = []
+            i = len(lines) - 1
+            while i >= 0:
+                candidate = lines[i].strip().strip("*`[] ").lower()
+                if candidate.startswith(("severity:", "category:")):
+                    bare_tags.append(candidate)
+                    i -= 1
+                    continue
+                if not candidate and bare_tags:
+                    i -= 1
+                    continue
+                break
+            if not bare_tags:
+                return text.strip(), []
+            lines = lines[: i + 1] + [f"TAGS: {','.join(reversed(bare_tags))}"]
+            tag_idx = len(lines) - 1
 
         label, _, raw_tags = lines[tag_idx].partition(":")
         if not raw_tags:
@@ -163,6 +211,27 @@ class LLMService:
         # Dedupe, preserve order.
         seen = set()
         tags = [t for t in tags if not (t in seen or seen.add(t))]
+        if tags == ["severity:none"] and any(
+            phrase in summary.lower()
+            for phrase in (
+                "purpose is unknown",
+                "purpose is indeterminate",
+                "purpose cannot be established",
+            )
+        ):
+            tags = []
+        if "category:impact:ddos" in tags and not any(
+            evidence in summary.lower()
+            for evidence in (
+                "flood",
+                "high volume",
+                "high-volume",
+                "continuously send",
+                "repeatedly",
+            )
+        ):
+            tags.remove("category:impact:ddos")
+
         return summary, tags
 
     def stream_summarize_function(self, function_name, code, custom_prompt=None):
@@ -408,22 +477,58 @@ def _selfcheck():
 
     # Only the last TAGS line counts (models sometimes echo the instruction).
     assert split("TAGS: ignored\nbody\nTAGS: severity:high")[1] == ["severity:high"]
+    # Older Ollama servers ignore JSON format and append one bare tag per line.
+    s, t = split("Observed flood.\nseverity:high\ncategory:impact:ddos\ncategory:")
+    assert s == "Observed flood."
+    assert t == ["severity:high", "category:impact:ddos"]
+    assert (
+        split(
+            "The syscall identity is unknown; its purpose is indeterminate.\nseverity:none"
+        )[1]
+        == []
+    )
+
+    # An unresolved structured verdict is a successful abstention, not severity:none.
+    assert split(
+        json.dumps(
+            {"severity": "unknown", "summary": "Purpose is unresolved.", "tags": []}
+        )
+    ) == (
+        "Purpose is unresolved.",
+        [],
+    )
+
+    s, t = split(
+        json.dumps(
+            {
+                "severity": "unknown",
+                "tags": [],
+                "summary": "Its purpose is unknown.\n\nseverity:none",
+            }
+        )
+    )
+    assert (s, t) == ("Its purpose is unknown.", [])
+    assert split(
+        "Actively probes randomized addresses.\nseverity:high\ncategory:network:scan\ncategory:impact:ddos"
+    )[1] == ["severity:high", "category:network:scan"]
 
     class FakeClient:
         def __init__(self):
-            self.responses = iter(
-                [
-                    {"message": {"content": "Observed packet flood."}},
-                    {
-                        "message": {
-                            "content": "TAGS: severity:high, category:impact:ddos"
-                        }
-                    },
-                ]
-            )
+            self.calls = []
 
-        def chat(self, **_kwargs):
-            return next(self.responses)
+        def chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "severity": "high",
+                            "tags": ["category:impact:ddos"],
+                            "summary": "Observed packet flood.",
+                        }
+                    )
+                }
+            }
 
     real_client = globals()["Client"]
     fake_client = FakeClient()
@@ -434,6 +539,11 @@ def _selfcheck():
         globals()["Client"] = real_client
     assert error is None and summary == "Observed packet flood."
     assert tags == ["severity:high", "category:impact:ddos"]
+    assert len(fake_client.calls) == 1
+    response_format = fake_client.calls[0]["format"]
+    assert response_format["required"] == ["severity", "tags", "summary"]
+    assert next(iter(response_format["properties"])) == "severity"
+    assert fake_client.calls[0]["options"]["num_predict"] == 256
 
     print("ok")
 

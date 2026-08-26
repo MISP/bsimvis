@@ -916,8 +916,12 @@ def prompt_rules():
     groups = "; ".join(f"{g}: {', '.join(leaves)}" for g, leaves in CATEGORIES.items())
     return (
         analysis_rules()
-        + "Then, on a final line starting with 'TAGS:', tag the function. "
-        "Emit exactly one severity tag, and at most 2 category tags.\n"
+        + "Then tag the function in the requested response format (or on a final "
+        "line starting with 'TAGS:' when no structured format is supplied). "
+        "If the visible evidence does not establish the function's purpose, emit no "
+        "tags. Otherwise emit exactly one severity tag and at most 2 category tags. "
+        "Put tag IDs only in the structured tags field or TAGS line, never in summary "
+        "prose.\n"
         f"Severity -- format `severity:<level>`, <level> MUST be one of: "
         f"{', '.join(SEVERITY_LEVELS)}. Severity measures evidenced malicious behaviour "
         "in a malware sample: high = directly performs or enables a destructive or "
@@ -926,14 +930,19 @@ def prompt_rules():
         "injection, credential theft, C2, or persistence; "
         "medium = suspicious/evasive behaviour "
         "with meaningful supporting evidence; low = dual-use behaviour with weak or "
-        "ambiguous malicious context; none = benign, trivial, library, or utility code. "
+        "ambiguous malicious context; none = positively identified benign, trivial, "
+        "library, or utility code; it does not mean unknown. "
         "A vulnerability, unsafe API, crash, privileged operation, or theoretical abuse "
         "does not by itself raise severity.\n"
         "Category -- format `category:<group>:<leaf>`, where <group>:<leaf> MUST "
         f"be one of: {groups}. Emit categories only for behaviour evidenced by this "
         "function or its supplied call context, not for plausible intent. Every "
         "non-none severity and category must be justified by a specific visible "
-        "operation or resolved callee in the summary."
+        "operation or resolved callee in the summary. Repeatedly transmitting crafted "
+        "TCP, UDP, GRE, or other packets at a target is `category:impact:ddos`, not "
+        "scan or C2. Use `category:network:scan` only for probing addresses or services "
+        "to discover targets. Use `category:network:c2` only when the function exchanges "
+        "commands or results with an operator-controlled endpoint."
     )
 
 
@@ -1608,6 +1617,8 @@ def demo():
     assert "instruction code field" in rules and "not evidence of a packer" in rules
     assert "recovery artifacts" in rules and "post-syscall code" in rules
     assert "None observed" in rules and "remove any claim" in rules
+    assert "does not establish the function's purpose, emit no tags" in rules
+    assert "does not mean unknown" in rules
     print("tag_taxonomy demo OK")
 
 

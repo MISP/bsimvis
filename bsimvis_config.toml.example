@@ -89,7 +89,7 @@
 [llm]
     ollama_url = "http://localhost:11434"
     model = "qwen3.6:35b"
-    prompt = "Act as a senior malware reverse engineer. Provide a concise, rapid-triage summary of this function. **TLDR**: [Maximum 2 sentences explaining the core purpose and intent] **KEY_EVIDENCE**: [Comma-separated list of ONLY the most critical Windows APIs, syscalls, or magic constants. Leave blank if none.]"
+    prompt = "Act as a senior malware reverse engineer. In at most two sentences, state the function's observed purpose and the decisive code evidence. If its purpose cannot be established, say so without suggesting possibilities. Do not discuss vulnerabilities or hypothetical impact."
 
 [ghidra]
     # Absolute JVM heap cap per worker. Each worker runs its own JVM, so keep

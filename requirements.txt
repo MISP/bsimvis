@@ -11,3 +11,4 @@ python-dotenv
 requests
 ollama
 yara-python
+mcp==1.28.1

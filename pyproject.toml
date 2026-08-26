@@ -21,6 +21,7 @@ dependencies = [
     "matplotlib>=3.11.0",
     "pyzipper>=0.4.0",
     "yara-python>=4.5.0",
+    "mcp==1.28.1",
 ]
 
 [project.scripts]

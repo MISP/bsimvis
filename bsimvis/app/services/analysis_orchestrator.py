@@ -34,13 +34,23 @@ from bsimvis.app.services.llm_batch_service import (
     _remove_llm_tags,
 )
 from bsimvis.app.services.llm_service import llm_service
-from bsimvis.app.services.llm_tools import get_function, get_function_relations
+from bsimvis.app.services.llm_tools import (
+    get_file_info,
+    get_function,
+    get_function_relations,
+)
 from bsimvis.app.services.note_service import note_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.tag_service import tag_service
 
 DEFAULT_MAX_BATCH = 1000
 SUMMARY_CONTEXT_CHARS = 220  # per-neighbour summary carried into a caller's prompt
+
+# Agentic fallback: a unit judged from context alone can ask for a second,
+# tool-using pass instead of guessing. Keeps the common case (most units) at
+# one cheap call while still going deep on the ones that need it.
+NEED_CONTEXT_MARKER = "NEED_MORE_CONTEXT"
+MAX_AGENTIC_ITERATIONS = 4
 
 
 def max_batch_size():
@@ -160,6 +170,97 @@ def _one_liner(summary):
     return first[:SUMMARY_CONTEXT_CHARS]
 
 
+# --- agentic fallback ----------------------------------------------------
+
+
+def _needs_more_context(summary):
+    return bool(summary) and summary.strip().strip("*# ").upper() == NEED_CONTEXT_MARKER
+
+
+def _agentic_prompt(custom_prompt):
+    base = custom_prompt or llm_service.default_prompt
+    return (
+        f"{base}\n\nIf this function's purpose is genuinely unclear from the code and "
+        "the context given -- not just non-trivial, but actually ambiguous -- reply "
+        f"with exactly '{NEED_CONTEXT_MARKER}' as your entire response and nothing else. "
+        "A follow-up pass will then let you look up its call graph, BSim neighbours, and "
+        "file/cluster metadata before judging it."
+    )
+
+
+def _agentic_summarize(collection, func_name, code_with_context, custom_prompt):
+    """One-shot tool-using pass for a unit whose cheap context-only prompt came
+    back NEED_MORE_CONTEXT. Same (summary, tags, err) contract as
+    `llm_service.summarize_and_tag`, but the model may call `llm_tools` first --
+    a standalone loop rather than `llm_chat_service`'s, since there is no chat
+    session to persist here, just one verdict."""
+    from ollama import Client
+
+    from bsimvis.app.services.llm_tools import TOOLS, call_tool
+
+    base_prompt = custom_prompt or llm_service.default_prompt
+    tag_rule = tag_taxonomy.prompt_rules() + (
+        "\nExample: TAGS: severity:medium, category:crypto:cipher."
+    )
+    system = (
+        f"{base_prompt}\n\n{tag_rule}\n\n"
+        f"Default collection for tool calls: '{collection}'. You have tools to look up "
+        "this function's call graph, BSim similar functions, tags, and file/cluster "
+        "metadata. Use whichever would change your judgment, then answer in the same "
+        "TLDR/TAGS format -- do not reply with NEED_MORE_CONTEXT again."
+    )
+    messages = [
+        {"role": "system", "content": system},
+        {
+            "role": "user",
+            "content": f"Function Name: {func_name}\n\nCode:\n{code_with_context}",
+        },
+    ]
+
+    client = Client(host=config_service.get("llm.ollama_url", "http://localhost:11434"))
+    model = config_service.get("llm.model", "qwen3.6:35b")
+
+    for _ in range(MAX_AGENTIC_ITERATIONS):
+        try:
+            response = client.chat(
+                model=model,
+                messages=messages,
+                tools=TOOLS,
+                stream=False,
+                think=False,
+                options={"num_predict": -1, "temperature": 0.2},
+            )
+        except Exception as e:
+            return None, [], str(e)
+
+        msg = response.get("message", {})
+        content = msg.get("content", "") or ""
+        raw_calls = [
+            tc.model_dump() if hasattr(tc, "model_dump") else tc
+            for tc in (msg.get("tool_calls") or [])
+        ]
+        if not raw_calls:
+            summary, tags = llm_service._split_summary_tags(content)
+            return summary, tags, None
+
+        messages.append(
+            {"role": "assistant", "content": content, "tool_calls": raw_calls}
+        )
+        for tc in raw_calls:
+            fn = tc.get("function", {})
+            name = fn.get("name")
+            args = fn.get("arguments") or {}
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except Exception:
+                    args = {}
+            result = call_tool(name, args)
+            messages.append({"role": "tool", "content": json.dumps(result)[:8000]})
+
+    return None, [], "agentic fallback stopped after too many tool calls without a final answer"
+
+
 # --- per-collection redis bookkeeping (shared shape with llm_batch_service) --
 
 
@@ -226,7 +327,15 @@ class AnalysisOrchestrator:
         return applied
 
     def _process_singleton(
-        self, collection, func_id, adj, summaries, actions, overwrite, custom_prompt
+        self,
+        collection,
+        func_id,
+        adj,
+        summaries,
+        actions,
+        overwrite,
+        custom_prompt,
+        agentic=False,
     ):
         data = get_function(func_id)
         if "error" in data:
@@ -235,9 +344,14 @@ class AnalysisOrchestrator:
         context = _context_block([func_id], adj, summaries)
         code_with_context = f"{context}\nCode:\n{data['code']}" if context else data["code"]
 
+        prompt = _agentic_prompt(custom_prompt) if agentic else custom_prompt
         summary, tags, err = llm_service.summarize_and_tag(
-            data["func_name"], code_with_context, custom_prompt=custom_prompt
+            data["func_name"], code_with_context, custom_prompt=prompt
         )
+        if not err and agentic and _needs_more_context(summary):
+            summary, tags, err = _agentic_summarize(
+                collection, data["func_name"], code_with_context, custom_prompt
+            )
         if err:
             return "failed", err
         if not summary and not tags:
@@ -250,7 +364,15 @@ class AnalysisOrchestrator:
         return "done", ", ".join(applied) if applied else None
 
     def _process_scc(
-        self, collection, unit, adj, summaries, actions, overwrite, custom_prompt
+        self,
+        collection,
+        unit,
+        adj,
+        summaries,
+        actions,
+        overwrite,
+        custom_prompt,
+        agentic=False,
     ):
         """A mutually-recursive group: no valid bottom-up order inside it, so
         one combined LLM call sees every member's code and returns one shared
@@ -280,11 +402,17 @@ class AnalysisOrchestrator:
             "(mutual recursion / a dispatch cycle) and must be judged as one unit:\n"
         )
 
+        combined_name = " + ".join(m["func_name"] for m in members)
+        prompt = _agentic_prompt(custom_prompt) if agentic else custom_prompt
         summary, tags, err = llm_service.summarize_and_tag(
-            " + ".join(m["func_name"] for m in members),
+            combined_name,
             header + combined_code,
-            custom_prompt=custom_prompt,
+            custom_prompt=prompt,
         )
+        if not err and agentic and _needs_more_context(summary):
+            summary, tags, err = _agentic_summarize(
+                collection, combined_name, header + combined_code, custom_prompt
+            )
         if err or (not summary and not tags):
             detail = err or "empty LLM response"
             return {m["func_id"]: ("failed", detail) for m in members}
@@ -313,6 +441,8 @@ class AnalysisOrchestrator:
         job_service=None,
         job_id=None,
         unit_max_size=None,
+        agentic=False,
+        summaries_out=None,
     ):
         actions = [a for a in (actions or []) if a in ("notes", "tags")] or ["notes", "tags"]
         total = len(func_ids)
@@ -344,7 +474,7 @@ class AnalysisOrchestrator:
                 f"| overwrite={overwrite}",
             )
 
-        summaries = {}
+        summaries = summaries_out if summaries_out is not None else {}
         counters = {"done": 0, "skipped": 0, "failed": 0}
         processed = 0
 
@@ -369,12 +499,26 @@ class AnalysisOrchestrator:
                 if len(unit) == 1:
                     fid = unit[0]
                     state, detail = self._process_singleton(
-                        collection, fid, adj, summaries, actions, overwrite, custom_prompt
+                        collection,
+                        fid,
+                        adj,
+                        summaries,
+                        actions,
+                        overwrite,
+                        custom_prompt,
+                        agentic,
                     )
                     results = {fid: (state, detail)}
                 else:
                     results = self._process_scc(
-                        collection, unit, adj, summaries, actions, overwrite, custom_prompt
+                        collection,
+                        unit,
+                        adj,
+                        summaries,
+                        actions,
+                        overwrite,
+                        custom_prompt,
+                        agentic,
                     )
             except Exception as e:
                 logging.error(f"analysis_orchestrator: unit {unit} failed: {e}")
@@ -401,6 +545,106 @@ class AnalysisOrchestrator:
                 f"{counters['skipped']} skipped, {counters['failed']} failed.",
             )
         return True
+
+    # --- whole-file analysis ---------------------------------------------
+
+    def run_file_analysis(
+        self,
+        collection,
+        file_md5,
+        func_ids,
+        actions=None,
+        overwrite=False,
+        custom_prompt=None,
+        job_service=None,
+        job_id=None,
+    ):
+        """The context-aware batch (agentic this time, see `agentic=True`)
+        over one file's functions, followed by one closing call that folds
+        every function's summary into a whole-file report saved as a file
+        note -- the deliverable a per-function pass alone can't produce."""
+        summaries = {}
+        ok = self.run_contextual_batch(
+            collection,
+            func_ids,
+            actions=actions,
+            overwrite=overwrite,
+            custom_prompt=custom_prompt,
+            job_service=job_service,
+            job_id=job_id,
+            agentic=True,
+            summaries_out=summaries,
+        )
+        if ok and summaries:
+            self._write_file_report(
+                collection, file_md5, summaries, overwrite, job_service, job_id
+            )
+        return ok
+
+    def _write_file_report(
+        self, collection, file_md5, summaries, overwrite, job_service, job_id
+    ):
+        file_info = get_file_info(collection, file_md5)
+        if "error" in file_info:
+            if job_service and job_id:
+                job_service.add_log(job_id, f"File report skipped: {file_info['error']}")
+            return
+
+        report = llm_service.chat(
+            [{"role": "user", "content": _file_report_prompt(file_info, summaries)}]
+        )
+        if not report or report.startswith("Error:"):
+            if job_service and job_id:
+                job_service.add_log(job_id, f"File report generation failed: {report}")
+            return
+
+        file_id = f"{collection}:file:{file_md5}"
+        if overwrite:
+            for n in note_service.get_file_notes(collection, file_id) or []:
+                if n.get("owner") == LLM_NOTE_OWNER:
+                    note_service.remove_file_note(collection, file_id, n.get("id"))
+        note_service.add_file_note(collection, file_id, report, owner=LLM_NOTE_OWNER)
+        if job_service and job_id:
+            job_service.add_log(job_id, "Whole-file report written as a file note.")
+
+
+def _file_report_prompt(file_info, summaries):
+    lines = [
+        "You are a senior malware analyst. Synthesize a whole-file report from "
+        "per-function findings already produced for this binary -- do not "
+        "re-derive them, just interpret what they add up to.",
+        "",
+        f"File: {file_info.get('file_name')} (md5={file_info.get('file_md5')})",
+    ]
+    for key, label in [
+        ("filetype", "Filetype"),
+        ("avtype", "AV classification"),
+        ("yara", "YARA matches"),
+        ("cc_ip", "C2 IPs"),
+    ]:
+        val = file_info.get(key)
+        if val:
+            lines.append(f"{label}: {val}")
+    lines.append(
+        f"Functions analysed: {len(summaries)} of {file_info.get('function_count')}"
+    )
+    lines.append("")
+    lines.append("Per-function findings:")
+    for s in summaries.values():
+        lines.append(f"- {s['func_name']}: {s['summary']}")
+    lines.append("")
+    lines.append("Write a structured whole-file report:")
+    lines.append("**OVERVIEW**: [2-4 sentences: what this file is/does overall]")
+    lines.append(
+        "**CAPABILITIES**: [bullet list of concrete capabilities observed across functions]"
+    )
+    lines.append(
+        "**NOTABLE FUNCTIONS**: [the few functions most worth an analyst's attention, and why]"
+    )
+    lines.append(
+        "**ASSESSMENT**: [benign / suspicious / malicious -- and why, citing the evidence above]"
+    )
+    return "\n".join(lines)
 
 
 analysis_orchestrator = AnalysisOrchestrator()

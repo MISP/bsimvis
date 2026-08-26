@@ -66,6 +66,9 @@ async function showNotes(funcId, expand = true) {
     // Ensure panels exist
     createPanelsIfMissing();
 
+    const fileAnalysisBtn = document.getElementById('file-analysis-btn');
+    if (fileAnalysisBtn) fileAnalysisBtn.style.display = entityMode === 'file' ? 'inline-block' : 'none';
+
     // Expand if requested
     if (expand) {
         openNotesPanel();
@@ -272,6 +275,7 @@ function renderAIPanelHTML(el) {
         <div class="panel-v2-header">
             <span style="display: flex; align-items: center; gap: 8px; font-size: 0.9rem; color: #ae81ff; font-weight: bold;"><i class="fa-solid fa-robot"></i> AI Insight</span>
             <div style="display: flex; align-items: center; gap: 12px;">
+                <button id="file-analysis-btn" onclick="runFullFileAnalysis()" title="Agentic pass over every function in this file: tags, notes, and a whole-file report" style="display:none; background: none; border: 1px solid #ae81ff; color: #ae81ff; padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 0.72rem; font-weight: bold; white-space: nowrap;">Analyze File</button>
                 <div id="llm-status" style="font-size: 0.75rem; color: #ae81ff; font-style: italic; font-weight: normal; text-transform: none;"></div>
                 <button onclick="closeAIPanel()" style="background: none; border: none; color: var(--subtle); cursor: pointer; font-size: 1.1rem; padding: 4px; display: flex; align-items: center; transition: color 0.2s;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--subtle)'"><i class="fa-solid fa-xmark"></i></button>
             </div>
@@ -899,6 +903,69 @@ async function generateSummary(funcId) {
         if (statusEl) statusEl.innerText = "";
         if (sendBtn) sendBtn.style.display = "block";
         if (stopBtn) stopBtn.style.display = "none";
+    }
+}
+
+/** Full-file agentic analysis: every function in the focused file gets a
+ * context-aware tagging/notes pass (escalating to tool use when needed),
+ * then a whole-file report is written as a file note. Posts progress into
+ * the shared AI Insight thread rather than its own UI -- one more kind of
+ * update in the same place the analyst is already watching. */
+async function runFullFileAnalysis() {
+    if (entityMode !== 'file' || !currentNotesFuncId) return;
+    const collection = getChatScopeCollection();
+    const fileMd5 = currentNotesFuncId.split(':')[2];
+    const btn = document.getElementById('file-analysis-btn');
+    const statusEl = document.getElementById('llm-status');
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.innerText = 'Starting full-file analysis...';
+
+    try {
+        const res = await fetch('/api/llm/file_analysis', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ collection, file_md5: fileMd5 })
+        });
+        const data = await res.json();
+        if (data.error) {
+            addChatMessage(collection, 'ai', `Error starting full-file analysis: ${data.error}`);
+            if (statusEl) statusEl.innerText = '';
+            if (btn) btn.disabled = false;
+            return;
+        }
+        addChatMessage(collection, 'ai', `_Started full-file analysis over ${data.total} functions..._`);
+        pollFileAnalysis(collection, data.job_id, fileMd5, btn, statusEl);
+    } catch (err) {
+        addChatMessage(collection, 'ai', `Error: ${err.message}`);
+        if (statusEl) statusEl.innerText = '';
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function pollFileAnalysis(collection, jobId, fileMd5, btn, statusEl) {
+    try {
+        const res = await fetch(`/api/llm/file_analysis/${jobId}`);
+        const data = await res.json();
+        if (statusEl) statusEl.innerText = `Analyzing file... ${data.processed || 0}/${data.total || '?'}`;
+
+        if (['completed', 'failed', 'cancelled'].includes(data.status)) {
+            if (statusEl) statusEl.innerText = '';
+            if (btn) btn.disabled = false;
+            const c = data.counts || {};
+            addChatMessage(
+                collection, 'ai',
+                `_Full-file analysis ${data.status}: ${c.done || 0} done, ${c.skipped || 0} skipped, ${c.failed || 0} failed. Report saved as a file note._`
+            );
+            const fileId = `${collection}:file:${fileMd5}`;
+            if (window.parent?.refreshFileRow) window.parent.refreshFileRow(fileId);
+            if (currentNotesFuncId === fileId) refreshNotes(fileId);
+            return;
+        }
+        setTimeout(() => pollFileAnalysis(collection, jobId, fileMd5, btn, statusEl), 3000);
+    } catch (err) {
+        if (statusEl) statusEl.innerText = '';
+        if (btn) btn.disabled = false;
+        addChatMessage(collection, 'ai', `Error polling full-file analysis: ${err.message}`);
     }
 }
 

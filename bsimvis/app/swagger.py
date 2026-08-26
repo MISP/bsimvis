@@ -2695,6 +2695,66 @@ class LLMContextualBatchCancel(Resource):
         return contextual_batch_cancel(job_id)
 
 
+@ns_llm.route("/file_analysis")
+class LLMFileAnalysis(Resource):
+    @ns_llm.expect(
+        api.model(
+            "LLMFileAnalysisRequest",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "pool": fields.String(description="Pool id, alternative to collection"),
+                "file_md5": fields.String(required=True, example="16c2addf..."),
+                "actions": fields.List(
+                    fields.String, enum=["notes", "tags"], example=["notes", "tags"]
+                ),
+                "overwrite": fields.Boolean(
+                    default=False,
+                    description="Re-analyse and replace this file's existing LLM "
+                    "tags/notes/report instead of skipping already-enriched functions",
+                ),
+                "skip_fid_tagged": fields.Boolean(
+                    default=True,
+                    description="Skip functions already carrying a fid: "
+                    "library-attribution tag",
+                ),
+                "min_complexity": fields.Integer(
+                    default=0,
+                    description="Skip functions with fewer than this many BSim "
+                    "features (0 = no floor)",
+                ),
+                "custom_prompt": fields.String,
+            },
+        )
+    )
+    def post(self):
+        """Starts a full-file agentic LLM analysis: every function in the file
+        (minus configurable pre-filters) gets a context-aware tagging/notes
+        pass, escalating to a tool-using pass when context alone isn't
+        enough, then folds every finding into one whole-file report saved as
+        a file note."""
+        from bsimvis.app.routes.llm_analysis import file_analysis
+
+        return file_analysis()
+
+
+@ns_llm.route("/file_analysis/<string:job_id>")
+class LLMFileAnalysisStatus(Resource):
+    def get(self, job_id):
+        """Progress, per-function state and errors for a file-analysis job."""
+        from bsimvis.app.routes.llm_analysis import contextual_batch_status
+
+        return contextual_batch_status(job_id)
+
+
+@ns_llm.route("/file_analysis/<string:job_id>/cancel")
+class LLMFileAnalysisCancel(Resource):
+    def post(self, job_id):
+        """Cancels a file-analysis job."""
+        from bsimvis.app.routes.llm_analysis import contextual_batch_cancel
+
+        return contextual_batch_cancel(job_id)
+
+
 # --- Pool Namespace ---
 
 pool_func_sim_params_model = api.model(

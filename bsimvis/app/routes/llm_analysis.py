@@ -162,3 +162,73 @@ def contextual_batch_cancel(job_id):
     if not JobService().cancel_job(job_id):
         return {"error": "Job not found"}, 404
     return {"status": "cancelled", "job_id": job_id}
+
+
+def file_analysis():
+    """Starts a full-file agentic LLM analysis: every function in the file
+    (minus configurable pre-filters) gets the same context-aware tagging/notes
+    pass as `contextual_batch`, escalating to a tool-using pass when a
+    function's purpose isn't clear from context alone, then folds every
+    function's finding into one whole-file report saved as a file note.
+
+    Status and cancellation reuse `contextual_batch_status`/
+    `contextual_batch_cancel` -- both key off the job hash and
+    `analysis_orchestrator`'s per-job result set, neither of which cares which
+    route created the job.
+    """
+    from bsimvis.app.services.analysis_orchestrator import max_batch_size
+    from bsimvis.app.services.job_service import JobService, JobType
+    from bsimvis.app.routes.llm import _resolve_filters_to_ids
+
+    data = request.json or {}
+    collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+    file_md5 = data.get("file_md5")
+    if not collection or not file_md5:
+        return {"error": "Missing collection or file_md5"}, 400
+
+    min_complexity = int(data.get("min_complexity") or 0)
+    filters_qs = f"md5={file_md5}"
+    if data.get("skip_fid_tagged", True):
+        # "fid" (bare, no colon) is the indexed ancestor bucket covering every
+        # fid:<name>[:<version>][#<func>] tag -- see tag_taxonomy.tag_prefixes.
+        filters_qs += "&exclude_tag=fid"
+    if min_complexity > 0:
+        filters_qs += f"&min_features={min_complexity}"
+
+    cap = max_batch_size()
+    func_ids, error = _resolve_filters_to_ids(collection, filters_qs, cap)
+    if error:
+        return {"error": error}, 400
+    func_ids = [f for f in dict.fromkeys(func_ids) if f]
+    if not func_ids:
+        return {"error": "Selection resolved to zero functions (after filters)"}, 400
+
+    if cap > 0 and len(func_ids) > cap:
+        return {
+            "error": (
+                f"File has {len(func_ids)} functions after filters, over the batch "
+                f"cap of {cap}. Raise llm.batch_max, or set it to 0 for no cap."
+            ),
+            "count": len(func_ids),
+            "cap": cap,
+        }, 413
+
+    job_service = JobService()
+    job_id = job_service.create_job(
+        JobType.LLM_FILE_ANALYSIS,
+        {
+            "collection": collection,
+            "file_md5": file_md5,
+            "func_ids": func_ids,
+            "actions": data.get("actions") or ["notes", "tags"],
+            "overwrite": bool(data.get("overwrite")),
+            "custom_prompt": data.get("custom_prompt"),
+        },
+    )
+    return {"job_id": job_id, "total": len(func_ids)}

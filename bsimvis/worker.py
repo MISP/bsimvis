@@ -798,6 +798,20 @@ class Worker:
                 unit_max_size=payload.get("unit_max_size"),
             )
 
+        elif jtype == JobType.LLM_FILE_ANALYSIS.value:
+            from bsimvis.app.services.analysis_orchestrator import analysis_orchestrator
+
+            return analysis_orchestrator.run_file_analysis(
+                collection,
+                payload.get("file_md5"),
+                payload.get("func_ids") or [],
+                actions=payload.get("actions") or ["notes", "tags"],
+                overwrite=payload.get("overwrite", False),
+                custom_prompt=payload.get("custom_prompt"),
+                job_service=self.job_service,
+                job_id=job_id,
+            )
+
         elif jtype == JobType.DELETE_COLLECTION.value:
             return self.processing_service.delete_collection(
                 collection, self.job_service, job_id

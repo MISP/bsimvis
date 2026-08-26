@@ -922,7 +922,8 @@ def prompt_rules():
         f"{', '.join(SEVERITY_LEVELS)}. Severity measures evidenced malicious behaviour "
         "in a malware sample: high = directly performs or enables a destructive or "
         "operational capability such as DDoS, file encryption/wiping, process "
-        "cloning/amplification, injection, credential theft, C2, or persistence; "
+        "cloning/amplification, large-scale scanning or brute-force propagation, "
+        "injection, credential theft, C2, or persistence; "
         "medium = suspicious/evasive behaviour "
         "with meaningful supporting evidence; low = dual-use behaviour with weak or "
         "ambiguous malicious context; none = benign, trivial, library, or utility code. "
@@ -1602,6 +1603,7 @@ def demo():
     assert "not software vulnerability" in rules
     assert "rendered syscall argument is not necessarily the syscall number" in rules
     assert "process cloning/amplification" in rules
+    assert "brute-force propagation" in rules
     assert "numeric constant do not identify an API" in rules
     assert "instruction code field" in rules and "not evidence of a packer" in rules
     assert "recovery artifacts" in rules and "post-syscall code" in rules

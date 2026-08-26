@@ -91,6 +91,31 @@ class LLMService:
             return None, [], str(e)
 
         summary, tags = self._split_summary_tags(text, vocabulary)
+        if summary and not tags:
+            try:
+                retry = client.chat(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": tag_rule},
+                        {
+                            "role": "user",
+                            "content": (
+                                "Return only the required TAGS: line for this completed "
+                                f"analysis of {function_name}:\n\n{summary}"
+                            ),
+                        },
+                    ],
+                    stream=False,
+                    think=False,
+                    options={"num_predict": 100, "temperature": 0.0},
+                )
+                retry_msg = retry.get("message", {})
+                retry_text = retry_msg.get("content", "") or retry_msg.get(
+                    "thinking", ""
+                )
+                _, tags = self._split_summary_tags(retry_text, vocabulary)
+            except Exception as e:
+                logging.warning(f"LLMService tag retry failed: {e}")
         return summary, tags, None
 
     @staticmethod
@@ -130,7 +155,8 @@ class LLMService:
             # has to be one the collection registered. `is_taxonomy_tag`
             # rejects `origin:` on purpose: a hallucinated library
             # attribution must not enter through the summarisation path.
-            return tag_taxonomy.is_taxonomy_tag(t) or t in allowed
+            reserved = t.split(":", 1)[0] in ("severity", "category")
+            return tag_taxonomy.is_taxonomy_tag(t) or (not reserved and t in allowed)
 
         tags = [allowed.get(t, t) for t in tags if is_allowed(t)]
 
@@ -372,12 +398,42 @@ def _selfcheck():
 
     # An invented leaf is not in the taxonomy, so a vocabulary drops it.
     assert split("x\nTAGS: category:network:telepathy", ["mytag"])[1] == []
+    assert split(
+        "x\nTAGS: category:network:ddos, severity:critical, MyTag",
+        ["category:network:ddos", "severity:critical", "mytag"],
+    )[1] == ["mytag"]
 
     # The model must not be able to assert provenance.
     assert split("x\nTAGS: origin:lib:libc:2.31", ["mytag"])[1] == []
 
     # Only the last TAGS line counts (models sometimes echo the instruction).
     assert split("TAGS: ignored\nbody\nTAGS: severity:high")[1] == ["severity:high"]
+
+    class FakeClient:
+        def __init__(self):
+            self.responses = iter(
+                [
+                    {"message": {"content": "Observed packet flood."}},
+                    {
+                        "message": {
+                            "content": "TAGS: severity:high, category:impact:ddos"
+                        }
+                    },
+                ]
+            )
+
+        def chat(self, **_kwargs):
+            return next(self.responses)
+
+    real_client = globals()["Client"]
+    fake_client = FakeClient()
+    globals()["Client"] = lambda host: fake_client
+    try:
+        summary, tags, error = LLMService().summarize_and_tag("attack", "send loop")
+    finally:
+        globals()["Client"] = real_client
+    assert error is None and summary == "Observed packet flood."
+    assert tags == ["severity:high", "category:impact:ddos"]
 
     print("ok")
 

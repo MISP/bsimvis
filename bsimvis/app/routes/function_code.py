@@ -286,6 +286,7 @@ def get_function_call_graph():
     func_id = request.args.get("id")
     if not func_id:
         return {"detail": "Missing function id"}, 400
+    limit = request.args.get("limit", type=int)
 
     try:
         if ":func:" in func_id:
@@ -321,7 +322,7 @@ def get_function_call_graph():
         if not meta:
             return {"detail": "Function not found"}, 404
 
-        nodes = get_enriched_nodes(collection, md5, addr)
+        nodes = get_enriched_nodes(collection, md5, addr, limit=limit)
 
         node = {
             "id": f"{collection}:func:{md5}:{addr}",
@@ -334,7 +335,13 @@ def get_function_call_graph():
             "is_external": False,
         }
 
-        return {"node": node, "callers": nodes["callers"], "callees": nodes["callees"]}
+        return {
+            "node": node,
+            "callers": nodes["callers"],
+            "callees": nodes["callees"],
+            "callers_total": nodes["callers_total"],
+            "callees_total": nodes["callees_total"],
+        }
     except Exception as e:
         error_traceback = traceback.format_exc()
         print(error_traceback)

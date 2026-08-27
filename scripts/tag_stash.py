@@ -30,6 +30,7 @@ from pathlib import Path
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.note_service import NoteService
 from bsimvis.app.services.tag_service import TagService
+from bsimvis.app.services.similarity_service import SimilarityService
 from bsimvis.app.services.llm_batch_service import LLM_NOTE_OWNER
 
 STASH_FILE = Path(__file__).parent / ".tag_stash.json"
@@ -55,9 +56,8 @@ def _tag_owner(vocab, tag):
     return LLM_NOTE_OWNER if vocab.get(tag, {}).get("llm") else "user"
 
 
-def _entity_tags(ts, collection, entity_type, entity_id, owner_filter, vocab, algo=None):
-    kwargs = {"algo": algo} if algo else {}
-    doc = ts._get_doc(ts._resolve_doc_id(collection, entity_type, entity_id, **kwargs))
+def _entity_tags(ts, collection, entity_type, entity_id, owner_filter, vocab):
+    doc = ts._get_doc(ts._resolve_doc_id(collection, entity_type, entity_id))
     all_tags = (doc or {}).get("user_tags", [])
     return [t for t in all_tags if _owner_ok(owner_filter, _tag_owner(vocab, t))]
 
@@ -74,9 +74,18 @@ def snapshot_file(ns, ts, collection, file_id, owner_filter, vocab):
     return {"notes": notes, "tags": tags}
 
 
-def snapshot_similarity(ts, collection, entity_id, algo, owner_filter, vocab):
-    tags = _entity_tags(ts, collection, "similarity", entity_id, owner_filter, vocab, algo=algo)
-    return {"tags": tags, "algo": algo}
+def snapshot_similarity(ts, sim, collection, a, b, algo, owner_filter, vocab):
+    """a/b are the two entities' own ids (function ids for a func-level pair,
+    file ids for a bin_sim / whole-binary pair) -- SimilarityService turns
+    them into the pair's sid the same way tag_similarity/untag_similarity
+    (the real /api/similarity/tag path) does, so this matches what the app
+    already wrote regardless of which kind of pair it is.
+    """
+    sid = sim._canonicalize_sid(collection, a, b, algo)
+    doc = ts._get_doc(sid)
+    all_tags = (doc or {}).get("user_tags", [])
+    tags = [t for t in all_tags if _owner_ok(owner_filter, _tag_owner(vocab, t))]
+    return {"tags": tags, "algo": algo, "a": a, "b": b}
 
 
 def clear_function(ns, ts, collection, func_id, snap):
@@ -93,9 +102,9 @@ def clear_file(ns, ts, collection, file_id, snap):
         ts.remove_user_tag(collection, "file", file_id, t)
 
 
-def clear_similarity(ts, collection, entity_id, snap):
+def clear_similarity(sim, collection, snap):
     for t in snap["tags"]:
-        ts.remove_user_tag(collection, "similarity", entity_id, t, algo=snap.get("algo"))
+        sim.untag_similarity(collection, snap["a"], snap["b"], snap["algo"], t)
 
 
 def restore_function(ns, ts, collection, func_id, snap):
@@ -112,20 +121,20 @@ def restore_file(ns, ts, collection, file_id, snap):
         ts.add_user_tag(collection, "file", file_id, t)
 
 
-def restore_similarity(ts, collection, entity_id, snap):
+def restore_similarity(sim, collection, snap):
     for t in snap["tags"]:
-        ts.add_user_tag(collection, "similarity", entity_id, t, algo=snap.get("algo"))
+        sim.tag_similarity(collection, snap["a"], snap["b"], snap["algo"], t)
 
 
 def discover_collection(r, collection, owner_filter, vocab):
     """Every function/file id currently carrying a matching note or tag,
     found via the existing owner/tag index sets -- no full collection scan.
 
-    ponytail: bin_sim pairs are skipped here. Their index only stores the
-    resolved sim key (base_coll:sim:algo:c1::c2), not the id1|id2|algo form
-    add_user_tag/remove_user_tag need, and rebuilding that pair reliably
-    needs more parsing than a collection-wide sweep is worth. Stash a pair
-    explicitly with --scope similarity --a --b instead.
+    ponytail: similarity pairs are skipped here. Their index only stores the
+    resolved sid (base_coll:sim:algo:c1::c2), and un-hashing that back into
+    the original --a/--b ids tag_similarity/untag_similarity need is more
+    parsing than a collection-wide sweep is worth. Stash a pair explicitly
+    with --scope similarity --a --b instead.
     """
     owners = [owner_filter] if owner_filter != "all" else ["user", LLM_NOTE_OWNER]
     funcs, files = set(), set()
@@ -141,7 +150,7 @@ def discover_collection(r, collection, owner_filter, vocab):
     return {_s(x) for x in funcs}, {_s(x) for x in files}
 
 
-def cmd_stash(args, r, ns, ts):
+def cmd_stash(args, r, ns, ts, sim):
     vocab = ts.get_collection_tags(args.collection)
     items = {"function": {}, "file": {}, "similarity": {}}
 
@@ -154,10 +163,10 @@ def cmd_stash(args, r, ns, ts):
         if snap["notes"] or snap["tags"]:
             items["file"][args.file_id] = snap
     elif args.scope == "similarity":
-        entity_id = f"{args.a}|{args.b}|{args.algo}"
-        snap = snapshot_similarity(ts, args.collection, entity_id, args.algo, args.owner, vocab)
+        snap = snapshot_similarity(ts, sim, args.collection, args.a, args.b, args.algo, args.owner, vocab)
         if snap["tags"]:
-            items["similarity"][entity_id] = snap
+            sid = sim._canonicalize_sid(args.collection, args.a, args.b, args.algo)
+            items["similarity"][sid] = snap
     elif args.scope == "collection":
         func_ids, file_ids = discover_collection(r, args.collection, args.owner, vocab)
         for fid in func_ids:
@@ -181,8 +190,8 @@ def cmd_stash(args, r, ns, ts):
         clear_function(ns, ts, args.collection, fid, snap)
     for fid, snap in items["file"].items():
         clear_file(ns, ts, args.collection, fid, snap)
-    for eid, snap in items["similarity"].items():
-        clear_similarity(ts, args.collection, eid, snap)
+    for sid, snap in items["similarity"].items():
+        clear_similarity(sim, args.collection, snap)
 
     stack = _load()
     stack.insert(0, {
@@ -197,14 +206,14 @@ def cmd_stash(args, r, ns, ts):
     print(f"Stashed {n_notes} note(s), {n_tags} tag(s) as stash@{{0}}: {args.message or '(no message)'}")
 
 
-def _restore_entry(ns, ts, entry, drop_after, stack, index):
+def _restore_entry(ns, ts, sim, entry, drop_after, stack, index):
     collection = entry["collection"]
     for fid, snap in entry["items"]["function"].items():
         restore_function(ns, ts, collection, fid, snap)
     for fid, snap in entry["items"]["file"].items():
         restore_file(ns, ts, collection, fid, snap)
-    for eid, snap in entry["items"]["similarity"].items():
-        restore_similarity(ts, collection, eid, snap)
+    for sid, snap in entry["items"]["similarity"].items():
+        restore_similarity(sim, collection, snap)
 
     n_notes = sum(len(v["notes"]) for v in entry["items"]["function"].values()) + sum(
         len(v["notes"]) for v in entry["items"]["file"].values()
@@ -218,7 +227,7 @@ def _restore_entry(ns, ts, entry, drop_after, stack, index):
         _save(stack)
 
 
-def cmd_pop_apply(args, ns, ts, drop_after):
+def cmd_pop_apply(args, ns, ts, sim, drop_after):
     stack = _load()
     if not stack:
         print("No stash entries.")
@@ -226,7 +235,7 @@ def cmd_pop_apply(args, ns, ts, drop_after):
     if args.index >= len(stack):
         print(f"No stash@{{{args.index}}}.", file=sys.stderr)
         sys.exit(1)
-    _restore_entry(ns, ts, stack[args.index], drop_after, stack, args.index)
+    _restore_entry(ns, ts, sim, stack[args.index], drop_after, stack, args.index)
 
 
 def cmd_drop(args):
@@ -266,8 +275,8 @@ def main():
     ps.add_argument("--scope", required=True, choices=["function", "file", "similarity", "collection"])
     ps.add_argument("--func-id")
     ps.add_argument("--file-id")
-    ps.add_argument("--a", help="first entity id (similarity scope)")
-    ps.add_argument("--b", help="second entity id (similarity scope)")
+    ps.add_argument("--a", help="first entity id (similarity scope) -- a function id for a func-pair, a file id for a bin_sim/whole-binary pair")
+    ps.add_argument("--b", help="second entity id (similarity scope), same kind as --a")
     ps.add_argument("--algo", default="unweighted_cosine")
     ps.add_argument("--owner", default="all", choices=["all", "user", LLM_NOTE_OWNER])
     ps.add_argument("-m", "--message")
@@ -291,13 +300,13 @@ def main():
         if args.scope == "similarity" and not (args.a and args.b):
             p.error("--scope similarity requires --a and --b")
         r = get_redis()
-        cmd_stash(args, r, NoteService(r), TagService(r))
+        cmd_stash(args, r, NoteService(r), TagService(r), SimilarityService(r))
     elif args.cmd == "pop":
         r = get_redis()
-        cmd_pop_apply(args, NoteService(r), TagService(r), drop_after=True)
+        cmd_pop_apply(args, NoteService(r), TagService(r), SimilarityService(r), drop_after=True)
     elif args.cmd == "apply":
         r = get_redis()
-        cmd_pop_apply(args, NoteService(r), TagService(r), drop_after=False)
+        cmd_pop_apply(args, NoteService(r), TagService(r), SimilarityService(r), drop_after=False)
     elif args.cmd == "drop":
         cmd_drop(args)
     elif args.cmd == "list":

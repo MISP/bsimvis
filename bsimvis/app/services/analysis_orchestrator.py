@@ -696,11 +696,6 @@ class AnalysisOrchestrator:
             ):
                 continue
             filtered.append(row)
-        cap = max_batch_size()
-        if cap > 0 and len(filtered) > cap:
-            raise ValueError(
-                f"Pair selection has {len(filtered)} functions, over the batch cap of {cap}"
-            )
         if not filtered:
             raise ValueError("Pair selection resolved to zero functions")
         return filtered

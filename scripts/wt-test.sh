@@ -12,10 +12,15 @@ set -uo pipefail
 WT_ROOT="$(git rev-parse --show-toplevel)"
 cd "$WT_ROOT" || exit 1
 
+# Own env file/session/ports/data dir, distinct from a persistent stack a
+# developer launched by hand against the plain .env -- so this throwaway
+# test run can never collide with, or tear down, that stack.
+export WT_ENV_FILE=.env.wttest
+
 "$WT_ROOT/scripts/wt-setup.sh" || exit 1
 
 # shellcheck disable=SC1091
-set -a; . ./.env; set +a
+set -a; . "./$WT_ENV_FILE"; set +a
 APP_PORT=${APP_PORT:-5100}
 
 # --- run the test suite ----------------------------------------------------

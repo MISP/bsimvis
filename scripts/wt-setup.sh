@@ -24,6 +24,14 @@ MAIN_ROOT="$(dirname "$(git rev-parse --git-common-dir)")"
 WT_NAME="$(basename "$WT_ROOT")"
 cd "$WT_ROOT" || exit 1
 
+# A non-default ENV_FILE (wt-test.sh sets WT_ENV_FILE=.env.wttest) gets its
+# own session name/ports/data dir, so an ephemeral test run can never
+# collide with -- or tear down -- a persistent stack launched by hand
+# against the plain .env in this same worktree.
+ENV_FILE="${WT_ENV_FILE:-.env}"
+SESSION_TAG="${ENV_FILE#.env}"; SESSION_TAG="${SESSION_TAG#.}"
+WT_ID="$WT_NAME${SESSION_TAG:+-$SESSION_TAG}"
+
 # --- 1. bin/ symlink -> main repo (never rebuilt; 1.4G of downloaded tools) --
 if [ ! -L bin ] || [ "$(readlink -f bin)" != "$MAIN_ROOT/bin" ]; then
   echo "Linking bin/ -> $MAIN_ROOT/bin"
@@ -37,13 +45,13 @@ if [ ! -f bsimvis_config.toml ] && [ -f bsimvis_config.toml.example ]; then
   cp bsimvis_config.toml.example bsimvis_config.toml
 fi
 
-# --- 2. isolated .env (offset ports so it never collides with main/others) --
-if [ ! -f .env ]; then
+# --- 2. isolated env file (offset ports so it never collides with main/others) --
+if [ ! -f "$ENV_FILE" ]; then
   # Bands kept clear of main (.env: 5001/6380/6667) and of each other.
   # Hash only spreads names; the busy-port guard below is what guarantees safety.
-  OFF=$(( ( $(cksum <<<"$WT_NAME" | cut -d' ' -f1) % 50 ) * 10 ))
-  echo "Writing isolated .env (offset $OFF)"
-  cat > .env <<EOF
+  OFF=$(( ( $(cksum <<<"$WT_ID" | cut -d' ' -f1) % 50 ) * 10 ))
+  echo "Writing isolated $ENV_FILE (offset $OFF)"
+  cat > "$ENV_FILE" <<EOF
 GHIDRA_INSTALL_DIR=$WT_ROOT/bin/ghidra_12.1_PUBLIC
 APP_HOST=0.0.0.0
 APP_PORT=$((5100 + OFF))
@@ -52,20 +60,20 @@ REDIS_PORT=$((6900 + OFF))
 KVROCKS_HOST=localhost
 KVROCKS_PORT=$((7400 + OFF))
 WORKERS_COUNT=5
-PROJECT_NAME=bsimvis-$WT_NAME
-DATA_BASE_DIR=$WT_ROOT/data
+PROJECT_NAME=bsimvis-$WT_ID
+DATA_BASE_DIR=$WT_ROOT/data${SESSION_TAG:+-$SESSION_TAG}
 EOF
 fi
 # shellcheck disable=SC1091
-set -a; . ./.env; set +a
+set -a; . "./$ENV_FILE"; set +a
 PROJECT_NAME="${PROJECT_NAME//./_}"
 APP_PORT=${APP_PORT:-5100}
 
-# --- 3. launch full stack (launch_tmux.sh reads the .env above) -------------
-# Clean up any existing session/services for this worktree first.
+# --- 3. launch full stack (launch_tmux.sh reads the env file above) ---------
+# Clean up any existing session/services for this worktree+ENV_FILE first.
 if tmux has-session -t "$PROJECT_NAME" 2>/dev/null; then
   echo "Session $PROJECT_NAME already exists. Cleaning up..."
-  "$WT_ROOT/scripts/wt-teardown.sh" >/dev/null
+  WT_ENV_FILE="$ENV_FILE" "$WT_ROOT/scripts/wt-teardown.sh" >/dev/null
   sleep 1
 fi
 
@@ -79,7 +87,7 @@ for p in "$APP_PORT" "$REDIS_PORT" "$KVROCKS_PORT"; do
   fi
 done
 echo "=== launching stack (session $PROJECT_NAME, app :$APP_PORT) ==="
-./launch_tmux.sh --clear || { echo "launch failed"; exit 1; }
+ENV_FILE="$ENV_FILE" ./launch_tmux.sh --clear || { echo "launch failed"; exit 1; }
 
 # app.py needs a moment after datastores; poll its port (max 40s)
 echo -n "  waiting for app on :$APP_PORT..."

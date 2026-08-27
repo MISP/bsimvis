@@ -21,7 +21,7 @@ completion via GET /api/jobs/<id>:
 
 Usage:
     python3 scripts/benchmark_pipeline.py \\
-        --base-url http://localhost:5420 \\
+        --base-url http://localhost:5000 \\
         --collection mycoll_a --collection mycoll_b \\
         --backend-label rust_cpu \\
         --out bench_rust_cpu.json
@@ -40,7 +40,7 @@ import requests
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--base-url", default="http://localhost:5420")
+    p.add_argument("--base-url", default="http://localhost:5000", help="This deployment's APP_HOST:APP_PORT (its own .env), not any fixed value.")
     p.add_argument("--collection", action="append", required=True, dest="collections")
     p.add_argument("--backend-label", required=True, help="Just a report tag -- e.g. rust_cpu or wgpu. Does not switch anything.")
     p.add_argument("--poll-interval", type=float, default=2.0)

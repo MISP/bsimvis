@@ -18,9 +18,10 @@ path (build_batch's plain per-chunk Python discovery, untouched by the LCA
 work) as a stand-in for the pre-LCA `dev` branch algorithm -- same algorithm
 dev runs, just without checking out a second branch/stack.
 
-Usage:
-    python3 scripts/quick_bench_backends.py --source test_bench --port 7720
-    python3 scripts/quick_bench_backends.py --source test_bench --port 7720 \\
+Usage (--port is this deployment's own KVROCKS_PORT from its .env, not a
+fixed value):
+    python3 scripts/quick_bench_backends.py --source test_bench --port 6667
+    python3 scripts/quick_bench_backends.py --source test_bench --port 6667 \\
         --backends rust_cpu wgpu --repeats 5
 """
 import argparse

@@ -6,8 +6,12 @@ from unittest.mock import patch
 from bsimvis.app.services.bin_sim_service import BinSimService
 from bsimvis.app.services.llm_service import LLMService
 from bsimvis.app.services.analysis_orchestrator import (
+    _cluster_units,
+    _group_by_duplicate_code,
     _needs_more_context,
+    _normalize_code_for_dedup,
     _pair_report_rules,
+    _with_dups,
     AnalysisOrchestrator,
     _pair_report_prompt,
     _select_pair_candidates,
@@ -395,6 +399,86 @@ def test_max_file_entrypoint_reads_the_full_file_index():
     assert BinSimService(Redis()).max_file_entrypoint("clean", "reference") == int(
         "180021a90", 16
     )
+
+
+def test_normalize_code_for_dedup_strips_address_tokens():
+    a = "int FUN_00401230(void) { return DAT_0040c000 + 0x1234abcd; }"
+    b = "int FUN_00512340(void) { return DAT_0050d111 + 0x99887766; }"
+    assert _normalize_code_for_dedup(a) == _normalize_code_for_dedup(b)
+    assert _normalize_code_for_dedup("int f(void) { return 1; }") != (
+        _normalize_code_for_dedup("int f(void) { return 2; }")
+    )
+
+
+def test_group_by_duplicate_code_collapses_identical_bodies_only():
+    funcs = {
+        "a:func:m:1": {
+            "func_id": "a:func:m:1",
+            "func_name": "f1",
+            "code": "return DAT_00401000 + 1;",
+        },
+        "a:func:m:2": {
+            "func_id": "a:func:m:2",
+            "func_name": "f2",
+            # identical to f1 once the address token is normalized out
+            "code": "return DAT_00499999 + 1;",
+        },
+        "a:func:m:3": {
+            "func_id": "a:func:m:3",
+            "func_name": "f3",
+            "code": "return 2;",
+        },
+        "a:func:m:4": {"func_id": "a:func:m:4", "error": "not found"},
+    }
+    with patch(
+        "bsimvis.app.services.analysis_orchestrator.get_function",
+        side_effect=lambda fid: funcs[fid],
+    ):
+        reps, dup_map, cache = _group_by_duplicate_code(list(funcs))
+    assert sorted(reps) == ["a:func:m:1", "a:func:m:3", "a:func:m:4"]
+    assert dup_map == {"a:func:m:1": ["a:func:m:2"]}
+    # duplicates' fetched data is not kept around once it has served the hash
+    assert "a:func:m:2" not in cache
+    assert cache["a:func:m:1"]["func_name"] == "f1"
+    assert _with_dups(["a:func:m:1", "a:func:m:3"], dup_map) == [
+        "a:func:m:1",
+        "a:func:m:3",
+        "a:func:m:2",
+    ]
+
+
+def test_cluster_units_batches_connected_singletons_keeps_scc_whole():
+    # a -> b -> c is a non-cyclic chain (batchable); d + e call each other
+    # (a true cycle, must stay a standalone "scc" unit); f is isolated.
+    adj = {"a": ["b"], "b": ["c"], "d": ["e"], "e": ["d"]}
+    units = [["a"], ["b"], ["c"], ["d", "e"], ["f"]]
+    clustered = _cluster_units(units, adj, batch_size=5)
+    assert ("batch", ["a", "b", "c"]) in clustered
+    assert ("scc", ["d", "e"]) in clustered
+    assert ("single", ["f"]) in clustered
+    # the SCC must never be folded into a neighbouring batch
+    for kind, fids in clustered:
+        if kind == "scc":
+            assert fids == ["d", "e"]
+
+
+def test_cluster_units_respects_batch_size_and_disconnected_singletons():
+    # every function calls the next one, but the cap is 2 per batch.
+    adj = {"a": ["b"], "b": ["c"], "c": ["d"]}
+    units = [["a"], ["b"], ["c"], ["d"]]
+    clustered = _cluster_units(units, adj, batch_size=2)
+    assert clustered == [
+        ("batch", ["a", "b"]),
+        ("batch", ["c", "d"]),
+    ]
+
+    # two singletons with no call relation must not be merged.
+    clustered = _cluster_units([["x"], ["y"]], {}, batch_size=5)
+    assert clustered == [("single", ["x"]), ("single", ["y"])]
+
+    # batch_size<=1 disables batching entirely.
+    clustered = _cluster_units([["a"], ["b"]], adj, batch_size=1)
+    assert clustered == [("single", ["a"]), ("single", ["b"])]
 
 
 if __name__ == "__main__":

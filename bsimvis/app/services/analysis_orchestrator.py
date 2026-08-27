@@ -13,16 +13,24 @@ batch, but with the neighbourhood it was missing.
 Mutually-recursive groups (true cycles -- A calls B calls A) have no valid
 bottom-up order, so they are Tarjan-SCC'd into one combined LLM call instead:
 one shared verdict for the group. A chain with no cycle (A calls B calls C)
-does not need that: sequential bottom-up processing with summary injection
-already gives each function its neighbours' context.
+does not strictly need that for context -- sequential bottom-up processing
+with summary injection already gives each function its neighbours' context --
+but small call-connected chains are also batched into one LLM call
+(`_process_batch`, independently-attributed results, not a shared verdict)
+purely to amortize the fixed per-call overhead when a diff pool runs into the
+hundreds. Byte-identical duplicate functions (common in statically-linked or
+copy-pasted code) are collapsed onto one representative before any of this
+runs, so a repeated function never costs more than one LLM call total.
 
 Reuses `llm_batch_service`'s already-enriched/undo bookkeeping rather than
 reimplementing it -- two divergent copies of "what counts as an LLM tag, and
 how overwrite removes it" is how a collection ends up with orphaned tags.
 """
 
+import hashlib
 import json
 import logging
+import re
 
 from bsimvis.app.services import tag_taxonomy
 from bsimvis.app.services.config_service import config_service
@@ -51,6 +59,22 @@ SUMMARY_CONTEXT_CHARS = 220  # per-neighbour summary carried into a caller's pro
 # one cheap call while still going deep on the ones that need it.
 NEED_CONTEXT_MARKER = "NEED_MORE_CONTEXT"
 MAX_AGENTIC_ITERATIONS = 4
+
+# Small call-connected, non-cyclic chains are batched into one LLM call to
+# amortize per-call overhead (system prompt/rules repeated every call). Kept
+# low: each member still needs independently attributed output parsed back
+# out of one response, and a bigger batch means more code sharing one
+# context window with less of it dedicated to any single function.
+CLUSTER_BATCH_SIZE = 5
+
+# Ghidra's auto-generated names/addresses (FUN_00401230, DAT_0040c000, a raw
+# 0x... literal) are the only thing that differs between two copies of the
+# same duplicated/templated/copy-pasted function; strip them before hashing
+# so those copies collapse onto one representative instead of each getting
+# their own LLM call.
+_ADDR_TOKEN_RE = re.compile(
+    r"\b(?:FUN|DAT|LAB|PTR|SUB|JOIN)_[0-9A-Fa-f]{4,}\b|\b0x[0-9A-Fa-f]{4,}\b"
+)
 
 
 def max_batch_size():
@@ -216,6 +240,104 @@ def partition_call_graph(collection, func_ids):
         adj.setdefault(edge["from"], []).append(edge["to"])
 
     return _tarjan_scc(func_ids, adj)
+
+
+def _normalize_code_for_dedup(code):
+    return _ADDR_TOKEN_RE.sub("<ADDR>", code or "")
+
+
+def _group_by_duplicate_code(func_ids):
+    """Buckets `func_ids` whose decompiled code is identical once
+    address-derived auto-names are normalized out. Returns
+    (representative_func_ids, dup_map, code_cache):
+
+    * `representative_func_ids` -- one func_id per distinct code body (plus
+      every func_id whose lookup failed, so the normal per-function error
+      path still surfaces it).
+    * `dup_map` -- representative func_id -> the other func_ids sharing its
+      code, for fanning the representative's verdict out to them.
+    * `code_cache` -- func_id -> its already-fetched `get_function` result,
+      for the representatives only (duplicates' fetch is discarded once it
+      has served the hash, so this stays bounded by the *distinct* code
+      count, not the input count).
+
+    ponytail: exact-normalized-text dedup, not fuzzy/near-duplicate
+    matching. Catches copy-pasted, templated and statically-duplicated
+    functions -- the common case; upgrade to bsim similarity clustering if
+    renamed-but-logically-identical functions turn out to matter.
+    """
+    buckets = {}
+    code_cache = {}
+    errors = []
+    for fid in func_ids:
+        data = get_function(fid)
+        if "error" in data:
+            errors.append(fid)
+            continue
+        key = hashlib.sha256(
+            _normalize_code_for_dedup(data.get("code")).encode()
+        ).hexdigest()
+        buckets.setdefault(key, []).append(fid)
+        code_cache[fid] = data
+
+    representatives = list(errors)
+    dup_map = {}
+    for fids in buckets.values():
+        fids_sorted = sorted(fids)
+        rep = fids_sorted[0]
+        representatives.append(rep)
+        dups = fids_sorted[1:]
+        if dups:
+            dup_map[rep] = dups
+        for fid in dups:
+            code_cache.pop(fid, None)
+    return representatives, dup_map, code_cache
+
+
+def _with_dups(fids, dup_map):
+    """Expands a unit's func_ids with each one's duplicate siblings, for
+    enrichment checks/counters that must account for the whole group."""
+    out = list(fids)
+    for fid in fids:
+        out.extend(dup_map.get(fid, ()))
+    return out
+
+
+def _cluster_units(units, adj, batch_size=CLUSTER_BATCH_SIZE):
+    """Groups `partition_call_graph`'s bottom-up units into
+    `(kind, func_ids)` entries: a true SCC (`kind="scc"`) always passes
+    through alone, never merged with anything (splitting or diluting a
+    mutual-recursion group would break `_process_scc`'s shared-verdict
+    contract). Consecutive singleton units are greedily folded into a
+    `kind="batch"` entry as long as the next one is call-connected (directly
+    calls, or is called by, something already in the running batch) and the
+    batch would not exceed `batch_size`; a singleton with no such neighbour
+    becomes its own `kind="single"` entry. `batch_size <= 1` disables
+    batching, every singleton stays its own entry.
+    """
+    clustered = []
+    batch = []
+
+    def flush():
+        if not batch:
+            return
+        clustered.append(("single" if len(batch) == 1 else "batch", list(batch)))
+        batch.clear()
+
+    for unit in units:
+        if len(unit) > 1:
+            flush()
+            clustered.append(("scc", list(unit)))
+            continue
+        fid = unit[0]
+        connected = any(
+            fid in adj.get(b, ()) or b in adj.get(fid, ()) for b in batch
+        )
+        if batch and (not connected or len(batch) >= batch_size):
+            flush()
+        batch.append(fid)
+    flush()
+    return clustered
 
 
 # --- prompt context assembly --------------------------------------------
@@ -438,6 +560,44 @@ class AnalysisOrchestrator:
 
         return applied
 
+    def _finalize(
+        self, collection, fid, func_name, summary, tags, actions, overwrite, summaries
+    ):
+        summaries[fid] = {
+            "func_name": func_name,
+            "summary": _one_liner(summary),
+            "tags": tags,
+        }
+        applied = self._write_result(
+            collection, fid, func_name, summary, tags, actions, overwrite
+        )
+        return "done", ", ".join(applied) if applied else None
+
+    def _fanout_dups(
+        self,
+        collection,
+        rep_fid,
+        rep_name,
+        summary,
+        tags,
+        actions,
+        overwrite,
+        summaries,
+        dup_map,
+        out,
+    ):
+        """Copies a representative's verdict onto its duplicate siblings
+        (see `_group_by_duplicate_code`) without a separate LLM call each."""
+        for dup_fid in dup_map.get(rep_fid, ()):
+            dup_summary = (
+                f"{summary}\n\n(Duplicate of {rep_fid}; identical code, verdict "
+                "copied without a separate LLM call.)"
+            )
+            out[dup_fid] = self._finalize(
+                collection, dup_fid, rep_name, dup_summary, tags, actions, overwrite,
+                summaries,
+            )
+
     def _process_singleton(
         self,
         collection,
@@ -448,10 +608,12 @@ class AnalysisOrchestrator:
         overwrite,
         custom_prompt,
         agentic=False,
+        code_cache=None,
+        dup_map=None,
     ):
-        data = get_function(func_id)
+        data = (code_cache or {}).get(func_id) or get_function(func_id)
         if "error" in data:
-            return "failed", data["error"]
+            return {func_id: ("failed", data["error"])}
 
         context = _context_block([func_id], adj, summaries)
         evidence = _code_evidence(data)
@@ -466,18 +628,20 @@ class AnalysisOrchestrator:
                 collection, data["func_name"], code_with_context, custom_prompt
             )
         if err:
-            return "failed", err
+            return {func_id: ("failed", err)}
         if not summary and not tags:
-            return "failed", "empty LLM response"
-        summaries[func_id] = {
-            "func_name": data["func_name"],
-            "summary": _one_liner(summary),
-            "tags": tags,
+            return {func_id: ("failed", "empty LLM response")}
+        out = {
+            func_id: self._finalize(
+                collection, func_id, data["func_name"], summary, tags, actions,
+                overwrite, summaries,
+            )
         }
-        applied = self._write_result(
-            collection, func_id, data["func_name"], summary, tags, actions, overwrite
+        self._fanout_dups(
+            collection, func_id, data["func_name"], summary, tags, actions,
+            overwrite, summaries, dup_map or {}, out,
         )
-        return "done", ", ".join(applied) if applied else None
+        return out
 
     def _process_scc(
         self,
@@ -489,6 +653,8 @@ class AnalysisOrchestrator:
         overwrite,
         custom_prompt,
         agentic=False,
+        code_cache=None,
+        dup_map=None,
     ):
         """A mutually-recursive group: no valid bottom-up order inside it, so
         one combined LLM call sees every member's code and returns one shared
@@ -503,7 +669,7 @@ class AnalysisOrchestrator:
         """
         members = []
         for fid in unit:
-            data = get_function(fid)
+            data = (code_cache or {}).get(fid) or get_function(fid)
             if "error" not in data:
                 members.append(data)
         if not members:
@@ -536,21 +702,79 @@ class AnalysisOrchestrator:
 
         out = {}
         for m in members:
-            summaries[m["func_id"]] = {
-                "func_name": m["func_name"],
-                "summary": _one_liner(summary),
-                "tags": tags,
-            }
-            applied = self._write_result(
-                collection,
+            out[m["func_id"]] = self._finalize(
+                collection, m["func_id"], m["func_name"], summary, tags, actions,
+                overwrite, summaries,
+            )
+            self._fanout_dups(
+                collection, m["func_id"], m["func_name"], summary, tags, actions,
+                overwrite, summaries, dup_map or {}, out,
+            )
+        return out
+
+    def _process_batch(
+        self,
+        collection,
+        unit,
+        adj,
+        summaries,
+        actions,
+        overwrite,
+        custom_prompt,
+        code_cache=None,
+        dup_map=None,
+    ):
+        """A small call-connected but non-cyclic cluster (`_cluster_units`):
+        one LLM call sees every member's code, but -- unlike `_process_scc`'s
+        true cycle -- these functions are independently meaningful, so the
+        call must return one attributed result per function rather than a
+        shared verdict. No agentic escalation here: a batch member that needs
+        a second, tool-using pass falls back to a plain "failed" result
+        instead of a per-item agentic call, which would erase the batching
+        the whole thing exists for -- `run_contextual_batch` only clusters
+        when `agentic` is off.
+        """
+        members = []
+        for fid in unit:
+            data = (code_cache or {}).get(fid) or get_function(fid)
+            if "error" not in data:
+                members.append(data)
+        if not members:
+            return {fid: ("failed", "no member function resolved") for fid in unit}
+
+        context = _context_block(unit, adj, summaries)
+        payload = [
+            (
                 m["func_id"],
                 m["func_name"],
-                summary,
-                tags,
-                actions,
-                overwrite,
+                f"{context}\n{_code_evidence(m)}" if context else _code_evidence(m),
             )
-            out[m["func_id"]] = ("done", ", ".join(applied) if applied else None)
+            for m in members
+        ]
+        vocabulary = self._vocab_seen if "tags" in actions else None
+        results, missing, err = llm_service.summarize_batch(
+            payload, vocabulary=vocabulary, custom_prompt=custom_prompt
+        )
+
+        out = {}
+        by_id = {m["func_id"]: m for m in members}
+        if err:
+            return {m["func_id"]: ("failed", err) for m in members}
+        for fid, (summary, tags) in results.items():
+            m = by_id[fid]
+            if not summary and not tags:
+                out[fid] = ("failed", "empty LLM response")
+                continue
+            out[fid] = self._finalize(
+                collection, fid, m["func_name"], summary, tags, actions, overwrite,
+                summaries,
+            )
+            self._fanout_dups(
+                collection, fid, m["func_name"], summary, tags, actions, overwrite,
+                summaries, dup_map or {}, out,
+            )
+        for fid in missing:
+            out[fid] = ("failed", "no result returned for this function in batch")
         return out
 
     # --- run -------------------------------------------------------------
@@ -583,23 +807,42 @@ class AnalysisOrchestrator:
                 t.lower() for t in tag_service.get_llm_vocabulary(collection) or ()
             }
 
-        units = partition_call_graph(collection, func_ids)
+        representatives, dup_map, code_cache = _group_by_duplicate_code(func_ids)
+        dup_count = len(func_ids) - len(representatives)
+
+        units = partition_call_graph(collection, representatives)
 
         relations = (
             get_function_relations(func_ids, collection)
             if len(func_ids) > 1
             else {"call_edges": []}
         )
+        dup_to_rep = {dup: rep for rep, dups in dup_map.items() for dup in dups}
         adj = {}
         for edge in relations.get("call_edges", []):
-            adj.setdefault(edge["from"], []).append(edge["to"])
+            src = dup_to_rep.get(edge["from"], edge["from"])
+            dst = dup_to_rep.get(edge["to"], edge["to"])
+            adj.setdefault(src, []).append(dst)
+
+        # Batching folds independent (non-cyclic) functions into one LLM call
+        # with per-function attributed output -- an escalation path
+        # (`_agentic_summarize`) that agentic mode relies on. Keep agentic
+        # runs on the one-unit-per-call path so that escalation still works.
+        clustered = (
+            _cluster_units(units, adj, unit_max_size or CLUSTER_BATCH_SIZE)
+            if not agentic
+            else [("scc" if len(u) > 1 else "single", list(u)) for u in units]
+        )
 
         if job_service and job_id:
-            scc_count = sum(1 for u in units if len(u) > 1)
+            scc_count = sum(1 for kind, _ in clustered if kind == "scc")
+            batch_count = sum(1 for kind, _ in clustered if kind == "batch")
             job_service.add_log(
                 job_id,
-                f"Contextual LLM batch over {total} functions in {len(units)} units "
-                f"({scc_count} mutually-recursive groups) | actions={','.join(actions)} "
+                f"Contextual LLM batch over {total} functions "
+                f"({dup_count} duplicate(s) collapsed onto a representative) in "
+                f"{len(clustered)} groups ({scc_count} mutually-recursive, "
+                f"{batch_count} batched) | actions={','.join(actions)} "
                 f"| overwrite={overwrite}",
             )
 
@@ -607,18 +850,19 @@ class AnalysisOrchestrator:
         counters = {"done": 0, "skipped": 0, "failed": 0}
         processed = 0
 
-        for unit in units:
+        for kind, unit in clustered:
             if job_service and job_id and job_service.is_cancelled(job_id):
                 if job_service:
                     job_service.add_log(job_id, "Cancelled.")
                 return False
 
+            all_fids = _with_dups(unit, dup_map)
             if not overwrite and all(
                 _already_enriched(self.r, collection, fid, a)
                 for fid in unit
                 for a in actions
             ):
-                for fid in unit:
+                for fid in all_fids:
                     (
                         self._record(job_id, fid, "skipped", "already enriched")
                         if job_id
@@ -631,32 +875,32 @@ class AnalysisOrchestrator:
                             if n.get("owner") == LLM_NOTE_OWNER and n.get("text")
                         ]
                         if notes:
-                            data = get_function(fid)
+                            data = code_cache.get(fid) or get_function(fid)
                             summaries[fid] = {
                                 "func_name": data.get(
                                     "func_name", fid.rsplit(":", 1)[-1]
                                 ),
                                 "summary": _one_liner(notes[-1]["text"]),
                             }
-                counters["skipped"] += len(unit)
-                processed += len(unit)
+                counters["skipped"] += len(all_fids)
+                processed += len(all_fids)
                 continue
 
             try:
-                if len(unit) == 1:
-                    fid = unit[0]
-                    state, detail = self._process_singleton(
+                if kind == "single":
+                    results = self._process_singleton(
                         collection,
-                        fid,
+                        unit[0],
                         adj,
                         summaries,
                         actions,
                         overwrite,
                         custom_prompt,
                         agentic,
+                        code_cache,
+                        dup_map,
                     )
-                    results = {fid: (state, detail)}
-                else:
+                elif kind == "scc":
                     results = self._process_scc(
                         collection,
                         unit,
@@ -666,10 +910,24 @@ class AnalysisOrchestrator:
                         overwrite,
                         custom_prompt,
                         agentic,
+                        code_cache,
+                        dup_map,
+                    )
+                else:
+                    results = self._process_batch(
+                        collection,
+                        unit,
+                        adj,
+                        summaries,
+                        actions,
+                        overwrite,
+                        custom_prompt,
+                        code_cache,
+                        dup_map,
                     )
             except Exception as e:
                 logging.error(f"analysis_orchestrator: unit {unit} failed: {e}")
-                results = {fid: ("failed", str(e)) for fid in unit}
+                results = {fid: ("failed", str(e)) for fid in all_fids}
 
             for fid, (state, detail) in results.items():
                 counters[state] = counters.get(state, 0) + 1

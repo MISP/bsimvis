@@ -2756,6 +2756,12 @@ class LLMContextualBatch(Resource):
                 ),
                 "overwrite": fields.Boolean(default=False),
                 "custom_prompt": fields.String,
+                "unit_max_size": fields.Integer(
+                    default=5,
+                    description="Max functions batched into one LLM call for a "
+                    "call-connected, non-cyclic cluster. 1 or less disables "
+                    "batching (one call per function/SCC).",
+                ),
             },
         )
     )

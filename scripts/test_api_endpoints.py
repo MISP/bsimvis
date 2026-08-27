@@ -3481,6 +3481,163 @@ def test_llm_pair_analysis_job():
         test_endpoint("DELETE", "/api/jobs/pause", label="DELETE /api/jobs/pause")
 
 
+def test_bin_sim_notes_and_tags():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-bis-3 – Bin_sim pair notes and tags", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – bin_sim notes/tags checks skipped.", YELLOW))
+        return
+
+    # The plain (no `table`) diff response is the full doc, sid included.
+    diff = test_endpoint(
+        "GET",
+        "/api/bin_sim/diff",
+        params={"collection": COLLECTION, "md5_a": file_md5, "md5_b": file_md5_2},
+        label="GET /api/bin_sim/diff (full doc, for sid)",
+    )
+    sid = (diff or {}).get("sid")
+    if not check("bin_sim diff doc carries its own sid", bool(sid), str(diff)[:200]):
+        return
+
+    # --- tags: plain tag, then bookmark/ignore, all through the generic
+    # tag_service entity_type path bin_sim now shares with file/function ---
+    add_tag_resp = test_endpoint(
+        "POST",
+        "/api/tags/add",
+        data={"collection": COLLECTION, "entity_type": "bin_sim", "entity_id": sid, "tag": "reviewed"},
+        label="POST /api/tags/add (bin_sim)",
+    )
+    check(
+        "bin_sim tag add reports success",
+        (add_tag_resp or {}).get("status") == "success",
+        str(add_tag_resp),
+    )
+
+    for special in ("bookmark", "ignore"):
+        resp = test_endpoint(
+            "POST",
+            "/api/tags/add",
+            data={"collection": COLLECTION, "entity_type": "bin_sim", "entity_id": sid, "tag": special},
+            label=f"POST /api/tags/add (bin_sim {special})",
+        )
+        check(f"bin_sim {special} tag add reports success", (resp or {}).get("status") == "success", str(resp))
+
+    diff2 = test_endpoint(
+        "GET",
+        "/api/bin_sim/diff",
+        params={"collection": COLLECTION, "md5_a": file_md5, "md5_b": file_md5_2},
+        label="GET /api/bin_sim/diff (after tagging)",
+    )
+    pair_user_tags = (diff2 or {}).get("user_tags") or []
+    check(
+        "bin_sim pair doc reflects added tags",
+        all(t in pair_user_tags for t in ("reviewed", "bookmark", "ignore")),
+        f"user_tags={pair_user_tags}",
+    )
+
+    search_after_tag = test_endpoint(
+        "GET",
+        "/api/bin_sim/search",
+        params={"collection": COLLECTION},
+        label="GET /api/bin_sim/search (after tagging)",
+    )
+    matching = [r for r in (search_after_tag or {}).get("results", []) if r.get("_id") == sid]
+    check(
+        "bin_sim search result exposes sid as _id",
+        bool(matching),
+        f"sid={sid}, ids={[r.get('_id') for r in (search_after_tag or {}).get('results', [])][:5]}",
+    )
+    if matching:
+        check(
+            "bin_sim search result carries the pair's own user_tags",
+            "reviewed" in (matching[0].get("user_tags") or []),
+            str(matching[0].get("user_tags")),
+        )
+
+    remove_tag_resp = test_endpoint(
+        "POST",
+        "/api/tags/remove",
+        data={"collection": COLLECTION, "entity_type": "bin_sim", "entity_id": sid, "tag": "reviewed"},
+        label="POST /api/tags/remove (bin_sim)",
+    )
+    check(
+        "bin_sim tag remove reports success",
+        (remove_tag_resp or {}).get("status") == "success",
+        str(remove_tag_resp),
+    )
+
+    # --- notes: add / update / remove against the pair's own note family ---
+    add_note_resp = test_endpoint(
+        "POST",
+        "/api/notes/bin_sim/add",
+        data={"sid": sid, "text": "Confirmed same malware family.", "owner": "user"},
+        label="POST /api/notes/bin_sim/add",
+    )
+    note = (add_note_resp or {}).get("note") or {}
+    check(
+        "bin_sim note add reports success with a note id",
+        (add_note_resp or {}).get("status") == "success" and bool(note.get("id")),
+        str(add_note_resp),
+    )
+    note_id = note.get("id")
+
+    list_notes_resp = test_endpoint(
+        "GET",
+        "/api/notes/bin_sim/list",
+        params={"sid": sid},
+        label="GET /api/notes/bin_sim/list",
+    )
+    check(
+        "bin_sim note appears in list",
+        any(n.get("id") == note_id for n in (list_notes_resp or {}).get("notes", [])),
+        str(list_notes_resp)[:200],
+    )
+
+    if note_id:
+        update_resp = test_endpoint(
+            "PUT",
+            "/api/notes/bin_sim/update",
+            data={"sid": sid, "note_id": note_id, "text": "Updated: same malware family, high confidence."},
+            label="PUT /api/notes/bin_sim/update",
+        )
+        check(
+            "bin_sim note update reports success",
+            (update_resp or {}).get("status") == "success",
+            str(update_resp),
+        )
+
+        # test_endpoint's DELETE branch doesn't forward a body, and this route
+        # needs one -- go straight through requests, like the other note
+        # cleanup calls in this file do.
+        remove_note_http = requests.delete(
+            f"{BASE_URL}/api/notes/bin_sim/remove",
+            json={"sid": sid, "note_id": note_id},
+            timeout=30,
+        )
+        try:
+            remove_note_resp = remove_note_http.json()
+        except Exception:
+            remove_note_resp = None
+        check(
+            "bin_sim note remove reports success",
+            remove_note_http.status_code == 200
+            and (remove_note_resp or {}).get("status") == "success",
+            f"HTTP {remove_note_http.status_code}: {remove_note_resp}",
+        )
+
+    # Cleanup: drop the bookmark/ignore tags this test added so it doesn't
+    # leak state into whatever runs after it against the same pair.
+    for special in ("bookmark", "ignore"):
+        test_endpoint(
+            "POST",
+            "/api/tags/remove",
+            data={"collection": COLLECTION, "entity_type": "bin_sim", "entity_id": sid, "tag": special},
+            label=f"POST /api/tags/remove (bin_sim {special}, cleanup)",
+        )
+
+
 def test_exact_pair_resplit():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-bis-2 – exact pair tag resplit", BOLD))
@@ -5325,6 +5482,7 @@ if __name__ == "__main__":
         test_llm_agentic_analysis,
         test_bin_sim_diff_cache,
         test_llm_pair_analysis_job,
+        test_bin_sim_notes_and_tags,
         test_exact_pair_resplit,
         test_pool_collection_equivalence,
         test_diff_injection_score,
@@ -5346,6 +5504,7 @@ if __name__ == "__main__":
         # Issues the /api/bin_sim/build whose doc the diff cache step reads.
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
         "test_llm_pair_analysis_job": ["test_search_filters_and_sorting"],
+        "test_bin_sim_notes_and_tags": ["test_search_filters_and_sorting"],
         "test_exact_pair_resplit": ["test_search_filters_and_sorting"],
         "test_retained_call_graph": ["test_search_filters_and_sorting"],
         "test_diff_injection_score": ["test_search_filters_and_sorting"],

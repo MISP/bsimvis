@@ -612,6 +612,8 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
         diff_data = _hydrate_diff(
             r, data_raw, req_coll_a, req_md5_a, req_coll_b, req_md5_b, pool_id, algo
         )
+        diff_data["sid"] = sid
+        normalize_tags(diff_data)
         _diff_cache_put(key, diff_data)
 
     # Tags changed since this pair was split. The score is unaffected -- it comes
@@ -1283,6 +1285,7 @@ def list_bin_sims():
     for sid, res in zip(child_sids, docs_res[len(paged) :]):
         doc = _load(res)
         if doc:
+            doc["sid"] = sid
             child_docs[sid] = doc
 
     results = []
@@ -1290,6 +1293,8 @@ def list_bin_sims():
         doc = _load(res)
         if not doc:
             continue
+        doc["sid"] = sid
+        normalize_tags(doc)
         if grouped:
             kids = [
                 child_docs[s] for s, _ in children_of.get(sid, ()) if s in child_docs

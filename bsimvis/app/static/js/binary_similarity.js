@@ -2864,6 +2864,32 @@ function binSimScoreCards(item, activeScoreType) {
 
 /** @param depth 0 for a normal row; deeper rows are the children folded under a
  *  container row, hidden until its caret is opened. */
+/** Tags + notes for the PAIR itself (not either file) -- ignore/bookmark and
+ * the AI insight report land here, keyed by the pair's own sid. */
+function renderBinSimPairCell(item) {
+    const sid = item.sid || item._id;
+    if (!sid) return '';
+    const pairTags = Array.isArray(item.tags) ? item.tags : [];
+    const pairUserTags = Array.isArray(item.user_tags) ? item.user_tags : [];
+    const ctxData = {
+        sid,
+        tags: pairTags,
+        user_tags: pairUserTags,
+        file_name_a: item.file_name_a,
+        file_name_b: item.file_name_b,
+        md5_a: item.md5_a,
+        md5_b: item.md5_b
+    };
+    return `
+        <div style="display:flex; align-items:center; gap:6px;"
+             data-entity-data='${escapeAttr(JSON.stringify(ctxData))}'
+             oncontextmenu='EntityRenderer.handleContextMenu(event, "bin_sim", this)'>
+            ${EntityRenderer.renderTag('bin_sim', sid, pairTags, pairUserTags, { maxTags: 3 })}
+            ${EntityRenderer.renderBinSimNoteButton(sid, item.note_owners || [], { raw_data: item })}
+        </div>
+    `;
+}
+
 function renderBinSimPairs(items, depth = 0, anchorMd5 = null) {
     if (!items || items.length === 0) return '';
     let html = '';
@@ -2976,6 +3002,9 @@ function renderBinSimPairs(items, depth = 0, anchorMd5 = null) {
                 </td>
                 <td class="sim-cell" style="vertical-align:middle;">
                     <div style="display:flex; align-items:center; justify-content:center; height:100%; font-weight:bold;">${shared}</div>
+                </td>
+                <td class="sim-cell" style="vertical-align:middle;">
+                    ${renderBinSimPairCell(item)}
                 </td>
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:8px;">

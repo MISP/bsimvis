@@ -25,8 +25,27 @@ let llmAbortController = null;
 let chatSessions = {}; // collection -> agent chat session_id (in-memory only)
 let lastChatFocusId = {}; // collection -> last funcId the chat was told about, for the "now viewing X" divider
 
-// 'func' for function notes, 'file' for file notes
+// 'func' for function notes, 'file' for file notes, 'bin_sim' for pair notes
 let entityMode = 'func';
+
+const NOTE_MODE_INFO = {
+    func: { idKey: 'func_id', base: '/api/notes' },
+    file: { idKey: 'file_id', base: '/api/notes/file' },
+    bin_sim: { idKey: 'sid', base: '/api/notes/bin_sim' }
+};
+function noteMode() { return NOTE_MODE_INFO[entityMode] || NOTE_MODE_INFO.func; }
+
+/** Fires the per-mode "a note changed" hooks after a note write. */
+function notifyNoteChanged(funcId) {
+    if (entityMode === 'func') {
+        window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
+        if (window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
+    } else if (entityMode === 'file') {
+        if (window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
+    } else if (entityMode === 'bin_sim') {
+        if (window.parent?.refreshBinSimRow) window.parent.refreshBinSimRow(funcId);
+    }
+}
 
 // Panel State
 let isNotesOpen = false;
@@ -61,7 +80,8 @@ async function showNotes(funcId, expand = true) {
     currentNotesFuncId = funcId;
     // ponytail: the id carries the entity kind, so derive it instead of trusting
     // the sticky flag showFileNotes() sets (stale after navigating file -> function)
-    entityMode = String(funcId).split(':')[1] === 'file' ? 'file' : 'func';
+    const kindSegment = String(funcId).split(':')[1];
+    entityMode = kindSegment === 'file' ? 'file' : kindSegment === 'bin_sim' ? 'bin_sim' : 'func';
 
     // Ensure panels exist
     createPanelsIfMissing();
@@ -86,7 +106,7 @@ async function showNotes(funcId, expand = true) {
     }
 
     // Also update graph panel if open and not locked
-    if (isGraphOpen && !isGraphLocked && funcId && entityMode !== 'file') {
+    if (isGraphOpen && !isGraphLocked && funcId && entityMode === 'func') {
         loadSideGraph(funcId);
     }
 
@@ -672,9 +692,9 @@ async function refreshNotes(funcId) {
     const listEl = document.getElementById('notes-list');
     if (!listEl) return;
     const collection = window.getCollectionFromId(funcId);
-    const isFile = entityMode === 'file';
-    const idParam = isFile ? `file_id=${encodeURIComponent(funcId)}` : `func_id=${encodeURIComponent(funcId)}`;
-    const endpoint = isFile ? '/api/notes/file/list' : '/api/notes/list';
+    const mode = noteMode();
+    const idParam = `${mode.idKey}=${encodeURIComponent(funcId)}`;
+    const endpoint = `${mode.base}/list`;
     try {
         const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
         const res = await fetch(`${endpoint}?${apiParams}&${idParam}`);
@@ -755,12 +775,11 @@ async function saveNote(funcId) {
     const ownerEl = document.getElementById('note-owner-select');
     const text = textEl.value.trim();
     if (!text) return;
-    const isFile = entityMode === 'file';
-    const endpoint = isFile ? '/api/notes/file/add' : '/api/notes/add';
-    const idKey = isFile ? 'file_id' : 'func_id';
+    const mode = noteMode();
+    const endpoint = `${mode.base}/add`;
     try {
         const pool = getActivePool();
-        const payload = { collection: window.getCollectionFromId(funcId), [idKey]: funcId, text, owner: ownerEl.value };
+        const payload = { collection: window.getCollectionFromId(funcId), [mode.idKey]: funcId, text, owner: ownerEl.value };
         if (pool) payload.pool = pool;
         const res = await fetch(endpoint, {
             method: 'POST',
@@ -770,9 +789,7 @@ async function saveNote(funcId) {
         if ((await res.json()).status === 'success') {
             textEl.value = '';
             await refreshNotes(funcId);
-            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
-            if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
-            if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
+            notifyNoteChanged(funcId);
         }
     } catch (e) { alert(e.message); }
 }
@@ -798,14 +815,13 @@ async function submitEditNote(funcId, noteId) {
     const text = textEl.value.trim();
     if (!text) return;
 
-    const isFile = entityMode === 'file';
-    const endpoint = isFile ? '/api/notes/file/update' : '/api/notes/update';
-    const idKey = isFile ? 'file_id' : 'func_id';
+    const mode = noteMode();
+    const endpoint = `${mode.base}/update`;
     try {
         const pool = getActivePool();
         const payload = {
             collection: window.getCollectionFromId(funcId),
-            [idKey]: funcId,
+            [mode.idKey]: funcId,
             note_id: noteId,
             text: text
         };
@@ -819,9 +835,7 @@ async function submitEditNote(funcId, noteId) {
         if (data.status === 'success') {
             currentEditingNoteId = null;
             await refreshNotes(funcId);
-            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
-            if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
-            if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
+            notifyNoteChanged(funcId);
         } else {
             alert(data.error || 'Failed to update note');
         }
@@ -832,12 +846,11 @@ async function submitEditNote(funcId, noteId) {
 
 async function deleteNote(funcId, note_id) {
     if (!confirm('Delete note?')) return;
-    const isFile = entityMode === 'file';
-    const endpoint = isFile ? '/api/notes/file/remove' : '/api/notes/remove';
-    const idKey = isFile ? 'file_id' : 'func_id';
+    const mode = noteMode();
+    const endpoint = `${mode.base}/remove`;
     try {
         const pool = getActivePool();
-        const payload = { collection: window.getCollectionFromId(funcId), [idKey]: funcId, note_id };
+        const payload = { collection: window.getCollectionFromId(funcId), [mode.idKey]: funcId, note_id };
         if (pool) payload.pool = pool;
         const res = await fetch(endpoint, {
             method: 'DELETE',
@@ -846,9 +859,7 @@ async function deleteNote(funcId, note_id) {
         });
         if ((await res.json()).status === 'success') {
             await refreshNotes(funcId);
-            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
-            if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
-            if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
+            notifyNoteChanged(funcId);
         }
     } catch (e) { alert(e.message); }
 }
@@ -868,6 +879,10 @@ async function readStream(response, onChunk) {
 
 async function generateSummary(funcId) {
     const statusEl = document.getElementById("llm-status");
+    if (entityMode === 'bin_sim') {
+        if (statusEl) statusEl.innerText = 'Use "Run Pair Analysis" to generate a binary comparison report.';
+        return;
+    }
     if (statusEl) statusEl.innerText = "Summarizing...";
     const sendBtn = document.getElementById("llm-send-btn");
     const stopBtn = document.getElementById("llm-stop-btn");
@@ -980,7 +995,7 @@ function currentFocusContextLine() {
     if (!currentNotesFuncId) {
         return "(No specific function or file is currently focused -- this is a general question about the collection.)";
     }
-    const kind = entityMode === 'file' ? 'file' : 'function';
+    const kind = entityMode === 'file' ? 'file' : entityMode === 'bin_sim' ? 'binary comparison pair' : 'function';
     return `(Analyst is currently viewing ${kind} ${currentNotesFuncId}. Assume this question refers to it unless stated otherwise.)`;
 }
 
@@ -1043,12 +1058,11 @@ async function saveMessageAsNote(funcId, index, btn) {
     const collection = window.getCollectionFromId(funcId);
     const history = chatHistories[collection];
     if (!history || !history[index]) return;
-    const isFile = entityMode === 'file';
-    const endpoint = isFile ? '/api/notes/file/add' : '/api/notes/add';
-    const idKey = isFile ? 'file_id' : 'func_id';
+    const mode = noteMode();
+    const endpoint = `${mode.base}/add`;
     try {
         const pool = getActivePool();
-        const payload = { collection, [idKey]: funcId, text: history[index].content, owner: "llm" };
+        const payload = { collection, [mode.idKey]: funcId, text: history[index].content, owner: "llm" };
         if (pool) payload.pool = pool;
         const res = await fetch(endpoint, {
             method: "POST",
@@ -1059,20 +1073,17 @@ async function saveMessageAsNote(funcId, index, btn) {
             await refreshNotes(funcId);
             btn.innerHTML = '<i class="fa-solid fa-check"></i> Saved';
             btn.disabled = true;
-            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
-            if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
-            if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
+            notifyNoteChanged(funcId);
         }
     } catch (e) { alert(e.message); }
 }
 
 async function handleDroppedText(funcId, text) {
-    const isFile = entityMode === 'file';
-    const endpoint = isFile ? '/api/notes/file/add' : '/api/notes/add';
-    const idKey = isFile ? 'file_id' : 'func_id';
+    const mode = noteMode();
+    const endpoint = `${mode.base}/add`;
     try {
         const pool = getActivePool();
-        const payload = { collection: window.getCollectionFromId(funcId), [idKey]: funcId, text: text, owner: 'llm' };
+        const payload = { collection: window.getCollectionFromId(funcId), [mode.idKey]: funcId, text: text, owner: 'llm' };
         if (pool) payload.pool = pool;
         const res = await fetch(endpoint, {
             method: 'POST',
@@ -1081,9 +1092,7 @@ async function handleDroppedText(funcId, text) {
         });
         if ((await res.json()).status === 'success') {
             await refreshNotes(funcId);
-            if (!isFile) window.dispatchEvent(new CustomEvent('bsimvis:note-changed', { detail: { funcId } }));
-            if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
-            if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
+            notifyNoteChanged(funcId);
         }
     } catch (e) { alert(e.message); }
 }
@@ -1109,6 +1118,7 @@ window.saveMessageAsNote = saveMessageAsNote;
 window.toggleContentExpand = toggleContentExpand;
 window.showNotePanel = function(id, e) { if (typeof showNotes === 'function') showNotes(id); };
 window.showFileNotePanel = function(id, e) { if (typeof showFileNotes === 'function') showFileNotes(id); };
+window.showBinSimNotePanel = function(id, e) { if (typeof showNotes === 'function') showNotes(id); };
 
 // Connect layout updates with SPA navigation. Graph/Notes/AI Insight are
 // global now: navigating to a different page (functions list, cluster view,
@@ -1130,7 +1140,10 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // --- Hover Tooltip for Notes ---
-window.showNoteTooltip = async function(id, isFile, e) {
+window.showNoteTooltip = async function(id, modeArg, e) {
+    // Back-compat: callers used to pass a boolean (isFile).
+    const mode = modeArg === true ? 'file' : modeArg === false ? 'func' : (modeArg || 'func');
+    const tooltipModeInfo = NOTE_MODE_INFO[mode] || NOTE_MODE_INFO.func;
     const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
     if (isMenuOpen) return;
     if (!id) return;
@@ -1168,8 +1181,8 @@ window.showNoteTooltip = async function(id, isFile, e) {
     `;
 
     const collection = (window.getCollectionFromId && window.getCollectionFromId(id)) || id.split(':')[0];
-    const idParam = isFile ? `file_id=${encodeURIComponent(id)}` : `func_id=${encodeURIComponent(id)}`;
-    const endpoint = isFile ? '/api/notes/file/list' : '/api/notes/list';
+    const idParam = `${tooltipModeInfo.idKey}=${encodeURIComponent(id)}`;
+    const endpoint = `${tooltipModeInfo.base}/list`;
     
     try {
         const apiParams = (window.getApiParams || (window.parent && window.parent.getApiParams) || (() => ''))(collection);

@@ -787,9 +787,15 @@ class AnalysisOrchestrator:
                 job_service.add_log(job_id, f"Pair report generation failed: {report}")
             return False
 
+        if overwrite:
+            for n in note_service.get_bin_sim_notes(pair_collection, sid) or []:
+                if n.get("owner") == LLM_NOTE_OWNER:
+                    note_service.remove_bin_sim_note(pair_collection, sid, n.get("id"))
+        note_service.add_bin_sim_note(pair_collection, sid, report, owner=LLM_NOTE_OWNER)
+
         if job_service and job_id:
             job_service.r.hset(f"job:{job_id}", "report", report)
-            job_service.add_log(job_id, "Binary comparison report written to the job.")
+            job_service.add_log(job_id, "Binary comparison report saved as a pair note.")
         return True
 
     # --- whole-file analysis ---------------------------------------------

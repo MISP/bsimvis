@@ -16,6 +16,15 @@ def _collection_of(source):
     return collection
 
 
+def _collection_for(data, etype, entry_id):
+    """A bin_sim entity_id is a sid that already fully qualifies its own
+    collection/pool scope -- unlike file/function/similarity ids, trust it
+    over whatever collection/pool the client happened to post."""
+    if etype == "bin_sim":
+        return (entry_id or "").split(":bin_sim:", 1)[0] or None
+    return _collection_of(data)
+
+
 def add_tag():
     """
     Adds a user_tag to an entity.
@@ -27,16 +36,15 @@ def add_tag():
     }
     """
     data = request.json or {}
-    collection = _collection_of(data)
-
     etype = data.get("entity_type")
     entry_id = data.get("entity_id")
     tag = data.get("tag")
+    collection = _collection_for(data, etype, entry_id)
 
     if not all([collection, etype, entry_id, tag]):
         return {"error": "Missing parameters"}, 400
 
-    if etype not in ["file", "function", "similarity", "cluster", "bin_cluster"]:
+    if etype not in ["file", "function", "similarity", "cluster", "bin_cluster", "bin_sim"]:
         return {"error": "Invalid entity type"}, 400
 
     success = tag_service.add_user_tag(
@@ -85,16 +93,15 @@ def add_bulk_tags():
 def remove_tag():
     """Removes a user_tag from an entity."""
     data = request.json or {}
-    collection = _collection_of(data)
-
     etype = data.get("entity_type")
     entry_id = data.get("entity_id")
     tag = data.get("tag")
+    collection = _collection_for(data, etype, entry_id)
 
     if not all([collection, etype, entry_id, tag]):
         return {"error": "Missing parameters"}, 400
 
-    if etype not in ["file", "function", "similarity", "cluster", "bin_cluster"]:
+    if etype not in ["file", "function", "similarity", "cluster", "bin_cluster", "bin_sim"]:
         return {"error": "Invalid entity type"}, 400
 
     success = tag_service.remove_user_tag(

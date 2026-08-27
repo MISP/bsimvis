@@ -62,9 +62,9 @@ window.EntityRenderer = {
     /**
      * Hover attributes that show the note preview tooltip. Reuses moveCodePreview for positioning.
      */
-    notePreviewAttrs: function(id, isFile) {
+    notePreviewAttrs: function(id, mode) {
         return {
-            onmouseenter: `typeof showNoteTooltip === 'function' && showNoteTooltip(${jsString(id)}, ${!!isFile}, event)`,
+            onmouseenter: `typeof showNoteTooltip === 'function' && showNoteTooltip(${jsString(id)}, ${jsString(mode)}, event)`,
             onmousemove: `typeof moveCodePreview === 'function' && moveCodePreview(event)`,
             onmouseleave: `typeof hideNoteTooltip === 'function' && hideNoteTooltip()`
         };
@@ -101,7 +101,7 @@ window.EntityRenderer = {
             tooltip: hasNotes ? `Notes by: ${noteOwners.join(', ')}` : 'Add Note',
             onClick: `event.stopPropagation(); showNotePanel(${jsString(id)}, event)`,
             badge: noteCount > 1 ? `+${noteCount}` : null,
-            attr: hasNotes ? this.notePreviewAttrs(id, false) : {}
+            attr: hasNotes ? this.notePreviewAttrs(id, 'func') : {}
         });
     },
 
@@ -123,7 +123,29 @@ window.EntityRenderer = {
             tooltip: hasNotes ? `File Notes by: ${noteOwners.join(', ')}` : 'Add File Note',
             onClick: `event.stopPropagation(); showFileNotePanel(${jsString(id)}, event)`,
             badge: noteCount > 1 ? `+${noteCount}` : null,
-            attr: hasNotes ? this.notePreviewAttrs(id, true) : {}
+            attr: hasNotes ? this.notePreviewAttrs(id, 'file') : {}
+        });
+    },
+
+    /**
+     * Renders a note button for bin_sim pair entities (calls showBinSimNotePanel).
+     */
+    renderBinSimNoteButton: function(sid, noteOwners = [], options = {}) {
+        const hasNotes = noteOwners && noteOwners.length > 0;
+        const isTable = options.isTable === true;
+
+        const f = options.raw_data || {};
+        const noteCount = f.note_count || noteOwners.length || 0;
+
+        if (isTable && !hasNotes) return '';
+
+        return UI.Button.render({
+            className: `btn-note-action ${hasNotes ? 'has-notes ' + this.noteOwnerClass(noteOwners) : ''}`,
+            icon: hasNotes ? 'fa-solid fa-note-sticky' : 'fa-regular fa-note-sticky',
+            tooltip: hasNotes ? `Pair notes by: ${noteOwners.join(', ')}` : 'Add Pair Note',
+            onClick: `event.stopPropagation(); showBinSimNotePanel(${jsString(sid)}, event)`,
+            badge: noteCount > 1 ? `+${noteCount}` : null,
+            attr: hasNotes ? this.notePreviewAttrs(sid, 'bin_sim') : {}
         });
     },
 

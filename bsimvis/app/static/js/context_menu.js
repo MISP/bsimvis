@@ -171,6 +171,12 @@
             norm.name_a = data.file1 ? (data.file1.name || data.file1.file_name || data.file1.file_md5) : data.name_a;
             norm.name_b = data.file2 ? (data.file2.name || data.file2.file_name || data.file2.file_md5) : data.name_b;
             norm.value = data.value;
+        } else if (type === 'bin_sim') {
+            // A stored bin_sim pair comparison -- keyed by its sid, not a func/file id.
+            resolvedType = 'bin_sim';
+            norm.sid = data.sid;
+            norm.name_a = data.file_name_a || data.name_a || data.md5_a;
+            norm.name_b = data.file_name_b || data.name_b || data.md5_b;
         }
 
         // 2. Build HTML Content
@@ -184,13 +190,14 @@
         else if (resolvedType === 'bin_similarity') headerTitle = `Link: ${norm.name_a.substring(0,10)} ↔ ${norm.name_b.substring(0,10)}`;
         else if (resolvedType === 'cluster') headerTitle = `Cluster: ${norm.name}`;
         else if (resolvedType === 'bin_cluster') headerTitle = `Binary Cluster: ${norm.name}`;
+        else if (resolvedType === 'bin_sim') headerTitle = `Pair: ${String(norm.name_a).substring(0,10)} ↔ ${String(norm.name_b).substring(0,10)}`;
 
         html += `<div class="context-menu-header">${headerTitle}</div>`;
 
         // -- Bookmark & Ignore (Pinned at the Top) --
-        if (['function', 'file', 'similarity', 'cluster', 'bin_cluster'].includes(resolvedType)) {
+        if (['function', 'file', 'similarity', 'cluster', 'bin_cluster', 'bin_sim'].includes(resolvedType)) {
             const etype = resolvedType;
-            const eid = resolvedType === 'similarity'
+            const eid = (resolvedType === 'similarity' || resolvedType === 'bin_sim')
                 ? norm.sid
                 : ((resolvedType === 'cluster' || resolvedType === 'bin_cluster') ? norm.tag_id : norm.id);
             const userTags = getEntityUserTags(etype, eid);

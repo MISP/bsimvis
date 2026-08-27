@@ -287,6 +287,34 @@ file_note_remove_model = api.model(
     },
 )
 
+bin_sim_note_add_model = api.model(
+    "BinSimNoteAdd",
+    {
+        "sid": fields.String(
+            required=True, example="main:bin_sim:unweighted_cosine:aaa...::bbb..."
+        ),
+        "text": fields.String(required=True, example="Confirmed same family"),
+        "owner": fields.String(example="user"),
+    },
+)
+
+bin_sim_note_update_model = api.model(
+    "BinSimNoteUpdate",
+    {
+        "sid": fields.String(required=True, example="main:bin_sim:unweighted_cosine:..."),
+        "note_id": fields.String(required=True, example="uuid"),
+        "text": fields.String(required=True, example="Updated note text"),
+    },
+)
+
+bin_sim_note_remove_model = api.model(
+    "BinSimNoteRemove",
+    {
+        "sid": fields.String(required=True, example="main:bin_sim:unweighted_cosine:..."),
+        "note_id": fields.String(required=True, example="uuid"),
+    },
+)
+
 # LLM Models
 llm_summary_request_model = api.model(
     "LLMSummaryRequest",
@@ -2513,6 +2541,53 @@ class FileNoteList(Resource):
         from bsimvis.app.routes.notes import get_file_notes
 
         return get_file_notes()
+
+
+# --- Bin_sim Pair Note Routes ---
+
+
+@ns_notes.route("/bin_sim/add")
+class BinSimNoteAdd(Resource):
+    @ns_notes.expect(bin_sim_note_add_model)
+    @ns_notes.response(200, "Success", note_model)
+    def post(self):
+        """Adds a note to a bin_sim pair."""
+        from bsimvis.app.routes.notes import add_bin_sim_note
+
+        return add_bin_sim_note()
+
+
+@ns_notes.route("/bin_sim/update")
+class BinSimNoteUpdate(Resource):
+    @ns_notes.expect(bin_sim_note_update_model)
+    @ns_notes.response(200, "Success", note_model)
+    def put(self):
+        """Updates an existing bin_sim pair note."""
+        from bsimvis.app.routes.notes import update_bin_sim_note
+
+        return update_bin_sim_note()
+
+
+@ns_notes.route("/bin_sim/remove")
+class BinSimNoteRemove(Resource):
+    @ns_notes.expect(bin_sim_note_remove_model)
+    @ns_notes.response(200, "Success")
+    def delete(self):
+        """Removes a note from a bin_sim pair."""
+        from bsimvis.app.routes.notes import remove_bin_sim_note
+
+        return remove_bin_sim_note()
+
+
+@ns_notes.route("/bin_sim/list")
+class BinSimNoteList(Resource):
+    @ns_notes.doc(params={"sid": "Bin_sim pair sid"})
+    @ns_notes.response(200, "Success", fields.List(fields.Nested(note_model)))
+    def get(self):
+        """Lists all notes for a bin_sim pair."""
+        from bsimvis.app.routes.notes import get_bin_sim_notes
+
+        return get_bin_sim_notes()
 
 
 # --- LLM Namespace ---

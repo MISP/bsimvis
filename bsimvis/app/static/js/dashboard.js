@@ -344,6 +344,7 @@ const routes = {
             { label: 'Funcs', width: '8%', sort: 'functions_count' },
             { label: 'Coverage', width: '12%', sort: 'coverage' },
             { label: 'Shared Clusters', width: '7%', sort: 'shared_clusters' },
+            { label: 'Pair', width: '10%' },
             { label: 'Tags', width: '20%' },
         ],
         renderer: renderBinSimPairs

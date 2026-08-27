@@ -96,9 +96,16 @@ def to_pool_indexed_id(indexed_id, lvl, pool_id):
     stripped from both sides. Mirroring a collection sid into a pool index
     without this rewrite indexes an id the pool has no document for.
 
+    bin_sim is the same problem with no rewrite available: a pool's pair
+    comparison is its own independently-computed document (a different
+    score, not a reference to the collection-scope pair), so there is no
+    correct pool-scoped id to derive from a collection sid at all. Skip it.
+
     Returns None when the id is not a sid this mapping applies to, so callers
     skip it rather than index a bad key.
     """
+    if lvl == "bin_sim":
+        return None
     if lvl != "sim":
         return indexed_id
     parts = indexed_id.split(":")

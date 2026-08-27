@@ -57,6 +57,88 @@ def max_batch_size():
     return int(config_service.get("llm.batch_max", DEFAULT_MAX_BATCH))
 
 
+def _select_pair_candidates(
+    diff, threshold=0.9, include_unique=True, include_unchanged=False
+):
+    """Functions worth an LLM call; the reason is context, not a verdict."""
+    selected = {}
+
+    def add(func_id, side, reason, similarity=None):
+        if func_id and func_id not in selected:
+            selected[func_id] = {
+                "func_id": func_id,
+                "side": side,
+                "reason": reason,
+                "similarity": similarity,
+            }
+
+    if include_unique:
+        for row in diff.get("unique_to_a") or []:
+            add(row.get("func_id"), "a", "unique")
+        for row in diff.get("unique_to_b") or []:
+            add(row.get("func_id"), "b", "unique")
+    for row in diff.get("matched") or []:
+        similarity = float(row.get("similarity") or 0)
+        if include_unchanged or similarity < threshold:
+            reason = "unchanged_match" if similarity >= threshold else "changed_match"
+            add(row.get("func_a"), "a", reason, similarity)
+            add(row.get("func_b"), "b", reason, similarity)
+    return list(selected.values())
+
+
+def _pair_report_rules():
+    return tag_taxonomy.analysis_rules() + (
+        "For a binary comparison, uniqueness, a low similarity score, or an appended "
+        "address is not evidence of maliciousness. Do not infer intent from those "
+        "signals. Cite a function finding for every capability and maliciousness claim; "
+        "when the findings do not establish intent, state inconclusive."
+    )
+
+
+def _pair_report_prompt(pair, summaries, candidates):
+    reason_by_fid = {row["func_id"]: row for row in candidates}
+    shared = sorted(
+        (pair.get("diff") or {}).get("matched") or [],
+        key=lambda row: float(row.get("similarity") or 0),
+        reverse=True,
+    )[:12]
+    lines = [
+        "Compare these two binaries using only the supplied evidence.",
+        f"A: {pair.get('coll_a', '')}:{pair.get('md5_a')}",
+        f"B: {pair.get('coll_b', '')}:{pair.get('md5_b')}",
+        f"Stored similarity score: {pair.get('score')}",
+        "Uniqueness is not evidence of maliciousness; it only selected a function for review.",
+        "Matched-function similarity establishes correspondence, not behavior or intent.",
+        "If evidence is insufficient, state inconclusive instead of guessing.",
+        "",
+        "Representative shared matches (correspondence only):",
+    ]
+    for row in shared:
+        lines.append(
+            f"- {row.get('func_a')} <-> {row.get('func_b')} "
+            f"similarity={float(row.get('similarity') or 0):.3f}"
+        )
+    lines.extend(["", "Analyzed function findings:"])
+    for fid, finding in summaries.items():
+        selected = reason_by_fid.get(fid, {})
+        context = selected.get("reason", "selected")
+        if selected.get("similarity") is not None:
+            context += f" similarity={selected['similarity']:.3f}"
+        lines.append(
+            f"- {fid} ({finding.get('func_name')}, side {selected.get('side', '?')}, "
+            f"{context}): {finding.get('summary')}"
+        )
+    lines.extend(
+        [
+            "",
+            "Write: **SIMILARITIES**, **DIFFERENCES**, **MALICIOUS FUNCTIONS**, "
+            "and **ASSESSMENT**. Cite function IDs. List a malicious function only "
+            "when its finding contains concrete malicious behavior; otherwise say none confirmed.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 # --- call-graph partitioning -------------------------------------------
 
 
@@ -514,6 +596,20 @@ class AnalysisOrchestrator:
             ):
                 for fid in unit:
                     self._record(job_id, fid, "skipped", "already enriched") if job_id else None
+                    if summaries_out is not None:
+                        notes = [
+                            n
+                            for n in note_service.get_notes(collection, fid) or []
+                            if n.get("owner") == LLM_NOTE_OWNER and n.get("text")
+                        ]
+                        if notes:
+                            data = get_function(fid)
+                            summaries[fid] = {
+                                "func_name": data.get(
+                                    "func_name", fid.rsplit(":", 1)[-1]
+                                ),
+                                "summary": _one_liner(notes[-1]["text"]),
+                            }
                 counters["skipped"] += len(unit)
                 processed += len(unit)
                 continue
@@ -567,6 +663,136 @@ class AnalysisOrchestrator:
                 f"Contextual LLM batch finished: {counters['done']} done, "
                 f"{counters['skipped']} skipped, {counters['failed']} failed.",
             )
+        return True
+
+    def pair_candidates(
+        self,
+        pair,
+        threshold=0.9,
+        include_unique=True,
+        include_unchanged=False,
+        skip_fid_tagged=True,
+        min_complexity=0,
+    ):
+        candidates = _select_pair_candidates(
+            pair.get("diff") or {}, threshold, include_unique, include_unchanged
+        )
+        pipe = self.r.pipeline(transaction=False)
+        for row in candidates:
+            pipe.get(_resolve_doc_id(row["func_id"]))
+        filtered = []
+        for row, meta_raw in zip(candidates, pipe.execute()):
+            if not meta_raw:
+                continue
+            meta = json.loads(meta_raw)
+            if isinstance(meta, list):
+                meta = meta[0] if meta else {}
+            if int(meta.get("bsim_features_count") or 0) < min_complexity:
+                continue
+            tags = (meta.get("tags") or []) + (meta.get("user_tags") or [])
+            if skip_fid_tagged and any(
+                isinstance(tag, str) and (tag == "fid" or tag.startswith("fid:"))
+                for tag in tags
+            ):
+                continue
+            filtered.append(row)
+        cap = max_batch_size()
+        if cap > 0 and len(filtered) > cap:
+            raise ValueError(
+                f"Pair selection has {len(filtered)} functions, over the batch cap of {cap}"
+            )
+        if not filtered:
+            raise ValueError("Pair selection resolved to zero functions")
+        return filtered
+
+    def run_pair_analysis(
+        self,
+        sid,
+        pair_collection,
+        algo="unweighted_cosine",
+        threshold=0.9,
+        include_unique=True,
+        include_unchanged=False,
+        skip_fid_tagged=True,
+        min_complexity=0,
+        actions=None,
+        overwrite=False,
+        custom_prompt=None,
+        job_service=None,
+        job_id=None,
+    ):
+        raw = self.r.get(sid)
+        if not raw:
+            raise ValueError("Binary similarity pair no longer exists")
+        pair = json.loads(raw)
+        if isinstance(pair, str):
+            pair = json.loads(pair)
+
+        candidates = self.pair_candidates(
+            pair,
+            threshold,
+            include_unique,
+            include_unchanged,
+            skip_fid_tagged,
+            min_complexity,
+        )
+
+        focus = (
+            "This function was selected for a binary comparison because it is unique "
+            "or changed relative to the other file. That is triage context only, not "
+            "evidence of maliciousness. Describe only behavior supported by the code; "
+            "when intent is unclear, do not assign malicious severity or category tags."
+        )
+        if custom_prompt:
+            focus += f"\nOperator focus: {custom_prompt}"
+
+        summaries = {}
+        grouped = {}
+        for row in candidates:
+            origin = row["func_id"].split(":func:", 1)[0]
+            grouped.setdefault(origin, []).append(row["func_id"])
+        ok = True
+        try:
+            for origin, func_ids in grouped.items():
+                ok = (
+                    self.run_contextual_batch(
+                        origin,
+                        func_ids,
+                        actions=actions,
+                        overwrite=overwrite,
+                        custom_prompt=focus,
+                        job_service=job_service,
+                        job_id=job_id,
+                        agentic=True,
+                        summaries_out=summaries,
+                    )
+                    and ok
+                )
+        finally:
+            if "tags" in (actions or ["notes", "tags"]):
+                from bsimvis.app.services.bin_sim_service import bin_sim_service
+
+                bin_sim_service.resplit_bin_sim(pair_collection, algo=algo, sid=sid)
+        if not ok:
+            return False
+
+        report = llm_service.chat(
+            [
+                {"role": "system", "content": _pair_report_rules()},
+                {
+                    "role": "user",
+                    "content": _pair_report_prompt(pair, summaries, candidates),
+                },
+            ]
+        )
+        if not report or report.startswith("Error:"):
+            if job_service and job_id:
+                job_service.add_log(job_id, f"Pair report generation failed: {report}")
+            return False
+
+        if job_service and job_id:
+            job_service.r.hset(f"job:{job_id}", "report", report)
+            job_service.add_log(job_id, "Binary comparison report written to the job.")
         return True
 
     # --- whole-file analysis ---------------------------------------------

@@ -6,6 +6,7 @@ from bsimvis.app.services.index_service import (
     enrich_pool_data,
 )
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.bin_sim_service import bin_sim_service
 from bsimvis.app.services.node_service import get_enriched_nodes
 import traceback
 import json
@@ -493,16 +494,43 @@ def get_file_call_graph():
     collection = request.args.get("collection")
     file_md5 = request.args.get("file_md5")
 
+    retain = request.args.get("retain")
+    max_nodes = request.args.get("max_nodes")
     if not collection or not file_md5:
         return {"detail": "Missing collection or file_md5"}, 400
 
+    if max_nodes is not None:
+        try:
+            max_nodes = int(max_nodes)
+        except (TypeError, ValueError):
+            return {"detail": "max_nodes must be an integer"}, 400
+        if max_nodes < 1:
+            return {"detail": "max_nodes must be at least 1"}, 400
     try:
         r = get_redis()
-        # Get all functions in file
-        func_ids_bytes = r.smembers(f"{collection}:idx:file:functions:{file_md5}") or []
-        func_ids = [
-            fid.decode() if isinstance(fid, bytes) else fid for fid in func_ids_bytes
-        ]
+        retain_set = None
+        if retain:
+            _, pair, retain_set = bin_sim_service.unique_functions_for_pair(
+                collection,
+                file_md5,
+                retain,
+                request.args.get("retain_collection", collection),
+                request.args.get("pool"),
+                request.args.get("algo", "unweighted_cosine"),
+            )
+            if not pair:
+                return {"detail": "Similarity not calculated for this pair"}, 404
+            if pair.get("is_container_pair"):
+                return {"detail": "Container pairs have no function call graph"}, 400
+            func_ids = sorted(retain_set)
+        else:
+            func_ids_bytes = (
+                r.smembers(f"{collection}:idx:file:functions:{file_md5}") or []
+            )
+            func_ids = [
+                fid.decode() if isinstance(fid, bytes) else fid
+                for fid in func_ids_bytes
+            ]
 
         if not func_ids:
             return {"nodes": [], "edges": []}
@@ -554,6 +582,8 @@ def get_file_call_graph():
 
             callees = [c.decode() if isinstance(c, bytes) else c for c in callee_bytes]
             for callee_id in callees:
+                if retain_set is not None and callee_id not in retain_set:
+                    continue
                 edges.append({"source": fid, "target": callee_id})
                 if callee_id.startswith("ext:"):
                     if callee_id not in external_nodes:
@@ -616,6 +646,30 @@ def get_file_call_graph():
                     "is_unindexed": False,
                 }
             )
+
+        if retain_set is not None:
+            degree = {fid: 0 for fid in retain_set}
+            for edge in edges:
+                degree[edge["source"]] += 1
+                degree[edge["target"]] += 1
+            nodes.sort(
+                key=lambda node: (
+                    -degree[node["id"]],
+                    -int(node.get("features_count") or 0),
+                    node["id"],
+                )
+            )
+            for rank, node in enumerate(nodes, 1):
+                node["unique_degree"] = degree[node["id"]]
+                node["rank"] = rank
+            if max_nodes is not None:
+                nodes = nodes[:max_nodes]
+                selected = {node["id"] for node in nodes}
+                edges = [
+                    edge
+                    for edge in edges
+                    if edge["source"] in selected and edge["target"] in selected
+                ]
 
         return {"nodes": nodes, "edges": edges}
     except Exception as e:

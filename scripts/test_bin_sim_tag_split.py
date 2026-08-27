@@ -383,6 +383,9 @@ class _FakeRedis:
     def __init__(self, docs):
         self.docs = docs
 
+    def smembers(self, key):
+        return set()
+
     def pipeline(self, transaction=False):
         return _FakePipe(self.docs)
 
@@ -690,13 +693,21 @@ class FakeRedis:
             def set(self, key, value):
                 self.ops.append(("set", key, value))
 
+            def zadd(self, key, values):
+                self.ops.append(("noop",))
+
+            def zrem(self, key, value):
+                self.ops.append(("noop",))
+
             def execute(self):
                 out = []
                 for op in self.ops:
                     if op[0] == "get":
                         out.append(outer.get(op[1]))
-                    else:
+                    elif op[0] == "set":
                         outer.set(op[1], op[2])
+                        out.append(True)
+                    else:
                         out.append(True)
                 self.ops = []
                 return out
@@ -762,6 +773,49 @@ def test_resplit_replays_the_split_from_the_stored_diff():
     assert out["split_schema"] == SPLIT_SCHEMA
     crossed = joint_marginal(out["joint"], AXIS_SEVERITY, AXIS_CATEGORY)
     assert crossed["severity:high"]["category:network"][0] == 10.0
+
+
+def test_resplit_can_target_one_exact_pair():
+    from bsimvis.app.services.bin_sim_service import bin_sim_service
+
+    sids = [
+        "main:bin_sim:uc:aaa::bbb",
+        "main:bin_sim:uc:aaa::ccc",
+        "main:bin_sim:uc:bbb::ccc",
+    ]
+    values = {"main:tags_rev": "9"}
+    for index, sid in enumerate(sids):
+        fid = f"f{index}"
+        values[sid] = json.dumps(
+            {
+                "score": 0.5 + index / 10,
+                "diff": {
+                    "matched": [],
+                    "unique_to_a": [{"func_id": fid}],
+                    "unique_to_b": [],
+                },
+            }
+        )
+        values[f"{fid}:meta"] = json.dumps(
+            {"bsim_features_count": 10, "user_tags": ["severity:high"]}
+        )
+
+    fake = FakeRedis(values, members=sids)
+    untouched = {sid: fake.values[sid] for sid in sids[1:]}
+    original_target = json.loads(fake.values[sids[0]])
+    old_r = bin_sim_service.r
+    bin_sim_service.r = fake
+    try:
+        assert bin_sim_service.resplit_bin_sim("main", algo="uc", sid=sids[0])
+    finally:
+        bin_sim_service.r = old_r
+
+    target = json.loads(fake.values[sids[0]])
+    assert target["score"] == original_target["score"]
+    assert target["diff"] == original_target["diff"]
+    assert target["tags_rev"] == 9
+    assert fake.values[sids[1]] == untouched[sids[1]]
+    assert fake.values[sids[2]] == untouched[sids[2]]
 
 
 if __name__ == "__main__":

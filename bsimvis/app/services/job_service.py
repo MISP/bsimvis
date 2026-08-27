@@ -48,6 +48,7 @@ class JobType(Enum):
     LLM_BATCH = "llm_batch"
     LLM_CONTEXTUAL_BATCH = "llm_contextual_batch"
     LLM_FILE_ANALYSIS = "llm_file_analysis"
+    LLM_PAIR_ANALYSIS = "llm_pair_analysis"
 
 
 # Lease-based claims. A worker refreshes its lease while it holds a job; if the
@@ -515,6 +516,7 @@ class JobService:
             JobType.LLM_BATCH.value,
             JobType.LLM_CONTEXTUAL_BATCH.value,
             JobType.LLM_FILE_ANALYSIS.value,
+            JobType.LLM_PAIR_ANALYSIS.value,
         ]
 
         if jtype in high_priority_types or job.get("priority") == "high":

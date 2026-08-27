@@ -3306,7 +3306,7 @@ def test_search_filters_and_sorting():
 DIFF_TABLES = ("all", "matched", "unique_to_a", "unique_to_b")
 
 
-def _diff_page(md5_a, md5_b, table):
+def _diff_page(md5_a, md5_b, table, sort_col="similarity"):
     """One page of /api/bin_sim/diff, or None if the request failed."""
     try:
         resp = requests.get(
@@ -3316,7 +3316,7 @@ def _diff_page(md5_a, md5_b, table):
                 "md5_a": md5_a,
                 "md5_b": md5_b,
                 "table": table,
-                "sort_col": "similarity",
+                "sort_col": sort_col,
                 "limit": 50,
             },
             timeout=60,
@@ -3401,6 +3401,325 @@ def test_bin_sim_diff_cache():
     )
 
     _check_diff_cache_expiry()
+
+
+def test_llm_pair_analysis_job():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-bis-2 – LLM pair analysis job contract", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    missing = requests.post(
+        f"{BASE_URL}/api/llm/pair_analysis",
+        json={"collection": COLLECTION, "md5_a": file_md5},
+        timeout=30,
+    )
+    check(
+        "pair analysis rejects a missing second file",
+        missing.status_code == 400,
+        f"HTTP {missing.status_code}: {missing.text[:120]}",
+    )
+    invalid = requests.post(
+        f"{BASE_URL}/api/llm/pair_analysis",
+        json={
+            "collection": COLLECTION,
+            "md5_a": file_md5,
+            "md5_b": file_md5_2,
+            "threshold": 1.2,
+        },
+        timeout=30,
+    )
+    check(
+        "pair analysis validates the similarity threshold",
+        invalid.status_code == 400,
+        f"HTTP {invalid.status_code}: {invalid.text[:120]}",
+    )
+
+    paused = test_endpoint("POST", "/api/jobs/pause", label="POST /api/jobs/pause")
+    if not check(
+        "worker fleet paused before pair enqueue",
+        bool((paused or {}).get("paused")),
+        str(paused),
+    ):
+        test_endpoint("DELETE", "/api/jobs/pause", label="DELETE /api/jobs/pause")
+        return
+
+    job_id = None
+    try:
+        started = test_endpoint(
+            "POST",
+            "/api/llm/pair_analysis",
+            data={
+                "collection": COLLECTION,
+                "md5_a": file_md5,
+                "md5_b": file_md5_2,
+                "threshold": 0.9,
+                "include_unique": True,
+                "include_unchanged": False,
+                "actions": ["notes", "tags"],
+            },
+        )
+        job_id = (started or {}).get("job_id")
+        check(
+            "pair analysis enqueues candidates",
+            bool(job_id) and int((started or {}).get("total") or 0) > 0,
+            str(started),
+        )
+        if job_id:
+            job = test_endpoint("GET", f"/api/jobs/{job_id}")
+            payload = (job or {}).get("payload") or {}
+            check(
+                "pair job preserves exact pair and analysis settings",
+                (job or {}).get("type") == "llm_pair_analysis"
+                and payload.get("md5_a") == file_md5
+                and payload.get("md5_b") == file_md5_2
+                and payload.get("threshold") == 0.9
+                and payload.get("sid") == (started or {}).get("sid"),
+                str(job)[:300],
+            )
+            test_endpoint("POST", f"/api/jobs/{job_id}/cancel")
+    finally:
+        test_endpoint("DELETE", "/api/jobs/pause", label="DELETE /api/jobs/pause")
+
+
+def test_exact_pair_resplit():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-bis-2 – exact pair tag resplit", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – resplit check skipped.", YELLOW))
+        return
+
+    before = {table: _diff_page(file_md5, file_md5_2, table) for table in DIFF_TABLES}
+    md5_a, md5_b = sorted((file_md5, file_md5_2))
+    sid = f"{COLLECTION}:bin_sim:unweighted_cosine:{md5_a}::{md5_b}"
+    started = test_endpoint(
+        "POST",
+        "/api/bin_sim/resplit",
+        data={
+            "collection": COLLECTION,
+            "algo": "unweighted_cosine",
+            "sid": sid,
+        },
+        label="POST /api/bin_sim/resplit (exact sid)",
+    )
+    completed = isinstance(started, dict) and wait_for_pipeline(
+        started.get("job_id"), banner=" STEP 3c – Wait for exact pair resplit"
+    )
+    check("exact pair resplit job completes", completed, str(started))
+    after = {table: _diff_page(file_md5, file_md5_2, table) for table in DIFF_TABLES}
+    check(
+        "exact pair resplit preserves similarity diff rows",
+        before == after,
+        "paged diff changed after tag-only resplit",
+    )
+
+
+def test_diff_injection_score():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-ter – unique function injection ranking", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+    _check_diff_injection_ranking()
+
+
+def _check_diff_injection_ranking():
+    """Unique rows expose the ranking used by comparison analysis."""
+    page = _diff_page(file_md5, file_md5_2, "unique_to_a", "injection_score")
+    rows = (page or {}).get("items") or []
+    if not check(
+        "diff ranking: fixture has unique functions",
+        bool(rows),
+        "unique_to_a returned no rows",
+    ):
+        return
+
+    ref_graph = test_endpoint(
+        "GET",
+        "/api/file/call_graph",
+        params={"collection": COLLECTION, "file_md5": file_md5_2},
+        label="GET /api/file/call_graph (reference maximum for diff ranking)",
+    )
+    ref_addrs = [
+        int(n["entrypoint"], 16)
+        for n in (ref_graph or {}).get("nodes", [])
+        if n.get("entrypoint")
+    ]
+    if not check(
+        "diff ranking: reference graph has comparable addresses",
+        bool(ref_addrs),
+        "reference graph returned no function addresses",
+    ):
+        return
+
+    ref_max = max(ref_addrs)
+    expected = []
+    flags_ok = True
+    fields_ok = True
+    for row in rows:
+        fields_ok &= "appended" in row and "injection_score" in row
+        addr = int(row["func_id"].rsplit(":", 1)[-1], 16)
+        appended = addr > ref_max
+        flags_ok &= row.get("appended") is appended
+        expected.append(
+            float(row.get("avg_features") or 0)
+            * float(row.get("sim_rarity") or 0)
+            * (2 if appended else 1)
+        )
+
+    check(
+        "diff ranking: unique rows expose appended and injection_score",
+        fields_ok,
+        f"first row: {rows[0]}",
+    )
+    check(
+        "diff ranking: appended is relative to the reference file maximum",
+        flags_ok,
+        f"reference max: {ref_max:x}",
+    )
+    actual = [float(row["injection_score"]) for row in rows]
+    check(
+        "diff ranking: score follows the documented formula",
+        all(abs(a - e) < 1e-9 for a, e in zip(actual, expected)),
+        f"actual={actual[:5]} expected={expected[:5]}",
+    )
+    check(
+        "diff ranking: sort_col=injection_score orders descending",
+        actual == sorted(actual, reverse=True),
+        f"scores={actual[:10]}",
+    )
+
+
+def test_retained_call_graph():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-quater – retained unique call graph", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    diff_a = test_endpoint(
+        "GET",
+        "/api/diff",
+        params={
+            "collection_a": COLLECTION,
+            "md5_a": file_md5,
+            "md5_b": file_md5_2,
+            "table": "unique_to_a",
+            "limit": 0,
+        },
+        label="GET /api/diff unique_to_a (retained graph source)",
+    )
+    expected_a = {row["func_id"] for row in (diff_a or {}).get("items", [])}
+    if not check(
+        "retained graph: fixture has unique target functions",
+        bool(expected_a),
+        "unique_to_a returned no functions",
+    ):
+        return
+
+    graph = test_endpoint(
+        "GET",
+        "/api/file/call_graph",
+        params={
+            "collection": COLLECTION,
+            "file_md5": file_md5,
+            "retain": file_md5_2,
+        },
+        label="GET /api/file/call_graph?retain=reference",
+    )
+    nodes = (graph or {}).get("nodes", [])
+    edges = (graph or {}).get("edges", [])
+    node_ids = [node["id"] for node in nodes]
+    check(
+        "retained graph: nodes equal the target unique set",
+        set(node_ids) == expected_a,
+        f"missing={list(expected_a - set(node_ids))[:3]} extra={list(set(node_ids) - expected_a)[:3]}",
+    )
+    check(
+        "retained graph: every edge is induced within the unique set",
+        all(
+            e.get("source") in expected_a and e.get("target") in expected_a
+            for e in edges
+        ),
+        f"bad edges: {[e for e in edges if e.get('source') not in expected_a or e.get('target') not in expected_a][:3]}",
+    )
+
+    degree = {fid: 0 for fid in expected_a}
+    for edge in edges:
+        degree[edge["source"]] += 1
+        degree[edge["target"]] += 1
+    check(
+        "retained graph: unique_degree matches returned edges",
+        all(node.get("unique_degree") == degree[node["id"]] for node in nodes),
+        f"first rows: {nodes[:3]}",
+    )
+    expected_order = sorted(
+        nodes,
+        key=lambda n: (
+            -degree[n["id"]],
+            -int(n.get("features_count") or 0),
+            n["id"],
+        ),
+    )
+    check(
+        "retained graph: nodes are ranked by degree then features",
+        node_ids == [node["id"] for node in expected_order]
+        and [node.get("rank") for node in nodes] == list(range(1, len(nodes) + 1)),
+        f"first ids: {node_ids[:5]}",
+    )
+
+    limited = test_endpoint(
+        "GET",
+        "/api/file/call_graph",
+        params={
+            "collection": COLLECTION,
+            "file_md5": file_md5,
+            "retain": file_md5_2,
+            "max_nodes": 2,
+        },
+        label="GET /api/file/call_graph?retain=reference&max_nodes=2",
+    )
+    limited_nodes = (limited or {}).get("nodes", [])
+    limited_ids = {node["id"] for node in limited_nodes}
+    check(
+        "retained graph: max_nodes keeps the ranked prefix",
+        [node["id"] for node in limited_nodes] == node_ids[:2],
+        f"got={[node['id'] for node in limited_nodes]} want={node_ids[:2]}",
+    )
+    check(
+        "retained graph: truncated edges remain induced",
+        all(
+            e.get("source") in limited_ids and e.get("target") in limited_ids
+            for e in (limited or {}).get("edges", [])
+        ),
+        f"limited edges: {(limited or {}).get('edges', [])}",
+    )
+
+    diff_b = test_endpoint(
+        "GET",
+        "/api/diff",
+        params={
+            "collection_a": COLLECTION,
+            "md5_a": file_md5,
+            "md5_b": file_md5_2,
+            "table": "unique_to_b",
+            "limit": 0,
+        },
+        label="GET /api/diff unique_to_b (reverse retained graph source)",
+    )
+    expected_b = {row["func_id"] for row in (diff_b or {}).get("items", [])}
+    reverse = test_endpoint(
+        "GET",
+        "/api/file/call_graph",
+        params={
+            "collection": COLLECTION,
+            "file_md5": file_md5_2,
+            "retain": file_md5,
+        },
+        label="GET /api/file/call_graph?retain=reference (reversed)",
+    )
+    check(
+        "retained graph: reversing the pair selects the opposite unique side",
+        {node["id"] for node in (reverse or {}).get("nodes", [])} == expected_b,
+        f"expected {len(expected_b)} reverse nodes",
+    )
 
 
 def _check_diff_cache_expiry():
@@ -4157,6 +4476,58 @@ def test_pool_collection_equivalence():
                     else f"single={_json.dumps(n_s)[:200]} pool={_json.dumps(n_p)[:200]}"
                 ),
             )
+
+        if p_doc:
+            paused = test_endpoint("POST", "/api/jobs/pause")
+            job_id = None
+            try:
+                if check(
+                    "pool pair analysis: worker fleet paused",
+                    bool((paused or {}).get("paused")),
+                    str(paused),
+                ):
+                    started = test_endpoint(
+                        "POST",
+                        "/api/llm/pair_analysis",
+                        data={
+                            "collection": sep_arm,
+                            "coll_b": sep_linux,
+                            "md5_a": md5_arm,
+                            "md5_b": md5_linux,
+                            "pool_id": eq_pool,
+                            "algo": EQ_ALGO,
+                            "threshold": 0.9,
+                            "include_unique": True,
+                            "include_unchanged": True,
+                            "skip_fid_tagged": False,
+                            "actions": ["notes"],
+                        },
+                    )
+                    job_id = (started or {}).get("job_id")
+                    check(
+                        "pool pair analysis: cross-collection pair enqueued",
+                        bool(job_id)
+                        and int((started or {}).get("total") or 0) > 0
+                        and (started or {}).get("sid") == pool_bs_key,
+                        str(started),
+                    )
+                    if job_id:
+                        job = test_endpoint("GET", f"/api/jobs/{job_id}")
+                        payload = (job or {}).get("payload") or {}
+                        check(
+                            "pool pair analysis: namespace and origins preserved",
+                            (job or {}).get("type") == "llm_pair_analysis"
+                            and payload.get("collection") == sep_arm
+                            and payload.get("coll_b") == sep_linux
+                            and payload.get("pool_id") == eq_pool
+                            and payload.get("sid") == pool_bs_key
+                            and payload.get("pair_collection")
+                            == f"global:pool:{eq_pool}",
+                            str(job)[:400],
+                        )
+                        test_endpoint("POST", f"/api/jobs/{job_id}/cancel")
+            finally:
+                test_endpoint("DELETE", "/api/jobs/pause")
 
         # ── 3. function similarity: pairs, scores, docs ───────────────────
         single_map, single_sids = {}, {}
@@ -4953,7 +5324,11 @@ if __name__ == "__main__":
         test_tag_vocabulary_and_llm_batch,
         test_llm_agentic_analysis,
         test_bin_sim_diff_cache,
+        test_llm_pair_analysis_job,
+        test_exact_pair_resplit,
         test_pool_collection_equivalence,
+        test_diff_injection_score,
+        test_retained_call_graph,
         test_archive_upload,
         test_unpack_upload,
         test_lineage,
@@ -4970,6 +5345,10 @@ if __name__ == "__main__":
     STEP_DEPS = {
         # Issues the /api/bin_sim/build whose doc the diff cache step reads.
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
+        "test_llm_pair_analysis_job": ["test_search_filters_and_sorting"],
+        "test_exact_pair_resplit": ["test_search_filters_and_sorting"],
+        "test_retained_call_graph": ["test_search_filters_and_sorting"],
+        "test_diff_injection_score": ["test_search_filters_and_sorting"],
     }
 
     # Resolved before the prelude: a mistyped --only should fail now, not after

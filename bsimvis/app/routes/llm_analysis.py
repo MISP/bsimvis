@@ -269,3 +269,80 @@ def file_analysis():
 
     job_id = job_service.create_group(tasks)
     return {"job_id": job_id, "total": total, "files": len(tasks)}
+
+
+def pair_analysis():
+    """Queue evidence-bound analysis of one stored binary comparison."""
+    from bsimvis.app.services.analysis_orchestrator import analysis_orchestrator
+    from bsimvis.app.services.bin_sim_service import bin_sim_service
+    from bsimvis.app.services.job_service import JobService, JobType
+
+    data = request.json or {}
+    collection = data.get("collection")
+    coll_b = data.get("coll_b") or collection
+    md5_a, md5_b = data.get("md5_a"), data.get("md5_b")
+    pool_id = data.get("pool") or data.get("pool_id")
+    if not collection or not md5_a or not md5_b:
+        return {"error": "collection, md5_a and md5_b are required"}, 400
+
+    actions = data.get("actions") or ["notes", "tags"]
+    invalid = [action for action in actions if action not in ("notes", "tags")]
+    if invalid:
+        return {"error": f"Invalid actions: {', '.join(invalid)}"}, 400
+    try:
+        threshold = float(data.get("threshold", 0.9))
+        min_complexity = int(data.get("min_complexity") or 0)
+    except (TypeError, ValueError):
+        return {
+            "error": "threshold must be a number and min_complexity an integer"
+        }, 400
+    if not 0 <= threshold <= 1:
+        return {"error": "threshold must be between 0 and 1"}, 400
+    if min_complexity < 0:
+        return {"error": "min_complexity must be zero or greater"}, 400
+
+    algo = data.get("algo", "unweighted_cosine")
+    sid, pair = bin_sim_service.load_pair(
+        collection, md5_a, md5_b, coll_b, pool_id, algo
+    )
+    if not pair:
+        return {"error": "Similarity not calculated for this pair"}, 404
+
+    include_unique = data.get("include_unique", True) is not False
+    include_unchanged = bool(data.get("include_unchanged"))
+    skip_fid_tagged = data.get("skip_fid_tagged", True) is not False
+    try:
+        total = len(
+            analysis_orchestrator.pair_candidates(
+                pair,
+                threshold,
+                include_unique,
+                include_unchanged,
+                skip_fid_tagged,
+                min_complexity,
+            )
+        )
+    except ValueError as error:
+        return {"error": str(error)}, 413 if "batch cap" in str(error) else 400
+
+    pair_collection = f"global:pool:{pool_id}" if pool_id else collection
+    payload = {
+        "collection": collection,
+        "coll_b": coll_b,
+        "md5_a": md5_a,
+        "md5_b": md5_b,
+        "pool_id": pool_id,
+        "sid": sid,
+        "pair_collection": pair_collection,
+        "algo": algo,
+        "threshold": threshold,
+        "include_unique": include_unique,
+        "include_unchanged": include_unchanged,
+        "skip_fid_tagged": skip_fid_tagged,
+        "min_complexity": min_complexity,
+        "actions": actions,
+        "overwrite": bool(data.get("overwrite")),
+        "custom_prompt": data.get("custom_prompt"),
+    }
+    job_id = JobService().create_job(JobType.LLM_PAIR_ANALYSIS, payload)
+    return {"job_id": job_id, "total": total, "sid": sid}

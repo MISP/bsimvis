@@ -212,6 +212,7 @@ bin_sim_clear_model = api.model(
         "collection": fields.String(default="main"),
         "algo": fields.String(default="unweighted_cosine"),
         "md5": fields.String(),
+        "sid": fields.String(description="Exact stored pair ID to resplit"),
     },
 )
 
@@ -920,9 +921,19 @@ class BulkMetadataPropagate(Resource):
 
 @ns_file.route("/call_graph")
 class FileCallGraph(Resource):
-    @ns_file.doc(params={"collection": "Collection name", "file_md5": "File MD5"})
+    @ns_file.doc(
+        params={
+            "collection": "Target collection",
+            "file_md5": "Target file MD5",
+            "retain": "Reference file MD5; retain only functions unique to the target",
+            "retain_collection": "Reference collection (defaults to target collection)",
+            "pool": "Pool ID for a cross-collection pair",
+            "algo": "Binary similarity algorithm",
+            "max_nodes": "Maximum retained nodes after degree/feature ranking",
+        }
+    )
     def get(self):
-        """Returns the full call graph for a file."""
+        """Returns a full file call graph or its unique subgraph versus a reference."""
         from bsimvis.app.routes.function_code import get_file_call_graph
 
         return get_file_call_graph()
@@ -2758,6 +2769,43 @@ class LLMFileAnalysisCancel(Resource):
         from bsimvis.app.routes.llm_analysis import contextual_batch_cancel
 
         return contextual_batch_cancel(job_id)
+
+
+@ns_llm.route("/pair_analysis")
+class LLMPairAnalysis(Resource):
+    @ns_llm.expect(
+        api.model(
+            "LLMPairAnalysisRequest",
+            {
+                "collection": fields.String(required=True),
+                "coll_b": fields.String,
+                "md5_a": fields.String(required=True),
+                "md5_b": fields.String(required=True),
+                "pool": fields.String(
+                    description="Pool id for a cross-collection pair"
+                ),
+                "algo": fields.String(default="unweighted_cosine"),
+                "threshold": fields.Float(
+                    default=0.9,
+                    description="Analyse matched functions below this similarity",
+                ),
+                "include_unique": fields.Boolean(default=True),
+                "include_unchanged": fields.Boolean(default=False),
+                "skip_fid_tagged": fields.Boolean(default=True),
+                "min_complexity": fields.Integer(default=0),
+                "actions": fields.List(
+                    fields.String, enum=["notes", "tags"], example=["notes", "tags"]
+                ),
+                "overwrite": fields.Boolean(default=False),
+                "custom_prompt": fields.String,
+            },
+        )
+    )
+    def post(self):
+        """Analyse differences, similarities and malicious functions in one pair."""
+        from bsimvis.app.routes.llm_analysis import pair_analysis
+
+        return pair_analysis()
 
 
 # --- Pool Namespace ---

@@ -127,6 +127,93 @@ class BinSimService:
     def __init__(self, r=None):
         self.r = r or get_redis()
 
+    def find_pair_sid(
+        self,
+        collection,
+        md5_a,
+        md5_b,
+        coll_b=None,
+        pool_id=None,
+        algo="unweighted_cosine",
+    ):
+        """Resolve one stored pair without hydrating its function rows."""
+        coll_b = coll_b or collection
+        if pool_id:
+            pipe = self.r.pipeline(transaction=False)
+            pipe.smembers(
+                f"global:pool:{pool_id}:bin_sim:involves:{collection}:{md5_a}"
+            )
+            pipe.smembers(f"global:pool:{pool_id}:bin_sim:involves:{coll_b}:{md5_b}")
+            res_a, res_b = pipe.execute()
+            a = {x.decode() if isinstance(x, bytes) else x for x in (res_a or set())}
+            b = {x.decode() if isinstance(x, bytes) else x for x in (res_b or set())}
+            return next(
+                (sid for sid in a & b if f":bin_sim:{algo}:" in sid),
+                None,
+            )
+        md5_a, md5_b = sorted((md5_a, md5_b))
+        return f"{collection}:bin_sim:{algo}:{md5_a}::{md5_b}"
+
+    def load_pair(
+        self,
+        collection,
+        md5_a,
+        md5_b,
+        coll_b=None,
+        pool_id=None,
+        algo="unweighted_cosine",
+    ):
+        sid = self.find_pair_sid(collection, md5_a, md5_b, coll_b, pool_id, algo)
+        raw = self.r.get(sid) if sid else None
+        if not raw:
+            return sid, None
+        pair = json.loads(raw) if not isinstance(raw, dict) else raw
+        if isinstance(pair, str):
+            pair = json.loads(pair)
+        return sid, pair
+
+    def unique_functions_for_pair(
+        self,
+        collection,
+        file_md5,
+        reference_md5,
+        reference_collection=None,
+        pool_id=None,
+        algo="unweighted_cosine",
+    ):
+        """Return the stored unique side for file_md5 in one exact pair."""
+        reference_collection = reference_collection or collection
+        sid, pair = self.load_pair(
+            collection, file_md5, reference_md5, reference_collection, pool_id, algo
+        )
+        if not pair:
+            return sid, None, None
+        if pair.get("is_container_pair"):
+            return sid, pair, None
+        stored_a = (pair.get("coll_a") or collection, pair.get("md5_a"))
+        table = "unique_to_a" if stored_a == (collection, file_md5) else "unique_to_b"
+        return (
+            sid,
+            pair,
+            {
+                row.get("func_id")
+                for row in (pair.get("diff") or {}).get(table, [])
+                if row.get("func_id")
+            },
+        )
+
+    def max_file_entrypoint(self, collection, md5):
+        """Read the highest address from the file's function-ID index."""
+        maximum = None
+        for raw in self.r.smembers(f"{collection}:idx:file:functions:{md5}") or ():
+            fid = raw.decode() if isinstance(raw, bytes) else raw
+            try:
+                address = int(fid.rsplit(":", 1)[-1], 16)
+            except (AttributeError, ValueError):
+                continue
+            maximum = address if maximum is None else max(maximum, address)
+        return maximum
+
     def build_bin_sim(
         self,
         collection,
@@ -832,6 +919,7 @@ class BinSimService:
         collection,
         algo="unweighted_cosine",
         md5=None,
+        sid=None,
         job_service=None,
         job_id=None,
     ):
@@ -852,9 +940,12 @@ class BinSimService:
         # naming one of them can change; everything else would be rewritten to
         # an identical value. `md5` takes one or several -- the pair view sends
         # both of its sides. Omit it and the whole collection is resplit.
-        wanted = [md5] if isinstance(md5, str) else list(md5 or ())
-        if wanted:
-            sids = [s for s in sids if any(m and m in s for m in wanted)]
+        if sid is not None:
+            sids = [sid] if sid in set(sids) else []
+        else:
+            wanted = [md5] if isinstance(md5, str) else list(md5 or ())
+            if wanted:
+                sids = [s for s in sids if any(m and m in s for m in wanted)]
         total = len(sids)
         if not total:
             if job_service and job_id:

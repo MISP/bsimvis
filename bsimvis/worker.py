@@ -744,6 +744,7 @@ class Worker:
                 collection,
                 algo=payload.get("algo", "unweighted_cosine"),
                 md5=payload.get("md5"),
+                sid=payload.get("sid"),
                 job_service=self.job_service,
                 job_id=job_id,
             )
@@ -805,6 +806,25 @@ class Worker:
                 collection,
                 payload.get("file_md5"),
                 payload.get("func_ids") or [],
+                actions=payload.get("actions") or ["notes", "tags"],
+                overwrite=payload.get("overwrite", False),
+                custom_prompt=payload.get("custom_prompt"),
+                job_service=self.job_service,
+                job_id=job_id,
+            )
+
+        elif jtype == JobType.LLM_PAIR_ANALYSIS.value:
+            from bsimvis.app.services.analysis_orchestrator import analysis_orchestrator
+
+            return analysis_orchestrator.run_pair_analysis(
+                payload.get("sid"),
+                payload.get("pair_collection", collection),
+                algo=payload.get("algo", "unweighted_cosine"),
+                threshold=payload.get("threshold", 0.9),
+                include_unique=payload.get("include_unique", True),
+                include_unchanged=payload.get("include_unchanged", False),
+                skip_fid_tagged=payload.get("skip_fid_tagged", True),
+                min_complexity=payload.get("min_complexity", 0),
                 actions=payload.get("actions") or ["notes", "tags"],
                 overwrite=payload.get("overwrite", False),
                 custom_prompt=payload.get("custom_prompt"),

@@ -11,14 +11,25 @@ What gets copied per function:
     (+ the funcid reverse-lookup set, {coll}:funcid:{hash})
 What gets copied per file:
     {coll}:file:{md5}:meta
+What gets rebuilt at the collection level:
+    global:collections membership (without this the collection is invisible
+    to /api/search/collections -- it enumerates that set, not any
+    per-collection key), global:collection:{coll}:meta stats (total_files/
+    total_functions/total_batches/last_updated), per-collection and global
+    batch docs + registries ({coll}:all_batches, {coll}:batch:{uuid},
+    global:batches, global:batch:{uuid}), and archive lineage (containment
+    edges + rolled-up function counts, from each file's own parent_md5/
+    path_in_parent -- already present in its copied :meta, just not yet
+    indexed into the lineage graph).
 
 What does NOT get copied (by design -- this is a "files + functions only"
 migration): similarity pairs, function/binary clusters, bin_sim docs, LLM
 analyses, notes, job history. Run the normal similarity/cluster/bin_sim
 build on the target afterward (see doc/lca-remote-benchmark-walkthrough.md).
 
-After the raw copy, this script calls the SAME two functions the real
-ingestion pipeline calls to build every derived index:
+After the raw copy, this script calls the SAME functions the real
+ingestion pipeline calls to build every derived index, instead of
+hand-copying registry keys:
     - bsimvis.app.services.index_service.save_file / save_function
       (search/filter registries, {coll}:all_files, {coll}:idx:file:functions:*)
     - bsimvis.app.services.feature_service.FeatureService.index_functions
@@ -26,6 +37,8 @@ ingestion pipeline calls to build every derived index:
       this is the expensive, CPU-bound step; it repeats the cost the
       source instance already paid once per function, so budget real time
       for a large collection)
+    - bsimvis.app.services.lineage_service.record / record_function_count
+      (archive parent/child graph + rolled-up container function counts)
 
 Dry-run by default -- prints what it would do and exits. Pass --apply to
 actually write.
@@ -46,6 +59,7 @@ import argparse
 import json
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 import redis
@@ -57,6 +71,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bsimvis.app.services.index_service import save_file, save_function
 from bsimvis.app.services.feature_service import FeatureService
+from bsimvis.app.services import lineage_service
 
 FUNC_SUFFIXES_STRING = (":meta", ":source", ":vec:meta", ":vec:raw", ":funcid")
 FUNC_SUFFIXES_ZSET = (":vec:tf",)
@@ -95,11 +110,11 @@ def rewrite_prefix(value, src_coll, dst_coll):
 
 def patch_meta_json(raw, src_coll, dst_coll):
     """Rewrite the self-referential `collection` / `function_id` / `file_id`
-    fields inside a :meta JSON blob so the copied doc points at the target
-    collection, not the source it was read from. `collection` holds the
-    bare collection name (exact match); `function_id`/`file_id` hold
-    `{collection}:func:...` / `{collection}:file:...` composite ids
-    (prefix rewrite)."""
+    / `batch_id` fields inside a :meta JSON blob so the copied doc points at
+    the target collection, not the source it was read from. `collection`
+    holds the bare collection name (exact match); the rest hold
+    `{collection}:func:...` / `{collection}:file:...` / `{collection}:batch:...`
+    composite ids (prefix rewrite)."""
     try:
         doc = json.loads(raw)
     except (TypeError, ValueError):
@@ -110,7 +125,7 @@ def patch_meta_json(raw, src_coll, dst_coll):
     if doc.get("collection") == src_coll:
         doc["collection"] = dst_coll
         changed = True
-    for field in ("function_id", "file_id"):
+    for field in ("function_id", "file_id", "batch_id"):
         if field in doc:
             new_val = rewrite_prefix(doc[field], src_coll, dst_coll)
             if new_val != doc[field]:
@@ -147,6 +162,7 @@ def migrate_one(src_r, dst_r, src_coll, dst_coll, apply, batch_size, force):
     # 1. Files: raw :meta + save_file() indexing.
     pipe = dst_r.pipeline(transaction=False)
     copied_files = 0
+    file_metas = []  # (md5, meta_dict), reused below for collection/batch registry + lineage
     for i, md5 in enumerate(md5s):
         raw = src_r.get(f"{src_coll}:file:{md5}:meta")
         if not raw:
@@ -157,7 +173,10 @@ def migrate_one(src_r, dst_r, src_coll, dst_coll, apply, batch_size, force):
             file_meta = json.loads(patched)
         except (TypeError, ValueError):
             file_meta = {}
-        save_file(pipe, dst_coll, md5, file_meta if isinstance(file_meta, dict) else {})
+        if not isinstance(file_meta, dict):
+            file_meta = {}
+        save_file(pipe, dst_coll, md5, file_meta)
+        file_metas.append((md5, file_meta))
         copied_files += 1
         if (i + 1) % batch_size == 0:
             pipe.execute()
@@ -237,6 +256,73 @@ def migrate_one(src_r, dst_r, src_coll, dst_coll, apply, batch_size, force):
     fsvc = FeatureService(r=dst_r)
     all_dfids = [dfid for dfid, _, _, _ in func_metas]
     fsvc.index_functions(dst_coll, all_dfids)
+
+    # 5. Collection + batch registry -- without this the target collection
+    # is invisible to /api/search/collections (it enumerates
+    # `global:collections`, not any per-collection key) and shows no
+    # batches. total_files/total_functions self-heal on first search from
+    # {coll}:all_files/all_functions (already populated by save_file/
+    # save_function above), so they're set here for immediacy, not
+    # correctness; total_batches has no such self-heal path, so
+    # {coll}:all_batches is the one that actually matters.
+    now_ms = int(time.time() * 1000)
+    batch_uuids = sorted({fm.get("batch_uuid") for _, fm in file_metas if fm.get("batch_uuid")})
+    pipe = dst_r.pipeline(transaction=False)
+    pipe.sadd("global:collections", dst_coll)
+    for batch_uuid in batch_uuids:
+        pipe.sadd(f"{dst_coll}:all_batches", batch_uuid)
+        pipe.sadd("global:batches", batch_uuid)
+
+        src_batch_raw = src_r.get(f"{src_coll}:batch:{batch_uuid}")
+        if src_batch_raw:
+            pipe.set(f"{dst_coll}:batch:{batch_uuid}", patch_meta_json(src_batch_raw, src_coll, dst_coll))
+
+        global_batch_key = f"global:batch:{batch_uuid}"
+        existing_global_raw = dst_r.get(global_batch_key) or src_r.get(global_batch_key)
+        try:
+            global_batch = json.loads(existing_global_raw) if existing_global_raw else {}
+        except (TypeError, ValueError):
+            global_batch = {}
+        if not isinstance(global_batch, dict):
+            global_batch = {}
+        global_batch.setdefault("batch_uuid", batch_uuid)
+        global_batch.setdefault("batch_id", global_batch_key)
+        global_batch.setdefault("created_at", now_ms)
+        global_batch["last_updated"] = now_ms
+        collections_map = global_batch.get("collections") or {}
+        collections_map[dst_coll] = True
+        global_batch["collections"] = collections_map
+        pipe.set(global_batch_key, json.dumps(global_batch))
+
+    last_updated = max((fm.get("entry_date") or 0 for _, fm in file_metas), default=now_ms)
+    pipe.hset(
+        f"global:collection:{dst_coll}:meta",
+        mapping={
+            "total_files": copied_files,
+            "total_functions": len(func_metas),
+            "total_batches": len(batch_uuids),
+            "last_updated": last_updated,
+        },
+    )
+    pipe.execute()
+    print(f"[+] registered collection ({len(batch_uuids)} batches, in global:collections + search)")
+
+    # 6. Lineage (archive containment + rolled-up function counts). Uses the
+    # parent_md5/path_in_parent fields already present in the copied file
+    # meta -- record() is idempotent, safe to call even if a file has no
+    # parent (no-ops on missing parent_md5).
+    for md5, fm in file_metas:
+        parent_md5 = fm.get("parent_md5")
+        if parent_md5:
+            path = fm.get("path_in_parent") or fm.get("file_name", "")
+            lineage_service.record(dst_coll, parent_md5, md5, path, r=dst_r)
+    funcs_per_md5 = Counter(fmd5 for _, fmd5, _, _ in func_metas)
+    for md5, fm in file_metas:
+        count = fm.get("function_count")
+        if count is None:
+            count = funcs_per_md5.get(md5, 0)
+        lineage_service.record_function_count(dst_coll, md5, count, r=dst_r)
+    print("[+] rebuilt archive lineage + rolled-up function counts")
 
     elapsed = time.time() - t0
     print(f"[+] done: {len(func_metas)} functions, {copied_files} files, {elapsed:.1f}s")

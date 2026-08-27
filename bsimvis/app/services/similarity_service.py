@@ -4,6 +4,7 @@ import math
 import time
 import logging
 import hashlib
+import heapq
 from bsimvis.app.services.index_service import save_similarity
 from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.index_config import get_propagated_fields
@@ -384,26 +385,40 @@ class SimilarityService:
             for f, count in zip(all_funcs, res):
                 func_feat_counts[f] = float(count or 0)
             
-            discovery_results_map = {} 
+            discovery_results_map = {}
             def add_candidate(fid_target, fid_cand, score):
                 t_total = func_feat_counts.get(fid_target, 0)
                 c_total = func_feat_counts.get(fid_cand, 0)
                 if t_total < min_features or c_total < min_features:
                     return
-                if fid_target not in discovery_results_map:
-                    discovery_results_map[fid_target] = []
-                discovery_results_map[fid_target].append({"id": fid_cand, "score": score, "c_total": c_total})
+                # Bound each target's candidate list to top_k via a min-heap instead of
+                # collecting every candidate before the top_k trim below -- a >5000-member
+                # identical-function vector-class was holding ~5000 uncapped candidates per
+                # function in memory, which is what OOM-killed the worker on this collection.
+                heap = discovery_results_map.setdefault(fid_target, [])
+                entry = (score, fid_cand, c_total)
+                if top_k <= 0 or len(heap) < top_k:
+                    heapq.heappush(heap, entry)
+                elif entry > heap[0]:
+                    heapq.heapreplace(heap, entry)
 
             n_vclasses = len(vclass_funcs)
             discovery_start = time.time()
             log_every = max(1, n_vclasses // 10)
             for i, (v_id, funcs) in enumerate(vclass_funcs.items()):
-                if len(funcs) > 1:
-                    for f1 in funcs:
-                        for f2 in funcs:
-                            if f1 != f2:
-                                if f1 in target_func_set:
-                                    add_candidate(f1, f2, 1.0)
+                n = len(funcs)
+                if n > 1:
+                    # Every pair within a vector-class ties at score 1.0 (byte-identical
+                    # functions), so any top_k other members are as good as all n-1 --
+                    # picking a fixed-size ring slice avoids the O(n^2) pair generation
+                    # that dominated this stage's time on large duplicate-function groups.
+                    cap = n - 1 if top_k <= 0 else min(top_k, n - 1)
+                    for idx, f1 in enumerate(funcs):
+                        if f1 not in target_func_set:
+                            continue
+                        for offset in range(1, cap + 1):
+                            f2 = funcs[(idx + offset) % n]
+                            add_candidate(f1, f2, 1.0)
                 if job_service and job_id and (i % log_every == 0 or i == n_vclasses - 1):
                     pct = 50 + int((i + 1) / max(1, n_vclasses) * 25)
                     job_service.update_progress(
@@ -437,9 +452,12 @@ class SimilarityService:
                         )
 
             discovery_results = []
-            for fid, candidates in discovery_results_map.items():
+            for fid, heap in discovery_results_map.items():
                 if fid in target_func_set:
-                    candidates.sort(key=lambda x: x["score"], reverse=True)
+                    candidates = sorted(
+                        ({"id": e[1], "score": e[0], "c_total": e[2]} for e in heap),
+                        key=lambda x: x["score"], reverse=True,
+                    )
                     if top_k > 0:
                         candidates = candidates[:top_k]
                     parts = fid.split(":")

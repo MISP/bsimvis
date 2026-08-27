@@ -85,6 +85,12 @@
     # instead (BSim is false-positive-prone on tiny funcs). 10 = canonical default.
     min_features = 10
     algo = "unweighted_cosine"
+    # LCA discovery backend: rust_cpu (default) or wgpu. Both need the native
+    # extension built (native/bsimvis_similarity/README.md); wgpu additionally
+    # needs it built with `--features gpu` and a Vulkan/Metal/DX12-capable GPU
+    # on the host. Switching requires a worker restart (config is read once at
+    # process start) -- see scripts/switch_backend.sh.
+    discovery_backend = "rust_cpu"
 
 
 [llm]

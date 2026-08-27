@@ -230,15 +230,20 @@ def _expand_tag_filter_values(collection, args):
     return expanded or None
 
 
-def search_functions(collection, filters_qs="", limit=25):
+def search_functions(collection, filters_qs="", limit=25, offset=0):
     """Function search using the same filter query string the search UI sends
-    (e.g. `tag=capa:crypto&name=decrypt`)."""
+    (e.g. `tag=capa:crypto&name=decrypt&sort_by=entry_date&sort_order=asc`).
+    Any parameter the real /api/function/search endpoint accepts works here
+    unchanged -- q, tag/static_tag/user_tag (+ exclude_ and file_/func_
+    variants), md5, file_name, namespace, language_id, min_features,
+    sort_by/sort_order, pool. `limit`/`offset` args always win over ones
+    embedded in filters_qs, so page with the tool args, not the string."""
     from bsimvis.app.routes.search_function import search_functions as _search
 
     def _run(query_args):
         query_args.setlist("collection", [collection])
         query_args.setlist("limit", [str(limit)])
-        query_args.setlist("offset", ["0"])
+        query_args.setlist("offset", [str(offset)])
         with _context_app().test_request_context(
             "/api/function/search", query_string=query_args.to_dict(flat=False)
         ):
@@ -269,12 +274,24 @@ def search_functions(collection, filters_qs="", limit=25):
 
     out = {
         "total": result.get("total", len(funcs)),
+        "offset": offset,
+        "sort_by": result.get("sort_by"),
+        "sort_order": result.get("sort_order"),
         "functions": [
             {
                 "func_id": f.get("function_id") or f.get("id"),
                 "name": f.get("function_name") or f.get("name"),
+                "address": f.get("entrypoint_address"),
+                "namespace": f.get("namespace"),
+                "language_id": f.get("language_id"),
+                "return_type": f.get("return_type"),
+                "file_md5": f.get("file_md5"),
+                "file_name": f.get("file_name"),
                 "tags": f.get("tags") or [],
                 "user_tags": f.get("user_tags") or [],
+                "file_tags": f.get("file_tags") or [],
+                "file_user_tags": f.get("file_user_tags") or [],
+                "clusters": f.get("clusters") or [],
             }
             for f in funcs
         ],
@@ -282,6 +299,108 @@ def search_functions(collection, filters_qs="", limit=25):
     if note:
         out["note"] = note
     return out
+
+
+def search_files(collection, filters_qs="", limit=25, offset=0):
+    """File/binary search using the same filter query string the search UI
+    sends (e.g. `tag=yara:trojan&language_id=1&sort_by=file_date`). Any
+    parameter /api/file/search accepts works here -- q, tag/static_tag/
+    user_tag (+ exclude_ variants), language_id, status, sort_by/sort_order,
+    pool. `limit`/`offset` args always win over ones embedded in filters_qs."""
+    from bsimvis.app.routes.search_file import search_files as _search
+
+    args = MultiDict(parse_qs(filters_qs, keep_blank_values=True))
+    args.setlist("collection", [collection])
+    args.setlist("limit", [str(limit)])
+    args.setlist("offset", [str(offset)])
+    with _context_app().test_request_context(
+        "/api/file/search", query_string=args.to_dict(flat=False)
+    ):
+        result = _search()
+    if isinstance(result, tuple):
+        return {"error": (result[0] or {}).get("error", "search failed")}
+
+    files = result.get("files") or result.get("items") or []
+    return {
+        "total": result.get("total", len(files)),
+        "offset": offset,
+        "sort_by": result.get("sort_by"),
+        "sort_order": result.get("sort_order"),
+        "files": files,
+    }
+
+
+def list_collections(q="", limit=50):
+    """List collections/pools known to this instance -- name, function/file
+    counts, last-updated. Use this first when a collection name wasn't given
+    up front, rather than guessing one."""
+    from bsimvis.app.routes.search_collection import search_collections as _search
+
+    qs = {"q": q, "limit": str(limit), "offset": "0"}
+    with _context_app().test_request_context(
+        "/api/collection/search", query_string=qs
+    ):
+        result = _search()
+    if isinstance(result, tuple):
+        return {"error": (result[0] or {}).get("error", "collection list failed")}
+    items = result.get("collections") or result.get("items") or []
+    return {"total": result.get("total", len(items)), "collections": items}
+
+
+def get_search_fields(collection, level, fields):
+    """Cardinality/stats for metadata fields at a given index level (func or
+    file) -- what values a field actually takes and how common each is.
+    Use before search_functions/search_files to discover real filter values
+    instead of guessing (e.g. what language_id or status values exist)."""
+    from bsimvis.app.routes.search_similarity import get_field_stats
+
+    qs = {"collection": collection, "level": level, "field": fields}
+    with _context_app().test_request_context("/api/search/fields", query_string=qs):
+        result = get_field_stats()
+    if isinstance(result, tuple):
+        return {"error": (result[0] or {}).get("error", "field stats failed")}
+    return result
+
+
+def list_clusters(collection, algo="unweighted_cosine", filters_qs="", limit=25):
+    """List function-similarity clusters in a collection, with cohesion/
+    stability/member-count and optional q/cluster_tag filtering + sorting
+    (sort_by=count|stability|features|cohesion). Use to see what clusters
+    exist before drilling into one with get_cluster_info."""
+    from bsimvis.app.routes.cluster import list_clusters as _list
+
+    args = MultiDict(parse_qs(filters_qs, keep_blank_values=True))
+    args.setlist("collection", [collection])
+    args.setlist("algo", [algo])
+    args.setlist("limit", [str(limit)])
+    args.setlist("offset", ["0"])
+    with _context_app().test_request_context(
+        "/api/cluster/list", query_string=args.to_dict(flat=False)
+    ):
+        result = _list()
+    if isinstance(result, tuple):
+        return {"error": (result[0] or {}).get("error", "cluster list failed")}
+    return result
+
+
+def list_bin_clusters(collection, algo="unweighted_cosine", filters_qs="", limit=25):
+    """List binary (file-level) clusters in a collection -- families of
+    similar files rather than similar functions. Same filter/sort surface as
+    list_clusters."""
+    from bsimvis.app.routes.bin_cluster import list_bin_clusters as _list
+
+    args = MultiDict(parse_qs(filters_qs, keep_blank_values=True))
+    args.setlist("collection", [collection])
+    args.setlist("algo", [algo])
+    args.setlist("limit", [str(limit)])
+    args.setlist("offset", ["0"])
+    with _context_app().test_request_context(
+        "/api/bin_cluster/list", query_string=args.to_dict(flat=False)
+    ):
+        result = _list()
+    if isinstance(result, tuple):
+        return {"error": (result[0] or {}).get("error", "bin cluster list failed")}
+    return result
 
 
 def get_file_info(collection, file_md5):
@@ -393,19 +512,26 @@ TOOLS = [
         "function": {
             "name": "search_functions",
             "description": (
-                "Search functions in a collection by tag/name/namespace, e.g. "
-                "to find every function tagged capa:crypto, or every function "
-                "named like 'decrypt*'. filters_qs uses the same query-string "
-                "syntax as the app's function search (tag=, name=, namespace=). "
-                "A tag filter must match the tag's exact stored string -- a "
-                "YARA tag in particular can carry a rule-name detail tail you "
+                "Search functions in a collection by any field the app's "
+                "function search supports: tag/static_tag/user_tag (+ "
+                "exclude_ and file_/func_-scoped variants), q (free text), "
+                "name, namespace, language_id, md5/file_name, min_features, "
+                "sort_by/sort_order (any indexed field, e.g. entry_date), "
+                "pool. filters_qs uses the same query-string syntax as the "
+                "app's function search UI, e.g. "
+                "'tag=capa:crypto&name=decrypt&sort_by=entry_date&sort_order=asc'. "
+                "Use offset to page past the first `limit` results. A tag "
+                "filter must match the tag's exact stored string -- a YARA "
+                "tag in particular can carry a rule-name detail tail you "
                 "won't guess (the real tag is "
                 "'yara:trojan:cristalloaders#Windows_Trojan_CristalLoaders_652f19ab', "
                 "not the clean 'yara:trojan:cristalloaders'). A zero-result "
                 "tag filter here automatically retries once against any real "
                 "tag it's a prefix of, but search_tags is the reliable way to "
                 "find a tag's exact stored form up front rather than relying "
-                "on that fallback."
+                "on that fallback. Not sure what values a field takes, or "
+                "which collection to search? Use list_collections / "
+                "get_search_fields first."
             ),
             "parameters": {
                 "type": "object",
@@ -415,6 +541,125 @@ TOOLS = [
                         "type": "string",
                         "description": "e.g. 'tag=capa:crypto&name=decrypt'",
                     },
+                    "limit": {"type": "integer", "default": 25},
+                    "offset": {"type": "integer", "default": 0},
+                },
+                "required": ["collection"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_files",
+            "description": (
+                "Search binaries/files in a collection by any field the "
+                "app's file search supports: tag/static_tag/user_tag (+ "
+                "exclude_ variants), q, language_id, status, "
+                "sort_by/sort_order, pool. Same filters_qs syntax as "
+                "search_functions, e.g. 'tag=yara:trojan&sort_by=file_date'. "
+                "Use to find files rather than functions -- e.g. every file "
+                "an AV engine flagged, or every file in a language."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "collection": {"type": "string"},
+                    "filters_qs": {"type": "string"},
+                    "limit": {"type": "integer", "default": 25},
+                    "offset": {"type": "integer", "default": 0},
+                },
+                "required": ["collection"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_collections",
+            "description": (
+                "List collections/pools known to this instance, with "
+                "function/file counts. Call this first if you don't already "
+                "know the collection name to search -- don't guess one."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "q": {"type": "string", "description": "Optional name substring filter"},
+                    "limit": {"type": "integer", "default": 50},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_search_fields",
+            "description": (
+                "Cardinality stats for one or more metadata fields at a "
+                "given index level ('func' or 'file') -- the real distinct "
+                "values a field takes and how common each is. Use before "
+                "search_functions/search_files to find valid filter values "
+                "(e.g. what language_id or status values actually occur) "
+                "instead of guessing."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "collection": {"type": "string"},
+                    "level": {"type": "string", "enum": ["func", "file"], "default": "func"},
+                    "fields": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "e.g. ['language_id', 'status']",
+                    },
+                },
+                "required": ["collection", "fields"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_clusters",
+            "description": (
+                "List function-similarity clusters in a collection: id, "
+                "name, cohesion, stability, member count. Supports the same "
+                "q/cluster_tag/sort_by filters as the app's cluster list. "
+                "Use to survey what clusters exist before drilling into one "
+                "with get_cluster_info."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "collection": {"type": "string"},
+                    "algo": {"type": "string", "default": "unweighted_cosine"},
+                    "filters_qs": {
+                        "type": "string",
+                        "description": "e.g. 'q=loader&sort_by=cohesion&sort_order=desc'",
+                    },
+                    "limit": {"type": "integer", "default": 25},
+                },
+                "required": ["collection"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_bin_clusters",
+            "description": (
+                "List binary (file-level) clusters in a collection -- "
+                "families of similar files rather than similar functions. "
+                "Same filter/sort surface as list_clusters."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "collection": {"type": "string"},
+                    "algo": {"type": "string", "default": "unweighted_cosine"},
+                    "filters_qs": {"type": "string"},
                     "limit": {"type": "integer", "default": 25},
                 },
                 "required": ["collection"],
@@ -502,7 +747,20 @@ DISPATCH = {
         limit=a.get("limit", 10),
     ),
     "search_functions": lambda a: search_functions(
-        a["collection"], a.get("filters_qs", ""), a.get("limit", 25)
+        a["collection"], a.get("filters_qs", ""), a.get("limit", 25), a.get("offset", 0)
+    ),
+    "search_files": lambda a: search_files(
+        a["collection"], a.get("filters_qs", ""), a.get("limit", 25), a.get("offset", 0)
+    ),
+    "list_collections": lambda a: list_collections(a.get("q", ""), a.get("limit", 50)),
+    "get_search_fields": lambda a: get_search_fields(
+        a["collection"], a.get("level", "func"), a["fields"]
+    ),
+    "list_clusters": lambda a: list_clusters(
+        a["collection"], a.get("algo", "unweighted_cosine"), a.get("filters_qs", ""), a.get("limit", 25)
+    ),
+    "list_bin_clusters": lambda a: list_bin_clusters(
+        a["collection"], a.get("algo", "unweighted_cosine"), a.get("filters_qs", ""), a.get("limit", 25)
     ),
     "search_tags": lambda a: search_tags(a["collection"], a["q"], a.get("limit", 25)),
     "get_file_info": lambda a: get_file_info(a["collection"], a["file_md5"]),

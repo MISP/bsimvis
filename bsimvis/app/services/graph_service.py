@@ -22,20 +22,25 @@ class GraphService:
             self.r = get_redis()
         self.r.set(f"{collection}:graph:active_gen", gen)
 
-    def write_base_partitions(self, collection, gen, edges):
+    def write_base_partitions(self, collection, gen, edges, part_offset=0):
+        """Writes `edges` as BSC2 partitions starting at `part_offset`, so a
+        caller streaming edges in batches (one call per batch, same `gen`)
+        doesn't collide part indices -- each call must pass the offset
+        returned by the previous one. Returns the next offset to use.
+        """
         if not self.r:
             from bsimvis.app.services.redis_client import get_redis
             self.r = get_redis()
         if not edges:
-            return
-        
-        # simulated chunking
+            return part_offset
+
         partitions = [edges[i:i + self.partition_size] for i in range(0, len(edges), self.partition_size)]
-        
-        for idx, part in enumerate(partitions):
-            # Encode
+
+        for i, part in enumerate(partitions):
             packed = [self.pack_bsc2_edge(e[0], e[1], e[2]) for e in part]
-            self.r.set(f"{collection}:graph:gen:{gen}:part:{idx}", b"".join(packed))
+            self.r.set(f"{collection}:graph:gen:{gen}:part:{part_offset + i}", b"".join(packed))
+
+        return part_offset + len(partitions)
 
     def pack_bsc2_edge(self, d_src, d_dst, score):
         scaled_score = int(score * 10000)

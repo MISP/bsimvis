@@ -108,19 +108,22 @@ def test_pair_candidates_are_bounded_and_balanced():
     picked = AnalysisOrchestrator(Redis()).pair_candidates(
         pair, skip_fid_tagged=False, max_functions=4
     )
-    with patch(
-        "bsimvis.app.services.analysis_orchestrator.max_batch_size", return_value=2
-    ):
-        globally_capped = AnalysisOrchestrator(Redis()).pair_candidates(
-            pair, skip_fid_tagged=False, max_functions=0
-        )
-    assert len(globally_capped) == 2
     assert [row["func_id"] for row in picked] == [
         "a:func:ma:0",
         "b:func:mb:0",
         "a:func:ma:1",
         "b:func:mb:1",
     ]
+
+    # max_functions=0 (default) is unlimited -- the global batch cap is a
+    # route-level warning only, and must not silently truncate the diff pool.
+    with patch(
+        "bsimvis.app.services.analysis_orchestrator.max_batch_size", return_value=2
+    ):
+        uncapped = AnalysisOrchestrator(Redis()).pair_candidates(
+            pair, skip_fid_tagged=False, max_functions=0
+        )
+    assert len(uncapped) == 6
 
 
 def test_unresolved_verdict_abstains_without_speculation():

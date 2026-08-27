@@ -305,7 +305,7 @@ def pair_analysis():
     try:
         threshold = float(data.get("threshold", 0.9))
         min_complexity = int(data.get("min_complexity") or 0)
-        max_functions = int(data.get("max_functions", 30))
+        max_functions = int(data.get("max_functions", 0))
     except (TypeError, ValueError):
         return {
             "error": "threshold must be a number; min_complexity and max_functions must be integers"

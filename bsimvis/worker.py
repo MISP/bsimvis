@@ -825,7 +825,7 @@ class Worker:
                 include_unchanged=payload.get("include_unchanged", False),
                 skip_fid_tagged=payload.get("skip_fid_tagged", True),
                 min_complexity=payload.get("min_complexity", 0),
-                max_functions=payload.get("max_functions", 30),
+                max_functions=payload.get("max_functions", 0),
                 actions=payload.get("actions") or ["notes", "tags"],
                 overwrite=payload.get("overwrite", False),
                 custom_prompt=payload.get("custom_prompt"),

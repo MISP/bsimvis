@@ -1758,7 +1758,7 @@ window.openPairAnalysisModal = function() {
                     <input id="pair-analysis-min" type="number" min="0" value="0" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
                 </label>
                 <label>Maximum functions
-                    <input id="pair-analysis-max" type="number" min="0" value="30" title="0 uses the global batch cap" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+                    <input id="pair-analysis-max" type="number" min="0" value="0" title="0 = whole analysis (every diff-selected candidate). Set a number for a fast, complexity-ranked triage subset." style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
                 </label>
             </div>
             <label style="display:block; margin-bottom:14px;">Prompt

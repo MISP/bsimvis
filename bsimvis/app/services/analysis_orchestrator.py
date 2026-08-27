@@ -703,8 +703,12 @@ class AnalysisOrchestrator:
         include_unchanged=False,
         skip_fid_tagged=True,
         min_complexity=0,
-        max_functions=30,
+        max_functions=0,
     ):
+        """`max_functions` is an opt-in fast-triage cap (complexity-ranked,
+        side-balanced). 0 (default) analyzes every diff-selected candidate --
+        the diff already did the real triage by dropping identical functions,
+        so a second cap on top of that would drop real findings, not noise."""
         candidates = _select_pair_candidates(
             pair.get("diff") or {}, threshold, include_unique, include_unchanged
         )
@@ -728,9 +732,7 @@ class AnalysisOrchestrator:
             ):
                 continue
             filtered.append((complexity, row))
-        batch_cap = max_batch_size()
-        limits = [limit for limit in (max_functions, batch_cap) if limit > 0]
-        effective_limit = min(limits) if limits else 0
+        effective_limit = max_functions if max_functions and max_functions > 0 else 0
         if effective_limit and len(filtered) > effective_limit:
             groups = {}
             for item in filtered:
@@ -793,7 +795,7 @@ class AnalysisOrchestrator:
         skip_fid_tagged=True,
         min_complexity=0,
         actions=None,
-        max_functions=30,
+        max_functions=0,
         overwrite=False,
         custom_prompt=None,
         job_service=None,

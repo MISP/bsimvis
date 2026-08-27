@@ -8,6 +8,26 @@ from bsimvis.app.services.index_service import save_similarity
 from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.index_config import get_propagated_fields
 
+# LCA acceleration (rust_cpu/wgpu) needs the compiled extension from
+# native/bsimvis_similarity/ (`maturin develop --release`), which is a
+# manual build step, not part of `uv sync`/pip install -- an environment
+# that skipped it must not crash every file's analysis job on the very
+# first similarity build. Checked once at import time; build_batch uses it
+# to fall back to the plain per-function Python path automatically instead
+# of blowing up on an unguarded `import bsimvis_similarity_native`.
+try:
+    import bsimvis_similarity_native as _native_probe  # noqa: F401
+
+    NATIVE_AVAILABLE = True
+except ImportError:
+    NATIVE_AVAILABLE = False
+    logging.warning(
+        "bsimvis_similarity_native not installed -- LCA discovery "
+        "(rust_cpu/wgpu) is unavailable, falling back to the plain "
+        "per-function Python path. Build it with `maturin develop --release "
+        "--manifest-path native/bsimvis_similarity/Cargo.toml` to enable."
+    )
+
 # --- Shared Lua Scripts ---
 
 
@@ -51,6 +71,8 @@ class SimilarityService:
 
 
     def build_lca_snapshot(self, collection, algo="unweighted_cosine", workers=4):
+        if not NATIVE_AVAILABLE:
+            return
         import bsimvis_similarity_native as sn
         from bsimvis.app.services.config_service import config_service
         import logging
@@ -241,7 +263,7 @@ class SimilarityService:
         )
 
         backend = config_service.get("similarity.discovery_backend", "rust_cpu")
-        if backend in ["wgpu", "rust_cpu"] and algo == "unweighted_cosine":
+        if backend in ["wgpu", "rust_cpu"] and algo == "unweighted_cosine" and NATIVE_AVAILABLE:
             logging.info(f"[*] Running LCA projection for {total} functions in {batch_uuid or md5}")
             
             self.build_lca_snapshot(collection, algo=algo)

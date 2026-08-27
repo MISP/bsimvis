@@ -1022,7 +1022,7 @@ class ClusterService:
         
         # LCA Acceleration
         from bsimvis.app.services.config_service import config_service
-        backend = config_service.get("similarity.discovery_backend", "none")
+        backend = config_service.get("similarity.discovery_backend", "rust_cpu")
         is_lca = backend in ("wgpu", "rust_cpu")
         
         if is_lca:
@@ -1030,7 +1030,16 @@ class ClusterService:
             import numpy as np
             gen = graph_service.get_active_generation(collection)
             class_edges = graph_service.get_edges_for_gen(collection, gen)
-            
+            # Compact class graph has no cross-class edges yet (e.g. every
+            # near-dup in this collection is an exact same-vclass match,
+            # which never appears in the BSC2 graph -- only cross-class
+            # links do). The class-projected tree below would then be
+            # built from zero classes and crash hierarchical_membership on
+            # a columnless DataFrame, so fall back to the plain
+            # per-function tree instead.
+            is_lca = bool(class_edges)
+
+        if is_lca:
             vclass_ids = set()
             for u, v, s in class_edges:
                 vclass_ids.add(str(u))

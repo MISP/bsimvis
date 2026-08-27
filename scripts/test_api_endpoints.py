@@ -3456,12 +3456,15 @@ def test_llm_pair_analysis_job():
                 "include_unique": True,
                 "include_unchanged": False,
                 "actions": ["notes", "tags"],
+                "max_functions": 2,
             },
         )
         job_id = (started or {}).get("job_id")
         check(
             "pair analysis enqueues candidates",
-            bool(job_id) and int((started or {}).get("total") or 0) > 0,
+            bool(job_id)
+            and int((started or {}).get("total") or 0) > 0
+            and int((started or {}).get("total") or 0) <= 2,
             str(started),
         )
         if job_id:
@@ -3472,6 +3475,7 @@ def test_llm_pair_analysis_job():
                 (job or {}).get("type") == "llm_pair_analysis"
                 and payload.get("md5_a") == file_md5
                 and payload.get("md5_b") == file_md5_2
+                and payload.get("max_functions") == 2
                 and payload.get("threshold") == 0.9
                 and payload.get("sid") == (started or {}).get("sid"),
                 str(job)[:300],
@@ -4293,7 +4297,9 @@ def test_llm_agentic_analysis():
 
     if not file_md5 or not func_id1:
         print(
-            _color("\n[SKIP] No uploaded file – agentic analysis checks skipped.", YELLOW)
+            _color(
+                "\n[SKIP] No uploaded file – agentic analysis checks skipped.", YELLOW
+            )
         )
         return
 

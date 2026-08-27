@@ -1750,12 +1750,15 @@ window.openPairAnalysisModal = function() {
                 <button type="button" onclick="closePairAnalysisModal()" style="background:none; border:0; color:var(--subtle); cursor:pointer; font-size:1.3rem;">&times;</button>
             </div>
             <div style="font-size:.75rem; color:var(--subtle); margin-bottom:14px; word-break:break-all;">${escapeHtml(ctx.md5a)} vs ${escapeHtml(ctx.md5b)}</div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:14px;">
                 <label>Changed-match threshold
                     <input id="pair-analysis-threshold" type="number" min="0" max="1" step="0.01" value="0.90" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
                 </label>
                 <label>Minimum BSim features
                     <input id="pair-analysis-min" type="number" min="0" value="0" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+                </label>
+                <label>Maximum functions
+                    <input id="pair-analysis-max" type="number" min="0" value="30" title="0 uses the global batch cap" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
                 </label>
             </div>
             <label style="display:block; margin-bottom:14px;">Prompt
@@ -1800,6 +1803,7 @@ window.submitPairAnalysis = async function(event) {
         pool: ctx.poolId || undefined,
         threshold: Number(document.getElementById('pair-analysis-threshold').value),
         min_complexity: Number(document.getElementById('pair-analysis-min').value),
+        max_functions: Number(document.getElementById('pair-analysis-max').value),
         include_unique: document.getElementById('pair-analysis-unique').checked,
         include_unchanged: document.getElementById('pair-analysis-unchanged').checked,
         skip_fid_tagged: document.getElementById('pair-analysis-skip-fid').checked,

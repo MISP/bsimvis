@@ -63,13 +63,14 @@ def _select_pair_candidates(
     """Functions worth an LLM call; the reason is context, not a verdict."""
     selected = {}
 
-    def add(func_id, side, reason, similarity=None):
+    def add(func_id, side, reason, similarity=None, match_id=None):
         if func_id and func_id not in selected:
             selected[func_id] = {
                 "func_id": func_id,
                 "side": side,
                 "reason": reason,
                 "similarity": similarity,
+                "match_id": match_id,
             }
 
     if include_unique:
@@ -77,12 +78,12 @@ def _select_pair_candidates(
             add(row.get("func_id"), "a", "unique")
         for row in diff.get("unique_to_b") or []:
             add(row.get("func_id"), "b", "unique")
-    for row in diff.get("matched") or []:
+    for match_id, row in enumerate(diff.get("matched") or []):
         similarity = float(row.get("similarity") or 0)
         if include_unchanged or similarity < threshold:
             reason = "unchanged_match" if similarity >= threshold else "changed_match"
-            add(row.get("func_a"), "a", reason, similarity)
-            add(row.get("func_b"), "b", reason, similarity)
+            add(row.get("func_a"), "a", reason, similarity, match_id)
+            add(row.get("func_b"), "b", reason, similarity, match_id)
     return list(selected.values())
 
 
@@ -91,7 +92,7 @@ def _pair_report_rules():
         "For a binary comparison, uniqueness, a low similarity score, or an appended "
         "address is not evidence of maliciousness. Do not infer intent from those "
         "signals. Cite a function finding for every capability and maliciousness claim; "
-        "when the findings do not establish intent, state inconclusive."
+        "when the findings show only dual-use behavior without malicious context, state inconclusive. Direct operational abuse does not require an identified victim or operator. Do not call daemonization persistence without a visible installation mechanism. Do not speculate that process enumeration supports evasion or target selection. Do not claim stack exhaustion or a crash from recursive-looking decompiler output or an infinite loop."
     )
 
 
@@ -124,9 +125,10 @@ def _pair_report_prompt(pair, summaries, candidates):
         context = selected.get("reason", "selected")
         if selected.get("similarity") is not None:
             context += f" similarity={selected['similarity']:.3f}"
+        verdict = ", ".join(finding.get("tags") or []) or "no automatic tags"
         lines.append(
             f"- {fid} ({finding.get('func_name')}, side {selected.get('side', '?')}, "
-            f"{context}): {finding.get('summary')}"
+            f"{context}; validated tags: {verdict}): {finding.get('summary')}"
         )
     lines.extend(
         [
@@ -265,7 +267,10 @@ def _code_evidence(data):
 
 
 def _needs_more_context(summary):
-    return bool(summary) and summary.strip().strip("*# ").upper() == NEED_CONTEXT_MARKER
+    return bool(summary) and any(
+        line.strip().strip("*# ").upper() == NEED_CONTEXT_MARKER
+        for line in summary.splitlines()
+    )
 
 
 def _without_annotations(value):
@@ -361,7 +366,11 @@ def _agentic_summarize(collection, func_name, code_with_context, custom_prompt):
             result = _without_annotations(call_tool(name, args))
             messages.append({"role": "tool", "content": json.dumps(result)[:8000]})
 
-    return None, [], "agentic fallback stopped after too many tool calls without a final answer"
+    return (
+        None,
+        [],
+        "agentic fallback stopped after too many tool calls without a final answer",
+    )
 
 
 # --- per-collection redis bookkeeping (shared shape with llm_batch_service) --
@@ -460,8 +469,11 @@ class AnalysisOrchestrator:
             return "failed", err
         if not summary and not tags:
             return "failed", "empty LLM response"
-
-        summaries[func_id] = {"func_name": data["func_name"], "summary": _one_liner(summary)}
+        summaries[func_id] = {
+            "func_name": data["func_name"],
+            "summary": _one_liner(summary),
+            "tags": tags,
+        }
         applied = self._write_result(
             collection, func_id, data["func_name"], summary, tags, actions, overwrite
         )
@@ -527,9 +539,16 @@ class AnalysisOrchestrator:
             summaries[m["func_id"]] = {
                 "func_name": m["func_name"],
                 "summary": _one_liner(summary),
+                "tags": tags,
             }
             applied = self._write_result(
-                collection, m["func_id"], m["func_name"], summary, tags, actions, overwrite
+                collection,
+                m["func_id"],
+                m["func_name"],
+                summary,
+                tags,
+                actions,
+                overwrite,
             )
             out[m["func_id"]] = ("done", ", ".join(applied) if applied else None)
         return out
@@ -549,7 +568,10 @@ class AnalysisOrchestrator:
         agentic=False,
         summaries_out=None,
     ):
-        actions = [a for a in (actions or []) if a in ("notes", "tags")] or ["notes", "tags"]
+        actions = [a for a in (actions or []) if a in ("notes", "tags")] or [
+            "notes",
+            "tags",
+        ]
         total = len(func_ids)
         if not total:
             if job_service and job_id:
@@ -564,7 +586,9 @@ class AnalysisOrchestrator:
         units = partition_call_graph(collection, func_ids)
 
         relations = (
-            get_function_relations(func_ids, collection) if len(func_ids) > 1 else {"call_edges": []}
+            get_function_relations(func_ids, collection)
+            if len(func_ids) > 1
+            else {"call_edges": []}
         )
         adj = {}
         for edge in relations.get("call_edges", []):
@@ -595,7 +619,11 @@ class AnalysisOrchestrator:
                 for a in actions
             ):
                 for fid in unit:
-                    self._record(job_id, fid, "skipped", "already enriched") if job_id else None
+                    (
+                        self._record(job_id, fid, "skipped", "already enriched")
+                        if job_id
+                        else None
+                    )
                     if summaries_out is not None:
                         notes = [
                             n
@@ -675,6 +703,7 @@ class AnalysisOrchestrator:
         include_unchanged=False,
         skip_fid_tagged=True,
         min_complexity=0,
+        max_functions=30,
     ):
         candidates = _select_pair_candidates(
             pair.get("diff") or {}, threshold, include_unique, include_unchanged
@@ -689,7 +718,8 @@ class AnalysisOrchestrator:
             meta = json.loads(meta_raw)
             if isinstance(meta, list):
                 meta = meta[0] if meta else {}
-            if int(meta.get("bsim_features_count") or 0) < min_complexity:
+            complexity = int(meta.get("bsim_features_count") or 0)
+            if complexity < min_complexity:
                 continue
             tags = (meta.get("tags") or []) + (meta.get("user_tags") or [])
             if skip_fid_tagged and any(
@@ -697,10 +727,60 @@ class AnalysisOrchestrator:
                 for tag in tags
             ):
                 continue
-            filtered.append(row)
+            filtered.append((complexity, row))
+        batch_cap = max_batch_size()
+        limits = [limit for limit in (max_functions, batch_cap) if limit > 0]
+        effective_limit = min(limits) if limits else 0
+        if effective_limit and len(filtered) > effective_limit:
+            groups = {}
+            for item in filtered:
+                row = item[1]
+                match_id = row.get("match_id")
+                key = (
+                    ("match", match_id)
+                    if match_id is not None
+                    else ("func", row["func_id"])
+                )
+                groups.setdefault(key, []).append(item)
+
+            def unit_key(unit):
+                priority = min(
+                    1 if item[1]["reason"] == "unchanged_match" else 0 for item in unit
+                )
+                return (
+                    priority,
+                    -max(item[0] for item in unit),
+                    min(item[1]["func_id"] for item in unit),
+                )
+
+            queues = {"a": [], "b": [], "both": []}
+            for unit in groups.values():
+                unit_sides = {item[1]["side"] for item in unit}
+                bucket = "both" if len(unit_sides) > 1 else next(iter(unit_sides))
+                queues[bucket].append(unit)
+            for queue in queues.values():
+                queue.sort(key=unit_key)
+
+            filtered = []
+            last_side = None
+            while any(queues.values()):
+                choices = [
+                    (bucket, queue[0]) for bucket, queue in queues.items() if queue
+                ]
+                opposite = "b" if last_side == "a" else "a"
+                if last_side and queues[opposite]:
+                    choices = [
+                        choice for choice in choices if choice[0] in (opposite, "both")
+                    ]
+                bucket, unit = min(choices, key=lambda choice: unit_key(choice[1]))
+                queues[bucket].pop(0)
+                if len(filtered) + len(unit) > effective_limit:
+                    continue
+                filtered.extend(sorted(unit, key=lambda item: item[1]["side"]))
+                last_side = None if bucket == "both" else bucket
         if not filtered:
             raise ValueError("Pair selection resolved to zero functions")
-        return filtered
+        return [row for _, row in filtered]
 
     def run_pair_analysis(
         self,
@@ -713,6 +793,7 @@ class AnalysisOrchestrator:
         skip_fid_tagged=True,
         min_complexity=0,
         actions=None,
+        max_functions=30,
         overwrite=False,
         custom_prompt=None,
         job_service=None,
@@ -732,13 +813,14 @@ class AnalysisOrchestrator:
             include_unchanged,
             skip_fid_tagged,
             min_complexity,
+            max_functions,
         )
 
         focus = (
             "This function was selected for a binary comparison because it is unique "
             "or changed relative to the other file. That is triage context only, not "
             "evidence of maliciousness. Describe only behavior supported by the code; "
-            "when intent is unclear, do not assign malicious severity or category tags."
+            "when only dual-use behavior is visible and malicious context is unclear, do not assign malicious severity. Direct operational abuse is judged from the visible behavior itself."
         )
         if custom_prompt:
             focus += f"\nOperator focus: {custom_prompt}"
@@ -839,7 +921,9 @@ class AnalysisOrchestrator:
         file_info = get_file_info(collection, file_md5)
         if "error" in file_info:
             if job_service and job_id:
-                job_service.add_log(job_id, f"File report skipped: {file_info['error']}")
+                job_service.add_log(
+                    job_id, f"File report skipped: {file_info['error']}"
+                )
             return
 
         report = llm_service.chat(

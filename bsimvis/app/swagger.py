@@ -2868,6 +2868,10 @@ class LLMPairAnalysis(Resource):
                 "include_unchanged": fields.Boolean(default=False),
                 "skip_fid_tagged": fields.Boolean(default=True),
                 "min_complexity": fields.Integer(default=0),
+                "max_functions": fields.Integer(
+                    default=30,
+                    description="Maximum selected functions; 0 uses the global batch cap",
+                ),
                 "actions": fields.List(
                     fields.String, enum=["notes", "tags"], example=["notes", "tags"]
                 ),

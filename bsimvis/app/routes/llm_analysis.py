@@ -305,14 +305,17 @@ def pair_analysis():
     try:
         threshold = float(data.get("threshold", 0.9))
         min_complexity = int(data.get("min_complexity") or 0)
+        max_functions = int(data.get("max_functions", 30))
     except (TypeError, ValueError):
         return {
-            "error": "threshold must be a number and min_complexity an integer"
+            "error": "threshold must be a number; min_complexity and max_functions must be integers"
         }, 400
     if not 0 <= threshold <= 1:
         return {"error": "threshold must be between 0 and 1"}, 400
     if min_complexity < 0:
         return {"error": "min_complexity must be zero or greater"}, 400
+    if max_functions < 0:
+        return {"error": "max_functions must be zero or greater"}, 400
 
     algo = data.get("algo", "unweighted_cosine")
     sid, pair = bin_sim_service.load_pair(
@@ -333,6 +336,7 @@ def pair_analysis():
                 include_unchanged,
                 skip_fid_tagged,
                 min_complexity,
+                max_functions,
             )
         )
     except ValueError as error:
@@ -362,6 +366,7 @@ def pair_analysis():
         "include_unchanged": include_unchanged,
         "skip_fid_tagged": skip_fid_tagged,
         "min_complexity": min_complexity,
+        "max_functions": max_functions,
         "actions": actions,
         "overwrite": bool(data.get("overwrite")),
         "custom_prompt": data.get("custom_prompt"),

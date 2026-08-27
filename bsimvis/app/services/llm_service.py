@@ -179,9 +179,10 @@ class LLMService:
                     i -= 1
                     continue
                 break
-            if not bare_tags:
-                return text.strip(), []
-            lines = lines[: i + 1] + [f"TAGS: {','.join(reversed(bare_tags))}"]
+            if bare_tags:
+                lines = lines[: i + 1] + [f"TAGS: {','.join(reversed(bare_tags))}"]
+            else:
+                lines = [*lines, "TAGS:"]
             tag_idx = len(lines) - 1
 
         label, _, raw_tags = lines[tag_idx].partition(":")
@@ -211,36 +212,55 @@ class LLMService:
         # Dedupe, preserve order.
         seen = set()
         tags = [t for t in tags if not (t in seen or seen.add(t))]
-        if tags == ["severity:none"] and any(
-            phrase in summary.lower()
+        summary_lower = summary.lower()
+        marker = any(
+            line.strip().strip("*# ").upper() == "NEED_MORE_CONTEXT"
+            for line in summary.splitlines()
+        )
+        if marker:
+            summary = "NEED_MORE_CONTEXT"
+            tags = []
+
+        elif tags == ["severity:none"] and any(
+            phrase in summary_lower
             for phrase in (
                 "purpose is unknown",
                 "purpose is indeterminate",
-                "purpose cannot be established",
+                "purpose is unresolved",
+                "cannot determine its purpose",
             )
         ):
             tags = []
-        if "category:impact:ddos" in tags and not any(
-            evidence in summary.lower()
-            for evidence in (
-                "flood",
-                "high volume",
-                "high-volume",
-                "continuously send",
-                "repeatedly",
+        unsupported_syscall_claim = (
+            "syscall" in summary_lower
+            and "loop" in summary_lower
+            and any(
+                term in summary_lower
+                for term in ("unidentified", "unknown", "indeterminate", "unresolved")
             )
-        ):
-            tags.remove("category:impact:ddos")
-        if "category:network:c2" in tags and not any(
-            evidence in summary.lower()
-            for evidence in (
-                "c2",
-                "command-and-control",
-                "operator-controlled",
-                "controller",
-            )
-        ):
-            tags.remove("category:network:c2")
+        )
+        if unsupported_syscall_claim:
+            tags = [
+                tag
+                for tag in tags
+                if tag != "category:evasion:rootkit"
+                and not tag.startswith("category:persistence:")
+            ]
+        high_risk_tags = {
+            "category:network:c2",
+            "category:network:scan",
+            "category:process:inject",
+            "category:process:privesc",
+            "category:recon:creds",
+            "category:evasion:rootkit",
+        }
+        has_high_risk_category = any(
+            tag in high_risk_tags
+            or tag.startswith(("category:impact:", "category:persistence:"))
+            for tag in tags
+        )
+        if "severity:high" in tags and not has_high_risk_category:
+            tags.remove("severity:high")
 
         return summary, tags
 
@@ -486,10 +506,12 @@ def _selfcheck():
     assert split("x\nTAGS: origin:lib:libc:2.31", ["mytag"])[1] == []
 
     # Only the last TAGS line counts (models sometimes echo the instruction).
-    assert split("TAGS: ignored\nbody\nTAGS: severity:high")[1] == ["severity:high"]
+    assert split("TAGS: ignored\nbody\nTAGS: severity:low")[1] == ["severity:low"]
     # Older Ollama servers ignore JSON format and append one bare tag per line.
-    s, t = split("Observed flood.\nseverity:high\ncategory:impact:ddos\ncategory:")
-    assert s == "Observed flood."
+    s, t = split(
+        "Observed network packet flood.\nseverity:high\ncategory:impact:ddos\ncategory:"
+    )
+    assert s == "Observed network packet flood."
     assert t == ["severity:high", "category:impact:ddos"]
     assert (
         split(
@@ -519,10 +541,10 @@ def _selfcheck():
     )
     assert (s, t) == ("Its purpose is unknown.", [])
     assert split(
-        "Actively probes randomized addresses.\nseverity:high\ncategory:network:scan\ncategory:impact:ddos"
+        "Actively probes randomized addresses.\nseverity:high\ncategory:network:scan"
     )[1] == ["severity:high", "category:network:scan"]
     assert split(
-        "Exchanges commands with scanned hosts.\nseverity:high\ncategory:network:scan\ncategory:network:c2"
+        "Exchanges commands with scanned hosts.\nseverity:high\ncategory:network:scan"
     )[1] == ["severity:high", "category:network:scan"]
 
     class FakeClient:

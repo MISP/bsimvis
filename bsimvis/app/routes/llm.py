@@ -123,10 +123,9 @@ def _resolve_filters_to_ids(collection, filters, cap):
                 args.add(k, v)
 
     args.setlist("collection", [collection])
-    # One page, capped: a filter matching 200k functions must be refused up
-    # front, so ask for cap+1 and let the caller detect the overflow. A cap of
-    # 0 turns the guard off, so ask for the export-sized page instead.
-    args.setlist("limit", [str(cap + 1 if cap > 0 else 100000)])
+    # cap is only a warning threshold now (batches over it still run), so
+    # always fetch the export-sized page instead of truncating at cap+1.
+    args.setlist("limit", ["100000"])
     args.setlist("offset", ["0"])
     args.setlist("format", [""])
 
@@ -195,16 +194,13 @@ def batch():
     if not func_ids:
         return {"error": "Selection resolved to zero functions"}, 400
 
+    warning = None
     if not explicit and cap > 0 and len(func_ids) > cap:
-        return {
-            "error": (
-                f"Filter matched {len(func_ids)} functions, over the batch cap "
-                f"of {cap}. Narrow the filter, raise llm.batch_max, or set it "
-                f"to 0 for no cap."
-            ),
-            "count": len(func_ids),
-            "cap": cap,
-        }, 413
+        warning = (
+            f"Filter matched {len(func_ids)} functions, over the batch cap "
+            f"of {cap}. This will run anyway; narrow the filter or raise "
+            f"llm.batch_max if that's not what you want."
+        )
 
     job_service = JobService()
     job_id = job_service.create_job(
@@ -219,7 +215,10 @@ def batch():
         },
     )
 
-    return {"job_id": job_id, "total": len(func_ids), "actions": actions}
+    result = {"job_id": job_id, "total": len(func_ids), "actions": actions}
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 def batch_status(job_id):

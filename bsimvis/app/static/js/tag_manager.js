@@ -234,6 +234,8 @@ window.submitFileAnalysis = async function (event) {
         const result = await tagPost('/api/llm/file_analysis', body);
         closeFileAnalysisModal();
         showToast(`Analysis job started for ${result.files} file(s), ${result.total} function(s)`, 'success');
+        const warnings = result.warnings || (result.warning ? [result.warning] : []);
+        warnings.forEach(w => showToast(w, 'warning'));
         trackFileAnalysis(result.job_id);
     } catch (e) {
         showToast(`Could not start analysis: ${e.message}`, 'error');

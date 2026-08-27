@@ -93,16 +93,13 @@ def contextual_batch():
     if not func_ids:
         return {"error": "Selection resolved to zero functions"}, 400
 
+    warning = None
     if not explicit and cap > 0 and len(func_ids) > cap:
-        return {
-            "error": (
-                f"Filter matched {len(func_ids)} functions, over the batch cap "
-                f"of {cap}. Narrow the filter, raise llm.batch_max, or set it "
-                f"to 0 for no cap."
-            ),
-            "count": len(func_ids),
-            "cap": cap,
-        }, 413
+        warning = (
+            f"Filter matched {len(func_ids)} functions, over the batch cap "
+            f"of {cap}. This will run anyway; narrow the filter or raise "
+            f"llm.batch_max if that's not what you want."
+        )
 
     job_service = JobService()
     job_id = job_service.create_job(
@@ -116,7 +113,10 @@ def contextual_batch():
             "unit_max_size": data.get("unit_max_size"),
         },
     )
-    return {"job_id": job_id, "total": len(func_ids)}
+    result = {"job_id": job_id, "total": len(func_ids)}
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 def contextual_batch_status(job_id):
@@ -216,17 +216,18 @@ def file_analysis():
             filters_qs += f"&min_features={min_complexity}"
         func_ids, error = _resolve_filters_to_ids(collection, filters_qs, cap)
         if error:
-            return None, error
+            return None, error, None
         marker = f":func:{md5}:"
         func_ids = [fid for fid in dict.fromkeys(func_ids) if fid and marker in fid]
+        warning = None
         if cap > 0 and len(func_ids) > cap:
-            return None, (
+            warning = (
                 f"File {md5} has {len(func_ids)} functions after filters, over "
-                f"the batch cap of {cap}. Raise llm.batch_max, or set it to 0 "
-                "for no cap."
+                f"the batch cap of {cap}. This will run anyway; raise "
+                f"llm.batch_max if that's not what you want."
             )
         if not func_ids:
-            return None, None
+            return None, None, None
         return {
             "collection": collection,
             "file_md5": md5,
@@ -234,19 +235,22 @@ def file_analysis():
             "actions": actions,
             "overwrite": bool(data.get("overwrite")),
             "custom_prompt": data.get("custom_prompt"),
-        }, None
+        }, None, warning
 
     job_service = JobService()
     if file_md5:
-        payload, error = payload_for(file_md5)
+        payload, error, warning = payload_for(file_md5)
         if error:
-            return {"error": error}, 413 if "batch cap" in error else 400
+            return {"error": error}, 400
         if not payload:
             return {
                 "error": "Selection resolved to zero functions (after filters)"
             }, 400
         job_id = job_service.create_job(JobType.LLM_FILE_ANALYSIS, payload)
-        return {"job_id": job_id, "total": len(payload["func_ids"]), "files": 1}
+        result = {"job_id": job_id, "total": len(payload["func_ids"]), "files": 1}
+        if warning:
+            result["warning"] = warning
+        return result
 
     file_ids = get_redis().sscan_iter(f"{collection}:all_files")
     # ponytail: group creation still holds one small task payload per file;
@@ -256,16 +260,22 @@ def file_analysis():
         for raw in file_ids
     )
     tasks = []
+    warnings = []
     total = 0
     for md5 in md5s:
-        payload, error = payload_for(md5)
+        payload, error, warning = payload_for(md5)
         if error:
-            return {"error": error}, 413 if "batch cap" in error else 400
+            return {"error": error}, 400
         if payload:
             tasks.append((JobType.LLM_FILE_ANALYSIS, payload))
             total += len(payload["func_ids"])
+            if warning:
+                warnings.append(warning)
     if not tasks:
         return {"error": "Collection resolved to zero functions (after filters)"}, 400
 
     job_id = job_service.create_group(tasks)
-    return {"job_id": job_id, "total": total, "files": len(tasks)}
+    result = {"job_id": job_id, "total": total, "files": len(tasks)}
+    if warnings:
+        result["warnings"] = warnings
+    return result

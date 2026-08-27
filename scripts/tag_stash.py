@@ -13,6 +13,7 @@ touches tags.
 
     uv run python scripts/tag_stash.py stash --collection main --scope function --func-id main:func:<md5>:<addr> -m "before clean rerun"
     uv run python scripts/tag_stash.py stash --collection main --scope file --file-id main:file:<md5>
+    uv run python scripts/tag_stash.py stash --collection main --scope file-functions --file-id main:file:<md5>  # every function in that file
     uv run python scripts/tag_stash.py stash --collection main --scope similarity --a <id1> --b <id2> [--algo unweighted_cosine]
     uv run python scripts/tag_stash.py stash --collection main --scope collection --owner llm
     uv run python scripts/tag_stash.py list
@@ -126,6 +127,16 @@ def restore_similarity(sim, collection, snap):
         sim.tag_similarity(collection, snap["a"], snap["b"], snap["algo"], t)
 
 
+def file_function_ids(r, ts, collection, file_id):
+    """Every function id belonging to one file, via the same
+    {collection}:idx:file:functions:{md5} index tag_service._propagate_user_tag
+    already reads to fan a file tag out to its functions.
+    """
+    doc_id = ts._resolve_doc_id(collection, "file", file_id)
+    md5 = (doc_id[:-5] if doc_id.endswith(":meta") else doc_id).split(":")[-1]
+    return [_s(x) for x in r.smembers(f"{collection}:idx:file:functions:{md5}")]
+
+
 def discover_collection(r, collection, owner_filter, vocab):
     """Every function/file id currently carrying a matching note or tag,
     found via the existing owner/tag index sets -- no full collection scan.
@@ -167,6 +178,11 @@ def cmd_stash(args, r, ns, ts, sim):
         if snap["tags"]:
             sid = sim._canonicalize_sid(args.collection, args.a, args.b, args.algo)
             items["similarity"][sid] = snap
+    elif args.scope == "file-functions":
+        for fid in file_function_ids(r, ts, args.collection, args.file_id):
+            snap = snapshot_function(ns, ts, args.collection, fid, args.owner, vocab)
+            if snap["notes"] or snap["tags"]:
+                items["function"][fid] = snap
     elif args.scope == "collection":
         func_ids, file_ids = discover_collection(r, args.collection, args.owner, vocab)
         for fid in func_ids:
@@ -272,7 +288,7 @@ def main():
 
     ps = sub.add_parser("stash", help="snapshot + clear notes/tags")
     ps.add_argument("--collection", required=True)
-    ps.add_argument("--scope", required=True, choices=["function", "file", "similarity", "collection"])
+    ps.add_argument("--scope", required=True, choices=["function", "file", "file-functions", "similarity", "collection"])
     ps.add_argument("--func-id")
     ps.add_argument("--file-id")
     ps.add_argument("--a", help="first entity id (similarity scope) -- a function id for a func-pair, a file id for a bin_sim/whole-binary pair")
@@ -295,8 +311,8 @@ def main():
     if args.cmd == "stash":
         if args.scope == "function" and not args.func_id:
             p.error("--scope function requires --func-id")
-        if args.scope == "file" and not args.file_id:
-            p.error("--scope file requires --file-id")
+        if args.scope in ("file", "file-functions") and not args.file_id:
+            p.error(f"--scope {args.scope} requires --file-id")
         if args.scope == "similarity" and not (args.a and args.b):
             p.error("--scope similarity requires --a and --b")
         r = get_redis()

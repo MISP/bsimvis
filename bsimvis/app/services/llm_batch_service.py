@@ -289,6 +289,8 @@ class LLMBatchService:
                             f"{processed}/{total} | {func_id} -> {state}"
                             f"{' (' + detail + ')' if detail else ''}"
                         ),
+                        processed=processed,
+                        total=total,
                     )
 
         with ThreadPoolExecutor(max_workers=concurrency()) as pool:

@@ -655,6 +655,8 @@ class AnalysisOrchestrator:
                     int(processed * 100 / total),
                     f"{processed}/{total} | unit of {len(unit)} -> "
                     f"{', '.join(f'{f}:{s}' for f, (s, _) in results.items())}",
+                    processed=processed,
+                    total=total,
                 )
 
         if job_service and job_id:

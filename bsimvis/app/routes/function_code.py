@@ -370,6 +370,10 @@ def get_function_relations():
     min_score = float(request.args.get("min_score", 0.85))
     new_ids_param = request.args.get("new_ids", "")
     new_ids = {i.strip() for i in new_ids_param.split(",") if i.strip()}
+    # Pairwise similarity is O(ids^2) -- callers that only want the call
+    # graph (e.g. analysis_orchestrator partitioning a big LLM batch) can
+    # skip it instead of paying for millions of unused pair lookups.
+    want_sim_edges = request.args.get("sim_edges", "1") not in ("0", "false", "")
 
     if len(ids) < 2 or not collection:
         return {"call_edges": [], "sim_edges": []}
@@ -393,6 +397,9 @@ def get_function_relations():
                 cid = c.decode() if isinstance(c, bytes) else c
                 if cid in id_set:
                     call_edges.append({"from": fid, "to": cid})
+
+        if not want_sim_edges:
+            return {"call_edges": call_edges, "sim_edges": []}
 
         # --- similarity edges: only pairs worth checking are (a) explicitly
         # requested via new_ids x ids (cheap re-add-a-function case), or (b)

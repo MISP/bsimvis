@@ -129,6 +129,9 @@ def get_function_relations(func_ids, collection, algo="unweighted_cosine", min_s
         "collection": collection,
         "algo": algo,
         "min_score": str(min_score),
+        # Only orchestrator callers use this wrapper, and they only read
+        # call_edges -- skip the O(ids^2) pairwise similarity pass entirely.
+        "sim_edges": "0",
     }
     with _context_app().test_request_context("/api/function/relations", query_string=qs):
         result = _relations()

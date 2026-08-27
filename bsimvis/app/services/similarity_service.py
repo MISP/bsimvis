@@ -71,6 +71,12 @@ class SimilarityService:
 
 
     def build_lca_snapshot(self, collection, algo="unweighted_cosine", workers=4):
+        # Reset on every call, including an early return below -- otherwise a
+        # collection/build where this bails (native missing, no vclasses yet)
+        # would silently reuse whatever _base_snapshot a PRIOR call (possibly
+        # for a different collection) last set, feeding stale cross-vclass
+        # edges into build_batch's discovery.
+        self._base_snapshot = None
         if not NATIVE_AVAILABLE:
             return
         import bsimvis_similarity_native as sn
@@ -263,9 +269,15 @@ class SimilarityService:
         )
 
         backend = config_service.get("similarity.discovery_backend", "rust_cpu")
-        if backend in ["wgpu", "rust_cpu"] and algo == "unweighted_cosine" and NATIVE_AVAILABLE:
+        if backend in ["wgpu", "rust_cpu"] and algo == "unweighted_cosine":
             logging.info(f"[*] Running LCA projection for {total} functions in {batch_uuid or md5}")
-            
+
+            # Same-vector-class exact matching (below) needs no native code --
+            # it's a plain Redis set lookup. Only the cross-class fuzzy
+            # matching inside build_lca_snapshot needs bsimvis_similarity_native;
+            # that call is a no-op (self._base_snapshot stays None) when it's
+            # missing, so this still finds every byte-identical function
+            # across files even without the native extension built.
             self.build_lca_snapshot(collection, algo=algo)
             
             vclass_keys = r.keys(f"{collection}:vclass:*:functions")

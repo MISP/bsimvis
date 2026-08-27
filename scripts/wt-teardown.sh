@@ -13,9 +13,12 @@ case "$GIT_DIR" in
 esac
 cd "$WT_ROOT" || exit 1
 
-[ -f .env ] || { echo "No .env here; nothing to tear down."; exit 0; }
+# WT_ENV_FILE lets wt-test.sh tear down its own .env.wttest stack without
+# touching a persistent stack launched by hand against the plain .env.
+ENV_FILE="${WT_ENV_FILE:-.env}"
+[ -f "$ENV_FILE" ] || { echo "No $ENV_FILE here; nothing to tear down."; exit 0; }
 # shellcheck disable=SC1091
-set -a; . ./.env; set +a
+set -a; . "./$ENV_FILE"; set +a
 PROJECT_NAME="${PROJECT_NAME//./_}"
 
 echo "=== teardown $PROJECT_NAME ==="

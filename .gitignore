@@ -23,6 +23,7 @@ data/kvrocks/
 volumes/
 *.log
 .env
+.env.*
 
 scratch_build/
 bin

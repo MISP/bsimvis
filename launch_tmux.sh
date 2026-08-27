@@ -1,13 +1,18 @@
 #!/bin/bash
 
+# Which env file to read (wt-setup.sh/wt-test.sh point this at a
+# non-default file so a throwaway test stack never shares its session
+# name/ports with a persistent one launched against the plain .env).
+ENV_FILE=${ENV_FILE:-.env}
+
 # Function to start a tmux window or create the session
 start_tmux() {
     window_name=$1
     command=$2
     # Build env prefix string for tmux command
     local env_prefix=""
-    if [ -f .env ]; then
-        env_prefix=$(grep -v '^#' .env | xargs)
+    if [ -f "$ENV_FILE" ]; then
+        env_prefix=$(grep -v '^#' "$ENV_FILE" | xargs)
         env_prefix="$env_prefix "
     fi
     if tmux has-session -t "${PROJECT_NAME}" 2>/dev/null; then
@@ -91,8 +96,8 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Load environment variables
-if [ -f .env ]; then
-    export $(grep -v '^#' .env | xargs)
+if [ -f "$ENV_FILE" ]; then
+    export $(grep -v '^#' "$ENV_FILE" | xargs)
 fi
 
 # Defaults & Config

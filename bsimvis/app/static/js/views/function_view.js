@@ -23,7 +23,7 @@ window.FunctionView = {
     async init(params, containerId) {
         this.params = params;
         this.container = document.getElementById(containerId);
-        
+
         const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
         const address = params.address;
@@ -168,17 +168,29 @@ window.FunctionView = {
                         </div>
                     </div>
 
-                    <div id="function-panel-callgraph" class="function-view-panel" style="display:none; flex:1; overflow:hidden; position:relative;">
-                        <div id="fn-cg-toolbar" style="position:absolute; bottom:10px; left:15px; z-index:100; display:flex; align-items:center; gap:14px; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); padding:6px 12px; border-radius:6px; border:1px solid var(--border); font-size:0.75rem; max-width:calc(100% - 30px); flex-wrap:wrap;">
-                            <label style="cursor:pointer; display:flex; align-items:center; gap:5px; color:var(--text); flex-shrink:0;" title="Toggle high-confidence similarity edges">
-                                <input type="checkbox" id="fn-cg-sim-toggle" checked onchange="FunctionView.toggleSimilarityEdges(this.checked)">
-                                <span>Similarities ⚡</span>
-                            </label>
-                            <div style="width:1px; align-self:stretch; background:var(--border);"></div>
-                            <div id="fn-cg-legend" style="display:flex; align-items:center; gap:10px; color:var(--subtle); flex-wrap:wrap;">${FunctionView.renderLegendHTML()}</div>
+                    <div id="function-panel-callgraph" class="function-view-panel" style="display:none; flex:1; overflow:hidden;">
+                        <div style="display:flex; height:100%;">
+                            <div style="flex:1; overflow:hidden; position:relative;">
+                                <div id="fn-cg-toolbar" style="position:absolute; bottom:10px; left:15px; z-index:100; display:flex; align-items:center; gap:14px; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); padding:6px 12px; border-radius:6px; border:1px solid var(--border); font-size:0.75rem; max-width:calc(100% - 30px); flex-wrap:wrap;">
+                                    <label style="cursor:pointer; display:flex; align-items:center; gap:5px; color:var(--text); flex-shrink:0;" title="Toggle high-confidence similarity edges">
+                                        <input type="checkbox" id="fn-cg-sim-toggle" checked onchange="FunctionView.toggleSimilarityEdges(this.checked)">
+                                        <span>Similarities ⚡</span>
+                                    </label>
+                                    <label style="cursor:pointer; display:flex; align-items:center; gap:5px; color:var(--text); flex-shrink:0;" title="Group same-binary matches into a collapsible cluster (Pivotick native)">
+                                        <input type="checkbox" id="fn-cg-cluster-toggle" onchange="FunctionView.toggleClusterByBinary(this.checked)">
+                                        <span>Cluster by binary</span>
+                                    </label>
+                                    <div style="width:1px; align-self:stretch; background:var(--border);"></div>
+                                    <div id="fn-cg-legend" style="display:flex; align-items:center; gap:10px; color:var(--subtle); flex-wrap:wrap;">${FunctionView.renderLegendHTML()}</div>
+                                </div>
+                                <div id="fn-cg-loader" style="text-align:center; padding:50px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin"></i> Loading call graph...</div>
+                                <div id="fn-cg-container" style="display:none; width:100%; height:100%;"></div>
+                            </div>
+                            <div id="fn-cg-expanded-panel" style="width:210px; flex-shrink:0; border-left:1px solid var(--border); overflow-y:auto; padding:10px; font-size:0.75rem;">
+                                <div style="color:var(--dim); font-weight:600; margin-bottom:8px; text-transform:uppercase; font-size:0.65rem; letter-spacing:0.5px;">Expanded functions</div>
+                                <div id="fn-cg-expanded-list" style="display:flex; flex-direction:column; gap:4px;"></div>
+                            </div>
                         </div>
-                        <div id="fn-cg-loader" style="text-align:center; padding:50px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin"></i> Loading call graph...</div>
-                        <div id="fn-cg-container" style="display:none; width:100%; height:100%;"></div>
                     </div>
                 </div>
                 <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:var(--window-bg); padding:10px; border-radius:4px; border:1px solid var(--accent); color:var(--text); font-size:0.8rem; pointer-events:none;"></div>
@@ -265,7 +277,7 @@ window.FunctionView = {
             this.setupKeyboardSelection();
             this.scrollToLine();
             this.onScroll();
-            
+
             // Actually place the cursor in the element so arrow keys work immediately
             this.vContentEl.focus();
             setTimeout(() => {
@@ -349,7 +361,10 @@ window.FunctionView = {
             loader.style.display = 'none';
             container.style.display = 'block';
 
-            this.graphController = new PivotickGraphController(container, { collection: this.params.collection });
+            this.graphController = new PivotickGraphController(container, {
+                collection: this.params.collection,
+                onExpandedChange: (list) => this.renderExpandedList(list),
+            });
             await this.graphController.addFunction(this.id, { asCenter: true });
         } catch (err) {
             console.error(err);
@@ -362,46 +377,32 @@ window.FunctionView = {
         await this.graphController.toggleSimilarity(show);
     },
 
-    // Groups caller/callee entries into Pivotick native cluster (parent) nodes
-    // by file_md5, one per distinct binary -- 'self' and 'external' entries and
-    // anything added later (recursive expansion, similarity hits) stay loose,
-    // since Pivotick's children[] shape only exists at node-construction time,
-    // not via a documented "add to existing cluster" API.
-    // ponytail: only clusters the initial synchronous batch; deeper-expanded
-    // nodes render ungrouped. Revisit if that's confusing in practice.
-    //
-    // Only 'similar'/'added' matches get grouped -- the center function and
-    // its direct callers/callees are the actual subject of the graph, and
-    // clustering them away (even when they happen to share a binary with a
-    // similarity match) hid the very thing the user came to look at.
-    CLUSTERABLE_KINDS: new Set(['similar', 'added']),
+    async toggleClusterByBinary(enabled) {
+        if (!this.graphController) return;
+        await this.graphController.toggleClustering(enabled);
+    },
 
-    buildClusteredNodes(entries) {
-        const groupable = entries.filter(n => this.CLUSTERABLE_KINDS.has(n.data.kind) && n.data.raw?.file_md5);
-        const binaries = new Set(groupable.map(n => n.data.raw.file_md5));
-        if (binaries.size < 1) return entries;
-
-        const byMd5 = new Map();
-        const result = [];
-        for (const n of entries) {
-            const md5 = n.data.raw?.file_md5;
-            if (!this.CLUSTERABLE_KINDS.has(n.data.kind) || !md5) {
-                result.push(n);
-                continue;
-            }
-            if (!byMd5.has(md5)) {
-                const cluster = {
-                    id: `cluster:${md5}`,
-                    data: { kind: 'binary-cluster', raw: { file_md5: md5, file_name: n.data.raw.file_name } },
-                    expanded: true,
-                    children: [],
-                };
-                byMd5.set(md5, cluster);
-                result.push(cluster);
-            }
-            byMd5.get(md5).children.push(n);
+    // Mirrors PivotickGraphController's tracked expanded-node set into the
+    // side list -- called on every expand/collapse/remove so the list never
+    // drifts from what's actually pinned open on the graph.
+    renderExpandedList(list) {
+        const el = document.getElementById('fn-cg-expanded-list');
+        if (!el) return;
+        if (!list.length) {
+            el.innerHTML = `<div style="color:var(--dim); font-style:italic;">None yet -- click a node to expand it.</div>`;
+            return;
         }
-        return result;
+        el.innerHTML = list.map(n => `
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:4px; background:var(--card-bg,#222); border-radius:4px; padding:4px 6px;">
+                <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:monospace;" title="${escapeAttr(n.name)}">${escapeHtml(n.name)}</span>
+                <button onclick="FunctionView.removeExpanded(${escapeAttr(jsString(n.id))})" title="Collapse this function" style="flex-shrink:0; border:none; background:none; color:var(--dim); cursor:pointer; padding:0 2px; font-size:0.9rem; line-height:1;">&times;</button>
+            </div>
+        `).join('');
+    },
+
+    removeExpanded(id) {
+        if (!this.graphController) return;
+        this.graphController.removeExpanded(id);
     },
 
     // Fetches a single function's current BSimVis notes and concatenates them
@@ -426,7 +427,7 @@ window.FunctionView = {
     // Pivotick's native canvas notes (attachedElement links a note bubble to a
     // node) so notes show up right on the graph instead of only in the side panel.
     async fetchGraphNotes(entries) {
-        const targets = entries.filter(n => n.data.kind !== 'external' && n.data.kind !== 'binary-cluster');
+        const targets = entries.filter(n => n.data.kind !== 'external');
         const results = await Promise.all(targets.map(async n => {
             const content = await this.fetchNoteContent(n.id);
             if (!content) return null;
@@ -463,18 +464,19 @@ window.FunctionView = {
     },
 
     LEGEND_ITEMS: [
-        { color: 'var(--accent, #04d9ff)', label: 'Added function(s)' },
-        { color: '#a6e22e', label: 'Caller (calls this)' },
-        { color: '#f92672', label: 'Callee (called by this)' },
+        { color: 'var(--accent, #04d9ff)', label: 'Center function' },
         { color: 'var(--dim, #888)', label: 'External' },
         { color: '#ae81ff', label: 'Similar to — % on edge', dashed: true },
+        { note: 'Other node colors = binary (same color = same file)' },
     ],
 
     renderLegendHTML() {
-        return this.LEGEND_ITEMS.map(i => `<span style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
-            <span style="width:10px; height:${i.dashed ? '0' : '10px'}; ${i.dashed ? `border-top:2px dashed ${i.color};` : `border-radius:50%; background:${i.color};`}"></span>
-            ${escapeHtml(i.label)}
-        </span>`).join('');
+        return this.LEGEND_ITEMS.map(i => i.note
+            ? `<span style="white-space:nowrap; opacity:0.75;">${escapeHtml(i.note)}</span>`
+            : `<span style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
+                <span style="width:10px; height:${i.dashed ? '0' : '10px'}; ${i.dashed ? `border-top:2px dashed ${i.color};` : `border-radius:50%; background:${i.color};`}"></span>
+                ${escapeHtml(i.label)}
+            </span>`).join('');
     },
 
     renderEdgeLabel() {
@@ -488,18 +490,45 @@ window.FunctionView = {
         return document.createElement('span');
     },
 
-    callGraphRenderNode(raw, kind) {
+    // `more` (from PivotickGraphController._applyCallGraphTruncation /
+    // _discoverSimilar) is how many callers/callees/similar matches the
+    // backend had beyond what got pulled into the graph -- MAX_CALL_CHILDREN_PER_SIDE
+    // and MAX_SIMILAR_PER_NODE cap what one click adds so a hub function
+    // doesn't dump hundreds of nodes into the simulation at once, but the
+    // user still needs to see that the list wasn't the whole picture.
+    callGraphMoreBadgeHtml(more) {
+        if (!more) return '';
+        const parts = [];
+        if (more.callers) parts.push(`${more.callers} more caller${more.callers === 1 ? '' : 's'}`);
+        if (more.callees) parts.push(`${more.callees} more callee${more.callees === 1 ? '' : 's'}`);
+        if (more.similar) parts.push(`${more.similar} more similar match${more.similar === 1 ? '' : 'es'}`);
+        if (!parts.length) return '';
+        const msg = `Not all shown: ${parts.join(', ')}. Re-expand after raising the limit, or check the Similar tab.`;
+        const onclick = `event.stopPropagation(); window.showToast && window.showToast(${jsString(msg)}, 'info');`;
+        return `<div onclick="${escapeAttr(onclick)}" title="${escapeAttr(msg)}" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--accent,#04d9ff); opacity:0.85; font-size:8.5px; margin-top:2px; cursor:help;"><i class="fa-solid fa-circle-plus" style="margin-right:3px;"></i>${escapeHtml(parts.join(', '))}</div>`;
+    },
+
+    callGraphRenderNode(raw, kind, more) {
         if (kind === 'binary-cluster') {
             const hasRealName = raw?.file_name && raw.file_name !== raw?.file_md5;
             const label = escapeHtml(hasRealName ? raw.file_name : (raw?.file_md5 || '').slice(0, 10) || 'binary');
+            const color = (raw?.file_md5 && window.getMd5Color) ? window.getMd5Color(raw.file_md5) : 'var(--accent, #04d9ff)';
             const div = document.createElement('div');
-            div.style.cssText = 'padding:6px 10px; border-radius:8px; border:2px dashed #66d9ef; background:var(--card-bg, #222); font:11px/1.3 monospace; color:#66d9ef; font-weight:bold; white-space:nowrap;';
+            div.style.cssText = `padding:6px 10px; border-radius:8px; border:2px dashed ${color}; background:var(--card-bg, #222); font:11px/1.3 monospace; color:${color}; font-weight:bold; white-space:nowrap;`;
             div.textContent = label;
             return div;
         }
 
         const name = escapeHtml(raw?.name || (raw?.id || '').split(':').pop() || '?');
-        const border = { self: 'var(--accent, #04d9ff)', added: 'var(--accent, #04d9ff)', caller: '#a6e22e', callee: '#f92672', external: 'var(--dim, #888)', similar: '#ae81ff' }[kind] || '#fff';
+        // Caller/callee/similar/added used to get distinct colors, but once a
+        // node can itself be expanded there's no fixed "reference point" left
+        // for those labels to mean anything -- color by binary instead (same
+        // md5 -> same color, matching every other graph in the app), and
+        // reserve a fixed color for the two kinds that stay meaningful
+        // regardless of expansion: the center function and external calls.
+        const border = kind === 'self' ? 'var(--accent, #04d9ff)'
+            : kind === 'external' ? 'var(--dim, #888)'
+            : (raw?.file_md5 && window.getMd5Color) ? window.getMd5Color(raw.file_md5) : '#fff';
         const lineCss = 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
         const fileName = raw?.file_name ? escapeHtml(raw.file_name) : '';
         const fileHtml = fileName ? `<div style="${lineCss} color:var(--dim,#888); opacity:0.75; font-size:8.5px; margin-top:1px;"><i class="fa-solid fa-file-binary" style="margin-right:3px;"></i>${fileName}</div>` : '';
@@ -522,7 +551,8 @@ window.FunctionView = {
 
         div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold; font-size:12px;">${nsHtml}${name}</div>`
             + `<div style="${lineCss} font-size:9.5px;">${retHtml} <span style="color:#fff; opacity:0.7;">(</span>${paramHtml}<span style="color:#fff; opacity:0.7;">)</span></div>`
-            + fileHtml;
+            + fileHtml
+            + this.callGraphMoreBadgeHtml(more);
         return div;
     },
 
@@ -701,7 +731,7 @@ window.FunctionView = {
         for (let i = start; i < end; i++) {
             const row = this.funcRows[i];
             let lineEl = lineMap.get(row.line_idx);
-            
+
             if (!lineEl) {
                 const isTarget = window.targetLineSet && window.targetLineSet.has(row.line_idx);
                 let content = '';
@@ -726,7 +756,7 @@ window.FunctionView = {
                 this.vContentEl.insertBefore(line, this.vContentEl.children[i] || null);
             }
         }
-        
+
         if (window.applyLocks) {
             window.applyLocks(this.vContentEl);
         }
@@ -735,7 +765,7 @@ window.FunctionView = {
     setupKeyboardSelection() {
         this.vContentEl.setAttribute('contenteditable', 'true');
         this.vContentEl.setAttribute('spellcheck', 'false');
-        
+
         this.vContentEl.addEventListener('keydown', (e) => {
             const isCmd = e.ctrlKey || e.metaKey;
             const key = e.key;
@@ -756,20 +786,20 @@ window.FunctionView = {
                 return;
             }
 
-            if (isCmd && key.toLowerCase() === 'a') return; 
+            if (isCmd && key.toLowerCase() === 'a') return;
             if (isCmd && (key.toLowerCase() === 'c' || key.toLowerCase() === 'v')) return;
-            
+
             const allowedKeys = [
                 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
                 'Home', 'End', 'PageUp', 'PageDown', 'Shift', 'Control', 'Alt', 'Meta'
             ];
-            
+
             if (allowedKeys.includes(key)) {
                 requestAnimationFrame(() => {
                     const sel = window.getSelection();
                     if (!sel.rangeCount) return;
                     const rect = sel.getRangeAt(0).getBoundingClientRect();
-                    
+
                     if (rect.height === 0 || (rect.top === 0 && rect.left === 0)) return;
 
                     const containerRect = this.scrollEl.getBoundingClientRect();
@@ -845,7 +875,7 @@ window.FunctionView = {
             } else if (calledFuncId && !isExternal) {
                 this.tooltipEl.style.display = 'none';
                 const targetName = token.getAttribute('data-target-name') || calledFuncId.split(':').pop();
-                
+
                 const fakeEvent = { clientX: x, clientY: y, target: token, currentTarget: token };
 
                 if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {

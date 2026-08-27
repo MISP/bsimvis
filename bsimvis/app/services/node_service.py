@@ -2,9 +2,16 @@ import json
 from bsimvis.app.services.redis_client import get_redis
 
 
-def get_enriched_nodes(collection, md5, addr):
+def get_enriched_nodes(collection, md5, addr, limit=None):
     """
     Fetches and enriches callers and callees for a given function.
+
+    `limit` caps how many of each (callers/callees) get enriched and
+    returned -- a function with hundreds of callers (a shared utility in a
+    statically-linked binary, say) would otherwise mean hundreds of redis
+    meta lookups and hundreds of new graph nodes for one click. The true
+    counts before truncation come back as callers_total/callees_total so
+    the caller can tell the user more exist.
     """
     try:
         r = get_redis()
@@ -23,6 +30,11 @@ def get_enriched_nodes(collection, md5, addr):
             for cid in callee_ids_bytes
             if cid
         ]
+        callers_total = len(caller_ids)
+        callees_total = len(callee_ids)
+        if limit is not None:
+            caller_ids = caller_ids[:limit]
+            callee_ids = callee_ids[:limit]
 
         # Pipeline to fetch names for internal functions
         all_ids = list(set(caller_ids + callee_ids))
@@ -108,7 +120,9 @@ def get_enriched_nodes(collection, md5, addr):
         return {
             "callers": [build_node_info(cid) for cid in caller_ids],
             "callees": [build_node_info(cid) for cid in callee_ids],
+            "callers_total": callers_total,
+            "callees_total": callees_total,
         }
     except Exception as e:
         print(f"Error enriching nodes: {e}")
-        return {"callers": [], "callees": []}
+        return {"callers": [], "callees": [], "callers_total": 0, "callees_total": 0}

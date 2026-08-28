@@ -263,6 +263,15 @@ class LLMService:
         `members` is [(func_id, func_name, code), ...]. Returns
         ({func_id: (verdict, evidence, suggested_tag)}, missing_func_ids,
         error). `suggested_tag` is `None` when nothing in the taxonomy fits.
+
+        The wire schema identifies each function by its position (`idx`),
+        not its func_id string: a real func_id is `collection:func:md5:addr`,
+        which the model would otherwise have to echo back verbatim in every
+        item just to satisfy the enum -- at 25+ functions per batch that ate
+        the whole num_predict budget on repeating ids, leaving nothing for
+        actual verdicts, so every item silently failed to parse (all landed
+        in `missing` with no error to explain why). An index costs a few
+        tokens instead of dozens.
         """
         self._load_config()
         custom_tags = [
@@ -276,8 +285,8 @@ class LLMService:
 
         func_ids = [fid for fid, _, _ in members]
         blocks = "\n\n".join(
-            f"=== FUNCTION {fid} ({name}) ===\nCode:\n{code}"
-            for fid, name, code in members
+            f"=== FUNCTION {i} ({name}) ===\nCode:\n{code}"
+            for i, (_fid, name, code) in enumerate(members)
         )
         full_prompt = (
             "An analyst is triaging functions and is looking for: "
@@ -289,7 +298,8 @@ class LLMService:
             "or built from individual constants, not just visible literal "
             "text. Do not judge general maliciousness or severity here. "
             "Evidence is one short phrase citing the specific code, empty "
-            "when the verdict is no."
+            "when the verdict is no. Identify each function by the number "
+            "in its \"=== FUNCTION N\" heading."
         )
         response_format = {
             "type": "object",
@@ -301,7 +311,10 @@ class LLMService:
                     "items": {
                         "type": "object",
                         "properties": {
-                            "func_id": {"type": "string", "enum": func_ids},
+                            "idx": {
+                                "type": "integer",
+                                "enum": list(range(len(members))),
+                            },
                             "verdict": {
                                 "type": "string",
                                 "enum": ["yes", "maybe", "no"],
@@ -313,12 +326,7 @@ class LLMService:
                                 "enum": ["none", *allowed_tags],
                             },
                         },
-                        "required": [
-                            "func_id",
-                            "verdict",
-                            "evidence",
-                            "suggested_tag",
-                        ],
+                        "required": ["idx", "verdict", "evidence", "suggested_tag"],
                         "additionalProperties": False,
                     },
                 }
@@ -346,7 +354,7 @@ class LLMService:
                 stream=False,
                 think=False,
                 format=response_format,
-                options={"num_predict": 40 * len(members), "temperature": 0.1},
+                options={"num_predict": 80 * len(members), "temperature": 0.1},
             )
             msg = response.get("message", {})
             text = msg.get("content", "") or msg.get("thinking", "")
@@ -373,8 +381,14 @@ class LLMService:
         for item in items or []:
             if not isinstance(item, dict):
                 continue
-            fid = item.get("func_id")
-            if fid not in func_ids or fid in out:
+            try:
+                idx = int(item.get("idx"))
+            except (TypeError, ValueError):
+                continue
+            if not 0 <= idx < len(func_ids):
+                continue
+            fid = func_ids[idx]
+            if fid in out:
                 continue
             verdict = item.get("verdict")
             if verdict not in ("yes", "maybe", "no"):
@@ -934,29 +948,37 @@ def _selfcheck():
     item_schema = batch_format["properties"]["results"]["items"]
     assert item_schema["properties"]["func_id"]["enum"] == ["a:func:1", "a:func:2"]
 
-    # _parse_classify_response: verdict/evidence pass through, a tag outside
-    # the caller's allowed set is nulled rather than trusted, a missing verdict
-    # drops the item (surfaces via `missing`) instead of guessing one.
+    # _parse_classify_response: identifies items by position (`idx`), not by
+    # echoing the func_id string -- verdict/evidence pass through, a tag
+    # outside the caller's allowed set is nulled rather than trusted, an
+    # invalid verdict/idx drops the item (surfaces via `missing`) instead of
+    # guessing one.
     parse_classify = LLMService._parse_classify_response
     out, missing, err = parse_classify(
         json.dumps(
             {
                 "results": [
                     {
-                        "func_id": "f1",
+                        "idx": 0,
                         "verdict": "yes",
                         "evidence": "builds .dat byte by byte",
                         "suggested_tag": "category:persistence:file",
                     },
                     {
-                        "func_id": "f2",
+                        "idx": 1,
                         "verdict": "no",
                         "evidence": "",
                         "suggested_tag": "not-a-real-tag",
                     },
                     {
-                        "func_id": "f3",
+                        "idx": 2,
                         "verdict": "not-a-verdict",
+                        "evidence": "x",
+                        "suggested_tag": "none",
+                    },
+                    {
+                        "idx": 99,  # out of range -- must not crash or leak in
+                        "verdict": "yes",
                         "evidence": "x",
                         "suggested_tag": "none",
                     },
@@ -984,7 +1006,7 @@ def _selfcheck():
                         {
                             "results": [
                                 {
-                                    "func_id": "a:func:1",
+                                    "idx": 0,
                                     "verdict": "maybe",
                                     "evidence": "opens a file by extension",
                                     "suggested_tag": "none",
@@ -997,21 +1019,27 @@ def _selfcheck():
 
     fake_classify_client = FakeClassifyClient()
     globals()["Client"] = lambda host: fake_classify_client
+    # A real func_id (collection:func:md5:addr) is long -- the regression
+    # this guards is the model being made to echo it back per item and
+    # running out of num_predict before it could emit a single full item.
+    long_func_id = "null:func:843841580c262ba277de71dc57336f70:00100780"
     try:
         results, missing, error = LLMService().classify_relevance_batch(
-            [("a:func:1", "f1", "code1")], "the .dat decrypt routine"
+            [(long_func_id, "f1", "code1")], "the .dat decrypt routine"
         )
     finally:
         globals()["Client"] = real_client
     assert error is None and missing == []
-    assert results["a:func:1"] == ("maybe", "opens a file by extension", None)
+    assert results[long_func_id] == ("maybe", "opens a file by extension", None)
     classify_format = fake_classify_client.calls[0]["format"]
-    assert classify_format["properties"]["results"]["items"]["properties"]["verdict"][
-        "enum"
-    ] == ["yes", "maybe", "no"]
+    item_props = classify_format["properties"]["results"]["items"]["properties"]
+    assert item_props["verdict"]["enum"] == ["yes", "maybe", "no"]
+    # identified by position, not by echoing the (potentially long) func_id
+    assert item_props["idx"]["enum"] == [0]
+    assert "func_id" not in item_props
     # the short triage prompt, not the full severity/category grounding rules
     assert "relevance" in fake_classify_client.calls[0]["messages"][0]["content"].lower()
-    assert fake_classify_client.calls[0]["options"]["num_predict"] == 40
+    assert fake_classify_client.calls[0]["options"]["num_predict"] == 80
 
     print("ok")
 

@@ -263,6 +263,40 @@ class BinSimService:
         if containers:
             binaries = [m for m in binaries if m not in containers]
 
+        # Readiness gate: never persist a bin_sim doc computed against a
+        # binary whose own similarity discovery hasn't run yet -- that would
+        # silently write a score with one side effectively empty (wrong, not
+        # just incomplete) whenever another file is still mid-analysis while
+        # this one's batch finishes. {collection}:built:functions:{algo} is
+        # exactly where similarity_service.build_batch marks a function done
+        # once its discovery pass has run. A binary that isn't ready yet is
+        # simply skipped this round -- whichever of a pair finishes analysis
+        # LAST will find the other side already ready and complete the pair
+        # then, so nothing is permanently lost, only deferred until correct.
+        built_functions = set(
+            f.decode() if isinstance(f, bytes) else f
+            for f in r.smembers(f"{collection}:built:functions:{algo}")
+        )
+        ready_binaries = []
+        not_ready = []
+        for md5 in binaries:
+            fids = r.smembers(f"{collection}:idx:file:functions:{md5}")
+            fids = {f.decode() if isinstance(f, bytes) else f for f in fids}
+            if fids and not fids.issubset(built_functions):
+                not_ready.append(md5)
+            else:
+                ready_binaries.append(md5)
+        if not_ready:
+            msg = (
+                f"[*] Skipping {len(not_ready)} binaries whose similarity "
+                f"discovery hasn't finished yet -- will pair once ready: "
+                f"{not_ready[:10]}{'...' if len(not_ready) > 10 else ''}"
+            )
+            logging.info(msg)
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+        binaries = ready_binaries
+
         num_binaries = len(binaries)
         if num_binaries < 2:
             if job_service and job_id:

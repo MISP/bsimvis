@@ -20,7 +20,7 @@ DEFAULT_TEST_DIR = "data/bench"
 DEFAULT_COLLECTION = "test_bench"
 
 
-def poll_job(job_id, timeout=300):
+def poll_job(job_id, timeout=1200):
     """Wait for a job or pipeline to finish."""
     start = time.time()
     while time.time() - start < timeout:
@@ -231,7 +231,7 @@ def run_single_file(
         )
 
         # Post to API
-        resp = requests.post(f"{API_BASE}/file/upload_file_data", json=data)
+        resp = requests.post(f"{API_BASE}/file/upload_file_data?enqueue=true", json=data)
         resp.raise_for_status()
         res = resp.json()
         pipeline_id = res.get("pipeline_id")
@@ -460,7 +460,7 @@ def run_single_file_for_pool(
         print(f"    - Size: {size_mb:.2f} MB | Lines: {lines:,}")
 
         resp = requests.post(
-            f"{API_BASE}/file/upload_file_data",
+            f"{API_BASE}/file/upload_file_data?enqueue=true",
             json=data,
             timeout=60,
         )
@@ -612,7 +612,7 @@ def run_bench_pools(
                 "skip_sim": True,
             }
             try:
-                resp = requests.post(api_url, json=payload, timeout=300)
+                resp = requests.post(api_url, json=payload, timeout=1200)
                 resp.raise_for_status()
                 master_pipeline_id = resp.json().get("master_pipeline_id")
                 if master_pipeline_id:

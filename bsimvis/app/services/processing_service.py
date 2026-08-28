@@ -339,6 +339,7 @@ class ProcessingService:
             if vec_tf_list:
                 zset_mapping = {item["hash"]: item["tf"] for item in vec_tf_list}
                 pipe.zadd(f"{base_func_key}:vec:tf", zset_mapping)
+                
 
             # --- Secondary Indexing ---
             save_function(pipe, collection, file_md5, addr, func_meta)

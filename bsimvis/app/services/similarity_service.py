@@ -523,6 +523,10 @@ class SimilarityService:
         last_t, last_done, last_sims = start_time, 0, 0
 
         for i in range(0, total, chunk_size):
+            if job_service and job_id and job_service.is_cancelled(job_id):
+                job_service.add_log(job_id, "Cancelled.")
+                return False
+
             chunk = function_ids[i : i + chunk_size]
 
             # 1. Update Progress & Metrics
@@ -2036,6 +2040,10 @@ class SimilarityService:
             []
         )  # below min_features -> exact FunctionID-hash match instead
         for i in range(0, total, chunk_size):
+            if job_service and job_id and job_service.is_cancelled(job_id):
+                job_service.add_log(job_id, "Cancelled.")
+                return False
+
             chunk = all_function_ids[i : i + chunk_size]
 
             # Update Progress
@@ -2330,6 +2338,10 @@ class SimilarityService:
             []
         )  # below min_features -> exact FunctionID-hash match instead
         for i in range(0, total, chunk_size):
+            if job_service and job_id and job_service.is_cancelled(job_id):
+                job_service.add_log(job_id, "Cancelled.")
+                return False
+
             chunk = all_function_ids[i : i + chunk_size]
 
             # Update Progress
@@ -2846,6 +2858,9 @@ class SimilarityService:
 
         for pair_idx, (b1, b2, edges) in enumerate(stream_pair_edges()):
             if pair_idx and pair_idx % 2000 == 0:
+                if job_service and job_id and job_service.is_cancelled(job_id):
+                    job_service.add_log(job_id, "Cancelled.")
+                    return False
                 elapsed = time.time() - loop_t
                 rate = pair_idx / elapsed if elapsed else 0
                 eta = (total_pairs - pair_idx) / rate if rate else 0
@@ -3092,6 +3107,10 @@ class SimilarityService:
 
         pipe = r.pipeline(transaction=False)
         for i, (sid, d) in enumerate(docs):
+            if i and i % 200 == 0 and job_service and job_id and job_service.is_cancelled(job_id):
+                job_service.add_log(job_id, "Cancelled.")
+                return False
+
             c1, m1 = d.get("coll_a", ""), d.get("md5_a", "")
             c2, m2 = d.get("coll_b", ""), d.get("md5_b", "")
             # Pool docs already carry the collection field names; only the
@@ -3239,6 +3258,10 @@ class SimilarityService:
         last_t, last_done = start_time, 0
 
         for i in range(0, total, batch_size):
+            if job_service and job_id and job_service.is_cancelled(job_id):
+                job_service.add_log(job_id, "Cancelled.")
+                return
+
             batch_ids = similarity_ids[i : i + batch_size]
 
             # 1. Fetch similarity documents

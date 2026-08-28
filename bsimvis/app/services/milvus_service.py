@@ -173,6 +173,10 @@ class MilvusService:
         for i, fid in enumerate(function_ids):
             fid = fid.decode() if isinstance(fid, bytes) else fid
 
+            if job_service and job_id and i % 50 == 0 and job_service.is_cancelled(job_id):
+                job_service.add_log(job_id, "Cancelled.")
+                return False
+
             # Update job progress
             if job_service and job_id and (i % 50 == 0 or i == total - 1):
                 pct = int((i + 1) / total * 100)

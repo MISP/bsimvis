@@ -973,6 +973,9 @@ class BinSimService:
                 pipe.execute()
                 pipe = r.pipeline(transaction=False)
                 if job_service and job_id:
+                    if job_service.is_cancelled(job_id):
+                        job_service.add_log(job_id, "Cancelled.")
+                        return False
                     job_service.update_progress(job_id, int((i + 1) / total * 100))
 
         pipe.execute()
@@ -1033,6 +1036,10 @@ class BinSimService:
         done = 0
 
         for start in range(0, total, 200):
+            if job_service and job_id and job_service.is_cancelled(job_id):
+                job_service.add_log(job_id, "Cancelled.")
+                return False
+
             chunk = sids[start : start + 200]
             pipe = r.pipeline(transaction=False)
             for sid in chunk:

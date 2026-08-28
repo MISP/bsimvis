@@ -508,7 +508,7 @@ class PoolService:
 
         return True
 
-    def init_pool_build(self, pool_id):
+    def init_pool_build(self, pool_id, job_service=None, job_id=None):
         """
         Wipes pool data, updates snapshots, and merges base file/func indexes.
         """
@@ -563,6 +563,10 @@ class PoolService:
                     # Chunk to avoid holding lock / freezing redis
                     chunk_size = 500
                     for i in range(0, len(bucket_list), chunk_size):
+                        if job_service and job_id and job_service.is_cancelled(job_id):
+                            job_service.add_log(job_id, "Cancelled.")
+                            return False
+
                         chunk = bucket_list[i : i + chunk_size]
 
                         exists_pipe = r.pipeline(transaction=False)
@@ -655,6 +659,10 @@ class PoolService:
             md5_list = list(md5_set)
             chunk_size = 500
             for i in range(0, len(md5_list), chunk_size):
+                if job_service and job_id and job_service.is_cancelled(job_id):
+                    job_service.add_log(job_id, "Cancelled.")
+                    return False
+
                 chunk = md5_list[i : i + chunk_size]
 
                 exists_pipe = r.pipeline(transaction=False)
@@ -695,7 +703,7 @@ class PoolService:
 
         return True
 
-    def finalize_pool_build(self, pool_id):
+    def finalize_pool_build(self, pool_id, job_service=None, job_id=None):
         """
         Merges similarity-level tag registries and index buckets.
         """
@@ -748,6 +756,10 @@ class PoolService:
                 total_chunks = (len(bucket_list) + chunk_size - 1) // chunk_size
 
                 for i in range(0, len(bucket_list), chunk_size):
+                    if job_service and job_id and job_service.is_cancelled(job_id):
+                        job_service.add_log(job_id, "Cancelled.")
+                        return False
+
                     chunk = bucket_list[i : i + chunk_size]
                     chunk_idx = i // chunk_size + 1
                     logging.info(

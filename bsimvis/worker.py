@@ -868,13 +868,17 @@ class Worker:
             pool_id = payload.get("pool_id")
             from bsimvis.app.services.pool_service import pool_service
 
-            return pool_service.init_pool_build(pool_id)
+            return pool_service.init_pool_build(
+                pool_id, job_service=self.job_service, job_id=job_id
+            )
 
         elif jtype == JobType.FINALIZE_POOL_BUILD.value:
             pool_id = payload.get("pool_id")
             from bsimvis.app.services.pool_service import pool_service
 
-            return pool_service.finalize_pool_build(pool_id)
+            return pool_service.finalize_pool_build(
+                pool_id, job_service=self.job_service, job_id=job_id
+            )
 
         elif jtype == JobType.BUILD_POOL_SIM.value:
             pool_id = payload.get("pool_id")

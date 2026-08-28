@@ -656,7 +656,7 @@ class BinClusterService:
 
             birth_lambdas, _ = self._tree_lambdas(tree_df)
 
-            self._persist_hierarchical_binary_clusters(
+            persisted = self._persist_hierarchical_binary_clusters(
                 collection,
                 algo,
                 edge_set,
@@ -672,6 +672,8 @@ class BinClusterService:
                 job_id,
                 node_type=node_type,
             )
+            if persisted is False:
+                return False
 
         return True
 
@@ -1004,7 +1006,7 @@ class BinClusterService:
 
                 tree_df = pd.DataFrame(pruned_rows)
 
-            self._persist_hierarchical_binary_clusters(
+            persisted = self._persist_hierarchical_binary_clusters(
                 collection,
                 algo,
                 edge_set,
@@ -1020,6 +1022,8 @@ class BinClusterService:
                 job_id,
                 node_type=node_type,
             )
+            if persisted is False:
+                return False
 
         return True
 
@@ -1165,6 +1169,9 @@ class BinClusterService:
             if i % 500 == 0:
                 pipe.execute()
                 if job_service and job_id:
+                    if job_service.is_cancelled(job_id):
+                        job_service.add_log(job_id, "Cancelled.")
+                        return False
                     pct = int((i / num_nodes) * 50)
                     job_service.update_progress(job_id, pct)
 

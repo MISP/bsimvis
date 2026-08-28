@@ -85,6 +85,9 @@ class MetadataService:
 
         for idx_file, (md5, file_updates) in enumerate(updates.items()):
             if job_service and job_id:
+                if job_service.is_cancelled(job_id):
+                    job_service.add_log(job_id, "Cancelled.")
+                    return False
                 pct = int((idx_file) / total_files * 100)
                 job_service.update_progress(
                     job_id,

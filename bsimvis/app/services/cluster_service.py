@@ -907,7 +907,7 @@ class ClusterService:
         # incremental state) so nothing orphaned survives underneath it.
         self.clear_clustering(collection, algo, job_service=job_service, job_id=job_id)
 
-        self._persist_flat_clusters(
+        persisted = self._persist_flat_clusters(
             collection,
             algo,
             id_to_idx,
@@ -920,6 +920,8 @@ class ClusterService:
             job_service,
             job_id,
         )
+        if persisted is False:
+            return False
 
         self._update_similarity_indexing(
             collection, algo, job_service=job_service, job_id=job_id
@@ -1200,7 +1202,7 @@ class ClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        self._persist_hierarchical_clusters(
+        persisted = self._persist_hierarchical_clusters(
             collection,
             algo,
             id_to_idx,
@@ -1217,6 +1219,8 @@ class ClusterService:
             job_service=job_service,
             job_id=job_id,
         )
+        if persisted is False:
+            return False
 
         self._update_similarity_indexing(
             collection, algo, job_service=job_service, job_id=job_id
@@ -1325,6 +1329,9 @@ class ClusterService:
             if i % 500 == 0:
                 pipe.execute()
                 if job_service and job_id:
+                    if job_service.is_cancelled(job_id):
+                        job_service.add_log(job_id, "Cancelled.")
+                        return False
                     job_service.update_progress(
                         job_id, int((i / max(1, len(all_member_meta_fids))) * 50)
                     )
@@ -1505,6 +1512,9 @@ class ClusterService:
             if i % 500 == 0:
                 pipe.execute()
                 if job_service and job_id:
+                    if job_service.is_cancelled(job_id):
+                        job_service.add_log(job_id, "Cancelled.")
+                        return False
                     job_service.update_progress(
                         job_id, int((i / max(1, len(idx_to_id))) * 50)
                     )

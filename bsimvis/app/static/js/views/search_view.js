@@ -323,9 +323,12 @@ window.searchViewOpenNewForm = function(btn) {
     if (container.innerHTML.trim()) { container.innerHTML = ''; return; }
     // Same "current collection" detection every other view uses (routing state,
     // falling back to the RESTful/hash path) rather than leaving it blank.
-    const currentCollection = (window.getRoutingState && window.getRoutingState().collection)
-        || (window.getCollectionFromHash && window.getCollectionFromHash())
-        || '';
+    // getCollectionFromHash throws (not returns falsy) when nothing resolves --
+    // e.g. /searches itself carries no collection -- so this stays a plain input.
+    let currentCollection = (window.getRoutingState && window.getRoutingState().collection) || '';
+    if (!currentCollection && window.getCollectionFromHash) {
+        try { currentCollection = window.getCollectionFromHash() || ''; } catch (e) { /* no collection in context */ }
+    }
     container.innerHTML = `
         <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:18px; display:flex; flex-direction:column; gap:12px;">
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">

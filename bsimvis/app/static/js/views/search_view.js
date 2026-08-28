@@ -3,13 +3,10 @@
  * List mode: /searches
  * Detail mode: /searches/{id}
  *
- * Row selection uses plain checkboxes rather than the TableSelection class
- * (table_selection.js) -- that class only auto-attaches on the page's single
- * DOMContentLoaded event, and this view's results table is injected later by
- * an SPA route change, so it would need to be constructed manually anyway;
- * checkboxes are simpler to get right without a live browser to verify
- * TableSelection's drag/keyboard-nav wiring against a dynamically-inserted
- * table.
+ * Results table reuses the same row-rendering/selection stack as the file
+ * view's function table: EntityRenderer.renderFunction/renderTag for the
+ * cells, and `new TableSelection(id)` after each render (the constructor is
+ * idempotent per table id, so calling it again after a re-render is safe).
  */
 
 const VERDICT_STYLE = {
@@ -154,7 +151,7 @@ window.SearchView = {
             <div id="search-progress-container"></div>
 
             <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-                <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; color:var(--dim);"><input type="checkbox" id="search-select-all" onchange="window.searchViewToggleAll(this)"> Select all</label>
+                <span style="font-size:0.75rem; color:var(--dim);"><i class="fa-solid fa-arrows-up-down"></i> shift/ctrl-click or drag to select rows, ctrl+A for all, ctrl+C to copy</span>
                 <input id="search-apply-tag-input" type="text" placeholder="tag to apply, e.g. category:persistence:file" style="flex:1; min-width:220px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.8rem;">
                 <button onclick="window.searchViewApplyTag(${escapeAttr(jsString(meta.id))})" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:7px 14px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer;"><i class="fa-solid fa-tag"></i> Apply tag to selected</button>
                 <button onclick="window.searchViewAnalyzeSelected(${escapeAttr(jsString(meta.id))})" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:7px 14px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer;"><i class="fa-solid fa-wand-magic-sparkles"></i> Send selected to deep analysis</button>
@@ -197,6 +194,8 @@ window.SearchView = {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             container.innerHTML = this._renderResults(data.results || [], collection);
+            // TableSelection takes an element id, not an element (constructor is idempotent per table)
+            if (window.TableSelection) new window.TableSelection('search-results-table');
         } catch (e) {
             container.innerHTML = `<div style="padding:20px; color:#f87171;">${e.message}</div>`;
         }
@@ -207,30 +206,44 @@ window.SearchView = {
             return `<div style="color:var(--dim); font-size:0.85rem; padding:30px; text-align:center; background:var(--card-bg); border:1px solid var(--border); border-radius:8px;">No results yet.</div>`;
         }
         const rows = results.map(r => {
-            const parsed = window.parseFuncId ? window.parseFuncId(r.func_id) : null;
-            const funcUrl = parsed && parsed.md5
-                ? `/collections/${encodeURIComponent(parsed.collection || collection || '')}/functions/${parsed.md5}/${parsed.address}`
-                : null;
-            const nameOrId = funcUrl
-                ? `<a href="${funcUrl}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); text-decoration:none; font-weight:600;">${escapeHtml(r.func_id)}</a>`
-                : `<code>${escapeHtml(r.func_id)}</code>`;
+            const fColl = r.collection || collection || '';
+            // Rows carry their own function metadata (routes/searches.py enriches them via
+            // fetch_function_data) so EntityRenderer can render the same colored signature,
+            // tag editor and right-click menu the file view's function table uses.
+            const f = {
+                function_id: r.func_id,
+                function_name: r.function_name,
+                namespace: r.namespace,
+                parameters: r.parameters,
+                return_type: r.return_type,
+                entrypoint_address: r.entrypoint_address,
+                file_md5: r.file_md5,
+                collection: fColl,
+                bsim_features_count: r.bsim_features_count,
+                note_owners: r.note_owners,
+                tags: r.tags || [],
+                user_tags: r.user_tags || []
+            };
+            const tagsHtml = window.EntityRenderer ? window.EntityRenderer.renderTag('function', r.func_id, f.tags, f.user_tags) : '';
             return `
-            <tr data-func-id="${escapeAttr(r.func_id)}" style="border-bottom: 1px solid var(--border);">
-                <td style="padding:8px 15px;"><input type="checkbox" class="search-result-checkbox"></td>
-                <td style="padding:8px 15px; font-family:monospace; font-size:0.78rem;">${nameOrId}</td>
-                <td style="padding:8px 15px;">${verdictBadge(r.verdict)}</td>
-                <td style="padding:8px 15px; color:var(--dim); font-size:0.82rem;">${escapeHtml(r.evidence || '')}</td>
-                <td style="padding:8px 15px;">${r.suggested_tag ? `<code style="font-size:0.75rem; color:var(--accent);">${escapeHtml(r.suggested_tag)}</code>` : ''}</td>
+            <tr data-id="${escapeAttr(r.func_id)}" style="border-bottom: 1px solid var(--border);"
+                data-entity-data='${escapeAttr(JSON.stringify(f))}'
+                oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
+                <td style="padding:8px 15px; min-width:260px; max-width:420px;">${window.EntityRenderer ? window.EntityRenderer.renderFunction(f) : `<code>${escapeHtml(r.func_id)}</code>`}</td>
+                <td style="padding:8px 15px; min-width:140px; max-width:220px; overflow:hidden;">${tagsHtml}</td>
+                <td style="padding:8px 15px; white-space:nowrap;">${verdictBadge(r.verdict)}</td>
+                <td style="padding:8px 15px; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--dim); font-size:0.82rem;" title="${escapeAttr(r.evidence || '')}">${escapeHtml(r.evidence || '')}</td>
+                <td style="padding:8px 15px; white-space:nowrap;">${r.suggested_tag ? `<code style="font-size:0.75rem; color:var(--accent);">${escapeHtml(r.suggested_tag)}</code>` : ''}</td>
             </tr>`;
         }).join('');
 
         return `
-        <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--card-bg);">
-            <table id="search-results-table" style="width:100%; border-collapse:collapse; text-align:left; font-size:0.85rem;">
+        <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow-x:auto; background:var(--card-bg);">
+            <table id="search-results-table" style="width:100%; min-width:900px; border-collapse:collapse; text-align:left; font-size:0.85rem;">
                 <thead>
                     <tr style="border-bottom:1px solid var(--border); background: var(--hover); color:var(--dim);">
-                        <th style="padding:8px 15px; width:34px;"></th>
                         <th style="padding:8px 15px;">Function</th>
+                        <th style="padding:8px 15px;">Tags</th>
                         <th style="padding:8px 15px;">Verdict</th>
                         <th style="padding:8px 15px;">Evidence</th>
                         <th style="padding:8px 15px;">Suggested tag</th>
@@ -244,14 +257,8 @@ window.SearchView = {
 
 // --- action handlers scoped to this view --------------------------------
 
-window.searchViewToggleAll = function(checkbox) {
-    document.querySelectorAll('.search-result-checkbox').forEach(cb => { cb.checked = checkbox.checked; });
-};
-
 function searchViewSelectedFuncIds() {
-    return Array.from(document.querySelectorAll('.search-result-checkbox:checked'))
-        .map(cb => cb.closest('tr').getAttribute('data-func-id'))
-        .filter(Boolean);
+    return window.getSelectedTableIds ? window.getSelectedTableIds('function') : [];
 }
 
 window.searchViewApplyTag = async function(searchId) {
@@ -314,11 +321,16 @@ window.searchViewOpenNewForm = function(btn) {
     const container = document.getElementById('search-new-form-container');
     if (!container) return;
     if (container.innerHTML.trim()) { container.innerHTML = ''; return; }
+    // Same "current collection" detection every other view uses (routing state,
+    // falling back to the RESTful/hash path) rather than leaving it blank.
+    const currentCollection = (window.getRoutingState && window.getRoutingState().collection)
+        || (window.getCollectionFromHash && window.getCollectionFromHash())
+        || '';
     container.innerHTML = `
         <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:18px; display:flex; flex-direction:column; gap:12px;">
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
                 <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--dim);">Collection
-                    <input id="search-form-collection" type="text" placeholder="main" style="padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px;">
+                    <input id="search-form-collection" type="text" value="${escapeAttr(currentCollection)}" placeholder="main" style="padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px;">
                 </label>
                 <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--dim);">Scope
                     <select id="search-form-scope-type" onchange="window.searchViewScopeChanged(this)" style="padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px;">
@@ -347,15 +359,18 @@ window.searchViewScopeChanged = function(select) {
     const type = select.value;
     const inputStyle = 'padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px;';
     const labelStyle = 'display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--dim);';
+    // MD5 fields reuse the same attachAutocomplete(input, 'file', 'file_md5', ...) dropdown
+    // dashboard.js's advanced file search uses, scoped to the current collection.
+    const md5Autocomplete = `onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; })"`;
     if (type === 'file') {
-        fields.innerHTML = `<label style="${labelStyle}">File MD5<input id="search-form-md5" type="text" style="${inputStyle}"></label>`;
+        fields.innerHTML = `<label style="${labelStyle}">File MD5<input id="search-form-md5" type="text" autocomplete="off" ${md5Autocomplete} style="${inputStyle}"></label>`;
     } else if (type === 'filter') {
         fields.innerHTML = `<label style="${labelStyle}">Filter query string (same syntax as function search)<input id="search-form-filters" type="text" placeholder="tag=x&min_features=5" style="${inputStyle}"></label>`;
     } else if (type === 'pair') {
         fields.innerHTML = `
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-                <label style="${labelStyle}">MD5 A<input id="search-form-md5a" type="text" style="${inputStyle}"></label>
-                <label style="${labelStyle}">MD5 B<input id="search-form-md5b" type="text" style="${inputStyle}"></label>
+                <label style="${labelStyle}">MD5 A<input id="search-form-md5a" type="text" autocomplete="off" ${md5Autocomplete} style="${inputStyle}"></label>
+                <label style="${labelStyle}">MD5 B<input id="search-form-md5b" type="text" autocomplete="off" ${md5Autocomplete} style="${inputStyle}"></label>
             </div>`;
     } else {
         fields.innerHTML = '';

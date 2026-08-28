@@ -146,6 +146,27 @@ class SearchService:
             ),
         )
 
+    def get_verdict_counts(self, search_id):
+        """{'yes': n, 'maybe': n, 'no': n} tally over all stored results, so a
+        search row can show how many functions actually matched instead of
+        just how many were processed (`total`).
+        # ponytail: scans the full results hash rather than an incremental
+        # counter kept in sync at save_result() time -- simpler and avoids
+        # a second write path to keep correct, at the cost of an O(results)
+        # scan per row on the list page. Move to a counter if that list page
+        # gets slow with many/large searches.
+        """
+        raw = self.r.hgetall(_results_key(search_id))
+        counts = {"yes": 0, "maybe": 0, "no": 0}
+        for v in raw.values():
+            try:
+                verdict = json.loads(v).get("verdict")
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if verdict in counts:
+                counts[verdict] += 1
+        return counts
+
     def get_results(self, search_id, offset=0, limit=100, verdict=None):
         """Ranked (yes before maybe before no), paginated results. `verdict`
         is an optional iterable/str of verdicts to keep."""

@@ -130,6 +130,8 @@ def list_searches():
     except ValueError:
         return {"error": "limit and offset must be integers"}, 400
     searches, total = search_service.list_searches(limit, offset)
+    for s in searches:
+        s["verdict_counts"] = search_service.get_verdict_counts(s["id"])
     return {"searches": searches, "total": total, "limit": limit, "offset": offset}
 
 
@@ -154,6 +156,33 @@ def delete_search(search_id):
     return {"status": "success", "message": message}
 
 
+def _enrich_with_function_meta(rows):
+    """Attach name/namespace/tags/etc to each result row so the UI can reuse
+    EntityRenderer.renderFunction/renderTag instead of showing a bare func_id."""
+    from bsimvis.app.services.function_service import fetch_function_data
+    from bsimvis.app.services.llm_tools import parse_func_id
+
+    for row in rows:
+        try:
+            collection, md5, addr = parse_func_id(row["func_id"])
+        except ValueError:
+            continue
+        _, _, meta, _ = fetch_function_data(collection, md5, addr, meta_only=True)
+        meta = meta or {}
+        row["collection"] = collection
+        row["file_md5"] = md5
+        row["entrypoint_address"] = addr
+        row["function_name"] = meta.get("function_name")
+        row["namespace"] = meta.get("namespace")
+        row["parameters"] = meta.get("parameters")
+        row["return_type"] = meta.get("return_type")
+        row["bsim_features_count"] = meta.get("bsim_features_count")
+        row["tags"] = meta.get("tags") or []
+        row["user_tags"] = meta.get("user_tags") or []
+        row["note_owners"] = meta.get("note_owners") or []
+    return rows
+
+
 def get_search_results(search_id):
     if not search_service.get_search(search_id):
         return {"error": "Search not found"}, 404
@@ -164,6 +193,7 @@ def get_search_results(search_id):
         return {"error": "limit and offset must be integers"}, 400
     verdict = request.args.getlist("verdict") or None
     rows, total = search_service.get_results(search_id, offset, limit, verdict)
+    rows = _enrich_with_function_meta(rows)
     return {"results": rows, "total": total, "limit": limit, "offset": offset}
 
 

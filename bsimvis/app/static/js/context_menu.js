@@ -47,8 +47,16 @@
         if (window.setTrigger) window.setTrigger(e);
 
         if (!isRefresh) {
-            // Trigger a background refresh of tag metadata if it's a new menu opening
-            const col = typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : '';
+            // Trigger a background refresh of tag metadata if it's a new menu opening.
+            // getCollectionFromHash() throws (not returns falsy) on a route with no
+            // collection in it -- e.g. /searches/<id> -- so fall back to the
+            // right-clicked entity's own collection, then to nothing.
+            let col = '';
+            try {
+                col = (typeof getCollectionFromHash === 'function' && getCollectionFromHash()) || (data && data.collection) || '';
+            } catch (err) {
+                col = (data && data.collection) || '';
+            }
             if (typeof fetchTagMetadata === 'function') {
                 fetchTagMetadata(col).then(() => {
                     if (window.graphContextMenuOpen) {
@@ -331,7 +339,19 @@
 
         // -- Actions Dropdown Submenu --
         let actionsSubmenuHtml = '';
-        const col = getCollectionFromHash();
+        // Same "no collection in this route" case as the tag-metadata refresh above --
+        // e.g. right-clicking a row on /searches/<id> -- fall back to the entity's own
+        // collection (norm.id already embeds it for a function row, data.collection
+        // covers the rest) instead of letting the whole menu build throw.
+        let col;
+        try {
+            col = getCollectionFromHash();
+        } catch (err) {
+            col = (data && data.collection) || '';
+            if (!col && resolvedType === 'function' && norm.id && typeof window.parseFuncId === 'function') {
+                try { col = window.parseFuncId(norm.id).collection || ''; } catch (err2) { /* leave col empty */ }
+            }
+        }
         if (resolvedType === 'function') {
             actionsSubmenuHtml += `
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.addNodesToActiveGraph([${escapeAttr(jsString(norm.id))}])">

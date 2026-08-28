@@ -731,12 +731,27 @@ class JobService:
                     self.add_log(parent_id, "All tasks in group completed.")
                 self.complete_job(parent_id)
 
-    def fail_job(self, job_id, error_msg):
-        """Marks a job as failed and cascades failure to its parent."""
+    def fail_job(self, job_id, error_msg, failure_reason=None):
+        """Marks a job as failed and cascades failure to its parent.
+
+        `failure_reason` is the taxonomy from job-system-rework-plan.md §2 --
+        crashed | frozen | retries_exhausted | error -- derived by the caller
+        that actually knows what happened, not hand-set at every one of
+        fail_job's call sites. Defaults to "error": the ordinary case is a
+        handler raising or returning False, a clean, in-process failure with
+        no crash/lease story behind it. The reaper is the one caller that
+        knows better (job_service.py:reap_expired) and passes
+        "retries_exhausted" explicitly; failure_detail (already set there)
+        carries the specific crashed/frozen story underneath that verdict.
+        """
         self._set_status(job_id, JobStatus.FAILED)
         self.r.hset(
             f"job:{job_id}",
-            mapping={"error": error_msg, "completed_at": str(int(time.time() * 1000))},
+            mapping={
+                "error": error_msg,
+                "failure_reason": failure_reason or "error",
+                "completed_at": str(int(time.time() * 1000)),
+            },
         )
         self.add_log(job_id, f"Execution error: {error_msg}")
 
@@ -993,6 +1008,7 @@ class JobService:
                     self.fail_job(
                         job_id,
                         f"Lease expired {attempts - 1} times; giving up. Last death: {death}",
+                        failure_reason="retries_exhausted",
                     )
                     failed += 1
                     continue

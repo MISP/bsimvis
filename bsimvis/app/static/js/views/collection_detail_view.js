@@ -4,12 +4,12 @@
  */
 
 window.CollectionDetailView = {
-    refreshInterval: null,
+    _unsubscribeJobs: null,
 
     destroy() {
-        if (this.refreshInterval) {
-            clearInterval(this.refreshInterval);
-            this.refreshInterval = null;
+        if (this._unsubscribeJobs) {
+            this._unsubscribeJobs();
+            this._unsubscribeJobs = null;
         }
     },
 
@@ -64,23 +64,14 @@ window.CollectionDetailView = {
                 container.innerHTML = this._renderPage(collection, associatedPools, collectionActiveJobs);
             }
 
-            if (this.refreshInterval) clearInterval(this.refreshInterval);
-            this.refreshInterval = setInterval(async () => {
-                try {
-                    const res = await fetch('/api/jobs/stats');
-                    if (res.ok) {
-                        const stats = await res.json();
-                        const activeJobs = stats.active_jobs || [];
-                        const filtered = activeJobs.filter(job => job.collection === collName);
-                        const tableContainer = document.getElementById('active-jobs-container');
-                        if (tableContainer) {
-                            tableContainer.innerHTML = this._renderActiveJobsSection(collName, filtered);
-                        }
-                    }
-                } catch (e) {
-                    console.error("Auto refresh jobs error:", e);
-                }
-            }, 3000);
+            if (this._unsubscribeJobs) this._unsubscribeJobs();
+            this._unsubscribeJobs = window.JobStatusStore.subscribe({ collection: collName }, () => {
+                const tableContainer = document.getElementById('active-jobs-container');
+                if (!tableContainer) return;
+                const active = window.JobStatusStore.snapshot({ collection: collName })
+                    .filter((job) => job.status === 'pending' || job.status === 'running');
+                tableContainer.innerHTML = this._renderActiveJobsSection(collName, active);
+            });
 
         } catch (e) {
             container.innerHTML = `<div style="padding:30px; color:#f87171;"><i class="fa-solid fa-triangle-exclamation"></i> ${e.message}</div>`;

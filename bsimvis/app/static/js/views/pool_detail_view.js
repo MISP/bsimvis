@@ -4,12 +4,12 @@
  */
 
 window.PoolDetailView = {
-    refreshInterval: null,
+    _unsubscribeJobs: null,
 
     destroy() {
-        if (this.refreshInterval) {
-            clearInterval(this.refreshInterval);
-            this.refreshInterval = null;
+        if (this._unsubscribeJobs) {
+            this._unsubscribeJobs();
+            this._unsubscribeJobs = null;
         }
     },
 
@@ -68,28 +68,14 @@ window.PoolDetailView = {
 
             container.innerHTML = this._renderPage(pool, poolId, collMap, poolActiveJobs);
 
-            if (this.refreshInterval) clearInterval(this.refreshInterval);
-            this.refreshInterval = setInterval(async () => {
-                try {
-                    const res = await fetch('/api/jobs/stats');
-                    if (res.ok) {
-                        const stats = await res.json();
-                        const activeJobs = stats.active_jobs || [];
-                        const filtered = activeJobs.filter(job => {
-                            if (job.pool_id === poolId) return true;
-                            if (job.collection === `pool:${poolId}`) return true;
-                            if (pool.collections && pool.collections.includes(job.collection)) return true;
-                            return false;
-                        });
-                        const tableContainer = document.getElementById('active-jobs-container');
-                        if (tableContainer) {
-                            tableContainer.innerHTML = this._renderActiveJobsSection(poolId, filtered);
-                        }
-                    }
-                } catch (e) {
-                    console.error("Auto refresh jobs error:", e);
-                }
-            }, 3000);
+            if (this._unsubscribeJobs) this._unsubscribeJobs();
+            this._unsubscribeJobs = window.JobStatusStore.subscribe({ pool: poolId }, () => {
+                const tableContainer = document.getElementById('active-jobs-container');
+                if (!tableContainer) return;
+                const active = window.JobStatusStore.snapshot({ pool: poolId })
+                    .filter((job) => job.status === 'pending' || job.status === 'running');
+                tableContainer.innerHTML = this._renderActiveJobsSection(poolId, active);
+            });
 
         } catch (e) {
             container.innerHTML = `<div style="padding:30px; color:#f87171;"><i class="fa-solid fa-triangle-exclamation"></i> ${e.message}</div>`;

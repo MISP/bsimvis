@@ -269,25 +269,16 @@ window.trackFileAnalysis = function (jobId) {
 
     const statusEl = card.querySelector('.file-analysis-status');
 
-    const poll = async () => {
-        let data;
-        try {
-            const res = await fetch(`/api/jobs/${jobId}`);
-            data = await res.json();
-        } catch (e) {
-            statusEl.textContent = 'status unavailable';
-            return;
-        }
-
-        statusEl.textContent = `${data.status} · ${data.progress || 0}%`;
-        if (['completed', 'failed', 'cancelled'].includes(data.status)) {
+    const unsubscribe = window.JobStatusStore.subscribe({ jobId }, (evt) => {
+        const data = evt.data;
+        if (!data) return;
+        statusEl.textContent = `${data.status || 'queued'} · ${data.progress || 0}%`;
+        if (evt.type === 'job:completed' || evt.type === 'job:failed') {
             if (typeof refreshData === 'function') refreshData(false, true);
             setTimeout(() => card.remove(), 12000);
-            return;
+            unsubscribe();
         }
-        setTimeout(poll, 2000);
-    };
-    poll();
+    });
 };
 
 window.cancelFileAnalysis = async function (jobId) {

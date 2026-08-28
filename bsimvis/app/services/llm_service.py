@@ -252,6 +252,141 @@ class LLMService:
         missing = [fid for fid in func_ids if fid not in out]
         return out, missing, None
 
+    def classify_relevance_batch(self, members, query, vocabulary=None):
+        """Fast relevance triage: for every function, does it plausibly
+        relate to the analyst's free-text question? Not a behavioral
+        analysis -- a search filter. One call judges many functions (no
+        call-graph batching needed, each verdict is independent of the
+        others), and the per-item output is tiny (a verdict word + one short
+        evidence phrase) instead of `summarize_batch`'s full
+        severity/tags/summary object, which is where the speed comes from.
+        `members` is [(func_id, func_name, code), ...]. Returns
+        ({func_id: (verdict, evidence, suggested_tag)}, missing_func_ids,
+        error). `suggested_tag` is `None` when nothing in the taxonomy fits.
+        """
+        self._load_config()
+        custom_tags = [
+            tag
+            for tag in (vocabulary or [])
+            if tag.split(":", 1)[0].lower() not in ("severity", "category")
+        ]
+        allowed_tags = list(
+            dict.fromkeys(tag_taxonomy.CATEGORY_TAGS + tuple(custom_tags))
+        )
+
+        func_ids = [fid for fid, _, _ in members]
+        blocks = "\n\n".join(
+            f"=== FUNCTION {fid} ({name}) ===\nCode:\n{code}"
+            for fid, name, code in members
+        )
+        full_prompt = (
+            "An analyst is triaging functions and is looking for: "
+            f"{query}\n\n{blocks}\n\n"
+            "For every function above, decide only whether it plausibly "
+            "relates to what the analyst described. Reason from the actual "
+            "code shown, including constructions that don't look like an "
+            "obvious keyword match -- e.g. a string assembled byte by byte "
+            "or built from individual constants, not just visible literal "
+            "text. Do not judge general maliciousness or severity here. "
+            "Evidence is one short phrase citing the specific code, empty "
+            "when the verdict is no."
+        )
+        response_format = {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "minItems": len(members),
+                    "maxItems": len(members),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "func_id": {"type": "string", "enum": func_ids},
+                            "verdict": {
+                                "type": "string",
+                                "enum": ["yes", "maybe", "no"],
+                            },
+                            "evidence": {"type": "string"},
+                            "suggested_tag": {
+                                "type": "string",
+                                "description": "A taxonomy tag this function's behavior supports, or 'none'.",
+                                "enum": ["none", *allowed_tags],
+                            },
+                        },
+                        "required": [
+                            "func_id",
+                            "verdict",
+                            "evidence",
+                            "suggested_tag",
+                        ],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["results"],
+            "additionalProperties": False,
+        }
+
+        try:
+            client = Client(host=self.ollama_url)
+            response = client.chat(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a fast relevance-triage step, not a full "
+                            "malware analyst. Judge only relevance to the "
+                            "analyst's stated question. Never invent behavior "
+                            "the shown code does not support."
+                        ),
+                    },
+                    {"role": "user", "content": full_prompt},
+                ],
+                stream=False,
+                think=False,
+                format=response_format,
+                options={"num_predict": 40 * len(members), "temperature": 0.1},
+            )
+            msg = response.get("message", {})
+            text = msg.get("content", "") or msg.get("thinking", "")
+        except Exception as e:
+            logging.error(f"LLMService classify_relevance_batch error: {e}")
+            return {}, func_ids, str(e)
+
+        return self._parse_classify_response(text, func_ids, allowed_tags)
+
+    @staticmethod
+    def _parse_classify_response(text, func_ids, allowed_tags=()):
+        """Network-free parsing of `classify_relevance_batch`'s structured
+        response, covered by `_selfcheck` below. `allowed_tags` is whatever
+        set the caller's schema constrained `suggested_tag` to (taxonomy +
+        any custom vocabulary) -- a model that ignores the schema and
+        returns something outside it gets nulled out rather than trusted."""
+        allowed = set(allowed_tags)
+        out = {}
+        try:
+            value = json.loads(text) if text else {}
+            items = value.get("results") if isinstance(value, dict) else None
+        except (TypeError, ValueError):
+            items = None
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            fid = item.get("func_id")
+            if fid not in func_ids or fid in out:
+                continue
+            verdict = item.get("verdict")
+            if verdict not in ("yes", "maybe", "no"):
+                continue
+            evidence = (item.get("evidence") or "").strip()
+            tag = item.get("suggested_tag")
+            if not tag or tag == "none" or tag not in allowed:
+                tag = None
+            out[fid] = (verdict, evidence, tag)
+        missing = [fid for fid in func_ids if fid not in out]
+        return out, missing, None
+
     @staticmethod
     def _split_summary_tags(text, vocabulary=None):
         """Parses structured output, with the old TAGS line as a fallback."""
@@ -798,6 +933,85 @@ def _selfcheck():
     assert batch_format["properties"]["results"]["minItems"] == 2
     item_schema = batch_format["properties"]["results"]["items"]
     assert item_schema["properties"]["func_id"]["enum"] == ["a:func:1", "a:func:2"]
+
+    # _parse_classify_response: verdict/evidence pass through, a tag outside
+    # the caller's allowed set is nulled rather than trusted, a missing verdict
+    # drops the item (surfaces via `missing`) instead of guessing one.
+    parse_classify = LLMService._parse_classify_response
+    out, missing, err = parse_classify(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "func_id": "f1",
+                        "verdict": "yes",
+                        "evidence": "builds .dat byte by byte",
+                        "suggested_tag": "category:persistence:file",
+                    },
+                    {
+                        "func_id": "f2",
+                        "verdict": "no",
+                        "evidence": "",
+                        "suggested_tag": "not-a-real-tag",
+                    },
+                    {
+                        "func_id": "f3",
+                        "verdict": "not-a-verdict",
+                        "evidence": "x",
+                        "suggested_tag": "none",
+                    },
+                ]
+            }
+        ),
+        ["f1", "f2", "f3", "f4"],
+        allowed_tags=["category:persistence:file"],
+    )
+    assert err is None
+    assert out["f1"] == ("yes", "builds .dat byte by byte", "category:persistence:file")
+    assert out["f2"] == ("no", "", None)
+    assert "f3" not in out  # invalid verdict, not silently coerced
+    assert missing == ["f3", "f4"]
+
+    class FakeClassifyClient:
+        def __init__(self):
+            self.calls = []
+
+        def chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "results": [
+                                {
+                                    "func_id": "a:func:1",
+                                    "verdict": "maybe",
+                                    "evidence": "opens a file by extension",
+                                    "suggested_tag": "none",
+                                },
+                            ]
+                        }
+                    )
+                }
+            }
+
+    fake_classify_client = FakeClassifyClient()
+    globals()["Client"] = lambda host: fake_classify_client
+    try:
+        results, missing, error = LLMService().classify_relevance_batch(
+            [("a:func:1", "f1", "code1")], "the .dat decrypt routine"
+        )
+    finally:
+        globals()["Client"] = real_client
+    assert error is None and missing == []
+    assert results["a:func:1"] == ("maybe", "opens a file by extension", None)
+    classify_format = fake_classify_client.calls[0]["format"]
+    assert classify_format["properties"]["results"]["items"]["properties"]["verdict"][
+        "enum"
+    ] == ["yes", "maybe", "no"]
+    # the short triage prompt, not the full severity/category grounding rules
+    assert "relevance" in fake_classify_client.calls[0]["messages"][0]["content"].lower()
+    assert fake_classify_client.calls[0]["options"]["num_predict"] == 40
 
     print("ok")
 

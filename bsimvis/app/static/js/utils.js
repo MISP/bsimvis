@@ -176,7 +176,8 @@ function parseRestfulPath() {
         md5_b: null,
         addr_b: null,
         id1: null,
-        id2: null
+        id2: null,
+        search_id: null
     };
 
     if (parts.length === 0) {
@@ -200,6 +201,14 @@ function parseRestfulPath() {
         pIdx += 2;
     } else if (parts[pIdx] === 'jobs') {
         params.view = 'jobs';
+        return params;
+    } else if (parts[pIdx] === 'searches') {
+        if (parts[pIdx + 1]) {
+            params.view = 'search-detail';
+            params.search_id = decodeURIComponent(parts[pIdx + 1]);
+        } else {
+            params.view = 'search';
+        }
         return params;
     } else if (parts[pIdx] === 'upload') {
         params.view = 'upload';
@@ -418,6 +427,7 @@ function getRoutingState() {
     if (restful.id1 && !params.has('id1')) params.set('id1', restful.id1);
     if (restful.id2 && !params.has('id2')) params.set('id2', restful.id2);
     if (restful.pool && !params.has('pool')) params.set('pool', restful.pool);
+    if (restful.search_id && !params.has('search_id')) params.set('search_id', restful.search_id);
 
     return { viewKey, collection, pool, params, ...restful };
 }

@@ -833,6 +833,18 @@ class Worker:
                 job_id=job_id,
             )
 
+        elif jtype == JobType.SEARCH_CLASSIFY.value:
+            from bsimvis.app.services.search_service import search_service
+
+            return search_service.run_search_classification(
+                payload.get("search_id"),
+                collection,
+                payload.get("func_ids") or [],
+                payload.get("query"),
+                job_service=self.job_service,
+                job_id=job_id,
+            )
+
         elif jtype == JobType.DELETE_COLLECTION.value:
             return self.processing_service.delete_collection(
                 collection, self.job_service, job_id

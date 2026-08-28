@@ -45,6 +45,9 @@ ns_bin_sim = Namespace(
 ns_notes = Namespace("notes", description="Function notes management")
 ns_llm = Namespace("llm", description="Large Language Model integration (Ollama)")
 ns_pool = Namespace("pool", description="Cross-collection pool management")
+# Not `ns_search` -- that's already mounted at /api/search for unified query/
+# autocomplete. This is a distinct, persisted entity: /api/searches.
+ns_searches = Namespace("searches", description="Persisted fast-relevance searches")
 
 api.add_namespace(ns_index)
 api.add_namespace(ns_jobs)
@@ -64,6 +67,7 @@ api.add_namespace(ns_bin_sim)
 api.add_namespace(ns_notes)
 api.add_namespace(ns_llm)
 api.add_namespace(ns_pool)
+api.add_namespace(ns_searches)
 
 # --- Models & Examples ---
 
@@ -3064,3 +3068,158 @@ class PoolRebuild(Resource):
         from bsimvis.app.routes.pools import rebuild_pool
 
         return rebuild_pool(pool_id)
+
+
+# --- Searches Namespace ---
+
+search_scope_model = api.model(
+    "SearchScope",
+    {
+        "type": fields.String(
+            required=True,
+            enum=["collection", "file", "filter", "pair"],
+            description="collection: every function in the collection. file: "
+            "one file (needs md5). filter: an arbitrary function-search "
+            "filter string (needs filters). pair: a bin_sim pair's diff "
+            "(needs md5_a/md5_b).",
+        ),
+        "md5": fields.String(description="scope.type=file"),
+        "filters": fields.String(
+            description="scope.type=filter -- same query-string syntax as /api/function/search"
+        ),
+        "md5_a": fields.String(description="scope.type=pair"),
+        "md5_b": fields.String(description="scope.type=pair"),
+        "coll_b": fields.String(description="scope.type=pair, defaults to collection"),
+        "pool_id": fields.String(description="scope.type=pair"),
+        "algo": fields.String(default="unweighted_cosine", description="scope.type=pair"),
+        "threshold": fields.Float(default=0.9, description="scope.type=pair"),
+        "include_unique": fields.Boolean(default=True, description="scope.type=pair"),
+        "include_unchanged": fields.Boolean(
+            default=True,
+            description="scope.type=pair -- defaults to True here (unlike deep "
+            "pair analysis) since fast triage is cheap and should not silently "
+            "skip matched functions.",
+        ),
+        "skip_fid_tagged": fields.Boolean(default=True, description="scope.type=pair"),
+        "min_complexity": fields.Integer(default=0, description="scope.type=pair"),
+        "max_functions": fields.Integer(
+            default=0, description="scope.type=pair, 0 = unlimited"
+        ),
+    },
+)
+
+search_create_model = api.model(
+    "SearchCreate",
+    {
+        "collection": fields.String(required=True, example="main"),
+        "pool": fields.String(required=False, description="Alternative to collection"),
+        "query": fields.String(
+            required=True,
+            example="the function decrypting a .dat file",
+            description="Free-text description of what the analyst is looking for.",
+        ),
+        "name": fields.String(required=False, description="Defaults to the query text"),
+        "scope": fields.Nested(search_scope_model, required=True),
+    },
+)
+
+search_tag_model = api.model(
+    "SearchApplyTag",
+    {
+        "func_ids": fields.List(fields.String, required=True),
+        "tag": fields.String(required=True, example="category:persistence:file"),
+    },
+)
+
+search_analyze_model = api.model(
+    "SearchAnalyzeSelection",
+    {
+        "func_ids": fields.List(fields.String, required=True),
+        "actions": fields.List(
+            fields.String, enum=["notes", "tags"], example=["notes", "tags"]
+        ),
+        "overwrite": fields.Boolean(default=False),
+        "custom_prompt": fields.String(
+            description="Defaults to the search's own query when omitted"
+        ),
+    },
+)
+
+
+@ns_searches.route("")
+class SearchList(Resource):
+    @ns_searches.doc(
+        params={
+            "offset": {"description": "Pagination offset", "default": 0},
+            "limit": {"description": "Max results", "default": 50},
+        }
+    )
+    def get(self):
+        """Lists past searches, most recent first."""
+        from bsimvis.app.routes.searches import list_searches
+
+        return list_searches()
+
+    @ns_searches.expect(search_create_model)
+    def post(self):
+        """Resolves the given scope to a function set and starts a fast
+        relevance-triage classification job over it."""
+        from bsimvis.app.routes.searches import create_search
+
+        return create_search()
+
+
+@ns_searches.route("/<string:search_id>")
+class SearchDetail(Resource):
+    @ns_searches.doc(params={"search_id": "Search ID"})
+    def get(self, search_id):
+        """Returns a search's metadata, merging live job status while running."""
+        from bsimvis.app.routes.searches import get_search
+
+        return get_search(search_id)
+
+    def delete(self, search_id):
+        """Deletes a search (cancelling its job first if still running)."""
+        from bsimvis.app.routes.searches import delete_search
+
+        return delete_search(search_id)
+
+
+@ns_searches.route("/<string:search_id>/results")
+class SearchResults(Resource):
+    @ns_searches.doc(
+        params={
+            "search_id": "Search ID",
+            "offset": {"description": "Pagination offset", "default": 0},
+            "limit": {"description": "Max results", "default": 100},
+            "verdict": {
+                "description": "Filter to one or more verdicts (repeatable): yes | maybe | no"
+            },
+        }
+    )
+    def get(self, search_id):
+        """Ranked results (yes before maybe before no)."""
+        from bsimvis.app.routes.searches import get_search_results
+
+        return get_search_results(search_id)
+
+
+@ns_searches.route("/<string:search_id>/apply_tag")
+class SearchApplyTag(Resource):
+    @ns_searches.expect(search_tag_model)
+    def post(self, search_id):
+        """Directly tags the given functions -- synchronous, no job."""
+        from bsimvis.app.routes.searches import apply_tag
+
+        return apply_tag(search_id)
+
+
+@ns_searches.route("/<string:search_id>/analyze")
+class SearchAnalyzeSelection(Resource):
+    @ns_searches.expect(search_analyze_model)
+    def post(self, search_id):
+        """Hands the given functions off to the existing deep-analysis
+        pipeline (notes/tags/severity) as a normal LLM_CONTEXTUAL_BATCH job."""
+        from bsimvis.app.routes.searches import analyze_selection
+
+        return analyze_selection(search_id)

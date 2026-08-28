@@ -439,6 +439,8 @@ window.ModuleLoader = {
             'home': window.HomeView,
             'pool-detail': window.PoolDetailView,
             'collection-detail': window.CollectionDetailView,
+            'search': window.SearchView,
+            'search-detail': window.SearchView,
             'bin_sim': {
                 init: (p) => {
                     if (window.renderBinarySimilarityView) {
@@ -560,7 +562,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
 
     // Check if we should load a module view
-    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail'].includes(viewKey)) {
+    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail', 'search', 'search-detail'].includes(viewKey)) {
         const stateParams = Object.fromEntries(params);
         stateParams.collection = collection;
         stateParams.pool = pool;

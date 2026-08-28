@@ -209,6 +209,25 @@ window.Breadcrumbs = {
                     icon: 'fa-solid fa-server'
                 });
                 break;
+            case 'search':
+                segments.push({
+                    label: 'Searches',
+                    url: '/searches',
+                    icon: 'fa-solid fa-list-check'
+                });
+                break;
+            case 'search-detail':
+                segments.push({
+                    label: 'Searches',
+                    url: '/searches',
+                    icon: 'fa-solid fa-list-check'
+                });
+                segments.push({
+                    label: (restful.search_id || '').slice(0, 8) || 'Search',
+                    url: window.location.pathname,
+                    icon: 'fa-solid fa-list-check'
+                });
+                break;
             case 'upload':
                 segments.push({
                     label: route ? route.title : 'Upload',

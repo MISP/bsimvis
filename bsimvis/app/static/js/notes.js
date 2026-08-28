@@ -949,18 +949,78 @@ function addChatMessage(chatKey, role, content) {
     return msgEl;
 }
 
+// Human-readable one-liner per tool, from its arguments -- what the trace
+// summary shows collapsed, before the analyst expands it.
+const TOOL_CALL_LABELS = {
+    get_function: (a) => `Looked up function ${a.func_id || ''}`,
+    get_call_graph: (a) => `Checked call graph for ${a.func_id || ''}`,
+    get_similar_functions: (a) => `Searched for similar functions (min_score=${a.min_score ?? 0.9})`,
+    search_functions: (a) => `Searched for function with "${a.filters_qs || ''}"`,
+    search_tags: (a) => `Searched tags for "${a.q || ''}"`,
+    get_file_info: (a) => `Looked up file ${a.file_md5 || ''}`,
+    get_cluster_info: (a) => `Looked up cluster ${a.cluster_id || ''}`,
+};
+
+function toolCallLabel(tc) {
+    const fn = TOOL_CALL_LABELS[tc.name];
+    try { return fn ? fn(tc.arguments || {}) : tc.name; } catch { return tc.name; }
+}
+
+// Ready-to-paste curl for the tool's real HTTP endpoint (backend-supplied
+// method/path/query), or null for tools with no single public endpoint.
+function buildCurl(apiCall) {
+    if (!apiCall) return null;
+    const params = new URLSearchParams();
+    Object.entries(apiCall.query || {}).forEach(([k, v]) => {
+        if (v !== undefined && v !== null) params.set(k, v);
+    });
+    const qs = params.toString();
+    const url = `${window.location.origin}${apiCall.path}${qs ? '?' + qs : ''}`;
+    return `curl '${url}'`;
+}
+
+function prettyJson(value) {
+    try { return JSON.stringify(typeof value === 'string' ? JSON.parse(value) : value, null, 2); }
+    catch { return String(value); }
+}
+
+/** Collapsed-by-default "thinking process": every tool call the agent made
+ * for this reply, each expandable to its arguments, result, and a curl
+ * command for the real API endpoint it corresponds to. */
+function renderToolTrace(toolCalls) {
+    if (!toolCalls || !toolCalls.length) return '';
+    const items = toolCalls.map(tc => {
+        const curl = buildCurl(tc.api_call);
+        return `
+            <details style="margin:6px 0; padding:6px 8px; background:var(--bg); border:1px solid var(--border); border-radius:4px;">
+                <summary style="cursor:pointer; font-size:.78rem; color:var(--dim);">🔧 ${escapeHtml(toolCallLabel(tc))}</summary>
+                <div style="margin-top:8px; font-size:.75rem;">
+                    <div><strong>Arguments</strong><pre style="white-space:pre-wrap; overflow-x:auto;">${escapeHtml(prettyJson(tc.arguments || {}))}</pre></div>
+                    <div><strong>Result</strong><pre style="white-space:pre-wrap; overflow-x:auto; max-height:240px; overflow-y:auto;">${escapeHtml(prettyJson(tc.result_preview || ''))}</pre></div>
+                    ${curl ? `<div><strong>API call</strong><pre style="white-space:pre-wrap; overflow-x:auto; user-select:all;">${escapeHtml(curl)}</pre></div>` : ''}
+                </div>
+            </details>`;
+    }).join('');
+    return `
+        <details style="margin-bottom:8px;">
+            <summary style="cursor:pointer; font-size:.78rem; color:var(--dim);">🧠 Thinking process (${toolCalls.length} lookup${toolCalls.length === 1 ? '' : 's'})</summary>
+            ${items}
+        </details>`;
+}
+
 function updateChatMessageUI(msgEl, content, index, chatKey) {
     const historyEl = document.getElementById("llm-chat-history");
     const isAtBottom = historyEl ? (historyEl.scrollHeight - historyEl.scrollTop <= historyEl.clientHeight + 5) : false;
 
     // Save to history object so re-renders don't lose progress
-    if (chatKey && chatHistories[chatKey] && chatHistories[chatKey][index]) {
-        chatHistories[chatKey][index].content = content;
-    }
+    const histEntry = chatKey && chatHistories[chatKey] && chatHistories[chatKey][index];
+    if (histEntry) histEntry.content = content;
 
     let html = renderNoteMarkdown(content);
     const isLong = content.length > 500;
+    const traceHtml = renderToolTrace(histEntry && histEntry.tool_calls);
     msgEl.innerHTML = `
+        ${traceHtml}
         <div class="collapsible-container">
             <div class="llm-markdown-body collapsible-content">${html}</div>
             ${isLong ? '<button class="toggle-expand-btn" onclick="toggleContentExpand(this)"><i class="fa-solid fa-chevron-up"></i> Show Less</button>' : ''}
@@ -1033,10 +1093,9 @@ async function sendLLMChat() {
         });
         const data = await response.json();
         if (data.error) throw new Error(data.error);
-        let content = data.reply || "_(no reply)_";
-        if (data.tool_calls && data.tool_calls.length) {
-            const names = data.tool_calls.map(tc => `\`${tc.name}\``).join(', ');
-            content = `> 🔧 looked up: ${names}\n\n${content}`;
+        const content = data.reply || "_(no reply)_";
+        if (chatHistories[chatKey] && chatHistories[chatKey][msgIndex]) {
+            chatHistories[chatKey][msgIndex].tool_calls = data.tool_calls || [];
         }
         updateChatMessageUI(msgEl, content, msgIndex, chatKey);
     } catch (err) {

@@ -20,7 +20,7 @@ from ollama import Client
 
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.llm_service import llm_service
-from bsimvis.app.services.llm_tools import TOOLS, call_tool
+from bsimvis.app.services.llm_tools import TOOLS, call_tool, describe_api_call
 from bsimvis.app.services.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
@@ -186,7 +186,18 @@ class LLMChatService:
                     except Exception:
                         args = {}
                 result = call_tool(name, args)
-                tool_calls_made.append({"name": name, "arguments": args})
+                tool_calls_made.append(
+                    {
+                        "name": name,
+                        "arguments": args,
+                        # Trimmed preview for the chat trace, not the full
+                        # payload already fed to the model above -- a
+                        # get_function result can carry a whole function's
+                        # decompiled code.
+                        "result_preview": json.dumps(result, default=str)[:4000],
+                        "api_call": describe_api_call(name, args),
+                    }
+                )
                 history.append(
                     {
                         "role": "tool",

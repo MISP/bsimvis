@@ -16,6 +16,7 @@ from bsimvis.cli import (
     bsimvis_binsim,
     bsimvis_collection,
     bsimvis_metadata,
+    bsimvis_rulezet,
 )
 
 
@@ -483,6 +484,15 @@ def main():
         help="Path to a metadata CSV file to enrich uploaded binaries",
     )
 
+    upload_parser.add_argument(
+        "--archive-password",
+        dest="archive_password",
+        metavar="PASSWORD",
+        default=None,
+        help="Password for uploaded zip archives (server default: infected). "
+        "Archives are unpacked server-side and every member analyzed.",
+    )
+
     decomp_args = upload_parser.add_argument_group("Decompilation options")
     decomp_args.add_argument(
         "--va",
@@ -512,6 +522,26 @@ def main():
         dest="cspec",
         help="Force a specific Ghidra Compiler Spec ID (e.g., 'gcc')",
         default=None,
+    )
+    decomp_args.add_argument(
+        "--enable",
+        action="append",
+        choices=["FunctionID", "capa", "yara", "rulezet"],
+        metavar="MODULE",
+        default=[],
+        help="Enable an analysis module for this run (repeatable), on top of "
+        "the server's [analysis_modules].enabled default: FunctionID "
+        "(library tagging), capa, yara (vendored rules), rulezet (mirrored "
+        "rules)",
+    )
+    decomp_args.add_argument(
+        "--disable",
+        action="append",
+        choices=["FunctionID", "capa", "yara", "rulezet"],
+        metavar="MODULE",
+        default=[],
+        help="Disable an analysis module for this run (repeatable), even if "
+        "the server's [analysis_modules].enabled default turns it on",
     )
 
     jvm_options = upload_parser.add_argument_group("JVM Options")
@@ -588,6 +618,51 @@ def main():
         "-c", "--collection", required=True, help="Target collection name"
     )
 
+    rulezet_parser = subparsers.add_parser(
+        "rulezet", help="Mirror YARA rules from rulezet.org"
+    )
+    rulezet_actions = rulezet_parser.add_subparsers(dest="action", required=True)
+
+    rz_sync = rulezet_actions.add_parser(
+        "sync", help="Fetch, tag, compile and gate the mirror"
+    )
+    rz_sync.add_argument(
+        "--full",
+        action="store_true",
+        help="Ignore the last sync date and refetch everything",
+    )
+    rz_sync.add_argument(
+        "--limit", type=int, help="Stop after N rules (for a trial run)"
+    )
+    rz_sync.add_argument(
+        "--meta-only",
+        action="store_true",
+        help="Backfill metadata for a previously-synced mirror",
+    )
+
+    rz_index = rulezet_actions.add_parser(
+        "index-tags",
+        help="Recover curated MISP-galaxy tags (needs rulezet.api_key)",
+    )
+    rz_index.add_argument(
+        "galaxy",
+        nargs="+",
+        help="misp-galaxy cluster names, e.g. mitre-attack-pattern",
+    )
+    rz_index.add_argument(
+        "--limit", type=int, help="Only query the first N tags of each galaxy"
+    )
+
+    rz_quar = rulezet_actions.add_parser(
+        "quarantine", help="Show or release rules the gate pulled"
+    )
+    rz_quar.add_argument(
+        "--release",
+        nargs="+",
+        metavar="UUID",
+        help="Return these rules to the mirror and remember it",
+    )
+
     # Parse and Resolve Host
     args = parser.parse_args()
 
@@ -645,7 +720,11 @@ def main():
             args.host = api_host_str
             if not args.hosts:
                 args.hosts = [api_host_str]
-            bsimvis_upload.run_upload(None, None, args)
+            # Propagate the failure count as an exit code: upload used to exit 0
+            # even when every file failed.
+            rc = bsimvis_upload.run_upload(None, None, args)
+            if rc:
+                sys.exit(rc)
         elif args.subcommand == "job":
             bsimvis_job.run_job(g_host, int(g_port), args)
         elif args.subcommand == "worker":
@@ -658,6 +737,8 @@ def main():
             bsimvis_collection.run_collection(g_host, int(g_port), args)
         elif args.subcommand == "metadata":
             bsimvis_metadata.run_metadata(g_host, int(g_port), args)
+        elif args.subcommand == "rulezet":
+            bsimvis_rulezet.run_rulezet(g_host, int(g_port), args)
 
     except Exception as e:
         import traceback

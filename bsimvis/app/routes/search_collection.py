@@ -134,8 +134,8 @@ def search_collections():
             results,
             offset,
             limit,
-            default_key="name",
-            default_reverse=False,
+            default_key="last_updated",
+            default_reverse=True,
             key_fns={
                 "name": lambda c: c["name"].lower(),
                 "total_files": lambda c: c["total_files"],

@@ -32,6 +32,17 @@ for cmd in autoconf automake libtoolize; do
     fi
 done
 
+# Initialize config files from examples if missing
+if [ ! -f .env ] && [ -f .env.example ]; then
+    echo "Creating .env from .env.example..."
+    cp .env.example .env
+fi
+
+if [ ! -f bsimvis_config.toml ] && [ -f bsimvis_config.toml.example ]; then
+    echo "Creating bsimvis_config.toml from example..."
+    cp bsimvis_config.toml.example bsimvis_config.toml
+fi
+
 # Load .env early to get DATA_BASE_DIR
 if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)
@@ -86,6 +97,57 @@ if [ ! -f "${BIN_DIR}/kvrocks" ]; then
     cd "${PROJECT_ROOT}"
 else
     echo "Kvrocks already installed in bin/"
+fi
+
+echo "--- Installing UPX ---"
+# Used to unpack UPX-packed samples before analysis (see unpack_service.py).
+# Optional: without it packed samples are still analyzed, just packed.
+UPX_VERSION="5.2.0"
+if [ ! -f "${BIN_DIR}/upx" ]; then
+    case "$(uname -m)" in
+        x86_64)  UPX_ARCH="amd64" ;;
+        aarch64) UPX_ARCH="arm64" ;;
+        armv7l)  UPX_ARCH="arm" ;;
+        i686)    UPX_ARCH="i386" ;;
+        *)       UPX_ARCH="" ;;
+    esac
+    UPX_DIR="upx-${UPX_VERSION}-${UPX_ARCH}_linux"
+    if [ -z "$UPX_ARCH" ]; then
+        echo "Warning: no UPX build for $(uname -m); packed samples stay packed."
+    elif ! (
+        cd "${SCRATCH_DIR}" \
+        && curl -fsSL "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/${UPX_DIR}.tar.xz" -o upx.tar.xz \
+        && tar -xJf upx.tar.xz \
+        && cp "${UPX_DIR}/upx" "${BIN_DIR}/upx" \
+        && chmod +x "${BIN_DIR}/upx"
+    ); then
+        echo "Warning: UPX download failed; packed samples stay packed."
+    fi
+else
+    echo "UPX already installed in bin/"
+fi
+
+echo "--- Installing capa ---"
+CAPA_VERSION="9.4.0"
+if [ ! -f "${BIN_DIR}/capa" ]; then
+    case "$(uname -m)" in
+        x86_64)  CAPA_ASSET="capa-v${CAPA_VERSION}-linux.zip" ;;
+        aarch64) CAPA_ASSET="capa-v${CAPA_VERSION}-linux-arm64.zip" ;;
+        *)       CAPA_ASSET="" ;;
+    esac
+    if [ -z "$CAPA_ASSET" ]; then
+        echo "Warning: no capa build for $(uname -m)."
+    elif ! (
+        cd "${SCRATCH_DIR}" \
+        && curl -fsSL "https://github.com/mandiant/capa/releases/download/v${CAPA_VERSION}/${CAPA_ASSET}" -o capa.zip \
+        && unzip -q -o capa.zip \
+        && cp capa "${BIN_DIR}/capa" \
+        && chmod +x "${BIN_DIR}/capa"
+    ); then
+        echo "Warning: capa download failed."
+    fi
+else
+    echo "capa already installed in bin/"
 fi
 
 echo "--- Installing Ghidra ---"

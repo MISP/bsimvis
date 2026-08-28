@@ -1,0 +1,378 @@
+"""HTTP surface for the agentic LLM analysis module: the interactive,
+tool-using analyst chat, and the context-aware batch tagging orchestrator.
+
+Kept separate from `routes/llm.py` (the single-shot summarize/batch
+endpoints) since this module's two features share `llm_tools`/
+`analysis_orchestrator` rather than `llm_batch_service`.
+"""
+
+from flask import request
+
+
+def start_chat_session():
+    from bsimvis.app.services.llm_chat_service import llm_chat_service
+
+    data = request.json or {}
+    collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+    if not collection:
+        return {"error": "Missing collection"}, 400
+
+    session_id = llm_chat_service.start_session(
+        collection,
+        custom_system_prompt=data.get("system_prompt"),
+        context=data.get("context"),
+    )
+    return {"session_id": session_id}
+
+
+def chat_message(session_id):
+    from bsimvis.app.services.llm_chat_service import llm_chat_service
+
+    data = request.json or {}
+    message = data.get("message")
+    if not message:
+        return {"error": "Missing message"}, 400
+
+    result = llm_chat_service.send_message(session_id, message)
+    if "error" in result:
+        return result, 404 if result["error"] == "Unknown or expired session" else 500
+    return result
+
+
+def get_chat_session(session_id):
+    from bsimvis.app.services.llm_chat_service import llm_chat_service
+
+    history = llm_chat_service.get_session(session_id)
+    if history is None:
+        return {"error": "Unknown or expired session"}, 404
+    return {"session_id": session_id, "messages": history}
+
+
+def contextual_batch():
+    """Starts a background context-aware LLM tagging job: partitions the
+    given functions by call-graph locality and runs a bottom-up pass so
+    tightly-calling functions are judged with each other's summaries in
+    context, instead of `llm/batch`'s per-function-blind pass."""
+    from bsimvis.app.services.analysis_orchestrator import (
+        max_batch_size,
+        analysis_orchestrator,
+    )
+    from bsimvis.app.services.job_service import JobService, JobType
+    from bsimvis.app.routes.llm import _resolve_filters_to_ids
+
+    data = request.json or {}
+    collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+    if not collection:
+        return {"error": "Missing collection"}, 400
+
+    cap = max_batch_size()
+    func_ids = data.get("func_ids")
+    explicit = bool(func_ids)
+
+    if not func_ids:
+        filters = data.get("filters")
+        if not filters:
+            return {"error": "Provide either func_ids or filters"}, 400
+        func_ids, error = _resolve_filters_to_ids(collection, filters, cap)
+        if error:
+            return {"error": error}, 400
+
+    func_ids = [f for f in dict.fromkeys(func_ids) if f]
+    if not func_ids:
+        return {"error": "Selection resolved to zero functions"}, 400
+
+    warning = None
+    if not explicit and cap > 0 and len(func_ids) > cap:
+        warning = (
+            f"Filter matched {len(func_ids)} functions, over the batch cap "
+            f"of {cap}. This will run anyway; narrow the filter or raise "
+            f"llm.batch_max if that's not what you want."
+        )
+
+    job_service = JobService()
+    job_id = job_service.create_job(
+        JobType.LLM_CONTEXTUAL_BATCH,
+        {
+            "collection": collection,
+            "func_ids": func_ids,
+            "actions": data.get("actions") or ["notes", "tags"],
+            "overwrite": bool(data.get("overwrite")),
+            "custom_prompt": data.get("custom_prompt"),
+            "unit_max_size": data.get("unit_max_size"),
+        },
+    )
+    result = {"job_id": job_id, "total": len(func_ids)}
+    if warning:
+        result["warning"] = warning
+    return result
+
+
+def contextual_batch_status(job_id):
+    from bsimvis.app.services.job_service import JobService
+    from bsimvis.app.services.analysis_orchestrator import analysis_orchestrator
+    import json as _json
+
+    job_service = JobService()
+    job = job_service.r.hgetall(f"job:{job_id}")
+    if not job:
+        return {"error": "Job not found"}, 404
+
+    results = analysis_orchestrator.get_results(job_id)
+    counts = {"done": 0, "skipped": 0, "failed": 0}
+    errors = []
+    for fid, res in results.items():
+        state = res.get("state")
+        counts[state] = counts.get(state, 0) + 1
+        if state == "failed":
+            errors.append({"func_id": fid, "error": res.get("detail")})
+
+    payload = {}
+    try:
+        payload = _json.loads(job.get("payload") or "{}")
+    except Exception:
+        pass
+
+    return {
+        "job_id": job_id,
+        "status": job.get("status"),
+        "progress": int(job.get("progress") or 0),
+        "total": len(payload.get("func_ids") or []),
+        "processed": sum(counts.values()),
+        "counts": counts,
+        "errors": errors,
+        "results": results,
+    }
+
+
+def contextual_batch_cancel(job_id):
+    from bsimvis.app.services.job_service import JobService
+
+    if not JobService().cancel_job(job_id):
+        return {"error": "Job not found"}, 404
+    return {"status": "cancelled", "job_id": job_id}
+
+
+def file_analysis():
+    """Starts agentic LLM analysis for one file or every file in a collection.
+
+    Every function in each file
+    (minus configurable pre-filters) gets the same context-aware tagging/notes
+    pass as `contextual_batch`, escalating to a tool-using pass when a
+    function's purpose isn't clear from context alone, then folds every
+    function's finding into one whole-file report saved as a file note.
+
+    Status and cancellation reuse `contextual_batch_status`/
+    `contextual_batch_cancel` -- both key off the job hash and
+    `analysis_orchestrator`'s per-job result set, neither of which cares which
+    route created the job.
+    """
+    from bsimvis.app.services.analysis_orchestrator import max_batch_size
+    from bsimvis.app.services.job_service import JobService, JobType
+    from bsimvis.app.services.redis_client import get_redis
+    from bsimvis.app.routes.llm import _resolve_filters_to_ids
+
+    data = request.json or {}
+    collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+    file_md5 = data.get("file_md5")
+    if not collection:
+        return {"error": "Missing collection"}, 400
+
+    actions = data.get("actions") or ["notes", "tags"]
+    invalid = [action for action in actions if action not in ("notes", "tags")]
+    if invalid:
+        return {"error": f"Invalid actions: {', '.join(invalid)}"}, 400
+    try:
+        min_complexity = int(data.get("min_complexity") or 0)
+    except (TypeError, ValueError):
+        return {"error": "min_complexity must be an integer"}, 400
+    if min_complexity < 0:
+        return {"error": "min_complexity must be zero or greater"}, 400
+
+    cap = max_batch_size()
+
+    def payload_for(md5):
+        filters_qs = f"md5={md5}"
+        if data.get("skip_fid_tagged", True):
+            filters_qs += "&exclude_tag=fid"
+        if min_complexity:
+            filters_qs += f"&min_features={min_complexity}"
+        func_ids, error = _resolve_filters_to_ids(collection, filters_qs, cap)
+        if error:
+            return None, error, None
+        marker = f":func:{md5}:"
+        func_ids = [fid for fid in dict.fromkeys(func_ids) if fid and marker in fid]
+        warning = None
+        if cap > 0 and len(func_ids) > cap:
+            warning = (
+                f"File {md5} has {len(func_ids)} functions after filters, over "
+                f"the batch cap of {cap}. This will run anyway; raise "
+                f"llm.batch_max if that's not what you want."
+            )
+        if not func_ids:
+            return None, None, None
+        return {
+            "collection": collection,
+            "file_md5": md5,
+            "func_ids": func_ids,
+            "actions": actions,
+            "overwrite": bool(data.get("overwrite")),
+            "custom_prompt": data.get("custom_prompt"),
+        }, None, warning
+
+    job_service = JobService()
+    if file_md5:
+        payload, error, warning = payload_for(file_md5)
+        if error:
+            return {"error": error}, 400
+        if not payload:
+            return {
+                "error": "Selection resolved to zero functions (after filters)"
+            }, 400
+        job_id = job_service.create_job(JobType.LLM_FILE_ANALYSIS, payload)
+        result = {"job_id": job_id, "total": len(payload["func_ids"]), "files": 1}
+        if warning:
+            result["warning"] = warning
+        return result
+
+    file_ids = get_redis().sscan_iter(f"{collection}:all_files")
+    # ponytail: group creation still holds one small task payload per file;
+    # switch to a discovery/continuation job only if huge collections make setup slow.
+    md5s = sorted(
+        (raw.decode() if isinstance(raw, bytes) else str(raw)).rsplit(":file:", 1)[-1]
+        for raw in file_ids
+    )
+    tasks = []
+    warnings = []
+    total = 0
+    for md5 in md5s:
+        payload, error, warning = payload_for(md5)
+        if error:
+            return {"error": error}, 400
+        if payload:
+            tasks.append((JobType.LLM_FILE_ANALYSIS, payload))
+            total += len(payload["func_ids"])
+            if warning:
+                warnings.append(warning)
+    if not tasks:
+        return {"error": "Collection resolved to zero functions (after filters)"}, 400
+
+    job_id = job_service.create_group(tasks)
+    result = {"job_id": job_id, "total": total, "files": len(tasks)}
+    if warnings:
+        result["warnings"] = warnings
+    return result
+
+
+def pair_analysis():
+    """Queue evidence-bound analysis of one stored binary comparison."""
+    from bsimvis.app.services.analysis_orchestrator import (
+        analysis_orchestrator,
+        max_batch_size,
+    )
+    from bsimvis.app.services.bin_sim_service import bin_sim_service
+    from bsimvis.app.services.job_service import JobService, JobType
+
+    data = request.json or {}
+    collection = data.get("collection")
+    coll_b = data.get("coll_b") or collection
+    md5_a, md5_b = data.get("md5_a"), data.get("md5_b")
+    pool_id = data.get("pool") or data.get("pool_id")
+    if not collection or not md5_a or not md5_b:
+        return {"error": "collection, md5_a and md5_b are required"}, 400
+
+    actions = data.get("actions") or ["notes", "tags"]
+    invalid = [action for action in actions if action not in ("notes", "tags")]
+    if invalid:
+        return {"error": f"Invalid actions: {', '.join(invalid)}"}, 400
+    try:
+        threshold = float(data.get("threshold", 0.9))
+        min_complexity = int(data.get("min_complexity") or 0)
+        max_functions = int(data.get("max_functions", 0))
+    except (TypeError, ValueError):
+        return {
+            "error": "threshold must be a number; min_complexity and max_functions must be integers"
+        }, 400
+    if not 0 <= threshold <= 1:
+        return {"error": "threshold must be between 0 and 1"}, 400
+    if min_complexity < 0:
+        return {"error": "min_complexity must be zero or greater"}, 400
+    if max_functions < 0:
+        return {"error": "max_functions must be zero or greater"}, 400
+
+    algo = data.get("algo", "unweighted_cosine")
+    sid, pair = bin_sim_service.load_pair(
+        collection, md5_a, md5_b, coll_b, pool_id, algo
+    )
+    if not pair:
+        return {"error": "Similarity not calculated for this pair"}, 404
+
+    include_unique = data.get("include_unique", True) is not False
+    include_unchanged = bool(data.get("include_unchanged"))
+    skip_fid_tagged = data.get("skip_fid_tagged", True) is not False
+    try:
+        total = len(
+            analysis_orchestrator.pair_candidates(
+                pair,
+                threshold,
+                include_unique,
+                include_unchanged,
+                skip_fid_tagged,
+                min_complexity,
+                max_functions,
+            )
+        )
+    except ValueError as error:
+        return {"error": str(error)}, 400
+
+    cap = max_batch_size()
+    warning = None
+    if cap > 0 and total > cap:
+        warning = (
+            f"Pair selection has {total} functions, over the batch cap of "
+            f"{cap}. This will run anyway; raise llm.batch_max if that's not "
+            f"what you want."
+        )
+
+    pair_collection = f"global:pool:{pool_id}" if pool_id else collection
+    payload = {
+        "collection": collection,
+        "coll_b": coll_b,
+        "md5_a": md5_a,
+        "md5_b": md5_b,
+        "pool_id": pool_id,
+        "sid": sid,
+        "pair_collection": pair_collection,
+        "algo": algo,
+        "threshold": threshold,
+        "include_unique": include_unique,
+        "include_unchanged": include_unchanged,
+        "skip_fid_tagged": skip_fid_tagged,
+        "min_complexity": min_complexity,
+        "max_functions": max_functions,
+        "actions": actions,
+        "overwrite": bool(data.get("overwrite")),
+        "custom_prompt": data.get("custom_prompt"),
+    }
+    job_id = JobService().create_job(JobType.LLM_PAIR_ANALYSIS, payload)
+    result = {"job_id": job_id, "total": total, "sid": sid}
+    if warning:
+        result["warning"] = warning
+    return result

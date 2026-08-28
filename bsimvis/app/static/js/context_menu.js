@@ -129,6 +129,7 @@
             } else {
                 resolvedType = type;
                 norm.id = data.id || data.cluster_id;
+                norm.tag_id = data.tag_id || norm.id;
                 norm.uuid = data.uuid || data.cluster_uuid;
                 norm.name = data.name || data.cluster_name || norm.uuid || norm.id;
             }
@@ -170,6 +171,12 @@
             norm.name_a = data.file1 ? (data.file1.name || data.file1.file_name || data.file1.file_md5) : data.name_a;
             norm.name_b = data.file2 ? (data.file2.name || data.file2.file_name || data.file2.file_md5) : data.name_b;
             norm.value = data.value;
+        } else if (type === 'bin_sim') {
+            // A stored bin_sim pair comparison -- keyed by its sid, not a func/file id.
+            resolvedType = 'bin_sim';
+            norm.sid = data.sid;
+            norm.name_a = data.file_name_a || data.name_a || data.md5_a;
+            norm.name_b = data.file_name_b || data.name_b || data.md5_b;
         }
 
         // 2. Build HTML Content
@@ -183,13 +190,16 @@
         else if (resolvedType === 'bin_similarity') headerTitle = `Link: ${norm.name_a.substring(0,10)} ↔ ${norm.name_b.substring(0,10)}`;
         else if (resolvedType === 'cluster') headerTitle = `Cluster: ${norm.name}`;
         else if (resolvedType === 'bin_cluster') headerTitle = `Binary Cluster: ${norm.name}`;
+        else if (resolvedType === 'bin_sim') headerTitle = `Pair: ${String(norm.name_a).substring(0,10)} ↔ ${String(norm.name_b).substring(0,10)}`;
 
         html += `<div class="context-menu-header">${headerTitle}</div>`;
 
         // -- Bookmark & Ignore (Pinned at the Top) --
-        if (resolvedType === 'function' || resolvedType === 'file' || resolvedType === 'similarity') {
+        if (['function', 'file', 'similarity', 'cluster', 'bin_cluster', 'bin_sim'].includes(resolvedType)) {
             const etype = resolvedType;
-            const eid = (resolvedType === 'function') ? norm.id : ((resolvedType === 'file') ? norm.id : norm.sid);
+            const eid = (resolvedType === 'similarity' || resolvedType === 'bin_sim')
+                ? norm.sid
+                : ((resolvedType === 'cluster' || resolvedType === 'bin_cluster') ? norm.tag_id : norm.id);
             const userTags = getEntityUserTags(etype, eid);
             const tags = getEntityStaticTags(etype, eid, data);
             
@@ -197,12 +207,12 @@
             const isIgnored = userTags.includes('ignore');
 
             html += `
-            <div style="display: flex; gap: 8px; padding: 6px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); margin-bottom: 4px;">
-                <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isBookmarked ? 'rgba(102, 217, 239, 0.1)' : 'none'}; border: 1px solid ${isBookmarked ? '#66d9ef' : 'rgba(255, 255, 255, 0.1)'}; color: ${isBookmarked ? '#66d9ef' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuBookmark(event, '${etype}', '${eid}')">
+            <div style="display: flex; gap: 8px; padding: 6px 16px; border-bottom: 1px solid var(--border); margin-bottom: 4px;">
+                <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isBookmarked ? 'color-mix(in srgb, var(--token-register) 10%, transparent)' : 'none'}; border: 1px solid ${isBookmarked ? '#66d9ef' : 'var(--border)'}; color: ${isBookmarked ? '#66d9ef' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuBookmark(event, ${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))})">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="${isBookmarked ? '#66d9ef' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
                     Bookmark
                 </button>
-                <button class="ignore-btn ${isIgnored ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isIgnored ? 'rgba(249, 38, 114, 0.1)' : 'none'}; border: 1px solid ${isIgnored ? '#f92672' : 'rgba(255, 255, 255, 0.1)'}; color: ${isIgnored ? '#f92672' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuIgnore(event, '${etype}', '${eid}')">
+                <button class="ignore-btn ${isIgnored ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isIgnored ? 'color-mix(in srgb, var(--token-instruction) 10%, transparent)' : 'none'}; border: 1px solid ${isIgnored ? '#f92672' : 'var(--border)'}; color: ${isIgnored ? '#f92672' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuIgnore(event, ${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))})">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
                     Ignore
                 </button>
@@ -215,21 +225,21 @@
             allKnownTags.forEach(tag => {
                 const isActive = userTags.includes(tag);
                 const color = window.getTagMetadata ? window.getTagMetadata(tag).color : '#66d9ef';
-                const checkboxStyle = `color: ${isActive ? color : 'rgba(255,255,255,0.2)'}; width: 16px; text-align: center; font-size: 0.8rem;`;
+                const checkboxStyle = `color: ${isActive ? color : 'var(--border)'}; width: 16px; text-align: center; font-size: 0.8rem;`;
 
                 tagsSubmenuHtml += `
-                <div class="context-menu-item" onclick="event.stopPropagation(); window.toggleContextMenuTag(event, '${etype}', '${eid}', '${String(tag).replace(/'/g, "\\'")}')">
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.toggleContextMenuTag(event, ${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))}, ${escapeAttr(jsString(tag))})">
                     <i class="fa-solid ${isActive ? 'fa-square-check' : 'fa-square'}" style="${checkboxStyle}"></i>
-                    <span>${tag}</span>
+                    <span>${escapeHtml(tag)}</span>
                 </div>`;
             });
 
             if (tagsSubmenuHtml) {
-                tagsSubmenuHtml += `<div style="border-top: 1px solid rgba(255,255,255,0.05); margin: 4px 0;"></div>`;
+                tagsSubmenuHtml += `<div style="border-top: 1px solid var(--border); margin: 4px 0;"></div>`;
             }
 
             tagsSubmenuHtml += `
-            <div class="context-menu-item add-custom-tag-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.showTagManagementModal('${etype}', '${eid}')">
+            <div class="context-menu-item add-custom-tag-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.showTagManagementModal(${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))})">
                 <i class="fa-solid fa-plus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Add custom tag...</span>
             </div>`;
@@ -240,7 +250,7 @@
                 <span>Tags</span>
                 <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
                 
-                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; max-height: 250px; overflow-y: auto; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; max-height: 250px; overflow-y: auto; background: var(--card-bg); border: 1px solid var(--border); z-index: 20005;">
                     ${tagsSubmenuHtml}
                 </div>
             </div>`;
@@ -253,16 +263,16 @@
                     if (window.getTagMetadata) {
                         color = window.getTagMetadata(tag).color;
                     }
-                    const removeClick = `event.stopPropagation(); window.removeContextMenuTag(event, '${etype}', '${eid}', '${tag}')`;
+                    const removeClick = `event.stopPropagation(); window.removeContextMenuTag(event, ${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))}, ${escapeAttr(jsString(tag))})`;
                     return `
-                    <span class="sim-tag-card" style="border-color:${color}44; color:${color}; background:${color}11; margin: 2px; padding: 1px 6px; font-size: 0.7rem; border-radius: 4px; display: inline-flex; align-items: center;">
-                        ${tag}
-                        <span onclick="${removeClick}" style="cursor: pointer; margin-left: 4px; opacity: 0.7; font-weight: bold;">×</span>
+                    <span class="sim-tag-card" style="border-color:${tagAlpha(color, 27)}; color:${color}; background:${tagAlpha(color, 7)}; margin: 2px; padding: 1px 6px; font-size: 0.7rem; border-radius: 4px; display: inline-flex; align-items: center;">
+                        ${escapeHtml(tag)}
+                        <span onclick="${escapeAttr(removeClick)}" style="cursor: pointer; margin-left: 4px; opacity: 0.7; font-weight: bold;">×</span>
                     </span>`;
                 }).join('');
 
                 html += `
-                <div style="padding: 4px 16px 8px 16px; display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); margin-bottom: 4px;">
+                <div style="padding: 4px 16px 8px 16px; display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 4px;">
                     ${tagsHtml}
                 </div>`;
             }
@@ -313,7 +323,7 @@
                 <span>Copy</span>
                 <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
                 
-                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; background: var(--card-bg); border: 1px solid var(--border); z-index: 20005;">
                     ${copySubmenuHtml}
                 </div>
             </div>`;
@@ -324,78 +334,108 @@
         const col = getCollectionFromHash();
         if (resolvedType === 'function') {
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToDiff('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}')">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.addNodesToActiveGraph([${escapeAttr(jsString(norm.id))}])">
+                <i class="fa-solid fa-diagram-project" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Add to Call Graph</span>
+            </div>
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToDiff(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
                 <i class="fa-solid fa-plus-minus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Add to Diff</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); seeSimilar('${norm.id}', event)">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); seeSimilar(${escapeAttr(jsString(norm.id))}, event)">
                 <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>See Similar</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); showFeaturePanel('${norm.id}', event)">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); showFeaturePanel(${escapeAttr(jsString(norm.id))}, event)">
                 <i class="fa-solid fa-fingerprint" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Features</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); showFunctionCodeById('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}', '', event)">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); showFunctionCodeById(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))}, '', event)">
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Code</span>
             </div>`;
+
+            if (window.getSelectedTableIds && window.getSelectedTableIds('function').length > 1) {
+                const count = window.getSelectedTableIds('function').length;
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.addSelectedNodesToActiveGraph()">
+                    <i class="fa-solid fa-network-wired" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>Add Selected to Graph (${count})</span>
+                </div>`;
+                if (count === 2) {
+                    const sel = window.getSelectedTableIds('function');
+                    actionsSubmenuHtml += `
+                    <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.openDiffDirectly(${escapeAttr(jsString(sel[0]))}, '', ${escapeAttr(jsString(sel[1]))}, '', event)">
+                        <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8; color: #fd971f;"></i>
+                        <span>Compare Selected (Diff)</span>
+                    </div>`;
+                }
+            }
+
         } else if (resolvedType === 'file') {
             const cgUrl = Nav.buildUIUrl(col, ['call_graph', norm.md5]);
             const funcsUrl = Nav.buildUIUrl(col, ['functions']) + '?file_md5=' + encodeURIComponent(norm.md5);
             const simUrl = Nav.buildUIUrl(col, ['functions', 'similarities']) + '?md5=' + encodeURIComponent(norm.md5);
+            // Matches for this file, with anything found inside a container
+            // folded under that container instead of listed loose.
+            const binSimUrl = Nav.buildUIUrl(col, ['files', 'similarities']) + '?md5=' + encodeURIComponent(norm.md5) + '&group=container';
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${funcsUrl}', event, { title: 'Functions', type: 'functions' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(funcsUrl))}, event, { title: 'Functions', type: 'functions' })">
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Functions</span>
             </div>`;
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToFileDiff('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}', event)">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToFileDiff(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))}, event)">
                 <i class="fa-solid fa-plus-minus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Add to File Diff</span>
             </div>
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${cgUrl}', event, { title: 'Call Graph: ${norm.md5}', type: 'call_graph' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(cgUrl))}, event, { title: ${escapeAttr(jsString('Call Graph: ' + norm.md5))}, type: 'call_graph' })">
                 <i class="fa-solid fa-sitemap" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Open Call Graph</span>
             </div>
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${simUrl}', event, { title: 'Function Similarities', type: 'function-similarity' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(simUrl))}, event, { title: 'Function Similarities', type: 'function-similarity' })">
                 <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Similarities</span>
-            </div>`;
+            </div>
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(binSimUrl))}, event, { title: 'Similar Files', type: 'binary-similarity' })">
+                <i class="fa-solid fa-box-archive" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Similar Files (by container)</span>
+            </div>
+            `;
+            actionsSubmenuHtml += renderFileAnalysisSubmenu(norm.md5);
         } else if (resolvedType === 'similarity') {
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly('${norm.id1}', '${String(norm.name1 || '').replace(/'/g, "\\'")}', '${norm.id2}', '${String(norm.name2 || '').replace(/'/g, "\\'")}', event)">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly(${escapeAttr(jsString(norm.id1))}, ${escapeAttr(jsString(norm.name1 || ''))}, ${escapeAttr(jsString(norm.id2))}, ${escapeAttr(jsString(norm.name2 || ''))}, event)">
                 <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Diff</span>
             </div>`;
         } else if (resolvedType === 'bin_similarity') {
             const diffUrl = (window.buildFileDiffUrl || (window.parent && window.parent.buildFileDiffUrl) || buildFileDiffUrl)(col, norm.md5_a, col, norm.md5_b);
-            const safeNameA = String(norm.name_a || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
-            const safeNameB = String(norm.name_b || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
+            const diffTitle = `Bin Diff: ${String(norm.name_a || '')} vs ${String(norm.name_b || '')}`;
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${diffUrl}', event, { title: 'Bin Diff: ${safeNameA} vs ${safeNameB}', type: 'bin_sim' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(diffUrl))}, event, { title: ${escapeAttr(jsString(diffTitle))}, type: 'bin_sim' })">
                 <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Binary Diff</span>
             </div>`;
         } else if (resolvedType === 'cluster') {
             const funcClusterUrl = Nav.buildUIUrl(col, ['functions']) + '?cluster_uuid=' + encodeURIComponent(norm.uuid);
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}')">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${funcClusterUrl}', event, { title: 'Cluster Functions', type: 'functions' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(funcClusterUrl))}, event, { title: 'Cluster Functions', type: 'functions' })">
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Functions</span>
             </div>`;
         } else if (resolvedType === 'bin_cluster') {
             const fileClusterUrl = Nav.buildUIUrl(col, ['files']) + '?bin_cluster_uuid=' + encodeURIComponent(norm.uuid);
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}')">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${fileClusterUrl}', event, { title: 'Cluster Files', type: 'files' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(fileClusterUrl))}, event, { title: 'Cluster Files', type: 'files' })">
                 <i class="fa-solid fa-folder-open" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Files</span>
             </div>`;
@@ -408,7 +448,7 @@
                 <span>Actions</span>
                 <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
                 
-                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; background: var(--card-bg); border: 1px solid var(--border); z-index: 20005;">
                     ${actionsSubmenuHtml}
                 </div>
             </div>`;
@@ -420,7 +460,9 @@
         // Add hover flipping listener to prevent submenus from going offscreen
         menu.querySelectorAll('.submenu-trigger').forEach(trigger => {
             trigger.addEventListener('mouseenter', () => {
-                const submenu = trigger.querySelector('.submenu');
+                // Direct child only: a nested trigger (Actions > LLM) must not
+                // let the parent grab the child's submenu.
+                const submenu = trigger.querySelector(':scope > .submenu');
                 if (!submenu) return;
                 
                 submenu.style.display = 'block';
@@ -440,7 +482,7 @@
                 }
             });
             trigger.addEventListener('mouseleave', () => {
-                const submenu = trigger.querySelector('.submenu');
+                const submenu = trigger.querySelector(':scope > .submenu');
                 if (!submenu) return;
                 submenu.style.display = 'none';
             });
@@ -625,15 +667,29 @@
         return [];
     }
 
+    function renderFileAnalysisSubmenu(md5) {
+        return `
+            <div class="context-menu-item submenu-trigger" style="position: relative;">
+                <i class="fa-solid fa-robot" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>LLM</span>
+                <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
+
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 200px; background: var(--card-bg); border: 1px solid var(--border); z-index: 20006;">
+                    <div class="context-menu-item" onclick="${escapeAttr(`event.stopPropagation(); window.closeGraphContextMenu(); openFileAnalysisModal({ fileMd5: ${jsString(md5)} })`)}">
+                        <i class="fa-solid fa-file-waveform" style="width:16px; text-align:center; opacity:.8;"></i>
+                        <span>Analyze whole file</span>
+                    </div>
+                </div>
+            </div>`;
+    }
+
     function renderCopyItem(label, text, icon = 'fa-copy') {
         if (text === null || text === undefined || text === '') return '';
         const strText = String(text);
-        const safeText = strText.replace(/'/g, "\\'").replace(/"/g, "&quot;");
-        const safeLabel = String(label).replace(/'/g, "\\'").replace(/"/g, "&quot;");
         return `
-        <div class="context-menu-item" onclick="event.stopPropagation(); copyMetadata('${safeText}', '${safeLabel}')">
-            <i class="fa-solid ${icon}" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-            <span>Copy ${label}</span>
+        <div class="context-menu-item" onclick="event.stopPropagation(); copyMetadata(${escapeAttr(jsString(strText))}, ${escapeAttr(jsString(String(label)))})">
+            <i class="fa-solid ${escapeAttr(icon)}" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+            <span>Copy ${escapeHtml(label)}</span>
         </div>`;
     }
 
@@ -685,7 +741,7 @@
                 left: 0;
                 width: 100%;
                 height: 100%;
-                background: rgba(0, 0, 0, 0.75);
+                background: var(--border);
                 backdrop-filter: blur(6px);
                 z-index: 30000;
                 display: none;
@@ -699,9 +755,8 @@
             }
             .tag-modal-content {
                 background: #181818;
-                border: 1px solid rgba(255, 255, 255, 0.1);
+                border: 1px solid var(--border);
                 border-radius: 12px;
-                box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
                 width: 440px;
                 max-width: 90vw;
                 padding: 24px;
@@ -710,7 +765,7 @@
                 display: flex;
                 flex-direction: column;
                 gap: 16px;
-                color: #eee;
+                color: var(--meta-text);
             }
             .tag-modal-overlay.active .tag-modal-content {
                 transform: translateY(0);
@@ -719,7 +774,7 @@
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+                border-bottom: 1px solid var(--border);
                 padding-bottom: 12px;
             }
             .tag-modal-header h3 {
@@ -731,7 +786,7 @@
             .tag-modal-close {
                 background: none;
                 border: none;
-                color: #888;
+                color: var(--subtle);
                 font-size: 1.5rem;
                 cursor: pointer;
                 line-height: 1;
@@ -739,16 +794,16 @@
                 transition: color 0.15s ease;
             }
             .tag-modal-close:hover {
-                color: #fff;
+                color: var(--text);
             }
             .tag-modal-target-info {
                 font-size: 0.75rem;
-                color: #aaa;
+                color: var(--meta-text-muted);
                 word-break: break-all;
-                background: rgba(255, 255, 255, 0.02);
+                background: var(--hover);
                 padding: 10px 14px;
                 border-radius: 6px;
-                border: 1px solid rgba(255, 255, 255, 0.05);
+                border: 1px solid var(--border);
                 font-family: var(--mono, monospace);
                 line-height: 1.4;
             }
@@ -757,7 +812,7 @@
                 font-weight: 700;
                 text-transform: uppercase;
                 letter-spacing: 1px;
-                color: #888;
+                color: var(--subtle);
                 margin-bottom: 8px;
             }
             .tag-modal-active-tags {
@@ -773,7 +828,7 @@
                 padding: 4px 10px;
                 border-radius: 4px;
                 font-size: 0.75rem;
-                color: #000;
+                color: var(--window-tray);
                 font-weight: 600;
             }
             .tag-modal-tag-pill .remove-btn {
@@ -793,10 +848,10 @@
             }
             .tag-modal-input {
                 flex: 1;
-                background: #121212;
-                border: 1px solid rgba(255, 255, 255, 0.15);
+                background: var(--bg);
+                border: 1px solid var(--border);
                 border-radius: 6px;
-                color: #fff;
+                color: var(--text);
                 padding: 8px 12px;
                 font-size: 0.85rem;
                 outline: none;
@@ -807,7 +862,7 @@
             }
             .tag-modal-btn-add {
                 background: var(--accent, #a6e22e);
-                color: #000;
+                color: var(--window-tray);
                 border: none;
                 border-radius: 6px;
                 padding: 0 16px;
@@ -822,9 +877,9 @@
             .tag-modal-suggestions {
                 max-height: 150px;
                 overflow-y: auto;
-                border: 1px solid rgba(255, 255, 255, 0.08);
+                border: 1px solid var(--border);
                 border-radius: 6px;
-                background: #121212;
+                background: var(--bg);
             }
             .tag-modal-suggestion-item {
                 padding: 8px 12px;
@@ -834,11 +889,11 @@
                 cursor: pointer;
                 font-size: 0.8rem;
                 transition: background 0.15s ease;
-                color: #ccc;
+                color: var(--meta-text-muted);
             }
             .tag-modal-suggestion-item:hover {
-                background: rgba(255, 255, 255, 0.05);
-                color: #fff;
+                background: var(--hover);
+                color: var(--text);
             }
             .tag-modal-suggestion-item.active-tag {
                 opacity: 0.4;
@@ -894,8 +949,8 @@
                     <button class="tag-modal-close" onclick="window.closeTagManagementModal()">&times;</button>
                 </div>
                 <div class="tag-modal-target-info">
-                    <strong>Entity:</strong> ${etype.toUpperCase()} <br/>
-                    <strong>ID:</strong> ${eid}
+                    <strong>Entity:</strong> ${escapeHtml(etype.toUpperCase())} <br/>
+                    <strong>ID:</strong> ${escapeHtml(eid)}
                 </div>
                 
                 <div>
@@ -933,14 +988,17 @@
             
             if (activeList) {
                 if (activeTags.length === 0) {
-                    activeList.innerHTML = `<span style="font-style: italic; font-size: 0.75rem; color: var(--dim, #888);">No custom tags applied.</span>`;
+                    activeList.innerHTML = `<span style="font-style: italic; font-size: 0.75rem; color: var(--dim, var(--subtle));">No custom tags applied.</span>`;
                 } else {
                     activeList.innerHTML = activeTags.map(tag => {
-                        const meta = tagMeta[tag] || { color: '#66d9ef' };
+                        // Through `getTagMetadata`, so a tag nobody recoloured
+                        // draws the colour derived from its id instead of one
+                        // flat blue shared by every tag in the list.
+                        const meta = window.getTagMetadata(tag);
                         return `
                             <span class="tag-modal-tag-pill" style="background: ${meta.color}">
-                                ${tag}
-                                <span class="remove-btn" onclick="window.handleModalRemoveTag('${etype}', '${eid}', '${String(tag).replace(/'/g, "\\'")}')">&times;</span>
+                                ${escapeHtml(tag)}
+                                <span class="remove-btn" onclick="window.handleModalRemoveTag(${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))}, ${escapeAttr(jsString(tag))})">&times;</span>
                             </span>
                         `;
                     }).join('');
@@ -957,25 +1015,25 @@
                 if (filtered.length === 0) {
                     if (query) {
                         suggestionsList.innerHTML = `
-                            <div class="tag-modal-suggestion-item" onclick="window.handleModalAddTag('${etype}', '${eid}', '${String(query).replace(/'/g, "\\'")}')">
+                            <div class="tag-modal-suggestion-item" onclick="window.handleModalAddTag(${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))}, ${escapeAttr(jsString(query))})">
                                 <i class="fa-solid fa-plus" style="color: var(--accent, #a6e22e);"></i>
-                                <span>Create new tag: <strong>${query}</strong></span>
+                                <span>Create new tag: <strong>${escapeHtml(query)}</strong></span>
                             </div>
                         `;
                     } else {
-                        suggestionsList.innerHTML = `<div style="padding: 12px; font-size: 0.75rem; font-style: italic; color: var(--dim, #888);">No existing tags found. Type above to create one.</div>`;
+                        suggestionsList.innerHTML = `<div style="padding: 12px; font-size: 0.75rem; font-style: italic; color: var(--dim, var(--subtle));">No existing tags found. Type above to create one.</div>`;
                     }
                 } else {
                     suggestionsList.innerHTML = filtered.map(tag => {
                         const isApplied = activeTags.includes(tag);
-                        const meta = tagMeta[tag] || { color: '#66d9ef' };
-                        const clickAction = isApplied ? '' : `onclick="window.handleModalAddTag('${etype}', '${eid}', '${String(tag).replace(/'/g, "\\'")}')"`;
+                        const meta = window.getTagMetadata(tag);
+                        const clickAction = isApplied ? '' : `onclick="window.handleModalAddTag(${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))}, ${escapeAttr(jsString(tag))})"`;
                         const activeClass = isApplied ? 'active-tag' : '';
                         return `
                             <div class="tag-modal-suggestion-item ${activeClass}" ${clickAction}>
                                 <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${meta.color}"></span>
-                                <span>${tag}</span>
-                                ${isApplied ? '<span style="margin-left: auto; font-size: 0.7rem; color: var(--dim, #888);">Applied</span>' : ''}
+                                <span>${escapeHtml(tag)}</span>
+                                ${isApplied ? '<span style="margin-left: auto; font-size: 0.7rem; color: var(--dim, var(--subtle));">Applied</span>' : ''}
                             </div>
                         `;
                     }).join('');
@@ -1034,6 +1092,11 @@
                             cm.data.file_user_tags = cm.data.file_user_tags || [];
                             if (action === 'add' && !cm.data.file_user_tags.includes(tag)) cm.data.file_user_tags.push(tag);
                             if (action === 'remove') cm.data.file_user_tags = cm.data.file_user_tags.filter(x => x !== tag);
+                        } else if ((cm.type === 'cluster' || cm.type === 'bin_cluster') && t.etype === cm.type &&
+                            String(cm.data.tag_id || cm.data.id || cm.data.cluster_id) === String(t.eid)) {
+                            cm.data.user_tags = cm.data.user_tags || [];
+                            if (action === 'add' && !cm.data.user_tags.includes(tag)) cm.data.user_tags.push(tag);
+                            if (action === 'remove') cm.data.user_tags = cm.data.user_tags.filter(x => x !== tag);
                         } else if ((cm.type === 'similarity' || cm.type === 'link') && t.etype === 'similarity') {
                             cm.data.user_tags = cm.data.user_tags || [];
                             if (action === 'add' && !cm.data.user_tags.includes(tag)) cm.data.user_tags.push(tag);

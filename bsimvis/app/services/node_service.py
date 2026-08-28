@@ -2,9 +2,16 @@ import json
 from bsimvis.app.services.redis_client import get_redis
 
 
-def get_enriched_nodes(collection, md5, addr):
+def get_enriched_nodes(collection, md5, addr, limit=None):
     """
     Fetches and enriches callers and callees for a given function.
+
+    `limit` caps how many of each (callers/callees) get enriched and
+    returned -- a function with hundreds of callers (a shared utility in a
+    statically-linked binary, say) would otherwise mean hundreds of redis
+    meta lookups and hundreds of new graph nodes for one click. The true
+    counts before truncation come back as callers_total/callees_total so
+    the caller can tell the user more exist.
     """
     try:
         r = get_redis()
@@ -23,6 +30,11 @@ def get_enriched_nodes(collection, md5, addr):
             for cid in callee_ids_bytes
             if cid
         ]
+        callers_total = len(caller_ids)
+        callees_total = len(callee_ids)
+        if limit is not None:
+            caller_ids = caller_ids[:limit]
+            callee_ids = callee_ids[:limit]
 
         # Pipeline to fetch names for internal functions
         all_ids = list(set(caller_ids + callee_ids))
@@ -53,6 +65,24 @@ def get_enriched_nodes(collection, md5, addr):
                         "is_external": False,
                     }
 
+        # File names for binary grouping in the call graph -- one extra pipeline
+        # keyed by md5 (parsed out of "collection:func:md5:addr") so nodes from a
+        # different binary than the center function can be labeled/clustered.
+        file_md5s = sorted({fid.split(":")[2] for fid in all_ids if not fid.startswith("ext:") and len(fid.split(":")) > 2})
+        file_name_map = {}
+        if file_md5s:
+            fpipe = r.pipeline(transaction=False)
+            for m in file_md5s:
+                fpipe.get(f"{collection}:file:{m}:meta")
+            for m, raw in zip(file_md5s, fpipe.execute()):
+                if not raw:
+                    continue
+                fmeta = raw.decode() if isinstance(raw, bytes) else raw
+                if isinstance(fmeta, str):
+                    fmeta = json.loads(fmeta)
+                if fmeta:
+                    file_name_map[m] = fmeta.get("file_name")
+
         def build_node_info(fid):
             if fid.startswith("ext:"):
                 name = fid.split(":", 1)[1]
@@ -62,6 +92,7 @@ def get_enriched_nodes(collection, md5, addr):
                     "entrypoint": None,
                     "is_external": True,
                 }
+            file_md5 = fid.split(":")[2] if len(fid.split(":")) > 2 else md5
             info = meta_map.get(fid)
             if info:
                 return {
@@ -72,6 +103,8 @@ def get_enriched_nodes(collection, md5, addr):
                     "return_type": info.get("return_type"),
                     "parameters": info.get("parameters"),
                     "is_external": False,
+                    "file_md5": file_md5,
+                    "file_name": file_name_map.get(file_md5),
                 }
             # Fallback
             addr_part = fid.split(":")[-1]
@@ -80,12 +113,16 @@ def get_enriched_nodes(collection, md5, addr):
                 "name": f"func_{addr_part}",
                 "entrypoint": addr_part,
                 "is_external": False,
+                "file_md5": file_md5,
+                "file_name": file_name_map.get(file_md5),
             }
 
         return {
             "callers": [build_node_info(cid) for cid in caller_ids],
             "callees": [build_node_info(cid) for cid in callee_ids],
+            "callers_total": callers_total,
+            "callees_total": callees_total,
         }
     except Exception as e:
         print(f"Error enriching nodes: {e}")
-        return {"callers": [], "callees": []}
+        return {"callers": [], "callees": [], "callers_total": 0, "callees_total": 0}

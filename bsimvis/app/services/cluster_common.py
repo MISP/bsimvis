@@ -29,13 +29,13 @@ def hierarchical_membership(tree_df, num_nodes, global_root_id, min_size=2):
 
     death = {}
     leaf_fall = {}
-    for _, row in tree_df.iterrows():
-        p = int(row["parent"])
-        l = float(row["lambda_val"])
+    for row in tree_df.itertuples(index=False):
+        p = int(row.parent)
+        l = float(row.lambda_val)
         if l > death.get(p, 0.0):
             death[p] = l
-        if int(row["child_size"]) == 1:
-            leaf_fall[int(row["child"])] = l
+        if int(row.child_size) == 1:
+            leaf_fall[int(row.child)] = l
 
     # First pass: surviving ancestors per leaf, ordered deepest-first.
     survived = {}

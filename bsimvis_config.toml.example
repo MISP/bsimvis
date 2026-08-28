@@ -7,7 +7,8 @@
         
         # Heavy data/archive analyzers (DISABLE)
         "Apply Data Archives" = false
-        "Function ID" = false
+        "Function ID" = true
+        "Function ID.Always Apply FID Labels" = true
         
         # Stack & Variable analyzers (DISABLE)
         "Stack" = false
@@ -31,6 +32,23 @@
     description = "Decompile only"
     no_analysis = true
 [clustering]
+    # threshold_uf (default): deterministic, incremental union-find (see
+    # cluster_threshold.py) -- exact by construction, and new uploads update
+    # only the clusters they touch instead of rebuilding the whole collection.
+    # hierarchical_uf: full single-linkage hierarchy via Kruskal + union-find,
+    # same file. Full rebuild only (no incremental yet). cohesion_cut picks
+    # each function's assigned cluster: the shallowest surviving ancestor
+    # whose cohesion clears cohesion_cut, not just its deepest one.
+    # hdbscan: legacy path, kept for comparison/rollback.
+    engine = "threshold_uf"
+    # Same three engines, over binary (file) similarity instead of function
+    # similarity -- see bin_cluster_service.py. bin_* keys below tune it;
+    # non-bin_-prefixed keys above (cohesion_cut, epsilon, min_cluster_size,
+    # etc.) are shared with the func-level engines.
+    bin_engine = "threshold_uf"
+    bin_uf_threshold = 0.1
+    uf_threshold = 0.98
+    cohesion_cut = 0.9
     epsilon = 0.001
     min_cluster_size = 2
     min_samples = 1
@@ -38,6 +56,26 @@
     min_sim = 0.0
     min_features = 0
     min_cohesion = 0.5
+    # Propagate cluster info to similarity-level indexes after clustering.
+    # Powers `shared_clusters` in similarity search and sim-level cluster
+    # filters. Slowest phase of a clustering run; set false to skip it.
+    propagate_sim_indexes = true
+
+    # Seconds of upload quiet on a collection before its lane auto-fires a
+    # full clear+cluster+bin_sim rebuild (see the per-collection job lane).
+    idle_debounce_seconds = 30
+    # A lane's active unit stays "stuck" only this long before the idle sweep
+    # self-heals it (crashed worker) and promotes the next pending unit.
+    lane_stale_seconds = 1800
+
+[analysis_modules]
+    # Function-tagging modules run during analysis, off by default: each one
+    # costs more than the rest of the job on a typical sample
+    # (doc/bench-fid-cost.md). List the ones every upload should run unless
+    # overridden per-request via `enable`/`disable` (CLI: --enable/--disable;
+    # API: repeatable `enable`/`disable` query params on /api/file/upload).
+    # Choices: "FunctionID", "capa", "yara", "rulezet".
+    enabled = []
 
 [similarity]
     top_k = 1000
@@ -51,7 +89,7 @@
 [llm]
     ollama_url = "http://localhost:11434"
     model = "qwen3.6:35b"
-    prompt =  "Act as a senior reverse engineer. Provide a structured, keyword-focused summary of this function. **SUMMARY**: [One-line summary of functionality] **KEYWORDS**: [List 5-10 key technical terms, API calls, or algorithm names] **IMPACT**: [Side-effects, security implications, or critical dependencies] **LOGIC**: [Brief description of data transformation or logic path]"
+    prompt = "Act as a senior malware reverse engineer. In at most two sentences, state the function's observed purpose and the decisive code evidence. If its purpose cannot be established, say so without suggesting possibilities. Do not discuss vulnerabilities or hypothetical impact."
 
 [ghidra]
     # Absolute JVM heap cap per worker. Each worker runs its own JVM, so keep
@@ -68,3 +106,47 @@
         "-XX:MinHeapFreeRatio=10",
         "-XX:MaxHeapFreeRatio=30",
     ]
+
+[rulezet]
+# Mirror of rulezet.org's YARA rules, built by `bsimvis rulezet sync`.
+# Everything under data/ is gitignored, so the mirror is a build artifact.
+url = "https://rulezet.org"
+# Optional. Without one the sync pages the public API (~1300 requests for the
+# full ~130k rules) and no curated MISP tags are reachable at all -- rulezet
+# exposes tag *filtering* but never returns a rule's tags. With one, the sync is
+# a single dumpRules call and `rulezet index-tags` can recover them.
+api_key = ""
+# Skip rules whose license is not listed. Empty list = keep everything;
+# rulezet rules are per-rule licensed and plenty are "NOASSERTION".
+allow_licenses = []
+
+# Known-clean binaries every mirrored rule must stay silent on. A rule that
+# fires here is quarantined automatically -- measured on a random 3k slice of
+# the mirror, 103 of 150 clean /bin binaries matched a Windows malware rule.
+baseline_dirs = ["/usr/bin"]
+baseline_max_files = 300
+
+# Source tags to drop entirely. Globs, matched against the raw tag: "tlp:*"
+# kills the family, "tlp:white" kills the single value. Distribution markers
+# say who may read a rule, not anything about the code it matches.
+drop = ["tlp:*", "pap:*"]
+
+# Which source tag namespace lands in which BSimVis namespace. Routing is by
+# namespace, never per tag: name a source namespace and every value under it
+# follows. Longest match wins, "*" is the catch-all, and `false` drops a
+# namespace outright. Anything unrouted still lands under `rulezet:`, so no tag
+# is silently lost.
+[rulezet.tags]
+"misp-galaxy:mitre-attack-pattern" = "mitre"   # -> mitre:t1027
+"misp-galaxy:*" = "misp"                       # -> misp:tool:cobalt-strike
+"cve" = "cve"                                  # -> cve:cve-2021-44228
+"ghsa" = "ghsa"
+"*" = "rulezet"                                # -> rulezet:runtime-packer:pe:upx
+
+[search]
+# Maximum index buckets one wildcard/substring filter may resolve to. Exact
+# filters ignore it — they touch a single bucket. Results are still correct
+# when it is hit, just a subset, and the response says so via
+# `filter_truncated`. Cost is linear: ~0.13s scan + ~0.11s union per 60k
+# buckets.
+max_filter_buckets = 200000

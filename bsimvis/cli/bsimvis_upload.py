@@ -14,6 +14,13 @@ from bsimvis.app.services.ghidra_service import ghidra_service
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
 DEFAULT_BATCH_NAME = "Ghidra Batch"
 
+# Per-target outcomes. "Already present by MD5" is a third state, not a failure:
+# folding it into failure made a fully-deduplicated group report 0/19 and look
+# like a total wipeout. Callers should treat only UPLOAD_FAILED as an error.
+UPLOAD_FAILED = 0
+UPLOAD_OK = 1
+UPLOAD_DUPLICATE = 2
+
 
 def archive_ghidra_project(gpr_path: Path) -> Optional[str]:
     """
@@ -230,6 +237,8 @@ def _perform_raw_upload(raw_bytes, file_name, args):
     collections = args.collections if args.collections else ["main"]
 
     success = True
+    duplicate = False  # every rejection so far was "already exists"
+    failed = False  # at least one genuine error
     pipeline_details = []
     for collection in collections:
         for api_host in hosts:
@@ -272,6 +281,20 @@ def _perform_raw_upload(raw_bytes, file_name, args):
                 params["algo"] = args.algo
             if getattr(args, "skip_sim", False):
                 params["skip_sim"] = True
+            if getattr(args, "enable", None):
+                params["enable"] = args.enable
+            if getattr(args, "disable", None):
+                params["disable"] = args.disable
+            if getattr(args, "archive_password", None) is not None:
+                params["archive_password"] = args.archive_password
+
+            # Unpacking options
+            if getattr(args, "no_unpack", False):
+                params["unpack"] = "false"
+            if getattr(args, "parent_md5", None) is not None:
+                params["parent_md5"] = args.parent_md5
+            if getattr(args, "parent_file_name", None) is not None:
+                params["parent_file_name"] = args.parent_file_name
 
             api_url = f"http://{api_host}/api/file/upload"
             try:
@@ -281,11 +304,15 @@ def _perform_raw_upload(raw_bytes, file_name, args):
                 )
                 resp.raise_for_status()
                 result = resp.json()
-                pipeline_id = result.get("pipeline_id")
-                logging.info(
-                    f"[+] Upload Success on {api_host}! Pipeline ID: {pipeline_id}"
+                # An archive is unpacked server-side into one pipeline per
+                # member, so the batch has to track all of them.
+                pipeline_ids = result.get("pipeline_ids") or (
+                    [result["pipeline_id"]] if result.get("pipeline_id") else []
                 )
-                if pipeline_id:
+                logging.info(
+                    f"[+] Upload Success on {api_host}! Pipeline ID: {', '.join(pipeline_ids)}"
+                )
+                for pipeline_id in pipeline_ids:
                     pipeline_details.append(
                         {
                             "host": api_host,
@@ -312,12 +339,23 @@ def _perform_raw_upload(raw_bytes, file_name, args):
                     except Exception:
                         err_msg = e.response.text[:200]
 
-                if not is_duplicate:
+                if is_duplicate:
+                    duplicate = True
+                else:
                     err_suffix = f" (Details: {err_msg})" if err_msg else ""
                     logging.error(f"[!] Upload failed for {api_url}: {e}{err_suffix}")
+                    failed = True
                 success = False
 
-    return (1 if success else 0), pipeline_details
+    # A file already present by MD5 is not a failure. Collapsing the two meant a
+    # group where every file was already indexed reported "0.00% (0/19)" and
+    # looked like a total wipeout -- while a run where everything genuinely
+    # failed reported the same thing and still exited 0.
+    if failed:
+        return UPLOAD_FAILED, pipeline_details
+    if duplicate:
+        return UPLOAD_DUPLICATE, pipeline_details
+    return (UPLOAD_OK if success else UPLOAD_FAILED), pipeline_details
 
 
 def process_target(target, args, config, batch_order) -> tuple[int, list]:
@@ -472,8 +510,11 @@ def process_target(target, args, config, batch_order) -> tuple[int, list]:
                                     )
                                     resp.raise_for_status()
                     finally:
-                        if "program" in locals() and program:
-                            program.release(project)
+                        # close() releases every program importProgram() registered and
+                        # disposes the project's LocalFileSystem, stopping its
+                        # "File System Listener" thread. Releasing the program first
+                        # would make close() throw "unknown consumer". See worker.py.
+                        project.close()
 
             t_total = time.time() - t0
             logging.info(
@@ -510,8 +551,10 @@ def run_upload(host, port, args):
 
     logging.basicConfig(level=level, force=True)
 
-    # Map back to what main(args) expects
-    main(args)
+    # Map back to what main(args) expects. Returning it matters: the failure
+    # count is the exit code, and dropping it here would keep `upload` exiting
+    # 0 no matter how many files failed.
+    return main(args)
 
 
 def main(args):
@@ -572,6 +615,28 @@ def main(args):
         except Exception as e:
             logging.error(f"[!] Failed to parse metadata file {args.metadata}: {e}")
 
+    # Stage the whole map once per run. Rows are matched by md5, and unpacking
+    # happens server-side, so the hashes of archive members, UPX payloads and
+    # GPR programs do not exist yet here -- the server resolves them itself as
+    # each one is ingested.
+    if args.metadata_dict and not getattr(args, "local_analysis", False):
+        for api_host in args.hosts:
+            try:
+                resp = requests.post(
+                    f"http://{api_host}/api/file/metadata/stage",
+                    json={
+                        "batch_uuid": args.batch_uuid,
+                        "updates": args.metadata_dict,
+                    },
+                    timeout=120,
+                )
+                resp.raise_for_status()
+                logging.info(
+                    f"[i] Staged {len(args.metadata_dict)} metadata rows on {api_host}"
+                )
+            except Exception as e:
+                logging.error(f"[!] Could not stage metadata on {api_host}: {e}")
+
     logging.info(f"[i] Processing targets using profile: {args.profile}")
     print(
         f"[i] Uploading to collections {args.collections} on hosts {args.hosts} with batch uuid {args.batch_uuid}"
@@ -588,6 +653,8 @@ def main(args):
         }
 
         success_count = 0
+        duplicate_count = 0
+        failed_count = 0
         total = len(args.targets)
         pipeline_details = []
 
@@ -600,18 +667,29 @@ def main(args):
                 target_name = future_to_target[future]
                 try:
                     result, p_details = future.result()
-                    if result == 1:
+                    if result == UPLOAD_OK:
                         success_count += 1
                         pipeline_details.extend(p_details)
+                    elif result == UPLOAD_DUPLICATE:
+                        duplicate_count += 1
+                    else:
+                        failed_count += 1
                 except Exception as e:
                     # tqdm.write ensures the progress bar stays at the bottom
                     # while the error message is printed above it
                     pbar.write(f"[!] Exception in job for {target_name}: {e}")
+                    failed_count += 1
 
                 pbar.update(1)
 
+        # Report the three outcomes separately. The SightHouse bridge used to
+        # regex-scrape this success-rate line because it was the only signal
+        # available; the counts and the exit code are the interface now.
         rate = (success_count / total * 100) if total > 0 else 0
         print(f"[i] Success rate : {rate:.2f}% ({success_count}/{total})")
+        print(f"[i] Uploaded     : {success_count}")
+        print(f"[i] Skipped (dup): {duplicate_count}")
+        print(f"[i] Failed       : {failed_count}")
 
         if pipeline_details:
             # Group pipeline IDs by (host, collection)
@@ -648,6 +726,12 @@ def main(args):
                     )
                 except Exception as e:
                     logging.error(f"[!] Batch finalize failed for {api_url}: {e}")
+                    failed_count += 1
+
+        # Exit code reflects real failures only. It used to be 0 unconditionally,
+        # so a run where every single file failed still looked like a success to
+        # any caller or CI step.
+        return 1 if failed_count else 0
 
 
 def load_config(path=DEFAULT_CONFIG_NAME):
@@ -736,6 +820,41 @@ def cli_main():
         help="Path to a metadata CSV file to enrich uploaded binaries",
     )
 
+    parser.add_argument(
+        "--archive-password",
+        dest="archive_password",
+        metavar="PASSWORD",
+        default=None,
+        help="Password for uploaded zip archives (server default: infected). "
+        "Archives are unpacked server-side and every member analyzed.",
+    )
+
+    unpack_options = parser.add_argument_group("Unpacking options")
+    unpack_options.add_argument(
+        "--no-unpack",
+        dest="no_unpack",
+        action="store_true",
+        default=False,
+        help="Upload each file exactly as-is. Without this, the server unpacks "
+        "archives, APKs, fat Mach-O binaries and UPX-packed executables, and "
+        "analyzes every binary that comes out.",
+    )
+    unpack_options.add_argument(
+        "--parent-md5",
+        dest="parent_md5",
+        metavar="MD5",
+        default=None,
+        help="Declare the md5 of the container these files came from, for "
+        "samples unpacked with your own tooling.",
+    )
+    unpack_options.add_argument(
+        "--parent-name",
+        dest="parent_file_name",
+        metavar="NAME",
+        default=None,
+        help="File name of the declared --parent-md5 container.",
+    )
+
     decomp_args = parser.add_argument_group("Decompilation options")
 
     decomp_args.add_argument(
@@ -774,6 +893,26 @@ def cli_main():
         dest="cspec",
         help="Force a specific Ghidra Compiler Spec ID (e.g., 'gcc')",
         default=None,
+    )
+    decomp_args.add_argument(
+        "--enable",
+        action="append",
+        choices=["FunctionID", "capa", "yara", "rulezet"],
+        metavar="MODULE",
+        default=[],
+        help="Enable an analysis module for this run (repeatable), on top of "
+        "the server's [analysis_modules].enabled default: FunctionID "
+        "(library tagging), capa, yara (vendored rules), rulezet (mirrored "
+        "rules)",
+    )
+    decomp_args.add_argument(
+        "--disable",
+        action="append",
+        choices=["FunctionID", "capa", "yara", "rulezet"],
+        metavar="MODULE",
+        default=[],
+        help="Disable an analysis module for this run (repeatable), even if "
+        "the server's [analysis_modules].enabled default turns it on",
     )
 
     jvm_options = parser.add_argument_group("JVM Options")

@@ -104,11 +104,14 @@ Full call graph for a file.
 - **Params:** `collection`, `file_md5`.
 
 ### `POST /api/file/upload`
-Uploads a raw binary for server-side Ghidra analysis. Params accepted as query or form.
+Uploads a raw binary for server-side Ghidra analysis. One job does analysis,
+indexing, and (unless `skip_sim`) per-file similarity build, all in-process —
+no follow-up call is needed for the file's own data. Params accepted as query or form.
 - **Config:** `collection`, `file_name`, `profile` (`fast`/`full`), `min_func_len` (default 10), `processor` (force Ghidra Language ID), `cspec` (force Compiler Spec ID).
 - **Similarity:** `algo` (`jaccard`/`unweighted_cosine`/`milvus_sparse`), `top_k`, `min_score`, `min_features`, `skip_sim`.
-- **Metadata:** `batch_uuid` (generated server-side if omitted), `batch_name` (default `Ghidra Batch`), `tags` (repeatable), `related_md5` (repeatable), `file_metadata_extra` (JSON object merged into the file document — this is how `parent_md5`, `parent_file_name` and `related_file_name` are supplied; all four parent/related fields are indexed and searchable at file, function and similarity level).
-- **Scheduling:** `enqueue` (default `true`; `false` creates the pipeline without starting it, for batch uploads finalized later).
+- **Metadata:** `batch_uuid` (generated server-side if omitted, kept for tagging/lookup — no longer required for batching, see below), `batch_name` (default `Ghidra Batch`), `tags` (repeatable), `related_md5` (repeatable), `file_metadata_extra` (JSON object merged into the file document — this is how `parent_md5`, `parent_file_name` and `related_file_name` are supplied; all four parent/related fields are indexed and searchable at file, function and similarity level).
+- **Scheduling:** `enqueue` (default `true`; `false` creates the job without starting it). `priority` (`high` to jump this file's analysis ahead of other pending jobs on the shared worker pool; doesn't preempt a job already running).
+- **Clustering:** every upload is recorded in its collection's job lane; once uploads to that collection go quiet (`clustering.idle_debounce_seconds`, default 30s), the lane automatically clears and rebuilds that collection's function/binary clusters covering everything uploaded since the last rebuild. See `POST /api/cluster/rebuild_all` and `POST /api/file/upload/batch_finalize` to force this immediately instead.
 - **Returns:** `status`, `file_md5`, `pipeline_id`, `batch_uuid`.
 
 ### `POST /api/file/upload_file_data`
@@ -121,8 +124,14 @@ Uploads pre-analyzed JSON metadata + function feature maps from client-side extr
 Uploads a chunk of function analysis data (streaming path to avoid memory bloat).
 
 ### `POST /api/file/upload/batch_finalize`
-Finalizes a multi-file batch upload by orchestrating a master pipeline.
-- **Body:** `pipeline_ids` (required), `batch_uuid`, `collection`, `algo`, `skip_sim`, `min_cohesion`.
+Finalizes a multi-file batch upload by orchestrating a master pipeline. Optional now
+that uploads auto-cluster on their own after a quiet period (see `POST /api/file/upload`)
+— use this to force it immediately for an explicit set of pipeline/job ids instead of
+waiting. Submitted through the collection's job lane: queues behind whatever's currently
+active for that collection rather than running concurrently with it (two overlapping
+finalize/rebuild calls used to race and corrupt each other's cluster/bin_sim results).
+- **Body:** `pipeline_ids` (required), `batch_uuid`, `collection`, `algo`, `skip_sim`, `min_cohesion`, `priority` (`high` to jump ahead of other rebuilds already queued for this collection).
+- **Returns:** `status` (`"queued"`), `master_pipeline_id`, `batch_uuid`. `master_pipeline_id` is pollable via `GET /api/jobs/{id}` whether it started immediately or is waiting on another active rebuild.
 
 ### `PATCH /api/file/<file_md5>/metadata`
 Partially updates metadata for a file and triggers propagation.
@@ -256,10 +265,19 @@ Enqueues a clustering job.
 - **Body:** `collection`, `algo`, `min_cluster_size` (default 2), `min_samples` (default 1), `epsilon` (default 0.1), `selection_method` (default `eom`), `min_sim` (default 0.0), `min_features` (default 0).
 
 ### `POST /api/cluster/rebuild`
-Clear + cluster pipeline. Same body as build.
+Clear + cluster pipeline (function clusters only, no bin_sim rebuild). Same body as
+build, plus `priority` (`high` to jump ahead of other rebuilds already queued for this
+collection). Submitted through the collection's job lane — see `rebuild_all` below.
 
 ### `POST /api/cluster/rebuild_all`
-Full re-analysis pipeline: function clusters + binary similarity. Same body as build.
+Full re-analysis pipeline: clear + function clusters + binary similarity + binary
+clusters. Same body as build, plus `priority`. Submitted through the collection's job
+lane: at most one rebuild runs per `(collection, algo)` at a time — a second call while
+one is active queues behind it instead of racing it (this used to corrupt cluster/bin_sim
+results when two rebuilds overlapped). Also fires automatically after uploads to a
+collection go quiet, so this endpoint is for forcing it now, not required routine
+maintenance. Returns `{"job_id", "pipeline_id", "status": "queued"}` — `pipeline_id` is
+pollable via `GET /api/jobs/{id}` whether it started immediately or is waiting.
 
 ### `POST /api/cluster/clear`
 Enqueues a cluster clear job. Body: `collection`, `algo`.
@@ -307,7 +325,7 @@ Searches binary similarity pairs with filtering and sorting. Accepts `pool`.
 - **Core:** `collection` or `pool`, `algo` (default `unweighted_cosine`), `q`, `md5` (matches either side, and also the sides' `parent_md5`/`related_md5`), `file_name` (either side, plus parent/related file names), `arch` (architecture / language ID, either side).
 - **Ranges:** `min_score`/`max_score`, `min_coverage`/`max_coverage`, `min_shared`/`max_shared`, `min_funcs`/`max_funcs` (function count).
 - **Tags:** `file_tag`, `exclude_file_tag`, `exclude_file_static_tag`, `exclude_file_user_tag` (resolved through the live file tag index, so tag edits take effect without a rebuild), plus similarity-level `tag`, `exclude_tag`, `exclude_static_tag`, `exclude_user_tag` (applied on the page). All repeatable.
-- **Paging/sort:** `sort_by` (alias `sort`; `score` (default), `score_sim_weighted`, `score_collection_weighted`, `coverage`, `shared_clusters`, `functions_count`, `computed_at`, `architecture`), `sort_order` (default `desc`), `offset`, `limit` (default 50).
+- **Paging/sort:** `sort_by` (alias `sort`; `score` (default), `coverage`, `shared_clusters`, `functions_count`, `computed_at`, `architecture`), `sort_order` (default `desc`), `offset`, `limit` (default 50).
 - **Returns:** `total`, `offset`, `limit`, `results` — each pair enriched with `md5_a`/`md5_b`, `coll_a`/`coll_b`, `file_name_a`/`file_name_b`, the `file_parent_*`/`file_related_*` md5 and name fields, `file_tags_*`/`file_user_tags_*`, `architecture_*`, `functions_count_*`, `compiler_*`, `entry_date_*`, `coverage_a`/`coverage_b`, `shared_clusters`.
 - Pool search uses the pool's own bin_sim index when present; otherwise it falls back to a slower full scan (run `bin_sim/reindex` with `pool_id` to build it).
 
@@ -358,7 +376,7 @@ Updates binary cluster metadata (e.g. rename).
 Unified diff endpoint. Without `addr_a`/`addr_b` returns the file-level bin_sim document; with them returns a side-by-side aligned function code diff. `/api/function/diff` and `/api/bin_sim/diff` are aliases of this endpoint (the latter also reads `algo`, default `unweighted_cosine`).
 - **Params:** `collection_a` (alias `collection`, default `main`), `collection_b` (alias `coll_b`, defaults to `collection_a`), `md5_a`, `md5_b`, `addr_a`, `addr_b`, `pool` (alias `pool_id`). `md5A`/`md5B`/`addrA`/`addrB` and the legacy `id1`/`id2` function-ID pair are also accepted.
 - **Function diff returns:** `rows` (aligned left/right), `left_tips`/`right_tips`, `meta1`/`meta2`.
-- **File diff returns:** `score`, `score_sim_weighted`, `score_collection_weighted`, `file_metadata_a`/`file_metadata_b`, `functions_metadata` (per function ID), and `diff` with the `matched`, `unique_to_a` and `unique_to_b` tables. Matched/unique rows carry `cluster_uuid`, `cluster_name`, `cohesion`, `similarity`, `avg_features`, `sim_rarity`, `is_clustered`.
+- **File diff returns:** `score`, `file_metadata_a`/`file_metadata_b`, `functions_metadata` (per function ID), and `diff` with the `matched`, `unique_to_a` and `unique_to_b` tables. Matched/unique rows carry `cluster_uuid`, `cluster_name`, `cohesion`, `similarity`, `avg_features`, `sim_rarity`, `is_clustered`.
 
 #### Server-side table paging (file diff)
 Adding `table` returns one filtered/sorted page of a single diff table instead of the whole document.
@@ -368,7 +386,7 @@ Adding `table` returns one filtered/sorted page of a single diff table instead o
 - **Returns:** `items`, `total`, `offset`, `limit`, `table`, `functions_metadata` (page rows only), `file_metadata_a`/`file_metadata_b`.
 
 #### Sankey projection (file diff)
-`view=sankey` returns a compact projection for the Sankey visualization: `score`, `score_sim_weighted`, `score_collection_weighted`, `file_metadata_a`/`file_metadata_b`, `counts` (per table), and `sankey` with cluster fields plus inlined feature counts (`feat_a`/`feat_b` for matched rows, `feat` for unique rows) — no names, tags or notes, so large binaries stay renderable. Ignored when `table` is present.
+`view=sankey` returns a compact projection for the Sankey visualization: `score`, `file_metadata_a`/`file_metadata_b`, `counts` (per table), and `sankey` with cluster fields plus inlined feature counts (`feat_a`/`feat_b` for matched rows, `feat` for unique rows) — no names, tags or notes, so large binaries stay renderable. Ignored when `table` is present.
 
 ---
 

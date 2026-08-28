@@ -1,8 +1,11 @@
 import uuid
 import time
 import json
+import os
 from enum import Enum
+from redis.exceptions import WatchError
 from .redis_client import get_queue_redis, get_redis
+from .config_service import config_service
 
 
 class JobStatus(Enum):
@@ -31,6 +34,7 @@ class JobType(Enum):
     BUILD_BIN_SIM = "build_bin_sim"
     CLEAR_BIN_SIM = "clear_bin_sim"
     REINDEX_BIN_SIM = "reindex_bin_sim"
+    RESPLIT_BIN_SIM = "resplit_bin_sim"
     ENRICH_FEATURES = "enrich_features"
     DELETE_COLLECTION = "delete_collection"
     CLEAN_COLLECTION = "clean_collection"
@@ -41,6 +45,45 @@ class JobType(Enum):
     FINALIZE_POOL_BUILD = "finalize_pool_build"
     BUILD_POOL_BIN_SIM = "build_pool_bin_sim"
     CLUSTER_POOL_BINARIES = "cluster_pool_binaries"
+    LLM_BATCH = "llm_batch"
+    LLM_CONTEXTUAL_BATCH = "llm_contextual_batch"
+    LLM_FILE_ANALYSIS = "llm_file_analysis"
+    LLM_PAIR_ANALYSIS = "llm_pair_analysis"
+
+
+# Lease-based claims. A worker refreshes its lease while it holds a job; if the
+# process dies (SIGKILL, OOM, host reset) nothing refreshes it, the lease expires
+# and the reaper requeues the job. This replaces the old "sweep jobs:processing on
+# startup" remedy, which could not tell a dead claim from a live one.
+LEASE_TTL = 60  # seconds a claim stays valid without a refresh
+LEASE_KEY = "jobs:leased"  # ZSET job_id -> expiry timestamp
+WORKERS_KEY = "workers:alive"  # ZSET worker_id -> registration expiry
+# Same shape as the lease: refreshed from the worker heartbeat, so a killed
+# worker ages out on its own. Generous enough that one slow heartbeat (the
+# worker is mid-job and the loop only ticks every LEASE_TTL/3) never drops a
+# live worker off the dashboard.
+WORKER_TTL = LEASE_TTL
+
+# --- memory admission control ---------------------------------------------
+# Weights are MEASURED, not hand-picked. The draft version of this listed
+# cluster_*, build_bin_sim and big binaries as "heavy" -- and enrich_features,
+# the job that actually killed ten workers, was not on the list. So instead each
+# worker records the peak RSS it actually saw for a job type and admission uses
+# that. Unmeasured types get a modest default and calibrate themselves after
+# one run.
+MEM_PEAK_KEY = "jobs:mem:peak"  # HASH jtype -> largest RSS observed, bytes
+MEM_RESERVED_KEY = "jobs:mem:reserved"  # HASH job_id -> bytes reserved
+MEM_USED_KEY = "jobs:mem:used"  # INT sum of live reservations
+MEM_DEFAULT_COST = 512 * 1024**2
+
+# Caveat worth keeping in view: tokens bound CONCURRENCY, not per-job
+# footprint. Each worker has its own cgroup, so serialising five
+# enrich_features jobs would not have saved any single one of them. This stops
+# the fleet from collectively overcommitting the host; it is necessary, not
+# sufficient.
+MAX_ATTEMPTS = 3  # requeue this many times before failing the job for good
+REAPER_LOCK_KEY = "jobs:reaper:lock"
+PAUSE_KEY = "jobs:paused"
 
 
 def safe_int(val, default=0):
@@ -76,7 +119,9 @@ class JobService:
             pass
         return None
 
-    def create_job(self, job_type, payload, parent_id=None, is_subtask=False):
+    def create_job(
+        self, job_type, payload, parent_id=None, is_subtask=False, enqueue=True
+    ):
         """Creates a job record and returns the job_id."""
         job_id = str(uuid.uuid4())
         timestamp = int(time.time() * 1000)
@@ -97,6 +142,8 @@ class JobService:
                 job_data["collection"] = payload["collection"]
             elif "pool_id" in payload:
                 job_data["collection"] = f"pool:{payload['pool_id']}"
+            if "priority" in payload:
+                job_data["priority"] = payload["priority"]
 
         # Store job metadata as a Hash
         self.r.hset(f"job:{job_id}", mapping=job_data)
@@ -114,7 +161,7 @@ class JobService:
                 self.r.ltrim(f"jobs:collection:{coll}", 0, 999)
 
         # If it's not a subtask of a pipeline (or it's the first subtask), enqueue it
-        if not is_subtask:
+        if not is_subtask and enqueue:
             self.enqueue_job(job_id)
 
         return job_id
@@ -281,6 +328,153 @@ class JobService:
 
         return group_id
 
+    # --- Per-collection lane -------------------------------------------------
+    # One rule, no job-type classification: for a given collection, exactly one
+    # top-level unit (job/pipeline/group with no parent) runs at a time.
+    # Concurrency only exists inside a group's own members. See
+    # /home/thomas/.claude/plans/synthetic-dancing-harbor.md.
+
+    _ADVANCE_LANE_LUA = """
+    local nxt = redis.call('lpop', KEYS[2])
+    if nxt then
+      redis.call('set', KEYS[1], nxt)
+    else
+      redis.call('del', KEYS[1])
+    end
+    return nxt
+    """
+
+    def _lane_key(self, collection, suffix):
+        return f"lane:{collection}:{suffix}"
+
+    def _touch_active_lanes(self, collection):
+        self.r.sadd("active_lanes", collection)
+
+    def _maybe_clear_active_lanes(self, collection):
+        if (
+            not self.r.exists(self._lane_key(collection, "active"))
+            and self.r.llen(self._lane_key(collection, "pending")) == 0
+            and not self.r.exists(self._lane_key(collection, "wave_deadline"))
+        ):
+            self.r.srem("active_lanes", collection)
+
+    def submit_to_lane(self, collection, tasks_or_id, priority=False):
+        """Submits a top-level unit (a task list, or an already-created job/
+        pipeline/group id) to run for this collection. Dispatches immediately
+        if the lane is idle; otherwise queues (front if priority) and runs
+        once the currently active unit finishes. Always returns a pollable
+        id -- nothing is rejected, dropped, or silently merged."""
+        if isinstance(tasks_or_id, str):
+            unit_id = tasks_or_id
+        else:
+            unit_id = self.create_pipeline(tasks_or_id, enqueue=False)
+
+        self.r.hset(f"job:{unit_id}", "lane_collection", collection)
+        self._touch_active_lanes(collection)
+        active_key = self._lane_key(collection, "active")
+        if self.r.set(active_key, unit_id, nx=True):
+            self.start_job(unit_id)
+        else:
+            pending_key = self._lane_key(collection, "pending")
+            if priority:
+                self.r.lpush(pending_key, unit_id)
+            else:
+                self.r.rpush(pending_key, unit_id)
+        return unit_id
+
+    def advance_lane(self, collection):
+        """Called whenever a collection's active lane unit reaches a terminal
+        state. Promotes the next pending unit, if any. The single
+        serialization point -- no job-type awareness at all."""
+        active_key = self._lane_key(collection, "active")
+        pending_key = self._lane_key(collection, "pending")
+        next_id = self.r.eval(self._ADVANCE_LANE_LUA, 2, active_key, pending_key)
+        if next_id:
+            next_id = next_id.decode() if isinstance(next_id, bytes) else next_id
+            self.start_job(next_id)
+        self._maybe_clear_active_lanes(collection)
+
+    def open_or_extend_wave(self, collection, job_id, debounce_seconds):
+        """Records an upload's job_id into the collection's currently-open
+        debounce window, purely for later grouping -- it does NOT delay the
+        job itself. The caller enqueues it normally (analysis starts
+        immediately, fully parallel across workers, same as today); this only
+        controls when the collection's next auto-cluster fires. Deliberately
+        a fixed deadline from the first arrival (SETNX), not a sliding one --
+        otherwise a collection under steady upload traffic would never seal."""
+        self._touch_active_lanes(collection)
+        wave_key = self._lane_key(collection, "wave")
+        deadline_key = self._lane_key(collection, "wave_deadline")
+        self.r.rpush(wave_key, job_id)
+        self.r.setnx(deadline_key, int(time.time() * 1000) + debounce_seconds * 1000)
+
+    def seal_wave(self, collection):
+        """Seals the open wave (if any) into a group, wraps it with the
+        standard cluster/bin_sim rebuild steps, and submits that pipeline to
+        the lane. This *is* automatic clustering-after-batch -- no separate
+        finalize call needed.
+
+        Members were already enqueued and may have started, or even finished,
+        running before this fires (open_or_extend_wave never delays them) --
+        create_group(..., enqueue=True) is required here, not enqueue=False:
+        for an already-terminal member, start_job's own status recheck
+        retroactively fires advance_parent now that parent_id is set, exactly
+        as if it had just completed. Without enqueue=True a fast file that
+        finishes before the debounce window closes would leave the group's
+        barrier permanently unfired."""
+        wave_key = self._lane_key(collection, "wave")
+        deadline_key = self._lane_key(collection, "wave_deadline")
+        members = self.r.lrange(wave_key, 0, -1)
+        self.r.delete(wave_key, deadline_key)
+        if not members:
+            self._maybe_clear_active_lanes(collection)
+            return None
+        members = [m.decode() if isinstance(m, bytes) else m for m in members]
+        group_id = self.create_group(members, enqueue=True)
+        # Lazy import: cluster.py imports JobService, so a module-level import
+        # here would be circular.
+        from bsimvis.app.routes.cluster import build_rebuild_all_tasks
+
+        algo = config_service.get("similarity.algo", "unweighted_cosine")
+        tasks = [group_id] + build_rebuild_all_tasks(collection, algo, skip_sim=False)
+        return self.submit_to_lane(collection, tasks)
+
+    def tick_lanes(self):
+        """Idle-loop sweep (called from Worker.run()'s idle branch): seals any
+        wave past its deadline, and self-heals a lane whose active unit has
+        gone stale (crashed worker) instead of relying on a fixed lock TTL."""
+        lane_stale_ms = config_service.get("clustering.lane_stale_seconds", 1800) * 1000
+        now_ms = int(time.time() * 1000)
+
+        for collection in self.r.smembers("active_lanes"):
+            collection = (
+                collection.decode() if isinstance(collection, bytes) else collection
+            )
+            deadline_raw = self.r.get(self._lane_key(collection, "wave_deadline"))
+            if deadline_raw and now_ms - safe_int(deadline_raw) >= 0:
+                self.seal_wave(collection)
+
+            active_id = self.r.get(self._lane_key(collection, "active"))
+            if not active_id:
+                self._maybe_clear_active_lanes(collection)
+                continue
+            active_id = (
+                active_id.decode() if isinstance(active_id, bytes) else active_id
+            )
+            job = self.r.hgetall(f"job:{active_id}")
+            status = job.get("status")
+            updated_at = job.get("updated_at")
+            if (
+                status in (JobStatus.PENDING.value, JobStatus.RUNNING.value)
+                and updated_at
+                and now_ms - safe_int(updated_at) > lane_stale_ms
+            ):
+                self.add_log(
+                    active_id,
+                    "Lane self-heal: active unit stale (worker likely crashed), promoting next.",
+                )
+                self.advance_lane(collection)
+
     def enqueue_job(self, job_id, is_continuation=False):
         """Pushes a job ID onto the appropriate priority queue.
 
@@ -303,15 +497,29 @@ class JobService:
             if status in (JobStatus.PENDING.value, JobStatus.RUNNING.value):
                 return
 
+        # Held by its own pause or an ancestor's: record that it wants to be
+        # queued and stop here. Catches the continuation case -- a paused
+        # pipeline whose running stage finishes and tries to start the next one.
+        if self.is_job_paused(job_id):
+            self.r.hdel(f"job:{job_id}", "queued")
+            self.r.hset(f"job:{job_id}", "paused_queued", "1")
+            return
+
         high_priority_types = [
             JobType.CLEAR_SIM.value,
             JobType.CLEAR_FEATURES.value,
             JobType.CLEAR_CLUSTER.value,
             JobType.CLEAR_BIN_SIM.value,
             JobType.SYNC_MILVUS.value,
+            # User-initiated LLM batches are interactive work: they must not sit
+            # behind a Ghidra analysis or a sim build for hours.
+            JobType.LLM_BATCH.value,
+            JobType.LLM_CONTEXTUAL_BATCH.value,
+            JobType.LLM_FILE_ANALYSIS.value,
+            JobType.LLM_PAIR_ANALYSIS.value,
         ]
 
-        if jtype in high_priority_types:
+        if jtype in high_priority_types or job.get("priority") == "high":
             self.r.lpush("jobs:pending:high", job_id)
         else:
             if is_continuation:
@@ -379,9 +587,14 @@ class JobService:
         self.r.hset(f"job:{job_id}", "status", JobStatus.COMPLETED.value)
         self.update_progress(job_id, 100)
 
-        parent_id = self.r.hget(f"job:{job_id}", "parent_id")
+        data = self.r.hgetall(f"job:{job_id}")
+        parent_id = data.get("parent_id")
         if parent_id:
             self.advance_parent(parent_id, job_id)
+        else:
+            collection = data.get("lane_collection")
+            if collection:
+                self.advance_lane(collection)
 
     def advance_parent(self, parent_id, finished_job_id):
         """Advances the parent job based on its type (pipeline sequence or group barrier)."""
@@ -452,6 +665,18 @@ class JobService:
         self.r.hset(f"job:{job_id}", "error", error_msg)
         self.add_log(job_id, f"Execution error: {error_msg}")
 
+        # Failure cascades down as well as up: without this the remaining children
+        # of a failed pipeline stay queued and still run.
+        raw_tids = self.r.hget(f"job:{job_id}", "task_ids")
+        if raw_tids:
+            for tid in json.loads(raw_tids):
+                child_status = self.r.hget(f"job:{tid}", "status")
+                if child_status in (
+                    JobStatus.PENDING.value,
+                    JobStatus.RUNNING.value,
+                ):
+                    self.cancel_job(tid)
+
         parent_id = self.r.hget(f"job:{job_id}", "parent_id")
         if parent_id:
             parent_type = self.r.hget(f"job:{parent_id}", "type")
@@ -460,12 +685,412 @@ class JobService:
                 self.advance_parent(parent_id, job_id)
             else:
                 self.fail_job(parent_id, f"Failed because sub-task {job_id} failed.")
+        else:
+            collection = self.r.hget(f"job:{job_id}", "lane_collection")
+            if collection:
+                self.advance_lane(collection)
+
+    # ------------------------------------------------------------------
+    # Leases: crash recovery for claimed jobs
+    # ------------------------------------------------------------------
+
+    def claim_lease(self, job_id, owner, ttl=LEASE_TTL):
+        """Records a lease for a claimed job. Called right after the queue pop."""
+        self.r.zadd(LEASE_KEY, {job_id: time.time() + ttl})
+        self.r.hset(f"job:{job_id}", "lease_owner", owner)
+
+    def refresh_lease(self, job_id, ttl=LEASE_TTL):
+        """Extends a live lease. No-op if the reaper already took the job away."""
+        # XX: never resurrect a lease the reaper has already released, or the job
+        # would run twice -- once here, once from the requeue.
+        return self.r.zadd(LEASE_KEY, {job_id: time.time() + ttl}, xx=True)
+
+    def release_lease(self, job_id):
+        """Drops the lease and the in-flight marker. Safe to call twice."""
+        self.r.zrem(LEASE_KEY, job_id)
+        # count 0: a job enqueued twice would otherwise leave a permanent orphan.
+        self.r.lrem("jobs:processing", 0, job_id)
+        # The memory reservation has the same lifetime as the claim.
+        self.release_admission(job_id)
+
+    # ------------------------------------------------------------------
+    # Worker registry: an honest count of live worker processes
+    # ------------------------------------------------------------------
+
+    def register_worker(self, worker_id, ttl=WORKER_TTL):
+        """Marks a worker alive until `ttl` seconds from now.
+
+        Called from the worker's heartbeat, so a worker that is OOM-killed
+        simply stops refreshing and ages out. Same trick as the leases: nothing
+        here relies on a `finally` block that SIGKILL never runs.
+        """
+        self.r.zadd(WORKERS_KEY, {worker_id: time.time() + ttl})
+
+    def unregister_worker(self, worker_id):
+        """Drops a worker from the registry on a clean shutdown."""
+        self.r.zrem(WORKERS_KEY, worker_id)
+
+    def count_active_workers(self, now=None):
+        """Number of workers whose registration has not expired.
+
+        This is the real fleet size. The dashboard used to show the count of
+        active *jobs* instead, so a dead fleet holding stale `running` jobs
+        looked like a busy system -- which is why the outage went unnoticed.
+        """
+        now = time.time() if now is None else now
+        # Trim first so an unnoticed dead fleet cannot inflate the count forever.
+        self.r.zremrangebyscore(WORKERS_KEY, 0, now)
+        return self.r.zcard(WORKERS_KEY)
+
+    def list_active_workers(self, now=None):
+        """Live worker ids, soonest-to-expire first."""
+        now = time.time() if now is None else now
+        self.r.zremrangebyscore(WORKERS_KEY, 0, now)
+        return [
+            w.decode() if isinstance(w, bytes) else w
+            for w in self.r.zrange(WORKERS_KEY, 0, -1)
+        ]
+
+    # ------------------------------------------------------------------
+    # Memory admission control
+    # ------------------------------------------------------------------
+
+    def memory_budget(self):
+        """Bytes of worker memory the fleet may collectively reserve."""
+        env = os.getenv("JOB_MEMORY_BUDGET_MB")
+        if env:
+            return int(float(env) * 1024**2)
+        # Same reservation as launch_tmux.sh: leave 8 GB for kvrocks, redis and
+        # the desktop, offer the rest to jobs.
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        total = int(line.split()[1]) * 1024
+                        return max(total - 8 * 1024**3, 1024**3)
+        except OSError:
+            pass
+        return 8 * 1024**3
+
+    def record_job_peak(self, jtype, peak_bytes):
+        """Remembers the largest RSS ever seen for a job type."""
+        if not jtype or not peak_bytes:
+            return
+        prev = safe_int(self.r.hget(MEM_PEAK_KEY, jtype))
+        if peak_bytes > prev:
+            self.r.hset(MEM_PEAK_KEY, jtype, int(peak_bytes))
+
+    def job_cost(self, jtype):
+        """Measured peak for this job type, or a default until one exists."""
+        return safe_int(self.r.hget(MEM_PEAK_KEY, jtype), MEM_DEFAULT_COST) or (
+            MEM_DEFAULT_COST
+        )
+
+    def try_admit(self, job_id, jtype):
+        """Reserves this job's measured cost, or refuses if the fleet is full.
+
+        INCRBY-then-roll-back: two workers racing can never both slip past the
+        budget, because the increment is what decides.
+        """
+        cost = self.job_cost(jtype)
+        used = self.r.incrby(MEM_USED_KEY, cost)
+        # `used == cost` means nothing else was reserved. Always admit then,
+        # even if the job alone exceeds the budget -- otherwise a single
+        # expensive job type would deadlock the queue forever.
+        if used <= self.memory_budget() or used == cost:
+            self.r.hset(MEM_RESERVED_KEY, job_id, cost)
+            return True
+        self.r.incrby(MEM_USED_KEY, -cost)
+        return False
+
+    def release_admission(self, job_id):
+        """Gives a job's reservation back. Safe to call twice."""
+        cost = safe_int(self.r.hget(MEM_RESERVED_KEY, job_id))
+        if cost:
+            self.r.hdel(MEM_RESERVED_KEY, job_id)
+            self.r.incrby(MEM_USED_KEY, -cost)
+
+    def resync_admissions(self):
+        """Rebuilds the used counter from the live reservations.
+
+        A worker killed between INCRBY and its release leaks its reservation,
+        and enough leaks would starve the fleet into a permanent standstill.
+        The reaper calls this, so the budget self-heals the same way leases do.
+        """
+        total = sum(safe_int(v) for v in (self.r.hvals(MEM_RESERVED_KEY) or []))
+        self.r.set(MEM_USED_KEY, total)
+        return total
+
+    def reap_expired(self, now=None):
+        """Requeues jobs whose worker died, and clears stale in-flight entries.
+
+        Returns (requeued, failed, cleaned). Held under a short lock so a fleet
+        starting together does not requeue the same job several times.
+        """
+        if not self.r.set(REAPER_LOCK_KEY, "1", nx=True, ex=30):
+            return (0, 0, 0)
+
+        now = time.time() if now is None else now
+        try:
+            expired = list(self.r.zrangebyscore(LEASE_KEY, 0, now))
+
+            # Entries sitting in jobs:processing with no lease at all: either a
+            # worker died between the queue pop and claim_lease, or they predate
+            # leases entirely (the historical jobs:processing leak).
+            leased = set(self.r.zrange(LEASE_KEY, 0, -1))
+            for job_id in self.r.lrange("jobs:processing", 0, -1):
+                if job_id not in leased and job_id not in expired:
+                    expired.append(job_id)
+
+            requeued = failed = cleaned = 0
+            for job_id in dict.fromkeys(expired):
+                job = self.r.hgetall(f"job:{job_id}")
+                status = job.get("status") if job else None
+
+                if not job or status in (
+                    JobStatus.COMPLETED.value,
+                    JobStatus.FAILED.value,
+                    JobStatus.CANCELLED.value,
+                ):
+                    # Already resolved -- the list entry is just stale bookkeeping.
+                    self.release_lease(job_id)
+                    cleaned += 1
+                    continue
+
+                self.release_lease(job_id)
+
+                # MAX_ATTEMPTS predates jobs being resumable. enrich_features
+                # now checkpoints every batch, so a job could be OOM-killed
+                # three times while permanently enriching thousands of features
+                # each time and still be abandoned -- which is what happened.
+                #
+                # A job that advanced since its last claim is slow, not poison.
+                # The watermark only ever moves forward, so a job that stops
+                # advancing still fails after MAX_ATTEMPTS: the counter now
+                # targets jobs that make no progress rather than jobs that need
+                # more than three goes.
+                processed = safe_int(job.get("processed_items"))
+                watermark = safe_int(job.get("attempts_progress"))
+                if processed > watermark:
+                    self.r.hset(
+                        f"job:{job_id}",
+                        mapping={"attempts_progress": processed, "attempts": 0},
+                    )
+                    self.add_log(
+                        job_id,
+                        f"Progressed to {processed} items since the last attempt; "
+                        "retry counter reset.",
+                    )
+                    attempts = 0
+                else:
+                    attempts = self.r.hincrby(f"job:{job_id}", "attempts", 1)
+                if attempts > MAX_ATTEMPTS:
+                    self.add_log(
+                        job_id,
+                        f"Abandoned after {attempts - 1} attempts (worker kept dying).",
+                    )
+                    self.fail_job(
+                        job_id,
+                        f"Lease expired {attempts - 1} times; giving up.",
+                    )
+                    failed += 1
+                    continue
+
+                # The `queued` latch is what stops a re-enqueue, and the status is
+                # still `running` from the dead worker. Both must be reset first.
+                self.r.hdel(f"job:{job_id}", "queued", "lease_owner")
+                self.r.hset(f"job:{job_id}", "status", JobStatus.PENDING.value)
+                self.add_log(
+                    job_id, f"Lease expired; requeued (attempt {attempts + 1})."
+                )
+                self.enqueue_job(job_id)
+                requeued += 1
+
+            # Drop memory reservations for jobs that are no longer in flight.
+            # A worker killed between INCRBY and its release would otherwise
+            # leak budget permanently, and enough leaks starve the whole fleet
+            # into a standstill that looks exactly like the outage we are
+            # fixing. Then rebuild the counter from what is actually held.
+            in_flight = set(self.r.lrange("jobs:processing", 0, -1))
+            for job_id in list(self.r.hkeys(MEM_RESERVED_KEY) or []):
+                job_id = job_id.decode() if isinstance(job_id, bytes) else job_id
+                if job_id not in in_flight:
+                    self.r.hdel(MEM_RESERVED_KEY, job_id)
+            self.resync_admissions()
+
+            return (requeued, failed, cleaned)
+        finally:
+            self.r.delete(REAPER_LOCK_KEY)
+
+    # ------------------------------------------------------------------
+    # Pause / resume
+    # ------------------------------------------------------------------
+
+    def is_paused(self):
+        """True when workers should finish their current job and stop claiming."""
+        return bool(self.r.exists(PAUSE_KEY))
+
+    def set_paused(self, paused):
+        if paused:
+            self.r.set(PAUSE_KEY, "1")
+        else:
+            self.r.delete(PAUSE_KEY)
+        return self.is_paused()
+
+    def set_job_paused(self, job_id, paused):
+        """Holds one job/group/pipeline out of scheduling, leaving the rest alone.
+
+        Stored as a field rather than a JobStatus: a paused job is still
+        pending/running and must keep aggregating into its parent's progress
+        exactly as before. A new terminal-looking status would have to be taught
+        to every status filter and rollup in the app.
+
+        Pausing pulls the paused subtree's queued work off the pending queues so
+        the freed capacity goes to other jobs immediately. Leaving it queued
+        would make workers pop it, notice the flag and push it back, burning
+        claim cycles on work that cannot run.
+        """
+        if not self.r.exists(f"job:{job_id}"):
+            return None
+        if paused:
+            self.r.hset(f"job:{job_id}", "paused", "1")
+            self._dequeue_paused_subtree(job_id)
+        else:
+            self.r.hdel(f"job:{job_id}", "paused")
+            self._requeue_paused_subtree(job_id)
+        return bool(paused)
+
+    def _dequeue_paused_subtree(self, job_id, seen=None):
+        """Takes the subtree's queued-but-not-started work off the pending queues.
+
+        Each removed job is tagged `paused_queued` so resume can put back exactly
+        what was taken. That tag is the whole point: a pipeline has many pending
+        stages but only the current one is queued, so resuming by "enqueue every
+        pending descendant" would fire the entire pipeline in parallel.
+        """
+        seen = seen if seen is not None else set()
+        if job_id in seen:
+            return
+        seen.add(job_id)
+
+        job = self.r.hgetall(f"job:{job_id}")
+        if not job:
+            return
+
+        removed = self.r.lrem("jobs:pending", 0, job_id) or 0
+        removed += self.r.lrem("jobs:pending:high", 0, job_id) or 0
+        if removed:
+            # The `queued` latch must go too, or the resume enqueue is treated as
+            # a duplicate and silently dropped -- the same trap worker._requeue hits.
+            self.r.hdel(f"job:{job_id}", "queued")
+            self.r.hset(f"job:{job_id}", "paused_queued", "1")
+
+        for tid in self._task_ids(job):
+            self._dequeue_paused_subtree(tid, seen)
+
+    def _requeue_paused_subtree(self, job_id, seen=None):
+        """Puts back exactly the work that pausing took off the queues."""
+        seen = seen if seen is not None else set()
+        if job_id in seen:
+            return
+        seen.add(job_id)
+
+        job = self.r.hgetall(f"job:{job_id}")
+        if not job:
+            return
+
+        # A job still held by an ancestor's pause stays down; the outer resume
+        # is what will release it.
+        if job.get("paused_queued") and not self.is_job_paused(job_id):
+            self.r.hdel(f"job:{job_id}", "paused_queued")
+            if job.get("status") == JobStatus.PENDING.value:
+                self.enqueue_job(job_id)
+
+        for tid in self._task_ids(job):
+            self._requeue_paused_subtree(tid, seen)
+
+    @staticmethod
+    def _task_ids(job):
+        raw = job.get("task_ids")
+        if not raw:
+            return []
+        try:
+            tids = json.loads(raw)
+            return tids if isinstance(tids, list) else []
+        except Exception:
+            return []
+
+    def is_job_paused(self, job_id):
+        """True when this job or any ancestor is paused.
+
+        Walking up is what makes pausing a group meaningful: the group itself is
+        never claimed by a worker, only its leaves are, so the leaves are where
+        the flag has to be observed. Depth is bounded by the pipeline/group
+        nesting (a handful), and the walk is capped in case parent_id ever loops.
+        """
+        seen = set()
+        while job_id and job_id not in seen:
+            seen.add(job_id)
+            job = self.r.hgetall(f"job:{job_id}")
+            if not job:
+                return False
+            if job.get("paused"):
+                return True
+            job_id = job.get("parent_id")
+        return False
+
+    # ------------------------------------------------------------------
+    # Task splicing
+    # ------------------------------------------------------------------
+
+    def splice_tasks(self, parent_id, after_id, new_tids, retries=10):
+        """Inserts task ids into a parent's task_ids after `after_id`, atomically.
+
+        task_ids is a JSON blob, so a plain read-modify-write loses one of two
+        concurrent splices (chunks arrive in parallel). WATCH makes the write
+        fail instead of silently dropping tasks.
+        """
+        if not new_tids:
+            return True
+        # new_tids is (jtype, payload) task defs, same shape create_pipeline/
+        # create_group take -- task_ids stores resolved job-id strings, so these
+        # need the same _resolve_task() pass (creates the child job, points its
+        # parent_id at parent_id) before they're spliced in. Resolve once, up
+        # front: doing it inside the WATCH retry loop would create a duplicate
+        # orphaned child job on every WatchError retry.
+        resolved_tids = [self._resolve_task(t, parent_id) for t in new_tids]
+        key = f"job:{parent_id}"
+        for _ in range(retries):
+            try:
+                with self.r.pipeline() as pipe:
+                    pipe.watch(key)
+                    raw = pipe.hget(key, "task_ids")
+                    if raw is None:
+                        pipe.unwatch()
+                        return False
+                    existing = json.loads(raw)
+                    try:
+                        idx = existing.index(after_id)
+                        updated = (
+                            existing[: idx + 1] + resolved_tids + existing[idx + 1 :]
+                        )
+                    except ValueError:
+                        updated = existing + resolved_tids
+                    pipe.multi()
+                    pipe.hset(key, "task_ids", json.dumps(updated))
+                    pipe.execute()
+                return True
+            except WatchError:
+                continue
+        return False
 
     def get_job_status(self, job_id):
         """Returns the full job or pipeline status."""
         data = self.r.hgetall(f"job:{job_id}")
         if not data:
             return None
+
+        data["tier"] = 2 if data.get("parent_id") else 1
 
         # Decode JSON fields
         if "payload" in data:
@@ -514,6 +1139,7 @@ class JobService:
 
                             target = (
                                 payload.get("md5")
+                                or payload.get("file_md5")
                                 or payload.get("file_id")
                                 or payload.get("batch_uuid")
                                 or ""
@@ -597,6 +1223,11 @@ class JobService:
             f"job_log:{job_id}", f"[{int(time.time()*1000)}] Job cancelled by user."
         )
 
+        if not data.get("parent_id"):
+            collection = data.get("lane_collection")
+            if collection:
+                self.advance_lane(collection)
+
         # Cancel all subtasks recursively
         if "task_ids" in data:
             tids = json.loads(data["task_ids"])
@@ -604,6 +1235,10 @@ class JobService:
                 self.cancel_job(tid)
 
         return True
+
+    def is_cancelled(self, job_id):
+        """True if the job was cancelled -- for long jobs to poll mid-run."""
+        return self.r.hget(f"job:{job_id}", "status") == JobStatus.CANCELLED.value
 
     def cancel_all_jobs(self):
         """Cancels all pending/running jobs and pipelines."""
@@ -626,9 +1261,28 @@ class JobService:
         # Also update updated_at
         self.r.hset(f"job:{job_id}", "updated_at", timestamp)
 
-    def update_progress(self, job_id, progress, message=None):
-        """Updates progress (0-100) and optionally adds a log entry."""
-        self.r.hset(f"job:{job_id}", "progress", progress)
+    def update_progress(
+        self, job_id, progress, message=None, processed=None, total=None
+    ):
+        """Updates progress (0-100) and optionally adds a log entry.
+
+        `processed`/`total` are what make the throughput fields on
+        /api/jobs/stats real. Only similarity_service ever wrote them, so during
+        an enrich_features drain every speed/ETA field on the dashboard read
+        zero and the only way to tell the queue had stalled was polling
+        pending_jobs by hand. Handlers that know their item counts should pass
+        them; `speed` is derived here so no caller has to time itself.
+        """
+        fields = {"progress": progress}
+        if total is not None:
+            fields["total_items"] = str(total)
+        if processed is not None:
+            fields["processed_items"] = str(processed)
+            started = safe_int(self.r.hget(f"job:{job_id}", "started_at"))
+            elapsed = time.time() - started / 1000.0 if started else 0
+            if elapsed > 0:
+                fields["speed"] = f"{processed / elapsed:.2f}"
+        self.r.hset(f"job:{job_id}", mapping=fields)
         if message:
             self.add_log(job_id, message)
 
@@ -681,6 +1335,11 @@ class JobService:
         total_speed = 0.0
         active_jobs_count = 0
         remaining_items = 0
+        # Longest per-job ETA derived from elapsed time vs progress percent, for
+        # handlers that report no item counts. Without it the queue could be
+        # visibly draining while global_eta sat at 0.
+        progress_eta = 0.0
+        now_s = time.time()
 
         for jid in processing_ids:
             job = job_hashes.get(jid)
@@ -706,10 +1365,21 @@ class JobService:
             done = safe_int(job.get("processed_items", 0))
             remaining_items += max(0, total - done)
 
+            pct = safe_int(job.get("progress", 0))
+            started = safe_int(job.get("started_at", 0))
+            if 0 < pct < 100 and started:
+                elapsed = now_s - started / 1000.0
+                if elapsed > 0:
+                    progress_eta = max(progress_eta, elapsed * (100 - pct) / pct)
+
         # Average speed
         avg_speed = total_speed / active_jobs_count if active_jobs_count > 0 else 0
 
-        global_eta = remaining_items / total_speed if total_speed > 0 else 0
+        # Item counts when we have them, elapsed-vs-percent otherwise.
+        if total_speed > 0 and remaining_items > 0:
+            global_eta = remaining_items / total_speed
+        else:
+            global_eta = progress_eta
 
         # Collect active collections
         active_collections = set()
@@ -760,7 +1430,11 @@ class JobService:
             )
 
         return {
-            "active_workers": active_jobs_count,
+            # A count of live worker processes, not of active jobs. The two
+            # differ exactly when it matters: a dead fleet still holding
+            # `running` jobs now reads 0 workers instead of looking busy.
+            "active_workers": self.count_active_workers(),
+            "active_jobs_count": active_jobs_count,
             "pending_jobs": pending_count,
             "avg_speed": round(avg_speed, 2),
             "total_speed": round(total_speed, 2),
@@ -771,7 +1445,14 @@ class JobService:
         }
 
     def list_jobs(
-        self, limit=100, offset=0, collection=None, pool=None, status=None, jtype=None
+        self,
+        limit=100,
+        offset=0,
+        collection=None,
+        pool=None,
+        status=None,
+        jtype=None,
+        tier=None,
     ):
         """Returns a paged list of jobs and the total count."""
         # Use collection index key if collection filter is passed
@@ -792,7 +1473,7 @@ class JobService:
 
         # Optimize: if no filter is active, we can slice top-level job IDs early
         # to avoid fetching and parsing all 1000 jobs.
-        has_filters = any([collection, pool, status, jtype])
+        has_filters = any([collection, pool, status, jtype, tier])
         sliced_job_ids = all_job_ids
         if not has_filters:
             sliced_job_ids = all_job_ids[offset : offset + limit]
@@ -876,6 +1557,13 @@ class JobService:
                     "parent_id": parent_id,
                     "task_ids": task_ids,
                     "payload": job.get("payload", ""),
+                    # Visibility tier, derived from root-ness rather than a type
+                    # table: a job the user started has no parent run (tier 1),
+                    # anything spawned underneath one is internal (tier 2). The
+                    # same type is legitimately both depending on context.
+                    "tier": 2 if parent_id else 1,
+                    "attempts": safe_int(job.get("attempts", 0)),
+                    "paused": bool(job.get("paused")),
                 }
             )
 
@@ -949,6 +1637,8 @@ class JobService:
             if status and job_dict.get("status") != status:
                 continue
             if jtype and job_dict.get("type") != jtype:
+                continue
+            if tier and job_dict.get("tier") != safe_int(tier):
                 continue
 
             filtered_top_level_jobs.append(job_dict)

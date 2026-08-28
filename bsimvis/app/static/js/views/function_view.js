@@ -15,11 +15,15 @@ window.FunctionView = {
     rowH: 24,
     OVERSCAN: 20,
     id: '',
+    neighborsLoaded: false,
+    neighborsDebounceTimer: null,
+    callGraphLoaded: false,
+    graphController: null,
 
     async init(params, containerId) {
         this.params = params;
         this.container = document.getElementById(containerId);
-        
+
         const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
         const address = params.address;
@@ -31,24 +35,165 @@ window.FunctionView = {
 
         this.id = `idx:${collection}:func:${file_md5}:${address}`;
         window.currentFuncId = `${collection}:func:${file_md5}:${address}`;
-        
+        this.neighborsLoaded = false;
+        this.callGraphLoaded = false;
+        if (this.graphController) {
+            this.graphController.destroy();
+            this.graphController = null;
+        }
+
         // Build initial layout
         this.container.innerHTML = `
+            <style>
+                .bsim-tabbar { display:flex; gap:4px; margin:0 0 10px 0; border-bottom:2px solid var(--border); flex-shrink:0; }
+                .bsim-tab {
+                    background:none; border:none; border-bottom:3px solid transparent;
+                    margin-bottom:-2px; padding:10px 20px; cursor:pointer;
+                    color:var(--subtle); font-size:0.9rem; font-weight:600; letter-spacing:0.01em;
+                    transition:color 0.15s, border-color 0.15s, background 0.15s;
+                }
+                .bsim-tab:hover { color:var(--text); background:rgba(255,255,255,0.04); }
+                .bsim-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+
+                .file-func-table { width:100%; border-collapse:collapse; font-size:0.8rem; }
+                .file-func-table th { text-align:left; padding:10px; border-bottom:1px solid var(--border); color:var(--subtle); text-transform:uppercase; font-size:0.75rem; letter-spacing:0.05em; }
+                .file-func-table td { padding:10px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:middle; }
+                .file-func-table tr:hover { background: rgba(255,255,255,0.02); }
+            </style>
             <div style="display:flex; flex-direction:column; flex:1; overflow:hidden; height:100%;">
                 <div id="function-loader" style="text-align:center; padding:50px; color:var(--dim); font-size:1.2rem;">
                     <i class="fa-solid fa-spinner fa-spin"></i> Loading Function Code...
                 </div>
                 <div id="function-content" style="display:none; flex:1; flex-direction:column; overflow:hidden; height:100%;">
                     <div id="meta-container"></div>
-                    <div id="code-scroll" style="flex: 1; position: relative; overflow-y: auto; background: #272822;">
-                        <div id="v-height" style="position: absolute; width: 1px; top: 0; left: 0; z-index: -1;"></div>
-                        <div id="v-content" class="c-code-container" style="position: sticky; top: 0; width: 100%;"></div>
-                        <button id="copy-code-btn" class="floating-copy-btn" title="Copy code with colors" onclick="FunctionView.copyFunctionCode(this)">
-                            <i class="fas fa-copy"></i>
-                        </button>
+                    <div class="bsim-tabbar" id="function-view-tabs">
+                        <button class="bsim-tab active" id="function-tab-btn-code" onclick="FunctionView.switchTab('code')">Code</button>
+                        <button class="bsim-tab" id="function-tab-btn-neighbors" onclick="FunctionView.switchTab('neighbors')">Similar<span id="fn-nbr-count-wrap" style="display:none;"> (<span id="fn-nbr-count">0</span>)</span></button>
+                        <button class="bsim-tab" id="function-tab-btn-callgraph" onclick="FunctionView.switchTab('callgraph')">Call Graph</button>
+                    </div>
+
+                    <div id="function-panel-code" class="function-view-panel" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
+                        <div id="code-scroll" style="flex: 1; position: relative; overflow-y: auto; background: var(--card-bg);">
+                            <div id="v-height" style="position: absolute; width: 1px; top: 0; left: 0; z-index: -1;"></div>
+                            <div id="v-content" class="c-code-container" style="position: sticky; top: 0; width: 100%;"></div>
+                            <button id="copy-code-btn" class="floating-copy-btn" title="Copy code with colors" onclick="FunctionView.copyFunctionCode(this)">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="function-panel-neighbors" class="function-view-panel" style="display:none; flex:1; overflow-y:auto;">
+                        <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
+                            <div class="filter-bar" style="gap:20px; padding:0;">
+                                <div class="search-input-wrapper">
+                                    <input type="text" id="fn-nbr-q" placeholder="Search similar functions by keywords..." oninput="FunctionView.debounceNeighborsSearch()">
+                                    <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="FunctionView.searchNeighbors()" title="Search"></i>
+                                </div>
+                            </div>
+                            <div style="display:flex; gap:20px; flex-wrap:wrap;">
+                                <div class="home-card" style="padding:16px; min-width:160px;">
+                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Scope</h3>
+                                    <input type="hidden" id="fn-nbr-scope" value="collection">
+                                    <div id="fn-nbr-scope-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+                                </div>
+                                <div class="home-card" style="padding:16px; min-width:220px;">
+                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Algorithm</h3>
+                                    <input type="hidden" id="fn-nbr-algo" value="unweighted_cosine">
+                                    <div id="fn-nbr-algo-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+                                </div>
+                                <div class="home-card" style="padding:16px; min-width:220px;">
+                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Cross Binary</h3>
+                                    <input type="hidden" id="fn-nbr-cross-binary" value="">
+                                    <div id="fn-nbr-cross-binary-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+                                </div>
+                                <div class="home-card" style="padding:16px; min-width:100px;">
+                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Limit</h3>
+                                    <input type="number" id="fn-nbr-limit" value="50" min="1" max="1000" style="width:70px; font-size:0.8rem; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:5px;" oninput="FunctionView.debounceNeighborsSearch()">
+                                </div>
+                            </div>
+                            <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
+                                <table id="fn-nbr-results-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Score</th>
+                                            <th>Function</th>
+                                            <th>Addr</th>
+                                            <th>Tags</th>
+                                            <th>Clusters</th>
+                                            <th>Feat</th>
+                                            <th>Notes</th>
+                                            <th>File</th>
+                                            <th>MD5</th>
+                                        </tr>
+                                        <tr class="filter-row">
+                                            <th>
+                                                <div style="display:flex; align-items:center; gap:2px;">
+                                                    <input type="number" id="fn-nbr-min-score" placeholder="Min..." value="0.9" step="0.05" min="0" max="1" style="font-size:0.65rem; width:48%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                    <span class="dim" style="font-size:0.6rem">-</span>
+                                                    <input type="number" id="fn-nbr-max-score" placeholder="Max..." step="0.05" min="0" max="1" style="font-size:0.65rem; width:48%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                </div>
+                                            </th>
+                                            <th>
+                                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                                    <input type="text" id="fn-nbr-name" placeholder="Name..." style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                    <input type="text" id="fn-nbr-namespace" placeholder="Namespace..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                    <input type="text" id="fn-nbr-ret-type" placeholder="Return Type..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                </div>
+                                            </th>
+                                            <th></th>
+                                            <th>
+                                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                                    <input type="text" id="fn-nbr-func-tag" placeholder="Tags..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                    <input type="text" id="fn-nbr-exclude-func-tag" placeholder="Exclude..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                </div>
+                                            </th>
+                                            <th>
+                                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                                    <input type="text" id="fn-nbr-cluster" placeholder="UUID..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                    <input type="text" id="fn-nbr-cluster-name" placeholder="Name..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                    <input type="number" id="fn-nbr-min-cohesion" placeholder="Min Cohesion" step="0.05" min="0" max="1" style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
+                                                </div>
+                                            </th>
+                                            <th><input type="number" id="fn-nbr-min-features" placeholder="Min..." min="0" style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()"></th>
+                                            <th><input type="text" id="fn-nbr-note-owner" placeholder="Owner..." style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()"></th>
+                                            <th><input type="text" id="fn-nbr-file-name" placeholder="File Name..." style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()"></th>
+                                            <th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="fn-nbr-results-tbody">
+                                        <tr><td colspan="9" style="text-align: center; color: var(--dim); padding: 20px;">Loading similar functions...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="function-panel-callgraph" class="function-view-panel" style="display:none; flex:1; overflow:hidden;">
+                        <div style="display:flex; height:100%;">
+                            <div style="flex:1; overflow:hidden; position:relative;">
+                                <div id="fn-cg-toolbar" style="position:absolute; bottom:10px; left:15px; z-index:100; display:flex; align-items:center; gap:14px; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); padding:6px 12px; border-radius:6px; border:1px solid var(--border); font-size:0.75rem; max-width:calc(100% - 30px); flex-wrap:wrap;">
+                                    <label style="cursor:pointer; display:flex; align-items:center; gap:5px; color:var(--text); flex-shrink:0;" title="Toggle high-confidence similarity edges">
+                                        <input type="checkbox" id="fn-cg-sim-toggle" checked onchange="FunctionView.toggleSimilarityEdges(this.checked)">
+                                        <span>Similarities ⚡</span>
+                                    </label>
+                                    <label style="cursor:pointer; display:flex; align-items:center; gap:5px; color:var(--text); flex-shrink:0;" title="Group same-binary matches into a collapsible cluster (Pivotick native)">
+                                        <input type="checkbox" id="fn-cg-cluster-toggle" onchange="FunctionView.toggleClusterByBinary(this.checked)">
+                                        <span>Cluster by binary</span>
+                                    </label>
+                                    <div style="width:1px; align-self:stretch; background:var(--border);"></div>
+                                    <div id="fn-cg-legend" style="display:flex; align-items:center; gap:10px; color:var(--subtle); flex-wrap:wrap;">${FunctionView.renderLegendHTML()}</div>
+                                </div>
+                                <div id="fn-cg-loader" style="text-align:center; padding:50px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin"></i> Loading call graph...</div>
+                                <div id="fn-cg-container" style="display:none; width:100%; height:100%;"></div>
+                            </div>
+                            <div id="fn-cg-expanded-panel" style="width:210px; flex-shrink:0; border-left:1px solid var(--border); overflow-y:auto; padding:10px; font-size:0.75rem;">
+                                <div style="color:var(--dim); font-weight:600; margin-bottom:8px; text-transform:uppercase; font-size:0.65rem; letter-spacing:0.5px;">Expanded functions</div>
+                                <div id="fn-cg-expanded-list" style="display:flex; flex-direction:column; gap:4px;"></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:rgba(0,0,0,0.85); padding:10px; border-radius:4px; border:1px solid var(--accent); color:#fff; font-size:0.8rem; pointer-events:none;"></div>
+                <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:var(--window-bg); padding:10px; border-radius:4px; border:1px solid var(--accent); color:var(--text); font-size:0.8rem; pointer-events:none;"></div>
             </div>
         `;
 
@@ -133,9 +278,45 @@ window.FunctionView = {
             this.scrollToLine();
             this.onScroll();
 
+            // Actually place the cursor in the element so arrow keys work immediately
+            this.vContentEl.focus();
+            setTimeout(() => {
+                const sel = window.getSelection();
+                if (!sel.rangeCount || !this.vContentEl.contains(sel.focusNode)) {
+                    const range = document.createRange();
+                    range.selectNodeContents(this.vContentEl);
+                    range.collapse(true);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                }
+            }, 250);
+
             // Bind hashchange listener
             this._hashChangeListener = () => this.scrollToLine();
             window.addEventListener('hashchange', this._hashChangeListener);
+
+            // Bind selection tracking for keyboard token preview
+            this._selectionChangeListener = () => {
+                if (document.activeElement !== this.vContentEl) {
+                    if (this._currentKbdToken) {
+                        this.handleTokenHover(this._currentKbdToken, false);
+                        this._currentKbdToken = null;
+                    }
+                    return;
+                }
+                const token = this.findTokenFromSelection();
+                if (token !== this._currentKbdToken) {
+                    if (this._currentKbdToken) {
+                        this.handleTokenHover(this._currentKbdToken, false);
+                    }
+                    this._currentKbdToken = token;
+                    if (this._currentKbdToken) {
+                        this.handleTokenHover(this._currentKbdToken, true);
+                    }
+                }
+            };
+            document.addEventListener('selectionchange', this._selectionChangeListener);
+
 
             // Rich copy support
             if (window.setupRichCopyInterceptor) {
@@ -152,6 +333,353 @@ window.FunctionView = {
             const loader = document.getElementById('function-loader');
             if (loader) loader.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color: #f92672;"></i> ${err.message}`;
         }
+    },
+
+    switchTab(tabId) {
+        document.querySelectorAll('#function-view-tabs .bsim-tab').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.function-view-panel').forEach(panel => panel.style.display = 'none');
+
+        const btn = document.getElementById(`function-tab-btn-${tabId}`);
+        if (btn) btn.classList.add('active');
+
+        const panel = document.getElementById(`function-panel-${tabId}`);
+        if (panel) panel.style.display = (tabId === 'code') ? 'flex' : 'block';
+
+        // ponytail: no hash-routing for tabs here -- #L<line> hash is already owned by scrollToLine()
+        if (tabId === 'neighbors') this.loadNeighborsPanel();
+        if (tabId === 'callgraph') this.loadCallGraphPanel();
+    },
+
+    async loadCallGraphPanel() {
+        if (this.callGraphLoaded) return;
+        this.callGraphLoaded = true;
+
+        const loader = document.getElementById('fn-cg-loader');
+        const container = document.getElementById('fn-cg-container');
+
+        try {
+            loader.style.display = 'none';
+            container.style.display = 'block';
+
+            this.graphController = new PivotickGraphController(container, {
+                collection: this.params.collection,
+                onExpandedChange: (list) => this.renderExpandedList(list),
+            });
+            await this.graphController.addFunction(this.id, { asCenter: true });
+        } catch (err) {
+            console.error(err);
+            loader.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#f92672;"></i> ${err.message}`;
+        }
+    },
+
+    async toggleSimilarityEdges(show) {
+        if (!this.graphController) return;
+        await this.graphController.toggleSimilarity(show);
+    },
+
+    async toggleClusterByBinary(enabled) {
+        if (!this.graphController) return;
+        await this.graphController.toggleClustering(enabled);
+    },
+
+    // Mirrors PivotickGraphController's tracked expanded-node set into the
+    // side list -- called on every expand/collapse/remove so the list never
+    // drifts from what's actually pinned open on the graph.
+    renderExpandedList(list) {
+        const el = document.getElementById('fn-cg-expanded-list');
+        if (!el) return;
+        if (!list.length) {
+            el.innerHTML = `<div style="color:var(--dim); font-style:italic;">None yet -- click a node to expand it.</div>`;
+            return;
+        }
+        el.innerHTML = list.map(n => `
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:4px; background:var(--card-bg,#222); border-radius:4px; padding:4px 6px;">
+                <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:monospace;" title="${escapeAttr(n.name)}">${escapeHtml(n.name)}</span>
+                <button onclick="FunctionView.removeExpanded(${escapeAttr(jsString(n.id))})" title="Collapse this function" style="flex-shrink:0; border:none; background:none; color:var(--dim); cursor:pointer; padding:0 2px; font-size:0.9rem; line-height:1;">&times;</button>
+            </div>
+        `).join('');
+    },
+
+    removeExpanded(id) {
+        if (!this.graphController) return;
+        this.graphController.removeExpanded(id);
+    },
+
+    // Fetches a single function's current BSimVis notes and concatenates them
+    // into the markdown content of one Pivotick note bubble. Single source of
+    // truth for "what should this function's graph note bubble say right
+    // now" -- used both to seed a freshly-built graph and to live-refresh an
+    // already-open one when the BSimVis Notes panel changes something.
+    async fetchNoteContent(funcId) {
+        const apiParamsFn = window.getApiParams || (window.parent && window.parent.getApiParams);
+        if (!apiParamsFn) return null;
+        const collection = window.getCollectionFromId ? window.getCollectionFromId(funcId) : (this.params.collection || '');
+        try {
+            const apiParams = apiParamsFn(collection);
+            const res = await fetch(`/api/notes/list?${apiParams}&func_id=${encodeURIComponent(funcId)}`);
+            const data = await res.json();
+            if (data.status !== 'success' || !data.notes || !data.notes.length) return null;
+            return data.notes.map(nt => `**${nt.owner}**: ${nt.text}`).join('\n\n---\n\n');
+        } catch (e) { return null; }
+    },
+
+    // Fetches existing BSimVis notes for each visible node and turns them into
+    // Pivotick's native canvas notes (attachedElement links a note bubble to a
+    // node) so notes show up right on the graph instead of only in the side panel.
+    async fetchGraphNotes(entries) {
+        const targets = entries.filter(n => n.data.kind !== 'external');
+        const results = await Promise.all(targets.map(async n => {
+            const content = await this.fetchNoteContent(n.id);
+            if (!content) return null;
+            return { id: `bsimnote:${n.id}`, attachedElement: { type: 'node', id: n.id }, content, color: '#ffd700' };
+        }));
+        return results.filter(Boolean);
+    },
+
+    // Pivotick's own note bubbles are a first-class canvas feature (drag, edit,
+    // markdown render) separate from the BSimVis notes side panel. Forward edits
+    // made in the graph back into the same /api/notes/* store so both surfaces
+    // read from one source of truth instead of drifting apart.
+    wireNoteSync(pInstance) {
+        if (!pInstance || typeof pInstance.on !== 'function') return;
+        let timer = null;
+        const forward = (note) => {
+            const funcId = note?.attachedElement?.id;
+            if (!funcId || typeof note.content !== 'string') return;
+            clearTimeout(timer);
+            timer = setTimeout(async () => {
+                const collection = window.getCollectionFromId ? window.getCollectionFromId(funcId) : (this.params.collection || '');
+                try {
+                    await fetch('/api/notes/add', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ collection, func_id: funcId, text: note.content, owner: 'user' }),
+                    });
+                    if (window.refreshFunctionRow) window.refreshFunctionRow(funcId);
+                } catch (e) { console.error('Failed to sync graph note to BSimVis notes:', e); }
+            }, 600);
+        };
+        pInstance.on('noteChange', forward);
+        pInstance.on('noteAdd', forward);
+    },
+
+    LEGEND_ITEMS: [
+        { color: 'var(--accent, #04d9ff)', label: 'Center function' },
+        { color: 'var(--dim, #888)', label: 'External' },
+        { color: '#ae81ff', label: 'Similar to — % on edge', dashed: true },
+        { note: 'Other node colors = binary (same color = same file)' },
+    ],
+
+    renderLegendHTML() {
+        return this.LEGEND_ITEMS.map(i => i.note
+            ? `<span style="white-space:nowrap; opacity:0.75;">${escapeHtml(i.note)}</span>`
+            : `<span style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
+                <span style="width:10px; height:${i.dashed ? '0' : '10px'}; ${i.dashed ? `border-top:2px dashed ${i.color};` : `border-radius:50%; background:${i.color};`}"></span>
+                ${escapeHtml(i.label)}
+            </span>`).join('');
+    },
+
+    renderEdgeLabel() {
+        // Pivotick's defaultEdgeRender always allocates a label foreignObject
+        // whenever renderLabel is configured at all, regardless of what it
+        // returns -- an empty Element is what actually collapses the box to
+        // 0x0 (a returned '' or null still leaves a text node, which fails
+        // the auto-measure's Element check and leaves the box at its
+        // default size). Score pills read as noise on a dense graph; drop
+        // them entirely per explicit request.
+        return document.createElement('span');
+    },
+
+    // `more` (from PivotickGraphController._applyCallGraphTruncation /
+    // _discoverSimilar) is how many callers/callees/similar matches the
+    // backend had beyond what got pulled into the graph -- MAX_CALL_CHILDREN_PER_SIDE
+    // and MAX_SIMILAR_PER_NODE cap what one click adds so a hub function
+    // doesn't dump hundreds of nodes into the simulation at once, but the
+    // user still needs to see that the list wasn't the whole picture.
+    callGraphMoreBadgeHtml(more) {
+        if (!more) return '';
+        const parts = [];
+        if (more.callers) parts.push(`${more.callers} more caller${more.callers === 1 ? '' : 's'}`);
+        if (more.callees) parts.push(`${more.callees} more callee${more.callees === 1 ? '' : 's'}`);
+        if (more.similar) parts.push(`${more.similar} more similar match${more.similar === 1 ? '' : 'es'}`);
+        if (!parts.length) return '';
+        const msg = `Not all shown: ${parts.join(', ')}. Re-expand after raising the limit, or check the Similar tab.`;
+        const onclick = `event.stopPropagation(); window.showToast && window.showToast(${jsString(msg)}, 'info');`;
+        return `<div onclick="${escapeAttr(onclick)}" title="${escapeAttr(msg)}" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--accent,#04d9ff); opacity:0.85; font-size:8.5px; margin-top:2px; cursor:help;"><i class="fa-solid fa-circle-plus" style="margin-right:3px;"></i>${escapeHtml(parts.join(', '))}</div>`;
+    },
+
+    callGraphRenderNode(raw, kind, more) {
+        if (kind === 'binary-cluster') {
+            const hasRealName = raw?.file_name && raw.file_name !== raw?.file_md5;
+            const label = escapeHtml(hasRealName ? raw.file_name : (raw?.file_md5 || '').slice(0, 10) || 'binary');
+            const color = (raw?.file_md5 && window.getMd5Color) ? window.getMd5Color(raw.file_md5) : 'var(--accent, #04d9ff)';
+            const div = document.createElement('div');
+            div.style.cssText = `padding:6px 10px; border-radius:8px; border:2px dashed ${color}; background:var(--card-bg, #222); font:11px/1.3 monospace; color:${color}; font-weight:bold; white-space:nowrap;`;
+            div.textContent = label;
+            return div;
+        }
+
+        const name = escapeHtml(raw?.name || (raw?.id || '').split(':').pop() || '?');
+        // Caller/callee/similar/added used to get distinct colors, but once a
+        // node can itself be expanded there's no fixed "reference point" left
+        // for those labels to mean anything -- color by binary instead (same
+        // md5 -> same color, matching every other graph in the app), and
+        // reserve a fixed color for the two kinds that stay meaningful
+        // regardless of expansion: the center function and external calls.
+        const border = kind === 'self' ? 'var(--accent, #04d9ff)'
+            : kind === 'external' ? 'var(--dim, #888)'
+            : (raw?.file_md5 && window.getMd5Color) ? window.getMd5Color(raw.file_md5) : '#fff';
+        const lineCss = 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+        const fileName = raw?.file_name ? escapeHtml(raw.file_name) : '';
+        const fileHtml = fileName ? `<div style="${lineCss} color:var(--dim,#888); opacity:0.75; font-size:8.5px; margin-top:1px;"><i class="fa-solid fa-file-binary" style="margin-right:3px;"></i>${fileName}</div>` : '';
+        const div = document.createElement('div');
+        // Wide enough that a typical name+signature fits without truncating --
+        // still fixed-width (not auto) since Pivotick derives its edge-attachment
+        // radius from max(width,height)/2, so a wildly variable box width throws
+        // off the anchor point on tall/short neighbors.
+        div.style.cssText = `width:190px; padding:5px 8px; border-radius:8px; border-left:3px solid ${border}; background:var(--card-bg, #222); font:12px/1.35 monospace; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.4);`;
+
+        if (!raw || raw.is_external) {
+            div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold;">${name}</div>${raw?.is_external ? `<div style="${lineCss} color:var(--dim,#888); font-size:9px;">EXT</div>` : ''}`;
+            return div;
+        }
+
+        const params = (raw.parameters || []).map(p => (typeof p === 'object' && p !== null) ? (p.name || '...') : p);
+        const paramHtml = params.map(p => `<span style="color:#ae81ff;">${escapeHtml(p)}</span>`).join('<span style="color:#fff;">, </span>');
+        const nsHtml = raw.namespace ? `<span style="color:#fff; opacity:0.8;">${escapeHtml(raw.namespace)}::</span>` : '';
+        const retHtml = raw.return_type ? `<span style="color:#ae81ff; opacity:0.85; font-size:9.5px;">${escapeHtml(raw.return_type)}</span>` : '';
+
+        div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold; font-size:12px;">${nsHtml}${name}</div>`
+            + `<div style="${lineCss} font-size:9.5px;">${retHtml} <span style="color:#fff; opacity:0.7;">(</span>${paramHtml}<span style="color:#fff; opacity:0.7;">)</span></div>`
+            + fileHtml
+            + this.callGraphMoreBadgeHtml(more);
+        return div;
+    },
+
+    async loadNeighborsPanel() {
+        if (this.neighborsLoaded) return;
+        this.neighborsLoaded = true;
+
+        const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+        const scopeEl = document.getElementById('fn-nbr-scope');
+        if (scopeEl) scopeEl.value = poolId ? 'pool' : 'collection';
+        this.renderAllNeighborPills();
+
+        await this.searchNeighbors();
+    },
+
+    debounceNeighborsSearch() {
+        if (this.neighborsDebounceTimer) clearTimeout(this.neighborsDebounceTimer);
+        this.neighborsDebounceTimer = setTimeout(() => this.searchNeighbors(), 400);
+    },
+
+    async searchNeighbors() {
+        const tbody = document.getElementById('fn-nbr-results-tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--dim); padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading similar functions...</td></tr>';
+
+        const collection = this.params.collection || '';
+        const file_md5 = this.params.md5 || this.params.file_md5;
+        const address = this.params.address;
+        const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+        const scope = document.getElementById('fn-nbr-scope')?.value || (poolId ? 'pool' : 'collection');
+
+        const qs = new URLSearchParams();
+        qs.set('md5', file_md5);
+        qs.set('address', address);
+        if (scope === 'pool' && poolId) qs.set('pool', poolId);
+        else qs.set('collection', collection);
+
+        qs.set('algo', document.getElementById('fn-nbr-algo')?.value || 'unweighted_cosine');
+        qs.set('min_score', document.getElementById('fn-nbr-min-score')?.value || '0.9');
+        qs.set('min_cohesion', document.getElementById('fn-nbr-min-cohesion')?.value || '0.5');
+        qs.set('min_features', document.getElementById('fn-nbr-min-features')?.value || '0');
+
+        const setIfVal = (id, key) => {
+            const v = document.getElementById(id)?.value;
+            if (v) qs.set(key, v);
+        };
+        setIfVal('fn-nbr-q', 'q');
+        setIfVal('fn-nbr-max-score', 'max_score');
+        setIfVal('fn-nbr-cross-binary', 'cross_binary');
+        setIfVal('fn-nbr-name', 'name');
+        setIfVal('fn-nbr-namespace', 'namespace');
+        setIfVal('fn-nbr-ret-type', 'ret_type');
+        setIfVal('fn-nbr-cluster', 'cluster_uuid');
+        setIfVal('fn-nbr-cluster-name', 'cluster_name');
+        setIfVal('fn-nbr-note-owner', 'note_owner');
+        setIfVal('fn-nbr-file-name', 'file_name');
+        setIfVal('fn-nbr-language', 'language');
+        qs.set('limit', document.getElementById('fn-nbr-limit')?.value || '50');
+
+        const tagList = (id) => (document.getElementById(id)?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+        tagList('fn-nbr-func-tag').forEach(t => qs.append('func_tag', t));
+        tagList('fn-nbr-exclude-func-tag').forEach(t => qs.append('exclude_func_tag', t));
+
+        try {
+            const res = await fetch(`/api/similarity/search?${qs.toString()}`);
+            if (!res.ok) throw new Error("Neighbors search failed");
+            const data = await res.json();
+            const items = data.pairs || data.items || data.results || [];
+            const html = window.renderTopCorrelations ? window.renderTopCorrelations(items, {}, file_md5, address) : '';
+            tbody.innerHTML = html || '<tr><td colspan="9" style="text-align: center; color: var(--dim); padding: 20px;">No similar functions found.</td></tr>';
+            const countEl = document.getElementById('fn-nbr-count');
+            if (countEl) countEl.innerText = data.total ?? items.length;
+            const countWrap = document.getElementById('fn-nbr-count-wrap');
+            if (countWrap) countWrap.style.display = 'inline';
+            if (window.TableSelection) new window.TableSelection('fn-nbr-results-table');
+        } catch (e) {
+            console.error(e);
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading similar functions: ${e.message}</td></tr>`;
+        }
+    },
+
+    // Generic pill group: [{v, label, icon, disabled}], one hidden input holds
+    // the active value, one container div renders the pills. Shared shape for
+    // Scope/Algorithm/Cross Binary/Match Mode -- none of these carry counts
+    // (unlike bin-sim's Scoring Metric cards), so no extra fetches here.
+    renderNeighborPillGroup(inputId, containerId, options, color) {
+        const el = document.getElementById(containerId);
+        if (!el || !window.binSimPillStyle) return;
+        const active = document.getElementById(inputId)?.value ?? '';
+        el.innerHTML = options.map(o => `<span class="bsim-tag-pill" style="${window.binSimPillStyle(o.v === active, color)}${o.disabled ? ' opacity:0.4; cursor:not-allowed;' : ''}" title="${escapeAttr(o.label)}" ${o.disabled ? '' : `onclick="FunctionView.setNeighborPill('${inputId}', '${containerId}', '${o.v}')"`}><i class="${o.icon}"></i>${o.label}</span>`).join('');
+    },
+
+    setNeighborPill(inputId, containerId, value) {
+        const el = document.getElementById(inputId);
+        if (el) el.value = value;
+        if (inputId === 'fn-nbr-scope') this.renderScopePills();
+        else if (inputId === 'fn-nbr-algo') this.renderNeighborPillGroup(inputId, containerId, this.ALGO_OPTIONS, 'var(--info, #3b82f6)');
+        else if (inputId === 'fn-nbr-cross-binary') this.renderNeighborPillGroup(inputId, containerId, this.CROSS_BINARY_OPTIONS, 'var(--warning, #d97706)');
+        this.searchNeighbors();
+    },
+
+    ALGO_OPTIONS: [
+        { v: 'unweighted_cosine', label: 'Cosine', icon: 'fa-solid fa-arrows-left-right' },
+        { v: 'jaccard', label: 'Jaccard', icon: 'fa-solid fa-object-group' },
+    ],
+    CROSS_BINARY_OPTIONS: [
+        { v: '', label: 'All Binaries', icon: 'fa-solid fa-globe' },
+        { v: 'false', label: 'Same Binary', icon: 'fa-solid fa-file' },
+        { v: 'true', label: 'Cross Binary', icon: 'fa-solid fa-shuffle' },
+    ],
+
+    renderScopePills() {
+        const el = document.getElementById('fn-nbr-scope-pills');
+        if (!el || !window.binSimPillStyle) return;
+        const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+        const active = document.getElementById('fn-nbr-scope')?.value || (poolId ? 'pool' : 'collection');
+        const options = [
+            { v: 'collection', label: 'Collection', icon: 'fa-solid fa-database' },
+            { v: 'pool', label: 'Pool', icon: 'fa-solid fa-layer-group', disabled: !poolId },
+        ];
+        el.innerHTML = options.map(o => `<span class="bsim-tag-pill" style="${window.binSimPillStyle(o.v === active, 'var(--success)')}${o.disabled ? ' opacity:0.4; cursor:not-allowed;' : ''}" title="${o.disabled ? 'No pool in this context' : escapeAttr(o.label)}" ${o.disabled ? '' : `onclick="FunctionView.setNeighborPill('fn-nbr-scope', 'fn-nbr-scope-pills', '${o.v}')"`}><i class="${o.icon}"></i>${o.label}</span>`).join('');
+    },
+
+    renderAllNeighborPills() {
+        this.renderScopePills();
+        this.renderNeighborPillGroup('fn-nbr-algo', 'fn-nbr-algo-pills', this.ALGO_OPTIONS, 'var(--info, #3b82f6)');
+        this.renderNeighborPillGroup('fn-nbr-cross-binary', 'fn-nbr-cross-binary-pills', this.CROSS_BINARY_OPTIONS, 'var(--warning, #d97706)');
     },
 
     copyFunctionCode(btn) {
@@ -203,7 +731,7 @@ window.FunctionView = {
         for (let i = start; i < end; i++) {
             const row = this.funcRows[i];
             let lineEl = lineMap.get(row.line_idx);
-            
+
             if (!lineEl) {
                 const isTarget = window.targetLineSet && window.targetLineSet.has(row.line_idx);
                 let content = '';
@@ -228,7 +756,7 @@ window.FunctionView = {
                 this.vContentEl.insertBefore(line, this.vContentEl.children[i] || null);
             }
         }
-        
+
         if (window.applyLocks) {
             window.applyLocks(this.vContentEl);
         }
@@ -237,25 +765,41 @@ window.FunctionView = {
     setupKeyboardSelection() {
         this.vContentEl.setAttribute('contenteditable', 'true');
         this.vContentEl.setAttribute('spellcheck', 'false');
-        
+
         this.vContentEl.addEventListener('keydown', (e) => {
             const isCmd = e.ctrlKey || e.metaKey;
             const key = e.key;
 
-            if (isCmd && key.toLowerCase() === 'a') return; 
+            if (key === 'Enter') {
+                e.preventDefault();
+                const token = this.findTokenFromSelection();
+                if (token) {
+                    const calledFuncId = token.getAttribute('data-called-func-id');
+                    if (calledFuncId) {
+                        const isExternal = token.getAttribute('data-is-external') === 'true';
+                        this.navigateToFunction(calledFuncId, isExternal, e);
+                        return;
+                    }
+                    const hashes = token.getAttribute('data-hashes');
+                    if (hashes && window.toggleLock) window.toggleLock(hashes, token);
+                }
+                return;
+            }
+
+            if (isCmd && key.toLowerCase() === 'a') return;
             if (isCmd && (key.toLowerCase() === 'c' || key.toLowerCase() === 'v')) return;
-            
+
             const allowedKeys = [
                 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
                 'Home', 'End', 'PageUp', 'PageDown', 'Shift', 'Control', 'Alt', 'Meta'
             ];
-            
+
             if (allowedKeys.includes(key)) {
                 requestAnimationFrame(() => {
                     const sel = window.getSelection();
                     if (!sel.rangeCount) return;
                     const rect = sel.getRangeAt(0).getBoundingClientRect();
-                    
+
                     if (rect.height === 0 || (rect.top === 0 && rect.left === 0)) return;
 
                     const containerRect = this.scrollEl.getBoundingClientRect();
@@ -286,10 +830,24 @@ window.FunctionView = {
         return null;
     },
 
+    findTokenFromSelection() {
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount) return null;
+        let node = sel.focusNode;
+        while (node && node !== this.vContentEl) {
+            if (node instanceof Element && node.classList.contains('token')) return node;
+            node = node.parentNode;
+        }
+        return null;
+    },
+
     handleHoverMove(e, state) {
         const token = this.findToken(e);
         if (!token) return;
+        this.handleTokenHover(token, state, e);
+    },
 
+    handleTokenHover(token, state, e) {
         const hashes = token.getAttribute('data-hashes');
         if (hashes && window.setHighlight) window.setHighlight(hashes, state, token);
 
@@ -297,22 +855,33 @@ window.FunctionView = {
         const isExternal = token.getAttribute('data-is-external') === 'true';
 
         if (state) {
+            let x = e ? e.clientX : undefined;
+            let y = e ? e.clientY : undefined;
+            if (x === undefined || y === undefined) {
+                const rect = token.getBoundingClientRect();
+                x = rect.left + rect.width / 2;
+                y = rect.bottom;
+            }
+
             if (calledFuncId && isExternal) {
                 const extName = token.getAttribute('data-target-name') || calledFuncId.replace('ext:', '');
                 this.tooltipEl.innerHTML = `<div style="display:flex;align-items:center;gap:6px;">
-                    <span style="background:rgba(249,38,114,0.2);color:#f92672;border:1px solid rgba(249,38,114,0.4);border-radius:4px;padding:2px 7px;font-size:0.7rem;font-weight:600;letter-spacing:0.04em;">EXTERNAL</span>
-                    <span style="color:#ccc;font-family:monospace;font-size:0.8rem;">${extName}</span>
+                    <span style="background:color-mix(in srgb, var(--token-instruction) 20%, transparent);color:#f92672;border:1px solid color-mix(in srgb, var(--token-instruction) 40%, transparent);border-radius:4px;padding:2px 7px;font-size:0.7rem;font-weight:600;letter-spacing:0.04em;">EXTERNAL</span>
+                    <span style="color:var(--meta-text-muted);font-family:monospace;font-size:0.8rem;">${extName}</span>
                 </div>`;
                 this.tooltipEl.style.display = 'block';
-                this.tooltipEl.style.left = (e.clientX + 15) + 'px';
-                this.tooltipEl.style.top = (e.clientY + 15) + 'px';
+                this.tooltipEl.style.left = (x + 15) + 'px';
+                this.tooltipEl.style.top = (y + 15) + 'px';
             } else if (calledFuncId && !isExternal) {
                 this.tooltipEl.style.display = 'none';
                 const targetName = token.getAttribute('data-target-name') || calledFuncId.split(':').pop();
+
+                const fakeEvent = { clientX: x, clientY: y, target: token, currentTarget: token };
+
                 if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
-                    window.parent.showCodePreviewFromIframe(window.name, calledFuncId, targetName, e);
+                    window.parent.showCodePreviewFromIframe(window.name, calledFuncId, targetName, fakeEvent);
                 } else if (typeof window.showCodePreview === 'function') {
-                    window.showCodePreview(calledFuncId, targetName, null, null, null, e);
+                    window.showCodePreview(calledFuncId, targetName, null, null, null, fakeEvent);
                 }
             } else {
                 const idx = token.getAttribute('data-idx');
@@ -324,8 +893,8 @@ window.FunctionView = {
                     }
                     this.tooltipEl.innerHTML = h;
                     this.tooltipEl.style.display = 'block';
-                    this.tooltipEl.style.left = (e.clientX + 15) + 'px';
-                    this.tooltipEl.style.top = (e.clientY + 15) + 'px';
+                    this.tooltipEl.style.left = (x + 15) + 'px';
+                    this.tooltipEl.style.top = (y + 15) + 'px';
                 }
             }
         } else {
@@ -434,10 +1003,22 @@ window.FunctionView = {
         this.tooltipEl = null;
         this.funcRows = [];
         this.funcTips = {};
+        this.neighborsLoaded = false;
+        if (this.neighborsDebounceTimer) clearTimeout(this.neighborsDebounceTimer);
+        this.callGraphLoaded = false;
+        if (this.graphController) {
+            this.graphController.destroy();
+            this.graphController = null;
+        }
 
         if (this._hashChangeListener) {
             window.removeEventListener('hashchange', this._hashChangeListener);
             delete this._hashChangeListener;
+        }
+
+        if (this._selectionChangeListener) {
+            document.removeEventListener('selectionchange', this._selectionChangeListener);
+            delete this._selectionChangeListener;
         }
     }
 };

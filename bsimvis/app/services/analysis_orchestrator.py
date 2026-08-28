@@ -1,0 +1,1300 @@
+"""Context-aware batch LLM tagging.
+
+`llm_batch_service` judges every function from its own code alone -- no
+caller, no callee, no idea whether it sits in a cluster of near-identical
+code or is the one outlier. This module partitions a working set of
+functions by call-graph locality and processes it bottom-up (callees before
+callers), carrying forward a one-line summary of each already-processed
+callee into its caller's prompt. A caller's prompt therefore says what its
+neighbours turned out to be, without concatenating their code -- one LLM
+call per function (or per mutually-recursive group), same cost as the blind
+batch, but with the neighbourhood it was missing.
+
+Mutually-recursive groups (true cycles -- A calls B calls A) have no valid
+bottom-up order, so they are Tarjan-SCC'd into one combined LLM call instead:
+one shared verdict for the group. A chain with no cycle (A calls B calls C)
+does not strictly need that for context -- sequential bottom-up processing
+with summary injection already gives each function its neighbours' context --
+but small call-connected chains are also batched into one LLM call
+(`_process_batch`, independently-attributed results, not a shared verdict)
+purely to amortize the fixed per-call overhead when a diff pool runs into the
+hundreds. Byte-identical duplicate functions (common in statically-linked or
+copy-pasted code) are collapsed onto one representative before any of this
+runs, so a repeated function never costs more than one LLM call total.
+
+Reuses `llm_batch_service`'s already-enriched/undo bookkeeping rather than
+reimplementing it -- two divergent copies of "what counts as an LLM tag, and
+how overwrite removes it" is how a collection ends up with orphaned tags.
+"""
+
+import hashlib
+import json
+import logging
+import re
+
+from bsimvis.app.services import tag_taxonomy
+from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.llm_batch_service import (
+    LLM_NOTE_OWNER,
+    _already_enriched,
+    _mark_enriched,
+    _remove_llm_notes,
+    _remove_llm_tags,
+)
+from bsimvis.app.services.llm_service import llm_service
+from bsimvis.app.services.llm_tools import (
+    get_file_info,
+    get_function,
+    get_function_relations,
+)
+from bsimvis.app.services.note_service import note_service
+from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.tag_service import tag_service
+
+DEFAULT_MAX_BATCH = 1000
+SUMMARY_CONTEXT_CHARS = 220  # per-neighbour summary carried into a caller's prompt
+
+# Agentic fallback: a unit judged from context alone can ask for a second,
+# tool-using pass instead of guessing. Keeps the common case (most units) at
+# one cheap call while still going deep on the ones that need it.
+NEED_CONTEXT_MARKER = "NEED_MORE_CONTEXT"
+MAX_AGENTIC_ITERATIONS = 4
+
+# Small call-connected, non-cyclic chains are batched into one LLM call to
+# amortize per-call overhead (system prompt/rules repeated every call). Kept
+# low: each member still needs independently attributed output parsed back
+# out of one response, and a bigger batch means more code sharing one
+# context window with less of it dedicated to any single function.
+CLUSTER_BATCH_SIZE = 5
+
+# Ghidra's auto-generated names/addresses (FUN_00401230, DAT_0040c000, a raw
+# 0x... literal) are the only thing that differs between two copies of the
+# same duplicated/templated/copy-pasted function; strip them before hashing
+# so those copies collapse onto one representative instead of each getting
+# their own LLM call.
+_ADDR_TOKEN_RE = re.compile(
+    r"\b(?:FUN|DAT|LAB|PTR|SUB|JOIN)_[0-9A-Fa-f]{4,}\b|\b0x[0-9A-Fa-f]{4,}\b"
+)
+
+
+def max_batch_size():
+    return int(config_service.get("llm.batch_max", DEFAULT_MAX_BATCH))
+
+
+def _select_pair_candidates(
+    diff, threshold=0.9, include_unique=True, include_unchanged=False
+):
+    """Functions worth an LLM call; the reason is context, not a verdict."""
+    selected = {}
+
+    def add(func_id, side, reason, similarity=None, match_id=None):
+        if func_id and func_id not in selected:
+            selected[func_id] = {
+                "func_id": func_id,
+                "side": side,
+                "reason": reason,
+                "similarity": similarity,
+                "match_id": match_id,
+            }
+
+    if include_unique:
+        for row in diff.get("unique_to_a") or []:
+            add(row.get("func_id"), "a", "unique")
+        for row in diff.get("unique_to_b") or []:
+            add(row.get("func_id"), "b", "unique")
+    for match_id, row in enumerate(diff.get("matched") or []):
+        similarity = float(row.get("similarity") or 0)
+        if include_unchanged or similarity < threshold:
+            reason = "unchanged_match" if similarity >= threshold else "changed_match"
+            add(row.get("func_a"), "a", reason, similarity, match_id)
+            add(row.get("func_b"), "b", reason, similarity, match_id)
+    return list(selected.values())
+
+
+def _pair_report_rules():
+    return tag_taxonomy.analysis_rules() + (
+        "For a binary comparison, uniqueness, a low similarity score, or an appended "
+        "address is not evidence of maliciousness. Do not infer intent from those "
+        "signals. Cite a function finding for every capability and maliciousness claim; "
+        "when the findings show only dual-use behavior without malicious context, state inconclusive. Direct operational abuse does not require an identified victim or operator. Do not call daemonization persistence without a visible installation mechanism. Do not speculate that process enumeration supports evasion or target selection. Do not claim stack exhaustion or a crash from recursive-looking decompiler output or an infinite loop."
+    )
+
+
+def _pair_report_prompt(pair, summaries, candidates):
+    reason_by_fid = {row["func_id"]: row for row in candidates}
+    shared = sorted(
+        (pair.get("diff") or {}).get("matched") or [],
+        key=lambda row: float(row.get("similarity") or 0),
+        reverse=True,
+    )[:12]
+    lines = [
+        "Compare these two binaries using only the supplied evidence.",
+        f"A: {pair.get('coll_a', '')}:{pair.get('md5_a')}",
+        f"B: {pair.get('coll_b', '')}:{pair.get('md5_b')}",
+        f"Stored similarity score: {pair.get('score')}",
+        "Uniqueness is not evidence of maliciousness; it only selected a function for review.",
+        "Matched-function similarity establishes correspondence, not behavior or intent.",
+        "If evidence is insufficient, state inconclusive instead of guessing.",
+        "",
+        "Representative shared matches (correspondence only):",
+    ]
+    for row in shared:
+        lines.append(
+            f"- {row.get('func_a')} <-> {row.get('func_b')} "
+            f"similarity={float(row.get('similarity') or 0):.3f}"
+        )
+    lines.extend(["", "Analyzed function findings:"])
+    for fid, finding in summaries.items():
+        selected = reason_by_fid.get(fid, {})
+        context = selected.get("reason", "selected")
+        if selected.get("similarity") is not None:
+            context += f" similarity={selected['similarity']:.3f}"
+        verdict = ", ".join(finding.get("tags") or []) or "no automatic tags"
+        lines.append(
+            f"- {fid} ({finding.get('func_name')}, side {selected.get('side', '?')}, "
+            f"{context}; validated tags: {verdict}): {finding.get('summary')}"
+        )
+    lines.extend(
+        [
+            "",
+            "Write: **SIMILARITIES**, **DIFFERENCES**, **MALICIOUS FUNCTIONS**, "
+            "and **ASSESSMENT**. Cite function IDs. List a malicious function only "
+            "when its finding contains concrete malicious behavior; otherwise say none confirmed.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+# --- call-graph partitioning -------------------------------------------
+
+
+def _tarjan_scc(node_ids, adj):
+    """Iterative Tarjan SCC (no Python recursion-depth limit on a large call
+    graph). Returns components in reverse-topological order: if A calls B,
+    B's component comes out before A's -- exactly the bottom-up order this
+    module needs, so callers never see a callee that has not run yet."""
+    index_counter = [0]
+    index, lowlink, on_stack = {}, {}, {}
+    stack, result = [], []
+
+    for start in node_ids:
+        if start in index:
+            continue
+        work = [(start, iter(adj.get(start, ())))]
+        index[start] = lowlink[start] = index_counter[0]
+        index_counter[0] += 1
+        stack.append(start)
+        on_stack[start] = True
+
+        while work:
+            v, it = work[-1]
+            descended = False
+            for w in it:
+                if w not in index:
+                    index[w] = lowlink[w] = index_counter[0]
+                    index_counter[0] += 1
+                    stack.append(w)
+                    on_stack[w] = True
+                    work.append((w, iter(adj.get(w, ()))))
+                    descended = True
+                    break
+                elif on_stack.get(w):
+                    lowlink[v] = min(lowlink[v], index[w])
+            if descended:
+                continue
+            work.pop()
+            if work:
+                parent = work[-1][0]
+                lowlink[parent] = min(lowlink[parent], lowlink[v])
+            if lowlink[v] == index[v]:
+                comp = []
+                while True:
+                    w = stack.pop()
+                    on_stack[w] = False
+                    comp.append(w)
+                    if w == v:
+                        break
+                result.append(comp)
+
+    return result
+
+
+def partition_call_graph(collection, func_ids):
+    """Bottom-up processing order for `func_ids`: a list of units, each a
+    list of one or more function ids (>1 only for a mutually-recursive
+    group), earlier units containing no function called by a later unit's
+    functions -- except within the same unit."""
+    if len(func_ids) < 2:
+        return [[f] for f in func_ids]
+
+    relations = get_function_relations(func_ids, collection)
+    if "error" in relations:
+        logging.warning(
+            f"analysis_orchestrator: relations lookup failed ({relations['error']}); "
+            "falling back to one function per unit, no context propagation."
+        )
+        return [[f] for f in func_ids]
+
+    adj = {}
+    for edge in relations.get("call_edges", []):
+        adj.setdefault(edge["from"], []).append(edge["to"])
+
+    return _tarjan_scc(func_ids, adj)
+
+
+def _normalize_code_for_dedup(code):
+    return _ADDR_TOKEN_RE.sub("<ADDR>", code or "")
+
+
+def _group_by_duplicate_code(func_ids):
+    """Buckets `func_ids` whose decompiled code is identical once
+    address-derived auto-names are normalized out. Returns
+    (representative_func_ids, dup_map, code_cache):
+
+    * `representative_func_ids` -- one func_id per distinct code body (plus
+      every func_id whose lookup failed, so the normal per-function error
+      path still surfaces it).
+    * `dup_map` -- representative func_id -> the other func_ids sharing its
+      code, for fanning the representative's verdict out to them.
+    * `code_cache` -- func_id -> its already-fetched `get_function` result,
+      for the representatives only (duplicates' fetch is discarded once it
+      has served the hash, so this stays bounded by the *distinct* code
+      count, not the input count).
+
+    ponytail: exact-normalized-text dedup, not fuzzy/near-duplicate
+    matching. Catches copy-pasted, templated and statically-duplicated
+    functions -- the common case; upgrade to bsim similarity clustering if
+    renamed-but-logically-identical functions turn out to matter.
+    """
+    buckets = {}
+    code_cache = {}
+    errors = []
+    for fid in func_ids:
+        data = get_function(fid)
+        if "error" in data:
+            errors.append(fid)
+            continue
+        key = hashlib.sha256(
+            _normalize_code_for_dedup(data.get("code")).encode()
+        ).hexdigest()
+        buckets.setdefault(key, []).append(fid)
+        code_cache[fid] = data
+
+    representatives = list(errors)
+    dup_map = {}
+    for fids in buckets.values():
+        fids_sorted = sorted(fids)
+        rep = fids_sorted[0]
+        representatives.append(rep)
+        dups = fids_sorted[1:]
+        if dups:
+            dup_map[rep] = dups
+        for fid in dups:
+            code_cache.pop(fid, None)
+    return representatives, dup_map, code_cache
+
+
+def _with_dups(fids, dup_map):
+    """Expands a unit's func_ids with each one's duplicate siblings, for
+    enrichment checks/counters that must account for the whole group."""
+    out = list(fids)
+    for fid in fids:
+        out.extend(dup_map.get(fid, ()))
+    return out
+
+
+def _cluster_units(units, adj, batch_size=CLUSTER_BATCH_SIZE):
+    """Groups `partition_call_graph`'s bottom-up units into
+    `(kind, func_ids)` entries: a true SCC (`kind="scc"`) always passes
+    through alone, never merged with anything (splitting or diluting a
+    mutual-recursion group would break `_process_scc`'s shared-verdict
+    contract). Consecutive singleton units are greedily folded into a
+    `kind="batch"` entry as long as the next one is call-connected (directly
+    calls, or is called by, something already in the running batch) and the
+    batch would not exceed `batch_size`; a singleton with no such neighbour
+    becomes its own `kind="single"` entry. `batch_size <= 1` disables
+    batching, every singleton stays its own entry.
+    """
+    clustered = []
+    batch = []
+
+    def flush():
+        if not batch:
+            return
+        clustered.append(("single" if len(batch) == 1 else "batch", list(batch)))
+        batch.clear()
+
+    for unit in units:
+        if len(unit) > 1:
+            flush()
+            clustered.append(("scc", list(unit)))
+            continue
+        fid = unit[0]
+        connected = any(
+            fid in adj.get(b, ()) or b in adj.get(fid, ()) for b in batch
+        )
+        if batch and (not connected or len(batch) >= batch_size):
+            flush()
+        batch.append(fid)
+    flush()
+    return clustered
+
+
+# --- prompt context assembly --------------------------------------------
+
+
+def _context_block(unit_func_ids, adj, summaries):
+    """Rolling-summary context for one unit: what its already-processed
+    direct callees turned out to be, if any. Summaries only, never code --
+    this is what keeps a caller's prompt from growing with its subtree."""
+    callee_lines = []
+    seen = set()
+    for fid in unit_func_ids:
+        for callee in adj.get(fid, []):
+            if callee in unit_func_ids or callee in seen:
+                continue
+            cap = summaries.get(callee)
+            if not cap:
+                continue
+            seen.add(callee)
+            callee_lines.append(f"- {cap['func_name']}: {cap['summary']}")
+
+    if not callee_lines:
+        return ""
+    return (
+        "Context: this function calls the following, already analysed "
+        "elsewhere in this binary (use this to judge intent, e.g. a "
+        "function whose only callee is a known network-send routine is "
+        "itself part of a network path):\n" + "\n".join(callee_lines) + "\n"
+    )
+
+
+def _one_liner(summary):
+    if not summary:
+        return ""
+    first = summary.strip().splitlines()[0]
+    return first[:SUMMARY_CONTEXT_CHARS]
+
+
+def _code_evidence(data):
+    language = data.get("language_id") or "unknown"
+    decompiler = data.get("decompiler_id") or "unknown"
+    return (
+        f"Target architecture (Ghidra language_id): {language}\n"
+        f"Decompiler: {decompiler}\nCode:\n{data['code']}"
+    )
+
+
+# --- agentic fallback ----------------------------------------------------
+
+
+def _needs_more_context(summary):
+    return bool(summary) and any(
+        line.strip().strip("*# ").upper() == NEED_CONTEXT_MARKER
+        for line in summary.splitlines()
+    )
+
+
+def _without_annotations(value):
+    if isinstance(value, dict):
+        return {
+            key: _without_annotations(item)
+            for key, item in value.items()
+            if key not in ("notes", "user_tags", "file_user_tags")
+        }
+    if isinstance(value, list):
+        return [_without_annotations(item) for item in value]
+    return value
+
+
+def _agentic_prompt(custom_prompt):
+    base = custom_prompt or llm_service.default_prompt
+    return (
+        f"{base}\n\nIf this function's purpose is genuinely unclear from the code and "
+        "the context given -- not just non-trivial, but actually ambiguous -- set the "
+        f"summary to exactly '{NEED_CONTEXT_MARKER}' and emit no tags. "
+        "A follow-up pass will then let you look up its call graph, BSim neighbours, and "
+        "file/cluster metadata before judging it."
+    )
+
+
+def _agentic_summarize(collection, func_name, code_with_context, custom_prompt):
+    """One-shot tool-using pass for a unit whose cheap context-only prompt came
+    back NEED_MORE_CONTEXT. Same (summary, tags, err) contract as
+    `llm_service.summarize_and_tag`, but the model may call `llm_tools` first --
+    a standalone loop rather than `llm_chat_service`'s, since there is no chat
+    session to persist here, just one verdict."""
+    from ollama import Client
+
+    from bsimvis.app.services.llm_tools import TOOLS, call_tool
+
+    base_prompt = custom_prompt or llm_service.default_prompt
+    tag_rule = tag_taxonomy.prompt_rules() + (
+        "\nExample: TAGS: severity:medium, category:crypto:cipher."
+    )
+    system = (
+        f"{base_prompt}\n\n{tag_rule}\n\n"
+        f"Default collection for tool calls: '{collection}'. You have tools to look up "
+        "this function's call graph, BSim similar functions, tags, and file/cluster "
+        "metadata. Use whichever would change your judgment, then answer in the same "
+        "TLDR/TAGS format -- do not reply with NEED_MORE_CONTEXT again."
+    )
+    messages = [
+        {"role": "system", "content": system},
+        {
+            "role": "user",
+            "content": f"Function Name: {func_name}\n\nCode:\n{code_with_context}",
+        },
+    ]
+
+    client = Client(host=config_service.get("llm.ollama_url", "http://localhost:11434"))
+    model = config_service.get("llm.model", "qwen3.6:35b")
+
+    for _ in range(MAX_AGENTIC_ITERATIONS):
+        try:
+            response = client.chat(
+                model=model,
+                messages=messages,
+                tools=TOOLS,
+                stream=False,
+                think=False,
+                options={"num_predict": 512, "temperature": 0.1},
+            )
+        except Exception as e:
+            return None, [], str(e)
+
+        msg = response.get("message", {})
+        content = msg.get("content", "") or ""
+        raw_calls = [
+            tc.model_dump() if hasattr(tc, "model_dump") else tc
+            for tc in (msg.get("tool_calls") or [])
+        ]
+        if not raw_calls:
+            summary, tags = llm_service._split_summary_tags(content)
+            return summary, tags, None
+
+        messages.append(
+            {"role": "assistant", "content": content, "tool_calls": raw_calls}
+        )
+        for tc in raw_calls:
+            fn = tc.get("function", {})
+            name = fn.get("name")
+            args = fn.get("arguments") or {}
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except Exception:
+                    args = {}
+            result = _without_annotations(call_tool(name, args))
+            messages.append({"role": "tool", "content": json.dumps(result)[:8000]})
+
+    return (
+        None,
+        [],
+        "agentic fallback stopped after too many tool calls without a final answer",
+    )
+
+
+# --- per-collection redis bookkeeping (shared shape with llm_batch_service) --
+
+
+def _resolve_doc_id(func_id):
+    return func_id.replace(":function:", ":func:") + (
+        "" if func_id.endswith(":meta") else ":meta"
+    )
+
+
+class AnalysisOrchestrator:
+    def __init__(self, r=None):
+        self.r = r or get_redis()
+        self._vocab_seen = set()
+
+    def _result_key(self, job_id):
+        return f"llm_contextual_batch:{job_id}:results"
+
+    def _record(self, job_id, func_id, state, detail=None):
+        self.r.hset(
+            self._result_key(job_id),
+            func_id,
+            json.dumps({"state": state, "detail": detail}),
+        )
+
+    def get_results(self, job_id):
+        raw = self.r.hgetall(self._result_key(job_id)) or {}
+        out = {}
+        for k, v in raw.items():
+            k = k.decode() if isinstance(k, bytes) else k
+            try:
+                out[k] = json.loads(v)
+            except Exception:
+                out[k] = {"state": "unknown"}
+        return out
+
+    # --- one unit -------------------------------------------------------
+
+    def _write_result(
+        self, collection, func_id, func_name, summary, tags, actions, overwrite
+    ):
+        do_notes = "notes" in actions and summary
+        do_tags = "tags" in actions and tags
+
+        if do_notes:
+            if overwrite:
+                _remove_llm_notes(collection, func_id)
+            note_service.add_note(collection, func_id, summary, owner=LLM_NOTE_OWNER)
+            _mark_enriched(self.r, collection, func_id, "notes")
+
+        applied = []
+        if do_tags:
+            if overwrite:
+                _remove_llm_tags(collection, func_id)
+            known = self._vocab_seen
+            for t in tags:
+                marked = tag_taxonomy.namespaced(t)
+                if marked.lower() not in known:
+                    tag_service.create_tag(collection, marked, llm=True)
+                    known.add(marked.lower())
+                if tag_service.add_user_tag(collection, "function", func_id, marked):
+                    applied.append(marked)
+            _mark_enriched(self.r, collection, func_id, "tags")
+
+        return applied
+
+    def _finalize(
+        self, collection, fid, func_name, summary, tags, actions, overwrite, summaries
+    ):
+        summaries[fid] = {
+            "func_name": func_name,
+            "summary": _one_liner(summary),
+            "tags": tags,
+        }
+        applied = self._write_result(
+            collection, fid, func_name, summary, tags, actions, overwrite
+        )
+        return "done", ", ".join(applied) if applied else None
+
+    def _fanout_dups(
+        self,
+        collection,
+        rep_fid,
+        rep_name,
+        summary,
+        tags,
+        actions,
+        overwrite,
+        summaries,
+        dup_map,
+        out,
+    ):
+        """Copies a representative's verdict onto its duplicate siblings
+        (see `_group_by_duplicate_code`) without a separate LLM call each."""
+        for dup_fid in dup_map.get(rep_fid, ()):
+            dup_summary = (
+                f"{summary}\n\n(Duplicate of {rep_fid}; identical code, verdict "
+                "copied without a separate LLM call.)"
+            )
+            out[dup_fid] = self._finalize(
+                collection, dup_fid, rep_name, dup_summary, tags, actions, overwrite,
+                summaries,
+            )
+
+    def _process_singleton(
+        self,
+        collection,
+        func_id,
+        adj,
+        summaries,
+        actions,
+        overwrite,
+        custom_prompt,
+        agentic=False,
+        code_cache=None,
+        dup_map=None,
+    ):
+        data = (code_cache or {}).get(func_id) or get_function(func_id)
+        if "error" in data:
+            return {func_id: ("failed", data["error"])}
+
+        context = _context_block([func_id], adj, summaries)
+        evidence = _code_evidence(data)
+        code_with_context = f"{context}\n{evidence}" if context else evidence
+
+        prompt = _agentic_prompt(custom_prompt) if agentic else custom_prompt
+        summary, tags, err = llm_service.summarize_and_tag(
+            data["func_name"], code_with_context, custom_prompt=prompt
+        )
+        if not err and agentic and _needs_more_context(summary):
+            summary, tags, err = _agentic_summarize(
+                collection, data["func_name"], code_with_context, custom_prompt
+            )
+        if err:
+            return {func_id: ("failed", err)}
+        if not summary and not tags:
+            return {func_id: ("failed", "empty LLM response")}
+        out = {
+            func_id: self._finalize(
+                collection, func_id, data["func_name"], summary, tags, actions,
+                overwrite, summaries,
+            )
+        }
+        self._fanout_dups(
+            collection, func_id, data["func_name"], summary, tags, actions,
+            overwrite, summaries, dup_map or {}, out,
+        )
+        return out
+
+    def _process_scc(
+        self,
+        collection,
+        unit,
+        adj,
+        summaries,
+        actions,
+        overwrite,
+        custom_prompt,
+        agentic=False,
+        code_cache=None,
+        dup_map=None,
+    ):
+        """A mutually-recursive group: no valid bottom-up order inside it, so
+        one combined LLM call sees every member's code and returns one shared
+        verdict, applied to each member.
+
+        ponytail: coarse -- a large SCC still gets one verdict for all
+        members rather than per-function attribution. Upgrade to per-function
+        blocks (ask the model to label each with a delimiter, parse per
+        block) if a group this coarse turns out to matter in practice; most
+        SCCs in compiled C/C++ are small (mutual helper pairs, dispatch
+        loops), where one verdict for the group is the right grain anyway.
+        """
+        members = []
+        for fid in unit:
+            data = (code_cache or {}).get(fid) or get_function(fid)
+            if "error" not in data:
+                members.append(data)
+        if not members:
+            return {fid: ("failed", "no member function resolved") for fid in unit}
+
+        context = _context_block(unit, adj, summaries)
+        combined_code = "\n\n".join(
+            f"// --- {m['func_name']} ({m['func_id']}) ---\n{_code_evidence(m)}"
+            for m in members
+        )
+        header = (
+            f"{context}\nThe following {len(members)} functions call each other "
+            "(mutual recursion / a dispatch cycle) and must be judged as one unit:\n"
+        )
+
+        combined_name = " + ".join(m["func_name"] for m in members)
+        prompt = _agentic_prompt(custom_prompt) if agentic else custom_prompt
+        summary, tags, err = llm_service.summarize_and_tag(
+            combined_name,
+            header + combined_code,
+            custom_prompt=prompt,
+        )
+        if not err and agentic and _needs_more_context(summary):
+            summary, tags, err = _agentic_summarize(
+                collection, combined_name, header + combined_code, custom_prompt
+            )
+        if err or (not summary and not tags):
+            detail = err or "empty LLM response"
+            return {m["func_id"]: ("failed", detail) for m in members}
+
+        out = {}
+        for m in members:
+            out[m["func_id"]] = self._finalize(
+                collection, m["func_id"], m["func_name"], summary, tags, actions,
+                overwrite, summaries,
+            )
+            self._fanout_dups(
+                collection, m["func_id"], m["func_name"], summary, tags, actions,
+                overwrite, summaries, dup_map or {}, out,
+            )
+        return out
+
+    def _process_batch(
+        self,
+        collection,
+        unit,
+        adj,
+        summaries,
+        actions,
+        overwrite,
+        custom_prompt,
+        code_cache=None,
+        dup_map=None,
+    ):
+        """A small call-connected but non-cyclic cluster (`_cluster_units`):
+        one LLM call sees every member's code, but -- unlike `_process_scc`'s
+        true cycle -- these functions are independently meaningful, so the
+        call must return one attributed result per function rather than a
+        shared verdict. No agentic escalation here: a batch member that needs
+        a second, tool-using pass falls back to a plain "failed" result
+        instead of a per-item agentic call, which would erase the batching
+        the whole thing exists for -- `run_contextual_batch` only clusters
+        when `agentic` is off.
+        """
+        members = []
+        for fid in unit:
+            data = (code_cache or {}).get(fid) or get_function(fid)
+            if "error" not in data:
+                members.append(data)
+        if not members:
+            return {fid: ("failed", "no member function resolved") for fid in unit}
+
+        context = _context_block(unit, adj, summaries)
+        payload = [
+            (
+                m["func_id"],
+                m["func_name"],
+                f"{context}\n{_code_evidence(m)}" if context else _code_evidence(m),
+            )
+            for m in members
+        ]
+        vocabulary = self._vocab_seen if "tags" in actions else None
+        results, missing, err = llm_service.summarize_batch(
+            payload, vocabulary=vocabulary, custom_prompt=custom_prompt
+        )
+
+        out = {}
+        by_id = {m["func_id"]: m for m in members}
+        if err:
+            return {m["func_id"]: ("failed", err) for m in members}
+        for fid, (summary, tags) in results.items():
+            m = by_id[fid]
+            if not summary and not tags:
+                out[fid] = ("failed", "empty LLM response")
+                continue
+            out[fid] = self._finalize(
+                collection, fid, m["func_name"], summary, tags, actions, overwrite,
+                summaries,
+            )
+            self._fanout_dups(
+                collection, fid, m["func_name"], summary, tags, actions, overwrite,
+                summaries, dup_map or {}, out,
+            )
+        for fid in missing:
+            out[fid] = ("failed", "no result returned for this function in batch")
+        return out
+
+    # --- run -------------------------------------------------------------
+
+    def run_contextual_batch(
+        self,
+        collection,
+        func_ids,
+        actions=None,
+        overwrite=False,
+        custom_prompt=None,
+        job_service=None,
+        job_id=None,
+        unit_max_size=None,
+        agentic=False,
+        summaries_out=None,
+    ):
+        actions = [a for a in (actions or []) if a in ("notes", "tags")] or [
+            "notes",
+            "tags",
+        ]
+        total = len(func_ids)
+        if not total:
+            if job_service and job_id:
+                job_service.add_log(job_id, "No functions matched the selection.")
+            return False
+
+        if "tags" in actions:
+            self._vocab_seen = {
+                t.lower() for t in tag_service.get_llm_vocabulary(collection) or ()
+            }
+
+        representatives, dup_map, code_cache = _group_by_duplicate_code(func_ids)
+        dup_count = len(func_ids) - len(representatives)
+
+        units = partition_call_graph(collection, representatives)
+
+        relations = (
+            get_function_relations(func_ids, collection)
+            if len(func_ids) > 1
+            else {"call_edges": []}
+        )
+        dup_to_rep = {dup: rep for rep, dups in dup_map.items() for dup in dups}
+        adj = {}
+        for edge in relations.get("call_edges", []):
+            src = dup_to_rep.get(edge["from"], edge["from"])
+            dst = dup_to_rep.get(edge["to"], edge["to"])
+            adj.setdefault(src, []).append(dst)
+
+        # Batching folds independent (non-cyclic) functions into one LLM call
+        # with per-function attributed output -- an escalation path
+        # (`_agentic_summarize`) that agentic mode relies on. Keep agentic
+        # runs on the one-unit-per-call path so that escalation still works.
+        clustered = (
+            _cluster_units(units, adj, unit_max_size or CLUSTER_BATCH_SIZE)
+            if not agentic
+            else [("scc" if len(u) > 1 else "single", list(u)) for u in units]
+        )
+
+        if job_service and job_id:
+            scc_count = sum(1 for kind, _ in clustered if kind == "scc")
+            batch_count = sum(1 for kind, _ in clustered if kind == "batch")
+            job_service.add_log(
+                job_id,
+                f"Contextual LLM batch over {total} functions "
+                f"({dup_count} duplicate(s) collapsed onto a representative) in "
+                f"{len(clustered)} groups ({scc_count} mutually-recursive, "
+                f"{batch_count} batched) | actions={','.join(actions)} "
+                f"| overwrite={overwrite}",
+            )
+
+        summaries = summaries_out if summaries_out is not None else {}
+        counters = {"done": 0, "skipped": 0, "failed": 0}
+        processed = 0
+
+        for kind, unit in clustered:
+            if job_service and job_id and job_service.is_cancelled(job_id):
+                if job_service:
+                    job_service.add_log(job_id, "Cancelled.")
+                return False
+
+            all_fids = _with_dups(unit, dup_map)
+            if not overwrite and all(
+                _already_enriched(self.r, collection, fid, a)
+                for fid in unit
+                for a in actions
+            ):
+                for fid in all_fids:
+                    (
+                        self._record(job_id, fid, "skipped", "already enriched")
+                        if job_id
+                        else None
+                    )
+                    if summaries_out is not None:
+                        notes = [
+                            n
+                            for n in note_service.get_notes(collection, fid) or []
+                            if n.get("owner") == LLM_NOTE_OWNER and n.get("text")
+                        ]
+                        if notes:
+                            data = code_cache.get(fid) or get_function(fid)
+                            summaries[fid] = {
+                                "func_name": data.get(
+                                    "func_name", fid.rsplit(":", 1)[-1]
+                                ),
+                                "summary": _one_liner(notes[-1]["text"]),
+                            }
+                counters["skipped"] += len(all_fids)
+                processed += len(all_fids)
+                continue
+
+            try:
+                if kind == "single":
+                    results = self._process_singleton(
+                        collection,
+                        unit[0],
+                        adj,
+                        summaries,
+                        actions,
+                        overwrite,
+                        custom_prompt,
+                        agentic,
+                        code_cache,
+                        dup_map,
+                    )
+                elif kind == "scc":
+                    results = self._process_scc(
+                        collection,
+                        unit,
+                        adj,
+                        summaries,
+                        actions,
+                        overwrite,
+                        custom_prompt,
+                        agentic,
+                        code_cache,
+                        dup_map,
+                    )
+                else:
+                    results = self._process_batch(
+                        collection,
+                        unit,
+                        adj,
+                        summaries,
+                        actions,
+                        overwrite,
+                        custom_prompt,
+                        code_cache,
+                        dup_map,
+                    )
+            except Exception as e:
+                logging.error(f"analysis_orchestrator: unit {unit} failed: {e}")
+                results = {fid: ("failed", str(e)) for fid in all_fids}
+
+            for fid, (state, detail) in results.items():
+                counters[state] = counters.get(state, 0) + 1
+                processed += 1
+                if job_id:
+                    self._record(job_id, fid, state, detail)
+
+            if job_service and job_id:
+                job_service.update_progress(
+                    job_id,
+                    int(processed * 100 / total),
+                    f"{processed}/{total} | unit of {len(unit)} -> "
+                    f"{', '.join(f'{f}:{s}' for f, (s, _) in results.items())}",
+                    processed=processed,
+                    total=total,
+                )
+
+        if job_service and job_id:
+            job_service.add_log(
+                job_id,
+                f"Contextual LLM batch finished: {counters['done']} done, "
+                f"{counters['skipped']} skipped, {counters['failed']} failed.",
+            )
+        return True
+
+    def pair_candidates(
+        self,
+        pair,
+        threshold=0.9,
+        include_unique=True,
+        include_unchanged=False,
+        skip_fid_tagged=True,
+        min_complexity=0,
+        max_functions=0,
+    ):
+        """`max_functions` is an opt-in fast-triage cap (complexity-ranked,
+        side-balanced). 0 (default) analyzes every diff-selected candidate --
+        the diff already did the real triage by dropping identical functions,
+        so a second cap on top of that would drop real findings, not noise."""
+        candidates = _select_pair_candidates(
+            pair.get("diff") or {}, threshold, include_unique, include_unchanged
+        )
+        pipe = self.r.pipeline(transaction=False)
+        for row in candidates:
+            pipe.get(_resolve_doc_id(row["func_id"]))
+        filtered = []
+        for row, meta_raw in zip(candidates, pipe.execute()):
+            if not meta_raw:
+                continue
+            meta = json.loads(meta_raw)
+            if isinstance(meta, list):
+                meta = meta[0] if meta else {}
+            complexity = int(meta.get("bsim_features_count") or 0)
+            if complexity < min_complexity:
+                continue
+            tags = (meta.get("tags") or []) + (meta.get("user_tags") or [])
+            if skip_fid_tagged and any(
+                isinstance(tag, str) and (tag == "fid" or tag.startswith("fid:"))
+                for tag in tags
+            ):
+                continue
+            filtered.append((complexity, row))
+        effective_limit = max_functions if max_functions and max_functions > 0 else 0
+        if effective_limit and len(filtered) > effective_limit:
+            groups = {}
+            for item in filtered:
+                row = item[1]
+                match_id = row.get("match_id")
+                key = (
+                    ("match", match_id)
+                    if match_id is not None
+                    else ("func", row["func_id"])
+                )
+                groups.setdefault(key, []).append(item)
+
+            def unit_key(unit):
+                priority = min(
+                    1 if item[1]["reason"] == "unchanged_match" else 0 for item in unit
+                )
+                return (
+                    priority,
+                    -max(item[0] for item in unit),
+                    min(item[1]["func_id"] for item in unit),
+                )
+
+            queues = {"a": [], "b": [], "both": []}
+            for unit in groups.values():
+                unit_sides = {item[1]["side"] for item in unit}
+                bucket = "both" if len(unit_sides) > 1 else next(iter(unit_sides))
+                queues[bucket].append(unit)
+            for queue in queues.values():
+                queue.sort(key=unit_key)
+
+            filtered = []
+            last_side = None
+            while any(queues.values()):
+                choices = [
+                    (bucket, queue[0]) for bucket, queue in queues.items() if queue
+                ]
+                opposite = "b" if last_side == "a" else "a"
+                if last_side and queues[opposite]:
+                    choices = [
+                        choice for choice in choices if choice[0] in (opposite, "both")
+                    ]
+                bucket, unit = min(choices, key=lambda choice: unit_key(choice[1]))
+                queues[bucket].pop(0)
+                if len(filtered) + len(unit) > effective_limit:
+                    continue
+                filtered.extend(sorted(unit, key=lambda item: item[1]["side"]))
+                last_side = None if bucket == "both" else bucket
+        if not filtered:
+            raise ValueError("Pair selection resolved to zero functions")
+        return [row for _, row in filtered]
+
+    def run_pair_analysis(
+        self,
+        sid,
+        pair_collection,
+        algo="unweighted_cosine",
+        threshold=0.9,
+        include_unique=True,
+        include_unchanged=False,
+        skip_fid_tagged=True,
+        min_complexity=0,
+        actions=None,
+        max_functions=0,
+        overwrite=False,
+        custom_prompt=None,
+        job_service=None,
+        job_id=None,
+    ):
+        raw = self.r.get(sid)
+        if not raw:
+            raise ValueError("Binary similarity pair no longer exists")
+        pair = json.loads(raw)
+        if isinstance(pair, str):
+            pair = json.loads(pair)
+
+        candidates = self.pair_candidates(
+            pair,
+            threshold,
+            include_unique,
+            include_unchanged,
+            skip_fid_tagged,
+            min_complexity,
+            max_functions,
+        )
+
+        focus = (
+            "This function was selected for a binary comparison because it is unique "
+            "or changed relative to the other file. That is triage context only, not "
+            "evidence of maliciousness. Describe only behavior supported by the code; "
+            "when only dual-use behavior is visible and malicious context is unclear, do not assign malicious severity. Direct operational abuse is judged from the visible behavior itself."
+        )
+        if custom_prompt:
+            focus += f"\nOperator focus: {custom_prompt}"
+
+        summaries = {}
+        grouped = {}
+        for row in candidates:
+            origin = row["func_id"].split(":func:", 1)[0]
+            grouped.setdefault(origin, []).append(row["func_id"])
+        ok = True
+        try:
+            for origin, func_ids in grouped.items():
+                ok = (
+                    self.run_contextual_batch(
+                        origin,
+                        func_ids,
+                        actions=actions,
+                        overwrite=overwrite,
+                        custom_prompt=focus,
+                        job_service=job_service,
+                        job_id=job_id,
+                        agentic=True,
+                        summaries_out=summaries,
+                    )
+                    and ok
+                )
+        finally:
+            if "tags" in (actions or ["notes", "tags"]):
+                from bsimvis.app.services.bin_sim_service import bin_sim_service
+
+                bin_sim_service.resplit_bin_sim(pair_collection, algo=algo, sid=sid)
+        if not ok:
+            return False
+
+        report = llm_service.chat(
+            [
+                {"role": "system", "content": _pair_report_rules()},
+                {
+                    "role": "user",
+                    "content": _pair_report_prompt(pair, summaries, candidates),
+                },
+            ]
+        )
+        if not report or report.startswith("Error:"):
+            if job_service and job_id:
+                job_service.add_log(job_id, f"Pair report generation failed: {report}")
+            return False
+
+        if overwrite:
+            for n in note_service.get_bin_sim_notes(pair_collection, sid) or []:
+                if n.get("owner") == LLM_NOTE_OWNER:
+                    note_service.remove_bin_sim_note(pair_collection, sid, n.get("id"))
+        note_service.add_bin_sim_note(pair_collection, sid, report, owner=LLM_NOTE_OWNER)
+
+        if job_service and job_id:
+            job_service.r.hset(f"job:{job_id}", "report", report)
+            job_service.add_log(job_id, "Binary comparison report saved as a pair note.")
+        return True
+
+    # --- whole-file analysis ---------------------------------------------
+
+    def run_file_analysis(
+        self,
+        collection,
+        file_md5,
+        func_ids,
+        actions=None,
+        overwrite=False,
+        custom_prompt=None,
+        job_service=None,
+        job_id=None,
+    ):
+        """The context-aware batch (agentic this time, see `agentic=True`)
+        over one file's functions, followed by one closing call that folds
+        every function's summary into a whole-file report saved as a file
+        note -- the deliverable a per-function pass alone can't produce."""
+        summaries = {}
+        ok = self.run_contextual_batch(
+            collection,
+            func_ids,
+            actions=actions,
+            overwrite=overwrite,
+            custom_prompt=custom_prompt,
+            job_service=job_service,
+            job_id=job_id,
+            agentic=True,
+            summaries_out=summaries,
+        )
+        if ok and summaries:
+            self._write_file_report(
+                collection, file_md5, summaries, overwrite, job_service, job_id
+            )
+        return ok
+
+    def _write_file_report(
+        self, collection, file_md5, summaries, overwrite, job_service, job_id
+    ):
+        file_info = get_file_info(collection, file_md5)
+        if "error" in file_info:
+            if job_service and job_id:
+                job_service.add_log(
+                    job_id, f"File report skipped: {file_info['error']}"
+                )
+            return
+
+        report = llm_service.chat(
+            [
+                {"role": "system", "content": _file_report_rules()},
+                {"role": "user", "content": _file_report_prompt(file_info, summaries)},
+            ]
+        )
+        if not report or report.startswith("Error:"):
+            if job_service and job_id:
+                job_service.add_log(job_id, f"File report generation failed: {report}")
+            return
+
+        file_id = f"{collection}:file:{file_md5}"
+        if overwrite:
+            for n in note_service.get_file_notes(collection, file_id) or []:
+                if n.get("owner") == LLM_NOTE_OWNER:
+                    note_service.remove_file_note(collection, file_id, n.get("id"))
+        note_service.add_file_note(collection, file_id, report, owner=LLM_NOTE_OWNER)
+        if job_service and job_id:
+            job_service.add_log(job_id, "Whole-file report written as a file note.")
+
+
+def _file_report_rules():
+    return tag_taxonomy.analysis_rules() + (
+        "For a whole-file report, do not introduce a capability absent from the "
+        "per-function findings. Compression, syscalls, an entry point, malformed-input "
+        "handling, and non-returning control flow are not malicious indicators by "
+        "themselves. Cite the function that supports every capability and assessment "
+        "claim."
+    )
+
+
+def _file_report_prompt(file_info, summaries):
+    lines = [
+        "Synthesize a whole-file report from "
+        "per-function findings already produced for this binary -- do not "
+        "re-derive them, just interpret what they add up to.",
+        "",
+        f"File: {file_info.get('file_name')} (md5={file_info.get('file_md5')})",
+    ]
+    for key, label in [
+        ("filetype", "Filetype"),
+        ("avtype", "AV classification"),
+        ("yara", "YARA matches"),
+        ("cc_ip", "C2 IPs"),
+    ]:
+        val = file_info.get(key)
+        if val:
+            lines.append(f"{label}: {val}")
+    lines.append(
+        f"Functions analysed: {len(summaries)} of {file_info.get('function_count')}"
+    )
+    lines.append("")
+    lines.append("Per-function findings:")
+    for s in summaries.values():
+        lines.append(f"- {s['func_name']}: {s['summary']}")
+    lines.append("")
+    lines.append("Write a structured whole-file report:")
+    lines.append("**OVERVIEW**: [2-4 sentences: what this file is/does overall]")
+    lines.append(
+        "**CAPABILITIES**: [bullet list of concrete capabilities observed across functions]"
+    )
+    lines.append(
+        "**NOTABLE FUNCTIONS**: [the few functions most worth an analyst's attention, and why]"
+    )
+    lines.append(
+        "**ASSESSMENT**: [benign / suspicious / malicious / inconclusive -- and why, citing the evidence above]"
+    )
+    return "\n".join(lines)
+
+
+analysis_orchestrator = AnalysisOrchestrator()
+
+
+def _selfcheck():
+    """Partitioning correctness, stubbed I/O -- Tarjan order and the
+    singleton/SCC split, not the LLM or storage."""
+
+    # A simple chain: no cycles, every unit a singleton, callees before callers.
+    adj = {"a": ["b"], "b": ["c"], "c": []}
+    units = _tarjan_scc(["a", "b", "c"], adj)
+    flat = [u[0] for u in units]
+    assert flat.index("c") < flat.index("b") < flat.index("a"), flat
+
+    evidence = _code_evidence(
+        {"language_id": "MIPS:LE:32:default", "decompiler_id": "ghidra", "code": "x"}
+    )
+    assert "MIPS:LE:32:default" in evidence and evidence.endswith("Code:\nx")
+    assert _without_annotations(
+        {"notes": ["old"], "nested": [{"user_tags": ["severity:high"], "x": 1}]}
+    ) == {"nested": [{"x": 1}]}
+
+    report_rules = _file_report_rules()
+    report = _file_report_prompt({"file_name": "x", "function_count": 1}, {})
+    assert "not evidence of a packer" in report_rules and "inconclusive" in report
+
+    # A cycle collapses into one unit.
+    adj = {"a": ["b"], "b": ["a"]}
+    units = _tarjan_scc(["a", "b"], adj)
+    assert len(units) == 1 and set(units[0]) == {"a", "b"}, units
+
+    # A cycle feeding a downstream singleton: cycle's unit still comes first.
+    adj = {"a": ["b"], "b": ["a", "c"], "c": []}
+    units = _tarjan_scc(["a", "b", "c"], adj)
+    sizes = [len(u) for u in units]
+    assert sizes[0] == 1 and set(units[0]) == {"c"}, units
+    assert len(units[1]) == 2 and set(units[1]) == {"a", "b"}, units
+
+    print("ok")
+
+
+if __name__ == "__main__":
+    _selfcheck()

@@ -13,6 +13,7 @@ from bsimvis.app.services.index_service import (
     get_pool_id,
 )
 from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.query_syntax import resolve_targets, union_buckets
 
 DEFAULT_LIMIT = 100  # API RESULT LIMIT
 DEFAULT_POOL_LIMIT = 1000000  # DATABASE FILTERING LIMIT
@@ -190,7 +191,11 @@ def similarity_search():
             offset = int(request.args.get("offset", 0))
             limit = int(request.args.get("limit", DEFAULT_LIMIT))
             min_features = int(request.args.get("min_features", 0))
-            min_cohesion = float(request.args.get("min_cohesion", 0.95))
+            min_cohesion = float(
+                request.args.get(
+                    "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
+                )
+            )
         except ValueError:
             return {"error": "Invalid numeric parameter"}, 400
 
@@ -282,6 +287,10 @@ def similarity_search():
             algo_zset = f"{col}:sim:score:{algo}"
             min_features_zset = f"{col}:sim:min_features"
         pool_truncated = False
+        # Match mode chosen per filter value, echoed in the response so a query
+        # that resolved differently than expected is visible rather than silent.
+        filter_modes = []
+        filter_truncated = [False]
         total = 0
 
         has_min_features = min_features > 0
@@ -408,7 +417,7 @@ def similarity_search():
             t_lua_prep = time.perf_counter()
             groups_raw = []
 
-            def get_group_targets(lvl, val, allowed_fields=None):
+            def get_group_targets(lvl, val, allowed_fields=None, default_kind="exact"):
                 """
                 Resolves a filter into raw identity base-keys
                 using the standardized registry->bucket hierarchy.
@@ -416,7 +425,6 @@ def similarity_search():
                 """
                 from bsimvis.app.services.index_config import (
                     INDEX_CONFIG,
-                    EXACT_FIELDS,
                 )
 
                 if not allowed_fields:
@@ -435,70 +443,36 @@ def similarity_search():
                     # Deduplicate
                     allowed_fields = list(set(allowed_fields))
 
-                val_lower = val.lower()
                 matches = []
-
-                # Determine correct registry and index prefixes
-                if is_pool:
-                    reg_prefix = f"global:pool:{pool_id}:reg"
-                    idx_prefix = f"global:pool:{pool_id}:idx"
-                else:
-                    reg_prefix = f"{col}:reg"
-                    idx_prefix = f"{col}:idx"
+                index_col = f"global:pool:{pool_id}" if is_pool else col
 
                 for field in allowed_fields:
-                    registry_key = f"{reg_prefix}:{lvl}:{field}"
-                    if r.exists(registry_key):
-                        matching_buckets = []
+                    bucket_values, truncated, spec = resolve_targets(
+                        r, index_col, lvl, field, val, default_kind=default_kind
+                    )
+                    if truncated:
+                        filter_truncated[0] = True
+                    if not bucket_values:
+                        continue
 
-                        # NEW: Perfect match fields
-                        if field in EXACT_FIELDS:
-                            target_bucket = f"{idx_prefix}:{lvl}:{field}:{val_lower}"
-                            if r.sismember(registry_key, target_bucket):
-                                matching_buckets = [target_bucket]
-                        else:
-                            try:
-                                for bucket in r.sscan_iter(
-                                    registry_key, match=f"*{val_lower}*", count=1000
-                                ):
-                                    bucket_str = (
-                                        bucket.decode()
-                                        if isinstance(bucket, bytes)
-                                        else str(bucket)
-                                    )
-                                    if val_lower in bucket_str.lower():
-                                        matching_buckets.append(bucket_str)
-                            except Exception as e:
-                                logging.warning(f"SSCAN failed for {registry_key}: {e}")
-                                pass
+                    entry = spec.as_dict()
+                    entry.update({"level": lvl, "field": field})
+                    filter_modes.append(entry)
 
-                        if matching_buckets:
-                            targets = []
-                            if lvl == "sim":
-                                # Fix: Don't use split(":")[-1] as tags can contain colons
-                                sim_idx_prefix = f"{idx_prefix}:sim:{field}:"
-                                targets = [
-                                    b[len(sim_idx_prefix) :]
-                                    for b in matching_buckets
-                                    if b.startswith(sim_idx_prefix)
-                                ]
-                            else:
-                                if len(matching_buckets) == 1:
-                                    targets = [
-                                        (t.decode() if isinstance(t, bytes) else str(t))
-                                        for t in r.smembers(matching_buckets[0])
-                                    ]
-                                else:
-                                    # Use SUNION for multiple buckets
-                                    targets = [
-                                        (t.decode() if isinstance(t, bytes) else str(t))
-                                        for t in r.sunion(*matching_buckets)
-                                    ]
+                    if lvl == "sim":
+                        # sim groups carry bucket values; the Lua side unions them.
+                        targets = bucket_values
+                    else:
+                        # Other levels resolve straight to member ids here.
+                        prefix = f"{index_col}:idx:{lvl}:{field}:"
+                        targets = list(
+                            union_buckets(r, [prefix + v for v in bucket_values])
+                        )
 
-                            logging.info(
-                                f"SIM SEARCH | {session_id} | Resolved {len(targets)} partial {lvl}-level targets across {len(matching_buckets)} buckets for '{field}:{val}'"
-                            )
-                            matches.append((lvl, targets, field))
+                    logging.info(
+                        f"SIM SEARCH | {session_id} | Resolved {len(targets)} partial {lvl}-level targets across {len(bucket_values)} buckets for '{field}:{val}' (mode={spec.kind})"
+                    )
+                    matches.append((lvl, targets, field))
 
                 return matches
 
@@ -543,7 +517,7 @@ def similarity_search():
                             except:
                                 pass
                     else:
-                        clean_targets = targets[:1000]
+                        clean_targets = targets
 
                     # Only these 3 fields are truly native to the sim entity itself.
                     # file_tags, func_tags, file_user_tags, func_user_tags etc. are
@@ -568,10 +542,13 @@ def similarity_search():
                         func_index_prefix = ""
 
                     total_weight += weight
+                    # No slice: capping the bucket/target list dropped documents
+                    # out of filters and exclusions with no error. The bound is
+                    # now in query_syntax.resolve_targets and is reported.
                     normalized_subs.append(
                         {
                             "level": l_name,
-                            "targets": clean_targets[:1000],
+                            "targets": clean_targets,
                             "field": field,
                             "propagated": is_propagated,
                             "func_index_prefix": func_index_prefix,
@@ -630,7 +607,14 @@ def similarity_search():
                     # We handle both the target name (e.g. func_tags) and common aliases
                     val = request.args.get(target_field)
 
-                    if target_field in ["file_md5", "parent_md5", "related_md5", "file_name", "parent_file_name", "related_file_name"]:
+                    if target_field in [
+                        "file_md5",
+                        "parent_md5",
+                        "related_md5",
+                        "file_name",
+                        "parent_file_name",
+                        "related_file_name",
+                    ]:
                         continue
 
                     # Alias handling
@@ -656,68 +640,82 @@ def similarity_search():
             md5_val = request.args.get("md5") or request.args.get("file_md5")
             md5_configs = []
             if md5_val:
-                md5_paths = _paths_for_source("file", "file_md5") + _paths_for_source("file", "parent_md5") + _paths_for_source("file", "related_md5")
+                md5_paths = (
+                    _paths_for_source("file", "file_md5")
+                    + _paths_for_source("file", "parent_md5")
+                    + _paths_for_source("file", "related_md5")
+                )
                 md5_configs = [([md5_val], "any_md5", md5_paths)]
 
             file_name_val = request.args.get("file_name")
             file_name_configs = []
             if file_name_val:
-                file_name_paths = _paths_for_source("file", "file_name") + _paths_for_source("file", "parent_file_name") + _paths_for_source("file", "related_file_name")
-                file_name_configs = [([file_name_val], "any_file_name", file_name_paths)]
+                file_name_paths = (
+                    _paths_for_source("file", "file_name")
+                    + _paths_for_source("file", "parent_file_name")
+                    + _paths_for_source("file", "related_file_name")
+                )
+                file_name_configs = [
+                    ([file_name_val], "any_file_name", file_name_paths)
+                ]
 
-            tag_filter_configs = md5_configs + file_name_configs + [
-                (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
-                (static_tag_filters, "static_tag", _paths("tags")),
-                (user_tag_filters, "user_tag", _paths("user_tags")),
-                (
-                    sim_tag_filters,
-                    "sim_tag",
-                    _paths_for_source("sim", "tags")
-                    + _paths_for_source("sim", "user_tags"),
-                ),
-                (
-                    sim_static_tag_filters,
-                    "sim_static_tag",
-                    _paths_for_source("sim", "tags"),
-                ),
-                (
-                    sim_user_tag_filters,
-                    "sim_user_tag",
-                    _paths_for_source("sim", "user_tags"),
-                ),
-                (
-                    func_tag_filters,
-                    "func_tag",
-                    _paths_for_source("func", "tags")
-                    + _paths_for_source("func", "user_tags"),
-                ),
-                (
-                    func_static_tag_filters,
-                    "func_static_tag",
-                    _paths_for_source("func", "tags"),
-                ),
-                (
-                    func_user_tag_filters,
-                    "func_user_tag",
-                    _paths_for_source("func", "user_tags"),
-                ),
-                (
-                    file_tag_filters,
-                    "file_tag",
-                    _paths_for_source("file", "tags")
-                    + _paths_for_source("file", "user_tags"),
-                ),
-                (
-                    file_static_tag_filters,
-                    "file_static_tag",
-                    _paths_for_source("file", "tags"),
-                ),
-                (
-                    file_user_tag_filters,
-                    "file_user_tag",
-                    _paths_for_source("file", "user_tags"),
-                ),
-            ]
+            tag_filter_configs = (
+                md5_configs
+                + file_name_configs
+                + [
+                    (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
+                    (static_tag_filters, "static_tag", _paths("tags")),
+                    (user_tag_filters, "user_tag", _paths("user_tags")),
+                    (
+                        sim_tag_filters,
+                        "sim_tag",
+                        _paths_for_source("sim", "tags")
+                        + _paths_for_source("sim", "user_tags"),
+                    ),
+                    (
+                        sim_static_tag_filters,
+                        "sim_static_tag",
+                        _paths_for_source("sim", "tags"),
+                    ),
+                    (
+                        sim_user_tag_filters,
+                        "sim_user_tag",
+                        _paths_for_source("sim", "user_tags"),
+                    ),
+                    (
+                        func_tag_filters,
+                        "func_tag",
+                        _paths_for_source("func", "tags")
+                        + _paths_for_source("func", "user_tags"),
+                    ),
+                    (
+                        func_static_tag_filters,
+                        "func_static_tag",
+                        _paths_for_source("func", "tags"),
+                    ),
+                    (
+                        func_user_tag_filters,
+                        "func_user_tag",
+                        _paths_for_source("func", "user_tags"),
+                    ),
+                    (
+                        file_tag_filters,
+                        "file_tag",
+                        _paths_for_source("file", "tags")
+                        + _paths_for_source("file", "user_tags"),
+                    ),
+                    (
+                        file_static_tag_filters,
+                        "file_static_tag",
+                        _paths_for_source("file", "tags"),
+                    ),
+                    (
+                        file_user_tag_filters,
+                        "file_user_tag",
+                        _paths_for_source("file", "user_tags"),
+                    ),
+                ]
+            )
             for tfc in tag_filter_configs:
                 if tfc[0]:
                     filter_configs.append(tfc)
@@ -1127,12 +1125,8 @@ def similarity_search():
             if unique_cluster_ids:
                 c_pipe = r.pipeline(transaction=False)
                 c_list = list(unique_cluster_ids)
-                # Use the requested algo for clusters if it matches a known clustering algo
-                c_algo = (
-                    algo
-                    if algo in ["unweighted_cosine", "weighted_cosine"]
-                    else "unweighted_cosine"
-                )
+                # Clusters live in the namespace of the algo they were built from.
+                c_algo = algo
                 for c_coll, cid in c_list:
                     c_pipe.get(f"{c_coll}:cluster:{c_algo}:{cid}:meta")
                 c_results = c_pipe.execute()
@@ -1152,11 +1146,7 @@ def similarity_search():
             # ({col}:sim:best_cluster:{algo}, written during cluster propagation). No
             # runtime per-function resolution — one best-matched cluster per edge.
             best_cluster_by_sid = {}
-            bc_algo = (
-                algo
-                if algo in ["unweighted_cosine", "weighted_cosine"]
-                else "unweighted_cosine"
-            )
+            bc_algo = algo
             page_sids = list(sim_data_map.keys())
             if page_sids:
                 raw = r.hmget(f"{col}:sim:best_cluster:{bc_algo}", page_sids)
@@ -1358,6 +1348,8 @@ def similarity_search():
             "limit": limit,
             "pool_limit": pool_limit,
             "pool_truncated": pool_truncated,
+            "filter_truncated": filter_truncated[0],
+            "filters": filter_modes,
             "clusters": clusters_response,
             "pairs": enriched_pairs,
             "sort_by": sort_by,

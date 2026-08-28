@@ -28,6 +28,16 @@ window.DiffView = {
         this.params = params;
         this.container = document.getElementById(containerId);
 
+        // _cgLoaded / _diffControllers previously weren't reset here, so the
+        // graph tab silently kept showing a stale comparison's graphs after
+        // navigating to a new diff pair. Reset on every init like
+        // FunctionView does for its own call graph.
+        this._cgLoaded = false;
+        if (this._diffControllers) {
+            for (const c of Object.values(this._diffControllers)) { if (c) c.destroy(); }
+        }
+        this._diffControllers = {};
+
         // Save original globals from code_renderer.js
         this._originalToggleLock = window.toggleLock;
         this._originalClearAllLocks = window.clearAllLocks;
@@ -48,6 +58,7 @@ window.DiffView = {
         window.clearAllLocks = () => this.clearAllLocks();
         window.setHighlight = (hashString, state, target) => this.setHighlight(hashString, state, target);
         window.setChunkHighlight = (chunkId, state, target) => this.setChunkHighlight(chunkId, state, target);
+        window.switchDiffMode = (mode) => this.switchDiffMode(mode);
 
         // Build HTML Layout
         this.container.innerHTML = `
@@ -64,6 +75,14 @@ window.DiffView = {
                                 <option value="jaccard">Jaccard</option>
                                 <option value="milvus_sparse">Milvus Sparse</option>
                             </select>
+                            <div style="display:flex; align-items:center; gap:5px; margin-left:15px; border-left:1px solid var(--border); padding-left:15px;">
+                                <button id="btn-diff-mode-code" class="top-action-btn active" onclick="switchDiffMode('code')" style="font-size:0.8rem; padding:3px 8px;">
+                                    <i class="fa-solid fa-code"></i> Code Diff
+                                </button>
+                                <button id="btn-diff-mode-graph" class="top-action-btn" onclick="switchDiffMode('graph')" style="font-size:0.8rem; padding:3px 8px;">
+                                    <i class="fa-solid fa-diagram-project"></i> Call Graph Diff
+                                </button>
+                            </div>
                         </div>
                         <div style="display:flex; align-items:center; gap:15px;">
                             <div id="diff-queue-status" style="display:flex; align-items:center; gap:10px;"></div>
@@ -134,7 +153,7 @@ window.DiffView = {
                         </div>
                     </div>
                     <div class="compare-btn-container" style="text-align:center; margin-top:20px;">
-                        <button id="compare-btn" class="btn-compare" disabled onclick="startComparison()" style="padding:10px 25px; background:var(--accent); color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer; font-size:1rem;">Start Comparison</button>
+                        <button id="compare-btn" class="btn-compare" disabled onclick="startComparison()" style="padding:10px 25px; background:var(--accent); color:var(--window-tray); border:none; border-radius:4px; font-weight:bold; cursor:pointer; font-size:1rem;">Start Comparison</button>
                     </div>
                 </div>
 
@@ -160,7 +179,28 @@ window.DiffView = {
                     </div>
                 </div>
 
-                <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:rgba(0,0,0,0.85); padding:10px; border-radius:4px; border:1px solid var(--accent); color:#fff; font-size:0.8rem; pointer-events:none;"></div>
+                <div id="bsim-graph-diff-wrap" style="display:none; flex:1; height:100%; width:100%; position:relative; min-height:500px;">
+                    <div style="display:flex; height:100%; width:100%; overflow-x:auto;">
+                        <div style="flex:1; min-width:600px; border-right:1px solid var(--border); display:flex; flex-direction:column; position:relative; background:var(--bg);">
+                            <div style="padding:6px 12px; background:var(--meta-bg); border-bottom:1px solid var(--border); font-weight:bold; font-size:0.8rem; color:var(--accent); display:flex; justify-content:space-between; align-items:center;">
+                                <span><i class="fa-solid fa-diagram-project"></i> Left Call Graph</span>
+                                <span id="diff-cg-left-name" style="font-size:0.75rem; font-weight:normal; color:var(--subtle);"></span>
+                            </div>
+                            <div id="diff-cg-left-loader" style="text-align:center; padding:40px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin"></i> Loading Left Graph...</div>
+                            <div id="diff-cg-left-container" style="display:none; width:100%; height:100%; flex:1; position:relative;"></div>
+                        </div>
+                        <div style="flex:1; min-width:600px; display:flex; flex-direction:column; position:relative; background:var(--bg);">
+                            <div style="padding:6px 12px; background:var(--meta-bg); border-bottom:1px solid var(--border); font-weight:bold; font-size:0.8rem; color:var(--accent); display:flex; justify-content:space-between; align-items:center;">
+                                <span><i class="fa-solid fa-diagram-project"></i> Right Call Graph</span>
+                                <span id="diff-cg-right-name" style="font-size:0.75rem; font-weight:normal; color:var(--subtle);"></span>
+                            </div>
+                            <div id="diff-cg-right-loader" style="text-align:center; padding:40px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin"></i> Loading Right Graph...</div>
+                            <div id="diff-cg-right-container" style="display:none; width:100%; height:100%; flex:1; position:relative;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:var(--window-bg); padding:10px; border-radius:4px; border:1px solid var(--accent); color:var(--text); font-size:0.8rem; pointer-events:none;"></div>
             </div>
         `;
 
@@ -435,6 +475,44 @@ window.DiffView = {
             window.setupRichCopyInterceptor(this.rightContent, () => this.bsimRows.map(r => r.r).filter(r => r && r.line_idx !== undefined), { showDiffs: true });
         }
         this.onScroll();
+        
+        // Actually place the cursor in the element so arrow keys work immediately
+        this.leftContent.focus();
+        setTimeout(() => {
+            const sel = window.getSelection();
+            if (!sel.rangeCount || !this.leftContent.contains(sel.focusNode)) {
+                const range = document.createRange();
+                range.selectNodeContents(this.leftContent);
+                range.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+        }, 250);
+
+        this._selectionChangeListener = () => {
+            const activeEl = document.activeElement;
+            if (activeEl !== this.leftContent && activeEl !== this.rightContent) {
+                if (this._currentKbdToken) {
+                    const els = this.getHoverElementsForToken(this._currentKbdToken);
+                    this.handleHoverElements(els.token, els.tooltipTarget, els.funcCallToken, false);
+                    this._currentKbdToken = null;
+                }
+                return;
+            }
+            const token = this.findTokenFromSelection();
+            if (token !== this._currentKbdToken) {
+                if (this._currentKbdToken) {
+                    const els = this.getHoverElementsForToken(this._currentKbdToken);
+                    this.handleHoverElements(els.token, els.tooltipTarget, els.funcCallToken, false);
+                }
+                this._currentKbdToken = token;
+                if (this._currentKbdToken) {
+                    const els = this.getHoverElementsForToken(this._currentKbdToken);
+                    this.handleHoverElements(els.token, els.tooltipTarget, els.funcCallToken, true);
+                }
+            }
+        };
+        document.addEventListener('selectionchange', this._selectionChangeListener);
 
         requestAnimationFrame(() => {
             const sample = this.leftContent.querySelector('.code-line, .code-spacer');
@@ -604,6 +682,26 @@ window.DiffView = {
             const isCmd = e.ctrlKey || e.metaKey;
             const key = e.key;
 
+            if (key === 'Enter') {
+                e.preventDefault();
+                const token = this.findTokenFromSelection();
+                if (token) {
+                    const els = this.getHoverElementsForToken(token);
+                    if (els.funcCallToken) {
+                        const calledFuncId = els.funcCallToken.getAttribute('data-called-func-id');
+                        if (calledFuncId) {
+                            this.navigateToFunction(calledFuncId, e);
+                            return;
+                        }
+                    }
+                    if (els.token && els.token.classList.contains('feature-highlight')) {
+                        const hashes = this.getHashesForToken(els.token);
+                        if (hashes) this.toggleLock(hashes, els.token);
+                    }
+                }
+                return;
+            }
+
             if (isCmd && key.toLowerCase() === 'a') return;
             if (isCmd && (key.toLowerCase() === 'c' || key.toLowerCase() === 'v')) return;
             
@@ -706,6 +804,26 @@ window.DiffView = {
         return null;
     },
 
+    findTokenFromSelection() {
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount) return null;
+        let node = sel.focusNode;
+        while (node && node !== this.leftContent && node !== this.rightContent) {
+            if (node instanceof Element && node.classList.contains('token')) return node;
+            node = node.parentNode;
+        }
+        return null;
+    },
+
+    getHoverElementsForToken(t) {
+        if (!t) return { token: null, tooltipTarget: null, funcCallToken: null };
+        return {
+            token: t.closest('.feature-highlight'),
+            tooltipTarget: t.closest('[data-side]'),
+            funcCallToken: t.closest('[data-called-func-id]')
+        };
+    },
+
     clearAllLocks() {
         document.querySelectorAll('.feature-locked, .bsim-group-active-match, .bsim-group-active-unique').forEach(el => {
             el.classList.remove('feature-locked', 'bsim-group-active-match', 'bsim-group-active-unique');
@@ -764,23 +882,36 @@ window.DiffView = {
         const tooltipTarget = this.findInPath(event, '[data-side]');
         const funcCallToken = this.findInPath(event, '[data-called-func-id]');
 
+        this.handleHoverElements(token, tooltipTarget, funcCallToken, state, event);
+    },
+
+    handleHoverElements(token, tooltipTarget, funcCallToken, state, event) {
         if (funcCallToken) {
             const calledFuncId = funcCallToken.getAttribute('data-called-func-id');
             const isExternal = funcCallToken.getAttribute('data-is-external') === 'true';
             const targetName = funcCallToken.getAttribute('data-target-name') || calledFuncId.split(':').pop();
             
+            let x = event ? event.clientX : undefined;
+            let y = event ? event.clientY : undefined;
+            if (x === undefined || y === undefined) {
+                const rect = funcCallToken.getBoundingClientRect();
+                x = rect.left + rect.width / 2;
+                y = rect.bottom;
+            }
+
             if (state) {
                 if (calledFuncId && isExternal) {
                     const extName = targetName || calledFuncId.replace('ext:', '');
                     this.showTooltip(`<div style="display:flex;align-items:center;gap:6px;">
-                        <span style="background:rgba(249,38,114,0.2);color:#f92672;border:1px solid rgba(249,38,114,0.4);border-radius:4px;padding:2px 7px;font-size:0.7rem;font-weight:600;letter-spacing:0.04em;">EXTERNAL</span>
-                        <span style="color:#ccc;font-family:monospace;font-size:0.8rem;">${extName}</span>
-                    </div>`, event.clientX, event.clientY);
+                        <span style="background:color-mix(in srgb, var(--token-instruction) 20%, transparent);color:#f92672;border:1px solid color-mix(in srgb, var(--token-instruction) 40%, transparent);border-radius:4px;padding:2px 7px;font-size:0.7rem;font-weight:600;letter-spacing:0.04em;">EXTERNAL</span>
+                        <span style="color:var(--meta-text-muted);font-family:monospace;font-size:0.8rem;">${extName}</span>
+                    </div>`, x, y);
                 } else if (calledFuncId && !isExternal) {
+                    const fakeEvent = { clientX: x, clientY: y, target: funcCallToken, currentTarget: funcCallToken };
                     if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
-                        window.parent.showCodePreviewFromIframe(window.name, calledFuncId, targetName, event);
+                        window.parent.showCodePreviewFromIframe(window.name, calledFuncId, targetName, fakeEvent);
                     } else if (typeof window.showCodePreview === 'function') {
-                        window.showCodePreview(calledFuncId, targetName, null, null, null, event);
+                        window.showCodePreview(calledFuncId, targetName, null, null, null, fakeEvent);
                     }
                 }
             } else {
@@ -803,15 +934,30 @@ window.DiffView = {
 
         if (tooltipTarget) {
             if (state) {
+                let x = event ? event.clientX : undefined;
+                let y = event ? event.clientY : undefined;
+                if (x === undefined || y === undefined) {
+                    const rect = tooltipTarget.getBoundingClientRect();
+                    x = rect.left + rect.width / 2;
+                    y = rect.bottom;
+                }
                 const html = this.getHtmlForTooltip(tooltipTarget);
-                if (html) this.showTooltip(html, event.clientX, event.clientY);
+                if (html) this.showTooltip(html, x, y);
             } else {
                 this.hideTooltip();
             }
         }
 
-        const chunk = this.findInPath(event, '[data-chunk-id]');
-        if (chunk && chunk.dataset.chunkId !== undefined) {
+        let chunk = null;
+        if (event) {
+            chunk = this.findInPath(event, '[data-chunk-id]');
+        } else if (token) {
+            chunk = token.closest('[data-chunk-id]');
+        } else if (tooltipTarget) {
+            chunk = tooltipTarget.closest('[data-chunk-id]');
+        }
+        
+        if (chunk && chunk.dataset && chunk.dataset.chunkId !== undefined) {
             this.setChunkHighlight(chunk.dataset.chunkId, state, chunk);
         }
     },
@@ -1141,10 +1287,83 @@ window.DiffView = {
         }
     },
 
+    switchDiffMode(mode) {
+        const codeBtn = document.getElementById('btn-diff-mode-code');
+        const graphBtn = document.getElementById('btn-diff-mode-graph');
+        const scrollEl = document.getElementById('bsim-scroll');
+        const graphWrap = document.getElementById('bsim-graph-diff-wrap');
+
+        if (mode === 'graph') {
+            if (codeBtn) codeBtn.classList.remove('active');
+            if (graphBtn) graphBtn.classList.add('active');
+            if (scrollEl) scrollEl.style.display = 'none';
+            if (graphWrap) graphWrap.style.display = 'flex';
+            this.loadDiffCallGraphs();
+        } else {
+            if (graphBtn) graphBtn.classList.remove('active');
+            if (codeBtn) codeBtn.classList.add('active');
+            if (graphWrap) graphWrap.style.display = 'none';
+            if (scrollEl) scrollEl.style.display = 'flex';
+        }
+    },
+
+    async loadDiffCallGraphs() {
+        if (this._cgLoaded) return;
+        this._cgLoaded = true;
+
+        const p = this._getCurrentP() || this._parsePathUrl();
+        if (!p || !p.collection_a || !p.md5_a || !p.addr_a || !p.collection_b || !p.md5_b || !p.addr_b) return;
+
+        const id1 = `${p.collection_a}:func:${p.md5_a}:${p.addr_a}`;
+        const id2 = `${p.collection_b}:func:${p.md5_b}:${p.addr_b}`;
+
+        this._renderSingleDiffGraph('left', id1);
+        this._renderSingleDiffGraph('right', id2);
+    },
+
+    async _renderSingleDiffGraph(side, funcId) {
+        const loader = document.getElementById(`diff-cg-${side}-loader`);
+        const container = document.getElementById(`diff-cg-${side}-container`);
+        const nameEl = document.getElementById(`diff-cg-${side}-name`);
+        if (!loader || !container) return;
+
+        loader.style.display = 'block';
+        container.style.display = 'none';
+
+        try {
+            if (nameEl) {
+                const parts = funcId.split(':');
+                nameEl.innerText = parts[parts.length - 1] || funcId;
+            }
+
+            loader.style.display = 'none';
+            container.style.display = 'block';
+
+            const collection = funcId.split(':')[0];
+            const controller = new PivotickGraphController(container, { collection });
+            this._diffControllers[side] = controller;
+            await controller.addFunction(funcId, { asCenter: true });
+            if (nameEl) nameEl.innerText = controller.nodes.get(controller.centerId)?.raw?.name || funcId;
+        } catch (err) {
+            loader.style.display = 'block';
+            loader.innerHTML = `<div style="padding:20px; color:#f92672;"><i class="fa-solid fa-triangle-exclamation"></i> ${err.message}</div>`;
+        }
+    },
+
     destroy() {
         this.container = null;
         this.params = null;
-        
+
+        if (this._diffControllers) {
+            for (const c of Object.values(this._diffControllers)) { if (c) c.destroy(); }
+            this._diffControllers = {};
+        }
+
+        if (this._selectionChangeListener) {
+            document.removeEventListener('selectionchange', this._selectionChangeListener);
+            delete this._selectionChangeListener;
+        }
+
         // Restore original global handlers
         window.toggleLock = this._originalToggleLock;
         window.clearAllLocks = this._originalClearAllLocks;

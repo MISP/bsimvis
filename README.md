@@ -42,7 +42,7 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 
 ### Analyst Notes & AI Insights
 - Analyst notes system for files and functions
-- Local LLM assistant for file and function summaries
+- LLM assistant for file and function summaries (local or remote via Ollama)
 
 ### API
 - REST API with Swagger documentation
@@ -71,9 +71,11 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 
 # Requirements
 
+- Java 21+ (Ghidra 12 requirement) — `install.sh` drops a portable Temurin JDK 21 into `bin/` and sets `JAVA_HOME` in `.env` if the system Java is missing or older
 - Ghidra and pyghidra install
 - Redis and Kvrocks databases
-
+- Function ID databases in the Ghidra install (see below) — without them, function library tags stay empty
+- Ollama (optional) for LLM analyst insights and function summaries. Can be run locally (default port `11434`) or remotely (configurable via `ollama_url` in `bsimvis_config.toml`).
 # Installation
 
 Copy the example configuration files and customize them:
@@ -90,6 +92,33 @@ Run the install script to set up portable Redis, Kvrocks, and optionally Ghidra:
 ```
 
 Milvus support is optional and can be enabled via the `.env` file (`ENABLE_MILVUS=true`).
+
+## Function ID databases
+
+Ghidra's Function ID (FID) analyzer is what produces the `lib:<library>:<version>:<name>` tags BSimVis puts
+on functions: standard library code identified by exact and operand-masked instruction hashes. Stock Ghidra
+ships FID databases for Visual Studio runtimes only, so on ELF samples nothing gets identified until you add
+databases to `$GHIDRA_HOME/Ghidra/Features/FunctionID/data/`.
+
+`install.sh` fetches the open-source [threatrack/ghidra-fidb-repo](https://github.com/threatrack/ghidra-fidb-repo)
+(MIT — 67 MB download, 215 MB unpacked, 47 databases: glibc, uClibc/OpenWrt, gcc, OpenSSL, Qt5, SDL,
+libsodium, CentOS 6/7, across x86 32/64, ARM, AARCH64, MIPS, PowerPC, SPARC, SuperH, m68k). Skip it with
+`SKIP_FIDB=1 ./install.sh`.
+
+To install them by hand, into your own Ghidra:
+
+```bash
+curl -LO https://github.com/threatrack/ghidra-fidb-repo/releases/download/20200530/ghidra-fidb-repo_20200530.zip
+unzip ghidra-fidb-repo_20200530.zip -d "$GHIDRA_HOME/Ghidra/Features/FunctionID/data/"
+```
+
+Those are the pre-unpacked `.fidbf` files, so no Ghidra rebuild is needed. Restart the workers afterwards —
+Ghidra reads the data directory at startup.
+
+Coverage is per-architecture and per-toolchain. No database exists for PowerPC e500, MIPS64r6, RISC-V or
+LoongArch, and a statically linked binary built with a different compiler or `-O` level than the one the FIDB
+was built from misses every hash even where a database exists. Build your own with Ghidra's
+`Tools -> Function ID -> Populate Function ID Database` when a library matters and nothing matches it.
 
 # Running
 
@@ -143,19 +172,56 @@ Full endpoint reference in [doc/api_documentation.md](doc/api_documentation.md);
 
 ## Binary upload
 
+One call is the whole story: analysis, indexing, and per-file similarity all
+run as part of this one job, and the collection's function/binary clusters
+rebuild automatically a short while after uploads to it go quiet
+(`clustering.idle_debounce_seconds` in `bsimvis_config.toml`, default 30s) --
+see [Batch upload](#batch-upload-optional) below for why you don't need to
+call anything else, even for many files at once.
+
 ```
 # upload to /api/file/upload
 curl -X POST --data-binary "@/path/to/file" \
   "http://localhost:5000/api/file/upload?collection=main&file_name=my_binary&profile=fast"
 
-# Follow pipeline with response
+# Response
 {
     "status": "processing",
     "file_md5": "b7680c697c69aff3cd8f44fffcb7d683",
-    "pipeline_id": "pipe_f4f87081-ab7d-4077",
-    "message": "Binary uploaded. Analysis pipeline started."
+    "pipeline_id": "b2e1a4c0-...",
+    "message": "Binary uploaded. Analysis started."
 }
 ```
+
+Add `&priority=high` to jump this file's analysis ahead of other pending jobs
+on the shared worker pool -- useful when another collection has a long-running
+job tying up workers and you need one file processed fast regardless. It does
+not preempt a job already running, only reorders what an idle worker picks up
+next.
+
+## Supported upload formats
+
+`/api/file/upload` takes the raw bytes of whatever you have. Containers are unpacked server-side and every binary inside is analyzed as its own file, tagged with the format it came from and carrying the container's md5 in `parent_md5`.
+
+| Upload | What gets analyzed | Tag |
+|---|---|---|
+| Raw executable (ELF, PE, Mach-O, ...) | The file itself | — |
+| `.zip`, `.tar`, `.tar.gz`, `.tar.bz2`, `.tar.xz` | Every member, one file each | `container:archive` |
+| Encrypted zip (ZipCrypto or AES) | Same, password defaults to `infected` | `container:archive` |
+| `.apk`, `.aab` | Only `.dex`, `.so` and `.jar` members — resources and assets are skipped | `container:apk` |
+| Fat/universal Mach-O | One file per architecture slice, named `<file>:x86_64`, `<file>:arm64`, ... | `container:macho-fat` |
+| UPX-packed executable | **Both** the packed file and its unpacked child, so packed-vs-unpacked is a normal binary diff | `packer:upx` |
+| `.gpr.zip` (Ghidra project) | Imported whole, never unpacked — see below | — |
+
+Notes:
+
+- Archive password: `--archive-password` on the CLI, `archive_password=` on the API. Default is `infected`, the usual convention for shipped malware samples.
+- Unpacking UPX needs the `upx` binary, installed into `bin/` by `install.sh`. Without it a packed sample is still analyzed, just packed.
+- Containers are followed 2 levels deep, capped at 200 children.
+- `--no-unpack` (`unpack=false`) analyzes the upload exactly as-is.
+- Unpacked something with your own tooling? Declare the lineage yourself with `--parent-md5` / `--parent-name` (`parent_md5=` / `parent_file_name=`).
+
+Adding another format means one entry in `HANDLERS` in [`bsimvis/app/services/unpack_service.py`](bsimvis/app/services/unpack_service.py).
 
 ## Ghidra project upload 
 
@@ -171,34 +237,34 @@ curl -X POST --data-binary @$gpr_name.gpr.zip \
   "http://localhost:5000/api/file/upload?file_name=$gpr_name&collection=main&profile=fast"
 ```
 
-## Batch upload + finalize
+## Batch upload (optional)
 
-Upload multiple files under one `batch_uuid`, then call `batch_finalize` once to cluster and build binary similarity for the whole batch instead of per-file:
+Just upload each file with plain `POST /api/file/upload` calls, in a loop or
+in parallel -- no `batch_uuid`, no finalize call needed. Every collection has
+its own lane: all the files you upload analyze fully in parallel across
+workers, and once uploads to that collection go quiet, the lane
+automatically groups everything uploaded in that window, clears old
+cluster/bin_sim results, and rebuilds function clusters, binary similarity,
+and binary clusters -- once, covering the whole batch:
 
 ```
-batch_uuid=$(python3 -c "import uuid; print(uuid.uuid4().hex)")
-
-# Upload each file with skip_sim, sharing the batch_uuid; collect the returned pipeline_ids
 for f in /path/to/*.bin; do
   curl -s -X POST --data-binary "@$f" \
-    "http://localhost:5000/api/file/upload?collection=main&file_name=$(basename $f)&batch_uuid=$batch_uuid&skip_sim=true"
+    "http://localhost:5000/api/file/upload?collection=main&file_name=$(basename $f)"
 done
-# -> {"status": "processing", "file_md5": "...", "pipeline_id": "pipe_...", "batch_uuid": "..."}
-
-# Finalize: pass every pipeline_id collected above
-curl -X POST -H "Content-Type: application/json" \
-  -d '{"pipeline_ids": ["pipe_a", "pipe_b"], "batch_uuid": "'"$batch_uuid"'", "collection": "main", "algo": "unweighted_cosine"}' \
-  "http://localhost:5000/api/file/upload/batch_finalize"
-
-# Response
-{
-    "status": "success",
-    "master_pipeline_id": "pipe_....",
-    "batch_uuid": "..."
-}
+# each upload analyzes immediately; clustering fires on its own ~30s after the last one
 ```
 
-`batch_finalize` groups the given pipelines, clears old cluster/bin_sim results, then runs function clustering, binary similarity build, binary clustering, and indexing in order. Pass `skip_sim: true` to skip the binary similarity steps. See [doc/api_documentation.md](doc/api_documentation.md#post-apifileuploadbatch_finalize) for full parameters.
+`POST /api/cluster/rebuild_all` and `POST /api/file/upload/batch_finalize`
+(explicit `pipeline_ids` list, `batch_uuid` grouping) still work for forcing
+a rebuild right now instead of waiting, or for scripts that already manage
+their own batching -- they queue behind whatever's currently active for that
+collection instead of racing it (a collection's lane only ever runs one
+clear/rebuild at a time; two overlapping requests used to corrupt each
+other's results). Add `"priority": "high"` to jump an explicit request ahead
+of other rebuilds already queued for that same collection. See
+[doc/api_documentation.md](doc/api_documentation.md#post-apifileuploadbatch_finalize)
+for `batch_finalize`'s full parameters.
 
 ## Follow pipeline progress
 
@@ -217,13 +283,23 @@ curl -s "http://localhost:5000/api/jobs/pipe_f4f87081-ab7d-4077"
 
 ## Build function clusters and Binary similarities
 
-```
-# With all binaries uploaded and ingestion pipeline completed
-# Or periodically schedule 
+Runs automatically after uploads to a collection go quiet (see
+[Batch upload](#batch-upload-optional) above). Call this directly to force it
+right now instead of waiting -- it queues behind whatever's currently active
+for that collection rather than running concurrently with it:
 
+```
 curl -X POST -H "Content-Type: application/json" \
  -d '{"collection": "main", "algo": "unweighted_cosine"}' \
  http://localhost:5000/api/cluster/rebuild_all
+
+# Response -- pipeline_id is pollable via GET /api/jobs/{pipeline_id} either way,
+# whether it started immediately or is waiting behind another active rebuild
+{
+    "job_id": "b2e1a4c0-...",
+    "pipeline_id": "b2e1a4c0-...",
+    "status": "queued"
+}
 ```
 
 # CLI tool

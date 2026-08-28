@@ -1,9 +1,11 @@
 from bsimvis.app.services.redis_client import get_redis
 
 
-def fetch_function_data(collection, md5, addr):
+def fetch_function_data(collection, md5, addr, meta_only=False):
     """
     Fetches raw function data from Redis: source, BSim vectors, and metadata.
+    With meta_only=True, skips the source/features/tf-vector reads (source can
+    be large decompiled token JSON) and returns just the metadata.
     Returns: (source_dict, features_list, meta_dict, tf_map)
     """
     try:
@@ -23,6 +25,15 @@ def fetch_function_data(collection, md5, addr):
                     sub_collection = parts[1]
 
         r = get_redis()
+        import json
+
+        if meta_only:
+            meta_raw = r.get(f"{sub_collection}:func:{md5}:{addr}:meta")
+            meta = json.loads(meta_raw) if meta_raw else None
+            if isinstance(meta, list) and len(meta) == 1:
+                meta = meta[0]
+            return None, None, meta, {}
+
         pipe = r.pipeline(transaction=False)
         pipe.get(f"{sub_collection}:func:{md5}:{addr}:source")
         pipe.get(f"{sub_collection}:func:{md5}:{addr}:vec:meta")
@@ -32,8 +43,6 @@ def fetch_function_data(collection, md5, addr):
         pipe.zrange(tf_key, 0, -1, withscores=True)
 
         source_raw, features_raw, meta_raw, tf_raw = pipe.execute()
-
-        import json
 
         source = json.loads(source_raw) if source_raw else None
         if isinstance(source, list) and len(source) == 1:

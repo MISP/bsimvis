@@ -25,6 +25,7 @@ fixed value):
         --backends rust_cpu wgpu --repeats 5
 """
 import argparse
+import os
 import statistics
 import sys
 import time
@@ -52,6 +53,17 @@ def parse_args():
     p.add_argument("--backends", nargs="+", default=["legacy_proxy", "rust_cpu", "wgpu"], choices=list(LABELS))
     p.add_argument("--repeats", type=int, default=3)
     p.add_argument("--restore-backend", default="rust_cpu", help="discovery_backend to leave the process config on when done.")
+    p.add_argument(
+        "--target-batch-sizes",
+        nargs="+",
+        type=int,
+        default=None,
+        help=(
+            "Sweep build_lca_snapshot's LCA_TARGET_BATCH_SIZE (job-system-rework-plan.md "
+            "§7.3/§7.5) instead of just the process default. Only affects rust_cpu/wgpu "
+            "-- legacy_proxy ignores it. Omit for a plain backend-only comparison."
+        ),
+    )
     return p.parse_args()
 
 
@@ -144,12 +156,16 @@ def copy_collection(r, source_coll, target_coll):
     return n
 
 
-def run_once(r, source_coll, backend_value, run_idx):
+def run_once(r, source_coll, backend_value, run_idx, target_batch_size=None):
     bench_coll = f"bench_{backend_value}_{run_idx}"
     cleanup(r, bench_coll)
     n_funcs = copy_collection(r, source_coll, bench_coll)
 
     config_service._config.setdefault("similarity", {})["discovery_backend"] = backend_value
+    if target_batch_size is not None:
+        os.environ["LCA_TARGET_BATCH_SIZE"] = str(target_batch_size)
+    else:
+        os.environ.pop("LCA_TARGET_BATCH_SIZE", None)
     sim_service = SimilarityService(r=r)
 
     t0 = time.time()
@@ -170,27 +186,36 @@ def main():
         sys.exit(1)
     print(f"[*] source={args.source} functions={src_count} repeats={args.repeats}")
 
+    batch_sizes = args.target_batch_sizes or [None]
+
     rows = []
     for backend in args.backends:
-        times, pairs_seen, funcs_seen = [], set(), set()
-        for i in range(args.repeats):
-            elapsed, n_pairs, n_funcs = run_once(r, args.source, backend, i)
-            times.append(elapsed)
-            pairs_seen.add(n_pairs)
-            funcs_seen.add(n_funcs)
-            print(f"    {backend} run {i + 1}/{args.repeats}: {elapsed:.3f}s, {n_pairs} pairs")
-        rows.append(
-            {
-                "backend": backend,
-                "label": LABELS[backend],
-                "mean": statistics.mean(times),
-                "median": statistics.median(times),
-                "min": min(times),
-                "max": max(times),
-                "pairs": sorted(pairs_seen),
-                "funcs": sorted(funcs_seen),
-            }
-        )
+        for batch_size in batch_sizes:
+            # legacy_proxy never touches build_lca_snapshot, so sweeping it
+            # would just repeat the same run under different labels.
+            if backend == "legacy_proxy" and batch_size is not None:
+                continue
+            times, pairs_seen, funcs_seen = [], set(), set()
+            for i in range(args.repeats):
+                elapsed, n_pairs, n_funcs = run_once(r, args.source, backend, i, batch_size)
+                times.append(elapsed)
+                pairs_seen.add(n_pairs)
+                funcs_seen.add(n_funcs)
+                bs_label = f" batch={batch_size}" if batch_size is not None else ""
+                print(f"    {backend}{bs_label} run {i + 1}/{args.repeats}: {elapsed:.3f}s, {n_pairs} pairs")
+            rows.append(
+                {
+                    "backend": backend,
+                    "label": LABELS[backend] + (f" (batch={batch_size})" if batch_size is not None else ""),
+                    "mean": statistics.mean(times),
+                    "median": statistics.median(times),
+                    "min": min(times),
+                    "max": max(times),
+                    "pairs": sorted(pairs_seen),
+                    "funcs": sorted(funcs_seen),
+                }
+            )
+    os.environ.pop("LCA_TARGET_BATCH_SIZE", None)
 
     print("\n" + "=" * 92)
     print(f"{'Backend':<38} | {'mean':>8} | {'median':>8} | {'min':>8} | {'max':>8} | {'pairs':>10}")

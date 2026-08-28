@@ -1,3 +1,4 @@
+import os
 import redis
 import json
 import math
@@ -73,8 +74,29 @@ class SimilarityService:
 
     def build_lca_snapshot(
         self, collection, algo="unweighted_cosine", workers=4,
-        job_service=None, job_id=None, target_batch_size=2000,
+        job_service=None, job_id=None, target_batch_size=None,
     ):
+        """Cross-vector-class fuzzy matching via the native discovery backend.
+
+        This is the one call in the file that crosses into
+        bsimvis_similarity_native (rust_cpu/wgpu) -- an O(V^2) all-pairs
+        score over every vector-class, which used to be a single opaque FFI
+        call per job with no chunking, progress, or logging inside it at all
+        (job-system-rework-plan.md §7.3). Chunked on the TARGET side (the
+        candidate side doesn't change per batch, so re-scoring against it
+        per chunk is free) so peak memory for the native call's result and
+        the on-heap edge list is bounded by target_batch_size, not V, and
+        progress/speed/ETA are visible instead of one multi-hour call.
+
+        target_batch_size defaults to LCA_TARGET_BATCH_SIZE (env), 2000 if
+        unset -- config-exposed per §7.5's tuning discipline, same pattern as
+        ENRICH_CHUNK_SIZE. No curve has been measured yet: doing so needs a
+        real vector-class corpus, which this worktree doesn't have access to
+        (job-system-rework-plan.md §7.5 point 1 is still open for this job
+        type -- see scripts/quick_bench_backends.py --target-batch-sizes).
+        """
+        if target_batch_size is None:
+            target_batch_size = int(os.getenv("LCA_TARGET_BATCH_SIZE", 2000))
         # Reset on every call, including an early return below -- otherwise a
         # collection/build where this bails (native missing, no vclasses yet)
         # would silently reuse whatever _base_snapshot a PRIOR call (possibly

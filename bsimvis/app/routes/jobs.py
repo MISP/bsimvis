@@ -109,6 +109,17 @@ def cancel_job(job_id):
     return {"status": "cancelled", "job_id": job_id}
 
 
+def skip_job(job_id):
+    """Marks a permanently-broken step skipped; the pipeline advances past it."""
+    reason = None
+    if request.is_json:
+        reason = (request.get_json(silent=True) or {}).get("reason")
+    ok = job_service.skip_job(job_id, reason=reason)
+    if not ok:
+        return {"error": "Job not found or already resolved"}, 404
+    return {"status": "skipped", "job_id": job_id}
+
+
 def pause_jobs():
     """Stops workers claiming new jobs. In-flight jobs finish normally."""
     return {"paused": job_service.set_paused(True)}

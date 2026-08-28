@@ -13,6 +13,10 @@ class JobStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # A permanently-broken step marked resolved-but-skipped so the pipeline
+    # advances past it (job-system-rework-plan.md §2's POST .../skip) instead
+    # of blocking everything downstream on one un-retryable logic/data error.
+    SKIPPED = "skipped"
 
 
 class JobType(Enum):
@@ -684,7 +688,13 @@ class JobService:
                     prev_status = self.r.hget(f"job:{tids[i]}", "status")
                     if isinstance(prev_status, bytes):
                         prev_status = prev_status.decode()
-                    if prev_status != JobStatus.COMPLETED.value:
+                    # A skipped step is resolved, not pending -- treat it the
+                    # same as completed so the pipeline advances past it
+                    # instead of stalling on the one step that was skipped.
+                    if prev_status not in (
+                        JobStatus.COMPLETED.value,
+                        JobStatus.SKIPPED.value,
+                    ):
                         return
                 if current_idx + 1 < len(tids):
                     next_tid = tids[current_idx + 1]
@@ -708,6 +718,7 @@ class JobService:
                     JobStatus.COMPLETED.value,
                     JobStatus.FAILED.value,
                     JobStatus.CANCELLED.value,
+                    JobStatus.SKIPPED.value,
                 ]:
                     all_done = False
                     break
@@ -779,6 +790,42 @@ class JobService:
             collection = self.r.hget(f"job:{job_id}", "lane_collection")
             if collection:
                 self.advance_lane(collection)
+
+    def skip_job(self, job_id, reason=None):
+        """Marks a permanently-broken step skipped and advances past it.
+
+        job-system-rework-plan.md §2: for the "logic/data error, not worth
+        retrying, don't block everything downstream" case -- unlike fail_job,
+        which cascades failure to the parent, this resolves the step (mirrors
+        complete_job's advance) so a pipeline/group continues with this one
+        step marked skipped instead of stalling or failing outright. Only
+        makes sense for a job that isn't already resolved; a terminal job is
+        left alone rather than silently reclassified.
+        """
+        status = self.r.hget(f"job:{job_id}", "status")
+        if status is None:
+            return False
+        if status in (
+            JobStatus.COMPLETED.value,
+            JobStatus.FAILED.value,
+            JobStatus.CANCELLED.value,
+            JobStatus.SKIPPED.value,
+        ):
+            return False
+
+        self._set_status(job_id, JobStatus.SKIPPED)
+        self.r.hset(f"job:{job_id}", "completed_at", str(int(time.time() * 1000)))
+        self.add_log(job_id, f"Skipped by user.{f' Reason: {reason}' if reason else ''}")
+
+        data = self.r.hgetall(f"job:{job_id}")
+        parent_id = data.get("parent_id")
+        if parent_id:
+            self.advance_parent(parent_id, job_id)
+        else:
+            collection = data.get("lane_collection")
+            if collection:
+                self.advance_lane(collection)
+        return True
 
     # ------------------------------------------------------------------
     # Leases: crash recovery for claimed jobs
@@ -964,6 +1011,7 @@ class JobService:
                     JobStatus.COMPLETED.value,
                     JobStatus.FAILED.value,
                     JobStatus.CANCELLED.value,
+                    JobStatus.SKIPPED.value,
                 ):
                     # Already resolved -- the list entry is just stale bookkeeping.
                     self.release_lease(job_id)
@@ -1510,6 +1558,7 @@ class JobService:
                 JobStatus.CANCELLED.value,
                 JobStatus.FAILED.value,
                 JobStatus.COMPLETED.value,
+                JobStatus.SKIPPED.value,
             ]:
                 continue
 
@@ -1553,6 +1602,7 @@ class JobService:
                 JobStatus.CANCELLED.value,
                 JobStatus.FAILED.value,
                 JobStatus.COMPLETED.value,
+                JobStatus.SKIPPED.value,
             ]:
                 continue
 

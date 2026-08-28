@@ -563,6 +563,23 @@ class JobPauseOne(Resource):
         return resume_job(job_id)
 
 
+@ns_jobs.route("/<string:job_id>/skip")
+class JobSkip(Resource):
+    @ns_jobs.doc(
+        params={
+            "job_id": {
+                "description": "Job UUID to mark skipped",
+                "example": "7b8e23af-4b2a-4e6c-8a1d-3c9f2b1a0e5d",
+            }
+        }
+    )
+    def post(self, job_id):
+        """Marks a permanently-broken step skipped; its pipeline/group advances past it."""
+        from bsimvis.app.routes.jobs import skip_job
+
+        return skip_job(job_id)
+
+
 @ns_jobs.route("/<string:job_id>/retry")
 class JobRetry(Resource):
     @ns_jobs.doc(

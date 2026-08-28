@@ -201,7 +201,16 @@ def _reset_job_recursive(job_id):
 
 
 def retry_job(job_id):
-    """Retries a failed or cancelled job/pipeline/group recursively."""
+    """Retries a failed or cancelled job/pipeline/group recursively.
+
+    Called on a leaf, this is job-system-rework-plan.md §2's "restart this
+    step" -- only the leaf resets and re-enqueues; already-completed siblings
+    are untouched. The pipeline resumes past it once it succeeds because
+    advance_parent (called from complete_job when the retried leaf finishes)
+    doesn't gate on the parent's own current status, only on whether the
+    earlier siblings are resolved -- so a parent left FAILED by the original
+    cascade still advances/completes once this leaf's retry succeeds.
+    """
     job = job_service.get_job_status(job_id)
     if not job:
         return {"error": "Job not found"}, 404
@@ -224,3 +233,46 @@ def retry_job(job_id):
         job_service.add_log(job_id, "Job retried by user.")
 
     return {"status": "retried", "job_id": job_id}
+
+
+def _find_root(job_id):
+    """Walks parent_id to the top-level unit. Cycle-safe, same guard as
+    JobService.is_job_paused's ancestor walk (parent_id should never loop,
+    but the walk is capped in case it ever does)."""
+    seen = set()
+    current = job_id
+    while current and current not in seen:
+        seen.add(current)
+        parent_id = job_service.r.hget(f"job:{current}", "parent_id")
+        if not parent_id:
+            return current
+        current = parent_id
+    return current
+
+
+def restart_all_job(job_id):
+    """Resets the WHOLE top-level unit containing `job_id` and reruns it from
+    the start -- job-system-rework-plan.md §2's "restart-all", distinct from
+    `retry` (restart just the one step). Finds the root ancestor first so
+    this works from any step's id, not only the top-level unit's own id
+    (which is all today's retry_job gives you for this semantic)."""
+    root_id = _find_root(job_id)
+    root = job_service.get_job_status(root_id)
+    if not root:
+        return {"error": "Job not found"}, 404
+
+    jtype = root.get("type")
+    _reset_job_recursive(root_id)
+
+    if jtype in ["pipeline", "group"]:
+        job_service.start_job(root_id)
+    else:
+        job_service.enqueue_job(root_id)
+    job_service.add_log(
+        root_id,
+        f"Restarted from the beginning by user (requested via {job_id})."
+        if root_id != job_id
+        else "Restarted from the beginning by user.",
+    )
+
+    return {"status": "restarted", "job_id": job_id, "root_job_id": root_id}

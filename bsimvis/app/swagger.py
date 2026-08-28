@@ -597,6 +597,23 @@ class JobRetry(Resource):
         return retry_job(job_id)
 
 
+@ns_jobs.route("/<string:job_id>/restart-all")
+class JobRestartAll(Resource):
+    @ns_jobs.doc(
+        params={
+            "job_id": {
+                "description": "Any job UUID within the unit to restart -- not necessarily the top-level one",
+                "example": "7b8e23af-4b2a-4e6c-8a1d-3c9f2b1a0e5d",
+            }
+        }
+    )
+    def post(self, job_id):
+        """Resets the whole top-level unit containing this job and reruns it from the start."""
+        from bsimvis.app.routes.jobs import restart_all_job
+
+        return restart_all_job(job_id)
+
+
 # --- Collection Namespace ---
 @ns_collection.route("/search")
 class CollectionSearch(Resource):

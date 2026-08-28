@@ -542,11 +542,20 @@ window.retryJob = async function (jobId) {
 };
 
 let currentActiveJobId = null;
+let currentModalUnsubscribe = null;
 
 window.showJobDetails = async function (jobId) {
     currentActiveJobId = jobId;
     await refreshJobModal(jobId, true);
     document.getElementById('job-details-modal').style.display = 'flex';
+
+    if (currentModalUnsubscribe) currentModalUnsubscribe();
+    // Store pushes progress/status deltas for this job; re-fetch the full
+    // doc (logs, sub_tasks) on each push instead of polling on a fixed timer.
+    currentModalUnsubscribe = window.JobStatusStore.subscribe({ jobId }, (evt) => {
+        if (evt.type === 'job:sync' || currentActiveJobId !== jobId) return;
+        refreshJobModal(jobId);
+    });
 };
 
 async function refreshJobModal(jobId, isInitial = false) {
@@ -717,6 +726,10 @@ async function refreshJobModal(jobId, isInitial = false) {
 window.closeJobModal = function () {
     document.getElementById('job-details-modal').style.display = 'none';
     currentActiveJobId = null;
+    if (currentModalUnsubscribe) {
+        currentModalUnsubscribe();
+        currentModalUnsubscribe = null;
+    }
 };
 
 // Fleet-wide pause toggle (global, not per-job — the API has no per-job pause)
@@ -758,22 +771,26 @@ window.toggleJobPause = async function () {
 
 // Modal and auto-refresh setups are completed below
 
-// Auto-refresh when in jobs view — skip when tab is hidden
-setInterval(() => {
-    if (document.visibilityState !== 'visible') return;
+function isOnJobsView() {
     const restful = (typeof parseRestfulPath === 'function') ? parseRestfulPath() : null;
-    const isJobsView = (restful && restful.view === 'jobs') || window.location.pathname === '/jobs' || (window.location.hash && window.location.hash.split('?')[0] === '#jobs');
-    if (isJobsView) {
-        refreshPauseButton();
-        const modal = document.getElementById('job-details-modal');
-        const isModalOpen = modal && modal.style.display !== 'none';
+    return (restful && restful.view === 'jobs') || window.location.pathname === '/jobs' || (window.location.hash && window.location.hash.split('?')[0] === '#jobs');
+}
 
-        if (isModalOpen && currentActiveJobId) {
-            refreshJobModal(currentActiveJobId);
-        } else {
-            if (localStorage.getItem('jobAutoRefresh') !== 'false') {
-                if (window.refreshData) window.refreshData(false, false);
-            }
-        }
+// List refresh reacts to the store's global push instead of polling on its
+// own timer -- modal refresh is wired separately in showJobDetails().
+window.JobStatusStore.subscribe({}, (evt) => {
+    if (evt.type === 'job:sync' || !isOnJobsView()) return;
+    const modal = document.getElementById('job-details-modal');
+    const isModalOpen = modal && modal.style.display !== 'none';
+    if (isModalOpen) return;
+    if (localStorage.getItem('jobAutoRefresh') !== 'false') {
+        if (window.refreshData) window.refreshData(false, false);
     }
-}, 2000);
+});
+
+// Fleet pause state has no store equivalent (it's not a per-job field) --
+// keep a slow poll for it, only while the jobs view is open.
+setInterval(() => {
+    if (document.visibilityState !== 'visible' || !isOnJobsView()) return;
+    refreshPauseButton();
+}, 5000);

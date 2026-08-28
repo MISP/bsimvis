@@ -3488,15 +3488,21 @@ window.addEventListener('load', () => {
             jobStatusInFlight = false;
         }
     };
-    // ponytail: one fixed interval, no self-rescheduling. Ticks at 3s but only
-    // hits the API when jobs are active or every 3rd tick otherwise.
-    let jobPollTick = 0;
     window.updateJobStatusIcon();
+    // Store pushes a diff on every job creation/status change (~1.5s from the
+    // server, §2's scoped SSE) -- react to that instead of blind-polling
+    // /api/jobs/stats on our own timer. Slow fallback interval only for
+    // fields the store doesn't carry (active_workers fleet count) and to
+    // recover from a dropped SSE connection.
+    window.JobStatusStore.subscribe({}, (evt) => {
+        if (evt.type === 'job:sync') return;
+        if (document.visibilityState !== 'visible') return;
+        window.updateJobStatusIcon();
+    });
     window.jobPollInterval = setInterval(() => {
         if (document.visibilityState !== 'visible') return;
-        jobPollTick++;
-        if (window.jobsActive || jobPollTick % 3 === 0) window.updateJobStatusIcon();
-    }, 3000);
+        window.updateJobStatusIcon();
+    }, 30000);
 });
 
 function updateNavVisibility(collection) {

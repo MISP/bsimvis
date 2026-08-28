@@ -373,7 +373,7 @@ function initResizableCards() {
 
     // Navigating to a different pair abandons any resplit poll for the old one.
     if (binSimResplitPoll && !(binSimCtx && binSimCtx.md5a === md5a && binSimCtx.md5b === md5b && binSimCtx.collection === collection)) {
-        clearInterval(binSimResplitPoll);
+        binSimResplitPoll();
         binSimResplitPoll = null;
     }
 
@@ -1835,30 +1835,23 @@ window.trackPairAnalysis = function(jobId, ctx) {
     fileAnalysisPanel().appendChild(card);
     const status = card.querySelector('.pair-analysis-status');
 
-    const poll = async () => {
-        try {
-            const response = await fetch(`/api/jobs/${jobId}`);
-            const job = await response.json();
-            status.textContent = `${job.status} · ${job.progress || 0}%`;
-            if (job.status === 'completed') {
-                if (binSimCtx && binSimCtx.md5a === ctx.md5a && binSimCtx.md5b === ctx.md5b) {
-                    fetchAndRenderBinaryDiff(ctx.collection, ctx.md5a, ctx.md5b, ctx.collB, ctx.poolId);
-                }
-                if (job.report) openPairAnalysisReport(job.report);
-                setTimeout(() => card.remove(), 30000);
-                return;
+    const unsubscribe = window.JobStatusStore.subscribe({ jobId }, (evt) => {
+        const job = evt.data;
+        if (!job) return;
+        status.textContent = `${job.status || 'queued'} · ${job.progress || 0}%`;
+        if (evt.type === 'job:completed') {
+            if (binSimCtx && binSimCtx.md5a === ctx.md5a && binSimCtx.md5b === ctx.md5b) {
+                fetchAndRenderBinaryDiff(ctx.collection, ctx.md5a, ctx.md5b, ctx.collB, ctx.poolId);
             }
-            if (['failed', 'cancelled'].includes(job.status)) {
-                status.textContent = `${job.status}${job.error ? ` · ${job.error}` : ''}`;
-                setTimeout(() => card.remove(), 30000);
-                return;
-            }
-            setTimeout(poll, 2000);
-        } catch (error) {
-            status.textContent = 'status unavailable';
+            if (job.report) openPairAnalysisReport(job.report);
+            setTimeout(() => card.remove(), 30000);
+            unsubscribe();
+        } else if (evt.type === 'job:failed') {
+            status.textContent = `${job.status}${job.error ? ` · ${job.error}` : ''}`;
+            setTimeout(() => card.remove(), 30000);
+            unsubscribe();
         }
-    };
-    poll();
+    });
 };
 
 window.cancelPairAnalysis = async function(jobId) {
@@ -1888,7 +1881,7 @@ window.openPairAnalysisReport = function(report) {
 };
 
 
-let binSimResplitPoll = null;
+let binSimResplitPoll = null; // holds the JobStatusStore unsubscribe fn while a resplit is in flight
 const BSIM_RESPLIT_AMBER = '#f0ad4e';
 
 function renderFileSimResplit(stale) {
@@ -1944,21 +1937,14 @@ window.resplitBinSimTags = async function() {
 };
 
 function pollBinSimResplitJob(jobId, ctx) {
-    if (binSimResplitPoll) clearInterval(binSimResplitPoll);
-    binSimResplitPoll = setInterval(async () => {
-        let job;
-        try {
-            const res = await fetch(`/api/jobs/${jobId}`);
-            job = await res.json();
-        } catch (e) {
-            return; // transient fetch error, try again next tick
-        }
-        if (!job || job.status === 'pending' || job.status === 'running') return;
+    if (binSimResplitPoll) binSimResplitPoll();
+    binSimResplitPoll = window.JobStatusStore.subscribe({ jobId }, (evt) => {
+        if (evt.type !== 'job:completed' && evt.type !== 'job:failed') return;
 
-        clearInterval(binSimResplitPoll);
+        binSimResplitPoll();
         binSimResplitPoll = null;
 
-        if (job.status !== 'completed') {
+        if (evt.type !== 'job:completed') {
             showToast('Tag resplit job failed', 'error');
             renderFileSimResplit(true);
             return;
@@ -1969,7 +1955,7 @@ function pollBinSimResplitJob(jobId, ctx) {
             && binSimCtx.collection === ctx.collection) {
             fetchAndRenderBinaryDiff(ctx.collection, ctx.md5a, ctx.md5b, ctx.collB, ctx.poolId);
         }
-    }, 2000);
+    });
 }
 
 function renderFileSimSankey(data) {

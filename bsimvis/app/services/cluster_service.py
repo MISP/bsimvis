@@ -3168,6 +3168,12 @@ class ClusterService:
                         total=total_clusters,
                         phase="bin_cluster_meta",
                     )
+                # Checked right after the chunk flush, so whatever was just
+                # written stays durable and only the remaining clusters are
+                # abandoned.
+                if job_service.is_cancelled(job_id):
+                    job_service.add_log(job_id, "Cancelled.")
+                    return False
         if total_clusters == 0:
             pipe.execute()  # flush the standalone `delete(cluster_list_key)` above
 
@@ -3209,6 +3215,9 @@ class ClusterService:
                         total=total_leaves,
                         phase="bin_cluster_assign",
                     )
+                if job_service.is_cancelled(job_id):
+                    job_service.add_log(job_id, "Cancelled.")
+                    return False
 
         if job_service and job_id:
             job_service.add_log(

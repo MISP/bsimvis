@@ -784,6 +784,12 @@ class FeatureService:
 
         processed = 0
         while True:
+            # Checked before scanning the next batch: whatever's already been
+            # SREM'd from pending_key stays checkpointed, the rest is left in
+            # the set for a resumed run to pick back up.
+            if job_service and job_id and job_service.is_cancelled(job_id):
+                job_service.add_log(job_id, "Cancelled.")
+                return False
             # Cursor 0 every time on purpose: the batch we just finished is gone
             # from the set, so the next scan returns the next slice of work.
             _, batch = self.r.sscan(pending_key, 0, count=batch_size)

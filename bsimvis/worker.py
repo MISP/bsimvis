@@ -332,7 +332,17 @@ class Worker:
                 # Dispatch
                 success = self._dispatch(jtype, payload, job_id)
 
-                if success:
+                # cancel_job (routes/jobs.py:cancel_job) already flipped this
+                # job's status to CANCELLED out-of-band; a handler that then
+                # exits early -- by returning False (analysis_orchestrator's
+                # is_cancelled() convention) or raising (ghidra_job.py's) --
+                # must not have that overwritten with FAILED/COMPLETED, or the
+                # only 3 handlers that cooperatively check is_cancelled() at
+                # all report the wrong terminal state to the user who asked
+                # to stop them.
+                if self.job_service.is_cancelled(job_id):
+                    self.job_service.add_log(job_id, "Job stopped after cancellation.")
+                elif success:
                     self.job_service.add_log(
                         job_id, f"Job {jtype} completed successfully."
                     )
@@ -344,12 +354,17 @@ class Worker:
                     )
 
             except Exception as e:
-                logging.error(f"[!] Job {job_id} failed with error: {e}")
-                import traceback
+                if self.job_service.is_cancelled(job_id):
+                    self.job_service.add_log(
+                        job_id, f"Job stopped after cancellation ({e})."
+                    )
+                else:
+                    logging.error(f"[!] Job {job_id} failed with error: {e}")
+                    import traceback
 
-                traceback.print_exc()
-                self._mark_file_status(payload, "failed", only_if_not="analyzed")
-                self.job_service.fail_job(job_id, str(e))
+                    traceback.print_exc()
+                    self._mark_file_status(payload, "failed", only_if_not="analyzed")
+                    self.job_service.fail_job(job_id, str(e))
             finally:
                 # Record what this job actually cost, so admission weights come
                 # from observation instead of a hand-picked list of suspects.

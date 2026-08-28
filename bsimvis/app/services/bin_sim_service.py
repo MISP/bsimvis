@@ -387,6 +387,13 @@ class BinSimService:
         done_with_single_pass = False
 
         while True:
+            # Checked before popping the next chunk, not after: whatever's
+            # already been LPOP'd off pairs_key stays checkpointed, and the
+            # remainder is left in the list for `restart` (§2) to resume from
+            # exactly here -- the same reason this loop is resumable at all.
+            if job_service and job_id and job_service.is_cancelled(job_id):
+                job_service.add_log(job_id, "Cancelled.")
+                return False
             if pairs_key:
                 raw_chunk = r.lpop(pairs_key, CHUNK_SIZE)
                 if not raw_chunk:

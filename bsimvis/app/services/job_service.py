@@ -3,7 +3,6 @@ import time
 import json
 import os
 from enum import Enum
-from redis.exceptions import WatchError
 from .redis_client import get_queue_redis, get_redis
 from .config_service import config_service
 
@@ -1141,51 +1140,6 @@ class JobService:
             if job.get("paused"):
                 return True
             job_id = job.get("parent_id")
-        return False
-
-    # ------------------------------------------------------------------
-    # Task splicing
-    # ------------------------------------------------------------------
-
-    def splice_tasks(self, parent_id, after_id, new_tids, retries=10):
-        """Inserts task ids into a parent's task_ids after `after_id`, atomically.
-
-        task_ids is a JSON blob, so a plain read-modify-write loses one of two
-        concurrent splices (chunks arrive in parallel). WATCH makes the write
-        fail instead of silently dropping tasks.
-        """
-        if not new_tids:
-            return True
-        # new_tids is (jtype, payload) task defs, same shape create_pipeline/
-        # create_group take -- task_ids stores resolved job-id strings, so these
-        # need the same _resolve_task() pass (creates the child job, points its
-        # parent_id at parent_id) before they're spliced in. Resolve once, up
-        # front: doing it inside the WATCH retry loop would create a duplicate
-        # orphaned child job on every WatchError retry.
-        resolved_tids = [self._resolve_task(t, parent_id) for t in new_tids]
-        key = f"job:{parent_id}"
-        for _ in range(retries):
-            try:
-                with self.r.pipeline() as pipe:
-                    pipe.watch(key)
-                    raw = pipe.hget(key, "task_ids")
-                    if raw is None:
-                        pipe.unwatch()
-                        return False
-                    existing = json.loads(raw)
-                    try:
-                        idx = existing.index(after_id)
-                        updated = (
-                            existing[: idx + 1] + resolved_tids + existing[idx + 1 :]
-                        )
-                    except ValueError:
-                        updated = existing + resolved_tids
-                    pipe.multi()
-                    pipe.hset(key, "task_ids", json.dumps(updated))
-                    pipe.execute()
-                return True
-            except WatchError:
-                continue
         return False
 
     def get_job_status(self, job_id):

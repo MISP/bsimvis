@@ -445,52 +445,6 @@ def test_failure_cancels_the_remaining_children():
     assert svc.r.hget("job:c", "status") == JobStatus.CANCELLED.value
 
 
-# --------------------------------------------------------------------------
-# task splicing
-# --------------------------------------------------------------------------
-
-
-def test_splice_inserts_after_the_anchor_task():
-    svc = make_service()
-    svc.r.hset("job:pipe", "task_ids", '["a", "b"]')
-
-    assert svc.splice_tasks("pipe", "a", ["x", "y"]) is True
-    assert svc.r.hget("job:pipe", "task_ids") == '["a", "x", "y", "b"]'
-
-
-def test_splice_appends_when_the_anchor_is_gone():
-    svc = make_service()
-    svc.r.hset("job:pipe", "task_ids", '["a"]')
-
-    assert svc.splice_tasks("pipe", "missing", ["x"]) is True
-    assert svc.r.hget("job:pipe", "task_ids") == '["a", "x"]'
-
-
-def test_concurrent_splices_both_survive():
-    # Read-modify-write of the task_ids blob used to lose one of two parallel
-    # chunk splices outright.
-    svc = make_service()
-    svc.r.hset("job:pipe", "task_ids", '["a"]')
-
-    svc.splice_tasks("pipe", "a", ["chunk1"])
-    svc.splice_tasks("pipe", "a", ["chunk2"])
-
-    tids = svc.r.hget("job:pipe", "task_ids")
-    assert "chunk1" in tids and "chunk2" in tids
-
-
-def test_splice_on_a_missing_pipeline_is_a_no_op():
-    svc = make_service()
-    assert svc.splice_tasks("nope", "a", ["x"]) is False
-
-
-def test_empty_splice_is_a_no_op():
-    svc = make_service()
-    svc.r.hset("job:pipe", "task_ids", '["a"]')
-    assert svc.splice_tasks("pipe", "a", []) is True
-    assert svc.r.hget("job:pipe", "task_ids") == '["a"]'
-
-
 def test_pausing_a_group_holds_back_its_children():
     # The group is never claimed by a worker -- only its leaves are -- so the
     # flag has to be visible from the leaf that actually gets popped.

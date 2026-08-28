@@ -2974,7 +2974,15 @@ class ClusterService:
         pipe = r.pipeline(transaction=False)
         pipe.delete(cluster_list_key)
 
-        for label, members in cluster_members.items():
+        # Flush + checkpoint every CLUSTER_POOL_META_CHUNK_SIZE clusters instead
+        # of accumulating every cluster's writes into one pipeline for the whole
+        # pool (job-system-rework-plan.md §7.1): on a pool with hundreds of
+        # thousands of clusters, that unflushed pipeline was itself unbounded
+        # memory, on top of the ~1.3 GiB this stage was never separately
+        # attributed against the measured 4.06 GiB peak (over the 3 GB cap).
+        META_CHUNK_SIZE = int(os.getenv("CLUSTER_POOL_META_CHUNK_SIZE", 500))
+        total_clusters = len(cluster_members)
+        for idx, (label, members) in enumerate(cluster_members.items()):
             c_uuid = label_to_uuid[label]
             meta_key = f"global:pool:{pool_id}:bin_cluster:{c_uuid}:meta"
             members_key = f"global:pool:{pool_id}:bin_cluster:{c_uuid}:members"
@@ -3147,9 +3155,28 @@ class ClusterService:
                                 f"{collection_coll}:reg:file:{meta_key}", bucket_key
                             )
 
-        pipe.execute()
+            if (idx + 1) % META_CHUNK_SIZE == 0 or (idx + 1) == total_clusters:
+                pipe.execute()
+                pipe = r.pipeline(transaction=False)
+                if job_service and job_id:
+                    pct = int((idx + 1) / total_clusters * 100) if total_clusters else 100
+                    job_service.update_progress(
+                        job_id,
+                        pct,
+                        f"Wrote {idx + 1}/{total_clusters} cluster docs",
+                        processed=idx + 1,
+                        total=total_clusters,
+                        phase="bin_cluster_meta",
+                    )
+        if total_clusters == 0:
+            pipe.execute()  # flush the standalone `delete(cluster_list_key)` above
 
-        # Write file-to-cluster assignments: pool:{pool_id}:file:{md5}:bin_clusters
+        # Write file-to-cluster assignments: pool:{pool_id}:file:{md5}:bin_clusters.
+        # Same chunk-and-checkpoint treatment -- iterates over every propagated
+        # file/edge in the pool, the other stage §7.1 named as a candidate for
+        # the unattributed memory (job-system-rework-plan.md §7.1).
+        ASSIGN_CHUNK_SIZE = int(os.getenv("CLUSTER_POOL_ASSIGN_CHUNK_SIZE", 500))
+        total_leaves = len(leaf_to_clusters)
         pipe = r.pipeline(transaction=False)
         for i, (leaf, clusters) in enumerate(leaf_to_clusters.items()):
             file_id = idx_to_id[leaf]
@@ -3168,7 +3195,20 @@ class ClusterService:
                         pipe.delete(clusters_key)
                 else:
                     pipe.delete(clusters_key)
-        pipe.execute()
+
+            if (i + 1) % ASSIGN_CHUNK_SIZE == 0 or (i + 1) == total_leaves:
+                pipe.execute()
+                pipe = r.pipeline(transaction=False)
+                if job_service and job_id:
+                    pct = int((i + 1) / total_leaves * 100) if total_leaves else 100
+                    job_service.update_progress(
+                        job_id,
+                        pct,
+                        f"Assigned {i + 1}/{total_leaves} files to clusters",
+                        processed=i + 1,
+                        total=total_leaves,
+                        phase="bin_cluster_assign",
+                    )
 
         if job_service and job_id:
             job_service.add_log(

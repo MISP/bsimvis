@@ -444,7 +444,14 @@ function renderJobs(jobs, skipBackgroundFetch = false) {
         }
 
         const targetDisplay = getJobTargetLink(job);
-        const durationHtml = window.formatDuration ? window.formatDuration(job.created_at, job.updated_at, status) : '-';
+        // started_at/completed_at (execution window) over created_at/updated_at
+        // (enqueue time + last-log-write time, which drift apart and mix queue
+        // wait into what should be a pure execution duration) -- see
+        // job-system-rework-plan.md §3.7. created_at/updated_at stay as the
+        // fallback for jobs that predate started_at/completed_at existing.
+        const durationHtml = window.formatDuration
+            ? window.formatDuration(job.started_at || job.created_at, job.completed_at || job.updated_at, status)
+            : '-';
         const rowStyle = shouldHide ? 'display: none;' : '';
 
         return `

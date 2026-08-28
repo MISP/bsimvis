@@ -23,6 +23,7 @@ def list_jobs():
     status = request.args.get("status")
     jtype = request.args.get("type")
     tier = request.args.get("tier", type=int)
+    md5 = request.args.get("md5")
     jobs, total = job_service.list_jobs(
         limit=limit,
         offset=offset,
@@ -31,6 +32,7 @@ def list_jobs():
         status=status,
         jtype=jtype,
         tier=tier,
+        md5=md5,
     )
     return {"items": jobs, "total": total}
 
@@ -105,7 +107,6 @@ def _reset_job_recursive(job_id):
     job_service.r.hset(
         f"job:{job_id}",
         mapping={
-            "status": "pending",
             "error": "",
             "progress": 0,
             # A user-initiated retry is exactly when the lease-expiry counter
@@ -114,9 +115,15 @@ def _reset_job_recursive(job_id):
             "attempts": 0,
         },
     )
+    job_service._set_status(job_id, "pending")
     # Delete (not zero) the enqueue + barrier latches: both use field-existence
     # semantics (hset return value), so they must be absent to re-arm on retry.
-    job_service.r.hdel(f"job:{job_id}", "queued", "barrier_fired")
+    # started_at/completed_at must also go: leaves them stamped from the prior
+    # attempt would otherwise report that attempt's duration for this one
+    # (job-system-rework-plan.md §3.7).
+    job_service.r.hdel(
+        f"job:{job_id}", "queued", "barrier_fired", "started_at", "completed_at"
+    )
 
     # Check for children
     task_ids_raw = job.get(b"task_ids") or job.get("task_ids")

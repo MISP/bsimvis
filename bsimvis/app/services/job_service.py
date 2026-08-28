@@ -104,8 +104,56 @@ def safe_int(val, default=0):
 
 
 class JobService:
+    # Centralizes what used to be ~6 separate hset(job, "status", ...) call
+    # sites, each of which needs to also move the job between the
+    # jobs:idx:status:<status> index sets (§2.1) -- doing that as two
+    # separate round trips per call site is how index/hash drift happens.
+    _SET_STATUS_LUA = """
+    local job_key = KEYS[1]
+    local job_id = ARGV[1]
+    local new_status = ARGV[2]
+    local old_status = redis.call('hget', job_key, 'status')
+    redis.call('hset', job_key, 'status', new_status)
+    if old_status and old_status ~= new_status then
+        redis.call('srem', 'jobs:idx:status:' .. old_status, job_id)
+    end
+    redis.call('sadd', 'jobs:idx:status:' .. new_status, job_id)
+    return old_status
+    """
+
     def __init__(self):
         self.r = get_queue_redis()
+
+    def _set_status(self, job_id, new_status):
+        """Sets job status and keeps jobs:idx:status:<status> in sync."""
+        val = new_status.value if isinstance(new_status, JobStatus) else new_status
+        return self.r.eval(self._SET_STATUS_LUA, 1, f"job:{job_id}", job_id, val)
+
+    def _canonical_md5(self, payload):
+        """Normalizes whichever of md5/file_md5/file_id (top-level or nested
+        under file_meta) a payload used, into one name."""
+        if not isinstance(payload, dict):
+            return None
+        md5 = payload.get("file_md5") or payload.get("md5") or payload.get("file_id")
+        if not md5:
+            file_meta = payload.get("file_meta") or {}
+            md5 = file_meta.get("file_md5") or file_meta.get("md5")
+        return md5
+
+    def _index_job(self, job_id, job_type, status, payload):
+        """Writes the §2.1 secondary indexes for a newly-created job. Called
+        for every job (leaf or subtask), not just top-level units, so 'every
+        job that touched this file' is answerable regardless of nesting."""
+        jtype_val = job_type.value if isinstance(job_type, JobType) else job_type
+        status_val = status.value if isinstance(status, JobStatus) else status
+        self.r.sadd(f"jobs:idx:status:{status_val}", job_id)
+        self.r.sadd(f"jobs:idx:type:{jtype_val}", job_id)
+        md5 = self._canonical_md5(payload)
+        if md5:
+            self.r.hset(f"job:{job_id}", "file_md5", md5)
+            self.r.sadd(f"jobs:idx:md5:{md5}", job_id)
+        if isinstance(payload, dict) and payload.get("pool_id"):
+            self.r.sadd(f"jobs:idx:pool:{payload['pool_id']}", job_id)
 
     def _get_pool_name(self, pool_id):
         if not pool_id:
@@ -147,12 +195,16 @@ class JobService:
 
         # Store job metadata as a Hash
         self.r.hset(f"job:{job_id}", mapping=job_data)
+        self._index_job(job_id, job_type, JobStatus.PENDING, payload)
 
         # Add to global list of jobs for tracking if not a subtask
         if not is_subtask:
             self.r.lpush("jobs:global", job_id)
             # Keep only the last 1000 jobs in the global list
             self.r.ltrim("jobs:global", 0, 999)
+            # Uncapped recency index (§2.1) -- jobs:global's LTRIM-to-1000
+            # means old jobs fall off it; the timeline never loses one.
+            self.r.zadd("jobs:timeline", {job_id: timestamp})
 
             # Index by collection if present
             coll = job_data.get("collection")
@@ -173,6 +225,7 @@ class JobService:
             self.r.hset(f"job:{task}", "parent_id", parent_id)
             # Remove from jobs:global since it now has a parent
             self.r.lrem("jobs:global", 0, task)
+            self.r.zrem("jobs:timeline", task)
             return task
         elif isinstance(task, (list, tuple)) and len(task) >= 2:
             jtype, payload = task[0], task[1]
@@ -242,8 +295,10 @@ class JobService:
             pipeline_data["collection"] = collection
 
         self.r.hset(f"job:{pipeline_id}", mapping=pipeline_data)
+        self._index_job(pipeline_id, "pipeline", JobStatus.PENDING, None)
         self.r.lpush("jobs:global", pipeline_id)
         self.r.ltrim("jobs:global", 0, 999)
+        self.r.zadd("jobs:timeline", {pipeline_id: timestamp})
 
         if collection:
             self.r.lpush(f"jobs:collection:{collection}", pipeline_id)
@@ -316,8 +371,10 @@ class JobService:
             group_data["collection"] = collection
 
         self.r.hset(f"job:{group_id}", mapping=group_data)
+        self._index_job(group_id, "group", JobStatus.PENDING, None)
         self.r.lpush("jobs:global", group_id)
         self.r.ltrim("jobs:global", 0, 999)
+        self.r.zadd("jobs:timeline", {group_id: timestamp})
 
         if collection:
             self.r.lpush(f"jobs:collection:{collection}", group_id)
@@ -564,7 +621,12 @@ class JobService:
             return
 
         if jtype in ["pipeline", "group"]:
-            self.r.hset(f"job:{job_id}", "status", JobStatus.RUNNING.value)
+            self._set_status(job_id, JobStatus.RUNNING)
+            # Composite units never went through worker._execute_job, so
+            # unlike leaf jobs they never got a started_at at all -- that's
+            # why jobs.js fell back to created_at (enqueue time, not
+            # execution time) for duration (§3.7).
+            self.r.hset(f"job:{job_id}", "started_at", str(int(time.time() * 1000)))
 
         if jtype == "pipeline":
             tids = json.loads(job.get("task_ids", "[]"))
@@ -584,7 +646,8 @@ class JobService:
 
     def complete_job(self, job_id):
         """Marks a job as completed and advances its parent if applicable."""
-        self.r.hset(f"job:{job_id}", "status", JobStatus.COMPLETED.value)
+        self._set_status(job_id, JobStatus.COMPLETED)
+        self.r.hset(f"job:{job_id}", "completed_at", str(int(time.time() * 1000)))
         self.update_progress(job_id, 100)
 
         data = self.r.hgetall(f"job:{job_id}")
@@ -661,8 +724,11 @@ class JobService:
 
     def fail_job(self, job_id, error_msg):
         """Marks a job as failed and cascades failure to its parent."""
-        self.r.hset(f"job:{job_id}", "status", JobStatus.FAILED.value)
-        self.r.hset(f"job:{job_id}", "error", error_msg)
+        self._set_status(job_id, JobStatus.FAILED)
+        self.r.hset(
+            f"job:{job_id}",
+            mapping={"error": error_msg, "completed_at": str(int(time.time() * 1000))},
+        )
         self.add_log(job_id, f"Execution error: {error_msg}")
 
         # Failure cascades down as well as up: without this the remaining children
@@ -899,7 +965,7 @@ class JobService:
                 # The `queued` latch is what stops a re-enqueue, and the status is
                 # still `running` from the dead worker. Both must be reset first.
                 self.r.hdel(f"job:{job_id}", "queued", "lease_owner")
-                self.r.hset(f"job:{job_id}", "status", JobStatus.PENDING.value)
+                self._set_status(job_id, JobStatus.PENDING)
                 self.add_log(
                     job_id, f"Lease expired; requeued (attempt {attempts + 1})."
                 )
@@ -1213,7 +1279,8 @@ class JobService:
         if not data:
             return False
 
-        self.r.hset(f"job:{job_id}", "status", JobStatus.CANCELLED.value)
+        self._set_status(job_id, JobStatus.CANCELLED)
+        self.r.hset(f"job:{job_id}", "completed_at", str(int(time.time() * 1000)))
 
         # Remove from pending queues to update stats immediately
         self.r.lrem("jobs:pending", 0, job_id)
@@ -1292,7 +1359,15 @@ class JobService:
             self._update_pipeline_aggregate_progress(parent_id)
 
     def _update_pipeline_aggregate_progress(self, pipeline_id):
-        """Recalculates pipeline progress based on subtasks."""
+        """Recalculates pipeline progress based on subtasks.
+
+        Weighted by each child's total_items when children report sizes
+        (a huge cluster_pool job and three quick idx_* jobs don't count
+        equally), falling back to an equal-weight average only when none
+        do. Then walks up to the grandparent too, not just one hop --
+        without this a change three levels down never reaches the
+        top-level unit's progress bar (job-system-rework-plan.md §3.7).
+        """
         pipe_data = self.r.hgetall(f"job:{pipeline_id}")
         if not pipe_data or "task_ids" not in pipe_data:
             return
@@ -1301,14 +1376,33 @@ class JobService:
         if not tids:
             return
 
-        total_p = 0
+        pipe = self.r.pipeline(transaction=False)
         for tid in tids:
-            p = self.r.hget(f"job:{tid}", "progress")
-            total_p += safe_int(p, 0)
+            pipe.hmget(f"job:{tid}", "progress", "total_items")
+        rows = pipe.execute()
 
-        agg_progress = total_p // len(tids)
+        total_p = 0
+        weighted_num = 0
+        weighted_den = 0
+        for progress_raw, total_items_raw in rows:
+            p = safe_int(progress_raw, 0)
+            total_p += p
+            sz = safe_int(total_items_raw, 0)
+            if sz > 0:
+                weighted_num += sz * p
+                weighted_den += sz
+
+        if weighted_den > 0:
+            agg_progress = weighted_num // weighted_den
+        else:
+            agg_progress = total_p // len(tids)
+
         self.r.hset(f"job:{pipeline_id}", "progress", agg_progress)
         self.r.hset(f"job:{pipeline_id}", "updated_at", int(time.time() * 1000))
+
+        parent_id = pipe_data.get("parent_id")
+        if parent_id:
+            self._update_pipeline_aggregate_progress(parent_id)
 
     def get_global_stats(self):
         """Returns aggregate stats across all active and pending jobs."""
@@ -1444,6 +1538,22 @@ class JobService:
             "active_jobs": active_jobs,
         }
 
+    def _root_job_id(self, job_id):
+        """Walks parent_id up to the top-level unit -- list_jobs is unit-
+        oriented (rows are chain/group/chord roots), so an md5 hit on a
+        leaf/subtask still needs to surface as its containing unit."""
+        current = job_id
+        seen = set()
+        while current not in seen:
+            seen.add(current)
+            parent = self.r.hget(f"job:{current}", "parent_id")
+            if isinstance(parent, bytes):
+                parent = parent.decode()
+            if not parent:
+                return current
+            current = parent
+        return current
+
     def list_jobs(
         self,
         limit=100,
@@ -1453,10 +1563,33 @@ class JobService:
         status=None,
         jtype=None,
         tier=None,
+        md5=None,
     ):
         """Returns a paged list of jobs and the total count."""
+        # md5 -- "every job that ever touched this file" -- resolves via the
+        # jobs:idx:md5 index (§2.1) instead of the full-scan-and-filter every
+        # other branch here still does; there was no way to answer this query
+        # at all before that index existed.
+        if md5:
+            raw_ids = {
+                i.decode() if isinstance(i, bytes) else i
+                for i in self.r.smembers(f"jobs:idx:md5:{md5}")
+            }
+            root_ids = {self._root_job_id(i) for i in raw_ids}
+            pipe = self.r.pipeline(transaction=False)
+            for rid in root_ids:
+                pipe.hget(f"job:{rid}", "created_at")
+            created_ats = pipe.execute()
+            all_job_ids = [
+                rid
+                for rid, _ in sorted(
+                    zip(root_ids, created_ats),
+                    key=lambda pair: safe_int(pair[1], 0),
+                    reverse=True,
+                )
+            ]
         # Use collection index key if collection filter is passed
-        if collection:
+        elif collection:
             all_job_ids = self.r.lrange(f"jobs:collection:{collection}", 0, -1)
         elif pool:
             all_job_ids = self.r.lrange(f"jobs:collection:pool:{pool}", 0, -1)
@@ -1473,7 +1606,7 @@ class JobService:
 
         # Optimize: if no filter is active, we can slice top-level job IDs early
         # to avoid fetching and parsing all 1000 jobs.
-        has_filters = any([collection, pool, status, jtype, tier])
+        has_filters = any([collection, pool, status, jtype, tier, md5])
         sliced_job_ids = all_job_ids
         if not has_filters:
             sliced_job_ids = all_job_ids[offset : offset + limit]
@@ -1554,6 +1687,7 @@ class JobService:
                     "created_at": safe_int(job.get("created_at", 0)),
                     "updated_at": safe_int(job.get("updated_at", 0)),
                     "started_at": safe_int(job.get("started_at", 0)),
+                    "completed_at": safe_int(job.get("completed_at", 0)),
                     "parent_id": parent_id,
                     "task_ids": task_ids,
                     "payload": job.get("payload", ""),

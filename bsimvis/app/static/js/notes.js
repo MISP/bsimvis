@@ -55,12 +55,19 @@ let isGraphLocked = false;
 let currentGraphFuncId = null;
 let sideGraphController = null;
 
-const NOTES_WIDTH = 500;
-const AI_WIDTH = 600;
-// Pivotick's own light-mode UI chrome (toolbar/rail/header) needs >600px in
-// both dimensions or it silently downgrades to the plainer 'viewer' mode --
-// keep this comfortably past that floor so the side panel actually gets it.
-const GRAPH_WIDTH = 640;
+// Panel widths are user-resizable (drag handle on each panel's left edge)
+// and persisted per-browser so a chosen size survives reloads. Pivotick's
+// own light-mode UI chrome (toolbar/rail/header) needs >600px in both
+// dimensions or it silently downgrades to the plainer 'viewer' mode --
+// keep its floor comfortably past that so the side panel actually gets it.
+const PANEL_MAX_WIDTH = 1100;
+const PANEL_MIN_WIDTHS = { notes: 320, ai: 360, graph: 620 };
+const PANEL_DEFAULTS = { notes: 500, ai: 600, graph: 640 };
+const panelWidths = { ...PANEL_DEFAULTS };
+for (const key of Object.keys(panelWidths)) {
+    const stored = parseInt(localStorage.getItem(`bsimvis-panel-width-${key}`), 10);
+    if (stored >= PANEL_MIN_WIDTHS[key] && stored <= PANEL_MAX_WIDTH) panelWidths[key] = stored;
+}
 
 /** Collection the AI Insight chat should use right now: the focused entity's
  * collection when one is focused, otherwise whatever collection/pool the
@@ -110,8 +117,6 @@ async function showNotes(funcId, expand = true) {
         loadSideGraph(funcId);
     }
 
-    // Add key listeners
-    setupInputListeners();
 }
 
 /** Entry point for file-level notes. entityMode is derived from the id in showNotes. */
@@ -157,39 +162,94 @@ function createPanelsIfMissing() {
     const graphPanel = document.createElement('div');
     graphPanel.id = 'pivotick-panel-v2';
     graphPanel.className = 'side-panel-v2';
-    graphPanel.style.width = GRAPH_WIDTH + 'px';
-    graphPanel.style.right = -(GRAPH_WIDTH + 50) + 'px';
+    graphPanel.style.width = panelWidths.graph + 'px';
+    graphPanel.style.right = -(panelWidths.graph + 50) + 'px';
     document.body.appendChild(graphPanel);
 
     // Notes Panel
     const notesPanel = document.createElement('div');
     notesPanel.id = 'notes-panel-v2';
     notesPanel.className = 'side-panel-v2';
-    notesPanel.style.width = NOTES_WIDTH + 'px';
-    notesPanel.style.right = -(NOTES_WIDTH + 50) + 'px';
+    notesPanel.style.width = panelWidths.notes + 'px';
+    notesPanel.style.right = -(panelWidths.notes + 50) + 'px';
     document.body.appendChild(notesPanel);
 
     // AI Panel
     const aiPanel = document.createElement('div');
     aiPanel.id = 'ai-panel-v2';
     aiPanel.className = 'side-panel-v2';
-    aiPanel.style.width = AI_WIDTH + 'px';
-    aiPanel.style.right = -(AI_WIDTH + 50) + 'px';
+    aiPanel.style.width = panelWidths.ai + 'px';
+    aiPanel.style.right = -(panelWidths.ai + 50) + 'px';
     document.body.appendChild(aiPanel);
 
     renderGraphPanelHTML(graphPanel);
     renderNotesPanelHTML(notesPanel);
     renderAIPanelHTML(aiPanel);
+
+    setupPanelResize(graphPanel, 'graph');
+    setupPanelResize(notesPanel, 'notes');
+    setupPanelResize(aiPanel, 'ai');
+
+    // Enter-to-send only needs wiring once -- these inputs are never
+    // recreated -- rather than every time showNotes() happens to run.
+    setupInputListeners();
+}
+
+/** Drag handle on a panel's left edge. Width is clamped and persisted so a
+ * resize survives reloads (localStorage, per panel key). */
+function setupPanelResize(panel, key) {
+    const handle = document.createElement('div');
+    handle.className = 'panel-resize-handle';
+    handle.title = 'Drag or use arrow keys to resize';
+    handle.tabIndex = 0;
+    handle.setAttribute('role', 'separator');
+    handle.setAttribute('aria-orientation', 'vertical');
+    handle.setAttribute('aria-label', `Resize ${key} panel`);
+    panel.appendChild(handle);
+
+    const setWidth = (width) => {
+        const viewportMax = Math.max(PANEL_MIN_WIDTHS[key], window.innerWidth - 48);
+        panelWidths[key] = Math.min(PANEL_MAX_WIDTH, viewportMax, Math.max(PANEL_MIN_WIDTHS[key], width));
+        panel.style.width = panelWidths[key] + 'px';
+        updateLayout();
+    };
+
+    handle.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startWidth = panelWidths[key];
+        document.body.classList.add('panel-resizing');
+        handle.setPointerCapture(e.pointerId);
+
+        const onMove = (ev) => setWidth(startWidth + startX - ev.clientX);
+        const onUp = () => {
+            handle.removeEventListener('pointermove', onMove);
+            handle.removeEventListener('pointerup', onUp);
+            handle.removeEventListener('pointercancel', onUp);
+            document.body.classList.remove('panel-resizing');
+            localStorage.setItem(`bsimvis-panel-width-${key}`, String(panelWidths[key]));
+        };
+        handle.addEventListener('pointermove', onMove);
+        handle.addEventListener('pointerup', onUp);
+        handle.addEventListener('pointercancel', onUp);
+    });
+
+    handle.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        setWidth(panelWidths[key] + (e.key === 'ArrowLeft' ? 20 : -20));
+        localStorage.setItem(`bsimvis-panel-width-${key}`, String(panelWidths[key]));
+    });
 }
 
 function renderNotesPanelHTML(el) {
     el.innerHTML = `
         <div class="panel-v2-header">
-            <h3 style="margin: 0; font-size: 0.9rem; color: #ffd700;"><i class="fa-solid fa-comments"></i> Notes</h3>
+            <h3 style="margin: 0; font-size: 0.9rem; color: var(--note-accent);"><i class="fa-solid fa-comments"></i> Notes</h3>
             <button onclick="closeNotesPanel()" style="background: none; border: none; color: var(--subtle); cursor: pointer; font-size: 1.1rem; padding: 4px; display: flex; align-items: center; transition: color 0.2s;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--subtle)'"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <div id="notes-column" style="flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden;">
-            <div id="notes-drop-overlay" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background: rgba(255, 215, 0, 0.1); border: 2px dashed #ffd700; z-index: 100; pointer-events: none; align-items: center; justify-content: center; flex-direction: column; color: #ffd700; font-weight: bold; font-size: 1.2rem; backdrop-filter: blur(2px);">
+            <div id="notes-drop-overlay" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background: color-mix(in srgb, var(--note-accent) 10%, transparent); border: 2px dashed var(--note-accent); z-index: 100; pointer-events: none; align-items: center; justify-content: center; flex-direction: column; color: var(--note-accent); font-weight: bold; font-size: 1.2rem; backdrop-filter: blur(2px);">
                 <i class="fa-solid fa-plus-circle" style="font-size: 3rem; margin-bottom: 10px;"></i>
                 Drop to Save Note
             </div>
@@ -197,13 +257,13 @@ function renderNotesPanelHTML(el) {
                 <div style="text-align: center; color: var(--subtle); padding: 20px;">Loading notes...</div>
             </div>
             <div style="padding: 16px; background: var(--meta-bg); border-top: 1px solid var(--border);">
-                <textarea id="new-note-text" placeholder="Add a new note (Markdown)..." style="width: 100%; min-height: 80px; background: var(--bg); border: 1px solid var(--border); color: var(--meta-text); padding: 10px; border-radius: 4px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; font-family: 'Fira Code', monospace; font-size: 0.85rem; outline: none;"></textarea>
+                <textarea id="new-note-text" placeholder="Add a new note (Markdown)..." style="width: 100%; min-height: 80px; background: var(--bg); border: 1px solid var(--border); color: var(--meta-text); padding: 10px; border-radius: 4px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; font: inherit; font-size: 0.85rem; outline: none;"></textarea>
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <select id="note-owner-select" style="background: var(--bg); color: var(--meta-text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 0.8rem; outline: none;">
                         <option value="user">User</option>
                         <option value="llm">LLM</option>
                     </select>
-                    <button onclick="saveNote(currentNotesFuncId)" style="background: var(--accent, #ffd700); color: var(--window-tray); border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.85rem;">Add Note</button>
+                    <button onclick="saveNote(currentNotesFuncId)" class="note-primary-btn">Add Note</button>
                 </div>
             </div>
         </div>
@@ -238,8 +298,8 @@ function toggleGraphScope() {
     }
     const btn = document.getElementById('pivotick-scope-btn');
     if (btn) {
-        btn.style.borderColor = isPoolScope ? '#ae81ff' : 'var(--border)';
-        btn.style.color = isPoolScope ? '#ae81ff' : 'var(--meta-text)';
+        btn.style.borderColor = isPoolScope ? 'var(--info)' : 'var(--border)';
+        btn.style.color = isPoolScope ? 'var(--info)' : 'var(--meta-text)';
     }
     if (window.showToast) {
         window.showToast(`Graph traversal scope switched to ${isPoolScope ? 'Pool' : 'Collection'} mode`, 'info');
@@ -280,7 +340,7 @@ function renderGraphPanelHTML(el) {
                 <i class="fa-solid fa-spinner fa-spin"></i> Loading call graph...
             </div>
             <div id="pivotick-side-container" style="display: none; width: 100%; height: 100%; position: relative;"></div>
-            <div id="pivotick-side-legend" style="position:absolute; bottom:8px; left:8px; z-index:100; display:flex; flex-direction:column; gap:3px; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:0.65rem; color:var(--subtle);">
+            <div id="pivotick-side-legend" style="position:absolute; bottom:8px; left:8px; z-index:100; display:flex; flex-direction:column; gap:3px; background:color-mix(in srgb, var(--meta-bg) 92%, transparent); backdrop-filter:blur(4px); padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:0.65rem; color:var(--meta-text-muted);">
                 ${typeof FunctionView !== 'undefined' ? FunctionView.renderLegendHTML() : ''}
             </div>
         </div>
@@ -290,18 +350,18 @@ function renderGraphPanelHTML(el) {
 function renderAIPanelHTML(el) {
     el.innerHTML = `
         <div class="panel-v2-header">
-            <span style="display: flex; align-items: center; gap: 8px; font-size: 0.9rem; color: #ae81ff; font-weight: bold;"><i class="fa-solid fa-robot"></i> AI Insight</span>
+            <span style="display: flex; align-items: center; gap: 8px; font-size: 0.9rem; color: var(--info); font-weight: bold;"><i class="fa-solid fa-robot"></i> AI Insight</span>
             <div style="display: flex; align-items: center; gap: 12px;">
-                <div id="llm-status" style="font-size: 0.75rem; color: #ae81ff; font-style: italic; font-weight: normal; text-transform: none;"></div>
+                <div id="llm-status" aria-live="polite"></div>
                 <button onclick="closeAIPanel()" style="background: none; border: none; color: var(--subtle); cursor: pointer; font-size: 1.1rem; padding: 4px; display: flex; align-items: center; transition: color 0.2s;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--subtle)'"><i class="fa-solid fa-xmark"></i></button>
             </div>
         </div>
-        <div id="llm-chat-history" style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 20px; background: var(--card-bg);"></div>
+        <div id="llm-chat-history" style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; background: var(--card-bg);"></div>
         <div style="padding: 16px; background: var(--meta-bg); border-top: 1px solid var(--border);">
-            <textarea id="llm-input" placeholder="Ask AI about this function..." style="width: 100%; min-height: 80px; background: var(--bg); border: 1px solid var(--border); color: var(--meta-text); padding: 10px; border-radius: 4px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; font-family: 'Fira Code', monospace; font-size: 0.85rem; outline: none;"></textarea>
+            <textarea id="llm-input" placeholder="Message AI Insight (Enter to send, Shift+Enter for a new line)" style="width: 100%; min-height: 80px; background: var(--bg); border: 1px solid var(--border); color: var(--meta-text); padding: 10px; border-radius: 6px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; font: inherit; font-size: 0.88rem; outline: none;"></textarea>
             <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                <button id="llm-stop-btn" onclick="stopLLMGeneration()" style="display:none; background: #f44336; color: var(--text); border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.85rem;">Stop</button>
-                <button id="llm-send-btn" onclick="sendLLMChat()" style="background: #ae81ff; color: var(--window-tray); border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.85rem;">Send</button>
+                <button id="llm-stop-btn" onclick="stopLLMGeneration()" class="llm-stop-btn" style="display:none;">Stop</button>
+                <button id="llm-send-btn" onclick="sendLLMChat()" class="llm-send-btn">Send</button>
             </div>
         </div>
     `;
@@ -317,25 +377,25 @@ function updateLayout() {
     // AI is on the far right
     if (isAIOpen) {
         aiPanel.style.right = '0';
-        totalOffset += AI_WIDTH;
+        totalOffset += panelWidths.ai;
     } else {
-        if (aiPanel) aiPanel.style.right = -(AI_WIDTH + 50) + 'px';
+        if (aiPanel) aiPanel.style.right = -(panelWidths.ai + 50) + 'px';
     }
-    
+
     // Notes is to the left of AI
     if (isNotesOpen) {
-        notesPanel.style.right = (isAIOpen ? AI_WIDTH : 0) + 'px';
-        totalOffset += NOTES_WIDTH;
+        notesPanel.style.right = (isAIOpen ? panelWidths.ai : 0) + 'px';
+        totalOffset += panelWidths.notes;
     } else {
-        if (notesPanel) notesPanel.style.right = -(NOTES_WIDTH + 50) + 'px';
+        if (notesPanel) notesPanel.style.right = -(panelWidths.notes + 50) + 'px';
     }
 
     // Graph is to the left of Notes
     if (isGraphOpen) {
         if (graphPanel) graphPanel.style.right = totalOffset + 'px';
-        totalOffset += GRAPH_WIDTH;
+        totalOffset += panelWidths.graph;
     } else {
-        if (graphPanel) graphPanel.style.right = -(GRAPH_WIDTH + 50) + 'px';
+        if (graphPanel) graphPanel.style.right = -(panelWidths.graph + 50) + 'px';
     }
     
     document.body.style.paddingRight = totalOffset + 'px';
@@ -527,6 +587,7 @@ function noteChatFocusChange(funcId) {
 function openAIPanel() {
     isAIOpen = true;
     updateLayout();
+    setTimeout(() => document.getElementById('llm-input')?.focus(), 100);
 
     const collection = getChatScopeCollection();
     if (!collection) return; // no collection/entity context available at all yet
@@ -549,25 +610,25 @@ function setupInputListeners() {
     const llmInput = document.getElementById('llm-input');
     const notesInput = document.getElementById('new-note-text');
 
-    if (llmInput && notesInput) {
+    if (llmInput) {
         llmInput.onkeydown = (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendLLMChat();
-            } else if (e.key === 'Tab') {
+            } else if (e.key === 'Tab' && notesInput) {
                 e.preventDefault();
                 notesInput.focus();
             }
         };
+    }
 
+    if (notesInput && llmInput) {
         notesInput.onkeydown = (e) => {
             if (e.key === 'Tab') {
                 e.preventDefault();
                 llmInput.focus();
             }
         };
-        
-        setTimeout(() => llmInput.focus(), 100);
     }
 }
 
@@ -577,13 +638,14 @@ function injectNotesStyles() {
     const style = document.createElement('style');
     style.id = 'notes-md-styles';
     style.textContent = `
-        body { 
-            transition: padding-right 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+        body {
+            transition: padding-right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             box-sizing: border-box;
             width: 100vw;
             overflow-x: hidden;
         }
-        
+        body.panel-resizing, body.panel-resizing .side-panel-v2 { transition: none !important; }
+
         #panel-handles-container {
             position: fixed;
             right: 0;
@@ -608,12 +670,23 @@ function injectNotesStyles() {
             font-family: 'Inter', sans-serif;
         }
 
+        .panel-resize-handle {
+            position: absolute;
+            top: 0; left: -4px;
+            width: 8px; height: 100%;
+            cursor: ew-resize;
+            z-index: 10001;
+            background: transparent;
+            touch-action: none;
+        }
+        .panel-resize-handle:hover, .panel-resize-handle:focus-visible, body.panel-resizing .panel-resize-handle { background: var(--accent); opacity: 0.4; }
+
         .panel-v2-header {
-            padding: 12px 16px; 
-            background: var(--meta-bg); 
-            border-bottom: 1px solid var(--border); 
-            display: flex; 
-            justify-content: space-between; 
+            padding: 12px 16px;
+            background: var(--meta-bg);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
             align-items: center;
         }
 
@@ -636,34 +709,67 @@ function injectNotesStyles() {
             transition: all 0.2s;
         }
         .panel-handle:hover { color: var(--text); background: var(--border); }
-        .panel-handle.user.active { color: #ffd700; border-color: #ffd700; background: var(--meta-bg); }
-        .panel-handle.ai.active { color: #ae81ff; border-color: #ae81ff; background: var(--meta-bg); }
+        .panel-handle.user.active { color: var(--note-accent); border-color: var(--note-accent); background: var(--meta-bg); }
+        .panel-handle.ai.active { color: var(--info); border-color: var(--info); background: var(--meta-bg); }
         .panel-handle i { font-size: 0.9rem; transform: rotate(90deg); }
 
-        .note-markdown-body, .llm-markdown-body { 
-            font-family: 'Fira Code', monospace;
-            font-size: 0.85rem; 
-            line-height: 1.6; 
-            color: var(--meta-text); 
+        .note-markdown-body, .llm-markdown-body {
+            font-family: inherit;
+            font-size: 0.88rem;
+            line-height: 1.6;
+            color: var(--meta-text);
         }
-        .note-markdown-body p, .llm-markdown-body p { margin-top: 0; margin-bottom: 12px; }
-        .note-markdown-body code { background: var(--border); padding: 2px 5px; border-radius: 3px; color: #ffd700; font-weight: bold; }
-        .llm-markdown-body code { background: var(--border); padding: 2px 5px; border-radius: 3px; color: #ae81ff; font-weight: bold; }
-        .note-markdown-body pre, .llm-markdown-body pre { background: var(--bg); padding: 12px; border-radius: 6px; overflow-x: auto; border: 1px solid var(--border); margin: 12px 0; }
-        .note-markdown-body blockquote { border-left: 4px solid #ffd700; margin: 12px 0; padding-left: 15px; color: var(--meta-text-muted); font-style: italic; background: rgba(255, 215, 0, 0.05); }
-        .llm-markdown-body blockquote { border-left: 4px solid #ae81ff; margin: 12px 0; padding-left: 15px; color: var(--meta-text-muted); font-style: italic; background: color-mix(in srgb, var(--token-address) 5%, transparent); }
-        
-        .chat-msg { border-radius: 8px; padding: 12px 16px; max-width: 95%; position: relative; }
-        .chat-msg.user { background: var(--meta-bg); align-self: flex-end; border-bottom-right-radius: 0; border: 1px solid var(--border); }
-        .chat-msg.ai { background: var(--meta-bg); align-self: flex-start; border-bottom-left-radius: 0; border: 1px solid var(--border); }
-        .chat-msg.user::after { content: 'YOU'; position: absolute; top: -18px; right: 0; font-size: 0.6rem; color: #ffd700; }
-        .chat-msg.ai::after { content: 'AI INSIGHT'; position: absolute; top: -18px; left: 0; font-size: 0.6rem; color: #ae81ff; }
-        
+        .note-markdown-body p, .llm-markdown-body p { margin-top: 0; margin-bottom: 10px; }
+        .note-markdown-body p:last-child, .llm-markdown-body p:last-child { margin-bottom: 0; }
+        .note-markdown-body code, .llm-markdown-body code { font-family: 'Fira Code', monospace; background: var(--border); padding: 2px 5px; border-radius: 3px; font-size: 0.85em; }
+        .note-markdown-body code { color: var(--note-accent); }
+        .llm-markdown-body code { color: var(--info); }
+        .note-markdown-body pre, .llm-markdown-body pre { font-family: 'Fira Code', monospace; background: var(--bg); padding: 12px; border-radius: 6px; overflow-x: auto; border: 1px solid var(--border); margin: 10px 0; }
+        .note-markdown-body pre code, .llm-markdown-body pre code { background: none; padding: 0; color: inherit; }
+        .note-markdown-body blockquote { border-left: 3px solid var(--note-accent); margin: 10px 0; padding-left: 12px; color: var(--meta-text-muted); }
+        .llm-markdown-body blockquote { border-left: 3px solid var(--info); margin: 10px 0; padding-left: 12px; color: var(--meta-text-muted); }
+
+        .chat-msg { border-radius: 12px; padding: 10px 14px; max-width: 88%; }
+        .chat-msg.user { background: color-mix(in srgb, var(--note-accent) 10%, var(--meta-bg)); align-self: flex-end; }
+        .chat-msg.ai { background: transparent; align-self: flex-start; border: 0; max-width: 100%; padding-left: 0; padding-right: 0; }
+        .chat-msg-role { font-size: 0.65rem; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 6px; opacity: 0.7; }
+        .chat-msg.user .chat-msg-role { color: var(--note-accent); text-align: right; }
+        .chat-msg.ai .chat-msg-role { color: var(--info); }
+
         .collapsible-container { position: relative; }
         .collapsible-content { overflow: hidden; transition: max-height 0.3s ease-out; }
         .collapsible-content.collapsed { max-height: 200px; mask-image: linear-gradient(to bottom, black 70%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 70%, transparent 100%); }
-        .toggle-expand-btn { background: none; border: none; color: #ffd700; cursor: pointer; font-size: 0.75rem; font-weight: bold; padding: 5px 0; display: flex; align-items: center; gap: 5px; }
-        .chat-msg.ai .toggle-expand-btn { color: #ae81ff; }
+        .toggle-expand-btn { background: none; border: none; color: var(--note-accent); cursor: pointer; font-size: 0.75rem; font-weight: bold; padding: 5px 0; display: flex; align-items: center; gap: 5px; }
+        .chat-msg.ai .toggle-expand-btn { color: var(--info); }
+
+        /* Agent "thinking process" trace */
+        .llm-trace { margin-bottom: 10px; }
+        .llm-trace > summary { cursor: pointer; font-size: 0.75rem; color: var(--dim); padding: 4px 0; user-select: none; }
+        .llm-trace > summary:hover { color: var(--meta-text); }
+        .llm-trace-steps { margin-top: 4px; display: flex; flex-direction: column; gap: 4px; padding-left: 4px; border-left: 2px solid var(--border); }
+        .llm-trace-step { padding: 4px 0 4px 10px; }
+        .llm-trace-step > summary { cursor: pointer; font-size: 0.75rem; color: var(--meta-text-muted); list-style: none; }
+        .llm-trace-step > summary:hover { color: var(--meta-text); }
+        .llm-trace-step > summary::-webkit-details-marker { display: none; }
+        .llm-trace-step[open] > summary { color: var(--meta-text); }
+        .llm-trace-body { margin-top: 8px; font-size: 0.75rem; display: flex; flex-direction: column; gap: 8px; }
+        .llm-trace-label { font-family: 'Inter', sans-serif; font-size: 0.65rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: var(--subtle); margin-bottom: 3px; }
+        .llm-trace-body pre { margin: 0; white-space: pre-wrap; overflow-x: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px; }
+        .llm-trace-body pre.result { max-height: 200px; overflow-y: auto; }
+        .llm-trace-curl { display: flex; align-items: stretch; gap: 6px; }
+        .llm-trace-curl pre { flex: 1; margin: 0; user-select: all; }
+        .llm-trace-copy-btn { flex-shrink: 0; background: var(--meta-bg); color: var(--meta-text); border: 1px solid var(--border); border-radius: 4px; padding: 0 10px; cursor: pointer; font-size: 0.72rem; }
+        .llm-trace-copy-btn:hover { background: var(--border); }
+
+        #llm-status { max-width: min(50%, 280px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.75rem; color: var(--info); font-variant-numeric: tabular-nums; font-weight: normal; text-transform: none; }
+        .note-primary-btn, .llm-send-btn, .llm-stop-btn { border: 0; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.85rem; }
+        .note-primary-btn { background: var(--note-accent); color: var(--window-bg); }
+        .llm-send-btn { background: var(--info); color: var(--bg); }
+        .llm-stop-btn { background: var(--token-instruction); color: var(--bg); }
+
+        .save-note-btn { background: var(--meta-bg); color: var(--meta-text); border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: bold; }
+        .save-note-btn:hover:not(:disabled) { border-color: var(--note-accent); color: var(--note-accent); }
+        .save-note-btn:disabled { opacity: 0.6; cursor: default; }
 
         #notes-panel-handle .note-count-badge {
             writing-mode: horizontal-tb;
@@ -723,26 +829,27 @@ async function refreshNotes(funcId) {
                     
                     if (isEditing) {
                         return `
-                            <div class="note-item editing" style="background: var(--meta-bg); border-radius: 6px; padding: 15px; border-left: 4px solid #ffd700; border: 1px solid #ffd700; border-left-width: 4px;">
+                            <div class="note-item editing" style="background: var(--meta-bg); border-radius: 6px; padding: 15px; border-left: 4px solid var(--note-accent); border: 1px solid var(--note-accent); border-left-width: 4px;">
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                    <span style="font-size: 0.7rem; font-weight: bold; color: #ffd700; text-transform: uppercase;">Editing Note</span>
+                                    <span style="font-size: 0.7rem; font-weight: bold; color: var(--note-accent); text-transform: uppercase;">Editing Note</span>
                                 </div>
                                 <textarea id="edit-note-text-${escapeAttr(note.id)}" 
                                     onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault(); submitEditNote(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(note.id))});} if(event.key==='Escape'){cancelEditNote(${escapeAttr(jsString(funcId))});}"
                                     style="width: 100%; min-height: 100px; background: var(--bg); border: 1px solid var(--border); color: var(--meta-text); padding: 10px; border-radius: 4px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; font-family: 'Fira Code', monospace; font-size: 0.85rem; outline: none;">${escapeHtml(note.text)}</textarea>
                                 <div style="display: flex; justify-content: flex-end; gap: 10px;">
                                     <button onclick="cancelEditNote(${escapeAttr(jsString(funcId))})" style="background: var(--border); color: var(--meta-text-muted); border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Cancel</button>
-                                    <button onclick="submitEditNote(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(note.id))})" style="background: #ffd700; color: var(--window-tray); border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.75rem;">Save</button>
+                                    <button onclick="submitEditNote(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(note.id))})" style="background: var(--note-accent); color: var(--window-bg); border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.75rem;">Save</button>
                                 </div>
                             </div>
                         `;
                     }
 
                     const renderedText = renderNoteMarkdown(note.text);
+                    const noteAccent = isAI ? 'var(--info)' : 'var(--note-accent)';
                     return `
-                        <div class="note-item" style="background: var(--meta-bg); border-radius: 6px; padding: 15px; border-left: 4px solid ${isAI ? '#ae81ff' : '#ffd700'}; border: 1px solid var(--border); border-left-width: 4px;">
+                        <div class="note-item" style="background: var(--meta-bg); border-radius: 6px; padding: 15px; border-left: 4px solid ${noteAccent}; border: 1px solid var(--border); border-left-width: 4px;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                <span style="font-size: 0.7rem; font-weight: bold; color: ${isAI ? '#ae81ff' : '#ffd700'}; text-transform: uppercase;">${escapeHtml(note.owner)}</span>
+                                <span style="font-size: 0.7rem; font-weight: bold; color: ${noteAccent}; text-transform: uppercase;">${escapeHtml(note.owner)}</span>
                                 <span style="font-size: 0.6rem; color: var(--subtle);">${escapeHtml(new Date(note.timestamp).toLocaleString())}</span>
                             </div>
                             <div class="collapsible-container">
@@ -992,24 +1099,24 @@ function renderToolTrace(toolCalls) {
     const items = toolCalls.map(tc => {
         const curl = buildCurl(tc.api_call);
         return `
-            <details style="margin:6px 0; padding:6px 8px; background:var(--bg); border:1px solid var(--border); border-radius:4px;">
-                <summary style="cursor:pointer; font-size:.78rem; color:var(--dim);">🔧 ${escapeHtml(toolCallLabel(tc))}</summary>
-                <div style="margin-top:8px; font-size:.75rem;">
-                    <div><strong>Arguments</strong><pre style="white-space:pre-wrap; overflow-x:auto;">${escapeHtml(prettyJson(tc.arguments || {}))}</pre></div>
-                    <div><strong>Result</strong><pre style="white-space:pre-wrap; overflow-x:auto; max-height:240px; overflow-y:auto;">${escapeHtml(prettyJson(tc.result_preview || ''))}</pre></div>
-                    ${curl ? `<div><strong>API call</strong>
-                        <div style="display:flex; align-items:flex-start; gap:6px;">
-                            <pre style="flex:1; white-space:pre-wrap; overflow-x:auto; user-select:all; margin:4px 0;">${escapeHtml(curl)}</pre>
-                            <button onclick="copyToClipboard(${escapeAttr(jsString(curl))}, this)" title="Copy curl command" style="flex-shrink:0; margin-top:4px; background:#2a2a2a; color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:4px 8px; cursor:pointer; font-size:.72rem;"><i class="fa-solid fa-copy"></i></button>
+            <details class="llm-trace-step">
+                <summary><i class="fa-solid fa-wrench"></i> ${escapeHtml(toolCallLabel(tc))}</summary>
+                <div class="llm-trace-body">
+                    <div><div class="llm-trace-label">Arguments</div><pre>${escapeHtml(prettyJson(tc.arguments || {}))}</pre></div>
+                    <div><div class="llm-trace-label">Result</div><pre class="result">${escapeHtml(prettyJson(tc.result_preview || ''))}</pre></div>
+                    ${curl ? `<div><div class="llm-trace-label">API call</div>
+                        <div class="llm-trace-curl">
+                            <pre>${escapeHtml(curl)}</pre>
+                            <button onclick="copyToClipboard(${escapeAttr(jsString(curl))}, this)" class="llm-trace-copy-btn" title="Copy curl command" aria-label="Copy curl command"><i class="fa-solid fa-copy"></i></button>
                         </div>
                     </div>` : ''}
                 </div>
             </details>`;
     }).join('');
     return `
-        <details style="margin-bottom:8px;">
-            <summary style="cursor:pointer; font-size:.78rem; color:var(--dim);">🧠 Thinking process (${toolCalls.length} lookup${toolCalls.length === 1 ? '' : 's'})</summary>
-            ${items}
+        <details class="llm-trace">
+            <summary>Thinking process · ${toolCalls.length} lookup${toolCalls.length === 1 ? '' : 's'}</summary>
+            <div class="llm-trace-steps">${items}</div>
         </details>`;
 }
 
@@ -1024,17 +1131,19 @@ function updateChatMessageUI(msgEl, content, index, chatKey) {
     let html = renderNoteMarkdown(content);
     const isLong = content.length > 500;
     const traceHtml = renderToolTrace(histEntry && histEntry.tool_calls);
+    const roleLabel = msgEl.classList.contains('ai') ? 'AI Insight' : 'You';
     msgEl.innerHTML = `
+        <div class="chat-msg-role">${roleLabel}</div>
         ${traceHtml}
         <div class="collapsible-container">
             <div class="llm-markdown-body collapsible-content">${html}</div>
             ${isLong ? '<button class="toggle-expand-btn" onclick="toggleContentExpand(this)"><i class="fa-solid fa-chevron-up"></i> Show Less</button>' : ''}
         </div>
     `;
-    if (msgEl.classList.contains('ai') && content.trim().length > 0) {
+    if (msgEl.classList.contains('ai') && content.trim().length > 0 && content !== "_investigating..._") {
         const actionsEl = document.createElement("div");
         actionsEl.style.cssText = "margin-top: 10px; display: flex; justify-content: flex-end; border-top: 1px solid var(--border); padding-top: 8px;";
-        actionsEl.innerHTML = `<button onclick="saveMessageAsNote(${escapeAttr(jsString(currentNotesFuncId))}, ${Number(index)}, this)" style="background: #2a2a2a; color: #ffd700; border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: bold;"><i class="fa-solid fa-plus"></i> Save Note</button>`;
+        actionsEl.innerHTML = `<button onclick="saveMessageAsNote(${escapeAttr(jsString(currentNotesFuncId))}, ${Number(index)}, this)" class="save-note-btn"><i class="fa-solid fa-plus"></i> Save Note</button>`;
         msgEl.appendChild(actionsEl);
     }
     if (historyEl && isAtBottom) historyEl.scrollTop = historyEl.scrollHeight;
@@ -1075,9 +1184,15 @@ async function sendLLMChat() {
     const sendBtn = document.getElementById("llm-send-btn");
     const stopBtn = document.getElementById("llm-stop-btn");
     const statusEl = document.getElementById("llm-status");
+    const startedAt = Date.now();
+    let statusText = "Investigating";
+    const updateStatus = () => {
+        if (statusEl) statusEl.innerText = `${statusText} · ${Math.floor((Date.now() - startedAt) / 1000)}s`;
+    };
     if (sendBtn) sendBtn.style.display = "none";
     if (stopBtn) stopBtn.style.display = "block";
-    if (statusEl) statusEl.innerText = "Agent investigating (may look up related functions)...";
+    updateStatus();
+    const thinkingTimer = setInterval(updateStatus, 1000);
     llmAbortController = new AbortController();
     const msgEl = addChatMessage(chatKey, "ai", "_investigating..._");
     const msgIndex = chatHistories[chatKey].length - 1;
@@ -1119,7 +1234,8 @@ async function sendLLMChat() {
                     if (chatHistories[chatKey] && chatHistories[chatKey][msgIndex]) {
                         chatHistories[chatKey][msgIndex].tool_calls.push(call);
                     }
-                    if (statusEl) statusEl.innerText = toolCallLabel(call);
+                    statusText = toolCallLabel(call);
+                    updateStatus();
                     updateChatMessageUI(msgEl, chatHistories[chatKey][msgIndex].content, msgIndex, chatKey);
                 } else if (event.type === "error") {
                     throw new Error(event.error);
@@ -1130,8 +1246,9 @@ async function sendLLMChat() {
         }
         updateChatMessageUI(msgEl, finalReply ?? "_(no reply)_", msgIndex, chatKey);
     } catch (err) {
-        if (err.name !== 'AbortError') updateChatMessageUI(msgEl, "Error: " + err.message, msgIndex, chatKey);
+        updateChatMessageUI(msgEl, err.name === 'AbortError' ? "_Stopped._" : "Error: " + err.message, msgIndex, chatKey);
     } finally {
+        clearInterval(thinkingTimer);
         if (sendBtn) sendBtn.style.display = "block";
         if (stopBtn) stopBtn.style.display = "none";
         if (statusEl) statusEl.innerText = "";

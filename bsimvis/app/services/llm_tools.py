@@ -520,8 +520,13 @@ def describe_api_call(name, args):
     corresponds to, so an analyst reading the chat trace can re-run it
     directly (e.g. via curl) instead of trusting the agent's summary.
 
-    Returns None for tools that compose several internal reads with no
-    single public endpoint (get_function, get_cluster_info)."""
+    get_function and get_cluster_info don't hit an HTTP route internally
+    (direct Redis / in-process reads) -- the endpoints below are each one
+    piece of what those tools return (decompiled code; cluster meta via a
+    single-cluster list filter), not a byte-for-byte replay, but close
+    enough for an analyst to sanity-check the lookup."""
+    if name == "get_function":
+        return {"method": "GET", "path": "/api/function/code", "query": {"id": args.get("func_id")}}
     if name == "get_call_graph":
         return {"method": "GET", "path": "/api/function/call_graph", "query": {"id": args.get("func_id")}}
     if name == "get_similar_functions":
@@ -561,6 +566,16 @@ def describe_api_call(name, args):
             "method": "GET",
             "path": f"/api/file/details/{args.get('file_md5')}",
             "query": {"collection": args.get("collection")},
+        }
+    if name == "get_cluster_info":
+        return {
+            "method": "GET",
+            "path": "/api/bin_cluster/list",
+            "query": {
+                "collection": args.get("collection"),
+                "cluster_id": args.get("cluster_id"),
+                "algo": args.get("algo", "unweighted_cosine"),
+            },
         }
     return None
 

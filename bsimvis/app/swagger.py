@@ -2735,8 +2735,9 @@ class LLMChatMessage(Resource):
     )
     def post(self, session_id):
         """Sends an analyst message; the model may call tools to look up
-        functions/call-graph/similarity/tags before answering. Runs to
-        completion (all tool calls resolved) and returns the final reply."""
+        functions/call-graph/similarity/tags before answering. Streams one
+        NDJSON event per line as each tool call resolves, then a final
+        "done" (or "error") event with the reply."""
         from bsimvis.app.routes.llm_analysis import chat_message
 
         return chat_message(session_id)

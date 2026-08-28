@@ -28,6 +28,7 @@ class FakeRedis:
         self.hashes = {}
         self.lists = {}
         self.zsets = {}
+        self.sets = {}
         self.strings = {}
         self.streams = {}
         self.expires = {}
@@ -103,7 +104,27 @@ class FakeRedis:
         self.strings[key] = str(int(self.strings.get(key, 0)) + amount)
         return int(self.strings[key])
 
+    # --- sets
+    def sadd(self, key, *members):
+        s = self.sets.setdefault(key, set())
+        added = sum(1 for m in members if m not in s)
+        s.update(members)
+        return added
+
+    def srem(self, key, *members):
+        s = self.sets.get(key, set())
+        removed = sum(1 for m in members if m in s)
+        s.difference_update(members)
+        return removed
+
+    def smembers(self, key):
+        return set(self.sets.get(key, set()))
+
     # --- lists
+    def lpop(self, key):
+        lst = self.lists.get(key, [])
+        return lst.pop(0) if lst else None
+
     def lpush(self, key, *vals):
         lst = self.lists.setdefault(key, [])
         for v in vals:
@@ -170,6 +191,30 @@ class FakeRedis:
     # --- pipeline (single-threaded, so WATCH never actually conflicts here)
     def pipeline(self, transaction=True):
         return FakePipeline(self)
+
+    # --- eval: no Lua interpreter here, so re-implement JobService's two
+    # known scripts in Python, dispatched by a marker unique to each. A
+    # script this doesn't recognize raises instead of silently no-op'ing.
+    def eval(self, script, numkeys, *keys_and_args):
+        keys = keys_and_args[:numkeys]
+        args = keys_and_args[numkeys:]
+        if "redis.call('srem'" in script:  # _SET_STATUS_LUA
+            job_key, job_id, new_status = keys[0], args[0], args[1]
+            old_status = self.hget(job_key, "status")
+            self.hset(job_key, "status", new_status)
+            if old_status and old_status != new_status:
+                self.srem(f"jobs:idx:status:{old_status}", job_id)
+            self.sadd(f"jobs:idx:status:{new_status}", job_id)
+            return old_status
+        if "redis.call('lpop'" in script:  # _ADVANCE_LANE_LUA
+            active_key, pending_key = keys[0], keys[1]
+            nxt = self.lpop(pending_key)
+            if nxt:
+                self.set(active_key, nxt)
+            else:
+                self.delete(active_key)
+            return nxt
+        raise NotImplementedError("FakeRedis.eval: unrecognized script")
 
 
 class FakePipeline:

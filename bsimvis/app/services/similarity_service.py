@@ -428,10 +428,21 @@ class SimilarityService:
                         processed=i + 1, total=n_vclasses,
                     )
 
+            if job_service and job_id:
+                job_service.add_log(
+                    job_id,
+                    f"[*] Same-class matching done: {len(discovery_results_map)} functions have "
+                    f"candidates so far ({time.time() - discovery_start:.1f}s).",
+                )
+
             if self._base_snapshot:
                 n_edges = len(self._base_snapshot)
                 cross_start = time.time()
                 log_every_edge = max(1, n_edges // 10)
+                if job_service and job_id:
+                    job_service.add_log(
+                        job_id, f"[*] Starting cross-class matching over {n_edges} fuzzy edges..."
+                    )
                 for i, (u_id, v_id, score) in enumerate(self._base_snapshot):
                     if score >= min_score:
                         u_funcs = vclass_funcs.get(u_id, [])
@@ -443,13 +454,26 @@ class SimilarityService:
                                 if f_v in target_func_set:
                                     add_candidate(f_v, f_u, score)
                     if job_service and job_id and (i % log_every_edge == 0 or i == n_edges - 1):
-                        pct = 75 + int((i + 1) / max(1, n_edges) * 25)
+                        # Leaves 90-100% for the persistence phase below, which used to run
+                        # silently after this hit 100% -- reserving headroom here keeps the
+                        # progress bar moving forward instead of jumping back from 100.
+                        pct = 75 + int((i + 1) / max(1, n_edges) * 15)
                         job_service.update_progress(
                             job_id, pct,
                             f"LCA discovery: cross-class matching {i + 1}/{n_edges} edges "
                             f"({time.time() - cross_start:.1f}s elapsed)",
                             processed=i + 1, total=n_edges,
                         )
+            elif job_service and job_id:
+                # No fuzzy edges to cross-match -- either the native extension isn't
+                # installed (see NATIVE_AVAILABLE at import time) or this snapshot
+                # genuinely found 0 cross-class edges above min_score. Either way,
+                # log it explicitly so a quiet stretch here doesn't read as a hang.
+                job_service.add_log(
+                    job_id,
+                    "[*] No cross-class snapshot edges to match (native extension "
+                    "missing or 0 fuzzy edges above min_score) -- skipping to persistence.",
+                )
 
             discovery_results = []
             for fid, heap in discovery_results_map.items():
@@ -467,6 +491,13 @@ class SimilarityService:
                     discovery_results.append((fid, md5_val, addr_val, t_total, candidates))
 
             if discovery_results:
+                total_candidates = sum(len(c) for _, _, _, _, c in discovery_results)
+                if job_service and job_id:
+                    job_service.add_log(
+                        job_id,
+                        f"[*] Persisting {total_candidates} candidate pairs for "
+                        f"{len(discovery_results)} target functions to the index...",
+                    )
                 written = self._persist_and_index_batch(
                     collection,
                     algo,
@@ -474,13 +505,21 @@ class SimilarityService:
                     min_features=min_features,
                     index_depth=index_depth,
                     skip_write=skip_write,
+                    job_service=job_service,
+                    job_id=job_id,
                 )
                 total_sims = written or 0
             else:
                 total_sims = 0
-                
+
             small_fids = [f for f, count in func_feat_counts.items() if count < min_features and f in target_func_set]
             if small_fids and not skip_write:
+                if job_service and job_id:
+                    job_service.add_log(
+                        job_id,
+                        f"[*] Hash-matching {len(small_fids)} functions below min_features "
+                        f"({min_features})...",
+                    )
                 written_small = self._hash_match_small(collection, algo, small_fids, index_depth)
                 total_sims += written_small or 0
                 
@@ -1255,11 +1294,14 @@ class SimilarityService:
         min_features=0,
         index_depth="full",
         skip_write=False,
+        job_service=None,
+        job_id=None,
     ):
         """Unified helper to persist similarity results and propagate metadata to search indexes."""
         r = self.r
         now = int(time.time() * 1000)
         total_written = 0
+        persist_start = time.time()
 
         def extract_md5(fid):
             # FID is {coll}:func:{md5}:{addr}
@@ -1300,6 +1342,12 @@ class SimilarityService:
             if needs_func_meta or needs_file_meta:
                 func_ids_needed = set()
                 file_ids_needed = set()
+                if job_service and job_id:
+                    job_service.add_log(
+                        job_id,
+                        f"[*] Scanning {len(discovery_results)} target functions' candidates "
+                        f"to see what metadata needs pre-fetching...",
+                    )
 
                 for fid, t_md5, t_addr, t_total, candidates in discovery_results:
                     if t_total < min_features:
@@ -1328,6 +1376,11 @@ class SimilarityService:
 
                 if func_ids_needed:
                     func_ids_list = list(func_ids_needed)
+                    if job_service and job_id:
+                        job_service.add_log(
+                            job_id,
+                            f"[*] Fetching cached metadata for {len(func_ids_list)} functions...",
+                        )
                     raw_func_metas = r.json().mget(
                         [f"{fid}:meta" for fid in func_ids_list], "$"
                     )
@@ -1342,6 +1395,11 @@ class SimilarityService:
 
                 if file_ids_needed:
                     file_ids_list = list(file_ids_needed)
+                    if job_service and job_id:
+                        job_service.add_log(
+                            job_id,
+                            f"[*] Fetching cached metadata for {len(file_ids_list)} files...",
+                        )
                     raw_file_metas = r.json().mget(
                         [f"{fid}:meta" for fid in file_ids_list], "$"
                     )
@@ -1362,8 +1420,18 @@ class SimilarityService:
         batch_size = 200
         persist_pipe = r.pipeline(transaction=False)
         sim_count = 0
+        n_targets = len(discovery_results)
+        log_every_target = max(1, n_targets // 20)
 
-        for fid, t_md5, t_addr, t_total, candidates in discovery_results:
+        for fid_idx, (fid, t_md5, t_addr, t_total, candidates) in enumerate(discovery_results):
+            if job_service and job_id and (fid_idx % log_every_target == 0 or fid_idx == n_targets - 1):
+                job_service.update_progress(
+                    job_id,
+                    90 + int((fid_idx + 1) / max(1, n_targets) * 10),
+                    f"Persisting similarities: {fid_idx + 1}/{n_targets} target functions "
+                    f"({total_written} sim docs written, {time.time() - persist_start:.1f}s elapsed)",
+                    processed=fid_idx + 1, total=n_targets,
+                )
             # Skip if target function has too few features
             if t_total < min_features:
                 continue
@@ -1485,6 +1553,13 @@ class SimilarityService:
 
         if sim_count > 0:
             persist_pipe.execute()
+
+        if job_service and job_id:
+            job_service.add_log(
+                job_id,
+                f"[*] Persistence done: {total_written} sim docs written "
+                f"({time.time() - persist_start:.1f}s).",
+            )
 
         return total_written
 

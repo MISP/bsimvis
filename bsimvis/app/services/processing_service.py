@@ -253,7 +253,12 @@ class ProcessingService:
             if job_service and job_id and (i % 50 == 0 or i == total - 1):
                 pct = int((i + 1) / total * 100)
                 job_service.update_progress(
-                    job_id, pct, f"Exploding functions: {i+1}/{total}"
+                    job_id,
+                    pct,
+                    f"Exploding functions: {i+1}/{total}",
+                    processed=i + 1,
+                    total=total,
+                    phase="explode_functions",
                 )
 
             # --- Extract parts ---

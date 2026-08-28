@@ -100,7 +100,12 @@ class FeatureService:
                 if pct != last_pct or i == total - 1:
                     last_pct = pct
                     job_service.update_progress(
-                        job_id, pct, f"Indexing features: {i+1}/{total}"
+                        job_id,
+                        pct,
+                        f"Indexing features: {i+1}/{total}",
+                        processed=i + 1,
+                        total=total,
+                        phase="index_features",
                     )
 
             # 1. Fetch metadata and vector data, one round-trip per READ_BATCH

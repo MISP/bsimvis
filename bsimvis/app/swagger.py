@@ -489,6 +489,24 @@ class JobStream(Resource):
         return stream_job(job_id)
 
 
+@ns_jobs.route("/stream")
+class JobStreamScoped(Resource):
+    @ns_jobs.doc(
+        params={
+            "collection": {"description": "Filter by collection name", "required": False},
+            "pool": {"description": "Filter by pool UUID", "required": False},
+            "status": {"description": "Filter by job status", "required": False},
+            "type": {"description": "Filter by job type", "required": False},
+            "md5": {"description": "Filter by file md5", "required": False},
+        }
+    )
+    def get(self):
+        """SSE feed of job created/status-changed/completed deltas matching the filter."""
+        from bsimvis.app.routes.jobs import stream_jobs_scoped
+
+        return stream_jobs_scoped()
+
+
 @ns_jobs.route("/pause")
 class JobPause(Resource):
     def get(self):

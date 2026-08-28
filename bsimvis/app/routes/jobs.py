@@ -1,4 +1,5 @@
 import json
+import time
 from flask import request
 from bsimvis.app.services.job_service import JobService
 
@@ -97,6 +98,71 @@ def stream_job(job_id):
         mimetype="text/event-stream",
         # Chunks are useless if a proxy buffers them into one response --
         # same precedent as routes/home.py's unified_search_stream.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def stream_jobs_scoped():
+    """SSE, scoped multi-job feed (job-system-rework-plan.md §2, the second
+    /stream endpoint -- distinct from stream_job's single-job tail above).
+
+    v1 per the plan: re-runs the §2.1 filtered `list_jobs` query for this
+    connection's filter every ~1.5s and pushes only the diff (job created /
+    status changed) -- every cross-view widget in §3 (global widget, a
+    collection page, an md5-scoped file page) subscribes to one of these
+    instead of its own poll loop. Real pub/sub on `_set_status` writes is the
+    v2 upgrade noted in the plan if connection count ever makes this pricey;
+    not needed to ship v1.
+    """
+    from flask import Response, stream_with_context
+
+    collection = request.args.get("collection")
+    pool = request.args.get("pool")
+    status = request.args.get("status")
+    jtype = request.args.get("type")
+    md5 = request.args.get("md5")
+    # Scoped feeds are for "what's relevant right now", not full history --
+    # capped well above what a fleet's active set normally looks like.
+    limit = request.args.get("limit", 200, type=int)
+
+    def snapshot():
+        jobs, _ = job_service.list_jobs(
+            limit=limit,
+            offset=0,
+            collection=collection,
+            pool=pool,
+            status=status,
+            jtype=jtype,
+            md5=md5,
+        )
+        return {j["id"]: j for j in jobs}
+
+    def events():
+        prev = snapshot()
+        for job in prev.values():
+            payload = {"type": "job.created", "data": job}
+            yield f"event: job\ndata: {json.dumps(payload)}\n\n"
+        while True:
+            time.sleep(1.5)
+            cur = snapshot()
+            for jid, job in cur.items():
+                old = prev.get(jid)
+                if old is None:
+                    evt = "job.created"
+                elif old.get("status") != job.get("status"):
+                    evt = (
+                        "job.completed"
+                        if job.get("status") in _TERMINAL_STATUSES
+                        else "job.status_changed"
+                    )
+                else:
+                    continue
+                yield f"event: job\ndata: {json.dumps({'type': evt, 'data': job})}\n\n"
+            prev = cur
+
+    return Response(
+        stream_with_context(events()),
+        mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 

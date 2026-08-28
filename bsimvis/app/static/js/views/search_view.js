@@ -75,12 +75,18 @@ window.SearchView = {
         const rows = searches.map(s => {
             const url = `/searches/${encodeURIComponent(s.id)}`;
             const scopeType = (s.scope && s.scope.type) || '?';
+            const counts = s.verdict_counts || { yes: 0, maybe: 0, no: 0 };
+            const matched = counts.yes + counts.maybe;
+            const matchLabel = matched
+                ? `<span style="color:${VERDICT_STYLE.yes.color}; font-weight:700;">${matched}</span>${counts.maybe ? ` <span style="color:${VERDICT_STYLE.maybe.color}; font-size:0.75rem;">(${counts.yes} yes, ${counts.maybe} maybe)</span>` : ''}`
+                : `<span style="color:var(--dim);">0</span>`;
             return `
             <tr style="border-bottom: 1px solid var(--border); cursor:pointer;" onmouseover="this.style.background='var(--hover)'" onmouseout="this.style.background='transparent'" onclick="Nav.openPath(${escapeAttr(jsString(url))})">
                 <td style="padding:10px 15px; font-weight:600;">${escapeHtml(s.name || s.query || s.id)}</td>
                 <td style="padding:10px 15px; color:var(--dim);"><code style="font-size:0.78rem;">${escapeHtml(scopeType)}</code></td>
                 <td style="padding:10px 15px;">${searchStatusBadge(s.status)}</td>
-                <td style="padding:10px 15px; text-align:right; color:var(--accent); font-weight:700;">${s.total ?? '—'}</td>
+                <td style="padding:10px 15px; text-align:right;">${matchLabel}</td>
+                <td style="padding:10px 15px; text-align:right; color:var(--dim);">${s.total ?? '—'}</td>
                 <td style="padding:10px 15px; color:var(--dim); font-size:0.8rem;">${window.formatDate ? window.formatDate(s.created_at) : s.created_at}</td>
                 <td style="padding:10px 15px; text-align:right;">
                     <button onclick="event.stopPropagation(); window.searchViewDelete(${escapeAttr(jsString(s.id))}, this)" title="Delete" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:5px 10px; border-radius:6px; cursor:pointer;"><i class="fa-solid fa-trash-can"></i></button>
@@ -102,13 +108,14 @@ window.SearchView = {
                             <th style="padding:10px 15px;">Name / Query</th>
                             <th style="padding:10px 15px;">Scope</th>
                             <th style="padding:10px 15px;">Status</th>
-                            <th style="padding:10px 15px; text-align:right;">Functions</th>
+                            <th style="padding:10px 15px; text-align:right;" title="functions with verdict yes/maybe">Matched</th>
+                            <th style="padding:10px 15px; text-align:right;" title="functions classified">Processed</th>
                             <th style="padding:10px 15px;">Created</th>
                             <th style="padding:10px 15px;"></th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${rows || `<tr><td colspan="6" style="padding:30px; text-align:center; color:var(--dim);">No searches yet.</td></tr>`}
+                        ${rows || `<tr><td colspan="7" style="padding:30px; text-align:center; color:var(--dim);">No searches yet.</td></tr>`}
                     </tbody>
                 </table>
             </div>
@@ -333,7 +340,9 @@ window.searchViewOpenNewForm = function(btn) {
         <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:18px; display:flex; flex-direction:column; gap:12px;">
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
                 <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--dim);">Collection
-                    <input id="search-form-collection" type="text" value="${escapeAttr(currentCollection)}" placeholder="main" style="padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px;">
+                    <select id="search-form-collection" onchange="window.searchViewCollectionChanged()" style="padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px;">
+                        <option value="">-- Loading Collections... --</option>
+                    </select>
                 </label>
                 <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--dim);">Scope
                     <select id="search-form-scope-type" onchange="window.searchViewScopeChanged(this)" style="padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px;">
@@ -354,6 +363,51 @@ window.searchViewOpenNewForm = function(btn) {
             </div>
         </div>`;
     window.searchViewScopeChanged(document.getElementById('search-form-scope-type'));
+    window.searchViewLoadCollections(currentCollection);
+};
+
+// Same GET /api/collection/search list diff_view.js's collection picker
+// (initSelectionTool) and upload.js's collection dropdown both fetch from.
+window.searchViewLoadCollections = async function(preselect) {
+    const sel = document.getElementById('search-form-collection');
+    if (!sel) return;
+    try {
+        const res = await (await fetch('/api/collection/search?limit=1000')).json();
+        const collections = res.collections || (Array.isArray(res) ? res : []);
+        sel.innerHTML = '<option value="">-- Choose Collection --</option>' +
+            collections.map(c => `<option value="${escapeAttr(c.name)}">${escapeHtml(c.name)}</option>`).join('');
+        if (preselect && collections.some(c => c.name === preselect)) sel.value = preselect;
+    } catch (e) {
+        sel.innerHTML = '<option value="">-- Failed to load collections --</option>';
+    }
+    window.searchViewCollectionChanged();
+};
+
+// Re-populate whichever file dropdown(s) the current scope type needs, same
+// cascade diff_view.js's onCollChange() uses for its collection -> file selects.
+window.searchViewCollectionChanged = function() {
+    const type = (document.getElementById('search-form-scope-type') || {}).value;
+    if (type === 'file') window.searchViewPopulateFileSelects(['search-form-md5']);
+    else if (type === 'pair') window.searchViewPopulateFileSelects(['search-form-md5a', 'search-form-md5b']);
+};
+
+window.searchViewPopulateFileSelects = async function(ids) {
+    const coll = (document.getElementById('search-form-collection') || {}).value;
+    const targets = ids.map(id => document.getElementById(id)).filter(Boolean);
+    if (!targets.length) return;
+    if (!coll) {
+        targets.forEach(sel => { sel.innerHTML = '<option value="">-- Choose Collection First --</option>'; sel.disabled = true; });
+        return;
+    }
+    targets.forEach(sel => { sel.innerHTML = '<option value="">-- Loading Files... --</option>'; sel.disabled = true; });
+    try {
+        const res = await (await fetch(`/api/file/search?collection=${encodeURIComponent(coll)}&limit=1000`)).json();
+        const options = '<option value="">-- Choose File --</option>' +
+            (res.files || []).map(f => `<option value="${escapeAttr(f.file_md5)}">${escapeHtml(f.file_name || f.file_md5)}</option>`).join('');
+        targets.forEach(sel => { sel.innerHTML = options; sel.disabled = false; });
+    } catch (e) {
+        targets.forEach(sel => { sel.innerHTML = '<option value="">-- Failed to load files --</option>'; });
+    }
 };
 
 window.searchViewScopeChanged = function(select) {
@@ -362,19 +416,18 @@ window.searchViewScopeChanged = function(select) {
     const type = select.value;
     const inputStyle = 'padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px;';
     const labelStyle = 'display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--dim);';
-    // MD5 fields reuse the same attachAutocomplete(input, 'file', 'file_md5', ...) dropdown
-    // dashboard.js's advanced file search uses, scoped to the current collection.
-    const md5Autocomplete = `onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; })"`;
     if (type === 'file') {
-        fields.innerHTML = `<label style="${labelStyle}">File MD5<input id="search-form-md5" type="text" autocomplete="off" ${md5Autocomplete} style="${inputStyle}"></label>`;
+        fields.innerHTML = `<label style="${labelStyle}">File<select id="search-form-md5" disabled style="${inputStyle}"><option value="">-- Choose Collection First --</option></select></label>`;
+        window.searchViewPopulateFileSelects(['search-form-md5']);
     } else if (type === 'filter') {
         fields.innerHTML = `<label style="${labelStyle}">Filter query string (same syntax as function search)<input id="search-form-filters" type="text" placeholder="tag=x&min_features=5" style="${inputStyle}"></label>`;
     } else if (type === 'pair') {
         fields.innerHTML = `
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-                <label style="${labelStyle}">MD5 A<input id="search-form-md5a" type="text" autocomplete="off" ${md5Autocomplete} style="${inputStyle}"></label>
-                <label style="${labelStyle}">MD5 B<input id="search-form-md5b" type="text" autocomplete="off" ${md5Autocomplete} style="${inputStyle}"></label>
+                <label style="${labelStyle}">File A<select id="search-form-md5a" disabled style="${inputStyle}"><option value="">-- Choose Collection First --</option></select></label>
+                <label style="${labelStyle}">File B<select id="search-form-md5b" disabled style="${inputStyle}"><option value="">-- Choose Collection First --</option></select></label>
             </div>`;
+        window.searchViewPopulateFileSelects(['search-form-md5a', 'search-form-md5b']);
     } else {
         fields.innerHTML = '';
     }

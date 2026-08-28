@@ -130,6 +130,8 @@ def list_searches():
     except ValueError:
         return {"error": "limit and offset must be integers"}, 400
     searches, total = search_service.list_searches(limit, offset)
+    for s in searches:
+        s["verdict_counts"] = search_service.get_verdict_counts(s["id"])
     return {"searches": searches, "total": total, "limit": limit, "offset": offset}
 
 

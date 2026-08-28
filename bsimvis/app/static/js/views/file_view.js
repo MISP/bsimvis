@@ -212,28 +212,17 @@ window.FileView = {
                                         <th class="sortable" onclick="FileView.toggleSort('bsim_features_count')">Features <span id="sort-icon-bsim_features_count">↕</span></th>
                                         <th>Notes</th>
                                     </tr>
-                                    <tr class="filter-row">
-                                        <th>
-                                            <div style="display:flex; flex-direction:column; gap:4px;">
-                                                <input type="text" id="flt-func-name" placeholder="Name..." style="width:100%;" onfocus="FileView.attachFieldAutocomplete(this, 'function_name')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
-                                                <div style="display:flex; gap:2px;">
-                                                    <input type="text" id="flt-func-namespace" placeholder="Namespace..." style="width:50%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'namespace')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
-                                                    <input type="text" id="flt-func-ret_type" placeholder="Return type..." style="width:50%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'return_type')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
-                                                </div>
-                                            </div>
-                                        </th>
-                                        <th><input type="text" id="flt-func-address" placeholder="Addr..." style="width:100%;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
-                                        <th><input type="text" id="flt-func-tag" placeholder="Tag..." style="width:100%;" onfocus="FileView.attachTagFilterAutocomplete(this)" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
-                                        <th>
-                                            <div style="display:flex; flex-direction:column; gap:2px;">
-                                                <input type="text" id="flt-func-cluster" placeholder="UUID..." style="width:100%; font-size:0.6rem;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
-                                                <input type="text" id="flt-func-cluster-name" placeholder="Cluster name..." style="width:100%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'cluster_name')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
-                                                <input type="number" id="flt-func-min-cohesion" placeholder="Min cohesion..." value="0.5" step="0.05" min="0" max="1" title="Min Cluster Cohesion" style="width:100%; font-size:0.6rem;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
-                                            </div>
-                                        </th>
-                                        <th><input type="number" id="flt-func-min-features" placeholder="Min" min="0" title="Min Features" style="width:100%;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
-                                        <th><input type="text" id="flt-func-note-owner" placeholder="Note owner..." style="width:100%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'note_owners')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
-                                    </tr>
+                                    ${FunctionFilters.functionRow({
+                                        values: { min_cohesion: '0.5' },
+                                        onInput: 'FileView.handleFilterChange()',
+                                        onKeydown: 'FileView.handleFilterKey(event)',
+                                        onFocus: param => ['function_name', 'namespace', 'return_type', 'cluster_name', 'note_owner'].includes(param)
+                                            ? `onfocus="FileView.attachFieldAutocomplete(this, '${param === 'note_owner' ? 'note_owners' : param}')"` : '',
+                                        tagCell: FunctionFilters.cell('flt-func-tag', {
+                                            placeholder: 'Tag...', onInput: 'FileView.handleFilterChange()', onKeydown: 'FileView.handleFilterKey(event)',
+                                            attrs: 'onfocus="FileView.attachTagFilterAutocomplete(this)"',
+                                        }),
+                                    })}
                                 </thead>
                                 <tbody id="file-functions-tbody">
                                     <tr><td colspan="6" style="text-align: center; color: var(--dim); padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading functions...</td></tr>
@@ -297,11 +286,7 @@ window.FileView = {
                                     </tr>
                                     <tr class="filter-row">
                                         <th>
-                                            <div style="display:flex; align-items:center; gap:2px;">
-                                                <input type="number" id="nbr-min-score" placeholder="Min..." value="0.9" step="0.05" min="0" max="1" style="font-size:0.65rem; width:48%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()">
-                                                <span class="dim" style="font-size:0.6rem">-</span>
-                                                <input type="number" id="nbr-max-score" placeholder="Max..." step="0.05" min="0" max="1" style="font-size:0.65rem; width:48%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()">
-                                            </div>
+                                            ${FunctionFilters.rangeCell('nbr-min-score', 'nbr-max-score', { onInput: 'FileView.debounceNeighborsSearch()', valueMin: '0.9' })}
                                         </th>
                                         <th><input type="text" id="nbr-file-name" placeholder="File Name..." style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()"></th>
                                         <th></th>
@@ -823,10 +808,7 @@ window.FileView = {
         p.set('limit', this.FUNC_PAGE_SIZE);
         p.set('sort_by', this.sortState.col);
         p.set('sort_order', this.sortState.dir === 1 ? 'asc' : 'desc');
-        for (const [id, param] of Object.entries(this.FUNC_FILTERS)) {
-            const v = (document.getElementById(id)?.value || '').trim();
-            if (v) p.set(param, v);
-        }
+        FunctionFilters.setParams(p, this.FUNC_FILTERS);
         return p.toString();
     },
 

@@ -101,11 +101,13 @@ function buildDiffUrl(id1, id2) {
 
 function buildFileDiffUrl(collA, md5A, collB, md5B) {
     const pool = window.getRoutingState ? window.getRoutingState().pool : null;
-    if (pool) {
-        const prefix = window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools';
-        return `/${prefix}/${encodeURIComponent(pool)}/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(md5A)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(md5B)}`;
-    }
-    return `/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(md5A)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(md5B)}`;
+    const prefix = pool ? `/${window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools'}/${encodeURIComponent(pool)}` : '';
+    let url = `${prefix}/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(md5A)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(md5B)}`;
+    const current = new URLSearchParams(window.location.search);
+    const q = current.get('compare_q');
+    const state = current.get('compare_state');
+    if (q) url += `?q=${encodeURIComponent(q)}#${['matched', 'unique_a', 'unique_b', 'unmatched', 'all'].includes(state) ? state : 'all'}`;
+    return url;
 }
 
 function getParentEvent(e) {

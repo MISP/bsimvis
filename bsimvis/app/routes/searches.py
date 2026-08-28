@@ -59,6 +59,20 @@ def _resolve_scope(collection, scope):
     coll_b = scope.get("coll_b") or collection
     pool_id = scope.get("pool_id")
     algo = scope.get("algo", "unweighted_cosine")
+    state = scope.get("state")
+    if state not in (None, "all", "matched", "unique", "changed"):
+        return None, "scope.state must be one of all, matched, unique, changed"
+    try:
+        threshold = float(scope.get("threshold", 0.9))
+    except (TypeError, ValueError) as error:
+        return None, str(error)
+    include_unique = scope.get("include_unique", True) is not False
+    include_unchanged = bool(scope.get("include_unchanged", True))
+    if state:
+        include_unique = state in ("all", "unique")
+        include_unchanged = state in ("all", "matched")
+        if state == "unique":
+            threshold = 0
     # Unlike deep pair analysis, search defaults to covering matched functions
     # too (include_unchanged=True) -- fast triage is cheap, and the whole
     # point of this feature is not silently excluding a candidate.
@@ -70,9 +84,9 @@ def _resolve_scope(collection, scope):
     try:
         candidates = analysis_orchestrator.pair_candidates(
             pair,
-            float(scope.get("threshold", 0.9)),
-            scope.get("include_unique", True) is not False,
-            bool(scope.get("include_unchanged", True)),
+            threshold,
+            include_unique,
+            include_unchanged,
             scope.get("skip_fid_tagged", True) is not False,
             int(scope.get("min_complexity") or 0),
             int(scope.get("max_functions") or 0),

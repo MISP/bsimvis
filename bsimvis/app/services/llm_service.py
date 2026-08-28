@@ -396,7 +396,7 @@ class LLMService:
                 continue
             evidence = (item.get("evidence") or "").strip()
             tag = item.get("suggested_tag")
-            if not tag or tag == "none" or tag not in allowed:
+            if verdict == "no" or not tag or tag == "none" or tag not in allowed:
                 tag = None
             out[fid] = (verdict, evidence, tag)
 
@@ -1014,10 +1014,15 @@ def _selfcheck():
                         "suggested_tag": "category:persistence:file",
                     },
                     {
+                        # a "no" verdict must never carry a tag, even a
+                        # valid/allowed one -- caught live against a real
+                        # model returning verdict="no" + a populated,
+                        # otherwise-valid suggested_tag on an unrelated
+                        # function.
                         "idx": 1,
                         "verdict": "no",
                         "evidence": "",
-                        "suggested_tag": "not-a-real-tag",
+                        "suggested_tag": "category:persistence:file",
                     },
                     {
                         "idx": 2,

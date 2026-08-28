@@ -28,6 +28,7 @@ file:line references hold unchanged — only the base for new work moves.
 | Live UI updates | Push (SSE/websocket), not polling |
 | Monolithic-job splitting | **Full scope** — split every known offender in this plan, not just a reference case |
 | Split-job performance | Must not regress throughput materially — measured, not assumed (§7) |
+| Search | Real secondary indexes (collection, file md5, status, type, pool), not a full-scan-and-filter (§2.1) |
 
 ---
 
@@ -122,6 +123,70 @@ log ("Abandoned after 3 attempts... Lease expired 3 times") — that becomes
 `failure_reason: retries_exhausted`, `failure_detail: "crashed x3 (worker
 died each time)"` instead of an opaque final log line.
 
+### 2.1 Search & indexing
+
+Today's "filtering" isn't indexed at all. `list_jobs` (job_service.py:1447)
+fetches every id from `jobs:global` (or `jobs:collection:<coll>`, capped at
+1000 each by `LTRIM`) and only applies `status`/`type`/`tier` filters
+**after** hydrating and JSON-parsing each one in Python (:1616-1644) — a
+status or type filter is a full scan every time, and gets more expensive as
+the cap grows or is raised. There is **no index at all** for file md5 —
+"every job that touched this file" isn't answerable without scanning every
+payload's `md5`/`file_md5`/`file_id` keys, which aren't even consistently
+named (the same three-way inconsistency `worker.py:290-296`'s
+`_mark_file_status` already has to work around).
+
+Fix: real secondary indexes, maintained incrementally instead of scanned.
+
+**Indexes** (Redis SETs, one per dimension value):
+
+- `jobs:idx:collection:<coll>`
+- `jobs:idx:pool:<pool_id>`
+- `jobs:idx:status:<status>`
+- `jobs:idx:type:<jtype>`
+- `jobs:idx:md5:<file_md5>` — **new**, doesn't exist today
+
+Plus one timeline: `jobs:timeline` — a ZSET, member = job id, score =
+`created_at`. Replaces `jobs:global`'s `LPUSH`+`LTRIM`-to-1000 with a real
+sorted structure that doesn't need an arbitrary cap to stay usable.
+
+**Canonical md5 field.** Write `file_md5` onto the job hash itself at
+creation time (`create_job`, normalizing whichever of `md5`/`file_md5`/
+`file_id` the payload used), instead of leaving it buried three different
+ways inside the JSON `payload` blob. This is what makes the md5 index (and
+`worker.py`'s existing lookup workaround) both simpler — one field, one
+name, indexed and hash-readable without a JSON parse.
+
+**Maintenance.** Collection/pool/type/md5 set membership is written once at
+`create_job` and never changes. Status is the one that moves — every status
+transition (`start_job`, `complete_job`, `fail_job`, `cancel_job`, the
+`pending`↔`running` flips) currently calls `self.r.hset(..., "status",
+...)` directly from ~6 separate call sites. Centralize these into one
+`_set_status(job_id, new_status)` helper that writes the hash field **and**
+does the `SREM` old-status-set / `SADD` new-status-set move atomically (Lua,
+same pattern as `_ADVANCE_LANE_LUA`). This both builds the index correctly
+and removes another instance of the "same state change, six call sites"
+smell the diagnosis doc flagged elsewhere (§1's `queued` latch, `advance_lane`
+CAS).
+
+**Query.** For N active filters (e.g. `collection=X&status=failed`):
+`ZINTERSTORE tmp 2 jobs:timeline jobs:idx:status:failed WEIGHTS 1 0` (or
+chain through each active filter's SET) intersects `jobs:timeline`'s
+recency ordering against every filter set at once, giving a
+correctly-paginated, correctly-sorted result in one round trip —
+`ZCARD tmp` for total, `ZREVRANGE tmp offset offset+limit-1` for the page —
+instead of hydrating and filtering the whole timeline in Python. `md5` and
+`pool` filters slot into the same intersection, so `GET /api/jobs?md5=<hash>`
+("every job that ever touched this file") becomes a real indexed query
+instead of a request nobody could serve before.
+
+**Engine-agnostic.** This indexing layer sits on the job *metadata* record,
+not on Celery's result backend — it's needed whether the underlying executor
+is today's `JobService` or the Celery-backed one from later phases (§9),
+since Celery's own result store has no notion of collection/md5/pool at all.
+Build it against the current job hash now; it carries forward unchanged
+across the phase-4/5 migration.
+
 ---
 
 ## 3. Job view UI
@@ -129,7 +194,9 @@ died each time)"` instead of an opaque final log line.
 Two-level layout, not a fully recursive tree:
 
 - **Unit list** (top-level chains/groups/chords): flat, paginated, filtered
-  — same as today's list, already reasonably fast.
+  by collection, pool, status, type, and **file md5** (§2.1's new index) —
+  a search box that accepts a pasted md5 and jumps straight to every job
+  that touched that file is the concrete deliverable here.
 - **Unit detail panel**: opens via SSE subscription (`/stream`), not a
   poll-on-interval fetch. Subtasks render from the pushed group/chord state;
   a unit with hundreds of members (a sealed upload wave) virtualizes the
@@ -332,9 +399,13 @@ Each phase independently shippable, same incremental discipline that worked
 for the memory-management branches. Later phases depend on earlier ones only
 where noted.
 
-1. **Logging/progress infrastructure (§5).** No architecture change
-   required — ships value immediately, and every later phase (stop/restart,
-   splitting, Celery migration) depends on it for observability. Do first.
+1. **Logging/progress infrastructure (§5) + search indexes (§2.1).** Neither
+   needs an architecture change — both ship value immediately, and every
+   later phase (stop/restart, splitting, Celery migration, the new UI)
+   depends on them for observability and for not re-scanning the whole
+   queue on every query. Do first, together: the `_set_status` centralization
+   §2.1 needs touches the same call sites §5's worker-death diagnostics
+   does.
 2. **Splice fixes (§6).** Independent of Celery; deletes `splice_tasks`
    outright. Uses §5's progress API for the new resumable `build_bin_sim`
    job.

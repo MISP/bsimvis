@@ -4,9 +4,30 @@ import math
 import time
 import logging
 import hashlib
+import heapq
 from bsimvis.app.services.index_service import save_similarity
 from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.index_config import get_propagated_fields
+
+# LCA acceleration (rust_cpu/wgpu) needs the compiled extension from
+# native/bsimvis_similarity/ (`maturin develop --release`), which is a
+# manual build step, not part of `uv sync`/pip install -- an environment
+# that skipped it must not crash every file's analysis job on the very
+# first similarity build. Checked once at import time; build_batch uses it
+# to fall back to the plain per-function Python path automatically instead
+# of blowing up on an unguarded `import bsimvis_similarity_native`.
+try:
+    import bsimvis_similarity_native as _native_probe  # noqa: F401
+
+    NATIVE_AVAILABLE = True
+except ImportError:
+    NATIVE_AVAILABLE = False
+    logging.warning(
+        "bsimvis_similarity_native not installed -- LCA discovery "
+        "(rust_cpu/wgpu) is unavailable, falling back to the plain "
+        "per-function Python path. Build it with `maturin develop --release "
+        "--manifest-path native/bsimvis_similarity/Cargo.toml` to enable."
+    )
 
 # --- Shared Lua Scripts ---
 
@@ -41,9 +62,116 @@ class SimilarityService:
         # ponytail: LRU-bounded by total cached pairs (~hundreds of MB) so a huge
         # collection can't OOM the cache. Raise/lower if RAM vs hit-rate needs it.
         self._pl_budget = 5_000_000
-        self._norm_cache = {}  # func_id -> vector norm (float)
-        self._count_cache = {}  # (count_idx_key, func_id) -> feature count (float)
+        self._norm_cache = {}  # v_id -> vector norm (float)
+        self._count_cache = {}  # (count_idx_key, v_id) -> feature count (float)
+        
+        # LCA Acceleration Graph Cache
+        self._base_snapshot = None
+        self._delta_snapshots = []
+        self._snapshot_budget_bytes = 1024 * 1024 * 500 # 500MB
 
+
+    def build_lca_snapshot(
+        self, collection, algo="unweighted_cosine", workers=4,
+        job_service=None, job_id=None, target_batch_size=2000,
+    ):
+        # Reset on every call, including an early return below -- otherwise a
+        # collection/build where this bails (native missing, no vclasses yet)
+        # would silently reuse whatever _base_snapshot a PRIOR call (possibly
+        # for a different collection) last set, feeding stale cross-vclass
+        # edges into build_batch's discovery.
+        self._base_snapshot = None
+        if not NATIVE_AVAILABLE:
+            return
+        import bsimvis_similarity_native as sn
+        from bsimvis.app.services.config_service import config_service
+        import logging
+
+        r = self.r
+        # KEYS blocks the whole server on a big keyspace; SCAN doesn't.
+        vclass_keys = list(r.scan_iter(f"{collection}:vclass:*:vec:tf"))
+        if not vclass_keys:
+            return
+
+        self.vclass_map = [
+            (k.decode() if isinstance(k, bytes) else k).split(":")[2]
+            for k in vclass_keys
+        ]
+        v_total = len(vclass_keys)
+        logging.info(f"[*] LCA snapshot: loading {v_total} vector-classes for {collection}...")
+
+        vectors = []
+        load_chunk = 5000
+        for start in range(0, v_total, load_chunk):
+            pipe = r.pipeline(transaction=False)
+            for key in vclass_keys[start:start + load_chunk]:
+                pipe.zrange(key, 0, -1, withscores=True)
+            for vec in pipe.execute():
+                vectors.append([(h.decode() if isinstance(h, bytes) else h, float(tf)) for h, tf in vec])
+
+        scorer = sn.ExactScorer(vectors)
+        # Handed to the Rust scorer above; the raw posting lists aren't
+        # needed again and can be big on a large collection.
+        del vectors
+        indices = list(range(v_total))
+
+        backend = config_service.get("similarity.discovery_backend", "rust_cpu")
+        min_score = config_service.get("similarity.min_score", 0.9)
+        top_k = 0  # No top_k for discovery
+
+        from bsimvis.app.services.graph_service import graph_service
+        gen = graph_service.get_active_generation(collection)
+        next_gen = gen + 1
+        part_offset = 0
+        mapped_edges = []
+        start_time = time.time()
+
+        # O(V^2) all-pairs scoring against a candidate set that doesn't change
+        # per batch -- chunk the TARGET side so the native call, its result,
+        # and the on-heap edge list never have to hold all V targets' results
+        # at once, and so progress is visible instead of one multi-hour call.
+        n_batches = (v_total + target_batch_size - 1) // target_batch_size
+        for b, start in enumerate(range(0, v_total, target_batch_size)):
+            target_batch = indices[start:start + target_batch_size]
+
+            edges_raw = None
+            if backend == "wgpu" and hasattr(scorer, "select_target_block_wgpu"):
+                try:
+                    edges_raw = scorer.select_target_block_wgpu(
+                        target_batch, indices, algo, workers, top_k, min_score, 0.05
+                    )
+                except Exception as e:
+                    logging.error(f"WGPU fallback on GPU failure with telemetry: {e}")
+                    edges_raw = None
+
+            if edges_raw is None:
+                edges_raw = scorer.select_target_block(target_batch, indices, algo, workers, top_k, min_score)
+
+            batch_edges = [
+                (int(self.vclass_map[target_batch[u]]), int(self.vclass_map[v]), s)
+                for u, targets in enumerate(edges_raw)
+                for v, s in targets
+            ]
+            part_offset = graph_service.write_base_partitions(collection, next_gen, batch_edges, part_offset)
+            mapped_edges.extend(batch_edges)
+
+            done = min(start + target_batch_size, v_total)
+            elapsed = time.time() - start_time
+            speed = done / elapsed if elapsed > 0 else 0
+            eta = (v_total - done) / speed if speed > 0 else 0
+            msg = (
+                f"LCA snapshot: {done}/{v_total} vector-classes "
+                f"({speed:.1f} vclass/s, {len(mapped_edges)} edges, ETA {int(eta)}s)"
+            )
+            logging.info(f"[*] {msg}")
+            if job_service and job_id:
+                # Reserve the tail of the progress bar for the per-function
+                # discovery pass below; this stage only owns the first half.
+                pct = int(done / v_total * 50)
+                job_service.update_progress(job_id, pct, msg, processed=done, total=v_total)
+
+        graph_service.set_active_generation(collection, next_gen)
+        self._base_snapshot = mapped_edges
     def _reset_read_caches(self):
         """Drop per-build read caches (call at each top-level build entry so a
         later build never sees posting lists/norms stale from a prior ingestion)."""
@@ -62,12 +190,42 @@ class SimilarityService:
             return
         pipe = self.r.pipeline(transaction=False)
         for k in miss:
-            pipe.zrange(k, 0, -1, withscores=True)
-        for k, raw in zip(miss, pipe.execute()):
-            pl = [(fid, float(tf)) for fid, tf in raw]
+            if k.endswith(":functions"):
+                pipe.zrange(k.replace(":functions", ":vclasses"), 0, -1, withscores=True)
+            else:
+                pipe.zrange(k, 0, -1, withscores=True)
+        raw_results = pipe.execute()
+        
+        vclass_pipe = self.r.pipeline(transaction=False)
+        vclasses_to_fetch = []
+        for k, raw in zip(miss, raw_results):
+            if k.endswith(":functions"):
+                coll = k.split(":")[0]
+                for v_id, _ in raw:
+                    v_str = v_id.decode() if isinstance(v_id, bytes) else v_id
+                    vclass_pipe.smembers(f"{coll}:vclass:{v_str}:functions")
+                    vclasses_to_fetch.append(v_str)
+                    
+        funcs_results = vclass_pipe.execute() if vclasses_to_fetch else []
+        vclass_funcs_map = {}
+        for v_str, funcs in zip(vclasses_to_fetch, funcs_results):
+            vclass_funcs_map[v_str] = [f.decode() if isinstance(f, bytes) else f for f in funcs]
+            
+        for k, raw in zip(miss, raw_results):
+            pl = []
+            if k.endswith(":functions"):
+                for v_id, tf in raw:
+                    v_str = v_id.decode() if isinstance(v_id, bytes) else v_id
+                    tf_float = float(tf)
+                    for f_id in vclass_funcs_map.get(v_str, []):
+                        pl.append((f_id, tf_float))
+            else:
+                for fid, tf in raw:
+                    pl.append((fid.decode() if isinstance(fid, bytes) else fid, float(tf)))
             c[k] = pl
             c.move_to_end(k)
             self._pl_pairs += len(pl)
+            
         while self._pl_pairs > self._pl_budget and len(c) > 1:
             _, ev = c.popitem(last=False)
             self._pl_pairs -= len(ev)
@@ -177,6 +335,163 @@ class SimilarityService:
         logging.info(
             f"[*] Building similarities for {total} functions in {batch_uuid or md5} (chunk_size=100, yield={sleep_time}s)..."
         )
+
+        backend = config_service.get("similarity.discovery_backend", "rust_cpu")
+        if backend in ["wgpu", "rust_cpu"] and algo == "unweighted_cosine":
+            logging.info(f"[*] Running LCA projection for {total} functions in {batch_uuid or md5}")
+
+            # Same-vector-class exact matching (below) needs no native code --
+            # it's a plain Redis set lookup. Only the cross-class fuzzy
+            # matching inside build_lca_snapshot needs bsimvis_similarity_native;
+            # that call is a no-op (self._base_snapshot stays None) when it's
+            # missing, so this still finds every byte-identical function
+            # across files even without the native extension built.
+            self.build_lca_snapshot(collection, algo=algo, job_service=job_service, job_id=job_id)
+
+            vclass_keys = list(r.scan_iter(f"{collection}:vclass:*:functions"))
+            vclass_ids = []
+            for k in vclass_keys:
+                k_str = k.decode() if isinstance(k, bytes) else k
+                try:
+                    vclass_ids.append(int(k_str.split(":")[2]))
+                except ValueError:
+                    vclass_ids.append(None)
+
+            vclass_funcs = {}
+            smembers_pipe = r.pipeline(transaction=False)
+            for k in vclass_keys:
+                smembers_pipe.smembers(k)
+            for v_id, members in zip(vclass_ids, smembers_pipe.execute()):
+                if v_id is None:
+                    continue
+                vclass_funcs[v_id] = [f.decode() if isinstance(f, bytes) else f for f in members]
+
+            big_vclasses = [(v, len(f)) for v, f in vclass_funcs.items() if len(f) > 500]
+            if big_vclasses:
+                logging.info(
+                    f"[*] LCA discovery: {len(big_vclasses)} vector-class(es) with >500 identical "
+                    f"functions (largest {max(n for _, n in big_vclasses)}) -- same-class matching "
+                    f"there is O(n^2) in group size, expect it to dominate this stage's time."
+                )
+
+            func_feat_counts = {}
+            target_func_set = set(f.decode() if isinstance(f, bytes) else f for f in function_ids)
+            all_funcs = [f.decode() if isinstance(f, bytes) else f for f in r.smembers(f"{collection}:indexed:functions")]
+            
+            pipe = r.pipeline(transaction=False)
+            for f in all_funcs:
+                pipe.zscore(f"{collection}:idx:func:bsim_features_count", f)
+            res = pipe.execute()
+            for f, count in zip(all_funcs, res):
+                func_feat_counts[f] = float(count or 0)
+            
+            discovery_results_map = {}
+            def add_candidate(fid_target, fid_cand, score):
+                t_total = func_feat_counts.get(fid_target, 0)
+                c_total = func_feat_counts.get(fid_cand, 0)
+                if t_total < min_features or c_total < min_features:
+                    return
+                # Bound each target's candidate list to top_k via a min-heap instead of
+                # collecting every candidate before the top_k trim below -- a >5000-member
+                # identical-function vector-class was holding ~5000 uncapped candidates per
+                # function in memory, which is what OOM-killed the worker on this collection.
+                heap = discovery_results_map.setdefault(fid_target, [])
+                entry = (score, fid_cand, c_total)
+                if top_k <= 0 or len(heap) < top_k:
+                    heapq.heappush(heap, entry)
+                elif entry > heap[0]:
+                    heapq.heapreplace(heap, entry)
+
+            n_vclasses = len(vclass_funcs)
+            discovery_start = time.time()
+            log_every = max(1, n_vclasses // 10)
+            for i, (v_id, funcs) in enumerate(vclass_funcs.items()):
+                n = len(funcs)
+                if n > 1:
+                    # Every pair within a vector-class ties at score 1.0 (byte-identical
+                    # functions), so any top_k other members are as good as all n-1 --
+                    # picking a fixed-size ring slice avoids the O(n^2) pair generation
+                    # that dominated this stage's time on large duplicate-function groups.
+                    cap = n - 1 if top_k <= 0 else min(top_k, n - 1)
+                    for idx, f1 in enumerate(funcs):
+                        if f1 not in target_func_set:
+                            continue
+                        for offset in range(1, cap + 1):
+                            f2 = funcs[(idx + offset) % n]
+                            add_candidate(f1, f2, 1.0)
+                if job_service and job_id and (i % log_every == 0 or i == n_vclasses - 1):
+                    pct = 50 + int((i + 1) / max(1, n_vclasses) * 25)
+                    job_service.update_progress(
+                        job_id, pct,
+                        f"LCA discovery: same-class matching {i + 1}/{n_vclasses} vector-classes "
+                        f"({time.time() - discovery_start:.1f}s elapsed)",
+                        processed=i + 1, total=n_vclasses,
+                    )
+
+            if self._base_snapshot:
+                n_edges = len(self._base_snapshot)
+                cross_start = time.time()
+                log_every_edge = max(1, n_edges // 10)
+                for i, (u_id, v_id, score) in enumerate(self._base_snapshot):
+                    if score >= min_score:
+                        u_funcs = vclass_funcs.get(u_id, [])
+                        v_funcs = vclass_funcs.get(v_id, [])
+                        for f_u in u_funcs:
+                            for f_v in v_funcs:
+                                if f_u in target_func_set:
+                                    add_candidate(f_u, f_v, score)
+                                if f_v in target_func_set:
+                                    add_candidate(f_v, f_u, score)
+                    if job_service and job_id and (i % log_every_edge == 0 or i == n_edges - 1):
+                        pct = 75 + int((i + 1) / max(1, n_edges) * 25)
+                        job_service.update_progress(
+                            job_id, pct,
+                            f"LCA discovery: cross-class matching {i + 1}/{n_edges} edges "
+                            f"({time.time() - cross_start:.1f}s elapsed)",
+                            processed=i + 1, total=n_edges,
+                        )
+
+            discovery_results = []
+            for fid, heap in discovery_results_map.items():
+                if fid in target_func_set:
+                    candidates = sorted(
+                        ({"id": e[1], "score": e[0], "c_total": e[2]} for e in heap),
+                        key=lambda x: x["score"], reverse=True,
+                    )
+                    if top_k > 0:
+                        candidates = candidates[:top_k]
+                    parts = fid.split(":")
+                    md5_val = parts[2] if len(parts) >= 3 else "unknown"
+                    addr_val = parts[3] if len(parts) >= 4 else ""
+                    t_total = func_feat_counts.get(fid, 0)
+                    discovery_results.append((fid, md5_val, addr_val, t_total, candidates))
+
+            if discovery_results:
+                written = self._persist_and_index_batch(
+                    collection,
+                    algo,
+                    discovery_results,
+                    min_features=min_features,
+                    index_depth=index_depth,
+                    skip_write=skip_write,
+                )
+                total_sims = written or 0
+            else:
+                total_sims = 0
+                
+            small_fids = [f for f, count in func_feat_counts.items() if count < min_features and f in target_func_set]
+            if small_fids and not skip_write:
+                written_small = self._hash_match_small(collection, algo, small_fids, index_depth)
+                total_sims += written_small or 0
+                
+            if job_service and job_id:
+                job_service.update_progress(job_id, 100, f"Completed LCA building {total_sims} similarities.")
+            
+            # 3. Mark all target functions as built so they aren't processed again
+            if not skip_write:
+                r.sadd(f"{collection}:built:functions:{algo}", *target_func_set)
+                
+            return True
 
         start_time = time.time()
         # Count total functions in the collection to size chunks dynamically
@@ -326,7 +641,7 @@ class SimilarityService:
         feats = list(target_features.items())
         pipe = r.pipeline(transaction=False)
         for f_hash, _ in feats:
-            pipe.zcard(f"{collection}:feature:{f_hash}:functions")
+            pipe.zcard(f"{collection}:feature:{f_hash}:vclasses")
         sizes = pipe.execute()
         features_sorted = sorted(
             (
@@ -1843,8 +2158,7 @@ class SimilarityService:
                 if candidates:
                     # Sort and limit combined candidates (from all collections)
                     candidates.sort(key=lambda x: x["score"], reverse=True)
-                    candidates = candidates[:top_k]
-
+                    # 
                     parts = fid.split(":")
                     md5 = parts[2] if len(parts) >= 3 else "unknown"
                     discovery_results.append((fid, md5, "", t_total, candidates))
@@ -2131,8 +2445,7 @@ class SimilarityService:
             for fid, t_total, candidates in candidates_by_fid:
                 if candidates:
                     candidates.sort(key=lambda x: x["score"], reverse=True)
-                    candidates = candidates[:top_k]
-
+                    # 
                     parts = fid.split(":")
                     md5 = parts[2] if len(parts) >= 3 else "unknown"
                     discovery_results.append((fid, md5, "", t_total, candidates))

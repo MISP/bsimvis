@@ -1,0 +1,15 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "bsimvis-similarity-native"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "maturin>=1.15.0",
+]
+
+[tool.maturin]
+module-name = "bsimvis_similarity_native"
+features = ["pyo3/extension-module"]

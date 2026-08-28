@@ -32,20 +32,21 @@
     description = "Decompile only"
     no_analysis = true
 [clustering]
-    # threshold_uf (default): deterministic, incremental union-find (see
-    # cluster_threshold.py) -- exact by construction, and new uploads update
-    # only the clusters they touch instead of rebuilding the whole collection.
-    # hierarchical_uf: full single-linkage hierarchy via Kruskal + union-find,
-    # same file. Full rebuild only (no incremental yet). cohesion_cut picks
-    # each function's assigned cluster: the shallowest surviving ancestor
-    # whose cohesion clears cohesion_cut, not just its deepest one.
+    # hierarchical_uf (default): full single-linkage hierarchy via Kruskal +
+    # union-find (see cluster_threshold.py). Full rebuild only (no
+    # incremental path yet). cohesion_cut picks each function's assigned
+    # cluster: the shallowest surviving ancestor whose cohesion clears
+    # cohesion_cut, not just its deepest one.
+    # threshold_uf: deterministic, incremental union-find -- exact by
+    # construction, and new uploads update only the clusters they touch
+    # instead of rebuilding the whole collection.
     # hdbscan: legacy path, kept for comparison/rollback.
-    engine = "threshold_uf"
+    engine = "hierarchical_uf"
     # Same three engines, over binary (file) similarity instead of function
     # similarity -- see bin_cluster_service.py. bin_* keys below tune it;
     # non-bin_-prefixed keys above (cohesion_cut, epsilon, min_cluster_size,
     # etc.) are shared with the func-level engines.
-    bin_engine = "threshold_uf"
+    bin_engine = "hierarchical_uf"
     bin_uf_threshold = 0.1
     uf_threshold = 0.98
     cohesion_cut = 0.9
@@ -84,6 +85,12 @@
     # instead (BSim is false-positive-prone on tiny funcs). 10 = canonical default.
     min_features = 10
     algo = "unweighted_cosine"
+    # LCA discovery backend: rust_cpu (default) or wgpu. Both need the native
+    # extension built (native/bsimvis_similarity/README.md); wgpu additionally
+    # needs it built with `--features gpu` and a Vulkan/Metal/DX12-capable GPU
+    # on the host. Switching requires a worker restart (config is read once at
+    # process start) -- see scripts/switch_backend.sh.
+    discovery_backend = "rust_cpu"
 
 
 [llm]

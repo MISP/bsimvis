@@ -472,6 +472,23 @@ class JobDetail(Resource):
         return get_job(job_id)
 
 
+@ns_jobs.route("/<string:job_id>/stream")
+class JobStream(Resource):
+    @ns_jobs.doc(
+        params={
+            "job_id": {
+                "description": "Job or pipeline UUID to tail",
+                "example": "7b8e23af-4b2a-4e6c-8a1d-3c9f2b1a0e5d",
+            }
+        }
+    )
+    def get(self, job_id):
+        """SSE tail of a job's log/progress stream, terminating on a `done` event."""
+        from bsimvis.app.routes.jobs import stream_job
+
+        return stream_job(job_id)
+
+
 @ns_jobs.route("/pause")
 class JobPause(Resource):
     def get(self):

@@ -51,6 +51,56 @@ def get_job(job_id):
     return job
 
 
+_TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+
+
+def stream_job(job_id):
+    """SSE tail of one job's log_stream (job-system-rework-plan.md §2/§5).
+
+    Pushes every §5 stream entry (log lines and progress/phase checkpoints
+    ride the same job_log:<id> Redis Stream) as it's written, then a `done`
+    event once the job reaches a terminal status -- the frontend consumes
+    this instead of polling GET /api/jobs/<id> in a loop. XREAD BLOCK does
+    the waiting server-side so this costs nothing when nothing is happening.
+    """
+    from flask import Response, stream_with_context
+
+    if not job_service.r.exists(f"job:{job_id}"):
+        return {"error": "Job not found"}, 404
+
+    def events():
+        key = f"job_log:{job_id}"
+        last_id = "0"
+        while True:
+            resp = job_service.r.xread({key: last_id}, count=100, block=2000)
+            got_entries = False
+            for _stream_key, items in resp or []:
+                for entry_id, fields in items:
+                    got_entries = True
+                    last_id = entry_id
+                    payload = {
+                        "id": entry_id,
+                        "type": "job.log",
+                        "time": fields.get("ts"),
+                        "data": fields,
+                    }
+                    yield f"id: {entry_id}\nevent: log\ndata: {json.dumps(payload)}\n\n"
+            if not got_entries:
+                status = job_service.r.hget(f"job:{job_id}", "status")
+                if status is None or status in _TERMINAL_STATUSES:
+                    payload = {"type": "job.done", "data": {"status": status}}
+                    yield f"event: done\ndata: {json.dumps(payload)}\n\n"
+                    break
+
+    return Response(
+        stream_with_context(events()),
+        mimetype="text/event-stream",
+        # Chunks are useless if a proxy buffers them into one response --
+        # same precedent as routes/home.py's unified_search_stream.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 def cancel_job(job_id):
     """Cancels a pending or running job/pipeline."""
     success = job_service.cancel_job(job_id)

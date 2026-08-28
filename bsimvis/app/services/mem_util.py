@@ -60,13 +60,21 @@ def phase(label, job_service=None, job_id=None):
     Off unless MEM_PHASE_LOG is set, because this is diagnostic: it answers
     "which part of this job holds the memory", which is not something you can
     infer from a single per-job peak. Enable it, run the job once, read the log.
+
+    This is the shared checkpoint every handler calls (job-system-rework-plan.md
+    §5): routes through JobService.update_progress so phase, message and RSS
+    land in one write on the job_log stream, instead of a separate add_log
+    call with the RSS baked into the message text.
     """
     if not _LOG_PHASES:
         return
-    msg = f"[mem] {label}: rss={current_rss() / 1024**3:.2f} GiB peak={peak_rss() / 1024**3:.2f} GiB"
+    cur, peak = current_rss(), peak_rss()
+    msg = f"[mem] {label}: rss={cur / 1024**3:.2f} GiB peak={peak / 1024**3:.2f} GiB"
     logging.info(msg)
     if job_service and job_id:
         try:
-            job_service.add_log(job_id, msg)
+            job_service.update_progress(
+                job_id, message=msg, phase=label, rss_current=cur, rss_peak=peak
+            )
         except Exception:
             pass

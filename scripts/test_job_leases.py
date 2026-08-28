@@ -29,6 +29,8 @@ class FakeRedis:
         self.lists = {}
         self.zsets = {}
         self.strings = {}
+        self.streams = {}
+        self.expires = {}
 
     # --- strings
     def set(self, key, value, nx=False, ex=None):
@@ -43,6 +45,22 @@ class FakeRedis:
     def delete(self, key):
         self.strings.pop(key, None)
         return 1
+
+    def expire(self, key, ttl):
+        self.expires[key] = ttl
+        return 1
+
+    # --- streams (job_log:<id>, see JobService.add_log/update_progress)
+    def xadd(self, key, fields, maxlen=None, approximate=True):
+        stream = self.streams.setdefault(key, [])
+        entry_id = f"{len(stream)}-0"
+        stream.append((entry_id, {k: str(v) for k, v in fields.items()}))
+        if maxlen is not None:
+            self.streams[key] = stream[-maxlen:]
+        return entry_id
+
+    def xrange(self, key, min="-", max="+"):
+        return list(self.streams.get(key, []))
 
     def exists(self, key):
         # Real EXISTS is type-agnostic; checking only strings would silently

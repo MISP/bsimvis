@@ -36,6 +36,10 @@ WORKER_RESTART_DELAY=${WORKER_RESTART_DELAY:-5}
 WORKER_OOM_SCORE_ADJ=${WORKER_OOM_SCORE_ADJ:-1000}
 # 0 = restart forever. A crash-looping worker still backs off by the delay.
 WORKER_MAX_RESTARTS=${WORKER_MAX_RESTARTS:-0}
+# Same connection the app/reaper use (bsimvis/app/services/redis_client.py),
+# so the reaper can read what this script saw about a dead worker.
+REDIS_HOST=${REDIS_HOST:-localhost}
+REDIS_PORT=${REDIS_PORT:-6379}
 
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/${NAME}.log"
@@ -73,6 +77,20 @@ human() {  # bytes -> GiB, 2dp
     awk -v b="${1:-0}" 'BEGIN { if (b+0 <= 0) print "n/a"; else printf "%.2f GiB", b/1073741824 }'
 }
 
+# Records this exit for the job reaper (job_service.py:_classify_worker_death)
+# to read -- otherwise a SIGKILL'd worker leaves no trace of *why* the lease
+# expired, and an OOM kill is indistinguishable from a genuinely frozen
+# process. Best-effort: a Redis hiccup here must never block the restart loop.
+record_worker_exit() {
+    local rc="$1" peak="$2" ts
+    ts=$(($(date +%s%N) / 1000000))
+    local args=(rc "$rc" ts "$ts")
+    [ -n "$peak" ] && args+=(peak "$peak")
+    redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" HSET "worker_exit:${NAME}" "${args[@]}" > /dev/null 2>&1
+    redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" EXPIRE "worker_exit:${NAME}" 3600 > /dev/null 2>&1
+    return 0
+}
+
 WORKER_FAST_FAIL_SECONDS=${WORKER_FAST_FAIL_SECONDS:-30}
 WORKER_MAX_RESTART_DELAY=${WORKER_MAX_RESTART_DELAY:-120}
 
@@ -106,6 +124,8 @@ while true; do
         rc=$?
         peak=""
     fi
+
+    record_worker_exit "$rc" "$peak"
 
     # 137 = SIGKILL, which under a MemoryMax scope means the cgroup OOM killer.
     if [ "$rc" -eq 137 ]; then

@@ -85,6 +85,16 @@ MAX_ATTEMPTS = 3  # requeue this many times before failing the job for good
 REAPER_LOCK_KEY = "jobs:reaper:lock"
 PAUSE_KEY = "jobs:paused"
 
+# --- job_log stream ---------------------------------------------------------
+# job_log:<id> is a Redis Stream, not a capped LIST. A pasted-log job doing
+# ~1 line/1-2s (a 20M-similarity run) blew through the old 100-line LTRIM cap
+# in under 3 minutes and lost everything before that. XADD trims by count
+# (approximate MAXLEN, O(1) amortized) instead of a hard cutoff, and the key
+# expires on its own after LOG_STREAM_TTL of inactivity instead of living
+# forever (job-system-rework-plan.md §5).
+LOG_STREAM_MAXLEN = 5000
+LOG_STREAM_TTL = 7 * 86400
+
 
 def safe_int(val, default=0):
     if val is None:
@@ -887,6 +897,29 @@ class JobService:
         self.r.set(MEM_USED_KEY, total)
         return total
 
+    def _classify_worker_death(self, worker_name):
+        """Reads what scripts/worker-supervisor.sh recorded about a dead worker.
+
+        The supervisor is the only thing that ever sees an exit code -- a
+        worker killed by SIGKILL/OOM never runs its `finally`, and the reaper
+        only observes a silently-expired lease. Without this, an OOM kill and
+        a genuinely frozen process look identical from Redis alone. Only
+        classify what the supervisor actually recorded (worker_exit:<name>,
+        written after every worker exit); don't guess at a cause with no
+        signal behind it.
+        """
+        if not worker_name:
+            return "no lease owner recorded (worker died before claiming)"
+        info = self.r.hgetall(f"worker_exit:{worker_name}")
+        if not info:
+            return "no exit signal recorded (frozen process, or supervisor not running)"
+        rc = info.get("rc")
+        peak = safe_int(info.get("peak"))
+        peak_str = f", peak={peak / 1024**3:.2f} GiB" if peak else ""
+        if rc == "137":
+            return f"OOM-killed by supervisor (rc=137{peak_str})"
+        return f"worker exited rc={rc}{peak_str}"
+
     def reap_expired(self, now=None):
         """Requeues jobs whose worker died, and clears stale in-flight entries.
 
@@ -923,6 +956,8 @@ class JobService:
                     cleaned += 1
                     continue
 
+                death = self._classify_worker_death(job.get("lease_owner"))
+                self.r.hset(f"job:{job_id}", "failure_detail", death)
                 self.release_lease(job_id)
 
                 # MAX_ATTEMPTS predates jobs being resumable. enrich_features
@@ -953,11 +988,12 @@ class JobService:
                 if attempts > MAX_ATTEMPTS:
                     self.add_log(
                         job_id,
-                        f"Abandoned after {attempts - 1} attempts (worker kept dying).",
+                        f"Abandoned after {attempts - 1} attempts (worker kept dying). "
+                        f"Last death: {death}",
                     )
                     self.fail_job(
                         job_id,
-                        f"Lease expired {attempts - 1} times; giving up.",
+                        f"Lease expired {attempts - 1} times; giving up. Last death: {death}",
                     )
                     failed += 1
                     continue
@@ -967,7 +1003,9 @@ class JobService:
                 self.r.hdel(f"job:{job_id}", "queued", "lease_owner")
                 self._set_status(job_id, JobStatus.PENDING)
                 self.add_log(
-                    job_id, f"Lease expired; requeued (attempt {attempts + 1})."
+                    job_id,
+                    f"Lease expired; requeued (attempt {attempts + 1}). "
+                    f"Cause: {death}",
                 )
                 self.enqueue_job(job_id)
                 requeued += 1
@@ -1234,9 +1272,17 @@ class JobService:
                     )
             data["sub_tasks"] = sub_tasks
 
-        # Fetch logs
-        logs = self.r.lrange(f"job_log:{job_id}", 0, -1)
-        data["logs"] = [log for log in logs]
+        # Fetch logs. The stream also carries bare progress ticks (no
+        # `message` field) for the future SSE tail -- the log view only
+        # wants the message-bearing entries, same as the old capped LIST.
+        entries = self.r.xrange(f"job_log:{job_id}")
+        logs = [
+            f"[{fields.get('ts', '')}] {fields['message']}"
+            for _id, fields in entries
+            if fields.get("message")
+        ]
+        logs.reverse()  # newest-first, matching the old LPUSH/lrange order
+        data["logs"] = logs
 
         # Fetch performance details if available
         perf_details = self.r.get(f"job_perf_details:{job_id}")
@@ -1286,9 +1332,7 @@ class JobService:
         self.r.lrem("jobs:pending", 0, job_id)
         self.r.lrem("jobs:pending:high", 0, job_id)
 
-        self.r.lpush(
-            f"job_log:{job_id}", f"[{int(time.time()*1000)}] Job cancelled by user."
-        )
+        self.add_log(job_id, "Job cancelled by user.")
 
         if not data.get("parent_id"):
             collection = data.get("lane_collection")
@@ -1318,40 +1362,90 @@ class JobService:
                 cancelled += 1
         return cancelled
 
-    def add_log(self, job_id, message):
-        """Adds a log entry for a job."""
+    def add_log(self, job_id, message, level="info"):
+        """Adds a structured log entry for a job. See LOG_STREAM_* above."""
         timestamp = int(time.time() * 1000)
-        log_entry = f"[{timestamp}] {message}"
-        self.r.lpush(f"job_log:{job_id}", log_entry)
-        self.r.ltrim(f"job_log:{job_id}", 0, 100)  # Keep last 100 logs
-
-        # Also update updated_at
+        key = f"job_log:{job_id}"
+        self.r.xadd(
+            key,
+            {"ts": timestamp, "level": level, "message": message},
+            maxlen=LOG_STREAM_MAXLEN,
+            approximate=True,
+        )
+        self.r.expire(key, LOG_STREAM_TTL)
         self.r.hset(f"job:{job_id}", "updated_at", timestamp)
 
     def update_progress(
-        self, job_id, progress, message=None, processed=None, total=None
+        self,
+        job_id,
+        progress=None,
+        message=None,
+        processed=None,
+        total=None,
+        phase=None,
+        speed_current=None,
+        rss_current=None,
+        rss_peak=None,
+        level="info",
     ):
-        """Updates progress (0-100) and optionally adds a log entry.
+        """Updates progress (0-100) and/or phase, and appends a stream entry.
 
         `processed`/`total` are what make the throughput fields on
         /api/jobs/stats real. Only similarity_service ever wrote them, so during
         an enrich_features drain every speed/ETA field on the dashboard read
         zero and the only way to tell the queue had stalled was polling
         pending_jobs by hand. Handlers that know their item counts should pass
-        them; `speed` is derived here so no caller has to time itself.
+        them; `speed_avg` is derived here so no caller has to time itself --
+        `speed_current` is an optional instantaneous rate a caller can supply
+        if it's already tracking one.
+
+        The progress fields ride the same job_log stream as log lines
+        (job-system-rework-plan.md §5): mem_util.phase() is the shared
+        checkpoint API built on this -- one call updates phase, progress,
+        item counts and RSS in a single write, instead of a separate hset
+        and a separate add_log the way handlers used to do it by hand.
         """
-        fields = {"progress": progress}
+        fields = {}
+        if progress is not None:
+            fields["progress"] = progress
         if total is not None:
             fields["total_items"] = str(total)
+        speed_avg = None
         if processed is not None:
             fields["processed_items"] = str(processed)
             started = safe_int(self.r.hget(f"job:{job_id}", "started_at"))
             elapsed = time.time() - started / 1000.0 if started else 0
             if elapsed > 0:
-                fields["speed"] = f"{processed / elapsed:.2f}"
+                speed_avg = processed / elapsed
+                fields["speed"] = f"{speed_avg:.2f}"
+        if phase is not None:
+            fields["phase"] = phase
+        timestamp = int(time.time() * 1000)
+        fields["updated_at"] = timestamp
         self.r.hset(f"job:{job_id}", mapping=fields)
+
+        entry = {"ts": timestamp, "level": level}
+        if progress is not None:
+            entry["progress"] = progress
         if message:
-            self.add_log(job_id, message)
+            entry["message"] = message
+        if processed is not None:
+            entry["processed"] = processed
+        if total is not None:
+            entry["total"] = total
+        if speed_avg is not None:
+            entry["speed_avg"] = f"{speed_avg:.2f}"
+        if speed_current is not None:
+            entry["speed_current"] = f"{speed_current:.2f}"
+        if phase is not None:
+            entry["phase"] = phase
+        if rss_current is not None:
+            entry["rss_current"] = rss_current
+        if rss_peak is not None:
+            entry["rss_peak"] = rss_peak
+        key = f"job_log:{job_id}"
+        self.r.xadd(key, entry, maxlen=LOG_STREAM_MAXLEN, approximate=True)
+        self.r.expire(key, LOG_STREAM_TTL)
 
         # If it has a parent pipeline, update the pipeline's overall progress
         parent_id = self.r.hget(f"job:{job_id}", "parent_id")

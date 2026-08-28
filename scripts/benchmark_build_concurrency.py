@@ -120,13 +120,13 @@ class LogTailer(threading.Thread):
 
         r = get_queue_redis()
         for jid in self.job_ids:
-            entries = r.lrange(f"job_log:{jid}", 0, -1)  # newest-first, capped 100
-            seen = self.seen.setdefault(jid, set())
-            for e in reversed(entries):  # chronological
-                e = e.decode() if isinstance(e, bytes) else e
-                if e not in seen:
-                    seen.add(e)
-                    print(f"    [{jid[:8]}] {e}", flush=True)
+            last_id = self.seen.get(jid, "0")
+            entries = r.xrange(f"job_log:{jid}", min=f"({last_id}", max="+")
+            for entry_id, fields in entries:  # chronological
+                msg = fields.get("message")
+                if msg:
+                    print(f"    [{jid[:8]}] [{fields.get('ts', '')}] {msg}", flush=True)
+                self.seen[jid] = entry_id
 
     def run(self):
         while not self._stop.is_set():

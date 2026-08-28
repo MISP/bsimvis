@@ -223,9 +223,21 @@ def test_resolve_scope_pair_defaults_include_unchanged_true():
             "main", {"type": "pair", "md5_a": "aa", "md5_b": "bb"}
         )
         assert err is None and ids == ["a:func:m:1"]
-        # positional args: threshold, include_unique, include_unchanged, ...
+        # positional args: pair, threshold, include_unique, include_unchanged, ...
         args = mock_candidates.call_args[0]
-        assert args[2] is True  # include_unchanged defaults True for search
+        assert args[3] is True  # include_unchanged defaults True for search
+
+        _resolve_scope(
+            "main", {"type": "pair", "md5_a": "aa", "md5_b": "bb", "state": "unique"}
+        )
+        args = mock_candidates.call_args[0]
+        assert args[1:4] == (0, True, False)
+
+        _resolve_scope(
+            "main", {"type": "pair", "md5_a": "aa", "md5_b": "bb", "state": "matched"}
+        )
+        args = mock_candidates.call_args[0]
+        assert args[2:4] == (False, True)
 
 
 if __name__ == "__main__":

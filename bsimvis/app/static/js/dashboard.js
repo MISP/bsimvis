@@ -1599,7 +1599,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
             let headHtml = thead.innerHTML; // Start with the <tr> built above
 
             if (path === 'files' || path === 'functions' || path === 'function-similarity' || path === 'features-global') {
-                headHtml += `<tr class="filter-row">`;
+                if (path !== 'functions' && path !== 'function-similarity') headHtml += `<tr class="filter-row">`;
                 if (path === 'features-global') {
                     headHtml += `
                         <th><input type="text" id="flt-feat-hash" placeholder="Hash..." value="${escapeAttr(p.get('hash') || '')}" onfocus="attachAutocomplete(this, 'feature', 'hash', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
@@ -1683,52 +1683,46 @@ function updateUI(viewKey, collection, params, route, force = false) {
                         </th>
                         <th style="position:relative"><div class="tag-filter-container" id="tag-container-file"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div></th>`;
                 } else if (path === 'function-similarity' || path === 'functions') {
-                    if (path === 'function-similarity') {
-                        headHtml += `
-                            <th style="vertical-align: middle;">
-                                <div style="display:flex; align-items:center; gap:2px;">
-                                    <input type="number" id="sim-min-score" value="${escapeAttr(p.get('min_score') || defaultMinScore())}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
-                                    <span class="dim" style="font-size:0.6rem">-</span>
-                                    <input type="number" id="sim-max-score" value="${escapeAttr(p.get('max_score') || '1.0')}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
-                                </div>
-                                <div class="tag-filter-container" id="tag-container-sim"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('sim', 'sim_tag', val); this.value=''; triggerTagSearch(); })"></div>
-                            </th>`;
-                    }
-                    const nameVal = path === 'function-similarity' ? p.get('name') : p.get('function_name');
-                    headHtml += `
-                        <th>
-                            <div style="display:flex; flex-direction:column; gap:4px;">
-                                <input type="text" id="flt-func-name" placeholder="Name..." value="${escapeAttr(nameVal || '')}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                                <div style="display:flex; gap:2px;">
-                                    <input type="text" id="flt-func-namespace" placeholder="Namespace..." value="${escapeAttr(p.get('namespace') || '')}" onfocus="attachAutocomplete(this, 'func', 'namespace', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
-                                    <input type="text" id="flt-func-ret_type" placeholder="Return Type..." value="${escapeAttr(p.get('return_type') || p.get('ret_type') || '')}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
-                                </div>
-                            </div>
-                        </th>`;
-                    const addrVal = path === 'function-similarity' ? p.get('address') : p.get('entrypoint_address');
-                    headHtml += `<th><input type="text" id="flt-func-address" placeholder="Addr..." value="${escapeAttr(addrVal || '')}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
-                        <th style="position:relative"><div class="tag-filter-container" id="tag-container-func"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
-                        <th>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
-                                <input type="text" id="flt-func-cluster" placeholder="UUID..." value="${escapeAttr(p.get('cluster_uuid') || '')}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                                <input type="text" id="flt-func-cluster-name" placeholder="Name..." value="${escapeAttr(p.get('cluster_name') || '')}" onfocus="attachAutocomplete(this, 'func', 'cluster_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                                <input type="number" id="flt-func-min-cohesion" placeholder="Min cohesion..." value="${escapeAttr(p.get('min_cohesion') || '0.5')}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                            </div>
-                        </th>
-                        <th><input type="number" id="flt-func-min-features" value="${escapeAttr(p.get('min_features') || '0')}" min="0" title="Min Features" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-                        <th><input type="text" id="flt-func-note-owner" placeholder="Note Owner..." value="${escapeAttr(p.get('note_owner') || '')}" onfocus="attachAutocomplete(this, 'func', 'note_owners', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></th>
-                        <th><input type="text" id="flt-func-file_name" placeholder="Name..." value="${escapeAttr(p.get('file_name') || '')}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
-                        <th><input type="text" id="flt-func-md5" placeholder="MD5..." value="${escapeAttr(p.get('file_md5') || p.get('md5') || '')}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
-                        <th style="position:relative"><div class="tag-filter-container" id="tag-container-file"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
-                        <th><input type="text" id="flt-func-language" placeholder="Lang..." value="${escapeAttr(p.get('language_id') || p.get('language') || '')}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>`;
-                    if (path === 'function-similarity') {
-                        // Algorithm/Cross Binary/Match Mode moved to the hero pill cards
-                        // above the table (simFilterPillsHtml) -- this column, previously
-                        // mislabeled "Date", is now genuinely empty.
-                        headHtml += `<th></th>`;
-                    } else { headHtml += `<th></th><th></th>`; }
+                    const values = {
+                        function_name: p.get(path === 'function-similarity' ? 'name' : 'function_name') || '',
+                        namespace: p.get('namespace') || '',
+                        return_type: p.get('return_type') || p.get('ret_type') || '',
+                        entrypoint_address: p.get(path === 'function-similarity' ? 'address' : 'entrypoint_address') || '',
+                        cluster_uuid: p.get('cluster_uuid') || '',
+                        cluster_name: p.get('cluster_name') || '',
+                        min_cohesion: p.get('min_cohesion') || '0.5',
+                        min_features: p.get('min_features') || '0',
+                        note_owner: p.get('note_owner') || '',
+                    };
+                    const input = (id, value, placeholder, field) => FunctionFilters.cell(id, {
+                        value, placeholder, onInput: `debouncedSearch(${applyFn})`, onKeydown: `handleFilterKey(event, ${applyFn})`,
+                        attrs: `onfocus="attachAutocomplete(this, 'func', '${field}', (val) => { this.value = val; ${applyFn}(); })"`,
+                    });
+                    const leadingCells = path === 'function-similarity' ? [{ html: `
+                        ${FunctionFilters.rangeCell('sim-min-score', 'sim-max-score', {
+                            valueMin: p.get('min_score') || defaultMinScore(), valueMax: p.get('max_score') || '1.0', onInput: 'debouncedSearch(applySimSearch)', onKeydown: 'handleFilterKey(event, applySimSearch)',
+                        })}
+                        <div class="tag-filter-container" id="tag-container-sim"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('sim', 'sim_tag', val); this.value=''; triggerTagSearch(); })"></div>` }] : [];
+                    const extraCells = [
+                        { html: input('flt-func-file_name', p.get('file_name') || '', 'Name...', 'file_name') },
+                        { html: input('flt-func-md5', p.get('file_md5') || p.get('md5') || '', 'MD5...', 'file_md5') },
+                        { html: `<div class="tag-filter-container" id="tag-container-file"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div>`, attrs: 'style="position:relative"' },
+                        { html: input('flt-func-language', p.get('language_id') || p.get('language') || '', 'Lang...', 'language_id') },
+                        { html: '' },
+                    ];
+                    if (path === 'functions') extraCells.push({ html: '' });
+                    headHtml += FunctionFilters.functionRow({
+                        values,
+                        onInput: `debouncedSearch(${applyFn})`,
+                        onKeydown: `handleFilterKey(event, ${applyFn})`,
+                        onFocus: field => ['function_name', 'namespace', 'return_type', 'cluster_name', 'note_owner'].includes(field)
+                            ? `onfocus="attachAutocomplete(this, 'func', '${field === 'note_owner' ? 'note_owners' : field}', (val) => { this.value = val; ${applyFn}(); })"` : '',
+                        tagCell: `<div class="tag-filter-container" id="tag-container-func"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; triggerTagSearch(); })"></div>`,
+                        leadingCells,
+                        extraCells,
+                    });
                 }
-                headHtml += `</tr>`;
+                if (path !== 'functions' && path !== 'function-similarity') headHtml += `</tr>`;
                 thead.innerHTML = headHtml;
 
                 if (path === 'files') {

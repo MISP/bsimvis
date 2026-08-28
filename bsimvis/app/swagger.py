@@ -3092,6 +3092,11 @@ search_scope_model = api.model(
         "coll_b": fields.String(description="scope.type=pair, defaults to collection"),
         "pool_id": fields.String(description="scope.type=pair"),
         "algo": fields.String(default="unweighted_cosine", description="scope.type=pair"),
+        "state": fields.String(
+            enum=["all", "matched", "unique", "changed"],
+            description="scope.type=pair function state. When set, overrides "
+            "include_unique/include_unchanged; defaults to all.",
+        ),
         "threshold": fields.Float(default=0.9, description="scope.type=pair"),
         "include_unique": fields.Boolean(default=True, description="scope.type=pair"),
         "include_unchanged": fields.Boolean(

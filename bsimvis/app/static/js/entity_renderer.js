@@ -33,9 +33,9 @@ window.EntityRenderer = {
         
         let actionsHtml = '';
         if (showActions) {
-            // Add to Diff / See Similar moved to right-click > Actions menu
             actionsHtml = `
                 <div class="entity-actions" style="display:inline-flex; gap:4px; margin-left: auto; flex-shrink: 0; padding-left: 8px;">
+                    ${file_md5 ? `<button class="btn-icon" onclick="event.stopPropagation(); openFunctionComparisonPicker(${escapeAttr(jsString(collection))}, ${escapeAttr(jsString(file_md5))}, ${escapeAttr(jsString(entry))}, event)" title="Compare this function; opens unique-to-source results after choosing the other binary" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:2px;"><i class="fa-solid fa-code-compare"></i></button>` : ''}
                     ${hideNote ? '' : this.renderNoteButton(funcId, f.note_owners, { ...options, raw_data: f })}
                 </div>
             `;

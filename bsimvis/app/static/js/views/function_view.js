@@ -127,11 +127,7 @@ window.FunctionView = {
                                         </tr>
                                         <tr class="filter-row">
                                             <th>
-                                                <div style="display:flex; align-items:center; gap:2px;">
-                                                    <input type="number" id="fn-nbr-min-score" placeholder="Min..." value="0.9" step="0.05" min="0" max="1" style="font-size:0.65rem; width:48%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
-                                                    <span class="dim" style="font-size:0.6rem">-</span>
-                                                    <input type="number" id="fn-nbr-max-score" placeholder="Max..." step="0.05" min="0" max="1" style="font-size:0.65rem; width:48%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()">
-                                                </div>
+                                                ${FunctionFilters.rangeCell('fn-nbr-min-score', 'fn-nbr-max-score', { onInput: 'FunctionView.debounceNeighborsSearch()', valueMin: '0.9' })}
                                             </th>
                                             <th>
                                                 <div style="display:flex; flex-direction:column; gap:2px;">

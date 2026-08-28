@@ -14,6 +14,15 @@ window.openFileDetails = function (collection, md5, fileName, event) {
     if (Nav) Nav.openPath(url, event, { title: `File: ${fileName}`, type: 'file' });
 };
 
+window.openFunctionComparisonPicker = function (collection, md5, address, event) {
+    const pool = typeof getRoutingState === 'function' ? getRoutingState().pool : null;
+    const prefix = pool ? `/pools/${encodeURIComponent(pool)}` : '';
+    const query = new URLSearchParams({ compare_q: address, compare_state: 'unique_a' });
+    const url = `${prefix}/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(md5)}?${query.toString()}#neighbors`;
+    const nav = window.Nav || (window.parent && window.parent.Nav);
+    if (nav) nav.openPath(url, event, { title: `Compare function @ ${address}`, type: 'file' });
+};
+
 function renderFunctionMetadata(container, m, fullId, options = {}) {
     if (!m) return "";
     

@@ -420,13 +420,16 @@ window.searchViewScopeChanged = function(select) {
         fields.innerHTML = `<label style="${labelStyle}">File<select id="search-form-md5" disabled style="${inputStyle}"><option value="">-- Choose Collection First --</option></select></label>`;
         window.searchViewPopulateFileSelects(['search-form-md5']);
     } else if (type === 'filter') {
-        fields.innerHTML = `<label style="${labelStyle}">Filter query string (same syntax as function search)<input id="search-form-filters" type="text" placeholder="tag=x&min_features=5" style="${inputStyle}"></label>`;
+        fields.innerHTML = FunctionFilters.searchForm('search-filter');
     } else if (type === 'pair') {
         fields.innerHTML = `
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
                 <label style="${labelStyle}">File A<select id="search-form-md5a" disabled style="${inputStyle}"><option value="">-- Choose Collection First --</option></select></label>
                 <label style="${labelStyle}">File B<select id="search-form-md5b" disabled style="${inputStyle}"><option value="">-- Choose Collection First --</option></select></label>
-            </div>`;
+            </div>
+            <label style="${labelStyle}; margin-top:8px;">Functions<select id="search-form-pair-state" style="${inputStyle}">
+                <option value="all">Matched and unique</option><option value="matched">Matched only</option><option value="unique">Unique only</option>
+            </select></label>`;
         window.searchViewPopulateFileSelects(['search-form-md5a', 'search-form-md5b']);
     } else {
         fields.innerHTML = '';
@@ -444,11 +447,12 @@ window.searchViewSubmitNew = async function(btn) {
         scope.md5 = (document.getElementById('search-form-md5') || {}).value?.trim();
         if (!scope.md5) { alert('File MD5 is required.'); return; }
     } else if (type === 'filter') {
-        scope.filters = (document.getElementById('search-form-filters') || {}).value?.trim();
-        if (!scope.filters) { alert('Filter query string is required.'); return; }
+        scope.filters = FunctionFilters.searchQuery('search-filter');
+        if (!scope.filters) { alert('Choose at least one filter.'); return; }
     } else if (type === 'pair') {
         scope.md5_a = (document.getElementById('search-form-md5a') || {}).value?.trim();
         scope.md5_b = (document.getElementById('search-form-md5b') || {}).value?.trim();
+        scope.state = (document.getElementById('search-form-pair-state') || {}).value || 'all';
         if (!scope.md5_a || !scope.md5_b) { alert('Both MD5 A and MD5 B are required.'); return; }
     }
 

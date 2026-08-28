@@ -997,7 +997,12 @@ function renderToolTrace(toolCalls) {
                 <div style="margin-top:8px; font-size:.75rem;">
                     <div><strong>Arguments</strong><pre style="white-space:pre-wrap; overflow-x:auto;">${escapeHtml(prettyJson(tc.arguments || {}))}</pre></div>
                     <div><strong>Result</strong><pre style="white-space:pre-wrap; overflow-x:auto; max-height:240px; overflow-y:auto;">${escapeHtml(prettyJson(tc.result_preview || ''))}</pre></div>
-                    ${curl ? `<div><strong>API call</strong><pre style="white-space:pre-wrap; overflow-x:auto; user-select:all;">${escapeHtml(curl)}</pre></div>` : ''}
+                    ${curl ? `<div><strong>API call</strong>
+                        <div style="display:flex; align-items:flex-start; gap:6px;">
+                            <pre style="flex:1; white-space:pre-wrap; overflow-x:auto; user-select:all; margin:4px 0;">${escapeHtml(curl)}</pre>
+                            <button onclick="copyToClipboard(${escapeAttr(jsString(curl))}, this)" title="Copy curl command" style="flex-shrink:0; margin-top:4px; background:#2a2a2a; color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:4px 8px; cursor:pointer; font-size:.72rem;"><i class="fa-solid fa-copy"></i></button>
+                        </div>
+                    </div>` : ''}
                 </div>
             </details>`;
     }).join('');
@@ -1074,12 +1079,11 @@ async function sendLLMChat() {
     if (stopBtn) stopBtn.style.display = "block";
     if (statusEl) statusEl.innerText = "Agent investigating (may look up related functions)...";
     llmAbortController = new AbortController();
-    // The agent runs to completion server-side (including every tool call)
-    // before responding, so there is nothing to stream -- unlike the old
-    // /api/llm/chat this can take several seconds to a minute rather than
-    // starting to type back immediately.
     const msgEl = addChatMessage(chatKey, "ai", "_investigating..._");
     const msgIndex = chatHistories[chatKey].length - 1;
+    if (chatHistories[chatKey] && chatHistories[chatKey][msgIndex]) {
+        chatHistories[chatKey][msgIndex].tool_calls = [];
+    }
     try {
         const sessionId = await ensureChatSession(chatKey);
         // Context travels with the message, not just the session start, so a
@@ -1091,13 +1095,40 @@ async function sendLLMChat() {
             body: JSON.stringify({ message: apiMessage }),
             signal: llmAbortController.signal
         });
-        const data = await response.json();
-        if (data.error) throw new Error(data.error);
-        const content = data.reply || "_(no reply)_";
-        if (chatHistories[chatKey] && chatHistories[chatKey][msgIndex]) {
-            chatHistories[chatKey][msgIndex].tool_calls = data.tool_calls || [];
+        if (!response.body) throw new Error(`HTTP ${response.status}`);
+        // The server streams one NDJSON event per line -- a "tool_call" as
+        // each lookup resolves, then a final "done" -- so the trace below
+        // the placeholder grows live instead of appearing all at once after
+        // the whole turn (which can take up to a minute) finishes.
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        let finalReply = null;
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            let nl;
+            while ((nl = buf.indexOf("\n")) >= 0) {
+                const line = buf.slice(0, nl);
+                buf = buf.slice(nl + 1);
+                if (!line.trim()) continue;
+                const event = JSON.parse(line);
+                if (event.type === "tool_call") {
+                    const { type, ...call } = event;
+                    if (chatHistories[chatKey] && chatHistories[chatKey][msgIndex]) {
+                        chatHistories[chatKey][msgIndex].tool_calls.push(call);
+                    }
+                    if (statusEl) statusEl.innerText = toolCallLabel(call);
+                    updateChatMessageUI(msgEl, chatHistories[chatKey][msgIndex].content, msgIndex, chatKey);
+                } else if (event.type === "error") {
+                    throw new Error(event.error);
+                } else if (event.type === "done") {
+                    finalReply = event.reply || "_(no reply)_";
+                }
+            }
         }
-        updateChatMessageUI(msgEl, content, msgIndex, chatKey);
+        updateChatMessageUI(msgEl, finalReply ?? "_(no reply)_", msgIndex, chatKey);
     } catch (err) {
         if (err.name !== 'AbortError') updateChatMessageUI(msgEl, "Error: " + err.message, msgIndex, chatKey);
     } finally {

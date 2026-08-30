@@ -2990,6 +2990,21 @@ class ClusterService:
         # thousands of clusters, that unflushed pipeline was itself unbounded
         # memory, on top of the ~1.3 GiB this stage was never separately
         # attributed against the measured 4.06 GiB peak (over the 3 GB cap).
+        #
+        # §7.5 guardrail: no real pool reaches that cluster count from a small
+        # sample corpus (a handful of files -- mirai3 variants included --
+        # cluster together, not apart), so the loop's write/flush pattern was
+        # measured directly against 20k synthetic clusters built from real
+        # ingested file metadata (scripts/bench_cluster_pool_meta_chunk.py,
+        # against the isolated mirai3_bench stack): throughput flat at ~6000
+        # clusters/s across 100/500/2000 (well inside noise, matching the
+        # ENRICH_CHUNK_SIZE precedent -- same flush-a-pipeline-every-N shape),
+        # peak RSS scales with chunk size as designed (34.4 -> 35.4 -> 37.9 MB
+        # at this harness's per-cluster payload size; absolute MB isn't
+        # production-representative, the scaling direction is what's being
+        # checked). 500 stays the default -- nothing in this data argues for
+        # moving it. CLUSTER_POOL_ASSIGN_CHUNK_SIZE below has the identical
+        # flush shape and wasn't benchmarked separately.
         META_CHUNK_SIZE = int(os.getenv("CLUSTER_POOL_META_CHUNK_SIZE", 500))
         total_clusters = len(cluster_members)
         for idx, (label, members) in enumerate(cluster_members.items()):

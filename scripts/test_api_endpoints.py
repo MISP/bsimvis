@@ -718,6 +718,95 @@ def test_cluster_response_contract():
             )
 
 
+def test_incremental_hierarchical_cluster_equivalence():
+    """A real second-batch insertion must match a forced full rebuild."""
+    from bsimvis.app.services.cluster_service import cluster_service
+    from bsimvis.app.services.redis_client import get_redis
+
+    algo = "unweighted_cosine"
+    collection = f"incremental_cluster_{uuid.uuid4().hex[:8]}"
+    batch_1, batch_2 = "batch-1", "batch-2"
+    r = get_redis()
+    state_base = f"{collection}:cluster:hier:{algo}"
+    score_key = f"{collection}:sim:score:{algo}"
+
+    def fid(label):
+        return f"{collection}:func:{label}"
+
+    def add_batch(batch, labels, edges):
+        for label in labels:
+            function_id = fid(label)
+            r.sadd(f"{collection}:batch:{batch}:functions", function_id)
+            r.set(
+                f"{function_id}:meta",
+                json.dumps(
+                    {
+                        "function_id": function_id,
+                        "function_name": label,
+                        "file_md5": label,
+                        "bsim_features_count": 10,
+                    }
+                ),
+            )
+        for left, right, score in edges:
+            sid = f"{collection}:sim:{algo}:{left}::{right}"
+            r.zadd(score_key, {sid: score})
+            r.sadd(f"{collection}:sim:involves:func:{left}", sid)
+            r.sadd(f"{collection}:sim:involves:func:{right}", sid)
+
+    def memberships():
+        return {
+            frozenset(
+                m.decode() if isinstance(m, bytes) else m
+                for m in r.smembers(f"{collection}:cluster:{algo}:{cid}:members")
+            )
+            for raw in r.smembers(f"{collection}:cluster:list:{algo}")
+            for cid in [raw.decode() if isinstance(raw, bytes) else raw]
+        }
+
+    try:
+        add_batch(batch_1, ("a", "b", "c"), (("a", "b", 0.95), ("b", "c", 0.90)))
+        initial_ok = cluster_service.run_clustering(collection, algo=algo)
+        old_ids = r.hgetall(f"{state_base}:nodeids")
+
+        add_batch(batch_2, ("d", "e"), (("d", "e", 0.99), ("c", "d", 0.88)))
+        incremental_ok = cluster_service.run_clustering(
+            collection, algo=algo, batch_uuid=batch_2
+        )
+        incremental = memberships()
+        stable_ids = r.hgetall(f"{state_base}:nodeids")
+
+        full_ok = cluster_service.run_clustering(collection, algo=algo)
+        full = memberships()
+
+        check(
+            "incremental hierarchical state survives a real second-batch insertion",
+            initial_ok
+            and incremental_ok
+            and bool(old_ids)
+            and all(
+                stable_ids.get(edge) == node_id for edge, node_id in old_ids.items()
+            ),
+            f"{len(old_ids)} prior defining edge id(s)",
+        )
+        check(
+            "incremental hierarchical memberships match a forced full rebuild",
+            full_ok and incremental == full,
+            f"{len(incremental)} incremental / {len(full)} full cluster(s)",
+        )
+    finally:
+        cluster_service.clear_clustering(collection, algo)
+        cursor = 0
+        while True:
+            cursor, keys = r.scan(cursor, match=f"{collection}:*", count=1000)
+            if keys:
+                r.delete(*keys)
+            if cursor == 0:
+                break
+
+
+
+
 # ---------------------------------------------------------------------------
 # Ghidra language / compiler-spec listing and upload validation
 # ---------------------------------------------------------------------------
@@ -5481,6 +5570,7 @@ if __name__ == "__main__":
     # run_all_tests() stays last: it deletes the collection on its way out.
     STEPS = [
         test_cluster_tags,
+        test_incremental_hierarchical_cluster_equivalence,
         test_cluster_response_contract,
         test_pool_annotation_propagation,
         test_search_filters_and_sorting,

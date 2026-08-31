@@ -37,9 +37,28 @@ class BinClusterService:
         engine = config_service.get("clustering.bin_engine", "threshold_uf")
 
         if engine == "hierarchical_uf":
-            # Full rebuild only, same reasoning as func-level hierarchical_uf
-            # in cluster_service.py -- single-linkage merges are monotonic,
-            # no incremental path yet.
+            if min_cluster_size is None:
+                min_cluster_size = config_service.get("clustering.min_cluster_size", 2)
+            if min_sim is None:
+                min_sim = config_service.get("clustering.min_sim", 0.0)
+            if min_cohesion is None:
+                min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
+            if batch_uuid and not collection.startswith("global:pool:"):
+                new_files = self._batch_files(collection, batch_uuid)
+                if not new_files:
+                    return True
+                result = self._incremental_cluster_hierarchical(
+                    collection,
+                    algo,
+                    new_files,
+                    min_sim,
+                    min_cluster_size,
+                    min_cohesion,
+                    job_service,
+                    job_id,
+                )
+                if result is not None:
+                    return result
             return self._run_clustering_hierarchical_uf(
                 collection,
                 algo=algo,
@@ -53,27 +72,7 @@ class BinClusterService:
         if engine == "threshold_uf":
             threshold = config_service.get("clustering.bin_uf_threshold", 0.1)
             if batch_uuid and not collection.startswith("global:pool:"):
-                new_files = list(
-                    self.r.smembers(f"{collection}:batch:{batch_uuid}:files")
-                )
-                if not new_files:
-                    # file.py tracks files in batch differently? Wait, batch files aren't in a set!
-                    # Let's get files from functions
-                    func_keys = self.r.smembers(
-                        f"{collection}:batch:{batch_uuid}:functions"
-                    )
-                    new_files = list(
-                        {
-                            k.decode().split(":")[-2]
-                            for k in func_keys
-                            if len(k.split(":")) >= 3
-                        }
-                    )
-                else:
-                    new_files = [
-                        f.decode() if isinstance(f, bytes) else f for f in new_files
-                    ]
-
+                new_files = self._batch_files(collection, batch_uuid)
                 if new_files:
                     return self._incremental_cluster_binaries(
                         collection,
@@ -108,6 +107,15 @@ class BinClusterService:
             min_cohesion,
         )
 
+    def _batch_files(self, collection, batch_uuid):
+        files = self.r.smembers(f"{collection}:batch:{batch_uuid}:files")
+        if files:
+            return sorted(f.decode() if isinstance(f, bytes) else f for f in files)
+
+        functions = self.r.smembers(f"{collection}:batch:{batch_uuid}:functions")
+        decoded = [f.decode() if isinstance(f, bytes) else f for f in functions]
+        return sorted({f.split(":")[-2] for f in decoded if len(f.split(":")) >= 3})
+
     def _incremental_cluster_binaries(
         self,
         collection,
@@ -140,9 +148,7 @@ class BinClusterService:
         # from file-space into container-space. Each side still clusters
         # normally against its own kind (container-rollup pairs keep forming
         # container clusters); they just never merge into one cluster.
-        uf_file = RedisUF(
-            r, f"{collection}:bin_cluster:{algo}:uf:parent", members_key
-        )
+        uf_file = RedisUF(r, f"{collection}:bin_cluster:{algo}:uf:parent", members_key)
         uf_container = RedisUF(
             r, f"{collection}:bin_cluster:{algo}:container:uf:parent", members_key
         )
@@ -567,6 +573,234 @@ class BinClusterService:
 
         return birth_lambdas, death_lambdas
 
+    def _incremental_cluster_hierarchical(
+        self,
+        collection,
+        algo,
+        new_files,
+        min_sim,
+        min_cluster_size,
+        min_cohesion,
+        job_service=None,
+        job_id=None,
+    ):
+        import pandas as pd
+
+        from bsimvis.app.services import lineage_service
+        from bsimvis.app.services.cluster_common import (
+            dirty_ancestors,
+            edgeset_from,
+            hier_fingerprint,
+            hierarchical_membership,
+            load_hier_state,
+            save_hier_state,
+            stabilise,
+        )
+        from bsimvis.app.services.cluster_threshold import build_single_linkage_tree
+
+        r = self.r
+        prefix = f"{collection}:bin_sim:{algo}:"
+        score_key = f"{collection}:bin_sim:score:{algo}"
+        file_prefix = f"{collection}:file:"
+        containers = set(lineage_service.container_md5s(collection, r))
+        fingerprint = hier_fingerprint(
+            min_sim, 0, min_cluster_size, min_cohesion, False
+        )
+        results = []
+
+        for node_type in ("file", "container"):
+            algo_ns = f"{algo}:container" if node_type == "container" else algo
+            base = f"{collection}:bin_cluster:hier:{algo_ns}"
+            state = load_hier_state(r, base)
+            if state is None:
+                new_container = node_type == "container" and any(
+                    md5 in containers for md5 in new_files
+                )
+                if (
+                    node_type == "file"
+                    or new_container
+                    or r.scard(f"{collection}:bin_cluster:list:{algo_ns}")
+                ):
+                    return None
+                continue
+            if state.get("fingerprint") != fingerprint:
+                return None
+
+            if node_type == "container":
+                seed_md5s = {md5 for md5 in new_files if md5 in containers}
+                seed_md5s.update(
+                    edge["md5"]
+                    for md5 in new_files
+                    for edge in lineage_service.ancestors(collection, md5, r)
+                    if edge["md5"] in containers
+                )
+            else:
+                seed_md5s = {md5 for md5 in new_files if md5 not in containers}
+            sids = set()
+            for md5 in seed_md5s:
+                for raw in r.smembers(f"{collection}:bin_sim:involves:{md5}") or ():
+                    sid = raw.decode() if isinstance(raw, bytes) else raw
+                    if sid.startswith(prefix):
+                        sids.add(sid)
+
+            scores = {}
+            sid_list = sorted(sids)
+            for i in range(0, len(sid_list), 1000):
+                chunk = sid_list[i : i + 1000]
+                pipe = r.pipeline(transaction=False)
+                for sid in chunk:
+                    pipe.zscore(score_key, sid)
+                for sid, score in zip(chunk, pipe.execute()):
+                    if score is not None:
+                        scores[sid] = float(score)
+
+            new_edges = []
+            for sid, score in scores.items():
+                if score < min_sim:
+                    continue
+                left, right = sid[len(prefix) :].split("::", 1)
+                if (left in containers) != (node_type == "container"):
+                    continue
+                if (right in containers) != (node_type == "container"):
+                    continue
+                new_edges.append(
+                    (f"{file_prefix}{left}", f"{file_prefix}{right}", score)
+                )
+
+            old_mst = {(min(u, v), max(u, v)) for u, v, _ in state["mst"]}
+            edge_set = edgeset_from(state, new_edges)
+            tree_rows, _, num_nodes, mst = build_single_linkage_tree(edge_set)
+            state["mst"] = mst
+            tree_rows, root_id = stabilise(tree_rows, mst, state)
+            tree_df = pd.DataFrame(tree_rows)
+            leaf_to_clusters, _ = hierarchical_membership(
+                tree_df, num_nodes, root_id, min_size=min_cluster_size
+            )
+            node_members = {}
+            for leaf, chain in leaf_to_clusters.items():
+                for c in chain:
+                    node_members.setdefault(c, []).append(edge_set.idx_to_id[leaf])
+
+            new_mst = {(min(u, v), max(u, v)) for u, v, _ in mst}
+            seed_fids = {
+                edge_set.id_to_idx[f"{file_prefix}{md5}"]
+                for md5 in seed_md5s
+                if f"{file_prefix}{md5}" in edge_set.id_to_idx
+            }
+            changed = old_mst ^ new_mst
+            dirty_seed = seed_fids | {u for edge in changed for u in edge}
+            dirty = dirty_ancestors(tree_rows, dirty_seed) & set(node_members)
+            previous = {
+                int(v.decode() if isinstance(v, bytes) else v)
+                for v in r.smembers(f"{collection}:bin_cluster:list:{algo_ns}")
+            }
+            live = set(node_members)
+            retired = previous - live
+            affected_leaves = {
+                leaf
+                for leaf, chain in leaf_to_clusters.items()
+                if chain and set(chain) & dirty
+            }
+            affected_fids = {edge_set.idx_to_id[leaf] for leaf in affected_leaves}
+
+            node_meta = {}
+            labels = sorted(node_members)
+            for i in range(0, len(labels), 1000):
+                chunk = labels[i : i + 1000]
+                pipe = r.pipeline(transaction=False)
+                for c in chunk:
+                    pipe.get(f"{collection}:bin_cluster:{algo_ns}:{c}:meta")
+                for c, raw in zip(chunk, pipe.execute()):
+                    node_meta[c] = json.loads(raw) if raw else {}
+
+            cohesion = {
+                c: meta.get("cohesion_score", 1.0) for c, meta in node_meta.items()
+            }
+            for c in dirty:
+                members = node_members[c]
+                if len(members) <= 1:
+                    cohesion[c] = 1.0
+                elif len(members) <= 200:
+                    total, pairs = 0.0, 0
+                    for i in range(len(members)):
+                        for j in range(i + 1, len(members)):
+                            left = members[i].rsplit(":", 1)[-1]
+                            right = members[j].rsplit(":", 1)[-1]
+                            score = r.zscore(score_key, f"{prefix}{left}::{right}")
+                            if score is None:
+                                score = r.zscore(score_key, f"{prefix}{right}::{left}")
+                            if score is not None:
+                                total += float(score)
+                                pairs += 1
+                    cohesion[c] = total / pairs if pairs else 1.0
+
+            uuids = {
+                c: node_meta.get(c, {}).get("cluster_uuid") or uuid.uuid4().hex[:12]
+                for c in node_members
+            }
+            birth_lambdas, _ = self._tree_lambdas(tree_df)
+            results.append(
+                (
+                    node_type,
+                    edge_set,
+                    tree_df,
+                    root_id,
+                    num_nodes,
+                    birth_lambdas,
+                    uuids,
+                    cohesion,
+                    state,
+                    base,
+                    dirty,
+                    affected_fids,
+                    retired,
+                )
+            )
+
+        if not results:
+            return True
+
+        for (
+            node_type,
+            edge_set,
+            tree_df,
+            root_id,
+            num_nodes,
+            birth_lambdas,
+            uuids,
+            cohesion,
+            state,
+            base,
+            dirty,
+            affected_fids,
+            retired,
+        ) in results:
+            persisted = self._persist_hierarchical_binary_clusters(
+                collection,
+                algo,
+                edge_set,
+                edge_set.id_to_idx,
+                edge_set.idx_to_id,
+                tree_df,
+                root_id,
+                num_nodes,
+                min_cluster_size,
+                min_cohesion,
+                birth_lambdas,
+                job_service,
+                job_id,
+                node_type=node_type,
+                label_to_uuid=uuids,
+                cohesion_by_label=cohesion,
+                only_nodes=dirty,
+                only_fids=affected_fids,
+                retired_nodes=retired,
+            )
+            if persisted is False:
+                return False
+            save_hier_state(r, base, state)
+        return True
+
     def _run_clustering_hierarchical_uf(
         self,
         collection,
@@ -586,6 +820,11 @@ class BinClusterService:
         """
         from bsimvis.app.services.config_service import config_service
         from bsimvis.app.services.cluster_threshold import build_single_linkage_tree
+        from bsimvis.app.services.cluster_common import (
+            hier_fingerprint,
+            save_hier_state,
+            stabilise,
+        )
         from bsimvis.app.services import lineage_service
         import pandas as pd
 
@@ -646,7 +885,21 @@ class BinClusterService:
                 job_service.add_log(job_id, msg)
 
             start_fit = time.time()
-            tree_rows, global_root_id, _ = build_single_linkage_tree(edge_set)
+            tree_rows, global_root_id, _, mst = build_single_linkage_tree(edge_set)
+            algo_ns = f"{algo}:container" if node_type == "container" else algo
+            hier_base = f"{collection}:bin_cluster:hier:{algo_ns}"
+            hier_state = {
+                "idx": dict(id_to_idx),
+                "next_idx": len(id_to_idx),
+                "mst": mst,
+                "node_ids": {},
+                "next_node_id": 1 << 30,
+                "fingerprint": hier_fingerprint(
+                    min_sim, 0, min_cluster_size, min_cohesion, False
+                ),
+                "root_id": None,
+            }
+            tree_rows, global_root_id = stabilise(tree_rows, mst, hier_state)
             tree_df = pd.DataFrame(tree_rows)
             fit_time = time.time() - start_fit
             msg = f"[hierarchical_uf/{node_type}] tree built in {fit_time:.2f}s, {len(tree_df)} rows."
@@ -674,6 +927,7 @@ class BinClusterService:
             )
             if persisted is False:
                 return False
+            save_hier_state(r, hier_base, hier_state)
 
         return True
 
@@ -766,7 +1020,9 @@ class BinClusterService:
                 job_service.add_log(job_id, msg)
 
             if edge_set.n_scanned == 0:
-                logging.warning(f"No binary similarity pairs found for {collection}:{algo} ({node_type})")
+                logging.warning(
+                    f"No binary similarity pairs found for {collection}:{algo} ({node_type})"
+                )
                 continue
 
             if edge_set.src.size == 0:
@@ -796,7 +1052,9 @@ class BinClusterService:
                 job_service.add_log(job_id, msg)
 
             adj_matrix = sim_edges.build_adjacency(edge_set, num_nodes)
-            n_components, labels = connected_components(csgraph=adj_matrix, directed=False)
+            n_components, labels = connected_components(
+                csgraph=adj_matrix, directed=False
+            )
             del adj_matrix
 
             comp_to_nodes = {}
@@ -853,7 +1111,9 @@ class BinClusterService:
                     data_sp = np.concatenate([sim, sim])
 
                     comp_matrix = sp.csr_matrix(
-                        (data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32
+                        (data_sp, (rows_sp, cols_sp)),
+                        shape=(size, size),
+                        dtype=np.float32,
                     )
                     comp_matrix.setdiag(1.0)
 
@@ -1043,6 +1303,11 @@ class BinClusterService:
         job_service,
         job_id,
         node_type="file",
+        label_to_uuid=None,
+        cohesion_by_label=None,
+        only_nodes=None,
+        only_fids=None,
+        retired_nodes=(),
     ):
         """Shared tail for every hierarchical binary engine (HDBSCAN,
         hierarchical_uf): given a condensed/single-linkage tree_df (columns
@@ -1101,7 +1366,14 @@ class BinClusterService:
                     cluster_members[c] = []
                 cluster_members[c].append(idx_to_id[leaf])
 
-        label_to_uuid = {c: f"{uuid.uuid4().hex[:12]}" for c in cluster_members.keys()}
+        write_nodes = (
+            set(cluster_members)
+            if only_nodes is None
+            else set(only_nodes) & set(cluster_members)
+        )
+
+        if label_to_uuid is None:
+            label_to_uuid = {c: uuid.uuid4().hex[:12] for c in cluster_members}
 
         # 5. Calculate Stability
         stabilities = {}
@@ -1130,25 +1402,10 @@ class BinClusterService:
         from bsimvis.app.services.index_service import _index_tag, _unindex_tag
 
         pipe = r.pipeline(transaction=False)
-
-        for c, members in cluster_members.items():
-            pipe.sadd(f"{collection}:bin_cluster:{algo_ns}:{c}:members", *members)
-            if len(pipe) > 1000:
-                pipe.execute()
-        pipe.execute()
-
-        # Direct members = leaves whose deepest surviving cluster is this node
-        # (shed noise points excluded, matching the membership rule above).
         direct_members = {}
-        for leaf, p in leaf_home.items():
+        for leaf, parent in leaf_home.items():
             if leaf in idx_to_id:
-                direct_members.setdefault(p, []).append(idx_to_id[leaf])
-
-        for c, d_members in direct_members.items():
-            pipe.sadd(f"{collection}:bin_cluster:{algo_ns}:{c}:direct_members", *d_members)
-            if len(pipe) > 1000:
-                pipe.execute()
-        pipe.execute()
+                direct_members.setdefault(parent, []).append(idx_to_id[leaf])
 
         file_tag_fields = [
             f
@@ -1156,32 +1413,118 @@ class BinClusterService:
             if f.startswith("bin_cluster_")
         ]
 
-        for i, (leaf, clusters) in enumerate(leaf_to_clusters.items()):
-            file_id = idx_to_id[leaf]
+        if only_nodes is not None:
+            inferred_fields = {
+                "yara_distribution": "inferred_yara",
+                "avtype_distribution": "inferred_avtype",
+                "filetype_distribution": "inferred_filetype",
+                "ccip_distribution": "inferred_ccip",
+                "filename_distribution": "inferred_filename",
+                "md5_distribution": "inferred_md5",
+            }
+            for c in write_nodes | set(retired_nodes):
+                members = [
+                    v.decode() if isinstance(v, bytes) else v
+                    for v in r.smembers(
+                        f"{collection}:bin_cluster:{algo_ns}:{c}:members"
+                    )
+                ]
+                raw = r.get(f"{collection}:bin_cluster:{algo_ns}:{c}:meta")
+                old_meta = json.loads(raw) if raw else {}
+                for member in members:
+                    if "bin_cluster_id" in file_tag_fields:
+                        _unindex_tag(
+                            pipe,
+                            collection,
+                            "file",
+                            "bin_cluster_id",
+                            label_key(c),
+                            member,
+                        )
+                    if "bin_cluster_uuid" in file_tag_fields:
+                        _unindex_tag(
+                            pipe,
+                            collection,
+                            "file",
+                            "bin_cluster_uuid",
+                            old_meta.get("cluster_uuid"),
+                            member,
+                        )
+                    if "bin_cluster_name" in file_tag_fields:
+                        _unindex_tag(
+                            pipe,
+                            collection,
+                            "file",
+                            "bin_cluster_name",
+                            old_meta.get("cluster_name"),
+                            member,
+                        )
+                    for dist_key, field in inferred_fields.items():
+                        dist = old_meta.get(dist_key) or []
+                        if dist:
+                            _unindex_tag(
+                                pipe,
+                                collection,
+                                "file",
+                                field,
+                                dist[0].get("value"),
+                                member,
+                            )
+                    if len(pipe) > 1000:
+                        pipe.execute()
+                pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:members")
+                pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:direct_members")
+                pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:meta")
+            pipe.execute()
+
+        for c in write_nodes:
+            members = cluster_members[c]
+            pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:members")
+            pipe.sadd(f"{collection}:bin_cluster:{algo_ns}:{c}:members", *members)
+            pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:direct_members")
+            if direct_members.get(c):
+                pipe.sadd(
+                    f"{collection}:bin_cluster:{algo_ns}:{c}:direct_members",
+                    *direct_members[c],
+                )
+            if len(pipe) > 1000:
+                pipe.execute()
+        pipe.execute()
+
+        if only_fids is None:
+            file_clusters = [
+                (idx_to_id[leaf], clusters)
+                for leaf, clusters in leaf_to_clusters.items()
+            ]
+        else:
+            file_clusters = [
+                (fid, leaf_to_clusters.get(id_to_idx[fid], []))
+                for fid in sorted(only_fids)
+                if fid in id_to_idx
+            ]
+
+        for i, (file_id, clusters) in enumerate(file_clusters):
             clusters_key = f"{file_id}:bin_clusters"
-
+            pipe.delete(clusters_key)
             if clusters:
-                pipe.delete(clusters_key)
                 pipe.sadd(clusters_key, *clusters)
-            else:
-                pipe.delete(clusters_key)
-
             if i % 500 == 0:
                 pipe.execute()
                 if job_service and job_id:
                     if job_service.is_cancelled(job_id):
                         job_service.add_log(job_id, "Cancelled.")
                         return False
-                    pct = int((i / num_nodes) * 50)
-                    job_service.update_progress(job_id, pct)
-
+                    job_service.update_progress(
+                        job_id, int((i / max(1, len(file_clusters))) * 50)
+                    )
         pipe.execute()
 
         # Update secondary index for 'bin_cluster_id', 'bin_cluster_uuid', 'bin_cluster_name'
         logging.info(
             f"[*] Updating secondary indexes for {len(cluster_members)} binary clusters..."
         )
-        for idx, (label, members) in enumerate(cluster_members.items()):
+        for idx, label in enumerate(write_nodes):
+            members = cluster_members[label]
             if "bin_cluster_id" in file_tag_fields:
                 bucket_key = (
                     f"{collection}:idx:file:bin_cluster_id:{label_key(label).lower()}"
@@ -1204,7 +1547,9 @@ class BinClusterService:
             f"[*] Calculating enriched metadata for {len(cluster_members)} binary clusters..."
         )
 
-        all_member_file_ids = list(id_to_idx.keys())
+        all_member_file_ids = sorted(
+            {fid for c in write_nodes for fid in cluster_members[c]}
+        )
         all_member_meta = {}
         total_members = len(all_member_file_ids)
         msg = f"Pre-fetching metadata for {total_members} files..."
@@ -1240,16 +1585,21 @@ class BinClusterService:
             job_service.add_log(job_id, msg)
 
         # CSR rather than a dict of dicts -- see sim_edges.SimAdjacency.
-        adj_sim = sim_edges.SimAdjacency(edge_set, num_nodes)
+        adj_sim = (
+            None
+            if cohesion_by_label is not None
+            else sim_edges.SimAdjacency(edge_set, num_nodes)
+        )
 
-        total_clusters = len(cluster_members)
+        total_clusters = len(write_nodes)
         if job_service and job_id:
             job_service.add_log(
                 job_id,
                 f"Enriching metadata for {total_clusters} hierarchical binary clusters...",
             )
 
-        for idx, (label, members) in enumerate(cluster_members.items()):
+        for idx, label in enumerate(write_nodes):
+            members = cluster_members[label]
             names_list = []
             md5s_list = []
             yara_list = []
@@ -1311,8 +1661,11 @@ class BinClusterService:
             filename_freq = build_freq(names_list)
             md5_freq = build_freq(md5s_list)
 
-            # Exact Average Internal Similarity (Cohesion) using sparse adjacency map
-            if len(members) > 1:
+            # Incremental rebuilds carry or recompute cohesion before clearing;
+            # full rebuilds use the complete edge-set adjacency.
+            if cohesion_by_label is not None:
+                cohesion_score = cohesion_by_label.get(label, 1.0)
+            elif len(members) > 1:
                 member_indices = [id_to_idx[file_id] for file_id in members]
                 n_members = len(members)
 
@@ -1372,7 +1725,9 @@ class BinClusterService:
                 if isinstance(v, float):
                     if not np.isfinite(v):
                         meta[k] = 0.0
-            pipe.set(f"{collection}:bin_cluster:{algo_ns}:{label}:meta", json.dumps(meta))
+            pipe.set(
+                f"{collection}:bin_cluster:{algo_ns}:{label}:meta", json.dumps(meta)
+            )
 
             if "bin_cluster_name" in file_tag_fields:
                 bucket_key = (
@@ -1412,9 +1767,15 @@ class BinClusterService:
         pipe.execute()
 
         cluster_list_key = f"{collection}:bin_cluster:list:{algo_ns}"
-        r.delete(cluster_list_key)
-        if cluster_members:
-            r.sadd(cluster_list_key, *[str(k) for k in cluster_members.keys()])
+        if only_nodes is None:
+            r.delete(cluster_list_key)
+            if cluster_members:
+                r.sadd(cluster_list_key, *[str(k) for k in cluster_members])
+        else:
+            if retired_nodes:
+                r.srem(cluster_list_key, *[str(k) for k in retired_nodes])
+            if write_nodes:
+                r.sadd(cluster_list_key, *[str(k) for k in write_nodes])
 
         summary = f"Binary clustering complete. Found {len(cluster_members)} hierarchical clusters."
         logging.info(f"[+] {summary}")
@@ -1433,6 +1794,7 @@ class BinClusterService:
         """
         r = self.r
 
+        from bsimvis.app.services.cluster_common import clear_hier_state
         from bsimvis.app.services.index_service import _unindex_tag
 
         for algo_ns in (algo, f"{algo}:container"):
@@ -1497,6 +1859,7 @@ class BinClusterService:
             r.delete(f"{collection}:bin_cluster:tree:{algo_ns}")
             r.delete(f"{collection}:bin_cluster:list:{algo_ns}")
             r.delete(f"{collection}:bin_cluster:tree_links:{algo_ns}")
+            clear_hier_state(r, f"{collection}:bin_cluster:hier:{algo_ns}")
 
         # Clear named-based indexes (shared bucket space across both
         # namespaces -- cid/uuid values never collide, see the write side).

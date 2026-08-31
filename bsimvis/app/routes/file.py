@@ -821,26 +821,9 @@ def finalize_batch_upload():
 
     group_id = job_service.create_group(pipeline_ids, enqueue=False)
 
-    # 1. Clear old results in parallel before rebuilding.
-    # Function clustering (CLUSTER_FUNCTIONS below) is NOT cleared here: under
-    # the default threshold_uf engine it updates incrementally in place, keyed
-    # off this batch_uuid, instead of wiping and rebuilding every cluster in
-    # the collection on every single upload.
-    clear_tasks = []
-
     master_tasks = [group_id]
-    if clear_tasks:
-        master_tasks.append(job_service.create_group(clear_tasks, enqueue=False))
 
-    # After the clears, we do clustering:
-    master_tasks.append(
-        (
-            JobType.CLUSTER_FUNCTIONS.value,
-            {"collection": collection, "algo": algo, "batch_uuid": batch_uuid},
-        )
-    )
-
-    # After clustering, we do binary similarity:
+    # BinSim depends on raw function similarities, not function clusters.
     if not skip_sim:
         build_payload = {
             "collection": collection,
@@ -849,15 +832,12 @@ def finalize_batch_upload():
         }
         if min_cohesion is not None:
             build_payload["min_cohesion"] = min_cohesion
-        master_tasks.append(
-            (
-                JobType.BUILD_BIN_SIM.value,
-                build_payload,
-            )
-        )
+        master_tasks.append((JobType.BUILD_BIN_SIM.value, build_payload))
+
         cluster_payload = {
             "collection": collection,
             "algo": algo,
+            "batch_uuid": batch_uuid,
         }
         if min_cohesion is not None:
             cluster_payload["min_cohesion"] = min_cohesion
@@ -873,6 +853,12 @@ def finalize_batch_upload():
             )
         )
 
+    master_tasks.append(
+        (
+            JobType.CLUSTER_FUNCTIONS.value,
+            {"collection": collection, "algo": algo, "batch_uuid": batch_uuid},
+        )
+    )
     # Enrich features must be the absolute last job to run:
     master_tasks.append(
         (

@@ -1625,7 +1625,12 @@ class SimilarityService:
         Targeted similarity deletion.
         field: 'batch_uuid' or 'md5'
         """
-        return self._clear_script(args=[collection, field, value, algo or ""])
+        result = self._clear_script(args=[collection, field, value, algo or ""])
+        from bsimvis.app.services.cluster_common import clear_hier_state
+
+        for name in ([algo] if algo else ["jaccard", "unweighted_cosine", "milvus_sparse"]):
+            clear_hier_state(self.r, f"{collection}:cluster:hier:{name}")
+        return result
 
     def clear_all(self, collection, algo=None):
         """Clears ALL similarities in the collection safely using SCAN."""
@@ -1635,9 +1640,12 @@ class SimilarityService:
         logging.info(f"[*] Clearing ALL similarities for collection: {collection}")
 
         # 1. Clear global ZSETs and SETs
+        from bsimvis.app.services.cluster_common import clear_hier_state
+
         for a in algos:
             r.delete(f"{collection}:sim:score:{a}")
             r.delete(f"{collection}:built:functions:{a}")
+            clear_hier_state(r, f"{collection}:cluster:hier:{a}")
 
         r.delete(f"{collection}:sim:all")
         r.delete(f"{collection}:sim:min_features")

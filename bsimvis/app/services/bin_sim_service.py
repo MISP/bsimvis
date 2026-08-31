@@ -795,6 +795,10 @@ class BinSimService:
         If md5 is provided, clears only pairs involving that md5.
         """
         r = self.r
+        from bsimvis.app.services.cluster_common import clear_hier_state
+
+        clear_hier_state(r, f"{collection}:bin_cluster:hier:{algo}")
+        clear_hier_state(r, f"{collection}:bin_cluster:hier:{algo}:container")
         if job_service and job_id:
             job_service.add_log(
                 job_id, f"[*] Clearing binary similarities (md5: {md5 or 'ALL'})"

@@ -33,8 +33,8 @@
     no_analysis = true
 [clustering]
     # hierarchical_uf (default): full single-linkage hierarchy via Kruskal +
-    # union-find (see cluster_threshold.py). Full rebuild only (no
-    # incremental path yet). cohesion_cut picks each function's assigned
+    # union-find (see cluster_threshold.py). Incremental uploads rebuild from
+    # the persisted MST plus only new edges. cohesion_cut picks each function's assigned
     # cluster: the shallowest surviving ancestor whose cohesion clears
     # cohesion_cut, not just its deepest one.
     # threshold_uf: deterministic, incremental union-find -- exact by

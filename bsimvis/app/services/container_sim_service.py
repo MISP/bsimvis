@@ -628,6 +628,10 @@ def clear_for(collection, md5, algo=ALGO_DEFAULT, r=None):
             _unindex_bin_sim_pair(pipe, collection, sid, doc)
             dropped += 1
         pipe.execute()
+    if dropped:
+        from bsimvis.app.services.cluster_common import clear_hier_state
+
+        clear_hier_state(r, f"{collection}:bin_cluster:hier:{algo}:container")
     return dropped
 
 

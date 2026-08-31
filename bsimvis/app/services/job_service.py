@@ -506,7 +506,21 @@ class JobService:
         from bsimvis.app.routes.cluster import build_rebuild_all_tasks
 
         algo = config_service.get("similarity.algo", "unweighted_cosine")
-        tasks = [group_id] + build_rebuild_all_tasks(collection, algo, skip_sim=False)
+        payload_pipe = self.r.pipeline(transaction=False)
+        for member in members:
+            payload_pipe.hget(f"job:{member}", "payload")
+        batch_uuids = set()
+        for raw in payload_pipe.execute():
+            if raw:
+                payload = json.loads(raw)
+                if payload.get("batch_uuid"):
+                    batch_uuids.add(payload["batch_uuid"])
+        data = {"batch_uuid": batch_uuids.pop()} if len(batch_uuids) == 1 else None
+        # ponytail: mixed-batch waves fall back to a full rebuild; add list
+        # support only if those become common enough to matter.
+        tasks = [group_id] + build_rebuild_all_tasks(
+            collection, algo, skip_sim=False, data=data
+        )
         return self.submit_to_lane(collection, tasks)
 
     def tick_lanes(self):

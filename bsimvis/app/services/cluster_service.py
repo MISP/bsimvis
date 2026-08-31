@@ -53,13 +53,18 @@ class ClusterService:
         """
         Runs clustering on similarity pairs stored in Kvrocks.
 
-        engine is clustering.engine ("threshold_uf" by default, "hdbscan"
-        for the legacy path). Under threshold_uf, passing batch_uuid (set by
-        the upload pipeline for every newly-ingested batch) takes the
+        engine is clustering.engine ("hierarchical_uf" by default,
+        "threshold_uf" for a flat one-cut variant, "hdbscan" for the legacy
+        path). Under threshold_uf or hierarchical_uf, passing batch_uuid (set
+        by the upload pipeline for every newly-ingested batch) takes the
         incremental path: only that batch's functions and the clusters they
         touch are updated, instead of rebuilding every cluster in the
-        collection. Omit batch_uuid (or use the "Recluster" action in the
-        UI/CLI) to force a full rebuild, e.g. after changing uf_threshold.
+        collection. hierarchical_uf's incremental path additionally needs a
+        persisted MST from a prior run under the same parameters (see
+        _incremental_cluster_hierarchical) -- falls back to a full rebuild
+        silently if there isn't one. Omit batch_uuid (or use the "Recluster"
+        action in the UI/CLI) to force a full rebuild, e.g. after changing
+        uf_threshold or cohesion_cut.
         """
         from bsimvis.app.services.config_service import config_service
 
@@ -78,18 +83,42 @@ class ClusterService:
 
         engine = config_service.get("clustering.engine", "threshold_uf")
         if engine == "hierarchical_uf":
-            # Full rebuild only -- no incremental path yet. A new tight
-            # subgroup discovered among already-merged nodes needs the
-            # historical region's sub-tree re-derived, not a blind union
-            # (single-linkage's monotonic merges can't un-happen); that's
-            # real, separate work, deliberately deferred for now.
+            cohesion_cut = config_service.get("clustering.cohesion_cut", 0.9)
+            if batch_uuid and not collection.startswith("global:pool:"):
+                new_fids = list(
+                    self.r.smembers(f"{collection}:batch:{batch_uuid}:functions")
+                )
+                new_fids = [f.decode() if isinstance(f, bytes) else f for f in new_fids]
+                if new_fids:
+                    # The MST persisted by the last full/incremental run is a
+                    # sufficient summary of the whole graph for this tree --
+                    # see cluster_threshold.build_single_linkage_tree's
+                    # docstring. None means no usable state to build on
+                    # (never saved, config changed, or the LCA backend is
+                    # active) -- fall through to a full rebuild.
+                    res = self._incremental_cluster_hierarchical(
+                        collection,
+                        algo,
+                        new_fids,
+                        min_sim=min_sim,
+                        min_features=min_features,
+                        min_cluster_size=min_cluster_size,
+                        cohesion_cut=cohesion_cut,
+                        job_service=job_service,
+                        job_id=job_id,
+                    )
+                    if res is not None:
+                        return res
+                else:
+                    # Batch had no functions (e.g. all filtered out) -- nothing to do.
+                    return True
             return self._run_clustering_hierarchical_uf(
                 collection,
                 algo=algo,
                 min_sim=min_sim,
                 min_features=min_features,
                 min_cluster_size=min_cluster_size,
-                cohesion_cut=config_service.get("clustering.cohesion_cut", 0.9),
+                cohesion_cut=cohesion_cut,
                 job_service=job_service,
                 job_id=job_id,
             )
@@ -99,9 +128,7 @@ class ClusterService:
                 new_fids = list(
                     self.r.smembers(f"{collection}:batch:{batch_uuid}:functions")
                 )
-                new_fids = [
-                    f.decode() if isinstance(f, bytes) else f for f in new_fids
-                ]
+                new_fids = [f.decode() if isinstance(f, bytes) else f for f in new_fids]
                 if new_fids:
                     return self._incremental_cluster_functions(
                         collection,
@@ -935,6 +962,35 @@ class ClusterService:
 
         return True
 
+    def _hierarchical_is_lca(self, collection):
+        """Whether hierarchical_uf's LCA/compact-class-graph projection is
+        active for this collection right now -- shared by the full-rebuild
+        and incremental hierarchical_uf paths so their fingerprints (and
+        thus the incremental path's "state still usable?" check) agree.
+
+        Returns (is_lca, class_edges) -- class_edges is already fetched
+        since the full-rebuild caller needs it too when is_lca is True.
+        """
+        from bsimvis.app.services.config_service import config_service
+
+        backend = config_service.get("similarity.discovery_backend", "rust_cpu")
+        is_lca = backend in ("wgpu", "rust_cpu")
+        class_edges = []
+        if is_lca:
+            from bsimvis.app.services.graph_service import graph_service
+
+            gen = graph_service.get_active_generation(collection)
+            class_edges = graph_service.get_edges_for_gen(collection, gen)
+            # Compact class graph has no cross-class edges yet (e.g. every
+            # near-dup in this collection is an exact same-vclass match,
+            # which never appears in the BSC2 graph -- only cross-class
+            # links do). The class-projected tree below would then be
+            # built from zero classes and crash hierarchical_membership on
+            # a columnless DataFrame, so fall back to the plain
+            # per-function tree instead.
+            is_lca = bool(class_edges)
+        return is_lca, class_edges
+
     def _run_clustering_hierarchical_uf(
         self,
         collection,
@@ -966,15 +1022,19 @@ class ClusterService:
         wrote), so a lower-cohesion grouping is still visible to anyone
         walking the dendrogram, just not picked as the "the" cluster.
 
-        Full rebuild only (see engine dispatch above for why). Self-cleans
-        via clear_clustering() first -- same reasoning as
+        This full-rebuild fallback self-cleans via clear_clustering() first -- same reasoning as
         _run_clustering_threshold_uf: whatever engine last wrote this
         collection's cluster keys, don't leave any of it underneath a fresh
         rebuild.
         """
         import pandas as pd
         from bsimvis.app.services.cluster_threshold import build_single_linkage_tree
-        from bsimvis.app.services.cluster_common import hierarchical_membership
+        from bsimvis.app.services.cluster_common import (
+            hierarchical_membership,
+            hier_fingerprint,
+            stabilise,
+            save_hier_state,
+        )
 
         r = self.r
         is_pool = collection.startswith("global:pool:")
@@ -1021,38 +1081,29 @@ class ClusterService:
             job_service.add_log(job_id, msg)
 
         start_fit = time.time()
-        
+        mst = None  # only ever set on the non-LCA branch below -- the class
+        # projection's own tree isn't over raw function edges, so
+        # it can't seed an MST for incremental function-level
+        # updates; the incremental path falls back to a full
+        # rebuild whenever is_lca is set (see run_clustering()).
+
         # LCA Acceleration
-        from bsimvis.app.services.config_service import config_service
-        backend = config_service.get("similarity.discovery_backend", "rust_cpu")
-        is_lca = backend in ("wgpu", "rust_cpu")
-        
-        if is_lca:
-            from bsimvis.app.services.graph_service import graph_service
-            import numpy as np
-            gen = graph_service.get_active_generation(collection)
-            class_edges = graph_service.get_edges_for_gen(collection, gen)
-            # Compact class graph has no cross-class edges yet (e.g. every
-            # near-dup in this collection is an exact same-vclass match,
-            # which never appears in the BSC2 graph -- only cross-class
-            # links do). The class-projected tree below would then be
-            # built from zero classes and crash hierarchical_membership on
-            # a columnless DataFrame, so fall back to the plain
-            # per-function tree instead.
-            is_lca = bool(class_edges)
+        import numpy as np
+
+        is_lca, class_edges = self._hierarchical_is_lca(collection)
 
         if is_lca:
             vclass_ids = set()
             for u, v, s in class_edges:
                 vclass_ids.add(str(u))
                 vclass_ids.add(str(v))
-                
+
             pipe = r.pipeline(transaction=False)
             vclass_list = list(vclass_ids)
             for vid in vclass_list:
                 pipe.smembers(f"{collection}:vclass:{vid}:functions")
             res = pipe.execute()
-            
+
             class_members = []
             valid_classes = []
             func_to_id = {}
@@ -1066,11 +1117,11 @@ class ClusterService:
                         if f not in func_to_id:
                             func_to_id[f] = len(funcs_list)
                             funcs_list.append(f)
-                            
+
             num_funcs = len(funcs_list)
             num_classes = len(valid_classes)
             vclass_to_idx = {v: i for i, v in enumerate(valid_classes)}
-            
+
             srcs, dsts, dists = [], [], []
             for u, v, s in class_edges:
                 u_str, v_str = str(u), str(v)
@@ -1078,16 +1129,26 @@ class ClusterService:
                     srcs.append(vclass_to_idx[u_str])
                     dsts.append(vclass_to_idx[v_str])
                     dists.append(1.0 - s)
-                    
+
             from bsimvis.app.services.sim_edges import EdgeSet
-            class_edge_set = EdgeSet(np.array(srcs, dtype=np.int32), np.array(dsts, dtype=np.int32), np.array(dists, dtype=np.float32), vclass_to_idx, {i:v for v,i in vclass_to_idx.items()}, len(srcs))
-            class_tree_rows, class_root_id, _ = build_single_linkage_tree(class_edge_set)
-            
+
+            class_edge_set = EdgeSet(
+                np.array(srcs, dtype=np.int32),
+                np.array(dsts, dtype=np.int32),
+                np.array(dists, dtype=np.float32),
+                vclass_to_idx,
+                {i: v for v, i in vclass_to_idx.items()},
+                len(srcs),
+            )
+            class_tree_rows, class_root_id, _, _class_mst = build_single_linkage_tree(
+                class_edge_set
+            )
+
             tree_rows = []
             next_node = num_funcs
             class_node_map = {}
             node_sizes = {i: 1 for i in range(num_funcs)}
-            
+
             for c_idx in range(num_classes):
                 mems = class_members[c_idx]
                 if len(mems) >= min_cluster_size:
@@ -1098,7 +1159,14 @@ class ClusterService:
                     node_sizes[c_node] = sz
                     for f in mems:
                         f_id = func_to_id[f]
-                        tree_rows.append({"parent": c_node, "child": f_id, "lambda_val": 1.0, "child_size": 1})
+                        tree_rows.append(
+                            {
+                                "parent": c_node,
+                                "child": f_id,
+                                "lambda_val": 1.0,
+                                "child_size": 1,
+                            }
+                        )
                 else:
                     if len(mems) == 1:
                         class_node_map[c_idx] = func_to_id[mems[0]]
@@ -1111,11 +1179,25 @@ class ClusterService:
                             next_node += 1
                             sz += 1
                             node_sizes[p] = sz
-                            tree_rows.append({"parent": p, "child": curr, "lambda_val": 1.0, "child_size": sz - 1})
-                            tree_rows.append({"parent": p, "child": f_id, "lambda_val": 1.0, "child_size": 1})
+                            tree_rows.append(
+                                {
+                                    "parent": p,
+                                    "child": curr,
+                                    "lambda_val": 1.0,
+                                    "child_size": sz - 1,
+                                }
+                            )
+                            tree_rows.append(
+                                {
+                                    "parent": p,
+                                    "child": f_id,
+                                    "lambda_val": 1.0,
+                                    "child_size": 1,
+                                }
+                            )
                             curr = p
                         class_node_map[c_idx] = curr
-                        
+
             for row in class_tree_rows:
                 p = row["parent"]
                 c = row["child"]
@@ -1124,21 +1206,51 @@ class ClusterService:
                     class_node_map[p] = next_node
                     next_node += 1
                     node_sizes[class_node_map[p]] = 0
-                    
+
                 new_p = class_node_map[p]
                 new_c = class_node_map[c]
-                
+
                 c_sz = node_sizes[new_c]
                 node_sizes[new_p] += c_sz
-                
-                tree_rows.append({"parent": new_p, "child": new_c, "lambda_val": l, "child_size": c_sz})
-                
+
+                tree_rows.append(
+                    {
+                        "parent": new_p,
+                        "child": new_c,
+                        "lambda_val": l,
+                        "child_size": c_sz,
+                    }
+                )
+
             global_root_id = class_node_map.get(class_root_id, next_node - 1)
             num_nodes = num_funcs
             id_to_idx = func_to_id
-            idx_to_id = {v:k for k,v in func_to_id.items()}
+            idx_to_id = {v: k for k, v in func_to_id.items()}
         else:
-            tree_rows, global_root_id, _ = build_single_linkage_tree(edge_set)
+            tree_rows, global_root_id, _, mst = build_single_linkage_tree(edge_set)
+
+        hier_base = f"{collection}:cluster:hier:{algo}"
+        hier_state = None
+        if not is_lca:
+            # Full rebuild also lands on stable (edge-keyed) ids from here,
+            # starting from an empty id table -- clear_clustering() below
+            # wipes any prior incremental state too, so there's nothing to
+            # carry forward. This just gets both paths onto the same id
+            # scheme (see cluster_service.py's incremental hierarchical_uf
+            # id-stability contract) so the NEXT upload has an MST to
+            # increment onto instead of falling back to a full rebuild again.
+            hier_state = {
+                "idx": dict(id_to_idx),
+                "next_idx": len(id_to_idx),
+                "mst": mst,
+                "node_ids": {},
+                "next_node_id": 1 << 30,
+                "fingerprint": hier_fingerprint(
+                    min_sim, min_features, min_cluster_size, cohesion_cut, is_lca
+                ),
+                "root_id": None,
+            }
+            tree_rows, global_root_id = stabilise(tree_rows, mst, hier_state)
 
         tree_df = pd.DataFrame(tree_rows)
         fit_time = time.time() - start_fit
@@ -1222,6 +1334,9 @@ class ClusterService:
         if persisted is False:
             return False
 
+        if hier_state is not None:
+            save_hier_state(r, hier_base, hier_state)
+
         self._update_similarity_indexing(
             collection, algo, job_service=job_service, job_id=job_id
         )
@@ -1235,6 +1350,319 @@ class ClusterService:
         logging.info(f"[+] {summary}")
         if job_service and job_id:
             job_service.add_log(job_id, summary)
+
+        return True
+
+    def _incremental_cluster_hierarchical(
+        self,
+        collection,
+        algo,
+        new_fids,
+        min_sim,
+        min_features,
+        min_cluster_size,
+        cohesion_cut,
+        job_service=None,
+        job_id=None,
+    ):
+        """Incremental hierarchical_uf update for one newly-uploaded batch.
+
+        The MST is a sufficient summary of the whole similarity graph for
+        rebuilding this tree (see cluster_threshold.build_single_linkage_tree
+        and cluster_threshold.demo_mst_is_a_sufficient_summary): every edge
+        NOT in the MST was rejected because its endpoints were already
+        connected by an earlier (>= similarity) edge, and adding more edges
+        elsewhere can never retroactively make a rejected edge relevant. So
+        this pulls only the new batch's own edges (via the same
+        sim:involves reverse index _incremental_cluster_functions uses),
+        rebuilds the FULL tree from persisted-MST + those new edges (cheap:
+        tens of thousands of edges, not the whole collection's ZSET), then
+        only WRITES the nodes that could have actually changed.
+
+        Returns None (not False) when there's no usable incremental state to
+        build on -- missing (never saved, or cleared), or saved under
+        different clustering parameters (fingerprint mismatch), or the LCA
+        class-projection backend is active (its tree isn't built from raw
+        function edges, so it can't seed this). None tells run_clustering()
+        to fall back to a full rebuild, same signal threshold_uf's
+        incremental path doesn't need (it always has fid-rooted state).
+        """
+        from bsimvis.app.services.cluster_common import (
+            load_hier_state,
+            save_hier_state,
+            edgeset_from,
+            stabilise,
+            dirty_ancestors,
+            hier_fingerprint,
+            hierarchical_membership,
+        )
+        from bsimvis.app.services.cluster_threshold import build_single_linkage_tree
+        import pandas as pd
+
+        r = self.r
+        is_pool = collection.startswith("global:pool:")
+        is_lca, _ = self._hierarchical_is_lca(collection)
+
+        hier_base = f"{collection}:cluster:hier:{algo}"
+        state = load_hier_state(r, hier_base)
+        if state is None:
+            return None
+
+        fingerprint = hier_fingerprint(
+            min_sim, min_features, min_cluster_size, cohesion_cut, is_lca
+        )
+        if is_lca or state.get("fingerprint") != fingerprint:
+            return None
+
+        if is_pool:
+            pool_id = collection[len("global:pool:") :]
+            prefix = f"global:pool:{pool_id}:sim:"
+            sim_score_key = f"global:pool:{pool_id}:sim:score"
+        else:
+            pool_id = None
+            prefix = f"{collection}:sim:{algo}:"
+            sim_score_key = f"{collection}:sim:score:{algo}"
+
+        func_prefix = f"{collection}:func:"
+
+        def clean_id(fid):
+            return fid[len(func_prefix) :] if fid.startswith(func_prefix) else fid
+
+        msg = f"[hierarchical_uf] incremental update: {len(new_fids)} new functions..."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        # 1. Only the new batch's own edges, via the reverse index -- never
+        # the full ZSET.
+        pairs = []
+        for fid in new_fids:
+            clean = clean_id(fid)
+            sids = r.smembers(f"{collection}:sim:involves:func:{clean}")
+            for sid_raw in sids or ():
+                sid = sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
+                if not sid.startswith(prefix):
+                    continue
+                id_part = sid[len(prefix) :]
+                if "::" not in id_part:
+                    continue
+                c1, c2 = id_part.split("::")
+                pairs.append((sid, c1, c2))
+
+        if not pairs:
+            return True
+
+        unique_sids = sorted({p[0] for p in pairs})
+        scores = {}
+        CHUNK = 1000
+        for i in range(0, len(unique_sids), CHUNK):
+            chunk = unique_sids[i : i + CHUNK]
+            pipe = r.pipeline(transaction=False)
+            for sid in chunk:
+                pipe.zscore(sim_score_key, sid)
+            for sid, score in zip(chunk, pipe.execute()):
+                if score is not None:
+                    scores[sid] = float(score)
+
+        def to_fid(c):
+            return c if is_pool else f"{func_prefix}{c}"
+
+        allowed_fids = None
+        if min_features > 0:
+            candidates = sorted({to_fid(c) for _, c1, c2 in pairs for c in (c1, c2)})
+            allowed_fids = set()
+            for i in range(0, len(candidates), CHUNK):
+                chunk = candidates[i : i + CHUNK]
+                pipe = r.pipeline(transaction=False)
+                for fid in chunk:
+                    pipe.get(f"{fid}:meta")
+                for fid, raw in zip(chunk, pipe.execute()):
+                    try:
+                        val = (
+                            json.loads(raw).get("bsim_features_count", 0) if raw else 0
+                        )
+                        if int(val) >= min_features:
+                            allowed_fids.add(fid)
+                    except (ValueError, TypeError):
+                        continue
+
+        new_edges = []
+        for sid, c1, c2 in pairs:
+            score = scores.get(sid)
+            if score is None:
+                continue
+            if min_sim > 0 and score < min_sim:
+                continue
+            fid_a, fid_b = to_fid(c1), to_fid(c2)
+            if allowed_fids is not None and (
+                fid_a not in allowed_fids or fid_b not in allowed_fids
+            ):
+                continue
+            new_edges.append((fid_a, fid_b, score))
+
+        if not new_edges:
+            return True
+
+        # 2. Rebuild the FULL (small) tree from MST + new edges -- the whole
+        # algorithm. Stable ids preserve identity for every merge whose
+        # defining edge didn't change (cluster_common.stabilise).
+        old_mst_set = {(min(u, v), max(u, v)) for u, v, _ in state["mst"]}
+        edge_set = edgeset_from(state, new_edges)
+        tree_rows, _old_root, num_nodes, mst = build_single_linkage_tree(edge_set)
+        new_mst_set = {(min(u, v), max(u, v)) for u, v, _ in mst}
+        state["mst"] = mst
+        tree_rows, global_root_id = stabilise(tree_rows, mst, state)
+
+        tree_df = pd.DataFrame(tree_rows)
+        leaf_to_clusters, leaf_home = hierarchical_membership(
+            tree_df, num_nodes, global_root_id, min_size=min_cluster_size
+        )
+
+        node_members = {}
+        for leaf, chain in leaf_to_clusters.items():
+            for c in chain:
+                node_members.setdefault(c, []).append(edge_set.idx_to_id[leaf])
+
+        # 3. Dirty set: new leaves, plus endpoints of any MST edge that
+        # entered or left (exactly the "tighter edge inside an
+        # already-merged region" case the deferred comment on
+        # run_clustering() names), walked up to every ancestor whose
+        # recursive membership could have changed. Correct, not just a
+        # heuristic bound -- see cluster_common.dirty_ancestors' docstring.
+        new_leaf_idxs = {
+            edge_set.id_to_idx[fid] for fid in new_fids if fid in edge_set.id_to_idx
+        }
+        sym_diff = old_mst_set ^ new_mst_set
+        changed_endpoints = {u for u, v in sym_diff} | {v for u, v in sym_diff}
+        dirty_seed = new_leaf_idxs | changed_endpoints
+        dirty = dirty_ancestors(tree_rows, dirty_seed) if dirty_seed else set()
+        dirty &= set(node_members.keys())
+
+        prev_live = {
+            int(x.decode() if isinstance(x, bytes) else x)
+            for x in r.smembers(f"{collection}:cluster:list:{algo}")
+        }
+        new_live = set(node_members.keys())
+        retired = prev_live - new_live
+
+        if not dirty and not retired:
+            save_hier_state(r, hier_base, state)
+            return True
+
+        # Keep old cohesion for unchanged nodes; only dirty nodes are rescored.
+        node_meta = {}
+        live_nodes = sorted(node_members)
+        for i in range(0, len(live_nodes), 1000):
+            chunk = live_nodes[i : i + 1000]
+            pipe = r.pipeline(transaction=False)
+            for c in chunk:
+                pipe.get(f"{collection}:cluster:{algo}:{c}:meta")
+            for c, raw in zip(chunk, pipe.execute()):
+                node_meta[c] = json.loads(raw) if raw else {}
+        node_cohesion = {
+            c: meta.get("cohesion_score", 1.0) for c, meta in node_meta.items()
+        }
+
+        for c in dirty:
+            members = node_members[c]
+            if len(members) <= 1:
+                node_cohesion[c] = 1.0
+            elif len(members) <= 200:
+                total_sim, pair_count = 0.0, 0
+                for i in range(len(members)):
+                    for j in range(i + 1, len(members)):
+                        ci, cj = clean_id(members[i]), clean_id(members[j])
+                        s = r.zscore(
+                            sim_score_key, f"{collection}:sim:{algo}:{ci}::{cj}"
+                        )
+                        if s is None:
+                            s = r.zscore(
+                                sim_score_key, f"{collection}:sim:{algo}:{cj}::{ci}"
+                            )
+                        if s is not None:
+                            total_sim += float(s)
+                            pair_count += 1
+                node_cohesion[c] = total_sim / pair_count if pair_count else 1.0
+
+        # Re-evaluate the cut for affected leaves against both changed and
+        # unchanged ancestors; only those leaves are written back to Redis.
+        cluster_members = {}
+        primary_by_fid = {}
+        affected_leaves = {
+            leaf
+            for leaf, chain in leaf_to_clusters.items()
+            if chain and set(chain) & dirty
+        }
+        for leaf, chain in leaf_to_clusters.items():
+            if not chain:
+                continue
+            qualifying = [c for c in chain if node_cohesion[c] >= cohesion_cut]
+            chosen = qualifying[-1] if qualifying else chain[0]
+            fid = edge_set.idx_to_id[leaf]
+            cluster_members.setdefault(chosen, []).append(fid)
+            primary_by_fid[fid] = chosen
+
+        affected_fids = {edge_set.idx_to_id[leaf] for leaf in affected_leaves}
+        old_primary = set()
+        affected_list = sorted(affected_fids)
+        for i in range(0, len(affected_list), 1000):
+            chunk = affected_list[i : i + 1000]
+            pipe = r.pipeline(transaction=False)
+            for fid in chunk:
+                pipe.smembers(f"{fid}:clusters")
+            for values in pipe.execute():
+                for value in values or ():
+                    try:
+                        old_primary.add(
+                            int(value.decode() if isinstance(value, bytes) else value)
+                        )
+                    except (TypeError, ValueError):
+                        pass
+
+        write_nodes = (
+            dirty
+            | (old_primary & new_live)
+            | {primary_by_fid[fid] for fid in affected_fids if fid in primary_by_fid}
+        )
+        label_to_uuid = {
+            c: node_meta.get(c, {}).get("cluster_uuid") or uuid.uuid4().hex[:12]
+            for c in write_nodes
+        }
+
+        persisted = self._persist_hierarchical_clusters(
+            collection,
+            algo,
+            id_to_idx=None,
+            idx_to_id=None,
+            adj_sim=None,
+            all_member_meta_fids=[],
+            cluster_members=cluster_members,
+            node_members=node_members,
+            node_cohesion=node_cohesion,
+            label_to_uuid=label_to_uuid,
+            tree_df=tree_df,
+            is_pool=is_pool,
+            pool_id=pool_id,
+            job_service=job_service,
+            job_id=job_id,
+            only_nodes=write_nodes,
+            only_fids=affected_fids,
+            retired_nodes=retired,
+        )
+        if persisted is False:
+            return False
+
+        save_hier_state(r, hier_base, state)
+
+        self._propagate_sim_indexes_for(collection, algo, affected_fids)
+
+        msg = (
+            f"[hierarchical_uf] incremental update done. "
+            f"{len(dirty)} node(s) touched, {len(retired)} retired."
+        )
+        logging.info(f"[+] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
 
         return True
 
@@ -1255,6 +1683,9 @@ class ClusterService:
         pool_id,
         job_service,
         job_id,
+        only_nodes=None,
+        only_fids=None,
+        retired_nodes=(),
     ):
         """Persist the full tree (every cohesion-candidate node) + the
         cohesion-cut assignment.
@@ -1265,16 +1696,34 @@ class ClusterService:
         hierarchy view. `cluster_members` (the cohesion-cut winners) only
         decides each function's single "primary" cluster for search/tags.
 
-        Cluster ids here are the synthetic internal node ids
-        build_single_linkage_tree() allocated (coarse nodes have no single
-        representative fid the way a flat threshold_uf root does) -- fine,
-        since this engine is full-rebuild only and never needs RedisUF's
-        fid-rooted incremental state, unlike _persist_flat_clusters.
+        Cluster ids are STABLE ids keyed on each merge's defining edge (see
+        cluster_common.stabilise() and cluster_service.py's incremental
+        hierarchical_uf id-stability contract) -- not raw
+        build_single_linkage_tree() output ids, which are re-minted fresh
+        every call.
+
+        only_nodes: when given (the incremental path), only these node ids
+        get member-set/meta/index writes -- `node_members` must still be the
+        FULL current mapping (every node the just-rebuilt tree actually has,
+        same as a full rebuild would produce), just with the writes scoped
+        to what actually changed. None (a full rebuild) writes every node.
+        retired_nodes: node ids that existed before this run but don't
+        anymore -- their persisted keys are deleted outright, not just left
+        stale. Always empty on a full rebuild (clear_clustering() already
+        wiped everything before this is called).
         """
         r = self.r
 
-        # Tree + tree_links: same keys/shape run_clustering's HDBSCAN path
-        # already writes, so the existing dendrogram UI works unchanged.
+        write_nodes = (
+            set(node_members.keys())
+            if only_nodes is None
+            else set(only_nodes) & set(node_members.keys())
+        )
+
+        # Tree + tree_links: always rewritten wholesale, same keys/shape
+        # run_clustering's HDBSCAN path already writes -- we hold the whole
+        # (small, MST-sized even on the incremental path) tree in memory
+        # regardless, so scoping this blob write would save nothing.
         # Restricted to node_members so every link the UI can walk resolves
         # to a real :meta doc -- raw tree_df also has pruned/non-surviving
         # merges (shed noise, per hierarchical_membership's docstring) that
@@ -1298,9 +1747,46 @@ class ClusterService:
 
         pipe = r.pipeline(transaction=False)
 
-        for c, members in node_members.items():
+        # Retire nodes that no longer exist at all (displaced by an MST
+        # swap, or absorbed structurally) -- delete their keys outright and
+        # clean their name/uuid index buckets. Old meta is read first since
+        # that's the only place those bucket names are recorded (same
+        # pattern _incremental_cluster_functions uses for threshold_uf's
+        # stale/absorbed roots).
+        if retired_nodes:
+            old_metas = {}
+            for c in retired_nodes:
+                raw = r.get(f"{collection}:cluster:{algo}:{c}:meta")
+                old_metas[c] = json.loads(raw) if raw else {}
+            for c in retired_nodes:
+                pipe.delete(f"{collection}:cluster:{algo}:{c}:members")
+                pipe.delete(f"{collection}:cluster:{algo}:{c}:direct_members")
+                pipe.delete(f"{collection}:cluster:{algo}:{c}:meta")
+                if "cluster_id" in func_tag_fields:
+                    pipe.delete(f"{collection}:idx:func:cluster_id:{str(c).lower()}")
+                old_name = old_metas[c].get("cluster_name")
+                if old_name and "cluster_name" in func_tag_fields:
+                    pipe.delete(
+                        f"{collection}:idx:func:cluster_name:{old_name.lower()}"
+                    )
+                old_uuid = old_metas[c].get("cluster_uuid")
+                if old_uuid and "cluster_uuid" in func_tag_fields:
+                    pipe.delete(
+                        f"{collection}:idx:func:cluster_uuid:{old_uuid.lower()}"
+                    )
+            pipe.execute()
+
+        for c in write_nodes:
+            members = node_members[c]
+            # delete + sadd, not a bare sadd -- on the incremental path
+            # there's no clear_clustering() wipe underneath this, so a plain
+            # sadd would leave stale members that fell out of the cluster.
+            # A harmless no-op extra delete on the full-rebuild path, where
+            # clear_clustering() already emptied these keys.
+            pipe.delete(f"{collection}:cluster:{algo}:{c}:members")
             pipe.sadd(f"{collection}:cluster:{algo}:{c}:members", *members)
             direct = cluster_members.get(c)
+            pipe.delete(f"{collection}:cluster:{algo}:{c}:direct_members")
             if direct:
                 pipe.sadd(f"{collection}:cluster:{algo}:{c}:direct_members", *direct)
             if len(pipe) > 1000:
@@ -1311,7 +1797,21 @@ class ClusterService:
             fid: c for c, members in cluster_members.items() for fid in members
         }
 
-        for i, fid in enumerate(all_member_meta_fids):
+        # Full rebuild touches every fid the graph knows about; the
+        # incremental path only touches fids under a node that actually
+        # changed -- everyone else's :clusters/:cluster_scores are already
+        # correct and untouched in Redis.
+        fids_to_process = (
+            all_member_meta_fids
+            if only_nodes is None
+            else sorted(
+                only_fids
+                if only_fids is not None
+                else {fid for c in write_nodes for fid in node_members[c]}
+            )
+        )
+
+        for i, fid in enumerate(fids_to_process):
             if is_pool:
                 clusters_key = f"{collection}:{fid}:clusters"
                 scores_key = f"{collection}:{fid}:cluster_scores"
@@ -1333,27 +1833,31 @@ class ClusterService:
                         job_service.add_log(job_id, "Cancelled.")
                         return False
                     job_service.update_progress(
-                        job_id, int((i / max(1, len(all_member_meta_fids))) * 50)
+                        job_id, int((i / max(1, len(fids_to_process))) * 50)
                     )
         pipe.execute()
 
-        for idx, (label, members) in enumerate(node_members.items()):
+        for idx, c in enumerate(write_nodes):
+            members = node_members[c]
             if "cluster_id" in func_tag_fields:
-                bucket_key = f"{collection}:idx:func:cluster_id:{str(label).lower()}"
+                bucket_key = f"{collection}:idx:func:cluster_id:{str(c).lower()}"
+                pipe.delete(bucket_key)
                 pipe.sadd(bucket_key, *members)
                 pipe.sadd(f"{collection}:reg:func:cluster_id", bucket_key)
             if "cluster_uuid" in func_tag_fields:
-                c_uuid = label_to_uuid[label]
+                c_uuid = label_to_uuid[c]
                 bucket_key = f"{collection}:idx:func:cluster_uuid:{c_uuid.lower()}"
+                pipe.delete(bucket_key)
                 pipe.sadd(bucket_key, *members)
                 pipe.sadd(f"{collection}:reg:func:cluster_uuid", bucket_key)
             if idx % 100 == 0:
                 pipe.execute()
         pipe.execute()
 
+        meta_fids_needed = sorted({fid for c in write_nodes for fid in node_members[c]})
         all_member_meta = {}
-        for i in range(0, len(all_member_meta_fids), 1000):
-            chunk = all_member_meta_fids[i : i + 1000]
+        for i in range(0, len(meta_fids_needed), 1000):
+            chunk = meta_fids_needed[i : i + 1000]
             m_pipe = r.pipeline(transaction=False)
             for fid in chunk:
                 m_pipe.get(f"{fid}:meta")
@@ -1366,7 +1870,8 @@ class ClusterService:
                         m = {}
                 all_member_meta[fid] = m
 
-        for label, members in node_members.items():
+        for label in write_nodes:
+            members = node_members[label]
             names = [
                 all_member_meta.get(fid, {}).get("function_name")
                 for fid in members
@@ -1402,11 +1907,11 @@ class ClusterService:
 
             meta = {
                 "cluster_id": label,
-                "snippet": all_member_meta.get(members[0], {}).get(
-                    "function_name", "unknown"
-                )
-                if members
-                else "unknown",
+                "snippet": (
+                    all_member_meta.get(members[0], {}).get("function_name", "unknown")
+                    if members
+                    else "unknown"
+                ),
                 "cluster_uuid": label_to_uuid[label],
                 "cluster_name": default_name,
                 "avg_features": avg_features,
@@ -1427,20 +1932,37 @@ class ClusterService:
                 bucket_key = (
                     f"{collection}:idx:func:cluster_name:{default_name.lower()}"
                 )
+                pipe.delete(bucket_key)
                 pipe.sadd(bucket_key, *members)
                 pipe.sadd(f"{collection}:reg:func:cluster_name", bucket_key)
         pipe.execute()
 
         cluster_list_key = f"{collection}:cluster:list:{algo}"
-        r.delete(cluster_list_key)
-        if node_members:
-            r.sadd(cluster_list_key, *[str(k) for k in node_members.keys()])
-            if is_pool:
-                pool_cluster_list_key = f"global:pool:{pool_id}:cluster:list"
+        pool_cluster_list_key = (
+            f"global:pool:{pool_id}:cluster:list" if is_pool else None
+        )
+        if only_nodes is None:
+            r.delete(cluster_list_key)
+            if node_members:
+                r.sadd(cluster_list_key, *[str(k) for k in node_members.keys()])
+            if pool_cluster_list_key:
                 r.delete(pool_cluster_list_key)
-                r.sadd(
-                    pool_cluster_list_key, *[str(k) for k in node_members.keys()]
-                )
+                if node_members:
+                    r.sadd(
+                        pool_cluster_list_key, *[str(k) for k in node_members.keys()]
+                    )
+        else:
+            # Targeted add/remove, not a full delete+rebuild -- everything
+            # not in write_nodes/retired_nodes is already correct in this
+            # set from a previous run.
+            if retired_nodes:
+                r.srem(cluster_list_key, *[str(k) for k in retired_nodes])
+                if pool_cluster_list_key:
+                    r.srem(pool_cluster_list_key, *[str(k) for k in retired_nodes])
+            if write_nodes:
+                r.sadd(cluster_list_key, *[str(k) for k in write_nodes])
+                if pool_cluster_list_key:
+                    r.sadd(pool_cluster_list_key, *[str(k) for k in write_nodes])
 
     def _persist_flat_clusters(
         self,
@@ -1606,11 +2128,11 @@ class ClusterService:
 
             meta = {
                 "cluster_id": label,
-                "snippet": all_member_meta.get(members[0], {}).get(
-                    "function_name", "unknown"
-                )
-                if members
-                else "unknown",
+                "snippet": (
+                    all_member_meta.get(members[0], {}).get("function_name", "unknown")
+                    if members
+                    else "unknown"
+                ),
                 "cluster_uuid": label_to_uuid[label],
                 "cluster_name": default_name,
                 "avg_features": avg_features,
@@ -1735,7 +2257,9 @@ class ClusterService:
                 pipe.delete(f"{collection}:idx:func:cluster_name:{old_name.lower()}")
             old_uuid = r.hget(uuid_key, stale)
             if old_uuid:
-                old_uuid = old_uuid.decode() if isinstance(old_uuid, bytes) else old_uuid
+                old_uuid = (
+                    old_uuid.decode() if isinstance(old_uuid, bytes) else old_uuid
+                )
                 pipe.delete(f"{collection}:idx:func:cluster_uuid:{old_uuid.lower()}")
                 pipe.hdel(uuid_key, stale)
         pipe.execute()
@@ -1785,7 +2309,9 @@ class ClusterService:
                     r.hset(uuid_key, root, c_uuid)
 
                 pipe.delete(f"{collection}:cluster:{algo}:{root}:direct_members")
-                pipe.sadd(f"{collection}:cluster:{algo}:{root}:direct_members", *members)
+                pipe.sadd(
+                    f"{collection}:cluster:{algo}:{root}:direct_members", *members
+                )
 
                 for fid in members:
                     if collection.startswith("global:pool:"):
@@ -1889,9 +2415,7 @@ class ClusterService:
                     pipe.sadd(bucket_key, *members)
                     pipe.sadd(f"{collection}:reg:func:cluster_id", bucket_key)
                 if "cluster_uuid" in func_tag_fields:
-                    bucket_key = (
-                        f"{collection}:idx:func:cluster_uuid:{c_uuid.lower()}"
-                    )
+                    bucket_key = f"{collection}:idx:func:cluster_uuid:{c_uuid.lower()}"
                     pipe.delete(bucket_key)
                     pipe.sadd(bucket_key, *members)
                     pipe.sadd(f"{collection}:reg:func:cluster_uuid", bucket_key)
@@ -1971,10 +2495,22 @@ class ClusterService:
                 fid1 = c1 if is_pool else f"{func_prefix}{c1}"
                 fid2 = c2 if is_pool else f"{func_prefix}{c2}"
 
-                m1_raw = r.smembers(f"{fid1}:clusters" if not is_pool else f"{collection}:{fid1}:clusters")
-                m2_raw = r.smembers(f"{fid2}:clusters" if not is_pool else f"{collection}:{fid2}:clusters")
-                cids1 = [m.decode() if isinstance(m, bytes) else m for m in (m1_raw or ())]
-                cids2 = [m.decode() if isinstance(m, bytes) else m for m in (m2_raw or ())]
+                m1_raw = r.smembers(
+                    f"{fid1}:clusters"
+                    if not is_pool
+                    else f"{collection}:{fid1}:clusters"
+                )
+                m2_raw = r.smembers(
+                    f"{fid2}:clusters"
+                    if not is_pool
+                    else f"{collection}:{fid2}:clusters"
+                )
+                cids1 = [
+                    m.decode() if isinstance(m, bytes) else m for m in (m1_raw or ())
+                ]
+                cids2 = [
+                    m.decode() if isinstance(m, bytes) else m for m in (m2_raw or ())
+                ]
                 if not cids1 or not cids2:
                     continue
 
@@ -2118,6 +2654,14 @@ class ClusterService:
         # find stale parent/uuid entries and silently resurrect the old grouping.
         r.delete(f"{collection}:cluster:{algo}:uf:parent")
         r.delete(f"{collection}:cluster:{algo}:uf:uuid")
+
+        # hierarchical_uf's incremental state (the persisted MST + id tables,
+        # cluster_common.load_hier_state/save_hier_state): same reasoning --
+        # without this, the next incremental upload resurrects the pre-clear
+        # tree instead of starting fresh.
+        from bsimvis.app.services.cluster_common import clear_hier_state
+
+        clear_hier_state(r, f"{collection}:cluster:hier:{algo}")
 
         if job_service and job_id:
             job_service.add_log(job_id, "Clustering data cleared successfully.")
@@ -3184,7 +3728,9 @@ class ClusterService:
                 pipe.execute()
                 pipe = r.pipeline(transaction=False)
                 if job_service and job_id:
-                    pct = int((idx + 1) / total_clusters * 100) if total_clusters else 100
+                    pct = (
+                        int((idx + 1) / total_clusters * 100) if total_clusters else 100
+                    )
                     job_service.update_progress(
                         job_id,
                         pct,

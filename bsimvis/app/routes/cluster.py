@@ -55,49 +55,33 @@ def rebuild_cluster():
 
 
 def build_rebuild_all_tasks(collection, algo, skip_sim=False, data=None):
-    """The one definition of 'what a full collection rebuild looks like':
-    clear clusters -> [clear/rebuild bin_sim] -> cluster functions ->
-    [build bin_sim -> cluster binaries -> index sim]. Shared by
-    rebuild_all_pipeline and JobService.seal_wave's automatic
+    """The shared post-analysis pipeline. Manual rebuilds clear old state;
+    batch-triggered runs keep it so both clustering engines and BinSim can
+    update incrementally. BinSim runs before function clustering.
+
+    BUILD_BIN_SIM and CLUSTER_FUNCTIONS are independent branches off the same
+    upstream (raw function-pair similarity discovery) -- BUILD_BIN_SIM only
+    reads `:built:functions:{algo}` + sim-score docs, never a `cluster:*`
+    key, so it doesn't need function clustering to have run first. The bin-sim
+    branch runs first so BinSim docs (what users actually look at) aren't
+    stuck behind a slow CLUSTER_FUNCTIONS run (hierarchical_uf's full rebuild
+    in particular). The only real data dependency in this chain is
+    BUILD_BIN_SIM -> CLUSTER_BINARIES (binary clustering reads bin_sim
+    scores/docs), which this order preserves.
+
+    Shared by rebuild_all_pipeline and JobService.seal_wave's automatic
     clustering-after-batch, so there's a single source of truth."""
     data = data or {}
+    incremental = bool(data.get("batch_uuid"))
 
-    tasks = [(JobType.CLEAR_CLUSTER, {"collection": collection, "algo": algo})]
-    if not skip_sim:
+    tasks = []
+    if not incremental:
+        tasks.append((JobType.CLEAR_CLUSTER, {"collection": collection, "algo": algo}))
+    if not skip_sim and not incremental:
         tasks.append((JobType.CLEAR_BIN_SIM, {"collection": collection, "algo": algo}))
         tasks.append(
             (JobType.CLEAR_BIN_CLUSTER, {"collection": collection, "algo": algo})
         )
-
-    tasks.append(
-        (
-            JobType.CLUSTER_FUNCTIONS,
-            {
-                "collection": collection,
-                "algo": algo,
-                "min_cluster_size": data.get(
-                    "min_cluster_size",
-                    config_service.get("clustering.min_cluster_size", 2),
-                ),
-                "min_samples": data.get(
-                    "min_samples", config_service.get("clustering.min_samples", 1)
-                ),
-                "epsilon": data.get(
-                    "epsilon", config_service.get("clustering.epsilon", 0.1)
-                ),
-                "selection_method": data.get(
-                    "selection_method",
-                    config_service.get("clustering.selection_method", "eom"),
-                ),
-                "min_sim": data.get(
-                    "min_sim", config_service.get("clustering.min_sim", 0.0)
-                ),
-                "min_features": data.get(
-                    "min_features", config_service.get("clustering.min_features", 0)
-                ),
-            },
-        )
-    )
 
     if not skip_sim:
         tasks.append(
@@ -142,13 +126,54 @@ def build_rebuild_all_tasks(collection, algo, skip_sim=False, data=None):
         )
         tasks.append((JobType.INDEX_SIM, {"collection": collection, "algo": algo}))
 
+    tasks.append(
+        (
+            JobType.CLUSTER_FUNCTIONS,
+            {
+                "collection": collection,
+                "algo": algo,
+                "min_cluster_size": data.get(
+                    "min_cluster_size",
+                    config_service.get("clustering.min_cluster_size", 2),
+                ),
+                "min_samples": data.get(
+                    "min_samples", config_service.get("clustering.min_samples", 1)
+                ),
+                "epsilon": data.get(
+                    "epsilon", config_service.get("clustering.epsilon", 0.1)
+                ),
+                "selection_method": data.get(
+                    "selection_method",
+                    config_service.get("clustering.selection_method", "eom"),
+                ),
+                "min_sim": data.get(
+                    "min_sim", config_service.get("clustering.min_sim", 0.0)
+                ),
+                "min_features": data.get(
+                    "min_features", config_service.get("clustering.min_features", 0)
+                ),
+            },
+        )
+    )
+
+    batch_uuid = data.get("batch_uuid")
+    if batch_uuid:
+        for job_type, payload in tasks:
+            if job_type in {
+                JobType.BUILD_BIN_SIM,
+                JobType.CLUSTER_BINARIES,
+                JobType.INDEX_SIM,
+                JobType.CLUSTER_FUNCTIONS,
+            }:
+                payload["batch_uuid"] = batch_uuid
+
     return tasks
 
 
 def rebuild_all_pipeline():
     """Submits a full re-analysis pipeline to the collection's lane: clear
-    clusters -> clear bin_sim -> cluster functions -> build bin_sim ->
-    cluster binaries -> index sim. Queues behind whatever's already active
+    clusters -> clear bin_sim -> build bin_sim -> cluster binaries ->
+    index sim -> cluster functions. Queues behind whatever's already active
     for this collection instead of racing it."""
     data = request.json or {}
     collection = data.get("collection", "main")

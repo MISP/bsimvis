@@ -268,6 +268,17 @@ for i in $(seq 1 $WORKERS_COUNT); do
         "LOG_DIR='${LOG_DIR}' PYTHON_CMD='${PYTHON_CMD}' PROJECT_NAME='${PROJECT_NAME}' WORKER_MEMORY_MAX='${WORKER_MEMORY_MAX}' bash scripts/worker-supervisor.sh worker-${i}"
 done
 
+# ghidra_analyze is routed through Celery instead of running in-process in a
+# dispatcher above (job-system-rework-plan.md §9 phase 5/6, worker.py's
+# _dispatch_via_celery) -- without a live Celery worker consuming
+# bsimvis.execute_job, every ghidra_analyze job hangs forever waiting on a
+# result that never arrives. --pool=prefork (not solo) is required: that's
+# what makes revoke(terminate=True) signal an actual separate OS process
+# instead of the worker's own consumer thread (see kill_utils.py).
+CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
+start_tmux "celery" \
+    "${PYTHON_CMD} -m celery -A bsimvis.celery_app worker --pool=prefork --concurrency=${CELERY_CONCURRENCY} --hostname=celery@%h --loglevel=info"
+
 echo "--------------------------"
 wait_for_port "${APP_PORT}" "App"
 APP_URL="http://localhost:${APP_PORT}"

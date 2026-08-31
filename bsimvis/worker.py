@@ -256,8 +256,20 @@ class Worker:
                         time.sleep(2)
                         continue
 
-                    # Execute Job
-                    self._execute_job(job_id, job_data)
+                    # Execute Job. ghidra_analyze is the one handler that
+                    # spawns a real subprocess (the Ghidra JVM) -- routing
+                    # just that type through Celery gets it a hard-kill that
+                    # actually reaps the JVM instead of orphaning it
+                    # (job-system-rework-plan.md §9 phase 5's validated
+                    # finding), without moving the other ~29 in-process
+                    # handlers off the already-tested lease/admission/pause
+                    # system above, which does things (fleet-wide measured
+                    # memory budget, watermark-based retry abandonment) a
+                    # per-child recycle threshold structurally can't.
+                    if jtype == JobType.GHIDRA_ANALYZE.value:
+                        self._dispatch_via_celery(job_id, job_data)
+                    else:
+                        self._execute_job(job_id, job_data)
                 finally:
                     self.current_job_id = None
                     self.job_service.release_lease(job_id)
@@ -383,6 +395,30 @@ class Worker:
                 self.job_service.add_log(job_id, perf_summary)
                 logging.info(f"[#] Job {job_id} {perf_summary}")
 
+    def _dispatch_via_celery(self, job_id, job_data):
+        """Hands ghidra_analyze off to Celery instead of running
+        _execute_job in-process (job-system-rework-plan.md §9 phase 6).
+
+        This dispatcher keeps the claim -- lease, admission reservation,
+        pause/cancel checks, all above, unchanged -- and blocks here until
+        the Celery task finishes: same one-job-per-slot shape this loop
+        always had. What moves is only where the handler actually runs: a
+        separate, hard-killable, memory-bounded Celery worker process
+        (bsimvis/tasks/leaf_task.py), instead of this dispatcher's own.
+        """
+        from bsimvis.tasks.leaf_task import execute_job_task
+
+        async_result = execute_job_task.delay(job_id)
+        self.r_queue.hset(f"job:{job_id}", "celery_task_id", async_result.id)
+        try:
+            async_result.get(disable_sync_subtasks=False)
+        except Exception as e:
+            # _execute_job (running inside the Celery task) already recorded
+            # the real outcome via job_service -- or will, once
+            # task_acks_late's redelivery to another Celery worker
+            # completes, if this Celery worker itself died mid-task.
+            logging.warning(f"[!] Celery execution for {job_id} ended abnormally: {e}")
+
     def _run_ghidra_out_of_process(self, job_id, payload):
         """Runs one Ghidra analysis in a child process, with retries.
 
@@ -403,13 +439,42 @@ class Worker:
             self.id,
         ]
 
+        # This handler only ever runs inside the Celery task leaf_task.py
+        # dispatches it to (job-system-rework-plan.md §9 phase 5/6) -- never
+        # directly in the dispatcher loop -- so current_task resolves to a
+        # real task outside of tests. task_id stays None under a direct call
+        # (e.g. scripts/test_ghidra_subprocess.py), which just skips pgid
+        # tracking below rather than touching self.r_queue.
+        try:
+            from celery import current_task
+
+            task_id = current_task.request.id if current_task else None
+        except Exception:
+            task_id = None
+
         for attempt in range(1, attempts + 1):
             self.job_service.add_log(
                 job_id, f"Ghidra analysis attempt {attempt}/{attempts} (subprocess)."
             )
             try:
-                proc = subprocess.run(cmd, cwd=os.getcwd())
-                rc = proc.returncode
+                # start_new_session puts the JVM in its own process group, so
+                # a Celery hard-kill (kill_utils.hard_kill_task) can take the
+                # whole group out via killpg instead of orphaning it --
+                # without this, killing the task process alone (terminate,
+                # OOM) leaves the JVM running, unkillable through the job
+                # system (§4/§9 phase 5's validated finding).
+                proc = subprocess.Popen(cmd, cwd=os.getcwd(), start_new_session=True)
+                if task_id:
+                    from bsimvis.tasks.kill_utils import record_child_pgid
+
+                    record_child_pgid(self.r_queue, task_id, proc.pid)
+                try:
+                    rc = proc.wait()
+                finally:
+                    if task_id:
+                        from bsimvis.tasks.kill_utils import clear_child_pgid
+
+                        clear_child_pgid(self.r_queue, task_id)
             except Exception as e:
                 logging.error(f"[!] Could not launch Ghidra subprocess: {e}")
                 self.job_service.add_log(job_id, f"Could not launch analysis: {e}")

@@ -2,8 +2,10 @@
 
 `AsyncResult.revoke(terminate=True, signal=...)` only reaches the single OS
 process Celery is running the task in. A task that spawned a subprocess
-(ghidra_task.py) leaves that subprocess orphaned on hard-kill unless
-something explicitly kills its process group too -- this is that something.
+(worker.py's `_run_ghidra_out_of_process`, the one handler this migration
+actually routes through Celery -- see leaf_task.py) leaves that subprocess
+orphaned on hard-kill unless something explicitly kills its process group
+too -- this module is that something.
 """
 
 import errno
@@ -12,7 +14,18 @@ import os
 import signal
 
 from bsimvis.celery_app import app
-from bsimvis.tasks.ghidra_task import CHILD_PGID_KEY
+
+CHILD_PGID_KEY = "celery:child_pgid:{task_id}"
+
+
+def record_child_pgid(r, task_id, pgid):
+    if task_id:
+        r.set(CHILD_PGID_KEY.format(task_id=task_id), pgid, ex=3600)
+
+
+def clear_child_pgid(r, task_id):
+    if task_id:
+        r.delete(CHILD_PGID_KEY.format(task_id=task_id))
 
 
 def _killpg_if_recorded(r, task_id, sig):
@@ -42,3 +55,28 @@ def hard_kill_task(task_id, r):
     """
     _killpg_if_recorded(r, task_id, signal.SIGKILL)
     app.control.revoke(task_id, terminate=True, signal="SIGKILL")
+
+
+@app.task(name="bsimvis.escalate_stop")
+def escalate_stop_task(task_id, job_id):
+    """Scheduled (countdown=STOP_GRACE_SECONDS) by job_service.cancel_job.
+
+    Cooperative stop already fired (stop_task, or a handler's own
+    is_cancelled() checkpoint). If the *task process itself* hasn't reached
+    a terminal Celery state by the time this fires, hard-kill is the
+    backstop for the ~29 handlers that don't checkpoint at all (plan §4
+    item 2).
+
+    Checks the Celery result, not job:<id>'s own status field -- cancel_job
+    stamps CANCELLED/completed_at synchronously the instant the user clicks
+    stop, before the underlying process has necessarily exited, so that
+    field can't distinguish "asked to stop" from "actually stopped."
+    """
+    from celery.result import AsyncResult
+
+    from bsimvis.app.services.redis_client import get_queue_redis
+
+    res = AsyncResult(task_id, app=app)
+    if res.state in ("SUCCESS", "FAILURE", "REVOKED"):
+        return  # cooperative stop already won the race
+    hard_kill_task(task_id, get_queue_redis())

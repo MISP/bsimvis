@@ -32,9 +32,14 @@ function verdictBadge(verdict) {
     return `<span style="background:${v.bg}; border:1px solid ${v.border}; color:${v.color}; padding:3px 10px; border-radius:20px; font-size:0.72rem; font-weight:700; display:inline-flex; align-items:center; gap:5px; white-space:nowrap;"><i class="fa-solid ${v.icon}"></i> ${verdict}</span>`;
 }
 
+const RESULTS_PAGE_SIZE = 100;
+
 window.SearchView = {
     _pollTimer: null,
     _stopped: false,
+    _resultsOffset: 0,
+    _suggestedTags: {}, // func_id -> suggested_tag, for the current results page
+    _currentSearchId: null,
 
     destroy() {
         this._stopped = true;
@@ -126,6 +131,8 @@ window.SearchView = {
 
     async _initDetail(container, searchId) {
         container.innerHTML = `<div style="display:flex; justify-content:center; align-items:center; height:200px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin" style="margin-right:10px;"></i> Loading Search...</div>`;
+        this._resultsOffset = 0;
+        this._currentSearchId = searchId;
         try {
             const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}`);
             if (!res.ok) throw new Error(res.status === 404 ? 'Search not found' : `HTTP ${res.status}`);
@@ -133,7 +140,7 @@ window.SearchView = {
             container.innerHTML = this._renderDetailShell(meta);
             await this._refreshResults(searchId, meta.collection);
             if (meta.status === 'running' && meta.job_id) {
-                this._pollJob(searchId, meta.job_id, meta.collection);
+                this._pollJob(searchId, meta.job_id, meta.collection, Number(meta.created_at));
             }
         } catch (e) {
             container.innerHTML = `<div style="padding:30px; color:#f87171;"><i class="fa-solid fa-triangle-exclamation"></i> ${e.message}</div>`;
@@ -150,6 +157,7 @@ window.SearchView = {
                         <span>Scope: <code>${escapeHtml((meta.scope && meta.scope.type) || '?')}</code></span>
                         <span>Collection: <code>${escapeHtml(meta.collection || '')}</code></span>
                         <span id="search-detail-status">${searchStatusBadge(meta.status)}</span>
+                        <span id="search-detail-duration" title="time the classification job took"><i class="fa-regular fa-clock"></i> ${window.formatDuration ? window.formatDuration(Number(meta.created_at), Number(meta.updated_at), meta.status) : ''}</span>
                     </div>
                 </div>
                 <button onclick="window.searchViewDelete(${escapeAttr(jsString(meta.id))}, this, true)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px;"><i class="fa-solid fa-trash-can"></i> Delete</button>
@@ -161,14 +169,16 @@ window.SearchView = {
                 <span style="font-size:0.75rem; color:var(--dim);"><i class="fa-solid fa-arrows-up-down"></i> shift/ctrl-click or drag to select rows, ctrl+A for all, ctrl+C to copy</span>
                 <input id="search-apply-tag-input" type="text" placeholder="tag to apply, e.g. category:persistence:file" style="flex:1; min-width:220px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.8rem;">
                 <button onclick="window.searchViewApplyTag(${escapeAttr(jsString(meta.id))})" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:7px 14px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer;"><i class="fa-solid fa-tag"></i> Apply tag to selected</button>
+                <button onclick="window.searchViewApplySuggestedToSelected(${escapeAttr(jsString(meta.id))})" title="Apply each selected row's own suggested tag" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:7px 14px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer;"><i class="fa-solid fa-wand-sparkles"></i> Apply suggested tags to selected</button>
                 <button onclick="window.searchViewAnalyzeSelected(${escapeAttr(jsString(meta.id))})" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:7px 14px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer;"><i class="fa-solid fa-wand-magic-sparkles"></i> Send selected to deep analysis</button>
             </div>
 
             <div id="search-results-container"></div>
+            <div id="search-results-pager"></div>
         </div>`;
     },
 
-    _pollJob(searchId, jobId, collection) {
+    _pollJob(searchId, jobId, collection, createdAt) {
         const poll = async () => {
             if (this._stopped) return;
             try {
@@ -176,6 +186,10 @@ window.SearchView = {
                 const job = await res.json();
                 const statusEl = document.getElementById('search-detail-status');
                 if (statusEl) statusEl.innerHTML = searchStatusBadge(job.status === 'running' ? 'running' : job.status);
+                const durationEl = document.getElementById('search-detail-duration');
+                if (durationEl && window.formatDuration) {
+                    durationEl.innerHTML = `<i class="fa-regular fa-clock"></i> ${window.formatDuration(createdAt, Date.now(), 'running')}`;
+                }
                 const progress = document.getElementById('search-progress-container');
                 if (progress && job.status === 'running') {
                     progress.innerHTML = `<div style="font-size:0.78rem; color:var(--dim);">${job.progress || 0}% -- ${job.processed_items || 0}/${job.total_items || '?'} classified</div>`;
@@ -183,6 +197,13 @@ window.SearchView = {
                 if (['completed', 'failed', 'cancelled'].includes(job.status)) {
                     if (progress) progress.innerHTML = '';
                     await this._refreshResults(searchId, collection);
+                    if (durationEl && window.formatDuration) {
+                        // Final duration comes from the search record's own updated_at
+                        // (set when the job finished), not this last job poll's clock.
+                        const metaRes = await fetch(`/api/searches/${encodeURIComponent(searchId)}`);
+                        const freshMeta = await metaRes.json();
+                        durationEl.innerHTML = `<i class="fa-regular fa-clock"></i> ${window.formatDuration(createdAt, Number(freshMeta.updated_at), freshMeta.status)}`;
+                    }
                     return;
                 }
             } catch (e) {
@@ -193,27 +214,45 @@ window.SearchView = {
         poll();
     },
 
-    async _refreshResults(searchId, collection) {
+    async _refreshResults(searchId, collection, offset) {
         const container = document.getElementById('search-results-container');
         if (!container) return;
+        if (offset !== undefined) this._resultsOffset = offset;
         try {
-            const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}/results?limit=500`);
+            const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}/results?limit=${RESULTS_PAGE_SIZE}&offset=${this._resultsOffset}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             container.innerHTML = this._renderResults(data.results || [], collection);
             // TableSelection takes an element id, not an element (constructor is idempotent per table)
             if (window.TableSelection) new window.TableSelection('search-results-table');
+            const pager = document.getElementById('search-results-pager');
+            if (pager) pager.innerHTML = this._renderPager(searchId, collection, data.total || 0);
         } catch (e) {
             container.innerHTML = `<div style="padding:20px; color:#f87171;">${e.message}</div>`;
         }
     },
 
+    _renderPager(searchId, collection, total) {
+        if (total <= RESULTS_PAGE_SIZE) return '';
+        const page = Math.floor(this._resultsOffset / RESULTS_PAGE_SIZE) + 1;
+        const pageCount = Math.ceil(total / RESULTS_PAGE_SIZE);
+        const btn = (label, offset, disabled) => `<button ${disabled ? 'disabled' : ''} onclick="window.SearchView._refreshResults(${escapeAttr(jsString(searchId))}, ${escapeAttr(jsString(collection || ''))}, ${offset})" style="background:var(--hover); border:1px solid var(--border); color:var(--text); padding:5px 12px; border-radius:6px; cursor:${disabled ? 'default' : 'pointer'}; opacity:${disabled ? 0.5 : 1};">${label}</button>`;
+        return `
+        <div style="display:flex; align-items:center; justify-content:center; gap:10px; padding:6px 0; font-size:0.8rem; color:var(--dim);">
+            ${btn('Prev', Math.max(0, this._resultsOffset - RESULTS_PAGE_SIZE), page <= 1)}
+            <span>Page ${page} / ${pageCount} (${total} results)</span>
+            ${btn('Next', this._resultsOffset + RESULTS_PAGE_SIZE, page >= pageCount)}
+        </div>`;
+    },
+
     _renderResults(results, collection) {
+        this._suggestedTags = {};
         if (!results.length) {
             return `<div style="color:var(--dim); font-size:0.85rem; padding:30px; text-align:center; background:var(--card-bg); border:1px solid var(--border); border-radius:8px;">No results yet.</div>`;
         }
         const rows = results.map(r => {
             const fColl = r.collection || collection || '';
+            if (r.suggested_tag) this._suggestedTags[r.func_id] = r.suggested_tag;
             // Rows carry their own function metadata (routes/searches.py enriches them via
             // fetch_function_data) so EntityRenderer can render the same colored signature,
             // tag editor and right-click menu the file view's function table uses.
@@ -232,24 +271,30 @@ window.SearchView = {
                 user_tags: r.user_tags || []
             };
             const tagsHtml = window.EntityRenderer ? window.EntityRenderer.renderTag('function', r.func_id, f.tags, f.user_tags) : '';
+            const suggestedHtml = r.suggested_tag
+                ? `<code style="font-size:0.75rem; color:var(--accent);">${escapeHtml(r.suggested_tag)}</code>
+                   <button class="btn-copy" title="Apply this suggested tag" onclick="window.searchViewApplySuggestedTag(${escapeAttr(jsString(r.func_id))}, ${escapeAttr(jsString(r.suggested_tag))})"><i class="fa-solid fa-check"></i></button>`
+                : '';
             return `
             <tr data-id="${escapeAttr(r.func_id)}" style="border-bottom: 1px solid var(--border);"
                 data-entity-data='${escapeAttr(JSON.stringify(f))}'
                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                 <td style="padding:8px 15px; min-width:260px; max-width:420px;">${window.EntityRenderer ? window.EntityRenderer.renderFunction(f) : `<code>${escapeHtml(r.func_id)}</code>`}</td>
+                <td style="padding:8px 15px; white-space:nowrap; font-family:monospace; font-size:0.75rem; color:var(--dim);" title="${escapeAttr(r.file_md5 || '')}">${escapeHtml((r.file_md5 || '').slice(0, 12))}${r.file_md5 ? `<button class="btn-copy" title="Copy MD5" onclick="copyToClipboard(${escapeAttr(jsString(r.file_md5))}, this)"><i class="fa-regular fa-copy"></i></button>` : ''}</td>
                 <td style="padding:8px 15px; min-width:140px; max-width:220px; overflow:hidden;">${tagsHtml}</td>
                 <td style="padding:8px 15px; white-space:nowrap;">${verdictBadge(r.verdict)}</td>
                 <td style="padding:8px 15px; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--dim); font-size:0.82rem;" title="${escapeAttr(r.evidence || '')}">${escapeHtml(r.evidence || '')}</td>
-                <td style="padding:8px 15px; white-space:nowrap;">${r.suggested_tag ? `<code style="font-size:0.75rem; color:var(--accent);">${escapeHtml(r.suggested_tag)}</code>` : ''}</td>
+                <td style="padding:8px 15px; white-space:nowrap;">${suggestedHtml}</td>
             </tr>`;
         }).join('');
 
         return `
         <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow-x:auto; background:var(--card-bg);">
-            <table id="search-results-table" style="width:100%; min-width:900px; border-collapse:collapse; text-align:left; font-size:0.85rem;">
+            <table id="search-results-table" style="width:100%; min-width:1000px; border-collapse:collapse; text-align:left; font-size:0.85rem;">
                 <thead>
                     <tr style="border-bottom:1px solid var(--border); background: var(--hover); color:var(--dim);">
                         <th style="padding:8px 15px;">Function</th>
+                        <th style="padding:8px 15px;">MD5</th>
                         <th style="padding:8px 15px;">Tags</th>
                         <th style="padding:8px 15px;">Verdict</th>
                         <th style="padding:8px 15px;">Evidence</th>
@@ -275,17 +320,59 @@ window.searchViewApplyTag = async function(searchId) {
     if (!funcIds.length) { alert('Select at least one function first.'); return; }
     if (!tag) { alert('Enter a tag to apply.'); return; }
     try {
-        const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}/apply_tag`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ func_ids: funcIds, tag })
-        });
-        if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
-        const data = await res.json();
+        const data = await searchViewApplyTagTo(searchId, funcIds, tag);
         if (typeof showToast === 'function') showToast(`Tagged ${data.applied.length}/${funcIds.length} function(s)`, 'success');
         else alert(`Tagged ${data.applied.length}/${funcIds.length} function(s)`);
     } catch (e) {
         alert(`Failed to apply tag: ${e.message}`);
+    }
+};
+
+async function searchViewApplyTagTo(searchId, funcIds, tag) {
+    const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}/apply_tag`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ func_ids: funcIds, tag })
+    });
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
+    return res.json();
+}
+
+window.searchViewApplySuggestedTag = async function(funcId, tag) {
+    const searchId = window.SearchView._currentSearchId;
+    if (!searchId) return;
+    try {
+        await searchViewApplyTagTo(searchId, [funcId], tag);
+        if (typeof showToast === 'function') showToast(`Applied "${tag}"`, 'success');
+    } catch (e) {
+        alert(`Failed to apply tag: ${e.message}`);
+    }
+};
+
+// Groups the current selection by each row's OWN suggested tag (not the free-text
+// input) and applies each group in one call, since apply_tag already batches by tag.
+window.searchViewApplySuggestedToSelected = async function(searchId) {
+    const funcIds = searchViewSelectedFuncIds();
+    if (!funcIds.length) { alert('Select at least one function first.'); return; }
+    const byTag = {};
+    let skipped = 0;
+    for (const id of funcIds) {
+        const tag = window.SearchView._suggestedTags[id];
+        if (!tag) { skipped++; continue; }
+        (byTag[tag] = byTag[tag] || []).push(id);
+    }
+    if (!Object.keys(byTag).length) { alert('None of the selected rows have a suggested tag.'); return; }
+    try {
+        let applied = 0;
+        for (const [tag, ids] of Object.entries(byTag)) {
+            const data = await searchViewApplyTagTo(searchId, ids, tag);
+            applied += data.applied.length;
+        }
+        const msg = `Applied suggested tags to ${applied}/${funcIds.length} function(s)` + (skipped ? ` (${skipped} had no suggestion)` : '');
+        if (typeof showToast === 'function') showToast(msg, 'success');
+        else alert(msg);
+    } catch (e) {
+        alert(`Failed to apply suggested tags: ${e.message}`);
     }
 };
 

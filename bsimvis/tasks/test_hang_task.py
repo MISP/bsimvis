@@ -38,16 +38,6 @@ def hang_task(self):
     return True
 
 
-@app.task(name="bsimvis.test_noop")
-def noop_task():
-    """Pure dispatch-overhead probe (scripts/benchmark_celery_dispatch.py,
-    job-system-rework-plan.md §8): does nothing, so a delay()+get() round
-    trip measures Celery's broker/backend cost in isolation from any real
-    handler's own runtime.
-    """
-    return True
-
-
 @app.task(name="bsimvis.test_mem_hog")
 def mem_hog_task(mb):
     """Allocates `mb` megabytes in the worker process itself (no subprocess).

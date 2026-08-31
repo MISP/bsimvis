@@ -10,6 +10,7 @@ Run: uv run python test_ghidra_subprocess.py
 """
 
 import logging
+import types
 
 from bsimvis.worker import Worker
 
@@ -32,15 +33,7 @@ class FakeData:
 
 
 def make_worker(returncodes):
-    """Worker whose subprocess call yields `returncodes` in order.
-
-    Mocks Popen, not run: worker.py needs the live pid before the process
-    exits (kill_utils.py's pgid tracking, job-system-rework-plan.md §9
-    phase 5), so it can't use subprocess.run's block-until-done shape
-    anymore. current_task is None outside a real Celery task (verified:
-    `bool(celery.current_task)` is False at module scope), so these calls
-    never touch pgid tracking at all -- exactly like today.
-    """
+    """Worker whose subprocess call yields `returncodes` in order."""
     w = object.__new__(Worker)
     w.name = "test"
     w.id = "test-0"
@@ -50,22 +43,14 @@ def make_worker(returncodes):
     calls = []
     seq = list(returncodes)
 
-    class FakeProc:
-        def __init__(self, rc):
-            self.pid = 999
-            self._rc = rc
-
-        def wait(self):
-            return self._rc
-
-    def fake_popen(cmd, cwd=None, start_new_session=False):
+    def fake_run(cmd, cwd=None):
         calls.append(cmd)
-        return FakeProc(seq[len(calls) - 1])
+        return types.SimpleNamespace(returncode=seq[len(calls) - 1])
 
     w._fake_calls = calls
     import bsimvis.worker as mod
 
-    mod.subprocess.Popen = fake_popen
+    mod.subprocess.run = fake_run
     return w
 
 

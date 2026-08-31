@@ -5,7 +5,7 @@ worker under real memory pressure?
 Two things this proves, both non-obvious from reading Celery's docs alone:
 
 1. A plain `revoke(terminate=True)` kills only the OS process Celery is
-   running the task in. A subprocess that task spawned (worker.py's
+   running the task in. A subprocess that task spawned (ghidra_task.py's
    JVM) is NOT in that process's wait-tree in a way the signal reaches --
    it survives, orphaned. `kill_utils.hard_kill_task`'s process-group
    killpg is what actually reaps it. Both the failure and the fix are
@@ -18,9 +18,9 @@ Two things this proves, both non-obvious from reading Celery's docs alone:
    per celery_app.py's comment).
 
 Requires a Celery worker already running against this process's
-REDIS_HOST/REDIS_PORT -- e.g.
-`celery -A bsimvis.celery_app worker --pool=prefork --concurrency=1`
-against an isolated stack, never a shared Redis.
+REDIS_HOST/REDIS_PORT (see scripts/spike_celery_ghidra_up.sh or run
+`celery -A bsimvis.celery_app worker --pool=prefork --concurrency=1` by
+hand against the isolated stack -- never point this at a shared Redis).
 
 Run: uv run python scripts/test_celery_hard_kill.py
 """
@@ -33,7 +33,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bsimvis.app.services.redis_client import get_queue_redis, init_redis
 from bsimvis.celery_app import app
-from bsimvis.tasks.kill_utils import CHILD_PGID_KEY, hard_kill_task
+from bsimvis.tasks.ghidra_task import CHILD_PGID_KEY
+from bsimvis.tasks.kill_utils import hard_kill_task
 from bsimvis.tasks.test_hang_task import hang_task, mem_hog_task
 
 

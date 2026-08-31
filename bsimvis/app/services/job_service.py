@@ -1352,18 +1352,7 @@ class JobService:
         )  # 24h retention
 
     def cancel_job(self, job_id):
-        """Marks a job or pipeline as cancelled.
-
-        job-system-rework-plan.md §4: this is the cooperative step -- the
-        CANCELLED flag itself, which the ~3 handlers that poll
-        is_cancelled() see at their next checkpoint. For a job already
-        handed off to Celery (celery_task_id set -- currently only
-        ghidra_analyze, see worker.py's _dispatch_via_celery), also SIGTERM
-        the task directly and schedule a hard-kill escalation for handlers
-        that don't checkpoint at all -- the real fix for "stopping isn't
-        immediate," since a plain flag does nothing for a handler that
-        never looks at it.
-        """
+        """Marks a job or pipeline as cancelled."""
         data = self.r.hgetall(f"job:{job_id}")
         if not data:
             return False
@@ -1374,16 +1363,6 @@ class JobService:
         # Remove from pending queues to update stats immediately
         self.r.lrem("jobs:pending", 0, job_id)
         self.r.lrem("jobs:pending:high", 0, job_id)
-
-        celery_task_id = data.get("celery_task_id")
-        if celery_task_id:
-            from bsimvis.celery_app import STOP_GRACE_SECONDS
-            from bsimvis.tasks.kill_utils import escalate_stop_task, stop_task
-
-            stop_task(celery_task_id)
-            escalate_stop_task.apply_async(
-                args=[celery_task_id, job_id], countdown=STOP_GRACE_SECONDS
-            )
 
         self.add_log(job_id, "Job cancelled by user.")
 

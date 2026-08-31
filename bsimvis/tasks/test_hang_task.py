@@ -1,11 +1,10 @@
 """Task-side half of the hard-kill regression test (scripts/test_celery_hard_kill.py).
 
 Spawns scripts/_celery_spike_hang_child.py -- a process that ignores
-SIGTERM -- the same way worker.py's _run_ghidra_out_of_process spawns the
-real Ghidra subprocess (start_new_session + pgid recorded via kill_utils'
-shared key). Proves `kill_utils.hard_kill_task` actually reaps a subprocess
-a plain revoke() cannot touch. Not wired into any real job type; exists
-only for that test.
+SIGTERM -- the same way ghidra_task.py spawns the real Ghidra subprocess
+(start_new_session + pgid recorded via kill_utils' shared key). Proves
+`kill_utils.hard_kill_task` actually reaps a subprocess a plain revoke()
+cannot touch. Not wired into any real job type; exists only for that test.
 """
 
 import os
@@ -16,7 +15,7 @@ from celery import current_task
 
 from bsimvis.app.services.redis_client import get_queue_redis
 from bsimvis.celery_app import app
-from bsimvis.tasks.kill_utils import clear_child_pgid, record_child_pgid
+from bsimvis.tasks.ghidra_task import _clear_child_pgid, _record_child_pgid
 
 _CHILD_SCRIPT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -30,11 +29,11 @@ def hang_task(self):
     r = get_queue_redis()
     task_id = current_task.request.id if current_task else None
     proc = subprocess.Popen([sys.executable, _CHILD_SCRIPT], start_new_session=True)
-    record_child_pgid(r, task_id, proc.pid)
+    _record_child_pgid(r, task_id, proc.pid)
     try:
         proc.wait()
     finally:
-        clear_child_pgid(r, task_id)
+        _clear_child_pgid(r, task_id)
     return True
 
 

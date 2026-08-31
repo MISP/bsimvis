@@ -22,6 +22,7 @@ dependencies = [
     "pyzipper>=0.4.0",
     "yara-python>=4.5.0",
     "mcp==1.28.1",
+    "maturin>=1.15.0",
 ]
 
 [project.scripts]

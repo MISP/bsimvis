@@ -212,16 +212,6 @@ for i in $(seq 1 $WORKERS_COUNT); do
     start_screen "${PROJECT_NAME}-worker-${i}" "${PYTHON_CMD} bsimvis/worker.py"
 done
 
-# ghidra_analyze is routed through Celery instead of running in-process
-# (job-system-rework-plan.md §9 phase 5/6, worker.py's _dispatch_via_celery) --
-# without a live Celery worker consuming bsimvis.execute_job, every
-# ghidra_analyze job hangs forever waiting on a result that never arrives.
-# --pool=prefork (not solo) is required for revoke(terminate=True) to signal
-# a real OS process (see kill_utils.py).
-CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
-start_screen "${PROJECT_NAME}-celery" \
-    "${PYTHON_CMD} -m celery -A bsimvis.celery_app worker --pool=prefork --concurrency=${CELERY_CONCURRENCY} --hostname=celery@%h --loglevel=info"
-
 echo "--------------------------"
 wait_for_port "${APP_PORT}" "App"
 APP_URL="http://localhost:${APP_PORT}"

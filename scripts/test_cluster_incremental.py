@@ -93,9 +93,33 @@ def test_stable_ids_survive_unrelated_increment():
     assert state["node_ids"]["0:1"] == stable_ab
 
 
+def test_incremental_flag_skips_clears():
+    """scripts/run_pipeline.py runs mid-batch: it must never enqueue a CLEAR_*."""
+    from bsimvis.app.routes.cluster import build_rebuild_all_tasks
+    from bsimvis.app.services.job_service import JobType
+
+    types = [t for t, _ in build_rebuild_all_tasks("c", "unweighted_cosine")]
+    assert JobType.CLEAR_CLUSTER in types and JobType.CLEAR_BIN_SIM in types
+
+    types = [
+        t
+        for t, _ in build_rebuild_all_tasks(
+            "c", "unweighted_cosine", data={"incremental": True}
+        )
+    ]
+    assert not any(t.value.startswith("clear_") for t in types), types
+    # ...and still the whole pipeline: bin sim, binary clustering, function clustering
+    assert {
+        JobType.BUILD_BIN_SIM,
+        JobType.CLUSTER_BINARIES,
+        JobType.CLUSTER_FUNCTIONS,
+    } <= set(types)
+
+
 if __name__ == "__main__":
     test_mst_summary_matches_full_rebuild()
     test_incremental_tight_subgroup_surfaces()
     test_incremental_input_is_linear_in_nodes_and_new_edges()
     test_stable_ids_survive_unrelated_increment()
+    test_incremental_flag_skips_clears()
     print("incremental hierarchical_uf checks OK")

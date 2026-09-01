@@ -72,7 +72,10 @@ def build_rebuild_all_tasks(collection, algo, skip_sim=False, data=None):
     Shared by rebuild_all_pipeline and JobService.seal_wave's automatic
     clustering-after-batch, so there's a single source of truth."""
     data = data or {}
-    incremental = bool(data.get("batch_uuid"))
+    # Incremental = no CLEAR_* steps. Set by the batch path (batch_uuid) and by
+    # anyone running the pipeline mid-batch against the whole collection
+    # (scripts/run_pipeline.py), where wiping live state would be destructive.
+    incremental = bool(data.get("batch_uuid")) or bool(data.get("incremental"))
 
     tasks = []
     if not incremental:

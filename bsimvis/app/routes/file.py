@@ -823,6 +823,22 @@ def finalize_batch_upload():
 
     master_tasks = [group_id]
 
+    # Every file in the wave built its similarities against a reverse index the
+    # other files were still writing to, so their built markers can be hiding
+    # real edges. One forced batch-wide rebuild reconciles the whole wave.
+    if not skip_sim:
+        master_tasks.append(
+            (
+                JobType.BUILD_SIM,
+                {
+                    "collection": collection,
+                    "algo": algo,
+                    "batch_uuid": batch_uuid,
+                    "force": True,
+                },
+            )
+        )
+
     # BinSim depends on raw function similarities, not function clusters.
     if not skip_sim:
         build_payload = {

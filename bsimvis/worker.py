@@ -597,6 +597,7 @@ class Worker:
                 job_id=job_id,
                 index_depth=index_depth,
                 skip_write=payload.get("skip_write", False),  # ponytail
+                force=payload.get("force", False),
             )
 
         elif jtype == JobType.INDEX_SIM.value:

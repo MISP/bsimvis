@@ -511,16 +511,41 @@ class JobService:
         for member in members:
             payload_pipe.hget(f"job:{member}", "payload")
         batch_uuids = set()
+        targets = []
+        seen = set()
         for raw in payload_pipe.execute():
-            if raw:
-                payload = json.loads(raw)
-                if payload.get("batch_uuid"):
-                    batch_uuids.add(payload["batch_uuid"])
+            payload = json.loads(raw) if raw else {}
+            if payload.get("batch_uuid"):
+                batch_uuids.add(payload["batch_uuid"])
+            if payload.get("skip_sim"):
+                continue
+            # Wave members built their similarities concurrently, each against a
+            # reverse index the others were still writing to. Their built markers
+            # would hide the edges they missed forever, so force one rebuild per
+            # target before the rebuild-all steps run.
+            target = ("batch_uuid", payload.get("batch_uuid"))
+            if not target[1]:
+                target = ("md5", payload.get("md5") or payload.get("file_md5"))
+            if target[1] and target not in seen:
+                seen.add(target)
+                targets.append(
+                    (
+                        JobType.BUILD_SIM,
+                        {
+                            "collection": collection,
+                            "algo": algo,
+                            target[0]: target[1],
+                            "force": True,
+                        },
+                    )
+                )
         data = {"batch_uuid": batch_uuids.pop()} if len(batch_uuids) == 1 else None
         # ponytail: mixed-batch waves fall back to a full rebuild; add list
         # support only if those become common enough to matter.
-        tasks = [group_id] + build_rebuild_all_tasks(
-            collection, algo, skip_sim=False, data=data
+        tasks = (
+            [group_id]
+            + targets
+            + build_rebuild_all_tasks(collection, algo, skip_sim=False, data=data)
         )
         return self.submit_to_lane(collection, tasks)
 

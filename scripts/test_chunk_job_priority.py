@@ -6,6 +6,37 @@ behaviour: functions get indexed while other files are still being analyzed.
 """
 
 from bsimvis.app.services.job_service import JobService, JobType
+from bsimvis.app.services.similarity_service import SimilarityService
+
+
+class StubPipeline:
+    """Queues calls and replays them on the stub. No transactions, no WATCH --
+    the code under test only ever uses a pipeline to batch reads/writes."""
+
+    def __init__(self, stub):
+        self._stub = stub
+        self._queued = []
+
+    def __getattr__(self, name):
+        def queue(*args, **kwargs):
+            self._queued.append((name, args, kwargs))
+            return self
+
+        return queue
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self):
+        results = [
+            getattr(self._stub, name)(*args, **kwargs)
+            for name, args, kwargs in self._queued
+        ]
+        self._queued = []
+        return results
 
 
 class StubRedis:
@@ -16,6 +47,8 @@ class StubRedis:
         self.lists = {}
         self.strings = {}
         self.sets = {}
+        self.zsets = {}
+        self.streams = {}
 
     def hset(self, key, field=None, value=None, mapping=None):
         h = self.hashes.setdefault(key, {})
@@ -31,6 +64,16 @@ class StubRedis:
 
     def hget(self, key, field):
         return self.hashes.get(key, {}).get(field)
+
+    def hmget(self, key, *fields):
+        if len(fields) == 1 and isinstance(fields[0], (list, tuple)):
+            fields = fields[0]
+        h = self.hashes.get(key, {})
+        return [h.get(f) for f in fields]
+
+    def hdel(self, key, *fields):
+        for field in fields:
+            self.hashes.get(key, {}).pop(field, None)
 
     def lpush(self, key, *vals):
         self.lists.setdefault(key, [])[0:0] = list(vals)
@@ -76,6 +119,7 @@ class StubRedis:
         for k in keys:
             self.strings.pop(k, None)
             self.lists.pop(k, None)
+            self.zsets.pop(k, None)
 
     def sadd(self, key, *vals):
         s = self.sets.setdefault(key, set())
@@ -92,8 +136,81 @@ class StubRedis:
     def smembers(self, key):
         return set(self.sets.get(key, set()))
 
-    def eval(self, script, numkeys, *keys):
-        # Only the lane's own advance script is ever run through this stub.
+    def scan_iter(self, match):
+        import fnmatch
+
+        keys = set(self.hashes) | set(self.lists) | set(self.strings) | set(self.sets)
+        return (k for k in keys if fnmatch.fnmatch(k, match))
+
+    def scard(self, key):
+        return len(self.sets.get(key, set()))
+
+    # Sorted sets: this branch's job_service keeps a jobs:timeline zset.
+    # ponytail: enough of the zset API for the lane paths under test.
+    def zadd(self, key, mapping):
+        self.zsets.setdefault(key, {}).update(mapping)
+
+    def zcard(self, key):
+        return len(self.zsets.get(key, {}))
+
+    def zscore(self, key, member):
+        return self.zsets.get(key, {}).get(member)
+
+    def zrem(self, key, *members):
+        z = self.zsets.get(key, {})
+        for m in members:
+            z.pop(m, None)
+
+    def zrange(self, key, start, end, withscores=False, desc=False):
+        items = sorted(
+            self.zsets.get(key, {}).items(), key=lambda kv: kv[1], reverse=desc
+        )
+        end = None if end == -1 else end + 1
+        items = items[start:end]
+        return items if withscores else [m for m, _ in items]
+
+    def zrangebyscore(self, key, minv, maxv, **kwargs):
+        lo = float("-inf") if minv in ("-inf", b"-inf") else float(minv)
+        hi = float("inf") if maxv in ("+inf", b"+inf") else float(maxv)
+        return [
+            m
+            for m, sc in sorted(self.zsets.get(key, {}).items(), key=lambda kv: kv[1])
+            if lo <= sc <= hi
+        ]
+
+    def zremrangebyscore(self, key, minv, maxv):
+        for m in self.zrangebyscore(key, minv, maxv):
+            self.zsets[key].pop(m, None)
+
+    def incrby(self, key, amount=1):
+        self.strings[key] = str(int(self.strings.get(key, 0)) + amount)
+        return int(self.strings[key])
+
+    def expire(self, key, seconds):
+        return True
+
+    def xadd(self, key, entry, **kwargs):
+        self.streams.setdefault(key, []).append(entry)
+
+    def xrevrange(self, key, *args, **kwargs):
+        return []
+
+    def pipeline(self, transaction=False):
+        return StubPipeline(self)
+
+    def eval(self, script, numkeys, *args):
+        # Two scripts run through this stub: the status setter and the lane's
+        # own advance script. Dispatch on the one distinguishing call.
+        if "jobs:idx:status:" in script:
+            job_key, job_id, new_status = args[0], args[1], args[2]
+            old_status = self.hashes.get(job_key, {}).get("status")
+            self.hset(job_key, "status", new_status)
+            if old_status and old_status != new_status:
+                self.srem(f"jobs:idx:status:{old_status}", job_id)
+            self.sadd(f"jobs:idx:status:{new_status}", job_id)
+            return old_status
+
+        keys = args
         active_key, pending_key = keys[0], keys[1]
         lst = self.lists.get(pending_key, [])
         if lst:
@@ -260,6 +377,107 @@ def test_non_lane_job_does_not_advance_active_lane():
     assert js.r.get("lane:main:active") == first
 
 
+def _sim_service(r):
+    service = SimilarityService.__new__(SimilarityService)
+    service.r = r
+    service._pl_cache = {}
+    service._pl_pairs = 0
+    service._norm_cache = {}
+    service._count_cache = {}
+    return service
+
+
+def test_similarity_retries_when_feature_generation_changes():
+    """Chunked (non-LCA) path: a feature write mid-build must invalidate the
+    built markers and rebuild, or the edges missed against the partial reverse
+    index stay hidden forever."""
+    from types import MethodType
+
+    # algo != unweighted_cosine keeps build_batch on the chunked path
+    # regardless of the configured discovery_backend.
+    algo = "weighted_cosine"
+    r = StubRedis()
+    fid = "main:func:a:1"
+    r.strings["main:features:generation"] = "1"
+    r.sets["main:batch:b:functions"] = {fid}
+    r.sets["main:indexed:functions"] = {fid}
+
+    service = _sim_service(r)
+    calls = []
+
+    def process(self, collection, chunk, *args, **kwargs):
+        calls.append(list(chunk))
+        r.sadd(f"main:built:functions:{algo}", *chunk)
+        if len(calls) == 1:
+            r.strings["main:features:generation"] = "2"
+        return 0
+
+    service._process_chunk = MethodType(process, service)
+
+    assert service.build_batch("main", batch_uuid="b", algo=algo) is True
+    assert calls == [[fid], [fid]]
+    assert fid in r.smembers(f"main:built:functions:{algo}")
+
+
+def test_lca_path_retries_when_feature_generation_changes():
+    """Same guard on the LCA path, which is the default backend here and
+    returns before the chunked path's tail ever runs."""
+    from types import MethodType
+
+    r = StubRedis()
+    fid = "main:func:a:1"
+    r.strings["main:features:generation"] = "1"
+    r.sets["main:batch:b:functions"] = {fid}
+    r.sets["main:indexed:functions"] = {fid}
+
+    service = _sim_service(r)
+    snapshots = []
+
+    def snapshot(self, collection, **kwargs):
+        snapshots.append(collection)
+        # What the real build_lca_snapshot leaves behind for the inline
+        # same-class matching below it; None means "no native extension".
+        self._base_snapshot = None
+        self.vclass_map = {}
+        if len(snapshots) == 1:
+            r.strings["main:features:generation"] = "2"
+
+    service.build_lca_snapshot = MethodType(snapshot, service)
+
+    assert service.build_batch("main", batch_uuid="b") is True
+    assert snapshots == ["main", "main"], "generation bump must force one rebuild"
+    assert fid in r.smembers("main:built:functions:unweighted_cosine")
+
+
+def test_wave_reconciles_each_batch_once_before_clustering():
+    import json as _json
+
+    js = JobService()
+    js.r = StubRedis()
+    members = [
+        js.create_job(
+            JobType.GHIDRA_ANALYZE,
+            {"collection": "main", "file_md5": str(i), "batch_uuid": "batch"},
+        )
+        for i in range(2)
+    ]
+    for member in members:
+        js.open_or_extend_wave("main", member, debounce_seconds=30)
+
+    pipeline_id = js.seal_wave("main")
+    task_ids = _json.loads(js.r.hgetall(f"job:{pipeline_id}")["task_ids"])
+    tasks = [js.r.hgetall(f"job:{tid}") for tid in task_ids]
+    build_positions = [i for i, task in enumerate(tasks) if task["type"] == "build_sim"]
+
+    assert build_positions == [1]
+    payload = _json.loads(tasks[1]["payload"])
+    assert payload["batch_uuid"] == "batch"
+    assert payload["force"] is True
+    # The reconcile has to land before anything consumes function similarities.
+    consumers = {"build_bin_sim", "cluster_binaries", "cluster_functions", "index_sim"}
+    assert min(i for i, task in enumerate(tasks) if task["type"] in consumers) > 1
+
+
 def test_wave_seals_into_one_group_not_n_pipelines():
     js = JobService()
     js.r = StubRedis()
@@ -291,5 +509,8 @@ if __name__ == "__main__":
     test_advance_lane_clears_when_nothing_pending()
     test_complete_job_only_advances_lane_for_top_level_jobs()
     test_non_lane_job_does_not_advance_active_lane()
+    test_similarity_retries_when_feature_generation_changes()
+    test_lca_path_retries_when_feature_generation_changes()
+    test_wave_reconciles_each_batch_once_before_clustering()
     test_wave_seals_into_one_group_not_n_pipelines()
     print("ok")

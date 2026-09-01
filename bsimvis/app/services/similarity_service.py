@@ -300,6 +300,8 @@ class SimilarityService:
         sleep_time=0,
         index_depth="none",
         skip_write=False,
+        force=False,
+        _generation_retry=True,
     ):
         """
         Builds similarities for all functions in a batch or for a specific file.
@@ -320,6 +322,54 @@ class SimilarityService:
         if min_features is None:
             min_features = config_service.get("similarity.min_features", 0)
         r = self.r
+        generation_key = f"{collection}:features:generation"
+        start_generation = int(r.get(generation_key) or 0)
+        built_set_key = f"{collection}:built:functions:{algo}"
+
+        def unmark_targets(ids):
+            if batch_uuid or md5:
+                for i in range(0, len(ids), 1000):
+                    r.srem(built_set_key, *ids[i : i + 1000])
+            else:
+                r.delete(built_set_key)
+
+        def recheck_generation(ids):
+            """Guards every exit from a completed build.
+
+            Features indexed while this build ran mean its candidates were scored
+            against a partial reverse index. The built markers would hide the
+            missed edges forever, so drop them and rebuild once. Returns a
+            build_batch result to propagate, or None to carry on.
+            """
+            end_generation = int(r.get(generation_key) or 0)
+            if end_generation == start_generation:
+                return None
+            unmark_targets(ids)
+            logging.warning(
+                "Feature index changed during similarity build for %s (%s -> %s)",
+                collection,
+                start_generation,
+                end_generation,
+            )
+            if _generation_retry:
+                return self.build_batch(
+                    collection,
+                    batch_uuid=batch_uuid,
+                    md5=md5,
+                    algo=algo,
+                    top_k=top_k,
+                    min_score=min_score,
+                    min_features=min_features,
+                    job_service=job_service,
+                    job_id=job_id,
+                    sleep_time=sleep_time,
+                    index_depth=index_depth,
+                    skip_write=skip_write,
+                    force=True,
+                    _generation_retry=False,
+                )
+            return False
+
         function_ids = []
 
         if batch_uuid:
@@ -346,6 +396,9 @@ class SimilarityService:
             # function's candidates (idempotent for already-correct pairs).
             r.delete(f"{collection}:built:functions:{algo}")
             function_ids = list(r.smembers(f"{collection}:indexed:functions"))
+
+        if force and function_ids:
+            unmark_targets(function_ids)
 
         total = len(function_ids)
         if total == 0:
@@ -512,7 +565,11 @@ class SimilarityService:
             # 3. Mark all target functions as built so they aren't processed again
             if not skip_write:
                 r.sadd(f"{collection}:built:functions:{algo}", *target_func_set)
-                
+
+            retry = recheck_generation(list(target_func_set))
+            if retry is not None:
+                return retry
+
             return True
 
         start_time = time.time()
@@ -585,6 +642,10 @@ class SimilarityService:
             # 3. Dashboard Protection: Yield
             if sleep_time > 0 and i + chunk_size < total:
                 time.sleep(sleep_time)
+
+        retry = recheck_generation(function_ids)
+        if retry is not None:
+            return retry
 
         # Final update
         if job_service and job_id:

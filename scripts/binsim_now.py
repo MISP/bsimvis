@@ -8,26 +8,41 @@ tool, not an API.
 
 What it does, in order:
 
-  1. Pauses the fleet (`jobs:paused`). Workers finish the job in their hands and
-     claim nothing new -- nothing is killed, requeued or dropped. Note this
-     stalls *every* collection for as long as step 2 takes.
-  2. Waits until no worker is still executing a job for this collection, so
-     BinSim never reads a binary that a Ghidra analysis is mid-way through.
+  1. Lifts this collection's not-yet-started `ghidra_analyze` jobs out of
+     `jobs:pending` into a stash list. Workers stop starting new analyses for it;
+     every other collection, and every job already in flight, is untouched.
+  2. Waits until no worker is executing anything for this collection. Because
+     only fresh analyses were held back, work already under way -- including the
+     indexing chain behind a finished analysis -- runs to completion instead of
+     freezing half-done, so those files are ready in time to be included.
   3. Creates build_bin_sim -> cluster_binaries -> index_sim -> cluster_functions
      OUTSIDE the lane, first stage marked priority=high so it lands on
      `jobs:pending:high`, which workers drain before `jobs:pending`.
-  4. Unpauses. The next free worker takes BinSim instead of the next Ghidra
-     analysis; the later stages follow as pipeline continuations (pushed to the
-     tail, i.e. served next).
+  4. Puts the stash back, in its original order. The high-priority stage is
+     already queued by then, so the next free worker takes BinSim rather than the
+     analysis it was about to start.
+
+Removing an entry is race-free against a worker claiming it: LREM either removes
+it (no worker saw it) or reports 0 (a worker already has it, and we leave it
+alone). Nothing is ever queued twice. Job UUIDs, parents and statuses are never
+touched -- this only reorders `jobs:pending`.
+
+`--pause` is the blunter alternative: pause the whole fleet for the drain
+instead. Simpler, but it stalls every other collection, and it freezes in-flight
+files mid-chain so they miss this pass.
+
+If the run dies between stashing and restoring, the ids are still in
+`binsim_now:stash:{collection}` and the next run refuses to start until you
+recover them with `--restore`.
 
 Nothing about default behavior changes: no CLEAR_* steps, no lane keys written,
-no existing job moved, reordered or dropped. The upload wave still runs its own
+no job re-parented, cancelled or dropped. The upload wave still runs its own
 clustering pass when it ends -- this is an early preview, not a replacement.
 
-Binaries still mid-analysis are simply left out of this pass: build_bin_sim's
-readiness gate skips any binary whose similarity discovery hasn't run, and the
-wave's own pass picks them up later. Re-run this as often as you like; every
-stage is idempotent.
+Binaries still mid-analysis are left out of this pass: build_bin_sim's readiness
+gate skips any binary whose similarity discovery hasn't run, and the wave's own
+pass picks them up later. Re-run this as often as you like; every stage is
+idempotent.
 
 The queue Redis runs in protected mode (loopback only), so this has to talk to
 it from the server's own host -- either run it there:
@@ -126,6 +141,64 @@ def stage_conflict(r, collection):
     return hits
 
 
+def stash_key(collection):
+    return f"binsim_now:stash:{collection}"
+
+
+def stash_pending(r, collection, key):
+    """Lift this collection's not-yet-started analyses out of jobs:pending.
+
+    Only `ghidra_analyze`. The rest of the chain (index_*, build_sim ...) is a
+    continuation of a file already being worked on -- holding those back would
+    freeze that file half-indexed, which is exactly what we are trying to avoid.
+
+    LREM is the whole safety argument: it removes the entry, or reports 0
+    because a worker popped it first. In that case we simply do not stash it,
+    so an id can never be both claimed and re-queued later.
+    """
+    ids = r.lrange("jobs:pending", 0, -1)
+    if not ids:
+        return 0
+    # Batched: this re-runs every few seconds against a queue a live fleet is
+    # already hammering, so it must not be one round trip per entry.
+    pipe = r.pipeline(transaction=False)
+    for job_id in ids:
+        pipe.hmget(f"job:{job_id}", "type", "collection", "payload")
+    mine = []
+    for job_id, (jtype, coll, payload) in zip(ids, pipe.execute()):
+        if jtype != "ghidra_analyze":
+            continue
+        if not coll and payload:
+            try:
+                coll = json.loads(payload).get("collection")
+            except Exception:
+                coll = None
+        if coll == collection:
+            mine.append(job_id)
+    if not mine:
+        return 0
+    pipe = r.pipeline(transaction=False)
+    for job_id in mine:
+        pipe.lrem("jobs:pending", 0, job_id)
+    taken = [j for j, removed in zip(mine, pipe.execute()) if removed]
+    if taken:
+        r.rpush(key, *taken)
+    return len(taken)
+
+
+def restore_stash(r, key):
+    """Put the stash back in its original relative order, then drop it.
+
+    LPUSH in reverse: the list is read head-first, so pushing the tail entry
+    first leaves them in the order they came out.
+    """
+    ids = r.lrange(key, 0, -1)
+    if ids:
+        r.lpush("jobs:pending", *reversed(ids))
+    r.delete(key)
+    return len(ids)
+
+
 def remote_algo(api):
     if not api:
         return "unweighted_cosine"
@@ -148,13 +221,21 @@ def main():
     ap.add_argument("--algo", default="", help="override; default is the server's similarity.algo")
     ap.add_argument("--min-cohesion", type=float, default=None)
     ap.add_argument(
+        "--pause",
+        action="store_true",
+        help="drain by pausing the whole fleet instead of stashing this "
+        "collection's queued analyses (stalls every other collection too)",
+    )
+    ap.add_argument(
         "--no-wait",
         action="store_true",
-        help="skip the pause+drain: queue BinSim immediately and let the readiness "
-        "gate drop whatever is mid-analysis",
+        help="skip the drain entirely: queue BinSim immediately and let the "
+        "readiness gate drop whatever is mid-analysis",
     )
+    ap.add_argument("--restore", action="store_true",
+                    help="put back a stash a previous run died holding, then exit")
     ap.add_argument("--drain-timeout", type=int, default=900,
-                    help="give up (and unpause) if the drain takes longer (default 900s)")
+                    help="give up (and put everything back) if the drain takes longer")
     args = ap.parse_args()
 
     host, _, port = args.redis.partition(":")
@@ -166,6 +247,20 @@ def main():
     js = JobService()
     r = js.r
     r.ping()
+    key = stash_key(args.collection)
+
+    if args.restore:
+        n = restore_stash(r, key)
+        print(f"restored {n} job(s) to jobs:pending")
+        return 0
+
+    held = r.llen(key)
+    if held:
+        print(f"refusing: {held} job(s) are still stashed in {key} from an earlier "
+              f"run that did not finish. Recover them first:\n"
+              f"  uv run scripts/binsim_now.py {args.collection} "
+              f"--redis {args.redis} --restore", file=sys.stderr)
+        return 1
 
     conflict = stage_conflict(r, args.collection)
     if conflict:
@@ -180,16 +275,28 @@ def main():
 
     was_paused = bool(r.exists("jobs:paused"))
     paused_by_us = False
+    stashed = 0
     try:
-        if not args.no_wait and busy:
-            if not was_paused:
-                # TTL, so a SIGKILL of this script cannot leave the fleet
-                # paused forever -- is_paused() is just an existence check.
-                r.set("jobs:paused", "1", ex=args.drain_timeout + 60)
-                paused_by_us = True
-                print("paused the fleet (in-flight jobs finish, nothing new is claimed)")
+        if not args.no_wait:
+            if args.pause:
+                if not was_paused:
+                    # TTL, so a SIGKILL of this script cannot leave the fleet
+                    # paused forever -- is_paused() is just an existence check.
+                    r.set("jobs:paused", "1", ex=args.drain_timeout + 60)
+                    paused_by_us = True
+                    print("paused the fleet (in-flight jobs finish, nothing new is claimed)")
+            else:
+                stashed = stash_pending(r, args.collection, key)
+                print(f"held back {stashed} queued analysis job(s) -- other "
+                      f"collections keep running")
+
             deadline = time.time() + args.drain_timeout
             while True:
+                # Re-sweep every round: an analysis that finishes hands its file
+                # to the next stage, and the wave can enqueue more behind us.
+                if not args.pause:
+                    more = stash_pending(r, args.collection, key)
+                    stashed += more
                 busy = running_for(r, args.collection)
                 if not busy:
                     break
@@ -230,6 +337,10 @@ def main():
             print(f"  {args.api.rstrip('/')}/jobs")
         return 0
     finally:
+        # Order matters: BinSim is already on the high queue by now, so the
+        # analyses we put back queue behind it rather than in front.
+        if r.llen(key):
+            print(f"restored {restore_stash(r, key)} held job(s) to jobs:pending")
         if paused_by_us:
             r.delete("jobs:paused")
             print("fleet resumed")

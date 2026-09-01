@@ -60,7 +60,7 @@ window.UI = {
     Sidebar: {
         render: function() {
             const { viewKey, collection, pool } = getRoutingState();
-            if (!collection && !pool && viewKey !== 'home' && viewKey !== 'collections' && viewKey !== 'pools' && viewKey !== 'jobs') {
+            if (!collection && !pool && viewKey !== 'home' && viewKey !== 'collections' && viewKey !== 'pools' && viewKey !== 'jobs' && viewKey !== 'search' && viewKey !== 'search-detail') {
                 throw new Error("Navigation error: collection context is missing.");
             }
 
@@ -112,7 +112,8 @@ window.UI = {
                 if (view === 'features-global' && viewKey === 'feature') return 'active';
                 if (view === 'collections' && viewKey === 'collection-detail') return 'active';
                 if (view === 'pools' && viewKey === 'pool-detail') return 'active';
-                
+                if (view === 'search' && viewKey === 'search-detail') return 'active';
+
                 return '';
             };
 
@@ -149,6 +150,7 @@ window.UI = {
                         ${collection ? `<a href="${buildNavUrl('tags')}" id="nav-tags" title="Tags" class="${isActive('tags')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-tags"></i> <span>Tags</span></a>` : ''}
                         <a href="${buildNavUrl('upload')}" id="nav-upload" title="Upload" class="${isActive('upload')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-cloud-arrow-up"></i> <span>Upload</span></a>
                         <a href="${buildNavUrl('jobs')}" id="nav-jobs" title="Jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> <span>Jobs</span></a>
+                        <a href="/searches" id="nav-searches" title="Saved Searches" class="${isActive('search')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-list-check"></i> <span>Searches</span></a>
                         <a href="/api/" target="_blank" id="nav-api" title="API"><i class="fa-solid fa-book"></i> <span>API</span></a>
                     </div>
                 </nav>

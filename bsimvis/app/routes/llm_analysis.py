@@ -6,7 +6,9 @@ endpoints) since this module's two features share `llm_tools`/
 `analysis_orchestrator` rather than `llm_batch_service`.
 """
 
-from flask import request
+import json
+
+from flask import request, Response, stream_with_context
 
 
 def start_chat_session():
@@ -32,6 +34,10 @@ def start_chat_session():
 
 
 def chat_message(session_id):
+    """Streams one NDJSON event per line: a "tool_call" as each tool call
+    the agent makes resolves, then one final "done" (or "error"). Lets the
+    chat panel show the trace as the agent works instead of only after the
+    whole turn (which can take up to a minute) finishes."""
     from bsimvis.app.services.llm_chat_service import llm_chat_service
 
     data = request.json or {}
@@ -39,10 +45,12 @@ def chat_message(session_id):
     if not message:
         return {"error": "Missing message"}, 400
 
-    result = llm_chat_service.send_message(session_id, message)
-    if "error" in result:
-        return result, 404 if result["error"] == "Unknown or expired session" else 500
-    return result
+    @stream_with_context
+    def generate():
+        for event in llm_chat_service.send_message_stream(session_id, message):
+            yield json.dumps(event) + "\n"
+
+    return Response(generate(), mimetype="application/x-ndjson")
 
 
 def get_chat_session(session_id):

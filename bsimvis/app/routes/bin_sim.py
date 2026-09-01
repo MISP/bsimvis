@@ -27,6 +27,7 @@ from bsimvis.app.services.cluster_utils import (
 from bsimvis.app.services.tag_taxonomy import tag_in_scope
 from bsimvis.app.services import container_sim_service, lineage_service
 from bsimvis.app.services.bin_sim_service import BinSimService, bin_sim_service
+from bsimvis.app.routes._list_query import fnum, in_bounds
 import json
 
 job_service = JobService()
@@ -792,14 +793,6 @@ def _sim_tag_match(pair_tags, needles):
     return all(any(t == n or t.startswith(n + ":") for t in have) for n in needles)
 
 
-def _fnum(name):
-    v = request.args.get(name)
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
-
-
 # The File sim view browses one table with a `state` column rather than three
 # tables, so Matched / Unmatched / All are the same request with a different
 # `state` filter. Rows are tagged with their origin on the way out.
@@ -951,9 +944,9 @@ def _page_diff(diff_data, table, r=None, collection=None, algo=None, pool_id=Non
     note_a = (request.args.get("note_a") or "").strip().lower()
     note_b = (request.args.get("note_b") or "").strip().lower()
     note = (request.args.get("note") or "").strip().lower()
-    sim_min, sim_max = _fnum("sim_min"), _fnum("sim_max")
-    feat_min, feat_max = _fnum("feat_min"), _fnum("feat_max")
-    rar_min, rar_max = _fnum("rar_min"), _fnum("rar_max")
+    sim_min, sim_max = fnum("sim_min"), fnum("sim_max")
+    feat_min, feat_max = fnum("feat_min"), fnum("feat_max")
+    rar_min, rar_max = fnum("rar_min"), fnum("rar_max")
 
     # Tree scope. Prefix match so selecting `lib:libc:2.31` catches every
     # `lib:libc:2.31:memcpy` under it, which is the same rollup rule the tag
@@ -1023,21 +1016,14 @@ def _page_diff(diff_data, table, r=None, collection=None, algo=None, pool_id=Non
         if note and not owners_match(item.get("func_id"), note):
             return False
         sim = item.get("similarity") or 0
-        if sim_min is not None and sim < sim_min:
-            return False
-        if sim_max is not None and sim > sim_max:
+        if not in_bounds(sim, sim_min, sim_max):
             return False
         feat = item.get("avg_features") or 0
-        if feat_min is not None and feat < feat_min:
-            return False
-        if feat_max is not None and feat > feat_max:
+        if not in_bounds(feat, feat_min, feat_max):
             return False
         rar = item.get("sim_rarity")
-        if rar is not None:
-            if rar_min is not None and rar < rar_min:
-                return False
-            if rar_max is not None and rar > rar_max:
-                return False
+        if rar is not None and not in_bounds(rar, rar_min, rar_max):
+            return False
         return True
 
     filtered = [it for it in rows if keep(it)]

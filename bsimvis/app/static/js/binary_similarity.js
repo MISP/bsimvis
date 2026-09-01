@@ -506,6 +506,7 @@ function initResizableCards() {
         if (btnUniqueB) btnUniqueB.textContent = `Unique to B (${counts.unique_to_b})`;
         if (btnUnmatched) btnUnmatched.textContent = `Unmatched (${counts.unique_to_a} / ${counts.unique_to_b})`;
 
+        window['bsim-flt-matched-q-val'] = new URLSearchParams(location.search).get('q') || '';
         // Tree + Summary render from the compact payload alone; the table and the
         // function graph page themselves once a tab that needs rows is shown.
         // Restore the tab from the URL hash (e.g. after a Back navigation).
@@ -1229,36 +1230,23 @@ function fileSimTableHeadHtml(mode) {
         : mode === 'b' ? [featTh, clusterTh, bTh, bNotesTh]
         : [simTh, featTh, clusterTh, aTh, aNotesTh, bTh, bNotesTh];
 
-    const searchColspan = mode === 'both' ? 4 : 2;
-    const filterCells = mode === 'both' ? `
-            <th style="position:relative;"><div style="display:flex; flex-direction:column; gap:3px;" onclick="event.stopPropagation()">
-                <div style="display:flex; align-items:center; gap:2px;">
-                    <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-coh-min" placeholder="Min..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
-                    <span class="dim" style="font-size:0.6rem">-</span>
-                    <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-coh-max" placeholder="Max..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
-                </div>
-                <div class="tag-filter-container" id="tag-container-bsim-sim">
-                    <input type="text" class="tag-filter-add" placeholder="+ Sim tag"
-                           onkeydown="binSimSimTagAdd(event)"
-                           onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bsim-sim', 'sim_tag', val, false, false); this.value=''; binSimFilterChange(true); })">
-                </div>
-            </div></th>` : '';
-    return `
-        <tr>${headCells.join('')}</tr>
-        <tr class="filter-row">
-            ${filterCells}
-            <th><div style="display:flex; align-items:center; gap:2px;" onclick="event.stopPropagation()">
-                <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-feat-min" placeholder="Min..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
-                <span class="dim" style="font-size:0.6rem">-</span>
-                <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-feat-max" placeholder="Max..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
-            </div></th>
-            <th><div onclick="event.stopPropagation()">
-                <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-cl-q" placeholder="Cluster name..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
-            </div></th>
-            <th colspan="${searchColspan}"><div onclick="event.stopPropagation()">
-                <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-q" placeholder="Search name / tag / addr..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
-            </div></th>
-        </tr>`;
+    const filterCells = [];
+    if (mode === 'both') {
+        filterCells.push({ html: `<div style="display:flex; flex-direction:column; gap:3px;" onclick="event.stopPropagation()">
+            ${FunctionFilters.rangeCell('bsim-flt-matched-coh-min', 'bsim-flt-matched-coh-max', {
+                onInput: 'binSimFilterChange(false)', onKeydown: "if(event.key==='Enter') binSimFilterChange(true)", step: 'any', min: '', max: '',
+            })}
+            <div class="tag-filter-container" id="tag-container-bsim-sim"><input type="text" class="tag-filter-add" placeholder="+ Sim tag" onkeydown="binSimSimTagAdd(event)" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bsim-sim', 'sim_tag', val, false, false); this.value=''; binSimFilterChange(true); })"></div>
+        </div>`, attrs: 'style="position:relative"' });
+    }
+    filterCells.push(
+        { html: `<div onclick="event.stopPropagation()">${FunctionFilters.rangeCell('bsim-flt-matched-feat-min', 'bsim-flt-matched-feat-max', {
+            onInput: 'binSimFilterChange(false)', onKeydown: "if(event.key==='Enter') binSimFilterChange(true)", step: 'any', min: '', max: '',
+        })}</div>` },
+        { html: `<div onclick="event.stopPropagation()">${FunctionFilters.cell('bsim-flt-matched-cl-q', { placeholder: 'Cluster name...', onInput: 'binSimFilterChange(true)', onKeydown: "if(event.key==='Enter') binSimFilterChange(true)" })}</div>` },
+        { html: `<div onclick="event.stopPropagation()">${FunctionFilters.cell('bsim-flt-matched-q', { placeholder: 'Search name / tag / addr...', onInput: 'binSimFilterChange(true)', onKeydown: "if(event.key==='Enter') binSimFilterChange(true)" })}</div>`, attrs: `colspan="${mode === 'both' ? 4 : 2}"` },
+    );
+    return `<tr>${headCells.join('')}</tr>${FunctionFilters.filterRow(filterCells)}`;
 }
 
 function fileSimMoreRowHtml(key, st, indent) {
@@ -2581,30 +2569,29 @@ window.binSimSimTagAdd = function(event) {
 };
 
 function binSimFilterParams(prefix) {
-    const val = (id) => (document.getElementById(id)?.value || '').trim();
-    const p = {};
-    const q = val(`bsim-flt-${prefix}-q`);
-    if (q) p.q = q;
-    // Cluster membership is a row column on every state, so its filter is too.
-    const clq = val(`bsim-flt-${prefix}-cl-q`);
-    if (clq) p.cl_q = clq;
+    const p = FunctionFilters.readIdMap({
+        [`bsim-flt-${prefix}-q`]: 'q',
+        [`bsim-flt-${prefix}-cl-q`]: 'cl_q',
+        [`bsim-flt-${prefix}-feat-min`]: 'feat_min',
+        [`bsim-flt-${prefix}-feat-max`]: 'feat_max',
+        [`bsim-flt-${prefix}-rar-min`]: 'rar_min',
+        [`bsim-flt-${prefix}-rar-max`]: 'rar_max',
+    });
     if (prefix === 'matched') {
         const simTags = readFileSimSimTags();
         const inc = simTags.filter(t => !t.exclude).map(t => t.value);
         const exc = simTags.filter(t => t.exclude).map(t => t.value);
         if (inc.length) p.sim_tags = inc.join(',');
         if (exc.length) p.sim_tags_not = exc.join(',');
-        const na = val('bsim-flt-matched-note-a'); if (na) p.note_a = na;
-        const nb = val('bsim-flt-matched-note-b'); if (nb) p.note_b = nb;
-        const smin = val('bsim-flt-matched-coh-min'); if (smin) p.sim_min = smin;
-        const smax = val('bsim-flt-matched-coh-max'); if (smax) p.sim_max = smax;
+        Object.assign(p, FunctionFilters.readIdMap({
+            'bsim-flt-matched-note-a': 'note_a',
+            'bsim-flt-matched-note-b': 'note_b',
+            'bsim-flt-matched-coh-min': 'sim_min',
+            'bsim-flt-matched-coh-max': 'sim_max',
+        }));
     } else {
-        const n = val(`bsim-flt-${prefix}-note`); if (n) p.note = n;
+        Object.assign(p, FunctionFilters.readIdMap({ [`bsim-flt-${prefix}-note`]: 'note' }));
     }
-    const fmin = val(`bsim-flt-${prefix}-feat-min`); if (fmin) p.feat_min = fmin;
-    const fmax = val(`bsim-flt-${prefix}-feat-max`); if (fmax) p.feat_max = fmax;
-    const rmin = val(`bsim-flt-${prefix}-rar-min`); if (rmin) p.rar_min = rmin;
-    const rmax = val(`bsim-flt-${prefix}-rar-max`); if (rmax) p.rar_max = rmax;
     return p;
 }
 
@@ -2910,9 +2897,10 @@ function renderBinSimPairs(items, depth = 0, anchorMd5 = null) {
 
         const collA = item.coll_a || collection;
         const collB = item.coll_b || collA;
-        const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
-        let diffUrl = `/collections/${collA}/files/${item.md5_a}/vs/${collB}/${item.md5_b}`;
-        if (poolId) diffUrl = `/pools/${encodeURIComponent(poolId)}/collections/${collA}/files/${item.md5_a}/vs/${collB}/${item.md5_b}`;
+        const anchorIsB = anchorMd5 && item.md5_b === anchorMd5;
+        const diffUrl = anchorIsB
+            ? buildFileDiffUrl(collB, item.md5_b, collA, item.md5_a)
+            : buildFileDiffUrl(collA, item.md5_a, collB, item.md5_b);
 
         const diffTitle = `Bin Diff: ${item.file_name_a || 'Unknown'} vs ${item.file_name_b || 'Unknown'}`;
         const onClickHandler = `Nav.openPath(${jsString(diffUrl)}, event, { title: ${jsString(diffTitle)}, type: 'bin_sim' });`;

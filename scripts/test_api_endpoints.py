@@ -3574,6 +3574,166 @@ def test_llm_pair_analysis_job():
         test_endpoint("DELETE", "/api/jobs/pause", label="DELETE /api/jobs/pause")
 
 
+def test_search_job():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-bis-2b – persisted search job contract", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5:
+        print(_color("\n[SKIP] Need an uploaded binary – search checks skipped.", YELLOW))
+        return
+
+    missing = requests.post(
+        f"{BASE_URL}/api/searches",
+        json={"collection": COLLECTION, "scope": {"type": "file", "md5": file_md5}},
+        timeout=30,
+    )
+    check(
+        "search rejects a missing query",
+        missing.status_code == 400,
+        f"HTTP {missing.status_code}: {missing.text[:120]}",
+    )
+    bad_scope = requests.post(
+        f"{BASE_URL}/api/searches",
+        json={"collection": COLLECTION, "query": "x", "scope": {"type": "nope"}},
+        timeout=30,
+    )
+    check(
+        "search validates scope.type",
+        bad_scope.status_code == 400,
+        f"HTTP {bad_scope.status_code}: {bad_scope.text[:120]}",
+    )
+
+    paused = test_endpoint("POST", "/api/jobs/pause", label="POST /api/jobs/pause")
+    if not check(
+        "worker fleet paused before search enqueue",
+        bool((paused or {}).get("paused")),
+        str(paused),
+    ):
+        test_endpoint("DELETE", "/api/jobs/pause", label="DELETE /api/jobs/pause")
+        return
+
+    search_id = None
+    job_id = None
+    try:
+        started = test_endpoint(
+            "POST",
+            "/api/searches",
+            data={
+                "collection": COLLECTION,
+                "query": "the function decrypting a .dat file",
+                "scope": {"type": "file", "md5": file_md5},
+            },
+        )
+        search_id = (started or {}).get("search_id")
+        job_id = (started or {}).get("job_id")
+        check(
+            "search enqueues a classification job",
+            bool(search_id) and bool(job_id) and int((started or {}).get("total") or 0) > 0,
+            str(started),
+        )
+        if job_id:
+            job = test_endpoint("GET", f"/api/jobs/{job_id}")
+            payload = (job or {}).get("payload") or {}
+            check(
+                "search job carries the search_id and query",
+                (job or {}).get("type") == "search_classify"
+                and payload.get("search_id") == search_id
+                and payload.get("query") == "the function decrypting a .dat file"
+                and len(payload.get("func_ids") or []) > 0,
+                str(job)[:300],
+            )
+
+        if search_id:
+            listed = test_endpoint("GET", "/api/searches", label="GET /api/searches")
+            check(
+                "new search appears in the list",
+                any(s.get("id") == search_id for s in (listed or {}).get("searches") or []),
+                str(listed)[:200],
+            )
+
+            detail = test_endpoint("GET", f"/api/searches/{search_id}")
+            check(
+                "search detail preserves scope and query",
+                (detail or {}).get("query") == "the function decrypting a .dat file"
+                and (detail or {}).get("scope", {}).get("type") == "file",
+                str(detail)[:300],
+            )
+
+            results = test_endpoint("GET", f"/api/searches/{search_id}/results")
+            check(
+                "results endpoint returns the paginated shape even with no hits yet",
+                isinstance((results or {}).get("results"), list)
+                and "total" in (results or {}),
+                str(results)[:200],
+            )
+
+            # apply_tag is synchronous and independent of classification having
+            # run -- it must work against the search's own resolved functions.
+            func_id = (job.get("payload") or {}).get("func_ids", [None])[0]
+            if func_id:
+                tagged = test_endpoint(
+                    "POST",
+                    f"/api/searches/{search_id}/apply_tag",
+                    data={"func_ids": [func_id], "tag": "search-triage-test"},
+                )
+                check(
+                    "apply_tag tags the selected function directly",
+                    func_id in ((tagged or {}).get("applied") or []),
+                    str(tagged),
+                )
+                test_endpoint(
+                    "POST",
+                    "/api/tags/remove",
+                    data={
+                        "collection": COLLECTION,
+                        "entity_type": "function",
+                        "entity_id": func_id,
+                        "tag": "search-triage-test",
+                    },
+                    label="POST /api/tags/remove (search-triage-test, cleanup)",
+                )
+
+            analyzed = test_endpoint(
+                "POST",
+                f"/api/searches/{search_id}/analyze",
+                data={"func_ids": [func_id] if func_id else []},
+            )
+            handoff_job_id = (analyzed or {}).get("job_id")
+            check(
+                "analyze hands the selection to a normal contextual-batch job",
+                bool(handoff_job_id),
+                str(analyzed),
+            )
+            if handoff_job_id:
+                handoff_job = test_endpoint("GET", f"/api/jobs/{handoff_job_id}")
+                check(
+                    "handoff job defaults custom_prompt to the search query",
+                    (handoff_job or {}).get("type") == "llm_contextual_batch"
+                    and (handoff_job or {}).get("payload", {}).get("custom_prompt")
+                    == "the function decrypting a .dat file",
+                    str(handoff_job)[:300],
+                )
+                test_endpoint("POST", f"/api/jobs/{handoff_job_id}/cancel")
+
+            test_endpoint("POST", f"/api/jobs/{job_id}/cancel")
+
+            deleted = test_endpoint("DELETE", f"/api/searches/{search_id}")
+            check(
+                "delete search reports success",
+                (deleted or {}).get("status") == "success",
+                str(deleted),
+            )
+            gone = requests.get(f"{BASE_URL}/api/searches/{search_id}", timeout=30)
+            check(
+                "deleted search is gone",
+                gone.status_code == 404,
+                f"HTTP {gone.status_code}: {gone.text[:120]}",
+            )
+    finally:
+        test_endpoint("DELETE", "/api/jobs/pause", label="DELETE /api/jobs/pause")
+
+
 def test_bin_sim_notes_and_tags():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-bis-3 – Bin_sim pair notes and tags", BOLD))
@@ -5578,6 +5738,7 @@ if __name__ == "__main__":
         test_llm_agentic_analysis,
         test_bin_sim_diff_cache,
         test_llm_pair_analysis_job,
+        test_search_job,
         test_bin_sim_notes_and_tags,
         test_exact_pair_resplit,
         test_pool_collection_equivalence,
@@ -5600,6 +5761,7 @@ if __name__ == "__main__":
         # Issues the /api/bin_sim/build whose doc the diff cache step reads.
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
         "test_llm_pair_analysis_job": ["test_search_filters_and_sorting"],
+        "test_search_job": ["test_search_filters_and_sorting"],
         "test_bin_sim_notes_and_tags": ["test_search_filters_and_sorting"],
         "test_exact_pair_resplit": ["test_search_filters_and_sorting"],
         "test_retained_call_graph": ["test_search_filters_and_sorting"],

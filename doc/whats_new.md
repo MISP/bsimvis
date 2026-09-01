@@ -2,42 +2,56 @@ BSimVis is a tool to analyze similarities across a collection of binaries, based
 
 # New features
 
-This release lands LCA-accelerated similarity discovery and hierarchical clustering, an agentic LLM analysis layer (chat + MCP server), a rebuilt call-graph/cluster UI (Pivotick), and a tag taxonomy overhaul — on top of continued stability and job-pipeline fixes.
+This cycle focuses on agentic LLM analysis, a tag taxonomy overhaul with YARA/capa provenance, a reworked binary-similarity UI (File/Container split, Pivotick call graphs), a new default clustering engine, LCA-accelerated similarity discovery, a hardened job system, and a broad XSS-escaping security pass.
 
-## LCA Acceleration
+## Agentic LLM analysis
+* **Tool-using chat agent** — per-function and per-collection chat panel, backed by an agent that can call the same search/graph/tag tools a human would.
+* **MCP server** — the read-only analysis tools (search, call graph, tags, similar functions) are now exposed over stdio for external MCP clients.
+* **Batch and pair analysis** — whole-file reports, cluster-wide batch tagging/notes, and binary-comparison (pair) analysis, with prompts hardened against over-claiming, double-prefixed tags, and unsupported C2/severity tags.
+
+## Tag taxonomy
+* **Four namespaced axes** with a canonical tag id, one hue rule per namespace, and colour assigned by identity rather than match quality.
+* **Provenance popups** — hover a tag to see the YARA/rulezet/capa rule that minted it, with rule preview and permalinks where available.
+* **ATT&CK/MBC axes** — capa and rulezet matches now carry family/vuln/MITRE/MBC axes through to bin-sim.
+
+## YARA & capa
+* Rulezet.org mirror with namespace-routed tags and a false-positive gate; vendored Elastic Linux rules plus multi-arch botnet/Mirai coverage.
+* YARA preanalysis tags functions the same way capa does, propagating string hits via xrefs.
+* capa rule metadata (ATT&CK/MBC) is now recorded and inherited onto function tags.
+
+## Binary similarity & Pivotick
+* **Hard File/Container split** — no more mixed edges between file-level and container-level clusters; containers score by rolling child similarity up the lineage.
+* **Code/Library/Content score axes** on every bin_sim pair, with a matching axis picker in the UI.
+* **Pivotick call graph** — recursive expansion with depth cap, similarity edges merged in, drag-and-drop/bulk-add, persistent side panel with locked side-by-side diff, and binary clustering with notes sync.
+* **Neighbors tab**, resplit-exact-pair action, Sankey view, and tag-scoped server-side paging on the File sim view.
+
+## LCA acceleration
 * **Unique-vector-class discovery** — functions are hashed into shared vector classes instead of compared pairwise; discovery scores classes once and expands to member functions, cutting redundant work on large collections.
 * **rust_cpu / wgpu backends** — `similarity.discovery_backend` selects the native Rust scorer or a WGPU-accelerated one; WGPU does a broad float32 pass and recomputes/thresholds candidates in Rust f64, falling back to CPU on GPU failure.
 * **Compact incremental class graph** — edges are stored as delta-encoded partitions over a base snapshot, compacted after a few overlay generations instead of rebuilt from scratch on every change.
-* **Hierarchical UF clustering** — `hierarchical_uf` is now the default clustering engine: a full single-linkage tree (Kruskal + union-find) over vector classes, cut by cohesion, projected back to functions and binaries.
 * **Remote deploy/migrate/benchmark tooling** for standing up and comparing `rust_cpu` vs `wgpu` on remote hosts.
 * Python discovery remains as a compatibility fallback when the native extension isn't available.
 
-## Agentic LLM Analysis
-* **Tool-using chat agent** wired into the per-function chat panel, with the MCP/chat tool surface broadened to full search coverage (functions, tags, call graphs, similar functions).
-* **MCP server** exposing the read-only analysis tools over stdio, for driving BSimVis from external MCP clients.
-* **Configurable full-file analysis** — agentic tagging, notes, and a whole-file report, scoped to the target architecture and grounded against actual evidence to curb speculative malware attribution.
+## Clustering
+* **Threshold union-find is now the default** function-clustering engine, replacing HDBSCAN, with incremental updates on upload.
+* **hierarchical_uf** adds a full single-linkage hierarchy (Kruskal + union-find) for binary clustering, cohesion-scored and named by AV family/YARA.
+* Cohesion adjacency now held as CSR instead of a dict-of-dicts; sim-index candidates and propagation are streamed/chunked instead of buffered.
 
-## Binary Similarity & Call Graph UI
-* **Pivotick rebuilt**: all three call-graph surfaces (function view, binary cluster, similarity diff) now share one controller, with tree/radial layout, cluster collapse, drag-and-drop, and a persistent side panel with lock mode for side-by-side diffing.
-* **File/Container view split** for binary clustering, so file-level and container-level clusters no longer share one mixed graph.
-* **Neighbors tab** added to File and Function views, reusing the bin-sim hero card/pill pattern.
-* **Cluster bookmarks and tags.**
-* **git-stash-alike** (`tag_stash.py`) — attach notes/tags to bin_sim, file, or function similarity pairs from the CLI, routed through `SimilarityService`.
+## Jobs, ingest & Ghidra
+* Lease-based job claims with a reaper and pause/resume; per-collection job lanes; memory-bounded admission and worker supervision.
+* Uploads auto-unpack packed/container files before analysis, with per-binary `--metadata` matching against unpacked children.
+* Ghidra analysis runs out-of-process with retry, FID databases are no longer rescanned per function, and temporary GhidraProjects are closed (fixed a JVM thread leak).
 
-## Tag Taxonomy
-* Canonical tag IDs with detector-named origin namespaces and a single colour rule per namespace, applied consistently across tables, trees, and cards.
-* Hoverable provenance popups with rule preview and permalinks.
-* Rulezet and YARA tag routing fixes (mirrored rule UUID vs name, family fallback).
+## Search & UI
+* Unified Ctrl+K homepage search with streaming results and hierarchical namespace tag buckets.
+* Full light theme support across every view, plus a restyled homepage.
 
-## Stability & Job Pipeline
-* Per-collection job lanes replace mid-analysis job splicing.
-* Live job-status badges on collections/batches/files tables; upload flow gets progress bars, a success screen, and a "Go to Collection" CTA.
-* Assorted bin-sim crash fixes (unguarded `.decode()`, count-pill races, chunked build scheduling) and score-formula corrections (Code/Library/Content axes).
-* Portable JDK 21 auto-install when no system Java is found.
+## Security
+* Twelve-commit escaping pass closing XSS gaps across tooltips, tables, context menus, breadcrumbs, note rendering, and shared UI renderers — every user- and analysis-derived string reaching the DOM is now escaped.
 
-## Search & Home
-* Unified `Ctrl+K` search streams results as they're found, no longer capped at 25 collections.
-* Homepage restyle with real tables and an upload CTA.
+# Upgrade notes
+* Default clustering engine changed from HDBSCAN to threshold union-find (`hierarchical_uf`) — re-cluster existing collections to pick up the new engine.
+* Tag ids are now canonical/namespaced; a one-time migration moves legacy double-prefixed and user-buried tag ids.
 
 # New Contributor
 * @SegmondFault made their first contribution

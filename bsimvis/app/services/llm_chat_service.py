@@ -20,7 +20,7 @@ from ollama import Client
 
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.llm_service import llm_service
-from bsimvis.app.services.llm_tools import TOOLS, call_tool
+from bsimvis.app.services.llm_tools import TOOLS, call_tool, describe_api_call
 from bsimvis.app.services.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
@@ -109,13 +109,21 @@ class LLMChatService:
 
     # --- turn execution ---------------------------------------------------
 
-    def send_message(self, session_id, user_message):
+    def send_message_stream(self, session_id, user_message):
         """Runs one analyst turn to completion (including any tool calls the
-        model makes along the way). Returns {reply, tool_calls, session_id}."""
+        model makes along the way), yielding one event dict per step so a
+        caller can show the trace live instead of only after the whole turn
+        finishes:
+          - {"type": "tool_call", "name", "arguments", "result_preview", "api_call"}
+            as each tool call resolves
+          - {"type": "done", "session_id", "reply", "tool_calls"} once, last
+          - {"type": "error", "error"} instead of "done" on failure
+        """
         self._load_config()
         history = self._load_history(session_id)
         if history is None:
-            return {"error": "Unknown or expired session"}
+            yield {"type": "error", "error": "Unknown or expired session"}
+            return
 
         history.append(
             {"role": "user", "content": user_message, "ts": int(time.time())}
@@ -139,7 +147,8 @@ class LLMChatService:
                 )
             except Exception as e:
                 logger.error(f"LLMChatService: chat call failed: {e}")
-                return {"error": str(e)}
+                yield {"type": "error", "error": str(e)}
+                return
 
             # `response` is an ollama `ChatResponse` (dict-like via `.get`, not
             # an actual dict) -- match the `.get(...)` pattern the rest of
@@ -161,11 +170,13 @@ class LLMChatService:
                     {"role": "assistant", "content": content, "ts": int(time.time())}
                 )
                 self._save_history(session_id, history)
-                return {
+                yield {
+                    "type": "done",
                     "session_id": session_id,
                     "reply": content,
                     "tool_calls": tool_calls_made,
                 }
+                return
 
             history.append(
                 {
@@ -186,7 +197,17 @@ class LLMChatService:
                     except Exception:
                         args = {}
                 result = call_tool(name, args)
-                tool_calls_made.append({"name": name, "arguments": args})
+                call_record = {
+                    "name": name,
+                    "arguments": args,
+                    # Trimmed preview for the chat trace, not the full
+                    # payload already fed to the model above -- a
+                    # get_function result can carry a whole function's
+                    # decompiled code.
+                    "result_preview": json.dumps(result, default=str)[:4000],
+                    "api_call": describe_api_call(name, args),
+                }
+                tool_calls_made.append(call_record)
                 history.append(
                     {
                         "role": "tool",
@@ -194,12 +215,14 @@ class LLMChatService:
                         "ts": int(time.time()),
                     }
                 )
+                yield {"type": "tool_call", **call_record}
 
         # Iteration budget spent without a final answer -- return what the
         # model has said so far rather than raising, so the analyst still
         # gets a partial trail instead of an opaque failure.
         self._save_history(session_id, history)
-        return {
+        yield {
+            "type": "done",
             "session_id": session_id,
             "reply": "(stopped after too many tool calls without a final answer)",
             "tool_calls": tool_calls_made,

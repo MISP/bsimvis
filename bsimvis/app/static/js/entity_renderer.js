@@ -33,7 +33,6 @@ window.EntityRenderer = {
         
         let actionsHtml = '';
         if (showActions) {
-            // Add to Diff / See Similar moved to right-click > Actions menu
             actionsHtml = `
                 <div class="entity-actions" style="display:inline-flex; gap:4px; margin-left: auto; flex-shrink: 0; padding-left: 8px;">
                     ${hideNote ? '' : this.renderNoteButton(funcId, f.note_owners, { ...options, raw_data: f })}

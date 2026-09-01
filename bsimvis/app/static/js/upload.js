@@ -2,8 +2,10 @@
 
 let selectedFiles = [];
 
-// Analysis modules are opt-in: each one costs more than the rest of the job on
-// a typical sample, so nothing runs unless it is ticked here.
+// Analysis modules cost more than the rest of the job on a typical sample, so
+// which ones run is opt-in -- boxes here are pre-ticked from the server's
+// `[analysis_modules].enabled` config (see applyDefaultEnabledModules) rather
+// than starting all off, and unticking a default sends `disable` for it.
 //
 // ponytail: `cost` is an order-of-magnitude model, not a promise.
 //
@@ -121,6 +123,34 @@ function selectedModules() {
     return ANALYSIS_MODULES
         .filter(m => document.getElementById(`module-${m.id}`)?.checked)
         .map(m => m.id);
+}
+
+// The server enables these by default ([analysis_modules].enabled). Ticking
+// a box only widens that set (?enable=) -- unticking one that's on by
+// default has to be sent explicitly (?disable=), so this also needs
+// tracking to compute what got turned off.
+let defaultEnabledModules = [];
+
+/** Pre-tick checkboxes to match the server's default-enabled modules. */
+async function applyDefaultEnabledModules() {
+    try {
+        const res = await fetch('/api/index/config');
+        const config = await res.json();
+        defaultEnabledModules = config?.analysis_modules?.enabled || [];
+    } catch (e) {
+        defaultEnabledModules = [];
+    }
+    defaultEnabledModules.forEach(id => {
+        const el = document.getElementById(`module-${id}`);
+        if (el) el.checked = true;
+    });
+    updateModuleEstimates();
+}
+
+/** Modules that are on by default but got unticked -- must be sent as ?disable=. */
+function disabledDefaultModules() {
+    const enabled = new Set(selectedModules());
+    return defaultEnabledModules.filter(id => !enabled.has(id));
 }
 
 function renderUploadView(params) {
@@ -272,6 +302,7 @@ function renderUploadView(params) {
     updateFileList();
     populateUploadCollectionDropdown(collection);
     populateUploadLanguageDropdowns();
+    applyDefaultEnabledModules();
 }
 
 // ~170 languages, so the processor picker is a filterable combobox: the full
@@ -560,6 +591,7 @@ async function startBatchUpload() {
     const relatedMd5s = document.getElementById('upload-related-md5').value.split(',').map(m => m.trim()).filter(m => m);
     const archivePassword = document.getElementById('upload-archive-password').value;
     const enabledModules = selectedModules();
+    const disabledModules = disabledDefaultModules();
 
     let currentBatchUuid = null;
 
@@ -610,6 +642,7 @@ async function startBatchUpload() {
             tags.forEach(t => url.searchParams.append('tags', t));
             relatedMd5s.forEach(m => url.searchParams.append('related_md5', m));
             enabledModules.forEach(m => url.searchParams.append('enable', m));
+            disabledModules.forEach(m => url.searchParams.append('disable', m));
 
             const response = await fetch(url, {
                 method: 'POST',

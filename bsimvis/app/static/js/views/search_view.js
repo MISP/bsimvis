@@ -1,0 +1,560 @@
+/**
+ * Search View
+ * List mode: /searches
+ * Detail mode: /searches/{id}
+ *
+ * Results table reuses the same row-rendering/selection stack as the file
+ * view's function table: EntityRenderer.renderFunction/renderTag for the
+ * cells, and `new TableSelection(id)` after each render (the constructor is
+ * idempotent per table id, so calling it again after a re-render is safe).
+ */
+
+const VERDICT_STYLE = {
+    yes: { color: '#10b981', bg: 'rgba(16,185,129,0.15)', border: 'rgba(16,185,129,0.35)', icon: 'fa-circle-check' },
+    maybe: { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.35)', icon: 'fa-circle-question' },
+    no: { color: '#9ca3af', bg: 'rgba(156,163,175,0.12)', border: 'rgba(156,163,175,0.3)', icon: 'fa-circle-minus' }
+};
+
+const STATUS_STYLE = {
+    running: { color: '#60a5fa', icon: 'fa-circle-notch fa-spin' },
+    completed: { color: '#10b981', icon: 'fa-check-circle' },
+    failed: { color: '#f87171', icon: 'fa-exclamation-circle' },
+    cancelled: { color: '#9ca3af', icon: 'fa-ban' }
+};
+
+function searchStatusBadge(status) {
+    const s = STATUS_STYLE[status] || STATUS_STYLE.cancelled;
+    return `<span style="color:${s.color}; font-weight:700; display:inline-flex; align-items:center; gap:6px;"><i class="fa-solid ${s.icon}"></i> ${status}</span>`;
+}
+
+function verdictBadge(verdict) {
+    const v = VERDICT_STYLE[verdict] || VERDICT_STYLE.no;
+    return `<span style="background:${v.bg}; border:1px solid ${v.border}; color:${v.color}; padding:3px 10px; border-radius:20px; font-size:0.72rem; font-weight:700; display:inline-flex; align-items:center; gap:5px; white-space:nowrap;"><i class="fa-solid ${v.icon}"></i> ${verdict}</span>`;
+}
+
+const RESULTS_PAGE_SIZE = 100;
+
+window.SearchView = {
+    _pollTimer: null,
+    _stopped: false,
+    _resultsOffset: 0,
+    _suggestedTags: {}, // func_id -> suggested_tag, for the current results page
+    _currentSearchId: null,
+
+    destroy() {
+        this._stopped = true;
+        if (this._pollTimer) {
+            clearTimeout(this._pollTimer);
+            this._pollTimer = null;
+        }
+    },
+
+    async init(params, containerId) {
+        this._stopped = false;
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        const searchId = params.search_id;
+        if (searchId) {
+            await this._initDetail(container, searchId);
+        } else {
+            await this._initList(container);
+        }
+    },
+
+    // --- list mode ------------------------------------------------------
+
+    async _initList(container) {
+        container.innerHTML = `<div style="display:flex; justify-content:center; align-items:center; height:200px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin" style="margin-right:10px;"></i> Loading Searches...</div>`;
+        try {
+            const res = await fetch('/api/searches?limit=100');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            container.innerHTML = this._renderList(data.searches || []);
+        } catch (e) {
+            container.innerHTML = `<div style="padding:30px; color:#f87171;"><i class="fa-solid fa-triangle-exclamation"></i> ${e.message}</div>`;
+        }
+    },
+
+    _renderList(searches) {
+        const rows = searches.map(s => {
+            const url = `/searches/${encodeURIComponent(s.id)}`;
+            const scopeType = (s.scope && s.scope.type) || '?';
+            const counts = s.verdict_counts || { yes: 0, maybe: 0, no: 0 };
+            const matched = counts.yes + counts.maybe;
+            const matchLabel = matched
+                ? `<span style="color:${VERDICT_STYLE.yes.color}; font-weight:700;">${matched}</span>${counts.maybe ? ` <span style="color:${VERDICT_STYLE.maybe.color}; font-size:0.75rem;">(${counts.yes} yes, ${counts.maybe} maybe)</span>` : ''}`
+                : `<span style="color:var(--dim);">0</span>`;
+            return `
+            <tr style="border-bottom: 1px solid var(--border); cursor:pointer;" onmouseover="this.style.background='var(--hover)'" onmouseout="this.style.background='transparent'" onclick="Nav.openPath(${escapeAttr(jsString(url))})">
+                <td style="padding:10px 15px; font-weight:600;">${escapeHtml(s.name || s.query || s.id)}</td>
+                <td style="padding:10px 15px; color:var(--dim);"><code style="font-size:0.78rem;">${escapeHtml(scopeType)}</code></td>
+                <td style="padding:10px 15px;">${searchStatusBadge(s.status)}</td>
+                <td style="padding:10px 15px; text-align:right;">${matchLabel}</td>
+                <td style="padding:10px 15px; text-align:right; color:var(--dim);">${s.total ?? '—'}</td>
+                <td style="padding:10px 15px; color:var(--dim); font-size:0.8rem;">${window.formatDate ? window.formatDate(s.created_at) : s.created_at}</td>
+                <td style="padding:10px 15px; text-align:right;">
+                    <button onclick="event.stopPropagation(); window.searchViewDelete(${escapeAttr(jsString(s.id))}, this)" title="Delete" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:5px 10px; border-radius:6px; cursor:pointer;"><i class="fa-solid fa-trash-can"></i></button>
+                </td>
+            </tr>`;
+        }).join('');
+
+        return `
+        <div style="flex:1; overflow-y:auto; padding:25px 30px; display:flex; flex-direction:column; gap:20px;">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+                <h1 style="margin:0; font-size:1.5rem; color:var(--text); display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-list-check" style="color:var(--accent);"></i> Searches</h1>
+                <button onclick="window.searchViewOpenNewForm(this)" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px;"><i class="fa-solid fa-plus"></i> New Search</button>
+            </div>
+            <div id="search-new-form-container"></div>
+            <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--card-bg);">
+                <table style="width:100%; border-collapse:collapse; text-align:left; font-size:0.85rem;">
+                    <thead>
+                        <tr style="border-bottom:1px solid var(--border); background: var(--hover); color:var(--dim);">
+                            <th style="padding:10px 15px;">Name / Query</th>
+                            <th style="padding:10px 15px;">Scope</th>
+                            <th style="padding:10px 15px;">Status</th>
+                            <th style="padding:10px 15px; text-align:right;" title="functions with verdict yes/maybe">Matched</th>
+                            <th style="padding:10px 15px; text-align:right;" title="functions classified">Processed</th>
+                            <th style="padding:10px 15px;">Created</th>
+                            <th style="padding:10px 15px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows || `<tr><td colspan="7" style="padding:30px; text-align:center; color:var(--dim);">No searches yet.</td></tr>`}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+    },
+
+    // --- detail mode ------------------------------------------------------
+
+    async _initDetail(container, searchId) {
+        container.innerHTML = `<div style="display:flex; justify-content:center; align-items:center; height:200px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin" style="margin-right:10px;"></i> Loading Search...</div>`;
+        this._resultsOffset = 0;
+        this._currentSearchId = searchId;
+        try {
+            const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}`);
+            if (!res.ok) throw new Error(res.status === 404 ? 'Search not found' : `HTTP ${res.status}`);
+            const meta = await res.json();
+            container.innerHTML = this._renderDetailShell(meta);
+            await this._refreshResults(searchId, meta.collection);
+            if (meta.status === 'running' && meta.job_id) {
+                this._pollJob(searchId, meta.job_id, meta.collection, Number(meta.created_at));
+            }
+        } catch (e) {
+            container.innerHTML = `<div style="padding:30px; color:#f87171;"><i class="fa-solid fa-triangle-exclamation"></i> ${e.message}</div>`;
+        }
+    },
+
+    _renderDetailShell(meta) {
+        return `
+        <div style="flex:1; overflow-y:auto; padding:25px 30px; display:flex; flex-direction:column; gap:20px;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:20px; flex-wrap:wrap;">
+                <div>
+                    <h1 style="margin:0 0 6px 0; font-size:1.3rem; color:var(--text);"><i class="fa-solid fa-magnifying-glass" style="color:var(--accent); margin-right:8px;"></i>${escapeHtml(meta.query || meta.name || '')}</h1>
+                    <div style="color:var(--dim); font-size:0.82rem; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+                        <span>Scope: <code>${escapeHtml((meta.scope && meta.scope.type) || '?')}</code></span>
+                        <span>Collection: <code>${escapeHtml(meta.collection || '')}</code></span>
+                        <span id="search-detail-status">${searchStatusBadge(meta.status)}</span>
+                        <span id="search-detail-duration" title="time the classification job took"><i class="fa-regular fa-clock"></i> ${window.formatDuration ? window.formatDuration(Number(meta.created_at), Number(meta.updated_at), meta.status) : ''}</span>
+                    </div>
+                </div>
+                <button onclick="window.searchViewDelete(${escapeAttr(jsString(meta.id))}, this, true)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px;"><i class="fa-solid fa-trash-can"></i> Delete</button>
+            </div>
+
+            <div id="search-progress-container"></div>
+
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                <span style="font-size:0.75rem; color:var(--dim);"><i class="fa-solid fa-arrows-up-down"></i> shift/ctrl-click or drag to select rows, ctrl+A for all, ctrl+C to copy</span>
+                <input id="search-apply-tag-input" type="text" placeholder="tag to apply, e.g. category:persistence:file" style="flex:1; min-width:220px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.8rem;">
+                <button onclick="window.searchViewApplyTag(${escapeAttr(jsString(meta.id))})" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:7px 14px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer;"><i class="fa-solid fa-tag"></i> Apply tag to selected</button>
+                <button onclick="window.searchViewApplySuggestedToSelected(${escapeAttr(jsString(meta.id))})" title="Apply each selected row's own suggested tag" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:7px 14px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer;"><i class="fa-solid fa-wand-sparkles"></i> Apply suggested tags to selected</button>
+                <button onclick="window.searchViewAnalyzeSelected(${escapeAttr(jsString(meta.id))})" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:7px 14px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer;"><i class="fa-solid fa-wand-magic-sparkles"></i> Send selected to deep analysis</button>
+            </div>
+
+            <div id="search-results-container"></div>
+            <div id="search-results-pager"></div>
+        </div>`;
+    },
+
+    _pollJob(searchId, jobId, collection, createdAt) {
+        const poll = async () => {
+            if (this._stopped) return;
+            try {
+                const res = await fetch(`/api/jobs/${jobId}`);
+                const job = await res.json();
+                const statusEl = document.getElementById('search-detail-status');
+                if (statusEl) statusEl.innerHTML = searchStatusBadge(job.status === 'running' ? 'running' : job.status);
+                const durationEl = document.getElementById('search-detail-duration');
+                if (durationEl && window.formatDuration) {
+                    durationEl.innerHTML = `<i class="fa-regular fa-clock"></i> ${window.formatDuration(createdAt, Date.now(), 'running')}`;
+                }
+                const progress = document.getElementById('search-progress-container');
+                if (progress && job.status === 'running') {
+                    progress.innerHTML = `<div style="font-size:0.78rem; color:var(--dim);">${job.progress || 0}% -- ${job.processed_items || 0}/${job.total_items || '?'} classified</div>`;
+                }
+                if (['completed', 'failed', 'cancelled'].includes(job.status)) {
+                    if (progress) progress.innerHTML = '';
+                    await this._refreshResults(searchId, collection);
+                    if (durationEl && window.formatDuration) {
+                        // Final duration comes from the search record's own updated_at
+                        // (set when the job finished), not this last job poll's clock.
+                        const metaRes = await fetch(`/api/searches/${encodeURIComponent(searchId)}`);
+                        const freshMeta = await metaRes.json();
+                        durationEl.innerHTML = `<i class="fa-regular fa-clock"></i> ${window.formatDuration(createdAt, Number(freshMeta.updated_at), freshMeta.status)}`;
+                    }
+                    return;
+                }
+            } catch (e) {
+                // transient -- keep polling
+            }
+            this._pollTimer = setTimeout(poll, 2000);
+        };
+        poll();
+    },
+
+    async _refreshResults(searchId, collection, offset) {
+        const container = document.getElementById('search-results-container');
+        if (!container) return;
+        if (offset !== undefined) this._resultsOffset = offset;
+        try {
+            const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}/results?limit=${RESULTS_PAGE_SIZE}&offset=${this._resultsOffset}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            container.innerHTML = this._renderResults(data.results || [], collection);
+            // TableSelection takes an element id, not an element (constructor is idempotent per table)
+            if (window.TableSelection) new window.TableSelection('search-results-table');
+            const pager = document.getElementById('search-results-pager');
+            if (pager) pager.innerHTML = this._renderPager(searchId, collection, data.total || 0);
+        } catch (e) {
+            container.innerHTML = `<div style="padding:20px; color:#f87171;">${e.message}</div>`;
+        }
+    },
+
+    _renderPager(searchId, collection, total) {
+        if (total <= RESULTS_PAGE_SIZE) return '';
+        const page = Math.floor(this._resultsOffset / RESULTS_PAGE_SIZE) + 1;
+        const pageCount = Math.ceil(total / RESULTS_PAGE_SIZE);
+        const btn = (label, offset, disabled) => `<button ${disabled ? 'disabled' : ''} onclick="window.SearchView._refreshResults(${escapeAttr(jsString(searchId))}, ${escapeAttr(jsString(collection || ''))}, ${offset})" style="background:var(--hover); border:1px solid var(--border); color:var(--text); padding:5px 12px; border-radius:6px; cursor:${disabled ? 'default' : 'pointer'}; opacity:${disabled ? 0.5 : 1};">${label}</button>`;
+        return `
+        <div style="display:flex; align-items:center; justify-content:center; gap:10px; padding:6px 0; font-size:0.8rem; color:var(--dim);">
+            ${btn('Prev', Math.max(0, this._resultsOffset - RESULTS_PAGE_SIZE), page <= 1)}
+            <span>Page ${page} / ${pageCount} (${total} results)</span>
+            ${btn('Next', this._resultsOffset + RESULTS_PAGE_SIZE, page >= pageCount)}
+        </div>`;
+    },
+
+    _renderResults(results, collection) {
+        this._suggestedTags = {};
+        if (!results.length) {
+            return `<div style="color:var(--dim); font-size:0.85rem; padding:30px; text-align:center; background:var(--card-bg); border:1px solid var(--border); border-radius:8px;">No results yet.</div>`;
+        }
+        const rows = results.map(r => {
+            const fColl = r.collection || collection || '';
+            if (r.suggested_tag) this._suggestedTags[r.func_id] = r.suggested_tag;
+            // Rows carry their own function metadata (routes/searches.py enriches them via
+            // fetch_function_data) so EntityRenderer can render the same colored signature,
+            // tag editor and right-click menu the file view's function table uses.
+            const f = {
+                function_id: r.func_id,
+                function_name: r.function_name,
+                namespace: r.namespace,
+                parameters: r.parameters,
+                return_type: r.return_type,
+                entrypoint_address: r.entrypoint_address,
+                file_md5: r.file_md5,
+                collection: fColl,
+                bsim_features_count: r.bsim_features_count,
+                note_owners: r.note_owners,
+                tags: r.tags || [],
+                user_tags: r.user_tags || []
+            };
+            const tagsHtml = window.EntityRenderer ? window.EntityRenderer.renderTag('function', r.func_id, f.tags, f.user_tags) : '';
+            const suggestedHtml = r.suggested_tag
+                ? `<code style="font-size:0.75rem; color:var(--accent);">${escapeHtml(r.suggested_tag)}</code>
+                   <button class="btn-copy" title="Apply this suggested tag" onclick="window.searchViewApplySuggestedTag(${escapeAttr(jsString(r.func_id))}, ${escapeAttr(jsString(r.suggested_tag))})"><i class="fa-solid fa-check"></i></button>`
+                : '';
+            return `
+            <tr data-id="${escapeAttr(r.func_id)}" style="border-bottom: 1px solid var(--border);"
+                data-entity-data='${escapeAttr(JSON.stringify(f))}'
+                oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
+                <td style="padding:8px 15px; min-width:260px; max-width:420px;">${window.EntityRenderer ? window.EntityRenderer.renderFunction(f) : `<code>${escapeHtml(r.func_id)}</code>`}</td>
+                <td style="padding:8px 15px; white-space:nowrap; font-family:monospace; font-size:0.75rem; color:var(--dim);" title="${escapeAttr(r.file_md5 || '')}">${escapeHtml((r.file_md5 || '').slice(0, 12))}${r.file_md5 ? `<button class="btn-copy" title="Copy MD5" onclick="copyToClipboard(${escapeAttr(jsString(r.file_md5))}, this)"><i class="fa-regular fa-copy"></i></button>` : ''}</td>
+                <td style="padding:8px 15px; min-width:140px; max-width:220px; overflow:hidden;">${tagsHtml}</td>
+                <td style="padding:8px 15px; white-space:nowrap;">${verdictBadge(r.verdict)}</td>
+                <td style="padding:8px 15px; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--dim); font-size:0.82rem;" title="${escapeAttr(r.evidence || '')}">${escapeHtml(r.evidence || '')}</td>
+                <td style="padding:8px 15px; white-space:nowrap;">${suggestedHtml}</td>
+            </tr>`;
+        }).join('');
+
+        return `
+        <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow-x:auto; background:var(--card-bg);">
+            <table id="search-results-table" style="width:100%; min-width:1000px; border-collapse:collapse; text-align:left; font-size:0.85rem;">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border); background: var(--hover); color:var(--dim);">
+                        <th style="padding:8px 15px;">Function</th>
+                        <th style="padding:8px 15px;">MD5</th>
+                        <th style="padding:8px 15px;">Tags</th>
+                        <th style="padding:8px 15px;">Verdict</th>
+                        <th style="padding:8px 15px;">Evidence</th>
+                        <th style="padding:8px 15px;">Suggested tag</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>`;
+    }
+};
+
+// --- action handlers scoped to this view --------------------------------
+
+function searchViewSelectedFuncIds() {
+    return window.getSelectedTableIds ? window.getSelectedTableIds('function') : [];
+}
+
+window.searchViewApplyTag = async function(searchId) {
+    const funcIds = searchViewSelectedFuncIds();
+    const tagInput = document.getElementById('search-apply-tag-input');
+    const tag = tagInput ? tagInput.value.trim() : '';
+    if (!funcIds.length) { alert('Select at least one function first.'); return; }
+    if (!tag) { alert('Enter a tag to apply.'); return; }
+    try {
+        const data = await searchViewApplyTagTo(searchId, funcIds, tag);
+        if (typeof showToast === 'function') showToast(`Tagged ${data.applied.length}/${funcIds.length} function(s)`, 'success');
+        else alert(`Tagged ${data.applied.length}/${funcIds.length} function(s)`);
+    } catch (e) {
+        alert(`Failed to apply tag: ${e.message}`);
+    }
+};
+
+async function searchViewApplyTagTo(searchId, funcIds, tag) {
+    const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}/apply_tag`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ func_ids: funcIds, tag })
+    });
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
+    return res.json();
+}
+
+window.searchViewApplySuggestedTag = async function(funcId, tag) {
+    const searchId = window.SearchView._currentSearchId;
+    if (!searchId) return;
+    try {
+        await searchViewApplyTagTo(searchId, [funcId], tag);
+        if (typeof showToast === 'function') showToast(`Applied "${tag}"`, 'success');
+    } catch (e) {
+        alert(`Failed to apply tag: ${e.message}`);
+    }
+};
+
+// Groups the current selection by each row's OWN suggested tag (not the free-text
+// input) and applies each group in one call, since apply_tag already batches by tag.
+window.searchViewApplySuggestedToSelected = async function(searchId) {
+    const funcIds = searchViewSelectedFuncIds();
+    if (!funcIds.length) { alert('Select at least one function first.'); return; }
+    const byTag = {};
+    let skipped = 0;
+    for (const id of funcIds) {
+        const tag = window.SearchView._suggestedTags[id];
+        if (!tag) { skipped++; continue; }
+        (byTag[tag] = byTag[tag] || []).push(id);
+    }
+    if (!Object.keys(byTag).length) { alert('None of the selected rows have a suggested tag.'); return; }
+    try {
+        let applied = 0;
+        for (const [tag, ids] of Object.entries(byTag)) {
+            const data = await searchViewApplyTagTo(searchId, ids, tag);
+            applied += data.applied.length;
+        }
+        const msg = `Applied suggested tags to ${applied}/${funcIds.length} function(s)` + (skipped ? ` (${skipped} had no suggestion)` : '');
+        if (typeof showToast === 'function') showToast(msg, 'success');
+        else alert(msg);
+    } catch (e) {
+        alert(`Failed to apply suggested tags: ${e.message}`);
+    }
+};
+
+window.searchViewAnalyzeSelected = async function(searchId) {
+    const funcIds = searchViewSelectedFuncIds();
+    if (!funcIds.length) { alert('Select at least one function first.'); return; }
+    try {
+        const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}/analyze`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ func_ids: funcIds })
+        });
+        if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
+        const data = await res.json();
+        if (typeof showToast === 'function') showToast(`Deep analysis started -- job ${data.job_id}`, 'success');
+        else alert(`Deep analysis started -- job ${data.job_id}`);
+    } catch (e) {
+        alert(`Failed to start deep analysis: ${e.message}`);
+    }
+};
+
+window.searchViewDelete = async function(searchId, btn, redirectToList) {
+    if (!confirm('Delete this search?')) return;
+    if (btn) { btn.disabled = true; }
+    try {
+        const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}`, { method: 'DELETE' });
+        if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
+        if (redirectToList) {
+            Nav.openPath('/searches');
+        } else if (typeof refreshData === 'function') {
+            refreshData(false, true);
+        }
+    } catch (e) {
+        alert(`Failed to delete search: ${e.message}`);
+        if (btn) { btn.disabled = false; }
+    }
+};
+
+window.searchViewOpenNewForm = function(btn) {
+    const container = document.getElementById('search-new-form-container');
+    if (!container) return;
+    if (container.innerHTML.trim()) { container.innerHTML = ''; return; }
+    // Same "current collection" detection every other view uses (routing state,
+    // falling back to the RESTful/hash path) rather than leaving it blank.
+    // getCollectionFromHash throws (not returns falsy) when nothing resolves --
+    // e.g. /searches itself carries no collection -- so this stays a plain input.
+    let currentCollection = (window.getRoutingState && window.getRoutingState().collection) || '';
+    if (!currentCollection && window.getCollectionFromHash) {
+        try { currentCollection = window.getCollectionFromHash() || ''; } catch (e) { /* no collection in context */ }
+    }
+    container.innerHTML = `
+        <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:18px; display:flex; flex-direction:column; gap:12px;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--dim);">Collection
+                    <select id="search-form-collection" onchange="window.searchViewCollectionChanged()" style="padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px;">
+                        <option value="">-- Loading Collections... --</option>
+                    </select>
+                </label>
+                <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--dim);">Scope
+                    <select id="search-form-scope-type" onchange="window.searchViewScopeChanged(this)" style="padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px;">
+                        <option value="collection">Whole collection</option>
+                        <option value="file">One file</option>
+                        <option value="filter">Filter selection</option>
+                        <option value="pair">Bin_sim pair</option>
+                    </select>
+                </label>
+            </div>
+            <div id="search-form-scope-fields"></div>
+            <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--dim);">What are you looking for?
+                <textarea id="search-form-query" rows="2" placeholder="e.g. the function decrypting a .dat file" style="padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-family:inherit; resize:vertical;"></textarea>
+            </label>
+            <div style="display:flex; gap:10px; justify-content:flex-end;">
+                <button onclick="document.getElementById('search-new-form-container').innerHTML=''" style="background:var(--hover); border:1px solid var(--border); color:var(--text); padding:8px 16px; border-radius:6px; cursor:pointer;">Cancel</button>
+                <button onclick="window.searchViewSubmitNew(this)" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-weight:700; cursor:pointer;"><i class="fa-solid fa-magnifying-glass"></i> Start Search</button>
+            </div>
+        </div>`;
+    window.searchViewScopeChanged(document.getElementById('search-form-scope-type'));
+    window.searchViewLoadCollections(currentCollection);
+};
+
+// Same GET /api/collection/search list diff_view.js's collection picker
+// (initSelectionTool) and upload.js's collection dropdown both fetch from.
+window.searchViewLoadCollections = async function(preselect) {
+    const sel = document.getElementById('search-form-collection');
+    if (!sel) return;
+    try {
+        const res = await (await fetch('/api/collection/search?limit=1000')).json();
+        const collections = res.collections || (Array.isArray(res) ? res : []);
+        sel.innerHTML = '<option value="">-- Choose Collection --</option>' +
+            collections.map(c => `<option value="${escapeAttr(c.name)}">${escapeHtml(c.name)}</option>`).join('');
+        if (preselect && collections.some(c => c.name === preselect)) sel.value = preselect;
+    } catch (e) {
+        sel.innerHTML = '<option value="">-- Failed to load collections --</option>';
+    }
+    window.searchViewCollectionChanged();
+};
+
+// Re-populate whichever file dropdown(s) the current scope type needs, same
+// cascade diff_view.js's onCollChange() uses for its collection -> file selects.
+window.searchViewCollectionChanged = function() {
+    const type = (document.getElementById('search-form-scope-type') || {}).value;
+    if (type === 'file') window.searchViewPopulateFileSelects(['search-form-md5']);
+    else if (type === 'pair') window.searchViewPopulateFileSelects(['search-form-md5a', 'search-form-md5b']);
+};
+
+window.searchViewPopulateFileSelects = async function(ids) {
+    const coll = (document.getElementById('search-form-collection') || {}).value;
+    const targets = ids.map(id => document.getElementById(id)).filter(Boolean);
+    if (!targets.length) return;
+    if (!coll) {
+        targets.forEach(sel => { sel.innerHTML = '<option value="">-- Choose Collection First --</option>'; sel.disabled = true; });
+        return;
+    }
+    targets.forEach(sel => { sel.innerHTML = '<option value="">-- Loading Files... --</option>'; sel.disabled = true; });
+    try {
+        const res = await (await fetch(`/api/file/search?collection=${encodeURIComponent(coll)}&limit=1000`)).json();
+        const options = '<option value="">-- Choose File --</option>' +
+            (res.files || []).map(f => `<option value="${escapeAttr(f.file_md5)}">${escapeHtml(f.file_name || f.file_md5)}</option>`).join('');
+        targets.forEach(sel => { sel.innerHTML = options; sel.disabled = false; });
+    } catch (e) {
+        targets.forEach(sel => { sel.innerHTML = '<option value="">-- Failed to load files --</option>'; });
+    }
+};
+
+window.searchViewScopeChanged = function(select) {
+    const fields = document.getElementById('search-form-scope-fields');
+    if (!fields) return;
+    const type = select.value;
+    const inputStyle = 'padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px;';
+    const labelStyle = 'display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--dim);';
+    if (type === 'file') {
+        fields.innerHTML = `<label style="${labelStyle}">File<select id="search-form-md5" disabled style="${inputStyle}"><option value="">-- Choose Collection First --</option></select></label>`;
+        window.searchViewPopulateFileSelects(['search-form-md5']);
+    } else if (type === 'filter') {
+        fields.innerHTML = FunctionFilters.searchForm('search-filter');
+    } else if (type === 'pair') {
+        fields.innerHTML = `
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                <label style="${labelStyle}">File A<select id="search-form-md5a" disabled style="${inputStyle}"><option value="">-- Choose Collection First --</option></select></label>
+                <label style="${labelStyle}">File B<select id="search-form-md5b" disabled style="${inputStyle}"><option value="">-- Choose Collection First --</option></select></label>
+            </div>
+            <label style="${labelStyle}; margin-top:8px;">Functions<select id="search-form-pair-state" style="${inputStyle}">
+                <option value="all">Matched and unique</option><option value="matched">Matched only</option><option value="unique">Unique only</option>
+            </select></label>`;
+        window.searchViewPopulateFileSelects(['search-form-md5a', 'search-form-md5b']);
+    } else {
+        fields.innerHTML = '';
+    }
+};
+
+window.searchViewSubmitNew = async function(btn) {
+    const collection = (document.getElementById('search-form-collection') || {}).value?.trim();
+    const query = (document.getElementById('search-form-query') || {}).value?.trim();
+    const type = (document.getElementById('search-form-scope-type') || {}).value;
+    if (!collection || !query) { alert('Collection and query are required.'); return; }
+
+    const scope = { type };
+    if (type === 'file') {
+        scope.md5 = (document.getElementById('search-form-md5') || {}).value?.trim();
+        if (!scope.md5) { alert('File MD5 is required.'); return; }
+    } else if (type === 'filter') {
+        scope.filters = FunctionFilters.searchQuery('search-filter');
+        if (!scope.filters) { alert('Choose at least one filter.'); return; }
+    } else if (type === 'pair') {
+        scope.md5_a = (document.getElementById('search-form-md5a') || {}).value?.trim();
+        scope.md5_b = (document.getElementById('search-form-md5b') || {}).value?.trim();
+        scope.state = (document.getElementById('search-form-pair-state') || {}).value || 'all';
+        if (!scope.md5_a || !scope.md5_b) { alert('Both MD5 A and MD5 B are required.'); return; }
+    }
+
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
+    try {
+        const res = await fetch('/api/searches', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ collection, query, scope })
+        });
+        if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
+        const data = await res.json();
+        Nav.openPath(`/searches/${encodeURIComponent(data.search_id)}`);
+    } catch (e) {
+        alert(`Failed to start search: ${e.message}`);
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-magnifying-glass"></i> Start Search'; }
+    }
+};

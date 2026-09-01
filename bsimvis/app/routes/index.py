@@ -51,4 +51,7 @@ def get_config():
             "min_features": config_service.get("similarity.min_features", 0),
             "algo": config_service.get("similarity.algo", "unweighted_cosine"),
         },
+        "analysis_modules": {
+            "enabled": config_service.get("analysis_modules.enabled", []),
+        },
     }

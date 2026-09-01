@@ -44,3 +44,6 @@ api_test_report.json
 
 # wt-test.sh isolated stack data dir
 data-wttest/
+
+# Local state cache for scripts/tag_stash.py
+scripts/.tag_stash.json

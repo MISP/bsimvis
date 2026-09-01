@@ -773,6 +773,71 @@ DISPATCH = {
 }
 
 
+def describe_api_call(name, args):
+    """Best-effort mapping of a tool call to the real HTTP endpoint it
+    corresponds to, so an analyst reading the chat trace can re-run it
+    directly (e.g. via curl) instead of trusting the agent's summary.
+
+    get_function and get_cluster_info don't hit an HTTP route internally
+    (direct Redis / in-process reads) -- the endpoints below are each one
+    piece of what those tools return (decompiled code; cluster meta via a
+    single-cluster list filter), not a byte-for-byte replay, but close
+    enough for an analyst to sanity-check the lookup."""
+    if name == "get_function":
+        return {"method": "GET", "path": "/api/function/code", "query": {"id": args.get("func_id")}}
+    if name == "get_call_graph":
+        return {"method": "GET", "path": "/api/function/call_graph", "query": {"id": args.get("func_id")}}
+    if name == "get_similar_functions":
+        return {
+            "method": "GET",
+            "path": "/api/similarity/search",
+            "query": {
+                "collection": args.get("collection"),
+                "md5": args.get("md5"),
+                "address": args.get("address"),
+                "min_score": args.get("min_score", 0.9),
+                "limit": args.get("limit", 10),
+            },
+        }
+    if name == "search_functions":
+        query = {
+            k: v[0] if len(v) == 1 else v
+            for k, v in parse_qs(args.get("filters_qs", ""), keep_blank_values=True).items()
+        }
+        query["collection"] = args.get("collection")
+        query["limit"] = args.get("limit", 25)
+        query["offset"] = 0
+        return {"method": "GET", "path": "/api/function/search", "query": query}
+    if name == "search_tags":
+        return {
+            "method": "GET",
+            "path": "/api/tags/list",
+            "query": {
+                "collection": args.get("collection"),
+                "q": args.get("q", ""),
+                "sort_by": "total_count",
+                "sort_order": "desc",
+            },
+        }
+    if name == "get_file_info":
+        return {
+            "method": "GET",
+            "path": f"/api/file/details/{args.get('file_md5')}",
+            "query": {"collection": args.get("collection")},
+        }
+    if name == "get_cluster_info":
+        return {
+            "method": "GET",
+            "path": "/api/bin_cluster/list",
+            "query": {
+                "collection": args.get("collection"),
+                "cluster_id": args.get("cluster_id"),
+                "algo": args.get("algo", "unweighted_cosine"),
+            },
+        }
+    return None
+
+
 def call_tool(name, arguments):
     """Runs one tool call and returns a JSON-serialisable result.
 

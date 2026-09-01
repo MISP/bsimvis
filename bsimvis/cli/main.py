@@ -556,6 +556,15 @@ def main():
     batch_options.add_argument(
         "--batch-name", help="Batch name", default="Ghidra Batch"
     )
+    batch_options.add_argument(
+        "--batch-split",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Upload in independent batches of N files (0 = one batch). Each "
+        "part gets its own batch uuid and is finalized before the next starts, "
+        "so results appear after every N files instead of at the end.",
+    )
 
     sim_options = upload_parser.add_argument_group("Similarity Options")
     sim_options.add_argument(

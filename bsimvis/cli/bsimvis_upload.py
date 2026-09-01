@@ -557,105 +557,51 @@ def run_upload(host, port, args):
     return main(args)
 
 
-def main(args):
+def stage_metadata_rows(args):
+    """Stage the CSV metadata map for args.batch_uuid on every host.
 
-    # Check if we need local Ghidra
-    needs_local_ghidra = getattr(args, "local_analysis", False)
-
-    if needs_local_ghidra:
-        ghidra_service.ensure_launcher(
-            verbose=args.verbose_analysis,
-            max_ram_percent=args.max_ram_percent,
-            jvm_args=args.jvm_args,
-        )
-    else:
-        logging.info("[i] Remote analysis selected. Skipping local Ghidra JVM start.")
-
-    logging.info(f"[i] Loading config {args.config}")
-    config = load_config(args.config)
-
-    if len(args.collections) == 0:
-        args.collections = ["main"]
-
-    if not args.batch_uuid:
-        args.batch_uuid = str(uuid.uuid4())
-
-    args.metadata_dict = {}
-    if getattr(args, "metadata", None):
+    Rows are matched by md5, and unpacking happens server-side, so the hashes
+    of archive members, UPX payloads and GPR programs do not exist yet here --
+    the server resolves them itself as each one is ingested. Called once per
+    batch: the staged rows are keyed by batch_uuid, so a split upload has to
+    restage the same map under each part's own uuid.
+    """
+    if not args.metadata_dict or getattr(args, "local_analysis", False):
+        return
+    for api_host in args.hosts:
         try:
-            with open(args.metadata, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f, delimiter="|")
-                reader.fieldnames = [n.strip() for n in reader.fieldnames]
-                for row in reader:
-                    hash_val = row.get("HASH", "").strip()
-                    if not hash_val:
-                        continue
-
-                    def parse_list(val):
-                        if not val or val.strip() == "-":
-                            return []
-                        return [v.strip() for v in val.split(",")]
-
-                    names = parse_list(row.get("names", ""))
-                    extra = {
-                        "first_seen": parse_list(row.get("first_seen", "")),
-                        "last_seen": parse_list(row.get("last_seen", "")),
-                        "filetype": parse_list(row.get("filetype", "")),
-                        "avtype": parse_list(row.get("avtype", "")),
-                        "yara": parse_list(row.get("yara", "")),
-                        "file_names": names,
-                        "cc_ip": parse_list(row.get("CC ip", "")),
-                    }
-                    if names:
-                        extra["file_name"] = names[0]
-                    args.metadata_dict[hash_val] = extra
+            resp = requests.post(
+                f"http://{api_host}/api/file/metadata/stage",
+                json={
+                    "batch_uuid": args.batch_uuid,
+                    "updates": args.metadata_dict,
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
             logging.info(
-                f"[i] Parsed metadata for {len(args.metadata_dict)} hashes from {args.metadata}"
+                f"[i] Staged {len(args.metadata_dict)} metadata rows on {api_host}"
             )
         except Exception as e:
-            logging.error(f"[!] Failed to parse metadata file {args.metadata}: {e}")
+            logging.error(f"[!] Could not stage metadata on {api_host}: {e}")
 
-    # Stage the whole map once per run. Rows are matched by md5, and unpacking
-    # happens server-side, so the hashes of archive members, UPX payloads and
-    # GPR programs do not exist yet here -- the server resolves them itself as
-    # each one is ingested.
-    if args.metadata_dict and not getattr(args, "local_analysis", False):
-        for api_host in args.hosts:
-            try:
-                resp = requests.post(
-                    f"http://{api_host}/api/file/metadata/stage",
-                    json={
-                        "batch_uuid": args.batch_uuid,
-                        "updates": args.metadata_dict,
-                    },
-                    timeout=120,
-                )
-                resp.raise_for_status()
-                logging.info(
-                    f"[i] Staged {len(args.metadata_dict)} metadata rows on {api_host}"
-                )
-            except Exception as e:
-                logging.error(f"[!] Could not stage metadata on {api_host}: {e}")
 
-    logging.info(f"[i] Processing targets using profile: {args.profile}")
-    print(
-        f"[i] Uploading to collections {args.collections} on hosts {args.hosts} with batch uuid {args.batch_uuid}"
-    )
+def upload_and_finalize(targets, args, config, order_offset=0):
+    """Upload one batch of targets, then finalize it. Returns (ok, dup, failed).
 
-    if getattr(args, "limit", 0) > 0:
-        args.targets = args.targets[: args.limit]
-        logging.info(f"[i] Capping upload targets to strictly {args.limit} binaries.")
-
+    `order_offset` keeps the indexed `batch_order` field unique across a split
+    upload, so it still reads as position within the whole run.
+    """
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
         future_to_target = {
             executor.submit(worker, target, args, config, batch_order): target
-            for batch_order, target in enumerate(args.targets)
+            for batch_order, target in enumerate(targets, start=order_offset)
         }
 
         success_count = 0
         duplicate_count = 0
         failed_count = 0
-        total = len(args.targets)
+        total = len(targets)
         pipeline_details = []
 
         # Progress bar setup
@@ -728,10 +674,114 @@ def main(args):
                     logging.error(f"[!] Batch finalize failed for {api_url}: {e}")
                     failed_count += 1
 
-        # Exit code reflects real failures only. It used to be 0 unconditionally,
-        # so a run where every single file failed still looked like a success to
-        # any caller or CI step.
-        return 1 if failed_count else 0
+        return success_count, duplicate_count, failed_count
+
+
+def main(args):
+
+    # Check if we need local Ghidra
+    needs_local_ghidra = getattr(args, "local_analysis", False)
+
+    if needs_local_ghidra:
+        ghidra_service.ensure_launcher(
+            verbose=args.verbose_analysis,
+            max_ram_percent=args.max_ram_percent,
+            jvm_args=args.jvm_args,
+        )
+    else:
+        logging.info("[i] Remote analysis selected. Skipping local Ghidra JVM start.")
+
+    logging.info(f"[i] Loading config {args.config}")
+    config = load_config(args.config)
+
+    if len(args.collections) == 0:
+        args.collections = ["main"]
+
+    if not args.batch_uuid:
+        args.batch_uuid = str(uuid.uuid4())
+
+    args.metadata_dict = {}
+    if getattr(args, "metadata", None):
+        try:
+            with open(args.metadata, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f, delimiter="|")
+                reader.fieldnames = [n.strip() for n in reader.fieldnames]
+                for row in reader:
+                    hash_val = row.get("HASH", "").strip()
+                    if not hash_val:
+                        continue
+
+                    def parse_list(val):
+                        if not val or val.strip() == "-":
+                            return []
+                        return [v.strip() for v in val.split(",")]
+
+                    names = parse_list(row.get("names", ""))
+                    extra = {
+                        "first_seen": parse_list(row.get("first_seen", "")),
+                        "last_seen": parse_list(row.get("last_seen", "")),
+                        "filetype": parse_list(row.get("filetype", "")),
+                        "avtype": parse_list(row.get("avtype", "")),
+                        "yara": parse_list(row.get("yara", "")),
+                        "file_names": names,
+                        "cc_ip": parse_list(row.get("CC ip", "")),
+                    }
+                    if names:
+                        extra["file_name"] = names[0]
+                    args.metadata_dict[hash_val] = extra
+            logging.info(
+                f"[i] Parsed metadata for {len(args.metadata_dict)} hashes from {args.metadata}"
+            )
+        except Exception as e:
+            logging.error(f"[!] Failed to parse metadata file {args.metadata}: {e}")
+
+    logging.info(f"[i] Processing targets using profile: {args.profile}")
+    print(
+        f"[i] Uploading to collections {args.collections} on hosts {args.hosts} with batch uuid {args.batch_uuid}"
+    )
+
+    if getattr(args, "limit", 0) > 0:
+        args.targets = args.targets[: args.limit]
+        logging.info(f"[i] Capping upload targets to strictly {args.limit} binaries.")
+
+    # Split into independent batches, each with its own batch_uuid: that uuid is
+    # what scopes the server's incremental bin-sim/cluster pass, so part 1 is
+    # clustered and browsable while part 2 is still uploading, instead of every
+    # result waiting on the last file of the run.
+    split = getattr(args, "batch_split", 0) or 0
+    chunks = (
+        [args.targets[i : i + split] for i in range(0, len(args.targets), split)]
+        if split > 0
+        else [args.targets]
+    )
+
+    base_uuid, base_name = args.batch_uuid, args.batch_name
+    success_count = duplicate_count = failed_count = 0
+    offset = 0
+    for i, chunk in enumerate(chunks, start=1):
+        if len(chunks) > 1:
+            args.batch_uuid = f"{base_uuid}-{i}"
+            args.batch_name = f"{base_name} ({i}/{len(chunks)})"
+            print(
+                f"[i] Batch {i}/{len(chunks)}: {len(chunk)} files, uuid {args.batch_uuid}"
+            )
+            stage_metadata_rows(args)
+        ok, dup, failed = upload_and_finalize(chunk, args, config, order_offset=offset)
+        success_count += ok
+        duplicate_count += dup
+        failed_count += failed
+        offset += len(chunk)
+
+    if len(chunks) > 1:
+        print(
+            f"[i] Total across {len(chunks)} batches: {success_count} uploaded, "
+            f"{duplicate_count} duplicate, {failed_count} failed"
+        )
+
+    # Exit code reflects real failures only. It used to be 0 unconditionally,
+    # so a run where every single file failed still looked like a success to
+    # any caller or CI step.
+    return 1 if failed_count else 0
 
 
 def load_config(path=DEFAULT_CONFIG_NAME):
@@ -933,6 +983,15 @@ def cli_main():
     batch_options.add_argument("--batch-uuid", help="Batch uuid", default=None)
     batch_options.add_argument(
         "--batch-name", help="Batch name", default=DEFAULT_BATCH_NAME
+    )
+    batch_options.add_argument(
+        "--batch-split",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Upload in independent batches of N files (0 = one batch). Each "
+        "part gets its own batch uuid and is finalized before the next starts, "
+        "so results appear after every N files instead of at the end.",
     )
 
     sim_options = parser.add_argument_group("Similarity Options")

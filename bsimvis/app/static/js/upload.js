@@ -201,6 +201,12 @@ function renderUploadView(params) {
                             </div>
 
                             <div class="form-group" style="margin-bottom: 15px;">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Split Into Batches Of</label>
+                                <input type="number" id="upload-batch-split" min="0" step="1" placeholder="0 = one batch" style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                                <div style="font-size: 0.7rem; color: var(--subtle); margin-top: 6px;">Each part gets its own batch and is finalized as soon as it is uploaded, so similarities and clusters appear after every N files instead of at the end.</div>
+                            </div>
+
+                            <div class="form-group" style="margin-bottom: 15px;">
                                 <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Tags (Global)</label>
                                 <input type="text" id="upload-tags" placeholder="Malware, Linux, MIPS..." style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                             </div>
@@ -557,6 +563,36 @@ function updateFileList() {
     `).join('');
 }
 
+// Seals one batch: the master pipeline (bin sim + clustering) for exactly the
+// files uploaded under `batchUuid`. Called once per part when the upload is
+// split, otherwise once at the end -- same call either way.
+async function finalizeBatch(partResults, batchUuid, collection) {
+    if (!partResults.length) return;
+    try {
+        // An archive upload answers with one pipeline per extracted member.
+        const pipelineIds = partResults.flatMap(r => r.pipeline_ids || [r.pipeline_id]);
+        const finalizeRes = await fetch('/api/file/upload/batch_finalize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                pipeline_ids: pipelineIds,
+                batch_uuid: batchUuid,
+                collection: collection,
+                algo: 'unweighted_cosine' // Default or grab from UI if available
+            })
+        });
+
+        if (finalizeRes.ok) {
+            if (typeof showToast === 'function') showToast(`Successfully queued master pipeline for ${pipelineIds.length} binaries`, 'success');
+        } else {
+            console.error("Failed to finalize batch", await finalizeRes.text());
+            if (typeof showToast === 'function') showToast('Binaries uploaded, but master pipeline orchestration failed.', 'warning');
+        }
+    } catch (e) {
+        console.error(e);
+    }
+}
+
 async function startBatchUpload() {
     if (selectedFiles.length === 0) {
         if (typeof showToast === 'function') showToast('Please select some files first', 'warning');
@@ -572,6 +608,8 @@ async function startBatchUpload() {
         return;
     }
     const batchName = document.getElementById('upload-batch-name').value || 'Manual Upload';
+    const batchSplit = parseInt(document.getElementById('upload-batch-split').value, 10) || 0;
+    const partCount = batchSplit > 0 ? Math.ceil(selectedFiles.length / batchSplit) : 1;
     const profile = document.getElementById('upload-profile').value;
     const minFuncLen = document.getElementById('upload-min-func-len').value;
     const processor = document.getElementById('upload-processor').value.trim();
@@ -594,6 +632,11 @@ async function startBatchUpload() {
     const disabledModules = disabledDefaultModules();
 
     let currentBatchUuid = null;
+    // Results of the part currently being uploaded. `results` stays the whole
+    // run's tally (the success screen counts it), this one is emptied every
+    // time a part is sealed.
+    let partResults = [];
+    let partIndex = 1;
 
     document.getElementById('upload-progress-container').style.display = 'block';
     document.getElementById('start-upload-btn').disabled = true;
@@ -633,7 +676,7 @@ async function startBatchUpload() {
             if (currentBatchUuid) {
                 url.searchParams.set('batch_uuid', currentBatchUuid);
             }
-            url.searchParams.set('batch_name', batchName);
+            url.searchParams.set('batch_name', partCount > 1 ? `${batchName} (${partIndex}/${partCount})` : batchName);
             url.searchParams.set('profile', profile);
             url.searchParams.set('min_func_len', minFuncLen);
             if (processor) url.searchParams.set('processor', processor);
@@ -660,6 +703,7 @@ async function startBatchUpload() {
                 progressEl.classList.remove('progress-running');
                 progressEl.classList.add('progress-completed');
                 results.push(data);
+                partResults.push(data);
             } else {
                 const error = await response.json();
                 statusEl.innerText = 'FAILED';
@@ -680,33 +724,23 @@ async function startBatchUpload() {
         const totalProgress = Math.round((completedCount / selectedFiles.length) * 100);
         document.getElementById('global-progress-fill').style.width = `${totalProgress}%`;
         document.getElementById('global-progress-text').innerText = `${totalProgress}%`;
+
+        // Part boundary: seal what has been uploaded so far and drop the batch
+        // uuid, so the next file starts a fresh batch server-side. Counted on
+        // files attempted, not files that succeeded, so parts line up with the
+        // file list even when one fails.
+        if (batchSplit > 0 && (i + 1) % batchSplit === 0 && i + 1 < selectedFiles.length) {
+            document.getElementById('global-progress-text').innerText = `Finalizing batch ${partIndex}/${partCount}...`;
+            await finalizeBatch(partResults, currentBatchUuid, collection);
+            partResults = [];
+            currentBatchUuid = null;
+            partIndex++;
+        }
     }
 
-    if (results.length > 0) {
-        try {
-            document.getElementById('global-progress-text').innerText = 'Finalizing Batch...';
-            // An archive upload answers with one pipeline per extracted member.
-            const pipelineIds = results.flatMap(r => r.pipeline_ids || [r.pipeline_id]);
-            const finalizeRes = await fetch('/api/file/upload/batch_finalize', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    pipeline_ids: pipelineIds,
-                    batch_uuid: currentBatchUuid,
-                    collection: collection,
-                    algo: 'unweighted_cosine' // Default or grab from UI if available
-                })
-            });
-
-            if (finalizeRes.ok) {
-                if (typeof showToast === 'function') showToast(`Successfully queued master pipeline for ${pipelineIds.length} binaries`, 'success');
-            } else {
-                console.error("Failed to finalize batch", await finalizeRes.text());
-                if (typeof showToast === 'function') showToast('Binaries uploaded, but master pipeline orchestration failed.', 'warning');
-            }
-        } catch (e) {
-            console.error(e);
-        }
+    if (partResults.length > 0) {
+        document.getElementById('global-progress-text').innerText = 'Finalizing Batch...';
+        await finalizeBatch(partResults, currentBatchUuid, collection);
     }
 
     const globalSpinner = document.getElementById('global-upload-spinner');

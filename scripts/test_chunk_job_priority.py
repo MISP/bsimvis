@@ -6,6 +6,7 @@ behaviour: functions get indexed while other files are still being analyzed.
 """
 
 from bsimvis.app.services.job_service import JobService, JobType
+from bsimvis.app.services.similarity_service import SimilarityService
 
 
 class StubRedis:
@@ -31,6 +32,10 @@ class StubRedis:
 
     def hget(self, key, field):
         return self.hashes.get(key, {}).get(field)
+
+    def hdel(self, key, *fields):
+        for field in fields:
+            self.hashes.get(key, {}).pop(field, None)
 
     def lpush(self, key, *vals):
         self.lists.setdefault(key, [])[0:0] = list(vals)
@@ -91,6 +96,9 @@ class StubRedis:
 
     def smembers(self, key):
         return set(self.sets.get(key, set()))
+
+    def scard(self, key):
+        return len(self.sets.get(key, set()))
 
     def eval(self, script, numkeys, *keys):
         # Only the lane's own advance script is ever run through this stub.
@@ -260,6 +268,64 @@ def test_non_lane_job_does_not_advance_active_lane():
     assert js.r.get("lane:main:active") == first
 
 
+def test_similarity_retries_when_feature_generation_changes():
+    from types import MethodType
+
+    r = StubRedis()
+    fid = "main:func:a:1"
+    r.strings["main:features:generation"] = "1"
+    r.sets["main:batch:b:functions"] = {fid}
+    r.sets["main:indexed:functions"] = {fid}
+
+    service = SimilarityService.__new__(SimilarityService)
+    service.r = r
+    service._pl_cache = {}
+    service._pl_pairs = 0
+    service._norm_cache = {}
+    service._count_cache = {}
+    calls = []
+
+    def process(self, collection, chunk, *args, **kwargs):
+        calls.append(list(chunk))
+        r.sadd("main:built:functions:unweighted_cosine", *chunk)
+        if len(calls) == 1:
+            r.strings["main:features:generation"] = "2"
+        return 0
+
+    service._process_chunk = MethodType(process, service)
+
+    assert service.build_batch("main", batch_uuid="b") is True
+    assert calls == [[fid], [fid]]
+    assert fid in r.smembers("main:built:functions:unweighted_cosine")
+
+
+def test_wave_reconciles_each_batch_once_before_clustering():
+    import json as _json
+
+    js = JobService()
+    js.r = StubRedis()
+    members = [
+        js.create_job(
+            JobType.GHIDRA_ANALYZE,
+            {"collection": "main", "file_md5": str(i), "batch_uuid": "batch"},
+        )
+        for i in range(2)
+    ]
+    for member in members:
+        js.open_or_extend_wave("main", member, debounce_seconds=30)
+
+    pipeline_id = js.seal_wave("main")
+    task_ids = _json.loads(js.r.hgetall(f"job:{pipeline_id}")["task_ids"])
+    tasks = [js.r.hgetall(f"job:{tid}") for tid in task_ids]
+    build_positions = [i for i, task in enumerate(tasks) if task["type"] == "build_sim"]
+
+    assert build_positions == [1]
+    payload = _json.loads(tasks[1]["payload"])
+    assert payload["batch_uuid"] == "batch"
+    assert payload["force"] is True
+    assert tasks[2]["type"] == "clear_cluster"
+
+
 def test_wave_seals_into_one_group_not_n_pipelines():
     js = JobService()
     js.r = StubRedis()
@@ -291,5 +357,7 @@ if __name__ == "__main__":
     test_advance_lane_clears_when_nothing_pending()
     test_complete_job_only_advances_lane_for_top_level_jobs()
     test_non_lane_job_does_not_advance_active_lane()
+    test_similarity_retries_when_feature_generation_changes()
+    test_wave_reconciles_each_batch_once_before_clustering()
     test_wave_seals_into_one_group_not_n_pipelines()
     print("ok")

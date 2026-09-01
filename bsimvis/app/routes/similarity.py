@@ -148,7 +148,7 @@ def build_similarity():
             }, 400
         tasks.insert(0, (JobType.SYNC_MILVUS, {"collection": collection}))
 
-    pipeline_id = job_service.create_pipeline(tasks)
+    pipeline_id = job_service.submit_to_lane(collection, tasks)
     return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
 
 
@@ -222,7 +222,7 @@ def rebuild_similarity():
             }, 400
         tasks.insert(1, (JobType.SYNC_MILVUS, {"collection": collection}))
 
-    pipeline_id = job_service.create_pipeline(tasks)
+    pipeline_id = job_service.submit_to_lane(collection, tasks)
     return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
 
 
@@ -240,7 +240,9 @@ def clear_similarity():
     job_id = job_service.create_job(
         JobType.CLEAR_SIM,
         {"collection": collection, "md5": md5, "batch_uuid": batch_uuid, "algo": algo},
+        enqueue=False,
     )
+    job_service.submit_to_lane(collection, job_id)
     return {"job_id": job_id, "status": "enqueued"}
 
 

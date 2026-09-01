@@ -285,12 +285,16 @@ class PoolService:
             )
             current_last_entry = int(zrange_res[0][1]) if zrange_res else 0
 
+            current_generation = int(r.get(f"{coll}:features:generation") or 0)
+
             snap = snapshots.get(coll, {})
             snap_count = snap.get("file_count", -1)
             snap_last_entry = snap.get("last_entry_date", -1)
 
-            coll_outdated = (current_count != snap_count) or (
-                current_last_entry > snap_last_entry
+            coll_outdated = (
+                (current_count != snap_count)
+                or (current_last_entry > snap_last_entry)
+                or current_generation != snap.get("feature_generation", -1)
             )
             if coll_outdated:
                 is_outdated = True
@@ -300,6 +304,7 @@ class PoolService:
                 "current": {
                     "file_count": current_count,
                     "last_entry_date": current_last_entry,
+                    "feature_generation": current_generation,
                 },
                 "snapshot": snap,
             }
@@ -331,6 +336,7 @@ class PoolService:
             snapshot = {
                 "file_count": current_count,
                 "last_entry_date": current_last_entry,
+                "feature_generation": int(r.get(f"{coll}:features:generation") or 0),
             }
             pipe.hset(f"global:pool:{pool_id}:collections", coll, json.dumps(snapshot))
 
@@ -523,8 +529,16 @@ class PoolService:
 
         # Wipe old data
         self.wipe_pool_data(pool_id)
-        # Update snapshots
-        self.update_sync_snapshots(pool_id)
+        r.hset(
+            f"global:pool:{pool_id}:meta",
+            "build_generations",
+            json.dumps(
+                {
+                    coll: int(r.get(f"{coll}:features:generation") or 0)
+                    for coll in collections
+                }
+            ),
+        )
 
         from bsimvis.app.services.index_service import (
             FILE_TAG_FIELDS,
@@ -710,6 +724,21 @@ class PoolService:
             logging.info(f"No collections defined for pool {pool_id}")
             return True
 
+        expected_raw = r.hget(f"global:pool:{pool_id}:meta", "build_generations")
+        expected = json.loads(expected_raw or "{}")
+        current = {
+            coll: int(r.get(f"{coll}:features:generation") or 0) for coll in collections
+        }
+        if current != expected:
+            logging.warning(
+                "Pool %s feature generations changed during build: %s -> %s",
+                pool_id,
+                expected,
+                current,
+            )
+            r.hset(f"global:pool:{pool_id}:meta", "sync_status", "outdated")
+            return False
+
         from bsimvis.app.services.index_config import get_fields_targeting_level
         from bsimvis.app.services.index_service import to_pool_indexed_id
 
@@ -823,6 +852,9 @@ class PoolService:
                 logging.info("zunionstore completed")
 
         r.hdel(f"global:pool:{pool_id}:meta", "total_func_similarities")
+
+        self.update_sync_snapshots(pool_id)
+        r.hdel(f"global:pool:{pool_id}:meta", "build_generations")
 
         return True
 

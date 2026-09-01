@@ -120,6 +120,8 @@ class SimilarityService:
         sleep_time=0,
         index_depth="none",
         skip_write=False,
+        force=False,
+        _generation_retry=True,
     ):
         """
         Builds similarities for all functions in a batch or for a specific file.
@@ -140,6 +142,17 @@ class SimilarityService:
         if min_features is None:
             min_features = config_service.get("similarity.min_features", 0)
         r = self.r
+        generation_key = f"{collection}:features:generation"
+        start_generation = int(r.get(generation_key) or 0)
+        built_set_key = f"{collection}:built:functions:{algo}"
+
+        def unmark_targets(ids):
+            if batch_uuid or md5:
+                for i in range(0, len(ids), 1000):
+                    r.srem(built_set_key, *ids[i : i + 1000])
+            else:
+                r.delete(built_set_key)
+
         function_ids = []
 
         if batch_uuid:
@@ -166,6 +179,9 @@ class SimilarityService:
             # function's candidates (idempotent for already-correct pairs).
             r.delete(f"{collection}:built:functions:{algo}")
             function_ids = list(r.smembers(f"{collection}:indexed:functions"))
+
+        if force and function_ids:
+            unmark_targets(function_ids)
 
         total = len(function_ids)
         if total == 0:
@@ -244,6 +260,34 @@ class SimilarityService:
             # 3. Dashboard Protection: Yield
             if sleep_time > 0 and i + chunk_size < total:
                 time.sleep(sleep_time)
+
+        end_generation = int(r.get(generation_key) or 0)
+        if end_generation != start_generation:
+            unmark_targets(function_ids)
+            logging.warning(
+                "Feature index changed during similarity build for %s (%s -> %s)",
+                collection,
+                start_generation,
+                end_generation,
+            )
+            if _generation_retry:
+                return self.build_batch(
+                    collection,
+                    batch_uuid=batch_uuid,
+                    md5=md5,
+                    algo=algo,
+                    top_k=top_k,
+                    min_score=min_score,
+                    min_features=min_features,
+                    job_service=job_service,
+                    job_id=job_id,
+                    sleep_time=sleep_time,
+                    index_depth=index_depth,
+                    skip_write=skip_write,
+                    force=True,
+                    _generation_retry=False,
+                )
+            return False
 
         # Final update
         if job_service and job_id:

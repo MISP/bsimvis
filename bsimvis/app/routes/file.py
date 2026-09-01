@@ -832,6 +832,19 @@ def finalize_batch_upload():
     if clear_tasks:
         master_tasks.append(job_service.create_group(clear_tasks, enqueue=False))
 
+    if not skip_sim:
+        master_tasks.append(
+            (
+                JobType.BUILD_SIM,
+                {
+                    "collection": collection,
+                    "algo": algo,
+                    "batch_uuid": batch_uuid,
+                    "force": True,
+                },
+            )
+        )
+
     # After the clears, we do clustering:
     master_tasks.append(
         (

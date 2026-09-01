@@ -437,7 +437,33 @@ class JobService:
         from bsimvis.app.routes.cluster import build_rebuild_all_tasks
 
         algo = config_service.get("similarity.algo", "unweighted_cosine")
-        tasks = [group_id] + build_rebuild_all_tasks(collection, algo, skip_sim=False)
+        targets = []
+        seen = set()
+        for member in members:
+            payload = json.loads(self.r.hget(f"job:{member}", "payload") or "{}")
+            if payload.get("skip_sim"):
+                continue
+            target = ("batch_uuid", payload.get("batch_uuid"))
+            if not target[1]:
+                target = ("md5", payload.get("md5") or payload.get("file_md5"))
+            if target[1] and target not in seen:
+                seen.add(target)
+                targets.append(
+                    (
+                        JobType.BUILD_SIM,
+                        {
+                            "collection": collection,
+                            "algo": algo,
+                            target[0]: target[1],
+                            "force": True,
+                        },
+                    )
+                )
+        tasks = (
+            [group_id]
+            + targets
+            + build_rebuild_all_tasks(collection, algo, skip_sim=False)
+        )
         return self.submit_to_lane(collection, tasks)
 
     def tick_lanes(self):

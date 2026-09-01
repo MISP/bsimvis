@@ -160,6 +160,9 @@ class FeatureService:
             self.r.sadd(
                 f"{collection}:features:pending_enrichment", *list(indexed_features)
             )
+            # Similarity posting-list caches are valid only for one completed
+            # reverse-index generation. Increment after every write is committed.
+            self.r.incr(f"{collection}:features:generation")
 
         return True
 
@@ -216,6 +219,7 @@ class FeatureService:
                         r.srem(f"{collection}:indexed:functions", *fids)
                     if cursor == 0:
                         break
+                r.incr(f"{collection}:features:generation")
                 return True
             return False
 
@@ -256,6 +260,8 @@ class FeatureService:
         # Re-index remaining occurrences for affected features
         if affected_features:
             self.index_global_features(collection, list(affected_features))
+
+        r.incr(f"{collection}:features:generation")
 
         return True
 

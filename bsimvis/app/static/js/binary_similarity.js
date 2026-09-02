@@ -3120,6 +3120,14 @@ window.refreshBinSimRow = async function(sid, notes) {
     }
 };
 
+/** What the notes rail should open when nothing else is focused. The hero's
+ * note slot exists only while a comparison is on screen, so it doubles as the
+ * "is this still the view?" test -- binSimPairCtx alone outlives the view. */
+window.defaultNoteEntityId = function() {
+    if (!binSimPairCtx || !document.getElementById('bin-sim-pair-note')) return null;
+    return binSimPairCtx.sid || null;
+};
+
 /** "a.elf vs b.elf" for the pair the comparison view is showing. */
 window.binSimPairNames = function(sid) {
     if (!binSimPairCtx || binSimPairCtx.sid !== sid) return null;

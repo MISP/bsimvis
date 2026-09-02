@@ -35,6 +35,16 @@ const NOTE_MODE_INFO = {
 };
 function noteMode() { return NOTE_MODE_INFO[entityMode] || NOTE_MODE_INFO.func; }
 
+/** A note attaches to an entity. The panel can be opened from its rail handle
+ * with nothing focused, and a null id used to POST straight through as
+ * `func_id: null`, which the API answers with "Missing parameters". */
+function requireNoteTarget(funcId) {
+    if (funcId) return true;
+    const msg = 'Open a function, file, or comparison first -- a note attaches to one of those.';
+    if (window.showToast) window.showToast(msg, 'warning'); else alert(msg);
+    return false;
+}
+
 /** Fires the per-mode "a note changed" hooks after a note write. */
 function notifyNoteChanged(funcId) {
     if (entityMode === 'func') {
@@ -574,9 +584,18 @@ window.addSelectedNodesToActiveGraph = function() {
     else if (window.showToast) window.showToast('No functions selected', 'info');
 };
 
-function openNotesPanel() { 
-    isNotesOpen = true; 
-    updateLayout(); 
+function openNotesPanel() {
+    isNotesOpen = true;
+    // Opened from the rail handle rather than an entity's note button. The view
+    // usually is about something -- a comparison is about its pair -- so adopt
+    // that instead of showing an empty panel whose Add Note button 400s.
+    if (!currentNotesFuncId) {
+        const fallback = (window.defaultNoteEntityId || window.parent?.defaultNoteEntityId)?.();
+        // showNotes sets currentNotesFuncId before it calls back in here, so
+        // this cannot loop.
+        if (fallback) { showNotes(fallback); return; }
+    }
+    updateLayout();
     if (currentNotesFuncId && lastRenderedNotesFuncId !== currentNotesFuncId) {
         refreshNotes(currentNotesFuncId);
     }
@@ -909,6 +928,7 @@ function getActivePool() {
 }
 
 async function saveNote(funcId) {
+    if (!requireNoteTarget(funcId)) return;
     const textEl = document.getElementById('new-note-text');
     const ownerEl = document.getElementById('note-owner-select');
     const text = textEl.value.trim();
@@ -949,6 +969,7 @@ function cancelEditNote(funcId) {
 }
 
 async function submitEditNote(funcId, noteId) {
+    if (!requireNoteTarget(funcId)) return;
     const textEl = document.getElementById(`edit-note-text-${noteId}`);
     const text = textEl.value.trim();
     if (!text) return;
@@ -983,6 +1004,7 @@ async function submitEditNote(funcId, noteId) {
 }
 
 async function deleteNote(funcId, note_id) {
+    if (!requireNoteTarget(funcId)) return;
     if (!confirm('Delete note?')) return;
     const mode = noteMode();
     const endpoint = `${mode.base}/remove`;
@@ -1298,7 +1320,7 @@ async function saveMessageAsNote(funcId, index, btn) {
     // funcId here is the entity the button's onclick was rendered with
     // (currentNotesFuncId at render time) -- the chat thread itself is keyed
     // by collection, so look the message content up via that.
-    if (!funcId) { alert('No function or file is focused to attach this note to.'); return; }
+    if (!requireNoteTarget(funcId)) return;
     const collection = window.getCollectionFromId(funcId);
     const history = chatHistories[collection];
     if (!history || !history[index]) return;
@@ -1323,6 +1345,7 @@ async function saveMessageAsNote(funcId, index, btn) {
 }
 
 async function handleDroppedText(funcId, text) {
+    if (!requireNoteTarget(funcId)) return;
     const mode = noteMode();
     const endpoint = `${mode.base}/add`;
     try {

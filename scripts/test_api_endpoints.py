@@ -3759,6 +3759,32 @@ def test_bin_sim_notes_and_tags():
         str(list_notes_resp)[:200],
     )
 
+    # The comparison view is built from the compact `view=sankey` projection,
+    # not the full doc, and addresses the pair's notes by sid. Drop sid from
+    # that projection and the view has no way to reach the notes it just wrote.
+    sankey = test_endpoint(
+        "GET",
+        "/api/bin_sim/diff",
+        params={
+            "collection": COLLECTION,
+            "md5_a": file_md5,
+            "md5_b": file_md5_2,
+            "view": "sankey",
+        },
+        label="GET /api/bin_sim/diff (view=sankey, pair identity)",
+    )
+    check(
+        "sankey projection carries the pair's sid",
+        (sankey or {}).get("sid") == sid,
+        f"sid={sid}, got={(sankey or {}).get('sid')}",
+    )
+    check(
+        "sankey projection carries the pair's note badge",
+        "user" in ((sankey or {}).get("note_owners") or [])
+        and (sankey or {}).get("note_count", 0) >= 1,
+        f"note_owners={(sankey or {}).get('note_owners')}, note_count={(sankey or {}).get('note_count')}",
+    )
+
     if note_id:
         update_resp = test_endpoint(
             "PUT",

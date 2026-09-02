@@ -669,6 +669,9 @@ def _sankey_summary(diff_data):
                 "unanalyzed_bytes_b",
                 "file_metadata_a",
                 "file_metadata_b",
+                "sid",
+                "note_owners",
+                "note_count",
             )
         }
         out["counts"] = {
@@ -727,6 +730,11 @@ def _sankey_summary(diff_data):
             "joint",
             "split_schema",
             "tags_stale",
+            # Per-pair, not per-function: the comparison view addresses its own
+            # notes by sid, so the compact projection has to carry it.
+            "sid",
+            "note_owners",
+            "note_count",
         )
     }
     out["counts"] = {

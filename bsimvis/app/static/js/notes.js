@@ -82,13 +82,24 @@ function getChatScopeCollection() {
     return null;
 }
 
+/** Which NOTE_MODE_INFO entry an entity id belongs to. Match on the kind marker,
+ * never on segment 1: a pool pair sid is
+ * global:pool:<id>:bin_sim:<algo>:<md5a>::<md5b>, whose segment 1 is "pool" --
+ * reading that segment sent every pool pair's notes down the function path. */
+function entityKindFromId(id) {
+    id = String(id || '');
+    if (id.includes(':bin_sim:')) return 'bin_sim';
+    if (id.includes(':file:')) return 'file';
+    return 'func';
+}
+window.entityKindFromId = entityKindFromId;
+
 async function showNotes(funcId, expand = true) {
     const isNewFunc = funcId !== currentNotesFuncId;
     currentNotesFuncId = funcId;
     // ponytail: the id carries the entity kind, so derive it instead of trusting
     // the sticky flag showFileNotes() sets (stale after navigating file -> function)
-    const kindSegment = String(funcId).split(':')[1];
-    entityMode = kindSegment === 'file' ? 'file' : kindSegment === 'bin_sim' ? 'bin_sim' : 'func';
+    entityMode = entityKindFromId(funcId);
 
     // Ensure panels exist
     createPanelsIfMissing();
@@ -245,7 +256,7 @@ function setupPanelResize(panel, key) {
 function renderNotesPanelHTML(el) {
     el.innerHTML = `
         <div class="panel-v2-header">
-            <h3 style="margin: 0; font-size: 0.9rem; color: var(--note-accent);"><i class="fa-solid fa-comments"></i> Notes</h3>
+            <h3 style="margin: 0; font-size: 0.9rem; color: var(--note-accent);"><i class="fa-solid fa-comments"></i> Notes <span id="notes-scope-label" style="font-weight:400; color:var(--subtle); font-size:0.75rem;"></span></h3>
             <button onclick="closeNotesPanel()" style="background: none; border: none; color: var(--subtle); cursor: pointer; font-size: 1.1rem; padding: 4px; display: flex; align-items: center; transition: color 0.2s;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--subtle)'"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <div id="notes-column" style="flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden;">
@@ -794,9 +805,24 @@ function toggleContentExpand(btn) {
     }
 }
 
+/** What the notes panel is attached to, shown next to its title. A pair sid is
+ * unreadable on its own, so the comparison view supplies "A vs B" for it. */
+function noteScopeLabel(funcId) {
+    const id = String(funcId || '');
+    if (!id) return '';
+    if (entityMode === 'bin_sim') {
+        const names = (window.binSimPairNames || window.parent?.binSimPairNames)?.(id);
+        return names ? `\u00b7 ${names}` : '\u00b7 binary comparison';
+    }
+    if (entityMode === 'file') return `\u00b7 file ${id.split(':file:')[1] || ''}`;
+    return '';
+}
+
 async function refreshNotes(funcId) {
     const listEl = document.getElementById('notes-list');
     if (!listEl) return;
+    const scopeEl = document.getElementById('notes-scope-label');
+    if (scopeEl) scopeEl.textContent = noteScopeLabel(funcId);
     const collection = window.getCollectionFromId(funcId);
     const mode = noteMode();
     const idParam = `${mode.idKey}=${encodeURIComponent(funcId)}`;
@@ -808,6 +834,11 @@ async function refreshNotes(funcId) {
         if (data.status === 'success') {
             lastRenderedNotesFuncId = funcId;
             const notes = data.notes || [];
+            // The comparison view's badge reads a cached diff doc, so hand it the
+            // list we just fetched rather than let it show a stale count.
+            if (entityMode === 'bin_sim') {
+                (window.refreshBinSimRow || window.parent?.refreshBinSimRow)?.(funcId, notes);
+            }
             
             // Update handle badge
             const badge = document.getElementById('notes-handle-badge');
@@ -987,7 +1018,7 @@ async function readStream(response, onChunk) {
 async function generateSummary(funcId) {
     const statusEl = document.getElementById("llm-status");
     if (entityMode === 'bin_sim') {
-        if (statusEl) statusEl.innerText = 'Use "Run Pair Analysis" to generate a binary comparison report.';
+        if (statusEl) statusEl.innerText = 'Use "Analyze comparison" on the comparison view to generate a pair report note.';
         return;
     }
     if (statusEl) statusEl.innerText = "Summarizing...";
@@ -1169,7 +1200,13 @@ function currentFocusContextLine() {
     if (!currentNotesFuncId) {
         return "(No specific function or file is currently focused -- this is a general question about the collection.)";
     }
-    const kind = entityMode === 'file' ? 'file' : entityMode === 'bin_sim' ? 'binary comparison pair' : 'function';
+    if (entityMode === 'bin_sim') {
+        // A raw sid tells the agent nothing; the comparison view knows the two
+        // binaries and their scores, so let it describe its own focus.
+        const ctx = (window.binSimFocusContext || window.parent?.binSimFocusContext)?.(currentNotesFuncId);
+        return `(Analyst is currently viewing the binary comparison ${currentNotesFuncId}.${ctx ? ` ${ctx}` : ''} Assume this question refers to that comparison -- the two binaries and how they differ -- unless stated otherwise.)`;
+    }
+    const kind = entityMode === 'file' ? 'file' : 'function';
     return `(Analyst is currently viewing ${kind} ${currentNotesFuncId}. Assume this question refers to it unless stated otherwise.)`;
 }
 
@@ -1347,6 +1384,13 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // --- Hover Tooltip for Notes ---
+/** A pair sid ends in an md5, so the plain tail would name one binary of two. */
+function previewNoteLabel(id, mode) {
+    if (mode !== 'bin_sim') return id.split(':').pop();
+    const names = (window.binSimPairNames || window.parent?.binSimPairNames)?.(id);
+    return names || 'binary comparison pair';
+}
+
 window.showNoteTooltip = async function(id, modeArg, e) {
     // Back-compat: callers used to pass a boolean (isFile).
     const mode = modeArg === true ? 'file' : modeArg === false ? 'func' : (modeArg || 'func');
@@ -1380,7 +1424,7 @@ window.showNoteTooltip = async function(id, modeArg, e) {
 
     tooltip.innerHTML = `
         <div class="preview-card" style="max-height:450px; display:flex; flex-direction:column;">
-            <div class="preview-header">Notes: ${escapeHtml(id.split(':').pop())}</div>
+            <div class="preview-header">Notes: ${escapeHtml(previewNoteLabel(id, mode))}</div>
             <div class="note-preview-scroll" style="flex:1; overflow-y:auto; padding: 10px;">
                 <div style="text-align: center; color: var(--subtle); font-style: italic; font-size: 0.8rem;">Loading notes...</div>
             </div>

@@ -27,6 +27,10 @@ let binSimSortState = {
 // tree and the composition flow; rows are paged in on demand.
 const BINSIM_LIMIT = 100;
 let binSimCtx = null;        // {collection, md5a, md5b, collB, poolId}
+// The pair being viewed, for anything keyed by the pair itself rather than by
+// its functions (notes, the AI focus line). Set by both the function-diff and
+// container-pair renders, since both are "this comparison".
+let binSimPairCtx = null;    // {sid, collection, collB, md5a, md5b, nameA, nameB, score}
 
 function renderBinarySimilarityView(params) {
     const container = document.getElementById('binary-similarity-container');
@@ -412,6 +416,11 @@ function initResizableCards() {
         Breadcrumbs.setFilename(md5b, data.file_metadata_b?.file_name || 'File');
         Breadcrumbs.refresh();
         
+        binSimPairCtx = {
+            sid: data.sid, collection, collB: collB || collection,
+            md5a, md5b, nameA, nameB, score: data.score, counts: data.counts,
+        };
+
         // Render Summary — prominent, score-colored
         const heroEl = document.getElementById('bin-sim-hero');
         if (heroEl) {
@@ -438,11 +447,19 @@ function initResizableCards() {
                     </div>
                     <div style="display:flex; gap:16px; margin-left:8px; border-left:1px solid var(--border); padding-left:24px;">${small}</div>
                 </div>
-                <button class="top-action-btn" onclick="openPairAnalysisModal()"
-                    style="position:absolute; right:18px; display:flex; align-items:center; gap:7px; color:#ae81ff; border-color:#ae81ff;"
-                    title="Analyze this comparison with evidence-bound automatic function tagging">
-                    <i class="fa-solid fa-wand-magic-sparkles"></i> Analyze comparison</button>
+                <div style="position:absolute; right:18px; display:flex; align-items:center; gap:10px;">
+                    <span id="bin-sim-pair-note"></span>
+                    <button class="top-action-btn" onclick="openPairAnalysisModal()"
+                        style="display:flex; align-items:center; gap:7px; color:#ae81ff; border-color:#ae81ff;"
+                        title="Analyze this comparison with evidence-bound automatic function tagging">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Analyze comparison</button>
+                </div>
             `;
+            // Pair notes -- including the report "Analyze comparison" writes --
+            // hang off the pair's own sid, so the comparison view is where they
+            // belong. Without this the analysis report was only reachable from
+            // the pairs list.
+            renderBinSimPairNote(data.sid, data.note_owners || [], data.note_count || 0);
         }
 
         resultsEl.style.display = 'flex';
@@ -458,7 +475,7 @@ function initResizableCards() {
 
         // Cache: the compact summary only; tables and the function graph load their
         // rows via paging, merging functions_metadata across pages.
-        binSimCtx = { collection, md5a, md5b, collB: collB || collection, poolId };
+        binSimCtx = { collection, md5a, md5b, collB: collB || collection, poolId, sid: data.sid };
         const counts = data.counts || { matched: 0, unique_to_a: 0, unique_to_b: 0 };
         binSimDataCache = {
             score: data.score,
@@ -1832,7 +1849,16 @@ window.trackPairAnalysis = function(jobId, ctx) {
                 if (binSimCtx && binSimCtx.md5a === ctx.md5a && binSimCtx.md5b === ctx.md5b) {
                     fetchAndRenderBinaryDiff(ctx.collection, ctx.md5a, ctx.md5b, ctx.collB, ctx.poolId);
                 }
-                if (job.report) openPairAnalysisReport(job.report);
+                // The orchestrator already saved the report as a pair note, so a
+                // modal was a second, throwaway copy of it -- one you lost by
+                // navigating away. Open the note instead.
+                const sid = (binSimPairCtx && binSimPairCtx.sid) || ctx.sid;
+                if (job.report && sid) {
+                    showToast('Comparison report saved as a pair note', 'success');
+                    if (typeof showBinSimNotePanel === 'function') showBinSimNotePanel(sid);
+                } else if (job.report) {
+                    showToast('Comparison analysis finished', 'success');
+                }
                 setTimeout(() => card.remove(), 30000);
                 return;
             }
@@ -1856,23 +1882,6 @@ window.cancelPairAnalysis = async function(jobId) {
     } catch (error) {
         showToast(`Could not cancel analysis: ${error.message}`, 'error');
     }
-};
-
-window.openPairAnalysisReport = function(report) {
-    document.getElementById('pair-analysis-report')?.remove();
-    const modal = document.createElement('div');
-    modal.id = 'pair-analysis-report';
-    modal.style.cssText = 'position:fixed; inset:0; z-index:30001; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.65); backdrop-filter:blur(4px);';
-    modal.innerHTML = `
-        <div style="width:760px; max-width:92vw; max-height:86vh; overflow:auto; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:22px; color:var(--fg);">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-                <h3 style="margin:0; color:#ae81ff;">Comparison analysis</h3>
-                <button onclick="document.getElementById('pair-analysis-report')?.remove()" style="background:none; border:0; color:var(--subtle); cursor:pointer; font-size:1.3rem;">&times;</button>
-            </div>
-            <pre style="white-space:pre-wrap; word-break:break-word; font:inherit; line-height:1.55; margin:0;">${escapeHtml(report)}</pre>
-        </div>`;
-    modal.onclick = event => { if (event.target === modal) modal.remove(); };
-    document.body.appendChild(modal);
 };
 
 
@@ -2695,6 +2704,13 @@ async function renderContainerPairView(data, collection, md5a, md5b, collB, pool
     const nameA = data.file_metadata_a?.file_name || md5a;
     const nameB = data.file_metadata_b?.file_name || md5b;
     const activeScoreType = (new URLSearchParams(location.search)).get('sort') || 'score';
+    // A container pair has no functions of its own, so nothing here can drive
+    // the function tables -- but it is still a pair, and still takes notes.
+    binSimCtx = null;
+    binSimPairCtx = {
+        sid: data.sid, collection, collB: collB || collection,
+        md5a, md5b, nameA, nameB, score: data.score, counts: null,
+    };
 
     const side = (name, md5, coll, cov, analyzed, unanalyzed, childCount, funcs) => `
         <div style="flex:1; min-width:0;">
@@ -2715,6 +2731,7 @@ async function renderContainerPairView(data, collection, md5a, md5b, collB, pool
                 <span style="color:var(--subtle); text-transform:uppercase; font-size:0.8rem; font-weight:bold; letter-spacing:0.08em;">Container Similarity</span>
                 ${binSimScoreCards(data, activeScoreType)}
                 <span class="dim" style="font-size:0.72rem; max-width:280px;">rolled up from the files inside, weighted by function count</span>
+                <span id="bin-sim-pair-note" style="margin-left:auto;"></span>
             </div>
             <div style="display:flex; gap:20px; margin-bottom:14px;">
                 ${side(nameA, md5a, collection, data.coverage_a, data.analyzed_bytes_a, data.unanalyzed_bytes_a, data.child_count_a, data.functions_count_a)}
@@ -2736,6 +2753,8 @@ async function renderContainerPairView(data, collection, md5a, md5b, collB, pool
                 </div>
             </div>
         </div>`;
+
+    renderBinSimPairNote(data.sid, data.note_owners || [], data.note_count || 0);
 
     let url = `/api/diff?table=all&limit=500&sort_col=similarity&sort_dir=desc&collection_a=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`;
     if (collB) url += `&collection_b=${encodeURIComponent(collB)}`;
@@ -3071,6 +3090,60 @@ window.refreshFunctionRow = async function(funcId) {
     }
 };
 
+
+// ---- Pair-level notes on the comparison view --------------------------
+// The pair's notes (analyst notes and the "Analyze comparison" report) are
+// keyed by the pair's own sid, not by either file.
+
+function renderBinSimPairNote(sid, noteOwners, noteCount) {
+    const el = document.getElementById('bin-sim-pair-note');
+    if (!el) return;
+    if (!sid || typeof EntityRenderer === 'undefined') { el.innerHTML = ''; return; }
+    el.innerHTML = EntityRenderer.renderBinSimNoteButton(sid, noteOwners || [], {
+        raw_data: { note_count: noteCount || (noteOwners || []).length }
+    });
+}
+
+/** Note panels call this after a pair note is added or removed, and after any
+ * load -- the diff response is cached, so its note_owners can lag a write the
+ * cache never saw. `notes` is passed when the caller already has the list. */
+window.refreshBinSimRow = async function(sid, notes) {
+    if (!binSimPairCtx || binSimPairCtx.sid !== sid) return;
+    try {
+        if (!notes) {
+            const res = await fetch(`/api/notes/bin_sim/list?sid=${encodeURIComponent(sid)}`);
+            notes = (await res.json()).notes || [];
+        }
+        renderBinSimPairNote(sid, [...new Set(notes.map(n => n.owner))], notes.length);
+    } catch (e) {
+        console.error('Failed to refresh pair note badge:', e);
+    }
+};
+
+/** "a.elf vs b.elf" for the pair the comparison view is showing. */
+window.binSimPairNames = function(sid) {
+    if (!binSimPairCtx || binSimPairCtx.sid !== sid) return null;
+    return `${binSimPairCtx.nameA} vs ${binSimPairCtx.nameB}`;
+};
+
+/** One line telling the AI agent what comparison is on screen. Its tools are
+ * per-function/per-file, so the pair itself has to arrive as context. */
+window.binSimFocusContext = function(sid) {
+    if (!binSimPairCtx || binSimPairCtx.sid !== sid) return null;
+    const c = binSimPairCtx;
+    const pct = v => `${((v || 0) * 100).toFixed(1)}%`;
+    const parts = [
+        `Side A is ${c.nameA} (md5 ${c.md5a}, collection ${c.collection});`,
+        `side B is ${c.nameB} (md5 ${c.md5b}, collection ${c.collB}).`,
+        `Overall binary similarity ${pct(c.score)}.`,
+    ];
+    const counts = c.counts;
+    if (counts) {
+        parts.push(`${counts.matched || 0} matched functions, ${counts.unique_to_a || 0} unique to A, ${counts.unique_to_b || 0} unique to B.`);
+    }
+    parts.push('Unique or low-similarity functions are triage candidates, not evidence of maliciousness.');
+    return parts.join(' ');
+};
 
 // ---- Slim per-binary strip (user tags + notes only) ----
 function renderBinSimStrip(containerId, m, fileId) {

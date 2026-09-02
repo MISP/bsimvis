@@ -459,7 +459,7 @@ function initResizableCards() {
             // hang off the pair's own sid, so the comparison view is where they
             // belong. Without this the analysis report was only reachable from
             // the pairs list.
-            renderBinSimPairNote(data.sid, data.note_owners || [], data.note_count || 0);
+            loadBinSimPairNote(data);
         }
 
         resultsEl.style.display = 'flex';
@@ -2754,7 +2754,7 @@ async function renderContainerPairView(data, collection, md5a, md5b, collB, pool
             </div>
         </div>`;
 
-    renderBinSimPairNote(data.sid, data.note_owners || [], data.note_count || 0);
+    loadBinSimPairNote(data);
 
     let url = `/api/diff?table=all&limit=500&sort_col=similarity&sort_dir=desc&collection_a=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`;
     if (collB) url += `&collection_b=${encodeURIComponent(collB)}`;
@@ -3102,6 +3102,17 @@ function renderBinSimPairNote(sid, noteOwners, noteCount) {
     el.innerHTML = EntityRenderer.renderBinSimNoteButton(sid, noteOwners || [], {
         raw_data: { note_count: noteCount || (noteOwners || []).length }
     });
+}
+
+/** Paint the badge from the diff payload, then correct it from the note list.
+ * ponytail: the diff response is cached per web process and a note write --
+ * an analysis report especially, written from a worker -- does not invalidate
+ * it, so the payload's note_owners can be a pair-load old. Reconciling costs
+ * one small request per comparison load; drop it the day the cache learns to
+ * expire on a note write across processes. */
+function loadBinSimPairNote(data) {
+    renderBinSimPairNote(data.sid, data.note_owners || [], data.note_count || 0);
+    if (data.sid) window.refreshBinSimRow(data.sid);
 }
 
 /** Note panels call this after a pair note is added or removed, and after any

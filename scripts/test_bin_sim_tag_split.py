@@ -33,6 +33,7 @@ from bsimvis.app.services.bin_sim_tags import (  # noqa: E402
     merge_tag_fields,
     normalize_tags,
     parse_tag_id,
+    score_pair,
     split_axes,
     tag_axis,
     tag_parent,
@@ -699,6 +700,10 @@ class FakeRedis:
             def zrem(self, key, value):
                 self.ops.append(("noop",))
 
+            # resplit reindexes the pair so search sorts off the fresh split.
+            def sadd(self, key, value):
+                self.ops.append(("noop",))
+
             def execute(self):
                 out = []
                 for op in self.ops:
@@ -816,6 +821,99 @@ def test_resplit_can_target_one_exact_pair():
     assert target["tags_rev"] == 9
     assert fake.values[sids[1]] == untouched[sids[1]]
     assert fake.values[sids[2]] == untouched[sids[2]]
+
+
+def _score_pair_fixture():
+    """Two binaries of 3 functions each. a1<->b1 and a2<->b2 match; a3/b3 are
+    leftovers. a2/b2 are libc, everything else is original code."""
+    edges = [
+        ("a1", "b1", 0.9),
+        ("a2", "b2", 0.5),
+        ("a1", "b2", 0.4),  # loser: a1 already assigned by the 0.9 edge
+    ]
+    feats = {"a1": 100.0, "a2": 100.0, "a3": 50.0, "b1": 100.0, "b2": 100.0, "b3": 50.0}
+    lib = {"origin:lib:libc:2.31": 1.0}
+    fid_tags = {"a2": lib, "b2": lib}
+    return (
+        edges,
+        {"a1", "a2", "a3"},
+        {"b1", "b2", "b3"},
+        lambda f: feats[f],
+        fid_tags,
+    )
+
+
+def test_score_pair_matches_greedily_and_weights_by_features():
+    edges, funcs_a, funcs_b, feat, fid_tags = _score_pair_fixture()
+    out = score_pair(edges, funcs_a, funcs_b, feat, fid_tags, {})
+
+    matched = out["diff"]["matched"]
+    assert [(m["func_a"], m["func_b"]) for m in matched] == [("a1", "b1"), ("a2", "b2")]
+    # (0.9*100 + 0.5*100) / (100 + 100 + 50 + 50): leftovers drag the denominator.
+    assert abs(out["score"] - 140.0 / 300.0) < 1e-9, out["score"]
+    assert out["coverage_a"] == 2 / 3 and out["coverage_b"] == 2 / 3
+    assert out["shared_clusters"] == 2
+    assert out["unique_clusters_a"] == 1 and out["unique_clusters_b"] == 1
+    assert [u["func_id"] for u in out["diff"]["unique_to_a"]] == ["a3"]
+    assert [u["func_id"] for u in out["diff"]["unique_to_b"]] == ["b3"]
+
+
+def test_score_pair_splits_code_from_library():
+    edges, funcs_a, funcs_b, feat, fid_tags = _score_pair_fixture()
+    out = score_pair(edges, funcs_a, funcs_b, feat, fid_tags, {})
+
+    # Library: only the a2<->b2 edge, nothing unmatched carries a lib tag.
+    assert abs(out["score_library"] - 0.5) < 1e-9, out["score_library"]
+    # Code: the a1<->b1 edge over its own mass plus both leftovers.
+    assert abs(out["score_code"] - (0.9 * 100) / 200.0) < 1e-9, out["score_code"]
+    # Same formula as the pair score, restricted -- never a re-average.
+    assert out["score_code"] != out["score"]
+
+    # No library mass at all -> absence, not zero, so the card can be skipped.
+    untagged = score_pair(edges, funcs_a, funcs_b, feat, {}, {})
+    assert untagged["score_library"] is None
+    assert abs(untagged["score_code"] - untagged["score"]) < 1e-9
+
+
+def test_score_pair_is_order_independent_and_clamps_weightless_leftovers():
+    edges, funcs_a, funcs_b, feat, fid_tags = _score_pair_fixture()
+    shuffled = list(reversed(edges))
+    assert score_pair(shuffled, funcs_a, funcs_b, feat, fid_tags, {}) == score_pair(
+        edges, funcs_a, funcs_b, feat, fid_tags, {}
+    )
+
+    # A leftover reporting 0 features still counts as one function of mass,
+    # otherwise an unmatched function would be free.
+    out = score_pair(
+        [("a1", "b1", 1.0)],
+        {"a1", "a3"},
+        {"b1"},
+        lambda f: 0.0 if f == "a3" else 10.0,
+    )
+    assert out["diff"]["unique_to_a"][0]["avg_features"] == 1.0
+    assert abs(out["score"] - 10.0 / 11.0) < 1e-9, out["score"]
+
+
+def test_score_pair_carries_every_field_both_builders_store():
+    edges, funcs_a, funcs_b, feat, fid_tags = _score_pair_fixture()
+    out = score_pair(edges, funcs_a, funcs_b, feat, fid_tags, {})
+    # The collection and pool bin_sim docs are `{ids/meta} | score_pair(...)`;
+    # anything dropped here silently disappears from one of the two views.
+    for field in (
+        "score",
+        "score_code",
+        "score_library",
+        "coverage_a",
+        "coverage_b",
+        "shared_clusters",
+        "unique_clusters_a",
+        "unique_clusters_b",
+        "unclustered_a",
+        "unclustered_b",
+        "tags_summary",
+        "diff",
+    ):
+        assert field in out, field
 
 
 if __name__ == "__main__":

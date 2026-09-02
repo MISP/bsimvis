@@ -845,6 +845,109 @@ def code_library_split(
     return score_library, score_code
 
 
+def score_pair(edges, funcs_a, funcs_b, feat, fid_tags=None, tag_meta_cache=None):
+    """Greedy-match one binary pair and return every doc field the collection
+    and pool bin_sim builders share.
+
+    The two builders differ only in where their edges and metadata come from
+    (one collection's function-sim docs vs. a pool's cross-collection stream);
+    the scoring itself -- greedy assignment, feature-weighted cohesion mean,
+    coverage, the tag split and the code/library split -- is one algorithm that
+    lived in two copies and drifted: pools shipped without `score_code` /
+    `score_library` entirely. One copy here, called from both.
+
+    `edges` is an unsorted iterable of `(fid_a, fid_b, similarity)` already
+    oriented a->b. `feat(fid)` returns a function's raw `bsim_features_count`,
+    clamped to 1.0 only for unmatched functions -- what both builders did
+    before, kept so stored scores don't shift under an upgrade.
+    """
+    assigned_a, assigned_b = set(), set()
+    diff_matched = []
+    sum_weighted_cohesion = 0.0
+    sum_weights = 0.0
+    tag_split = AxisSplit(fid_tags, tag_meta_cache)
+
+    # Best matches first so the greedy assignment is stable; function ids break
+    # ties deterministically.
+    for fid_a, fid_b, score in sorted(edges, key=lambda x: (-x[2], x[0], x[1])):
+        if fid_a in assigned_a or fid_b in assigned_b:
+            continue
+        assigned_a.add(fid_a)
+        assigned_b.add(fid_b)
+
+        f_a = feat(fid_a)
+        f_b = feat(fid_b)
+        f_features = max(f_a, f_b)
+
+        # Slim doc: persist only the stable/expensive triple. Cluster tag +
+        # rarity are derived live at read (get_bin_sim -> _enrich_diff_clusters),
+        # so a cluster rebuild can't leave them stale.
+        diff_matched.append(
+            {
+                "similarity": score,
+                "avg_features": f_features,
+                "func_a": fid_a,
+                "func_b": fid_b,
+            }
+        )
+        sum_weighted_cohesion += score * f_features
+        sum_weights += f_features
+        tag_split.add_match(fid_a, fid_b, score, f_a, f_b)
+
+    def leftovers(all_funcs, assigned, side):
+        nonlocal sum_weights
+        rows = []
+        for fid in sorted(all_funcs - assigned):
+            w = feat(fid)
+            if w <= 0:
+                w = 1.0
+            rows.append({"func_id": fid, "avg_features": w})
+            sum_weights += w
+            tag_split.add_unique(fid, w, side)
+        return rows
+
+    unique_to_a = leftovers(funcs_a, assigned_a, "a")
+    unique_to_b = leftovers(funcs_b, assigned_b, "b")
+
+    # Coverage is against each binary's whole mass, so "libc covers 40% of A"
+    # means 40% of everything A contains, matched or not.
+    def total_weight(fids):
+        return sum((feat(f) or 1.0) for f in fids)
+
+    tag_fields = (
+        tag_split.summaries(total_weight(funcs_a), total_weight(funcs_b), tag_meta_cache)
+        if fid_tags
+        else dict(EMPTY_SUMMARIES)
+    )
+
+    # Code/Library is the same weighted-cosine formula as `score`, restricted
+    # per category -- not a re-average of `tags_summary`.
+    score_library, score_code = code_library_split(
+        diff_matched, unique_to_a, unique_to_b, fid_tags
+    )
+
+    return {
+        "score": (sum_weighted_cohesion / sum_weights) if sum_weights > 0 else 0.0,
+        "score_code": score_code,
+        "score_library": score_library,
+        "coverage_a": (len(assigned_a) / len(funcs_a)) if funcs_a else 0.0,
+        "coverage_b": (len(assigned_b) / len(funcs_b)) if funcs_b else 0.0,
+        "shared_clusters": len(diff_matched),
+        "unique_clusters_a": len(unique_to_a),
+        "unique_clusters_b": len(unique_to_b),
+        "unclustered_a": len(unique_to_a),
+        "unclustered_b": len(unique_to_b),
+        **tag_fields,
+        "diff": {
+            "matched": diff_matched,
+            "unique_to_a": unique_to_a,
+            "unique_to_b": unique_to_b,
+            "unclustered_a": [],
+            "unclustered_b": [],
+        },
+    }
+
+
 def tags_rev_key(collection):
     return f"{collection}:tags_rev"
 

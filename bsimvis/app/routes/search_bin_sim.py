@@ -786,6 +786,7 @@ def search_bin_sims():
 
             doc["_id"] = sid
             doc.pop("diff", None)
+            doc.pop("notes", None)
 
             m_a = doc.get("md5_a") or ld["m_a"]
             m_b = doc.get("md5_b") or ld["m_b"]

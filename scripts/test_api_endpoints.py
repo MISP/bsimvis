@@ -3759,6 +3759,26 @@ def test_bin_sim_notes_and_tags():
         str(list_notes_resp)[:200],
     )
 
+    search_after_note = test_endpoint(
+        "GET",
+        "/api/bin_sim/search",
+        params={"collection": COLLECTION},
+        label="GET /api/bin_sim/search (after note)",
+    )
+    matching = [
+        row
+        for row in (search_after_note or {}).get("results", [])
+        if row.get("_id") == sid
+    ]
+    check(
+        "bin_sim search omits note content but carries the note badge",
+        bool(matching)
+        and "notes" not in matching[0]
+        and "user" in (matching[0].get("note_owners") or [])
+        and matching[0].get("note_count", 0) >= 1,
+        str(matching[0] if matching else None)[:200],
+    )
+
     # The comparison view is built from the compact `view=sankey` projection,
     # not the full doc, and addresses the pair's notes by sid. Drop sid from
     # that projection and the view has no way to reach the notes it just wrote.

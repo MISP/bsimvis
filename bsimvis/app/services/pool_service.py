@@ -294,7 +294,11 @@ class PoolService:
             coll_outdated = (
                 (current_count != snap_count)
                 or (current_last_entry > snap_last_entry)
-                or current_generation != snap.get("feature_generation", -1)
+                # A snapshot taken before generations were tracked has no baseline;
+                # don't read its absence as drift.
+                or current_generation != snap.get(
+                    "feature_generation", current_generation
+                )
             )
             if coll_outdated:
                 is_outdated = True
@@ -724,20 +728,25 @@ class PoolService:
             logging.info(f"No collections defined for pool {pool_id}")
             return True
 
+        # No baseline recorded (pool built before generations were tracked, or a
+        # finalize already consumed it) means there is nothing to compare against.
+        # Only an actual mismatch is a mid-build ingest.
         expected_raw = r.hget(f"global:pool:{pool_id}:meta", "build_generations")
-        expected = json.loads(expected_raw or "{}")
-        current = {
-            coll: int(r.get(f"{coll}:features:generation") or 0) for coll in collections
-        }
-        if current != expected:
-            logging.warning(
-                "Pool %s feature generations changed during build: %s -> %s",
-                pool_id,
-                expected,
-                current,
-            )
-            r.hset(f"global:pool:{pool_id}:meta", "sync_status", "outdated")
-            return False
+        if expected_raw:
+            expected = json.loads(expected_raw)
+            current = {
+                coll: int(r.get(f"{coll}:features:generation") or 0)
+                for coll in collections
+            }
+            if current != expected:
+                logging.warning(
+                    "Pool %s feature generations changed during build: %s -> %s",
+                    pool_id,
+                    expected,
+                    current,
+                )
+                r.hset(f"global:pool:{pool_id}:meta", "sync_status", "outdated")
+                return False
 
         from bsimvis.app.services.index_config import get_fields_targeting_level
         from bsimvis.app.services.index_service import to_pool_indexed_id

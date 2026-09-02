@@ -17,6 +17,7 @@ class StubRedis:
         self.lists = {}
         self.strings = {}
         self.sets = {}
+        self.zsets = {}
 
     def hset(self, key, field=None, value=None, mapping=None):
         h = self.hashes.setdefault(key, {})
@@ -99,6 +100,18 @@ class StubRedis:
 
     def scard(self, key):
         return len(self.sets.get(key, set()))
+
+    def zcard(self, key):
+        return len(self.zsets.get(key, {}))
+
+    def zrange(self, key, start, end, withscores=False):
+        return []
+
+    def pipeline(self, transaction=True):
+        return self
+
+    def execute(self):
+        return []
 
     def eval(self, script, numkeys, *keys):
         # Only the lane's own advance script is ever run through this stub.
@@ -348,6 +361,46 @@ def test_wave_seals_into_one_group_not_n_pipelines():
     assert js.r.get("lane:main:wave_deadline") == deadline_before
 
 
+def _pool_stub():
+    """Pool with two member collections, both at feature generation 0."""
+    r = StubRedis()
+    pool_id = "p1"
+    r.hashes[f"global:pool:{pool_id}:meta"] = {"name": "p", "status": "created"}
+    r.sets[f"global:pool:{pool_id}:collections_list"] = {"c1", "c2"}
+    return r, pool_id
+
+
+def test_finalize_runs_when_no_build_generations_baseline():
+    """A pool whose init predates generation tracking must still finalize.
+
+    Regression: `json.loads(expected_raw or "{}")` read a missing baseline as
+    `{}`, which never equals `{coll: 0}`, so finalize failed on every retry.
+    """
+    from bsimvis.app.services.pool_service import pool_service
+
+    r, pool_id = _pool_stub()
+    pool_service.r = r
+
+    assert pool_service.finalize_pool_build(pool_id) is True
+    assert r.hashes[f"global:pool:{pool_id}:meta"]["sync_status"] != "outdated"
+
+
+def test_finalize_rejects_when_generations_changed_mid_build():
+    import json as _json
+
+    from bsimvis.app.services.pool_service import pool_service
+
+    r, pool_id = _pool_stub()
+    r.hashes[f"global:pool:{pool_id}:meta"]["build_generations"] = _json.dumps(
+        {"c1": 0, "c2": 0}
+    )
+    r.strings["c2:features:generation"] = "1"  # reingest landed during the build
+    pool_service.r = r
+
+    assert pool_service.finalize_pool_build(pool_id) is False
+    assert r.hashes[f"global:pool:{pool_id}:meta"]["sync_status"] == "outdated"
+
+
 if __name__ == "__main__":
     test_chunk_jobs_jump_pending_analysis()
     test_lane_dispatches_immediately_when_idle()
@@ -360,4 +413,6 @@ if __name__ == "__main__":
     test_similarity_retries_when_feature_generation_changes()
     test_wave_reconciles_each_batch_once_before_clustering()
     test_wave_seals_into_one_group_not_n_pipelines()
+    test_finalize_runs_when_no_build_generations_baseline()
+    test_finalize_rejects_when_generations_changed_mid_build()
     print("ok")

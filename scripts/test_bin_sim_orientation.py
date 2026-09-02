@@ -2,6 +2,7 @@
 order the caller asked for. Guards the side-flip used by get_bin_sim()."""
 
 from bsimvis.app.routes.bin_sim import _flip_diff_sides
+from bsimvis.app.services.bin_sim_service import BinSimService
 
 
 def test_flip_diff_sides():
@@ -82,7 +83,56 @@ def test_flip_tags_summary():
     assert doc["tags_summary"][0]["bins"]["16"] == [3.0, 40.0, 2.0, 10.0]
 
 
+class _FakeRedis:
+    """Only what find_pair_sid touches: a pipeline of smembers."""
+
+    def __init__(self, data):
+        self.data, self.queued = data, []
+
+    def pipeline(self, transaction=False):
+        return self
+
+    def smembers(self, key):
+        self.queued.append(key)
+        return self.data.get(key, set())
+
+    def execute(self):
+        out = [self.data.get(k, set()) for k in self.queued]
+        self.queued = []
+        return out
+
+
+def test_find_pair_sid_pool_namespaced_collection():
+    """A pooled request arrives with `collection` rewritten to
+    global:pool:{id}:col:{name}; the involves index is keyed by the origin
+    name, so the lookup must map it back or every pooled pair reads as
+    "Similarity not calculated for this pair"."""
+    sid = "global:pool:7:bin_sim:unweighted_cosine:mirai:aa::rondo:bb"
+    svc = BinSimService(
+        _FakeRedis(
+            {
+                "global:pool:7:bin_sim:involves:mirai:aa": {sid},
+                "global:pool:7:bin_sim:involves:rondo:bb": {sid},
+            }
+        )
+    )
+
+    assert svc.find_pair_sid("mirai", "aa", "bb", "rondo", "7") == sid
+    assert (
+        svc.find_pair_sid("global:pool:7:col:mirai", "aa", "bb", "rondo", "7") == sid
+    )
+    # both sides can arrive namespaced, and a wrong collection still misses
+    assert (
+        svc.find_pair_sid(
+            "global:pool:7:col:mirai", "aa", "bb", "global:pool:7:col:rondo", "7"
+        )
+        == sid
+    )
+    assert svc.find_pair_sid("nope", "aa", "bb", "rondo", "7") is None
+
+
 if __name__ == "__main__":
     test_flip_diff_sides()
     test_flip_tags_summary()
+    test_find_pair_sid_pool_namespaced_collection()
     print("ok")

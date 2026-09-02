@@ -140,6 +140,17 @@ def _unindex_bin_sim_pair(
     pipe.srem(f"{collection}:all_bin_sims", sid)
 
 
+def _origin_coll(collection):
+    """Pool bin_sim keys are qualified by the origin collection name.
+
+    A request carrying `pool` reaches the route with `collection` already
+    rewritten to `global:pool:{id}:col:{name}` (app/__init__.py
+    normalize_pool_params), so every pair lookup has to map it back or it
+    builds `...:involves:global:pool:{id}:col:{name}:{md5}` and finds nothing.
+    """
+    return collection.split(":col:")[-1] if collection else collection
+
+
 class BinSimService:
     def __init__(self, r=None):
         self.r = r or get_redis()
@@ -156,10 +167,9 @@ class BinSimService:
         """Resolve one stored pair without hydrating its function rows."""
         coll_b = coll_b or collection
         if pool_id:
+            coll_a, coll_b = _origin_coll(collection), _origin_coll(coll_b)
             pipe = self.r.pipeline(transaction=False)
-            pipe.smembers(
-                f"global:pool:{pool_id}:bin_sim:involves:{collection}:{md5_a}"
-            )
+            pipe.smembers(f"global:pool:{pool_id}:bin_sim:involves:{coll_a}:{md5_a}")
             pipe.smembers(f"global:pool:{pool_id}:bin_sim:involves:{coll_b}:{md5_b}")
             res_a, res_b = pipe.execute()
             a = {x.decode() if isinstance(x, bytes) else x for x in (res_a or set())}
@@ -207,8 +217,9 @@ class BinSimService:
             return sid, None, None
         if pair.get("is_container_pair"):
             return sid, pair, None
-        stored_a = (pair.get("coll_a") or collection, pair.get("md5_a"))
-        table = "unique_to_a" if stored_a == (collection, file_md5) else "unique_to_b"
+        asked = (_origin_coll(collection), file_md5)
+        stored_a = (pair.get("coll_a") or asked[0], pair.get("md5_a"))
+        table = "unique_to_a" if stored_a == asked else "unique_to_b"
         return (
             sid,
             pair,

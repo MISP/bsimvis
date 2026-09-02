@@ -13,6 +13,9 @@ __pycache__
 
 # Data storage
 data/*
+# throwaway stack scripts/wt-test.sh brings up in a worktree
+data-wttest/
+.env.wttest
 !data/bench/
 !data/.gitkeep
 !data/test/

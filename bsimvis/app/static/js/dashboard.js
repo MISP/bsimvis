@@ -2426,6 +2426,11 @@ function triggerTagSearch() {
         binSimFilterChange(true);
         return;
     }
+    // File view's Functions table filters its own rows in place too.
+    if (document.getElementById('tag-container-fv-func') && window.FileView) {
+        FileView.applyFilters();
+        return;
+    }
     const { viewKey } = getRoutingState();
     if (viewKey === 'function-similarity') debouncedSearch(applySimSearch);
     else if (viewKey === 'binary-similarity') debouncedSearch(applyBinSimSearch);

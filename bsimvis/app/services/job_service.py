@@ -407,11 +407,20 @@ class JobService:
         wave_key = self._lane_key(collection, "wave")
         deadline_key = self._lane_key(collection, "wave_deadline")
         self.r.rpush(wave_key, job_id)
-        # Read by the analysis job: a waved file gets its similarities built
-        # once, by the wave's reconcile pass, instead of building them in-line
-        # against a half-ingested collection and having them rebuilt anyway.
-        self.r.hset(f"job:{job_id}", "waved", "1")
+        self.mark_tail_pending(job_id)
         self.r.setnx(deadline_key, int(time.time() * 1000) + debounce_seconds * 1000)
+
+    def mark_tail_pending(self, job_id):
+        """Flags an analysis job whose similarities a later tail will build.
+
+        Read by ghidra_job: building them in-line as well means discovering
+        every function against a collection its siblings are still being
+        written into, which the generation guard then unmarks as stale anyway.
+        True for a waved upload (the wave reconciles it) and for an
+        enqueue=false one, which can only ever run from the group an explicit
+        batch_finalize creates -- and that pipeline builds the batch itself.
+        """
+        self.r.hset(f"job:{job_id}", "tail_pending", "1")
 
     def seal_wave(self, collection, extra_members=None, options=None):
         """Seals the open wave (if any) into a group, wraps it with the

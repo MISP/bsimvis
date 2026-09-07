@@ -403,10 +403,27 @@ def test_waved_analysis_defers_its_own_similarity_build():
     js.r = StubRedis()
 
     job_id = js.create_job(JobType.GHIDRA_ANALYZE, {"collection": "main"})
-    assert js.r.hget(f"job:{job_id}", "waved") is None
+    assert js.r.hget(f"job:{job_id}", "tail_pending") is None
 
     js.open_or_extend_wave("main", job_id, debounce_seconds=30)
-    assert js.r.hget(f"job:{job_id}", "waved") == "1"
+    assert js.r.hget(f"job:{job_id}", "tail_pending") == "1"
+
+
+def test_enqueue_false_upload_also_defers_its_similarity_build():
+    """The upload page uploads with enqueue=false, so it never opens a wave.
+
+    Those jobs run from the group batch_finalize creates and that tail builds
+    the batch, so building in-line as well is the same duplicate by a route the
+    wave flag alone did not cover.
+    """
+    js = JobService()
+    js.r = StubRedis()
+
+    job_id = js.create_job(
+        JobType.GHIDRA_ANALYZE, {"collection": "main"}, enqueue=False
+    )
+    js.mark_tail_pending(job_id)
+    assert js.r.hget(f"job:{job_id}", "tail_pending") == "1"
 
 
 def test_finalize_folds_pipelines_into_one_wave_without_duplicates():
@@ -543,6 +560,7 @@ if __name__ == "__main__":
     test_similarity_retries_when_feature_generation_changes()
     test_wave_reconciles_each_batch_once_before_clustering()
     test_waved_analysis_defers_its_own_similarity_build()
+    test_enqueue_false_upload_also_defers_its_similarity_build()
     test_finalize_folds_pipelines_into_one_wave_without_duplicates()
     test_similarity_skips_functions_already_built()
     test_finalize_after_the_wave_sealed_reuses_that_tail()

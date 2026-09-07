@@ -541,6 +541,12 @@ def _ingest_raw_binary(
             job_id,
             config_service.get("clustering.idle_debounce_seconds", 30),
         )
+    else:
+        # The upload page and the CLI both upload with enqueue=false and then
+        # call batch_finalize, so these jobs run from that finalize's group and
+        # its tail builds their similarities. Without this they built them
+        # in-line as well and the tail's build_sim had nothing left to do.
+        job_service.mark_tail_pending(job_id)
 
     return {
         "status": "processing" if enqueue else "queued",

@@ -305,18 +305,18 @@ class GhidraAnalyzer:
         self.processing_service.rollup_lib_tags(collection, file_md5)
         update_file_status(self.r_data, collection, file_md5, "analyzed")
 
-        # A waved upload has a reconcile pass queued behind the whole wave
-        # (JobService.seal_wave). Building here too meant discovering every
-        # function twice: once against a collection its siblings were still
-        # being written into -- which build_batch's generation guard then
-        # unmarks as stale -- and once for real afterwards.
-        waved = bool(self.job_service.r.hget(f"job:{job_id}", "waved"))
-        if waved and not skip_sim:
+        # A wave reconcile or a batch_finalize tail is already queued to build
+        # this batch (JobService.mark_tail_pending). Building here too meant
+        # discovering every function twice: once against a collection its
+        # siblings were still being written into -- which build_batch's
+        # generation guard then unmarks as stale -- and once for real after.
+        tail_pending = bool(self.job_service.r.hget(f"job:{job_id}", "tail_pending"))
+        if tail_pending and not skip_sim:
             self.job_service.add_log(
-                job_id, "Similarities deferred to this collection's wave reconcile."
+                job_id, "Similarities deferred to this batch's build_sim."
             )
 
-        if not skip_sim and not waved:
+        if not skip_sim and not tail_pending:
             algo = payload.get(
                 "algo", config_service.get("similarity.algo", "unweighted_cosine")
             )

@@ -378,6 +378,7 @@ def _ingest_raw_binary(
         enqueue = enqueue_arg.lower() == "true"
     else:
         enqueue = True
+    debounce = request.args.get("debounce", "false").lower() in ("true", "1")
 
     # Register a pending stub immediately so the file shows up (with a status)
     # in searches/listings right away, instead of only after the whole
@@ -533,14 +534,30 @@ def _ingest_raw_binary(
         analysis_payload["priority"] = "high"
 
     job_id = job_service.create_job(
-        JobType.GHIDRA_ANALYZE, analysis_payload, enqueue=enqueue
+        JobType.GHIDRA_ANALYZE, analysis_payload, enqueue=False
     )
+    pipeline_id = job_id
     if enqueue:
-        job_service.open_or_extend_wave(
-            collection,
-            job_id,
-            config_service.get("clustering.idle_debounce_seconds", 30),
-        )
+        if debounce:
+            job_service.open_or_extend_wave(
+                collection,
+                job_id,
+                config_service.get("clustering.idle_debounce_seconds", 30),
+            )
+            job_service.enqueue_job(job_id)
+        else:
+            job_service.mark_tail_pending(job_id)
+            pipeline_id = job_service.seal_wave(
+                collection,
+                extra_members=[job_id],
+                options={
+                    "algo": analysis_payload.get("algo"),
+                    "batch_uuid": batch_uuid,
+                    "skip_sim": analysis_payload.get("skip_sim", False),
+                    "priority": priority,
+                    "enrich": True,
+                },
+            )
     else:
         # The upload page and the CLI both upload with enqueue=false and then
         # call batch_finalize, so these jobs run from that finalize's group and
@@ -552,7 +569,7 @@ def _ingest_raw_binary(
         "status": "processing" if enqueue else "queued",
         "file_md5": file_md5,
         "file_name": file_name,
-        "pipeline_id": job_id,
+        "pipeline_id": pipeline_id,
         "batch_uuid": batch_uuid,
         "message": "Binary uploaded. Analysis started.",
     }

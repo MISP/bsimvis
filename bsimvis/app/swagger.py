@@ -856,6 +856,8 @@ class RawFileUpload(Resource):
             "min_features": "Minimum feature count required",
             "algo": "Similarity algorithm (jaccard, unweighted_cosine, milvus_sparse)",
             "skip_sim": "Set to true to skip building similarities",
+            "enqueue": "Set to false to require batch_finalize (default: true)",
+            "debounce": "Set to true to batch uploads before building (default: false)",
             "archive_password": "Password for an uploaded zip archive (default: infected)",
             "unpack": "Set to false to analyze the upload exactly as-is (default: true)",
             "parent_md5": "md5 of the container this file was extracted from",

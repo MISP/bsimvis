@@ -331,6 +331,76 @@ def test_running_group_does_not_advance_lane_queued_pipeline():
     assert js.r.hget(f"job:{next_task}", "queued") == "1"
 
 
+def test_sealed_wave_waits_for_lane_before_starting_analysis():
+    js = JobService()
+    js.r = StubRedis()
+
+    js.submit_to_lane("main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})])
+    member = js.create_job(
+        JobType.GHIDRA_ANALYZE, {"collection": "main"}, enqueue=False
+    )
+    queued = js.seal_wave("main", extra_members=[member], options={"skip_sim": True})
+
+    assert js.r.hgetall(f"job:{queued}")["status"] == "pending"
+    assert js.r.hget(f"job:{member}", "queued") is None
+
+    js.advance_lane("main")
+    assert js.r.hgetall(f"job:{queued}")["status"] == "running"
+    assert js.r.hget(f"job:{member}", "queued") == "1"
+
+
+def test_upload_api_scheduling_modes():
+    from unittest.mock import MagicMock, patch
+
+    from flask import Flask
+
+    from bsimvis.app.routes import file as file_route
+
+    app = Flask(__name__)
+
+    def run(query):
+        r = MagicMock()
+        r.sismember.return_value = False
+        r.exists.return_value = False
+        jobs = MagicMock()
+        jobs.create_job.return_value = "analysis"
+        jobs.seal_wave.return_value = "master"
+
+        with (
+            app.test_request_context(f"/{query}", method="POST"),
+            patch.object(file_route, "get_redis", return_value=r),
+            patch.object(file_route, "save_file"),
+            patch.object(file_route, "staged_metadata", return_value=None),
+            patch.object(file_route, "job_service", jobs),
+        ):
+            result = file_route._ingest_raw_binary(
+                b"x", "x.bin", "main", "batch", "Batch"
+            )
+        return result, jobs
+
+    result, jobs = run("")
+    assert result["pipeline_id"] == "master"
+    assert jobs.create_job.call_args.kwargs["enqueue"] is False
+    jobs.mark_tail_pending.assert_called_once_with("analysis")
+    jobs.seal_wave.assert_called_once()
+    jobs.open_or_extend_wave.assert_not_called()
+    jobs.enqueue_job.assert_not_called()
+
+    result, jobs = run("?debounce=true")
+    assert result["pipeline_id"] == "analysis"
+    assert jobs.create_job.call_args.kwargs["enqueue"] is False
+    jobs.open_or_extend_wave.assert_called_once()
+    jobs.enqueue_job.assert_called_once_with("analysis")
+    jobs.seal_wave.assert_not_called()
+
+    result, jobs = run("?enqueue=false")
+    assert result["pipeline_id"] == "analysis"
+    assert jobs.create_job.call_args.kwargs["enqueue"] is False
+    jobs.mark_tail_pending.assert_called_once_with("analysis")
+    jobs.seal_wave.assert_not_called()
+    jobs.enqueue_job.assert_not_called()
+
+
 def test_similarity_retries_when_feature_generation_changes():
     from types import MethodType
 
@@ -582,6 +652,8 @@ if __name__ == "__main__":
     test_complete_job_only_advances_lane_for_top_level_jobs()
     test_non_lane_job_does_not_advance_active_lane()
     test_running_group_does_not_advance_lane_queued_pipeline()
+    test_sealed_wave_waits_for_lane_before_starting_analysis()
+    test_upload_api_scheduling_modes()
     test_similarity_retries_when_feature_generation_changes()
     test_wave_reconciles_each_batch_once_before_clustering()
     test_waved_analysis_defers_its_own_similarity_build()

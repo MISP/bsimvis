@@ -435,13 +435,8 @@ class JobService:
         caller's knobs (algo, skip_sim, min_cohesion, priority).
 
         Members were already enqueued and may have started, or even finished,
-        running before this fires (open_or_extend_wave never delays them) --
-        create_group(..., enqueue=True) is required here, not enqueue=False:
-        for an already-terminal member, start_job's own status recheck
-        retroactively fires advance_parent now that parent_id is set, exactly
-        as if it had just completed. Without enqueue=True a fast file that
-        finishes before the debounce window closes would leave the group's
-        barrier permanently unfired."""
+        running before this fires. New members stay dormant until lane admission;
+        start_job revisits terminal members when the pipeline starts."""
         options = options or {}
         wave_key = self._lane_key(collection, "wave")
         deadline_key = self._lane_key(collection, "wave_deadline")
@@ -454,7 +449,7 @@ class JobService:
         if not members:
             self._maybe_clear_active_lanes(collection)
             return None
-        group_id = self.create_group(members, enqueue=True)
+        group_id = self.create_group(members, enqueue=False)
         # Lazy import: cluster.py imports JobService, so a module-level import
         # here would be circular.
         from bsimvis.app.routes.cluster import build_rebuild_all_tasks

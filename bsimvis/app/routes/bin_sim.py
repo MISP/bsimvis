@@ -26,7 +26,11 @@ from bsimvis.app.services.cluster_utils import (
 )
 from bsimvis.app.services.tag_taxonomy import tag_in_scope
 from bsimvis.app.services import container_sim_service, lineage_service
-from bsimvis.app.services.bin_sim_service import BinSimService, bin_sim_service
+from bsimvis.app.services.bin_sim_service import (
+    BinSimService,
+    bin_sim_service,
+    read_bin_sim_rev,
+)
 from bsimvis.app.routes._list_query import fnum, in_bounds
 import json
 
@@ -589,13 +593,28 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
         md5_a, md5_b = md5_b, md5_a
         coll_a, coll_b = coll_b, coll_a
 
-    key = (sid, req_md5_a, req_coll_a, req_coll_b, algo, pool_id)
+    # The pair-doc generation belongs in the key, not in the validity check
+    # below: `tags_rev` answers "was this split computed before the user's
+    # tagging", which is a different question from "has the doc been rewritten
+    # since". A rebuild moves functions between matched and unique without
+    # touching a tag, and serving the memoized split then contradicts every
+    # other reader of the same pair.
+    rev_scope = f"global:pool:{pool_id}" if pool_id else collection
+    key = (
+        sid,
+        req_md5_a,
+        req_coll_a,
+        req_coll_b,
+        algo,
+        pool_id,
+        read_bin_sim_rev(r, rev_scope),
+    )
     # A resplit runs in the worker, so this process cannot be told to drop its
     # cache entry. Comparing the revision a doc was split at against the
     # collection's current one costs one GET, and answers two questions at once:
     # whether the cached copy is worth keeping, and whether the split the client
     # is about to draw predates the user's tagging.
-    cur_rev = read_tags_rev(r, f"global:pool:{pool_id}" if pool_id else collection)
+    cur_rev = read_tags_rev(r, rev_scope)
     diff_data = _diff_cache_get(key)
     if diff_data is not None and not _split_current(diff_data, cur_rev):
         diff_data = None

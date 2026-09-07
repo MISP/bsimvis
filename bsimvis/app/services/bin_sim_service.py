@@ -58,8 +58,34 @@ def _zadd_score_split(pipe, base, algo, sid, scores):
         pipe.zrem(f"{base}:score_library:{algo}", sid)
 
 
+def bin_sim_rev_key(collection):
+    return f"{collection}:bin_sim_rev"
+
+
+def read_bin_sim_rev(r, collection):
+    """Generation counter of a collection's bin_sim pair docs.
+
+    Bumped by every pair-doc rewrite. /api/diff memoizes the hydrated doc and
+    used to revalidate it against `tags_rev` alone -- which a rebuild never
+    touches -- so after a bin-sim rebuild it kept serving the previous split
+    while every other reader (`call_graph?retain=`, the container rollup, which
+    all go through `load_pair`) already saw the new one.
+    """
+    try:
+        raw = r.get(bin_sim_rev_key(collection))
+    except Exception:
+        return 0
+    try:
+        return int(raw.decode() if isinstance(raw, bytes) else raw)
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+
 def _index_bin_sim_pair(pipe, collection, sid, doc, file_meta_a=None, file_meta_b=None):
     """Write secondary indexes for a bin_sim pair doc."""
+    # Every pair-doc write in the codebase passes through here, so this is the
+    # one place the generation above can be moved from. See read_bin_sim_rev.
+    pipe.incr(bin_sim_rev_key(collection))
 
     def tag_index(field, value):
         if value is None:

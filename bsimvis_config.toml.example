@@ -146,3 +146,13 @@ drop = ["tlp:*", "pap:*"]
 # `filter_truncated`. Cost is linear: ~0.13s scan + ~0.11s union per 60k
 # buckets.
 max_filter_buckets = 200000
+
+[storage]
+# Where an uploaded binary is written to disk for analysis (Ghidra import,
+# capa, upx unpacking). Relative paths resolve against the process CWD, same as
+# this config file. Empty string = system temp (/tmp), which is a small tmpfs
+# on many hosts.
+#
+# Ghidra's own scratch project stays in the system temp on purpose: it rejects
+# any path element starting with ".", so it cannot live under a dot-directory.
+upload_dir = "data/uploads"

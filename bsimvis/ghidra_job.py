@@ -34,7 +34,7 @@ from bsimvis.app.services.redis_client import get_queue_redis, get_redis, get_ra
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.lua_manager import lua_manager
 from bsimvis.app.services.ghidra_service import ghidra_service
-from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.config_service import config_service, upload_dir
 from bsimvis.app.services.metadata_service import staged_metadata
 from bsimvis.app.services.processing_service import ProcessingService
 from bsimvis.app.services.feature_service import FeatureService
@@ -389,7 +389,7 @@ class GhidraAnalyzer:
             if not orig_name:
                 orig_name = "unknown"
 
-            temp_dir = tempfile.mkdtemp(prefix="bsim_worker_")
+            temp_dir = tempfile.mkdtemp(prefix="bsim_worker_", dir=upload_dir())
             temp_path = os.path.join(temp_dir, orig_name)
             with open(temp_path, "wb") as f:
                 f.write(raw_bytes)

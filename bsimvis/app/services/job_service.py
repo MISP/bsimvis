@@ -1,6 +1,7 @@
 import uuid
 import time
 import json
+import logging
 import os
 from enum import Enum
 from redis.exceptions import WatchError
@@ -93,6 +94,13 @@ MEM_DEFAULT_COST = 512 * 1024**2
 # sufficient.
 MAX_ATTEMPTS = 3  # requeue this many times before failing the job for good
 REAPER_LOCK_KEY = "jobs:reaper:lock"
+REAPER_RUN_KEY = "jobs:reaper:last_run"  # unix ts of the last completed sweep
+# Workers sweep every 30s. A gap past this means nobody swept -- the fleet was
+# frozen, or every worker was busy long enough that none reached its idle
+# branch. Both are cases where an expired lease says nothing about the job, so
+# the sweep is skipped once. Cost is one extra TTL before a genuinely dead
+# worker's job is recovered, which is the cheap side of this trade.
+REAPER_PAUSE_GRACE = 120
 PAUSE_KEY = "jobs:paused"
 
 
@@ -979,6 +987,31 @@ class JobService:
 
         now = time.time() if now is None else now
         try:
+            # Pause detection. A lease proves the worker could write to kvrocks,
+            # not that its job died -- so when kvrocks itself stalls (one slow
+            # EVAL holds its global lock and every command queues behind it) the
+            # whole fleet stops heartbeating at once. Judging expiry on wall
+            # clock after such a freeze requeues jobs that never stopped running,
+            # which then analyze the same binary twice and race each other into
+            # the wave. Observed: a 280s silence with a 300s lease, and the job
+            # requeued on its third strike while still decompiling.
+            #
+            # If this sweep itself went missing for far longer than its own
+            # interval, the pause was global: hand every lease a fresh TTL and
+            # judge them next time, on timings taken while the system was awake.
+            last_run = self.r.get(REAPER_RUN_KEY)
+            self.r.set(REAPER_RUN_KEY, str(now))
+            if last_run and now - float(last_run) > REAPER_PAUSE_GRACE:
+                stalled = list(self.r.zrangebyscore(LEASE_KEY, 0, now))
+                for job_id in stalled:
+                    self.r.zadd(LEASE_KEY, {job_id: now + LEASE_TTL}, xx=True)
+                if stalled:
+                    logging.warning(
+                        f"[!] Reaper gap of {now - float(last_run):.0f}s; "
+                        f"renewed {len(stalled)} lease(s) instead of requeuing."
+                    )
+                return (0, 0, 0)
+
             expired = list(self.r.zrangebyscore(LEASE_KEY, 0, now))
 
             # Entries sitting in jobs:processing with no lease at all: either a

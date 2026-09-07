@@ -692,11 +692,16 @@ def test_cluster_tags():
 def test_cluster_response_contract():
     """Guards the response shape the unified search and homepage read.
 
-    The two-binary fixture never forms a cluster, so a cluster *hit* cannot be
-    asserted here. What can be asserted is the contract the fan-out depends on:
-    both cluster listings page under "results", and any row carries
-    `member_count` — not `count`. If either is renamed, this fails instead of
-    the homepage silently rendering an empty panel.
+    Both cluster listings page under "results", and a row spells its size
+    `count` — not `member_count`. The service layer calls it `member_count`
+    (cluster_service.py:847) but both routes rename it on the way out
+    (cluster.py:604, bin_cluster.py:481), and every consumer reads the renamed
+    one: the homepage panel (home.py:136) and the dashboard's renderer and
+    sort key (dashboard.js:318, 3515). If either is renamed, this fails instead
+    of the homepage silently rendering an empty panel.
+
+    This asserted `member_count` until the fixture started forming clusters --
+    with no rows the check never ran, so it never got to be wrong out loud.
     """
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" Cluster response contract", BOLD))
@@ -712,8 +717,8 @@ def test_cluster_response_contract():
         )
         if rows:
             check(
-                f"{path} rows carry member_count",
-                "member_count" in rows[0],
+                f"{path} rows carry count",
+                "count" in rows[0],
                 f"keys={sorted(rows[0])}",
             )
 
@@ -2857,7 +2862,14 @@ SEARCH_SPECS = [
             ("min_tf_score", "tf_score", "min"),
             ("max_tf_score", "tf_score", "max"),
         ],
-        "substr": [("type", "type"), ("op", "op")],
+        # `type` and `op` are a controlled vocabulary (pcode op names, BSim
+        # feature kinds), so they are not in index_config.SUBSTRING_FIELDS and a
+        # wildcard-free filter on them is an exact bucket lookup -- the
+        # documented rule for every field that isn't free text. Sweeping them as
+        # substrings asked for `type=DATA` to match `DATA_...` and got the zero
+        # rows the design promises.
+        "substr": [],
+        "exact": [("type", "type"), ("op", "op")],
     },
     {
         "name": "clusters",
@@ -3063,6 +3075,45 @@ def _sweep_ranges(spec, ns, label):
             )
 
 
+def _sweep_exact(spec, ns, label):
+    """Controlled-vocabulary filters: feed back a whole value, assert it holds.
+
+    The counterpart to _sweep_substr for fields outside
+    index_config.SUBSTRING_FIELDS, where a wildcard-free value is an exact
+    bucket lookup and a prefix legitimately matches nothing.
+    """
+    base = dict(spec.get("base", {}), **ns)
+    baseline = _search_rows(spec["path"], dict(base, limit=100), spec["key"])
+    if not baseline:
+        return
+    for param, row_field in spec.get("exact", []):
+        value = next(
+            (str(row[row_field]) for row in baseline if row.get(row_field)), None
+        )
+        if not value or value == "N/A":
+            vprint(f"     [skip] {label} {spec['name']}: no usable {row_field} value")
+            continue
+        rows = _search_rows(
+            spec["path"], dict(base, limit=100, **{param: value}), spec["key"]
+        )
+        if not check(
+            f"{label}: {spec['name']} {param}={value!r} returns rows",
+            bool(rows),
+            f"{len(rows)} of {len(baseline)}",
+        ):
+            continue
+        off = [
+            str(row.get(row_field))
+            for row in rows
+            if str(row.get(row_field)).lower() != value.lower()
+        ]
+        check(
+            f"{label}: {spec['name']} {param}={value!r} returns only that value",
+            not off,
+            f"{len(rows)} row(s), other values={off[:3]}",
+        )
+
+
 def _sweep_substr(spec, ns, label):
     """Substring filters: take a real value from the data, assert every row carries it."""
     base = dict(spec.get("base", {}), **ns)
@@ -3161,6 +3212,7 @@ def _sweep_namespace(label, ns):
         _sweep_sorts(spec, ns, label)
         _sweep_ranges(spec, ns, label)
         _sweep_substr(spec, ns, label)
+        _sweep_exact(spec, ns, label)
     _sweep_bin_sim_pair_filters(ns, label)
 
 
@@ -5247,47 +5299,18 @@ def test_container_similarity():
         check("container members analysed", False, "pipeline did not complete")
         return
 
-    # Every score below is cluster-derived, so the collection has to be
-    # clustered before any of it means anything. An upload clusters itself once
-    # its debounce wave seals, but that fires on the wave's own schedule -- this
-    # asserted against whatever state it happened to catch, and caught the
-    # pre-clustering one: no clusters means every pair scores 0 and the rollup
-    # has nothing to roll up, which is exactly what the two failures said.
-    # Finalizing seals that wave now and hands back the single job covering
-    # cluster + bin_sim + the container rollup; if the wave already sealed
-    # itself, split_sealed returns that same tail instead of starting a second.
-    finalized = test_endpoint(
-        "POST",
-        "/api/file/upload/batch_finalize",
-        data={
-            "collection": coll,
-            "pipeline_ids": pipelines,
-            "algo": "unweighted_cosine",
-        },
-        label="POST /api/file/upload/batch_finalize (container collection)",
-    )
-    master = (finalized or {}).get("master_pipeline_id")
-    if not check(
-        "container collection sealed into one tail",
-        bool(master),
-        str(finalized)[:200],
-    ):
-        return
-    if not check(
-        "cluster + bin_sim tail completed",
-        wait_for_pipeline(master, banner=" STEP 4b2 – Wait for cluster + bin_sim"),
-        "tail did not complete",
-    ):
-        return
-
-    built = test_endpoint(
-        "POST",
-        "/api/bin_sim/build",
-        data={"collection": coll, "algo": "unweighted_cosine"},
-        label="POST /api/bin_sim/build (container collection)",
-    )
-    if isinstance(built, dict) and built.get("job_id"):
-        wait_for_pipeline(built["job_id"], banner=" STEP 4b2 – Wait for bin_sim build")
+    # Every score below is cluster-derived, and an upload now seals its own
+    # wave (3cba696): the id it hands back is the master pipeline whose tail
+    # clusters, builds bin_sim and rolls the child pairs up the containment
+    # edges. Waiting on those tails above is therefore the whole setup, and it
+    # is lane-serialised, so the second upload's tail sees both apks.
+    #
+    # This used to fire /api/bin_sim/build here as well. That endpoint does not
+    # go through the collection lane, so once uploads started sealing their own
+    # waves it could run while a tail was still writing pair docs -- two
+    # sweeps interleaving, and build_container_sims rolling up from a partial
+    # pair_scores. Under the full suite's load that surfaced as a container
+    # pair listing itself among its own children.
 
     def pair_with(md5, other, params=None):
         body = test_endpoint(

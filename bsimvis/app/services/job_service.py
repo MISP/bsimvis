@@ -699,6 +699,14 @@ class JobService:
             status = status.decode()
 
         if status == JobStatus.CANCELLED.value:
+            # A cancelled step is skipped, not a dead end: cancelling a job by
+            # hand is how you fast-forward a pipeline, so hand the parent the
+            # same "this one is finished" signal a completed step would.
+            parent_id = job.get("parent_id")
+            if parent_id:
+                if isinstance(parent_id, bytes):
+                    parent_id = parent_id.decode()
+                self.advance_parent(parent_id, job_id)
             return
 
         if status in [
@@ -735,6 +743,11 @@ class JobService:
 
     def complete_job(self, job_id):
         """Marks a job as completed and advances its parent if applicable."""
+        # A job cancelled mid-run still reaches here when its handler returns.
+        # It already advanced the parent at cancel time, so stop: otherwise the
+        # next pipeline step is started twice and CANCELLED flips to COMPLETED.
+        if self.r.hget(f"job:{job_id}", "status") == JobStatus.CANCELLED.value:
+            return
         self.r.hset(f"job:{job_id}", "status", JobStatus.COMPLETED.value)
         self.update_progress(job_id, 100)
 
@@ -750,7 +763,11 @@ class JobService:
     def advance_parent(self, parent_id, finished_job_id):
         """Advances the parent job based on its type (pipeline sequence or group barrier)."""
         parent = self.r.hgetall(f"job:{parent_id}")
-        if not parent or parent.get("status") == JobStatus.CANCELLED.value:
+        if not parent or parent.get("status") in [
+            JobStatus.CANCELLED.value,
+            JobStatus.FAILED.value,
+            JobStatus.COMPLETED.value,
+        ]:
             return
 
         ptype = parent.get("type")
@@ -767,7 +784,10 @@ class JobService:
                     prev_status = self.r.hget(f"job:{tids[i]}", "status")
                     if isinstance(prev_status, bytes):
                         prev_status = prev_status.decode()
-                    if prev_status != JobStatus.COMPLETED.value:
+                    if prev_status not in (
+                        JobStatus.COMPLETED.value,
+                        JobStatus.CANCELLED.value,
+                    ):
                         return
                 if current_idx + 1 < len(tids):
                     next_tid = tids[current_idx + 1]
@@ -816,6 +836,8 @@ class JobService:
 
     def fail_job(self, job_id, error_msg):
         """Marks a job as failed and cascades failure to its parent."""
+        if self.r.hget(f"job:{job_id}", "status") == JobStatus.CANCELLED.value:
+            return
         self.r.hset(f"job:{job_id}", "status", JobStatus.FAILED.value)
         self.r.hset(f"job:{job_id}", "error", error_msg)
         self.add_log(job_id, f"Execution error: {error_msg}")
@@ -1403,7 +1425,8 @@ class JobService:
             f"job_log:{job_id}", f"[{int(time.time()*1000)}] Job cancelled by user."
         )
 
-        if not data.get("parent_id"):
+        parent_id = data.get("parent_id")
+        if not parent_id:
             collection = data.get("lane_collection")
             if collection:
                 self.advance_lane(collection)
@@ -1413,6 +1436,13 @@ class JobService:
             tids = json.loads(data["task_ids"])
             for tid in tids:
                 self.cancel_job(tid)
+
+        # Unblock the pipeline/group this job sits in. Without this a cancelled
+        # member leaves the parent waiting on a job that will never report, so
+        # the whole pipeline stalls. advance_parent no-ops when the parent is
+        # itself cancelled/failed, which is the recursive case above.
+        if parent_id:
+            self.advance_parent(parent_id, job_id)
 
         return True
 

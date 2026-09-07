@@ -439,8 +439,14 @@ class JobService:
         algo = config_service.get("similarity.algo", "unweighted_cosine")
         targets = []
         seen = set()
+        batch_uuids = set()
+        payload_pipe = self.r.pipeline(transaction=False)
         for member in members:
-            payload = json.loads(self.r.hget(f"job:{member}", "payload") or "{}")
+            payload_pipe.hget(f"job:{member}", "payload")
+        for raw in payload_pipe.execute():
+            payload = json.loads(raw or "{}")
+            if payload.get("batch_uuid"):
+                batch_uuids.add(payload["batch_uuid"])
             if payload.get("skip_sim"):
                 continue
             target = ("batch_uuid", payload.get("batch_uuid"))
@@ -459,10 +465,15 @@ class JobService:
                         },
                     )
                 )
+        # One batch_uuid across the whole wave means both clustering engines
+        # can update incrementally off it.
+        # ponytail: mixed-batch waves fall back to a full rebuild; add list
+        # support only if those become common enough to matter.
+        data = {"batch_uuid": batch_uuids.pop()} if len(batch_uuids) == 1 else None
         tasks = (
             [group_id]
             + targets
-            + build_rebuild_all_tasks(collection, algo, skip_sim=False)
+            + build_rebuild_all_tasks(collection, algo, skip_sim=False, data=data)
         )
         return self.submit_to_lane(collection, tasks)
 

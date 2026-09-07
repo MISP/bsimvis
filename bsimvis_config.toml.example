@@ -36,9 +36,10 @@
     # cluster_threshold.py) -- exact by construction, and new uploads update
     # only the clusters they touch instead of rebuilding the whole collection.
     # hierarchical_uf: full single-linkage hierarchy via Kruskal + union-find,
-    # same file. Full rebuild only (no incremental yet). cohesion_cut picks
-    # each function's assigned cluster: the shallowest surviving ancestor
-    # whose cohesion clears cohesion_cut, not just its deepest one.
+    # same file. Also incremental: uploads rebuild from the persisted MST plus
+    # only the new batch's edges. cohesion_cut picks each function's assigned
+    # cluster: the shallowest surviving ancestor whose cohesion clears
+    # cohesion_cut, not just its deepest one.
     # hdbscan: legacy path, kept for comparison/rollback.
     engine = "threshold_uf"
     # Same three engines, over binary (file) similarity instead of function

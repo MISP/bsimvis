@@ -821,16 +821,7 @@ def finalize_batch_upload():
 
     group_id = job_service.create_group(pipeline_ids, enqueue=False)
 
-    # 1. Clear old results in parallel before rebuilding.
-    # Function clustering (CLUSTER_FUNCTIONS below) is NOT cleared here: under
-    # the default threshold_uf engine it updates incrementally in place, keyed
-    # off this batch_uuid, instead of wiping and rebuilding every cluster in
-    # the collection on every single upload.
-    clear_tasks = []
-
     master_tasks = [group_id]
-    if clear_tasks:
-        master_tasks.append(job_service.create_group(clear_tasks, enqueue=False))
 
     if not skip_sim:
         master_tasks.append(
@@ -862,12 +853,11 @@ def finalize_batch_upload():
         }
         if min_cohesion is not None:
             build_payload["min_cohesion"] = min_cohesion
-        master_tasks.append(
-            (
-                JobType.BUILD_BIN_SIM.value,
-                build_payload,
-            )
-        )
+        master_tasks.append((JobType.BUILD_BIN_SIM.value, build_payload))
+
+        # No batch_uuid: CLUSTER_BINARIES stays a full rebuild. Binary
+        # incremental union-find is present but not wired up -- see
+        # build_rebuild_all_tasks() for why.
         cluster_payload = {
             "collection": collection,
             "algo": algo,

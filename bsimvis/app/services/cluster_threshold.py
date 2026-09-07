@@ -188,9 +188,23 @@ def build_single_linkage_tree(edge_set):
     root at lambda_val=0.0 (the coarsest possible level, matching
     hierarchical_membership's assumption that the root's birth is 0).
 
-    Returns (tree_rows, global_root_id, num_nodes). tree_rows is a list of
-    dicts with columns parent/child/lambda_val/child_size, ready for
-    pandas.DataFrame() the same way run_clustering already builds one.
+    Returns (tree_rows, global_root_id, num_nodes, mst). tree_rows is a list
+    of dicts with columns parent/child/lambda_val/child_size, ready for
+    pandas.DataFrame() the same way run_clustering already builds one. mst is
+    a list of (u, v, sim) -- the raw leaf-index endpoints and similarity of
+    every edge that actually caused a merge, in merge order -- which is
+    exactly the MST Kruskal built along the way.
+
+    The MST is a sufficient summary of the whole edge set for rebuilding this
+    same tree: every edge NOT in the MST was skipped because its endpoints
+    were already connected by earlier (>= similarity) edges, so adding more
+    edges elsewhere can never retroactively make a skipped edge relevant.
+    Concretely: MST(G) union E_new, run back through this same function,
+    yields the identical tree to G union E_new from scratch -- see
+    demo_mst_is_a_sufficient_summary() below. That's what makes incremental
+    hierarchical clustering (cluster_service.py's _incremental_cluster_
+    hierarchical) cheap: persist the ~n-edge MST instead of the ~E-edge full
+    graph, and only ever stream the new batch's edges, never re-scan the ZSET.
     """
     num_nodes = len(edge_set.idx_to_id)
 
@@ -204,14 +218,18 @@ def build_single_linkage_tree(edge_set):
             x = parent[x]
         return x
 
-    order = np.argsort(edge_set.dist, kind="stable")  # ascending distance = descending sim
+    order = np.argsort(
+        edge_set.dist, kind="stable"
+    )  # ascending distance = descending sim
     rows = []
+    mst = []
     for k in order:
         u, v = int(edge_set.src[k]), int(edge_set.dst[k])
         ru, rv = find(u), find(v)
         if ru == rv:
             continue
         sim = 1.0 - float(edge_set.dist[k])
+        mst.append((u, v, sim))
         new_id = next_id
         next_id += 1
         parent.append(new_id)
@@ -237,7 +255,7 @@ def build_single_linkage_tree(edge_set):
             }
         )
 
-    return rows, global_root_id, num_nodes
+    return rows, global_root_id, num_nodes, mst
 
 
 def incremental_add(uf: ThresholdUF, new_edges, threshold: float) -> set:
@@ -361,22 +379,32 @@ def demo_svd_sheds_exact_pair():
     src, dst, sim = np.array(src), np.array(dst), np.array(sim)
     dist = 1.0 - sim
     edge_set = EdgeSet(
-        src, dst, dist.astype(np.float32),
-        {i: i for i in range(size)}, {i: i for i in range(size)}, len(src),
+        src,
+        dst,
+        dist.astype(np.float32),
+        {i: i for i in range(size)},
+        {i: i for i in range(size)},
+        len(src),
     )
 
     # --- production path, inlined from cluster_service.py's size>=5000 branch ---
     rows_sp = np.concatenate([src, dst])
     cols_sp = np.concatenate([dst, src])
     data_sp = np.concatenate([sim, sim])
-    comp_matrix = sp.csr_matrix((data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32)
+    comp_matrix = sp.csr_matrix(
+        (data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32
+    )
     comp_matrix.setdiag(1.0)
     k = min(50, size - 1)
     U, S, _ = svds(comp_matrix, k=k)
     embeddings = U @ np.diag(np.sqrt(S))
     clusterer = hdbscan_lib.HDBSCAN(
-        min_cluster_size=2, min_samples=1, cluster_selection_epsilon=0.1,
-        cluster_selection_method="eom", metric="euclidean", gen_min_span_tree=True,
+        min_cluster_size=2,
+        min_samples=1,
+        cluster_selection_epsilon=0.1,
+        cluster_selection_method="eom",
+        metric="euclidean",
+        gen_min_span_tree=True,
     )
     labels = clusterer.fit_predict(embeddings)
     hdbscan_same_cluster = labels[u] != -1 and labels[u] == labels[v]
@@ -412,9 +440,14 @@ def demo_incremental_touches_only_new_edges():
     dst = list(range(1, n, 2))
     dist = [0.0] * len(src)
     import numpy as np
+
     edge_set = EdgeSet(
-        np.array(src), np.array(dst), np.array(dist, dtype=np.float32),
-        {i: i for i in range(n)}, {i: i for i in range(n)}, len(src),
+        np.array(src),
+        np.array(dst),
+        np.array(dist, dtype=np.float32),
+        {i: i for i in range(n)},
+        {i: i for i in range(n)},
+        len(src),
     )
 
     uf = build_threshold_clusters(edge_set, threshold=0.999)
@@ -462,7 +495,7 @@ def demo_single_linkage_tree():
 
     def run(sim, min_size=2):
         edges = edges_from_matrix(sim)
-        rows, global_root_id, n = build_single_linkage_tree(edges)
+        rows, global_root_id, n, _mst = build_single_linkage_tree(edges)
         tree_df = pd.DataFrame(rows)
         leaf_to_clusters, leaf_home = hierarchical_membership(
             tree_df, n, global_root_id, min_size=min_size
@@ -523,12 +556,88 @@ def demo_single_linkage_tree():
     # And the tight node's birth lambda must reflect ITS OWN edge (.99), not
     # get diluted to the coarse group's (.90) -- proof it's a real nested
     # node, not just a relabeling.
-    de_birth = tree_df[
-        (tree_df["child"].isin([3, 4])) & (tree_df["child_size"] == 1)
-    ]["lambda_val"]
-    assert (de_birth.round(2) == 0.99).all(), f"D,E should fall at .99: {de_birth.tolist()}"
+    de_birth = tree_df[(tree_df["child"].isin([3, 4])) & (tree_df["child_size"] == 1)][
+        "lambda_val"
+    ]
+    assert (
+        de_birth.round(2) == 0.99
+    ).all(), f"D,E should fall at .99: {de_birth.tolist()}"
 
     print("single-linkage tree demo OK (including nested-subgroup recovery)")
+
+
+def demo_mst_is_a_sufficient_summary():
+    """The premise incremental hierarchical_uf relies on: MST(G1) union G2,
+    rebuilt through build_single_linkage_tree() unchanged, must accept the
+    exact same edges in the exact same order as G1 union G2 from scratch --
+    i.e. the MST alone is a sufficient summary of a graph for this tree, no
+    edge outside it is ever relevant again.
+
+    Distinct edge weights throughout (no ties): with ties, stable-sort
+    tie-break depends on an edge's position in ITS OWN input array, which
+    differs between "full graph" and "MST-only" input, so tied edges can
+    legitimately accept in either order -- a real property of this corpus
+    (see cluster_service.py's incremental hierarchical_uf), just not one this
+    demo is trying to characterize.
+    """
+    from bsimvis.app.services.sim_edges import EdgeSet
+
+    rng = np.random.default_rng(0)
+    n = 60
+    all_pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
+    rng.shuffle(all_pairs)
+    pairs = all_pairs[: n * 4]  # sparse-ish, still well-connected
+    weights = rng.permutation(len(pairs)).astype(np.float64) / (len(pairs) * 2.0)
+
+    def make_edge_set(idxs, src=None, dst=None, dist=None):
+        if idxs is not None:
+            src = [pairs[i][0] for i in idxs]
+            dst = [pairs[i][1] for i in idxs]
+            dist = [weights[i] for i in idxs]
+        idx = {i: i for i in range(n)}
+        return EdgeSet(
+            np.array(src, dtype=np.int64),
+            np.array(dst, dtype=np.int64),
+            np.array(dist, dtype=np.float32),
+            idx,
+            idx,
+            len(src),
+        )
+
+    all_idx = list(range(len(pairs)))
+    rng.shuffle(all_idx)
+    split = len(all_idx) // 3
+    g1_idx, g2_idx = all_idx[:split], all_idx[split:]
+
+    _, _, _, mst_full = build_single_linkage_tree(make_edge_set(all_idx))
+    _, _, _, mst_g1 = build_single_linkage_tree(make_edge_set(g1_idx))
+
+    g2 = make_edge_set(g2_idx)
+    combined = make_edge_set(
+        None,
+        src=[u for u, v, s in mst_g1] + list(g2.src),
+        dst=[v for u, v, s in mst_g1] + list(g2.dst),
+        dist=[1.0 - s for u, v, s in mst_g1] + list(g2.dist),
+    )
+    _, _, _, mst_inc = build_single_linkage_tree(combined)
+
+    edges_full = [(u, v) for u, v, _ in mst_full]
+    edges_inc = [(u, v) for u, v, _ in mst_inc]
+    assert edges_inc == edges_full, (
+        "MST(G1) U G2 accepted a different -- or differently ordered -- set "
+        f"of edges than G1 U G2 from scratch: {edges_inc} vs {edges_full}"
+    )
+    lambdas_full = [s for _, _, s in mst_full]
+    lambdas_inc = [s for _, _, s in mst_inc]
+    assert np.allclose(
+        lambdas_inc, lambdas_full, atol=1e-5
+    ), "same merge edges but different lambda (similarity) values"
+
+    print(
+        f"MST-as-summary demo OK: {len(mst_g1)}-edge MST(G1) from "
+        f"{len(g1_idx)} G1 edges, plus {len(g2_idx)} new G2 edges, reproduces "
+        f"the exact {len(mst_full)}-edge tree that {len(pairs)} raw edges do."
+    )
 
 
 if __name__ == "__main__":
@@ -536,4 +645,5 @@ if __name__ == "__main__":
     demo_incremental_touches_only_new_edges()
     demo_svd_sheds_exact_pair()
     demo_single_linkage_tree()
+    demo_mst_is_a_sufficient_summary()
     print("cluster_threshold PoC OK")

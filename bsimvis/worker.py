@@ -13,7 +13,12 @@ load_dotenv()
 
 from bsimvis.app.services.redis_client import get_queue_redis, get_redis, get_raw_redis
 from bsimvis.app.services.index_service import update_file_status
-from bsimvis.app.services.job_service import JobService, JobStatus, JobType, LEASE_TTL
+from bsimvis.app.services.job_service import (
+    JobService,
+    JobStatus,
+    JobType,
+    HEARTBEAT_INTERVAL,
+)
 from bsimvis.app.services.processing_service import ProcessingService
 from bsimvis.app.services.feature_service import FeatureService
 from bsimvis.app.services.similarity_service import SimilarityService
@@ -138,8 +143,14 @@ class Worker:
         A dead process stops refreshing, its lease expires, and the reaper
         requeues the job -- which is the whole point: a `finally` block cannot
         run after SIGKILL or an OOM kill.
+
+        `self.current_job_id` keeps this alive past a stop signal on purpose.
+        SIGTERM sets `running = False`, but the job in flight keeps going --
+        _run_ghidra_out_of_process alone can spend minutes on its retries. Under
+        the old `while self.running` the heartbeat stopped the instant the signal
+        landed, so the reaper requeued a job that was still actively running.
         """
-        while self.running:
+        while self.running or self.current_job_id:
             # Registration rides the same heartbeat as the lease: one dead
             # process, one thing that stops refreshing, both age out together.
             try:
@@ -159,7 +170,7 @@ class Worker:
                 rss = _current_rss()
                 if rss > self._job_peak_rss:
                     self._job_peak_rss = rss
-            time.sleep(LEASE_TTL / 3)
+            time.sleep(HEARTBEAT_INTERVAL)
 
     def run(self):
         logging.info(f"[*] Worker {self.id} started. Waiting for jobs...")

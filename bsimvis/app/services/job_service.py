@@ -449,8 +449,17 @@ class JobService:
         options = options or {}
         wave_key = self._lane_key(collection, "wave")
         deadline_key = self._lane_key(collection, "wave_deadline")
-        members = self.r.lrange(wave_key, 0, -1)
-        self.r.delete(wave_key, deadline_key)
+        # Claim the wave atomically. tick_lanes runs in *every* worker's idle
+        # branch, so all of them see the same expired deadline at once; with a
+        # plain LRANGE-then-DELETE two of them each built a full group over the
+        # same member jobs, and the second create_group re-parented those jobs
+        # away from the first group -- whose barrier could then never fire,
+        # wedging the collection's lane (and so its clustering) for good.
+        # MULTI/EXEC makes exactly one caller see a non-empty list.
+        claim = self.r.pipeline()
+        claim.lrange(wave_key, 0, -1)
+        claim.delete(wave_key, deadline_key)
+        members = claim.execute()[0]
         members = [m.decode() if isinstance(m, bytes) else m for m in members]
         # A finalize call hands back ids that are already waved: the same job
         # twice in a group would decrement its barrier once and hang it.

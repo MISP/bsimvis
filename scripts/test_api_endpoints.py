@@ -894,6 +894,26 @@ def test_ghidra_languages():
 # ---------------------------------------------------------------------------
 # Archive uploads: a zip/tar is unpacked and every member analyzed
 # ---------------------------------------------------------------------------
+def _analyze_payload(job):
+    """The GHIDRA_ANALYZE payload behind an upload's returned pipeline id.
+
+    A raw upload creates that job directly: the per-collection job lane
+    (fb36f65) replaced the single-task pipeline that used to wrap it, so
+    `pipeline_id` names the analysis job itself and its payload comes back
+    already decoded at the top level. The sub_tasks walk stays for the ids
+    that really are pipelines.
+    """
+    if not isinstance(job, dict):
+        return {}
+    if job.get("type") == "ghidra_analyze":
+        payload = job.get("payload")
+        return payload if isinstance(payload, dict) else {}
+    for task in job.get("sub_tasks") or []:
+        if task.get("type") == "ghidra_analyze" and task.get("payload"):
+            return json.loads(task["payload"])
+    return {}
+
+
 def test_archive_upload():
     """Uploads a zip of two binaries and checks both members get a pipeline."""
     import hashlib
@@ -965,10 +985,9 @@ def test_archive_upload():
 
     analyze_payloads = []
     for pid in (meta_body or {}).get("pipeline_ids") or []:
-        for tid in (_job(pid) or {}).get("task_ids") or []:
-            payload = (_job(tid) or {}).get("payload") or {}
-            if "file_metadata_extra" in payload:
-                analyze_payloads.append(payload)
+        payload = _analyze_payload(_job(pid))
+        if "file_metadata_extra" in payload:
+            analyze_payloads.append(payload)
     check(
         "inherited metadata does not rename archive members",
         len(analyze_payloads) == 2
@@ -979,7 +998,10 @@ def test_archive_upload():
     )
     check(
         "inherited metadata still reaches archive members",
-        all(
+        # The length guard is the point: `all()` over the empty list this used
+        # to build passed while proving nothing.
+        len(analyze_payloads) == 2
+        and all(
             p["file_metadata_extra"].get("yara") == ["yara_from_zip"]
             for p in analyze_payloads
         ),
@@ -1026,10 +1048,9 @@ def test_archive_upload():
     )
     by_md5 = {}
     for pid in (staged_body or {}).get("pipeline_ids") or []:
-        for tid in (_job(pid) or {}).get("task_ids") or []:
-            payload = (_job(tid) or {}).get("payload") or {}
-            if "file_metadata_extra" in payload:
-                by_md5[payload.get("file_md5")] = payload
+        payload = _analyze_payload(_job(pid))
+        if "file_metadata_extra" in payload:
+            by_md5[payload.get("file_md5")] = payload
     own = by_md5.get(one_md5) or {}
     other = next((p for m, p in by_md5.items() if m != one_md5), {})
     check(
@@ -5226,6 +5247,39 @@ def test_container_similarity():
         check("container members analysed", False, "pipeline did not complete")
         return
 
+    # Every score below is cluster-derived, so the collection has to be
+    # clustered before any of it means anything. An upload clusters itself once
+    # its debounce wave seals, but that fires on the wave's own schedule -- this
+    # asserted against whatever state it happened to catch, and caught the
+    # pre-clustering one: no clusters means every pair scores 0 and the rollup
+    # has nothing to roll up, which is exactly what the two failures said.
+    # Finalizing seals that wave now and hands back the single job covering
+    # cluster + bin_sim + the container rollup; if the wave already sealed
+    # itself, split_sealed returns that same tail instead of starting a second.
+    finalized = test_endpoint(
+        "POST",
+        "/api/file/upload/batch_finalize",
+        data={
+            "collection": coll,
+            "pipeline_ids": pipelines,
+            "algo": "unweighted_cosine",
+        },
+        label="POST /api/file/upload/batch_finalize (container collection)",
+    )
+    master = (finalized or {}).get("master_pipeline_id")
+    if not check(
+        "container collection sealed into one tail",
+        bool(master),
+        str(finalized)[:200],
+    ):
+        return
+    if not check(
+        "cluster + bin_sim tail completed",
+        wait_for_pipeline(master, banner=" STEP 4b2 – Wait for cluster + bin_sim"),
+        "tail did not complete",
+    ):
+        return
+
     built = test_endpoint(
         "POST",
         "/api/bin_sim/build",
@@ -5692,14 +5746,7 @@ def test_skip_modules_payload():
     job = requests.get(
         f"{BASE_URL}/api/jobs/{body.get('pipeline_id')}", timeout=10
     ).json()
-    ghidra_task = next(
-        (t for t in job.get("sub_tasks", []) if t.get("type") == "ghidra_analyze"), None
-    )
-    payload = (
-        json.loads(ghidra_task["payload"])
-        if ghidra_task and ghidra_task.get("payload")
-        else {}
-    )
+    payload = _analyze_payload(job)
     check(
         "enable=capa clears skip_capa on the queued job",
         payload.get("skip_capa") is False,
@@ -5746,15 +5793,7 @@ def test_skip_modules_payload():
         job2 = requests.get(
             f"{BASE_URL}/api/jobs/{body2.get('pipeline_id')}", timeout=10
         ).json()
-        ghidra_task2 = next(
-            (t for t in job2.get("sub_tasks", []) if t.get("type") == "ghidra_analyze"),
-            None,
-        )
-        payload2 = (
-            json.loads(ghidra_task2["payload"])
-            if ghidra_task2 and ghidra_task2.get("payload")
-            else {}
-        )
+        payload2 = _analyze_payload(job2)
         check(
             "disable=capa wins over enable=capa",
             payload2.get("skip_capa") is True,

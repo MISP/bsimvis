@@ -25,6 +25,62 @@ except ImportError:
     hdbscan = None
 
 
+def _pairwise_cohesion(r, sim_score_key, sid_prefix, clean_members, memo):
+    """(sum, count) of stored similarity over every pair in `clean_members`.
+
+    Two things the naive `for each pair: r.zscore(...)` version got wrong on
+    a real collection, both of them latency, not server work (a 1.08M-ZSCORE
+    sample billed 8.2s inside kvrocks against ~180s of wall clock):
+
+    - One blocking round-trip per pair, plus a second one on every miss to
+      retry the reversed `b::a` key. Both orderings now go out in the same
+      pipeline, so a 200-member node costs ~20 round-trips instead of ~40k.
+    - `memo` is shared across every node scored in one run. Single-linkage
+      chains rescore a whole ancestor line, and each ancestor's member set
+      contains all of its child's, so an un-memoized run re-fetches the same
+      pair once per level -- O(sum of m^2) instead of O(m_max^2).
+
+    Denominator is pairs that actually have a stored similarity, not every
+    combinatorial pair: BSim only keeps each function's top-K neighbours, so
+    counting never-compared pairs as 0% crushes a genuinely tight cluster.
+    """
+    n = len(clean_members)
+    keys = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = clean_members[i], clean_members[j]
+            keys.append((a, b) if a <= b else (b, a))
+
+    want, seen = [], set()
+    for key in keys:
+        if key in memo or key in seen:
+            continue
+        seen.add(key)
+        want.append(key)
+
+    CHUNK = 2000
+    for i in range(0, len(want), CHUNK):
+        chunk = want[i : i + CHUNK]
+        pipe = r.pipeline(transaction=False)
+        for a, b in chunk:
+            pipe.zscore(sim_score_key, f"{sid_prefix}{a}::{b}")
+            pipe.zscore(sim_score_key, f"{sid_prefix}{b}::{a}")
+        res = pipe.execute()
+        for k, key in enumerate(chunk):
+            score = res[2 * k]
+            if score is None:
+                score = res[2 * k + 1]
+            memo[key] = float(score) if score is not None else None
+
+    total, count = 0.0, 0
+    for key in keys:
+        score = memo.get(key)
+        if score is not None:
+            total += score
+            count += 1
+    return total, count
+
+
 class ClusterService:
     def __init__(self, r=None):
         self.r = r or get_redis()
@@ -1390,25 +1446,27 @@ class ClusterService:
             c: meta.get("cohesion_score", 1.0) for c, meta in node_meta.items()
         }
 
+        # Shared across every dirty node: nested ancestors re-ask for the
+        # exact same pairs, so the memo is what turns this from O(sum m^2)
+        # round-trips into O(m_max^2) pipelined ones.
+        # ponytail: still a full O(m^2) rescore per dirty node. A node that
+        # only GAINED members could instead keep its stored sum/count and add
+        # the O(m) new-member edges -- needs cohesion_sum/cohesion_pairs
+        # persisted in :meta alongside cohesion_score. Do that if the memo
+        # stops being enough.
+        pair_memo = {}
         for c in dirty:
             members = node_members[c]
             if len(members) <= 1:
                 node_cohesion[c] = 1.0
             elif len(members) <= 200:
-                total_sim, pair_count = 0.0, 0
-                for i in range(len(members)):
-                    for j in range(i + 1, len(members)):
-                        ci, cj = clean_id(members[i]), clean_id(members[j])
-                        s = r.zscore(
-                            sim_score_key, f"{collection}:sim:{algo}:{ci}::{cj}"
-                        )
-                        if s is None:
-                            s = r.zscore(
-                                sim_score_key, f"{collection}:sim:{algo}:{cj}::{ci}"
-                            )
-                        if s is not None:
-                            total_sim += float(s)
-                            pair_count += 1
+                total_sim, pair_count = _pairwise_cohesion(
+                    r,
+                    sim_score_key,
+                    prefix,
+                    [clean_id(m) for m in members],
+                    pair_memo,
+                )
                 node_cohesion[c] = total_sim / pair_count if pair_count else 1.0
 
         # Re-evaluate the cut for affected leaves against both changed and
@@ -2122,6 +2180,7 @@ class ClusterService:
                             m = {}
                     all_member_meta[fid] = m
 
+            pair_memo = {}
             for root, members in all_members_raw.items():
                 c_uuid = r.hget(uuid_key, root)
                 c_uuid = c_uuid.decode() if isinstance(c_uuid, bytes) else c_uuid
@@ -2171,20 +2230,13 @@ class ClusterService:
                 # cluster down to ~0.27 on real data (see debug session).
                 n_members = len(members)
                 if n_members <= 200:
-                    total_sim = 0.0
-                    pairs = 0
-                    for i in range(n_members):
-                        for j in range(i + 1, n_members):
-                            c1 = clean_id(members[i])
-                            c2 = clean_id(members[j])
-                            sid_a = f"{collection}:sim:{algo}:{c1}::{c2}"
-                            sid_b = f"{collection}:sim:{algo}:{c2}::{c1}"
-                            score = r.zscore(sim_score_key, sid_a)
-                            if score is None:
-                                score = r.zscore(sim_score_key, sid_b)
-                            if score is not None:
-                                total_sim += float(score)
-                                pairs += 1
+                    total_sim, pairs = _pairwise_cohesion(
+                        r,
+                        sim_score_key,
+                        sim_prefix,
+                        [clean_id(m) for m in members],
+                        pair_memo,
+                    )
                     cohesion_score = total_sim / pairs if pairs else 1.0
                 else:
                     old_meta_raw = r.get(f"{collection}:cluster:{algo}:{root}:meta")
@@ -2301,6 +2353,28 @@ class ClusterService:
         clean_fids = {clean_id(f) if not is_pool else f for f in fids}
         seen_sids = set()
 
+        # Every function appears in one edge per neighbour and every cluster
+        # in one edge per member pair, so without these the same :clusters
+        # set and the same :meta doc get re-fetched hundreds of times each,
+        # one blocking round-trip apiece.
+        clusters_cache = {}
+        meta_cache = {}
+
+        def cluster_ids(fid):
+            if fid not in clusters_cache:
+                key = f"{collection}:{fid}:clusters" if is_pool else f"{fid}:clusters"
+                raw = r.smembers(key)
+                clusters_cache[fid] = [
+                    m.decode() if isinstance(m, bytes) else m for m in (raw or ())
+                ]
+            return clusters_cache[fid]
+
+        def cluster_meta(cid):
+            if cid not in meta_cache:
+                raw = r.get(f"{collection}:cluster:{algo}:{cid}:meta")
+                meta_cache[cid] = json.loads(raw) if raw else None
+            return meta_cache[cid]
+
         for c in clean_fids:
             sids = r.smembers(f"{collection}:sim:involves:func:{c}")
             for sid_raw in sids or ():
@@ -2316,31 +2390,14 @@ class ClusterService:
                 fid1 = c1 if is_pool else f"{func_prefix}{c1}"
                 fid2 = c2 if is_pool else f"{func_prefix}{c2}"
 
-                m1_raw = r.smembers(
-                    f"{fid1}:clusters"
-                    if not is_pool
-                    else f"{collection}:{fid1}:clusters"
-                )
-                m2_raw = r.smembers(
-                    f"{fid2}:clusters"
-                    if not is_pool
-                    else f"{collection}:{fid2}:clusters"
-                )
-                cids1 = [
-                    m.decode() if isinstance(m, bytes) else m for m in (m1_raw or ())
-                ]
-                cids2 = [
-                    m.decode() if isinstance(m, bytes) else m for m in (m2_raw or ())
-                ]
+                cids1 = cluster_ids(fid1)
+                cids2 = cluster_ids(fid2)
                 if not cids1 or not cids2:
                     continue
 
-                meta1_raw = r.get(f"{collection}:cluster:{algo}:{cids1[0]}:meta")
-                meta2_raw = r.get(f"{collection}:cluster:{algo}:{cids2[0]}:meta")
                 cluster_meta_map = {}
-                for raw in (meta1_raw, meta2_raw):
-                    if raw:
-                        cm = json.loads(raw)
+                for cm in (cluster_meta(cids1[0]), cluster_meta(cids2[0])):
+                    if cm:
                         cluster_meta_map[str(cm["cluster_id"])] = cm
 
                 best = pick_best_shared_cluster(cids1, cids2, cluster_meta_map)
@@ -2366,6 +2423,8 @@ class ClusterService:
                             pass
 
                 pipe.hset(best_cluster_key, sid, best_cid)
+                if len(pipe) > 1000:
+                    pipe.execute()
 
         pipe.execute()
 
@@ -3556,3 +3615,80 @@ class ClusterService:
 
 
 cluster_service = ClusterService()
+
+
+def _demo_pairwise_cohesion():
+    """_pairwise_cohesion agrees with the naive per-pair ZSCORE it replaced,
+    and does it in far fewer round-trips (the whole point).
+    """
+
+    class _FakePipe:
+        def __init__(self, owner):
+            self.owner = owner
+            self.queued = []
+
+        def zscore(self, key, member):
+            self.queued.append((key, member))
+
+        def execute(self):
+            self.owner.roundtrips += 1
+            return [self.owner.scores.get(m) for _, m in self.queued]
+
+    class FakeZ:
+        """Minimal ZSCORE-only stand-in that counts round-trips."""
+
+        def __init__(self, scores):
+            self.scores = scores
+            self.roundtrips = 0
+
+        def zscore(self, _key, member):
+            return self.scores.get(member)
+
+        def pipeline(self, transaction=False):
+            return _FakePipe(self)
+
+    prefix = "col:sim:algo:"
+    # c::b is stored in the reversed order only; a::d was never compared.
+    scores = {
+        f"{prefix}a::b": 0.9,
+        f"{prefix}a::c": 0.8,
+        f"{prefix}c::b": 0.7,
+        f"{prefix}b::d": 0.6,
+        f"{prefix}c::d": 0.5,
+    }
+    members = ["a", "b", "c", "d"]
+
+    naive_total, naive_pairs = 0.0, 0
+    for i in range(len(members)):
+        for j in range(i + 1, len(members)):
+            x, y = members[i], members[j]
+            s = scores.get(f"{prefix}{x}::{y}")
+            if s is None:
+                s = scores.get(f"{prefix}{y}::{x}")
+            if s is not None:
+                naive_total += s
+                naive_pairs += 1
+
+    r = FakeZ(scores)
+    memo = {}
+    total, pairs = _pairwise_cohesion(r, "zk", prefix, members, memo)
+    assert pairs == naive_pairs == 5, f"{pairs} != {naive_pairs}"
+    assert abs(total - naive_total) < 1e-9, f"{total} != {naive_total}"
+    assert r.roundtrips == 1, f"6 pairs should be one pipeline, got {r.roundtrips}"
+
+    # The memo is the algorithmic win: an ancestor holding the same members
+    # rescores for free, and only a genuinely new pair costs a fetch.
+    before = r.roundtrips
+    total2, pairs2 = _pairwise_cohesion(r, "zk", prefix, members, memo)
+    assert (total2, pairs2) == (total, pairs)
+    assert r.roundtrips == before, "repeat scoring should hit the memo only"
+
+    total3, pairs3 = _pairwise_cohesion(r, "zk", prefix, members + ["e"], memo)
+    assert pairs3 == pairs, "e has no stored similarity to anyone"
+    assert abs(total3 - total) < 1e-9
+
+    print("_pairwise_cohesion demo OK")
+
+
+if __name__ == "__main__":
+    _demo_pairwise_cohesion()

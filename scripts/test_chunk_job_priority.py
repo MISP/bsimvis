@@ -444,6 +444,31 @@ def test_finalize_folds_pipelines_into_one_wave_without_duplicates():
     assert tasks[-1]["type"] == "enrich_features"
 
 
+def test_finalize_after_the_wave_sealed_reuses_that_tail():
+    """The debounce can expire mid-upload; finalize must not build a 2nd tail."""
+    js = JobService()
+    js.r = StubRedis()
+
+    member = js.create_job(
+        JobType.GHIDRA_ANALYZE, {"collection": "main", "batch_uuid": "batch"}
+    )
+    js.open_or_extend_wave("main", member, debounce_seconds=30)
+
+    # tick_lanes gets there first, while the client is still uploading.
+    auto_tail = js.seal_wave("main")
+    assert auto_tail
+
+    unsealed, sealed_into = js.split_sealed([member])
+    assert unsealed == []
+    assert sealed_into == auto_tail
+
+    # A later upload the wave never saw is still uncovered.
+    later = js.create_job(JobType.GHIDRA_ANALYZE, {"collection": "main"})
+    unsealed, sealed_into = js.split_sealed([member, later])
+    assert unsealed == [later], "only uncovered jobs may join a new group"
+    assert sealed_into == auto_tail
+
+
 def test_wave_seals_into_one_group_not_n_pipelines():
     js = JobService()
     js.r = StubRedis()
@@ -520,6 +545,7 @@ if __name__ == "__main__":
     test_waved_analysis_defers_its_own_similarity_build()
     test_finalize_folds_pipelines_into_one_wave_without_duplicates()
     test_similarity_skips_functions_already_built()
+    test_finalize_after_the_wave_sealed_reuses_that_tail()
     test_wave_seals_into_one_group_not_n_pipelines()
     test_finalize_runs_when_no_build_generations_baseline()
     test_finalize_rejects_when_generations_changed_mid_build()

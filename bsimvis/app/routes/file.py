@@ -831,9 +831,17 @@ def finalize_batch_upload():
     if data.get("min_cohesion") is not None:
         options["min_cohesion"] = data["min_cohesion"]
 
-    master_id = job_service.seal_wave(
-        collection, extra_members=pipeline_ids, options=options
-    )
+    # The wave may have sealed on its own while the client was still uploading
+    # (fixed 30s debounce). Everything already covered by that tail needs no
+    # second one - re-running it would rebuild bin-sim and re-cluster the whole
+    # collection again.
+    unsealed, sealed_into = job_service.split_sealed(pipeline_ids)
+    if not unsealed and sealed_into:
+        master_id = sealed_into
+    else:
+        master_id = job_service.seal_wave(
+            collection, extra_members=unsealed, options=options
+        )
 
     return {
         "status": "queued",

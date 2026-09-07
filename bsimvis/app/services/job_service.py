@@ -528,9 +528,36 @@ class JobService:
                     {"collection": collection, "batch_uuid": batch_uuid},
                 )
             )
-        return self.submit_to_lane(
+        unit_id = self.submit_to_lane(
             collection, tasks, priority=bool(options.get("priority"))
         )
+        # Which tail covers this job. A client that uploads and then finalizes
+        # (the upload page, the CLI) would otherwise submit a second, identical
+        # tail whenever the debounce expired before its finalize call arrived.
+        for member in members:
+            self.r.hset(f"job:{member}", "sealed_into", unit_id)
+        return unit_id
+
+    def split_sealed(self, job_ids):
+        """(jobs no tail covers yet, the last tail that covers the others).
+
+        A job already swept into a sealed wave must not be handed to another
+        create_group: it would be re-parented away from the group whose barrier
+        is waiting on it.
+        """
+        job_ids = list(job_ids or [])
+        if not job_ids:
+            return [], None
+        pipe = self.r.pipeline(transaction=False)
+        for job_id in job_ids:
+            pipe.hget(f"job:{job_id}", "sealed_into")
+        unsealed, tail = [], None
+        for job_id, raw in zip(job_ids, pipe.execute()):
+            if raw:
+                tail = raw.decode() if isinstance(raw, bytes) else raw
+            else:
+                unsealed.append(job_id)
+        return unsealed, tail
 
     def tick_lanes(self):
         """Idle-loop sweep (called from Worker.run()'s idle branch): seals any

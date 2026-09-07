@@ -736,6 +736,10 @@ class JobService:
         tids = json.loads(parent.get("task_ids", "[]"))
 
         if ptype == "pipeline":
+            # An already-running first task may finish while its pipeline is
+            # still queued in a collection lane. The lane starts it later.
+            if parent.get("status") != JobStatus.RUNNING.value:
+                return
             try:
                 current_idx = tids.index(finished_job_id)
                 for i in range(current_idx):

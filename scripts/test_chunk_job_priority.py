@@ -307,6 +307,30 @@ def test_non_lane_job_does_not_advance_active_lane():
     assert js.r.get("lane:main:active") == first
 
 
+def test_running_group_does_not_advance_lane_queued_pipeline():
+    import json as _json
+
+    js = JobService()
+    js.r = StubRedis()
+
+    js.submit_to_lane("main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})])
+    member = js.create_job(JobType.GHIDRA_ANALYZE, {"collection": "main"})
+    group = js.create_group([member], enqueue=True)
+    queued = js.submit_to_lane(
+        "main", [group, (JobType.INDEX_SIM, {"collection": "main"})]
+    )
+    next_task = _json.loads(js.r.hgetall(f"job:{queued}")["task_ids"])[1]
+
+    js.complete_job(member)
+
+    assert js.r.hgetall(f"job:{queued}")["status"] == "pending"
+    assert js.r.hget(f"job:{next_task}", "queued") is None
+
+    js.advance_lane("main")
+    assert js.r.hgetall(f"job:{queued}")["status"] == "running"
+    assert js.r.hget(f"job:{next_task}", "queued") == "1"
+
+
 def test_similarity_retries_when_feature_generation_changes():
     from types import MethodType
 
@@ -557,6 +581,7 @@ if __name__ == "__main__":
     test_advance_lane_clears_when_nothing_pending()
     test_complete_job_only_advances_lane_for_top_level_jobs()
     test_non_lane_job_does_not_advance_active_lane()
+    test_running_group_does_not_advance_lane_queued_pipeline()
     test_similarity_retries_when_feature_generation_changes()
     test_wave_reconciles_each_batch_once_before_clustering()
     test_waved_analysis_defers_its_own_similarity_build()

@@ -1594,6 +1594,30 @@ def run_all_tests():
             "files" in md5_kinds,
             f"kinds={sorted(md5_kinds)}",
         )
+        # Every hit is a link the palette navigates to. A mapper reading a key
+        # the search route does not return yields ".../None" and a dead page.
+        urls = [
+            it.get("url", "")
+            for g in uni_md5.get("groups", [])
+            for it in g.get("items", [])
+        ]
+        bad = [u for u in urls if not u.startswith("/") or "/None" in u or "=None" in u]
+        check(
+            "unified search links carry no missing path segments",
+            urls and not bad,
+            f"{len(bad)} bad of {len(urls)}: {bad[:3]}",
+        )
+        file_urls = [
+            it["url"]
+            for g in uni_md5.get("groups", [])
+            if g["kind"] == "files"
+            for it in g["items"]
+        ]
+        check(
+            "unified search file links point at the file's md5",
+            file_urls and all(u.endswith(f"/files/{file_md5}") for u in file_urls),
+            str(file_urls[:3]),
+        )
     empty = test_endpoint(
         "GET", "/api/search/unified", label="GET /api/search/unified (no query)"
     )

@@ -4,7 +4,6 @@
 
 Use uv run to run
 
-
 ## Ports
 Configurable via `.env` file:
 - Kvrocks : `KVROCKS_PORT` (default: 6666) -> storage of functions, binaries and similarities

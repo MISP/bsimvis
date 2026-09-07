@@ -325,7 +325,7 @@ class BinSimService:
             return True
 
         # Generate Pairs and Chunking
-        CHUNK_SIZE = 100
+        CHUNK_SIZE = 10000
         if offset == 0:
             if md5_a and md5_b:
                 if md5_a < md5_b:

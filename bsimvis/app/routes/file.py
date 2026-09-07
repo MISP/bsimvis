@@ -826,6 +826,7 @@ def finalize_batch_upload():
         "batch_uuid": batch_uuid,
         "skip_sim": data.get("skip_sim", False),
         "priority": str(data.get("priority", "")).lower() == "high",
+        "enrich": True,
     }
     if data.get("min_cohesion") is not None:
         options["min_cohesion"] = data["min_cohesion"]

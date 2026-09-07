@@ -516,14 +516,18 @@ class JobService:
             [group_id]
             + targets
             + build_rebuild_all_tasks(collection, algo, skip_sim=skip_sim, data=data)
-            # Enrichment consumes what the whole wave queued, so it runs once, last.
-            + [
+        )
+        # Only for an explicit finalize, which has always owned this step. The
+        # automatic path deliberately does not enrich: enrich_features drains a
+        # collection-wide pending set, so a second one racing an upload
+        # pipeline's own enrich leaves the feature type/op registry half-built.
+        if options.get("enrich"):
+            tasks.append(
                 (
                     JobType.ENRICH_FEATURES,
                     {"collection": collection, "batch_uuid": batch_uuid},
                 )
-            ]
-        )
+            )
         return self.submit_to_lane(
             collection, tasks, priority=bool(options.get("priority"))
         )

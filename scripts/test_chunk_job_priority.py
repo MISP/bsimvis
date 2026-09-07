@@ -394,7 +394,7 @@ def test_wave_reconciles_each_batch_once_before_clustering():
     # Not force: build_batch's generation guard unmarks what went stale, so the
     # reconcile pass builds only that instead of the whole batch again.
     assert "force" not in payload
-    assert tasks[-1]["type"] == "enrich_features"
+    assert tasks[-1]["type"] != "enrich_features", "automatic path must not enrich"
 
 
 def test_waved_analysis_defers_its_own_similarity_build():
@@ -427,7 +427,7 @@ def test_finalize_folds_pipelines_into_one_wave_without_duplicates():
     pipeline_id = js.seal_wave(
         "main",
         extra_members=[waved, other],
-        options={"algo": "unweighted_cosine", "batch_uuid": "batch"},
+        options={"algo": "unweighted_cosine", "batch_uuid": "batch", "enrich": True},
     )
 
     task_ids = _json.loads(js.r.hgetall(f"job:{pipeline_id}")["task_ids"])
@@ -440,6 +440,8 @@ def test_finalize_folds_pipelines_into_one_wave_without_duplicates():
     assert len(build_sims) == 1, "one reconcile build, not one per entry point"
     assert _json.loads(build_sims[0]["payload"])["batch_uuid"] == "batch"
     assert [t["type"] for t in tasks].count("cluster_binaries") == 1
+    # Enrichment is finalize's own step, and last.
+    assert tasks[-1]["type"] == "enrich_features"
 
 
 def test_wave_seals_into_one_group_not_n_pipelines():

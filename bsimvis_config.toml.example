@@ -57,11 +57,6 @@
     min_sim = 0.0
     min_features = 0
     min_cohesion = 0.5
-    # Propagate cluster info to similarity-level indexes after clustering.
-    # Powers `shared_clusters` in similarity search and sim-level cluster
-    # filters. Slowest phase of a clustering run; set false to skip it.
-    propagate_sim_indexes = true
-
     # Seconds of upload quiet on a collection before its lane auto-fires a
     # full clear+cluster+bin_sim rebuild (see the per-collection job lane).
     idle_debounce_seconds = 30

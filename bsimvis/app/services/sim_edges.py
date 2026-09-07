@@ -308,7 +308,7 @@ class SimAdjacency:
                 total += float(sims[member_set[idx]].sum())
         return total / 2.0
 
-    def cohesion(self, member_indices):
+    def cohesion(self, member_indices, member_set=None, sources=None):
         """(sum of similarities, count of pairs with an actual edge) over
         every pair inside member_indices.
 
@@ -320,12 +320,15 @@ class SimAdjacency:
         actually tight (e.g. avg 0.99 over the pairs that DO have data) down
         to a misleadingly low score. This returns the count of pairs that
         actually have data too, so callers can divide by that instead.
+
+        A caller may reuse ``member_set`` and restrict the scan to ``sources``;
+        sampled scans count each undirected edge through its lower endpoint.
         """
         n = len(member_indices)
         if n < 2:
             return 0.0, 0
 
-        if n < 50:
+        if n < 50 and sources is None:
             total = 0.0
             count = 0
             for i in range(n):
@@ -337,17 +340,24 @@ class SimAdjacency:
                         count += 1
             return total, count
 
-        member_set = np.zeros(self.indptr.size - 1, dtype=bool)
+        if member_set is None:
+            member_set = np.zeros(self.indptr.size - 1, dtype=bool)
         member_set[member_indices] = True
         total = 0.0
         count = 0
-        for u in member_indices:
+        sampled = sources is not None
+        for u in sources if sampled else member_indices:
             idx, sims = self.neighbours(u)
             if idx.size:
                 mask = member_set[idx]
+                if sampled:
+                    # Count each undirected edge through one endpoint so every
+                    # edge has the same chance of entering the sample.
+                    mask &= idx > u
                 total += float(sims[mask].sum())
                 count += int(mask.sum())
-        return total / 2.0, count // 2
+        member_set[member_indices] = False
+        return (total, count) if sampled else (total / 2.0, count // 2)
 
 
 def build_adjacency(edges, num_nodes):

@@ -98,6 +98,9 @@ class StubRedis:
     def smembers(self, key):
         return set(self.sets.get(key, set()))
 
+    def sismember(self, key, val):
+        return val in self.sets.get(key, set())
+
     def scard(self, key):
         return len(self.sets.get(key, set()))
 
@@ -108,10 +111,7 @@ class StubRedis:
         return []
 
     def pipeline(self, transaction=True):
-        return self
-
-    def execute(self):
-        return []
+        return StubPipeline(self)
 
     def eval(self, script, numkeys, *keys):
         # Only the lane's own advance script is ever run through this stub.
@@ -123,6 +123,32 @@ class StubRedis:
             return nxt
         self.strings.pop(active_key, None)
         return None
+
+
+class StubPipeline:
+    """Queues commands and replays them on execute(), like the real client.
+
+    Returning the connection itself (the old shortcut) made every pipelined
+    read run immediately and execute() return nothing, which silently skipped
+    the parts of seal_wave that read member payloads.
+    """
+
+    def __init__(self, r):
+        self.r = r
+        self.queued = []
+
+    def __getattr__(self, name):
+        method = getattr(self.r, name)
+
+        def queue(*args, **kwargs):
+            self.queued.append((method, args, kwargs))
+            return self
+
+        return queue
+
+    def execute(self):
+        queued, self.queued = self.queued, []
+        return [method(*args, **kwargs) for method, args, kwargs in queued]
 
 
 def pop(r):
@@ -312,6 +338,36 @@ def test_similarity_retries_when_feature_generation_changes():
     assert fid in r.smembers("main:built:functions:unweighted_cosine")
 
 
+def test_similarity_skips_functions_already_built():
+    """The reconcile pass must not re-walk functions an earlier build covered."""
+    from types import MethodType
+
+    r = StubRedis()
+    done, todo = "main:func:a:1", "main:func:b:1"
+    r.strings["main:features:generation"] = "1"
+    r.sets["main:batch:b:functions"] = {done, todo}
+    r.sets["main:indexed:functions"] = {done, todo}
+    r.sets["main:built:functions:unweighted_cosine"] = {done}
+
+    service = SimilarityService.__new__(SimilarityService)
+    service.r = r
+    service._pl_cache = {}
+    service._pl_pairs = 0
+    service._norm_cache = {}
+    service._count_cache = {}
+    calls = []
+
+    def process(self, collection, chunk, *args, **kwargs):
+        calls.append(list(chunk))
+        r.sadd("main:built:functions:unweighted_cosine", *chunk)
+        return 0
+
+    service._process_chunk = MethodType(process, service)
+
+    assert service.build_batch("main", batch_uuid="b") is True
+    assert calls == [[todo]]
+
+
 def test_wave_reconciles_each_batch_once_before_clustering():
     import json as _json
 
@@ -335,8 +391,55 @@ def test_wave_reconciles_each_batch_once_before_clustering():
     assert build_positions == [1]
     payload = _json.loads(tasks[1]["payload"])
     assert payload["batch_uuid"] == "batch"
-    assert payload["force"] is True
-    assert tasks[2]["type"] == "clear_cluster"
+    # Not force: build_batch's generation guard unmarks what went stale, so the
+    # reconcile pass builds only that instead of the whole batch again.
+    assert "force" not in payload
+    assert tasks[-1]["type"] == "enrich_features"
+
+
+def test_waved_analysis_defers_its_own_similarity_build():
+    """A file in a wave must not build sims in-line: the wave rebuilds them."""
+    js = JobService()
+    js.r = StubRedis()
+
+    job_id = js.create_job(JobType.GHIDRA_ANALYZE, {"collection": "main"})
+    assert js.r.hget(f"job:{job_id}", "waved") is None
+
+    js.open_or_extend_wave("main", job_id, debounce_seconds=30)
+    assert js.r.hget(f"job:{job_id}", "waved") == "1"
+
+
+def test_finalize_folds_pipelines_into_one_wave_without_duplicates():
+    """batch_finalize seals the wave instead of submitting a second tail."""
+    import json as _json
+
+    js = JobService()
+    js.r = StubRedis()
+
+    waved = js.create_job(
+        JobType.GHIDRA_ANALYZE, {"collection": "main", "batch_uuid": "batch"}
+    )
+    js.open_or_extend_wave("main", waved, debounce_seconds=30)
+
+    # The CLI hands back the same id it already uploaded (plus one that never
+    # reached a wave, e.g. a JSON-upload pipeline).
+    other = js.create_job(JobType.BUILD_SIM, {"collection": "main"})
+    pipeline_id = js.seal_wave(
+        "main",
+        extra_members=[waved, other],
+        options={"algo": "unweighted_cosine", "batch_uuid": "batch"},
+    )
+
+    task_ids = _json.loads(js.r.hgetall(f"job:{pipeline_id}")["task_ids"])
+    tasks = [js.r.hgetall(f"job:{tid}") for tid in task_ids]
+
+    group_members = _json.loads(js.r.hgetall(f"job:{task_ids[0]}")["task_ids"])
+    assert group_members == [waved, other], "a waved id must be folded in once"
+
+    build_sims = [t for t in tasks if t["type"] == "build_sim"]
+    assert len(build_sims) == 1, "one reconcile build, not one per entry point"
+    assert _json.loads(build_sims[0]["payload"])["batch_uuid"] == "batch"
+    assert [t["type"] for t in tasks].count("cluster_binaries") == 1
 
 
 def test_wave_seals_into_one_group_not_n_pipelines():
@@ -412,6 +515,9 @@ if __name__ == "__main__":
     test_non_lane_job_does_not_advance_active_lane()
     test_similarity_retries_when_feature_generation_changes()
     test_wave_reconciles_each_batch_once_before_clustering()
+    test_waved_analysis_defers_its_own_similarity_build()
+    test_finalize_folds_pipelines_into_one_wave_without_duplicates()
+    test_similarity_skips_functions_already_built()
     test_wave_seals_into_one_group_not_n_pipelines()
     test_finalize_runs_when_no_build_generations_baseline()
     test_finalize_rejects_when_generations_changed_mid_build()

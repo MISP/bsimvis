@@ -183,11 +183,25 @@ class SimilarityService:
         if force and function_ids:
             unmark_targets(function_ids)
 
+        # Reconciliation passes (seal_wave / batch_finalize) re-target functions
+        # an earlier per-file build already covered. _process_chunk skips those,
+        # but only after the full list has been walked chunk by chunk -- and
+        # chunk_size collapses to 1 on a large collection, so a redundant pass
+        # cost one job progress write per already-built function. Drop them up
+        # front: a redundant pass is now one SISMEMBER sweep.
+        requested = len(function_ids)
+        function_ids = self._unbuilt(built_set_key, function_ids)
+
         total = len(function_ids)
         if total == 0:
-            logging.warning(
-                f"No functions found to build similarities for {batch_uuid or md5}"
-            )
+            if requested:
+                logging.info(
+                    f"[*] All {requested} functions already built for {batch_uuid or md5}, nothing to do"
+                )
+            else:
+                logging.warning(
+                    f"No functions found to build similarities for {batch_uuid or md5}"
+                )
             return True
 
         logging.info(
@@ -296,6 +310,23 @@ class SimilarityService:
             )
 
         return True
+
+    def _unbuilt(self, built_set_key, function_ids):
+        """function_ids minus the ones already marked built, order preserved.
+
+        Pipelined SISMEMBER rather than SMEMBERS: the built set is the whole
+        collection, the target list is usually one batch.
+        """
+        remaining = []
+        for i in range(0, len(function_ids), 1000):
+            window = function_ids[i : i + 1000]
+            pipe = self.r.pipeline(transaction=False)
+            for fid in window:
+                pipe.sismember(built_set_key, fid)
+            remaining.extend(
+                fid for fid, built in zip(window, pipe.execute()) if not built
+            )
+        return remaining
 
     def _compute_lsh_buckets(self, features_raw, num_bands=30, rows_per_band=4):
         """Generates SimHash LSH buckets for a set of features."""

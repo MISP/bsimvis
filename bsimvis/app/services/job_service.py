@@ -407,13 +407,23 @@ class JobService:
         wave_key = self._lane_key(collection, "wave")
         deadline_key = self._lane_key(collection, "wave_deadline")
         self.r.rpush(wave_key, job_id)
+        # Read by the analysis job: a waved file gets its similarities built
+        # once, by the wave's reconcile pass, instead of building them in-line
+        # against a half-ingested collection and having them rebuilt anyway.
+        self.r.hset(f"job:{job_id}", "waved", "1")
         self.r.setnx(deadline_key, int(time.time() * 1000) + debounce_seconds * 1000)
 
-    def seal_wave(self, collection):
+    def seal_wave(self, collection, extra_members=None, options=None):
         """Seals the open wave (if any) into a group, wraps it with the
         standard cluster/bin_sim rebuild steps, and submits that pipeline to
         the lane. This *is* automatic clustering-after-batch -- no separate
         finalize call needed.
+
+        `extra_members`/`options` are for an explicit finalize (the CLI's
+        batch_finalize) sealing the wave early instead of submitting a second
+        tail of its own: two tails meant every CLI batch upload rebuilt bin-sim
+        and clustered the whole collection twice. `options` carries that
+        caller's knobs (algo, skip_sim, min_cohesion, priority).
 
         Members were already enqueued and may have started, or even finished,
         running before this fires (open_or_extend_wave never delays them) --
@@ -423,23 +433,46 @@ class JobService:
         as if it had just completed. Without enqueue=True a fast file that
         finishes before the debounce window closes would leave the group's
         barrier permanently unfired."""
+        options = options or {}
         wave_key = self._lane_key(collection, "wave")
         deadline_key = self._lane_key(collection, "wave_deadline")
         members = self.r.lrange(wave_key, 0, -1)
         self.r.delete(wave_key, deadline_key)
+        members = [m.decode() if isinstance(m, bytes) else m for m in members]
+        # A finalize call hands back ids that are already waved: the same job
+        # twice in a group would decrement its barrier once and hang it.
+        members = list(dict.fromkeys(members + list(extra_members or [])))
         if not members:
             self._maybe_clear_active_lanes(collection)
             return None
-        members = [m.decode() if isinstance(m, bytes) else m for m in members]
         group_id = self.create_group(members, enqueue=True)
         # Lazy import: cluster.py imports JobService, so a module-level import
         # here would be circular.
         from bsimvis.app.routes.cluster import build_rebuild_all_tasks
 
-        algo = config_service.get("similarity.algo", "unweighted_cosine")
+        algo = options.get("algo") or config_service.get(
+            "similarity.algo", "unweighted_cosine"
+        )
+        skip_sim = bool(options.get("skip_sim"))
         targets = []
         seen = set()
         batch_uuids = set()
+        if options.get("batch_uuid"):
+            # An explicit finalize names its batch; its members are pipeline ids
+            # whose own payloads carry nothing to target.
+            batch_uuids.add(options["batch_uuid"])
+            if not skip_sim:
+                seen.add(("batch_uuid", options["batch_uuid"]))
+                targets.append(
+                    (
+                        JobType.BUILD_SIM,
+                        {
+                            "collection": collection,
+                            "algo": algo,
+                            "batch_uuid": options["batch_uuid"],
+                        },
+                    )
+                )
         payload_pipe = self.r.pipeline(transaction=False)
         for member in members:
             payload_pipe.hget(f"job:{member}", "payload")
@@ -447,7 +480,7 @@ class JobService:
             payload = json.loads(raw or "{}")
             if payload.get("batch_uuid"):
                 batch_uuids.add(payload["batch_uuid"])
-            if payload.get("skip_sim"):
+            if skip_sim or payload.get("skip_sim"):
                 continue
             target = ("batch_uuid", payload.get("batch_uuid"))
             if not target[1]:
@@ -461,21 +494,39 @@ class JobService:
                             "collection": collection,
                             "algo": algo,
                             target[0]: target[1],
-                            "force": True,
                         },
                     )
                 )
+        # Deliberately not force: build_batch's generation guard already unmarks
+        # anything built against a reverse index that moved underneath it, and a
+        # pair found from either side is written for both functions, so what
+        # stayed marked is complete. Forcing here re-discovered every function in
+        # the batch a second time for nothing.
         # One batch_uuid across the whole wave means both clustering engines
         # can update incrementally off it.
         # ponytail: mixed-batch waves fall back to a full rebuild; add list
         # support only if those become common enough to matter.
-        data = {"batch_uuid": batch_uuids.pop()} if len(batch_uuids) == 1 else None
+        batch_uuid = batch_uuids.pop() if len(batch_uuids) == 1 else None
+        data = dict(options)
+        if batch_uuid:
+            data["batch_uuid"] = batch_uuid
+        else:
+            data.pop("batch_uuid", None)
         tasks = (
             [group_id]
             + targets
-            + build_rebuild_all_tasks(collection, algo, skip_sim=False, data=data)
+            + build_rebuild_all_tasks(collection, algo, skip_sim=skip_sim, data=data)
+            # Enrichment consumes what the whole wave queued, so it runs once, last.
+            + [
+                (
+                    JobType.ENRICH_FEATURES,
+                    {"collection": collection, "batch_uuid": batch_uuid},
+                )
+            ]
         )
-        return self.submit_to_lane(collection, tasks)
+        return self.submit_to_lane(
+            collection, tasks, priority=bool(options.get("priority"))
+        )
 
     def tick_lanes(self):
         """Idle-loop sweep (called from Worker.run()'s idle branch): seals any

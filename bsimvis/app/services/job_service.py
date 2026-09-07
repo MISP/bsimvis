@@ -56,14 +56,23 @@ class JobType(Enum):
 # process dies (SIGKILL, OOM, host reset) nothing refreshes it, the lease expires
 # and the reaper requeues the job. This replaces the old "sweep jobs:processing on
 # startup" remedy, which could not tell a dead claim from a live one.
-LEASE_TTL = 60  # seconds a claim stays valid without a refresh
+#
+# The TTL is deliberately far longer than the heartbeat. The two failure costs
+# are not symmetric: a lease that expires under a *live* worker requeues a job
+# that is still running (duplicate work) and burns one of its MAX_ATTEMPTS, so
+# a few false expiries fail the job for good. A lease that expires late only
+# delays crash recovery -- and jobs here run for minutes anyway, so nobody is
+# waiting on it. At 60s/20s a mere two missed heartbeats requeued a live job;
+# a kvrocks stall (30s socket timeout) or a paused worker did it routinely.
+LEASE_TTL = 300  # seconds a claim stays valid without a refresh
+HEARTBEAT_INTERVAL = 15  # seconds between refreshes; ~20 misses before expiry
 LEASE_KEY = "jobs:leased"  # ZSET job_id -> expiry timestamp
 WORKERS_KEY = "workers:alive"  # ZSET worker_id -> registration expiry
-# Same shape as the lease: refreshed from the worker heartbeat, so a killed
-# worker ages out on its own. Generous enough that one slow heartbeat (the
-# worker is mid-job and the loop only ticks every LEASE_TTL/3) never drops a
-# live worker off the dashboard.
-WORKER_TTL = LEASE_TTL
+# NOT tied to LEASE_TTL. Registration feeds count_workers(), which sizes the
+# memory admission budget, so a dead worker must age out fast or the fleet
+# over-admits. Four heartbeats of slack is plenty for a dashboard entry that
+# costs one ZADD to restore.
+WORKER_TTL = 60
 
 # --- memory admission control ---------------------------------------------
 # Weights are MEASURED, not hand-picked. The draft version of this listed

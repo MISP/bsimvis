@@ -2569,7 +2569,7 @@ class SimilarityService:
         only_cross = pool.get("only_cross_collection", False)
 
         processed = 0
-        for b_src, b_par in pairs:
+        for pair_idx, (b_src, b_par) in enumerate(pairs):
             coll_a, md5_a = b_src
             coll_b, md5_b = b_par
             if only_cross and b_src[0] == b_par[0]:

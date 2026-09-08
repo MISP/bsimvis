@@ -2367,7 +2367,7 @@ class SimilarityService:
                 parts = k.split(":")
                 if len(parts) >= 3:
                     md5 = parts[2]
-                    binaries.append((coll, md5))
+                binaries.append((coll, md5))
 
         num_binaries = len(binaries)
         if num_binaries < 2:

@@ -47,7 +47,8 @@ def create_pool():
 
     tasks.extend(
         [
-            (JobType.FINALIZE_POOL_BUILD, {"pool_id": pool_id}),
+            (JobType.BUILD_POOL_SIM, {"pool_id": pool_id}),
+                (JobType.FINALIZE_POOL_BUILD, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
             (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),
@@ -185,7 +186,8 @@ def build_pool(pool_id):
 
     tasks.extend(
         [
-            (JobType.FINALIZE_POOL_BUILD, {"pool_id": pool_id}),
+            (JobType.BUILD_POOL_SIM, {"pool_id": pool_id}),
+                (JobType.FINALIZE_POOL_BUILD, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
             (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),
@@ -278,7 +280,8 @@ def rebuild_pool(pool_id):
 
     tasks.extend(
         [
-            (JobType.FINALIZE_POOL_BUILD, {"pool_id": pool_id}),
+            (JobType.BUILD_POOL_SIM, {"pool_id": pool_id}),
+                (JobType.FINALIZE_POOL_BUILD, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
             (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),

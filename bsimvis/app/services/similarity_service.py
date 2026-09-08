@@ -2388,18 +2388,21 @@ class SimilarityService:
                 )
                 for fid in raw_ids
             ]
+            
+            # Ensure fully qualified!
+            fids = [
+                fid if fid.startswith(f"{coll}:func:") else f"{coll}:func:{fid}"
+                for fid in fids
+            ]
 
             b_cluster_map = defaultdict(set)
             binary_fids[(coll, md5)] = set(fids)
             binary_func_counts[(coll, md5)] = len(fids)
 
             for fid in fids:
-                full_fid = (
-                    fid if fid.startswith(f"{coll}:func:") else f"{coll}:func:{fid}"
-                )
-                if full_fid in fid_to_cids:
-                    for cid in fid_to_cids[full_fid]:
-                        b_cluster_map[cid].add(full_fid)
+                if fid in fid_to_cids:
+                    for cid in fid_to_cids[fid]:
+                        b_cluster_map[cid].add(fid)
 
             binary_cluster_maps[(coll, md5)] = b_cluster_map
             for cid in b_cluster_map.keys():

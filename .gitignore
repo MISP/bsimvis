@@ -62,3 +62,20 @@ mirai-pilot-comparison.json
 /test_*.js
 /list_fid_opts.py
 /summarize_diff.py
+
+# Third-party YARA rulesets: fetched by scripts/fetch_yara_rules.sh, not tracked.
+# Only rules that exist nowhere else stay in git -- house/, and botnet/ +
+# anomaly/, which are hand-edited. See data/yara_rules/VENDORED_FROM.md.
+data/yara_rules/backdoor/
+data/yara_rules/certificate/
+data/yara_rules/downloader/
+data/yara_rules/elastic/
+data/yara_rules/exploit/
+data/yara_rules/infostealer/
+data/yara_rules/pua/
+data/yara_rules/ransomware/
+data/yara_rules/rootkit/
+data/yara_rules/trojan/
+data/yara_rules/virus/
+data/yara_rules/LICENSE
+data/yara_rules/LICENSE-elastic-v2

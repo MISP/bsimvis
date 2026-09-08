@@ -1,13 +1,23 @@
 # Vendored rulesets
 
+Only the rules that exist nowhere else are tracked in git: `house/`, and
+`botnet/` + `anomaly/`, which were hand-edited. Every other directory below is a
+verbatim copy of an upstream repo and is **not** tracked -- `install.sh` fetches
+it with `scripts/fetch_yara_rules.sh`, which pins the commits recorded here. Run
+that script by hand after a fresh clone if you skipped it (`SKIP_YARA=1`), and
+re-vendor by bumping a commit in the script rather than by copying files in.
+
+`SKIP_ELASTIC=1 scripts/fetch_yara_rules.sh` leaves out the one ruleset with a
+non-OSI licence; see the `elastic/` section for the trade.
+
 ## backdoor/ certificate/ downloader/ exploit/ infostealer/ pua/ ransomware/ rootkit/ trojan/ virus/
 
 Source: https://github.com/reversinglabs/reversinglabs-yara-rules
 Commit: e0a0be54aa1e11ccfd6854e4f19e9476f328fd84 (2025-11-03)
 License: MIT (see LICENSE in this directory)
 
-Update by re-cloning the source repo and replacing these directories' contents
-(except this file and LICENSE), then bumping the commit above.
+Update by bumping `RL_COMMIT` in `scripts/fetch_yara_rules.sh` (and the commit
+above) and re-running it; it replaces these directories wholesale.
 
 ## botnet/ anomaly/
 
@@ -49,13 +59,9 @@ Copied verbatim, unlike the signature-base rules above -- these carry no
 `meta.category`/`meta.malware` either, but they do carry
 `threat_name = "Linux.Trojan.Mirai"`, and `tag_taxonomy._match_tag()` reads the
 category and family off that field instead. So a re-vendor is a plain wipe and
-re-copy of this directory with no hand-editing:
-
-    rm -rf elastic/ && mkdir elastic
-    cp <clone>/yara/rules/Linux_*.yar <clone>/yara/rules/Multi_*.yar elastic/
-    cp <clone>/LICENSE.txt LICENSE-elastic-v2
-
-then bump the commit above.
+re-copy of this directory with no hand-editing, which is what
+`scripts/fetch_yara_rules.sh` does -- bump `EL_COMMIT` there (and the commit
+above) and re-run it.
 
 Rules were also evaluated from Yara-Rules/rules (`malware/MALW_*` ELF set),
 ditekshen/detection and ESET/malware-ioc. All three added **zero** detections

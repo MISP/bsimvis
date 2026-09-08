@@ -26,25 +26,22 @@ Some optimisations for incremental build, and improved clustering.
 
 ![alt text](../img/C2_search.png)
 
-## External analysis integrations
+## External analysis integrations for triage
 * **YARA preanalysis** tags functions for fast triage and inisights, with an automated Rulezet.org synchronization tool. 
-* **capa rule metadata & axes** — ATT&CK/MBC rule metadata is recorded and inherited onto function tags, carrying family/vuln/MITRE/MBC axes through to bin-sim.
+* **capa rule metadata & axes** — ATT&CK/MBC rule metadata is recorded and inherited onto function tags, carrying family/vuln/MITRE/MBC triage axes. 
 * **Provenance** — hover an analysis tag to see the rule that created it and its documentation. 
 
 ## Nested files and packed files
 * **Auto-unpacking pipeline** — Seamless extraction of code from container formats such as Android APKs, fat/universal Mach-O binaries, and ZIP/TAR archives.
 * **UPX packer support** — Automatic decompression of UPX-packed binaries, preserving both the original packed sample and the unpacked child executable for side-by-side diffing and analysis.
 
-## Binary similarity & Pivotick
-* **Hard File/Container split** — no more mixed edges between file-level and container-level clusters; containers score by rolling child similarity up the lineage.
-* **Code/Library/Content score axes** on every bin_sim pair, with a matching axis picker in the UI.
+## Binary similarity & Call graph
+* **Code/Library/Content score axes** — for every similarity between two files, similarity score is now split between original code and standard library code.
 * **Pivotick call graph** — recursive expansion with depth cap, similarity edges merged in, drag-and-drop/bulk-add, persistent side panel with locked side-by-side diff, and binary clustering with notes sync.
-* **Neighbors tab**, resplit-exact-pair action, Sankey view, and tag-scoped server-side paging on the File sim view.
+
 ![alt text](../img/call_graph_pivotick.png)
 ## Clustering
 * **New clustering backend** — Threshold union-find replaces HDBSCAN for function clustering with incremental update, lowering drastically clustering time.
-* **Hierarchical binary clustering** — Groups binary families with Kruskal/union-find.
-
 
 ## Jobs and injesting
 * **Reliable workflows** — Lease-based job scheduler, per-collection lanes, auto-unpacking of container files

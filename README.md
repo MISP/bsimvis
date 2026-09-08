@@ -93,6 +93,22 @@ Run the install script to set up portable Redis, Kvrocks, and optionally Ghidra:
 
 Milvus support is optional and can be enabled via the `.env` file (`ENABLE_MILVUS=true`).
 
+## YARA rulesets
+
+The `yara` analysis module runs against `data/yara_rules/`. Only the rules written here are kept in git; the
+~585 files copied verbatim from [ReversingLabs](https://github.com/reversinglabs/reversinglabs-yara-rules) (MIT)
+and [elastic/protections-artifacts](https://github.com/elastic/protections-artifacts) (Elastic License 2.0) are
+fetched at pinned commits by `install.sh`. Skip them with `SKIP_YARA=1 ./install.sh`, or fetch by hand later:
+
+```bash
+./scripts/fetch_yara_rules.sh
+```
+
+The Elastic rules carry the only non-OSI licence in the tree: self-hosting is fine, but it forbids offering a
+substantial set of their functionality as a hosted multi-tenant service. `SKIP_ELASTIC=1 ./scripts/fetch_yara_rules.sh`
+leaves them out, at the cost of roughly half the ELF/botnet detections (see `doc/yara-botnet-coverage.md`).
+A thin or missing ruleset is not fatal — it means fewer tags, not failed jobs.
+
 ## Function ID databases
 
 Ghidra's Function ID (FID) analyzer is what produces the `lib:<library>:<version>:<name>` tags BSimVis puts

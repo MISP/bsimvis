@@ -3,7 +3,9 @@
 Two rulesets, handled differently because their sizes differ by two orders of
 magnitude:
 
-  * **Vendored** -- `data/yara_rules/`, 589 reviewed files in git. Compiled from
+  * **Vendored** -- `data/yara_rules/`, 589 reviewed files. Only the ones that
+    exist nowhere else are in git; the upstream copies are fetched by
+    `scripts/fetch_yara_rules.sh` (run by install.sh). Compiled from
     source and cached for the life of the process: 0.46s once, ~12 MB resident.
     Mirrors unpack_service.capa_path(): an env var override, else a vendored
     default, so a deployment can point at its own ruleset without a code change.

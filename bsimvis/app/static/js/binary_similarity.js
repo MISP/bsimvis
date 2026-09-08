@@ -1734,98 +1734,15 @@ window.toggleFileSimNs = function(key) {
 // corner as a small amber pill, not a full-width row, so it stands out by
 // color instead of by size.
 // --- Pair analysis ---------------------------------------------------------
+// The form lives in tag_manager.js: a comparison is one scope of the shared
+// Analyze modal, not a second modal that happens to look like it.
 
 window.openPairAnalysisModal = function() {
     if (!binSimCtx) {
         showToast('No comparison loaded', 'warning');
         return;
     }
-    const ctx = binSimCtx;
-    let modal = document.getElementById('pair-analysis-modal');
-    if (!modal) {
-        modal = document.createElement('div');
-        modal.id = 'pair-analysis-modal';
-        modal.style.cssText = 'position:fixed; inset:0; z-index:30000; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.65); backdrop-filter:blur(4px);';
-        document.body.appendChild(modal);
-    }
-    modal.innerHTML = `
-        <form onsubmit="submitPairAnalysis(event)" style="width:540px; max-width:92vw; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:22px; color:var(--fg);">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-                <h3 style="margin:0; color:#ae81ff;"><i class="fa-solid fa-wand-magic-sparkles"></i> Analyze comparison</h3>
-                <button type="button" onclick="closePairAnalysisModal()" style="background:none; border:0; color:var(--subtle); cursor:pointer; font-size:1.3rem;">&times;</button>
-            </div>
-            <div style="font-size:.75rem; color:var(--subtle); margin-bottom:14px; word-break:break-all;">${escapeHtml(ctx.md5a)} vs ${escapeHtml(ctx.md5b)}</div>
-            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:14px;">
-                <label>Changed-match threshold
-                    <input id="pair-analysis-threshold" type="number" min="0" max="1" step="0.01" value="0.90" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
-                </label>
-                <label>Minimum BSim features
-                    <input id="pair-analysis-min" type="number" min="0" value="0" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
-                </label>
-                <label>Maximum functions
-                    <input id="pair-analysis-max" type="number" min="0" value="0" title="0 = whole analysis (every diff-selected candidate). Set a number for a fast, complexity-ranked triage subset." style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
-                </label>
-            </div>
-            <label style="display:block; margin-bottom:14px;">Prompt
-                <textarea id="pair-analysis-prompt" placeholder="Optional analyst focus" style="display:block; width:100%; min-height:90px; box-sizing:border-box; margin-top:5px; padding:8px; resize:vertical; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;"></textarea>
-            </label>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-bottom:18px; font-size:.84rem;">
-                <label><input id="pair-analysis-unique" type="checkbox" checked> Analyze unique functions</label>
-                <label title="Slower: also sends high-similarity matches"><input id="pair-analysis-unchanged" type="checkbox"> Include unchanged matches</label>
-                <label><input id="pair-analysis-skip-fid" type="checkbox" checked> Skip FID-tagged functions</label>
-                <label><input id="pair-analysis-overwrite" type="checkbox"> Replace existing LLM output</label>
-                <label><input id="pair-analysis-notes" type="checkbox" checked> Write notes</label>
-                <label><input id="pair-analysis-tags" type="checkbox" checked> Write tags + refresh split</label>
-            </div>
-            <div style="font-size:.72rem; color:var(--subtle); margin-bottom:16px;">Unique and low-similarity functions are triage candidates, not evidence of maliciousness.</div>
-            <div style="display:flex; justify-content:flex-end; gap:10px;">
-                <button type="button" onclick="closePairAnalysisModal()" class="top-action-btn">Cancel</button>
-                <button type="submit" class="top-action-btn" style="color:#ae81ff; border-color:#ae81ff;"><i class="fa-solid fa-play"></i> Create job</button>
-            </div>
-        </form>`;
-    modal.onclick = event => { if (event.target === modal) closePairAnalysisModal(); };
-};
-
-window.closePairAnalysisModal = function() {
-    document.getElementById('pair-analysis-modal')?.remove();
-};
-
-window.submitPairAnalysis = async function(event) {
-    event.preventDefault();
-    const actions = [];
-    if (document.getElementById('pair-analysis-notes').checked) actions.push('notes');
-    if (document.getElementById('pair-analysis-tags').checked) actions.push('tags');
-    if (!actions.length) {
-        showToast('Select notes, tags, or both', 'warning');
-        return;
-    }
-    const ctx = { ...binSimCtx };
-    const body = {
-        collection: ctx.collection,
-        coll_b: ctx.collB,
-        md5_a: ctx.md5a,
-        md5_b: ctx.md5b,
-        pool: ctx.poolId || undefined,
-        threshold: Number(document.getElementById('pair-analysis-threshold').value),
-        min_complexity: Number(document.getElementById('pair-analysis-min').value),
-        max_functions: Number(document.getElementById('pair-analysis-max').value),
-        include_unique: document.getElementById('pair-analysis-unique').checked,
-        include_unchanged: document.getElementById('pair-analysis-unchanged').checked,
-        skip_fid_tagged: document.getElementById('pair-analysis-skip-fid').checked,
-        overwrite: document.getElementById('pair-analysis-overwrite').checked,
-        actions,
-    };
-    const prompt = document.getElementById('pair-analysis-prompt').value.trim();
-    if (prompt) body.custom_prompt = prompt;
-
-    try {
-        const result = await tagPost('/api/llm/pair_analysis', body);
-        closePairAnalysisModal();
-        showToast(`Comparison analysis queued for ${result.total} candidate function(s)`, 'success');
-        trackPairAnalysis(result.job_id, ctx);
-    } catch (error) {
-        showToast(`Could not start comparison analysis: ${error.message}`, 'error');
-    }
+    openAnalyzeModal({ scope: 'pair', pair: binSimCtx });
 };
 
 window.trackPairAnalysis = function(jobId, ctx) {

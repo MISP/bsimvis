@@ -59,7 +59,7 @@ window.renderTagVocabulary = function (items) {
                     onchange="setTagPriorityValue(${js}, this.value)">
             </td>
             <td>
-                <input type="checkbox" ${t.llm ? 'checked' : ''} title="Include this tag in the LLM tagging vocabulary"
+                <input type="checkbox" ${t.llm ? 'checked' : ''} title="Include this tag in the AI tagging vocabulary"
                     onchange="setTagLLMFlag(${js}, this.checked)">
             </td>
             <td class="mono">${t.function_count}</td>
@@ -95,7 +95,7 @@ window.setTagPriorityValue = async function (tag, priority) {
 window.setTagLLMFlag = async function (tag, enabled) {
     try {
         await tagPost('/api/tags/llm', tagApiBody({ tag, llm: !!enabled }));
-        showToast(`'${tag}' ${enabled ? 'added to' : 'removed from'} the LLM vocabulary`, 'success');
+        showToast(`'${tag}' ${enabled ? 'added to' : 'removed from'} the AI vocabulary`, 'success');
     } catch (e) {
         showToast(`Failed to update LLM flag: ${e.message}`, 'error');
     }
@@ -131,7 +131,7 @@ window.renderTagCreationForm = function () {
             <input id="new-tag-color" type="color" value="#66d9ef" title="Tag color"
                 style="width:34px; height:26px; background:none; border:none; cursor:pointer;">
             <label style="font-size:0.8rem; display:flex; align-items:center; gap:5px;">
-                <input id="new-tag-llm" type="checkbox" checked> LLM vocabulary
+                <input id="new-tag-llm" type="checkbox" checked> AI vocabulary
             </label>
             <button class="top-action-btn" onclick="createTagFromForm()" style="font-size:0.75rem; padding:4px 10px;">
                 <i class="fa-solid fa-plus"></i> Create Tag
@@ -159,61 +159,156 @@ window.createTagFromForm = async function () {
     }
 };
 
-// --- File analysis ----------------------------------------------------------
+// --- Analyze (AI) -----------------------------------------------------------
+// One modal for every scope. `scope` picks the endpoint and the few fields that
+// only make sense for a comparison; everything else is shared, so a file, a
+// comparison and a whole collection are the same form with a different chip on
+// top. Engine knobs live behind Advanced -- nobody should meet a match
+// threshold on their first run.
 
-window.openFileAnalysisModal = function ({ fileMd5 = '', collection = '' } = {}) {
-    collection = collection || getRoutingState().collection;
+const ANALYZE_SCOPES = {
+    file: { endpoint: '/api/llm/file_analysis', icon: 'fa-file-waveform', noun: 'file' },
+    collection: { endpoint: '/api/llm/file_analysis', icon: 'fa-layer-group', noun: 'collection' },
+    pair: { endpoint: '/api/llm/pair_analysis', icon: 'fa-code-compare', noun: 'comparison' }
+};
+
+// Quick triage skips trivial functions and caps a comparison at a
+// complexity-ranked subset; Full pass sends everything the scope selects.
+const ANALYZE_PRESETS = {
+    quick: { min_complexity: 10, max_functions: 50, include_unchanged: false },
+    full: { min_complexity: 0, max_functions: 0, include_unchanged: false }
+};
+
+window.openAnalyzeModal = function (opts = {}) {
+    const scope = opts.scope || (opts.fileMd5 ? 'file' : 'collection');
+    const meta = ANALYZE_SCOPES[scope];
+    if (!meta) return;
+
+    const pair = opts.pair ? { ...opts.pair } : null;
+    if (scope === 'pair' && !pair) {
+        showToast('No comparison loaded', 'warning');
+        return;
+    }
+
+    const collection = opts.collection || (pair && pair.collection) || getRoutingState().collection;
     if (!collection) {
         showToast('No collection selected', 'warning');
         return;
     }
 
-    let modal = document.getElementById('file-analysis-modal');
+    let modal = document.getElementById('analyze-modal');
     if (!modal) {
         modal = document.createElement('div');
-        modal.id = 'file-analysis-modal';
+        modal.id = 'analyze-modal';
         modal.style.cssText = 'position:fixed; inset:0; z-index:30000; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.65); backdrop-filter:blur(4px);';
         document.body.appendChild(modal);
     }
+    modal.dataset.scope = scope;
     modal.dataset.collection = collection;
-    modal.dataset.fileMd5 = fileMd5;
-    const target = fileMd5 ? `file ${fileMd5}` : `collection ${collection}`;
+    modal.dataset.fileMd5 = opts.fileMd5 || '';
+    modal._pair = pair;
+
+    const target = scope === 'pair'
+        ? `${pair.md5a} vs ${pair.md5b}`
+        : (opts.fileMd5 ? `file ${opts.fileMd5}` : `collection ${collection}`);
+    const isPair = scope === 'pair';
+
     modal.innerHTML = `
-        <form onsubmit="submitFileAnalysis(event)" style="width:500px; max-width:90vw; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:22px; color:var(--fg);">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
-                <h3 style="margin:0; color:#ae81ff;"><i class="fa-solid fa-robot"></i> Analyze ${escapeHtml(target)}</h3>
-                <button type="button" onclick="closeFileAnalysisModal()" style="background:none; border:0; color:var(--subtle); cursor:pointer; font-size:1.3rem;">&times;</button>
+        <form onsubmit="submitAnalyze(event)" style="width:540px; max-width:92vw; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:22px; color:var(--fg);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <h3 style="margin:0; color:#ae81ff;"><i class="fa-solid fa-robot"></i> Analyze ${escapeHtml(meta.noun)}</h3>
+                <button type="button" onclick="closeAnalyzeModal()" style="background:none; border:0; color:var(--subtle); cursor:pointer; font-size:1.3rem;">&times;</button>
             </div>
-            <label style="display:block; margin-bottom:14px;">Minimum BSim features
-                <input id="file-analysis-min" type="number" min="0" value="0" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
-            </label>
-            <label style="display:block; margin-bottom:14px;">Prompt
-                <textarea id="file-analysis-prompt" placeholder="Leave empty for the configured default" style="display:block; width:100%; min-height:100px; box-sizing:border-box; margin-top:5px; padding:8px; resize:vertical; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;"></textarea>
-            </label>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:18px;">
-                <label><input id="file-analysis-skip-fid" type="checkbox" checked> Skip FID-tagged functions</label>
-                <label><input id="file-analysis-overwrite" type="checkbox"> Replace existing LLM output</label>
-                <label><input id="file-analysis-notes" type="checkbox" checked> Write notes</label>
-                <label><input id="file-analysis-tags" type="checkbox" checked> Write tags</label>
+            <div style="font-size:.75rem; color:var(--subtle); margin-bottom:16px; word-break:break-all;">
+                <i class="fa-solid ${escapeAttr(meta.icon)}"></i> ${escapeHtml(target)}
             </div>
+
+            <div class="analyze-presets">
+                <label class="analyze-preset"><input type="radio" name="analyze-preset" value="quick" checked
+                    onchange="applyAnalyzePreset('quick')"> <b>Quick triage</b>
+                    <small>Skips trivial functions${isPair ? ', caps at 50' : ''}</small></label>
+                <label class="analyze-preset"><input type="radio" name="analyze-preset" value="full"
+                    onchange="applyAnalyzePreset('full')"> <b>Full pass</b>
+                    <small>Every candidate the scope selects</small></label>
+            </div>
+
+            <label style="display:block; margin-bottom:14px;">Prompt <span style="color:var(--subtle); font-weight:normal;">(optional)</span>
+                <textarea id="analyze-prompt" placeholder="Analyst focus. Leave empty for the configured default" style="display:block; width:100%; min-height:80px; box-sizing:border-box; margin-top:5px; padding:8px; resize:vertical; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;"></textarea>
+            </label>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-bottom:14px; font-size:.84rem;">
+                <label><input id="analyze-notes" type="checkbox" checked> Write notes</label>
+                <label><input id="analyze-tags" type="checkbox" checked> Write tags${isPair ? ' + refresh split' : ''}</label>
+            </div>
+
+            <details style="margin-bottom:16px;">
+                <summary style="cursor:pointer; font-size:.8rem; color:var(--subtle);">Advanced</summary>
+                <div style="display:grid; grid-template-columns:${isPair ? '1fr 1fr 1fr' : '1fr'}; gap:12px; margin:12px 0;">
+                    <label style="font-size:.8rem;">Minimum BSim features
+                        <input id="analyze-min" type="number" min="0" value="10" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+                    </label>
+                    ${isPair ? `
+                    <label style="font-size:.8rem;">Changed-match threshold
+                        <input id="analyze-threshold" type="number" min="0" max="1" step="0.01" value="0.90" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+                    </label>
+                    <label style="font-size:.8rem;">Maximum functions
+                        <input id="analyze-max" type="number" min="0" value="50" title="0 = every diff-selected candidate. A number takes a complexity-ranked subset." style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+                    </label>` : ''}
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:9px; font-size:.82rem;">
+                    <label><input id="analyze-skip-fid" type="checkbox" checked> Skip FID-tagged functions</label>
+                    <label><input id="analyze-overwrite" type="checkbox"> Replace existing AI output</label>
+                    ${isPair ? `
+                    <label><input id="analyze-unique" type="checkbox" checked> Analyze unique functions</label>
+                    <label title="Slower: also sends high-similarity matches"><input id="analyze-unchanged" type="checkbox"> Include unchanged matches</label>` : ''}
+                </div>
+            </details>
+
+            ${isPair ? `<div style="font-size:.72rem; color:var(--subtle); margin-bottom:16px;">Unique and low-similarity functions are triage candidates, not evidence of maliciousness.</div>` : ''}
+
             <div style="display:flex; justify-content:flex-end; gap:10px;">
-                <button type="button" onclick="closeFileAnalysisModal()" class="top-action-btn">Cancel</button>
-                <button type="submit" class="top-action-btn" style="color:#ae81ff; border-color:#ae81ff;"><i class="fa-solid fa-play"></i> Create job</button>
+                <button type="button" onclick="closeAnalyzeModal()" class="top-action-btn">Cancel</button>
+                <button type="submit" class="top-action-btn" style="color:#ae81ff; border-color:#ae81ff;"><i class="fa-solid fa-play"></i> Analyze</button>
             </div>
         </form>`;
-    modal.onclick = e => { if (e.target === modal) closeFileAnalysisModal(); };
+    modal.onclick = e => { if (e.target === modal) closeAnalyzeModal(); };
 };
 
-window.closeFileAnalysisModal = function () {
-    document.getElementById('file-analysis-modal')?.remove();
+/** Presets only move the Advanced fields, so opening Advanced always shows what
+ *  the chosen preset actually does rather than a stale default. */
+window.applyAnalyzePreset = function (name) {
+    const preset = ANALYZE_PRESETS[name];
+    if (!preset) return;
+    const set = (id, value) => { const el = document.getElementById(id); if (el) el.value = value; };
+    const check = (id, value) => { const el = document.getElementById(id); if (el) el.checked = value; };
+    set('analyze-min', preset.min_complexity);
+    set('analyze-max', preset.max_functions);
+    check('analyze-unchanged', preset.include_unchanged);
 };
 
-window.submitFileAnalysis = async function (event) {
+window.closeAnalyzeModal = function () {
+    document.getElementById('analyze-modal')?.remove();
+};
+
+window.submitAnalyze = async function (event) {
     event.preventDefault();
-    const modal = document.getElementById('file-analysis-modal');
+    const modal = document.getElementById('analyze-modal');
+    const scope = modal.dataset.scope;
+    const meta = ANALYZE_SCOPES[scope];
+    // A field only exists for the scopes that use it, so every read carries the
+    // value the endpoint would have defaulted to anyway.
+    const num = (id, fallback) => {
+        const el = document.getElementById(id);
+        return el ? Number(el.value) : fallback;
+    };
+    const on = (id, fallback) => {
+        const el = document.getElementById(id);
+        return el ? el.checked : fallback;
+    };
+
     const actions = [];
-    if (document.getElementById('file-analysis-notes').checked) actions.push('notes');
-    if (document.getElementById('file-analysis-tags').checked) actions.push('tags');
+    if (on('analyze-notes', true)) actions.push('notes');
+    if (on('analyze-tags', true)) actions.push('tags');
     if (!actions.length) {
         showToast('Select notes, tags, or both', 'warning');
         return;
@@ -222,25 +317,52 @@ window.submitFileAnalysis = async function (event) {
     const body = {
         collection: modal.dataset.collection,
         actions,
-        min_complexity: Number(document.getElementById('file-analysis-min').value),
-        skip_fid_tagged: document.getElementById('file-analysis-skip-fid').checked,
-        overwrite: document.getElementById('file-analysis-overwrite').checked
+        min_complexity: num('analyze-min', 0),
+        skip_fid_tagged: on('analyze-skip-fid', true),
+        overwrite: on('analyze-overwrite', false)
     };
-    if (modal.dataset.fileMd5) body.file_md5 = modal.dataset.fileMd5;
-    const prompt = document.getElementById('file-analysis-prompt').value.trim();
+    const prompt = document.getElementById('analyze-prompt').value.trim();
     if (prompt) body.custom_prompt = prompt;
 
+    const pair = modal._pair;
+    if (scope === 'pair') {
+        Object.assign(body, {
+            collection: pair.collection,
+            coll_b: pair.collB,
+            md5_a: pair.md5a,
+            md5_b: pair.md5b,
+            pool: pair.poolId || undefined,
+            threshold: num('analyze-threshold', 0.9),
+            max_functions: num('analyze-max', 0),
+            include_unique: on('analyze-unique', true),
+            include_unchanged: on('analyze-unchanged', false)
+        });
+    } else if (modal.dataset.fileMd5) {
+        body.file_md5 = modal.dataset.fileMd5;
+    }
+
     try {
-        const result = await tagPost('/api/llm/file_analysis', body);
-        closeFileAnalysisModal();
-        showToast(`Analysis job started for ${result.files} file(s), ${result.total} function(s)`, 'success');
-        const warnings = result.warnings || (result.warning ? [result.warning] : []);
-        warnings.forEach(w => showToast(w, 'warning'));
-        trackFileAnalysis(result.job_id);
+        const result = await tagPost(meta.endpoint, body);
+        closeAnalyzeModal();
+        if (scope === 'pair') {
+            showToast(`Analysis queued for ${result.total} candidate function(s)`, 'success');
+            trackPairAnalysis(result.job_id, pair);
+        } else {
+            showToast(`Analysis started for ${result.files} file(s), ${result.total} function(s)`, 'success');
+            const warnings = result.warnings || (result.warning ? [result.warning] : []);
+            warnings.forEach(w => showToast(w, 'warning'));
+            trackFileAnalysis(result.job_id);
+        }
     } catch (e) {
         showToast(`Could not start analysis: ${e.message}`, 'error');
     }
 };
+
+// Call sites that predate the merge.
+window.openFileAnalysisModal = function (opts = {}) {
+    openAnalyzeModal({ ...opts, scope: opts.fileMd5 ? 'file' : 'collection' });
+};
+window.closeFileAnalysisModal = window.closeAnalyzeModal;
 
 function fileAnalysisPanel() {
     let panel = document.getElementById('file-analysis-panel');

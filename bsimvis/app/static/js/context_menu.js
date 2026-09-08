@@ -686,22 +686,15 @@
 
         return [];
     }
-
+    // One item, so a submenu was a level of nesting around a single click.
     function renderFileAnalysisSubmenu(md5) {
         return `
-            <div class="context-menu-item submenu-trigger" style="position: relative;">
+            <div class="context-menu-item" onclick="${escapeAttr(`event.stopPropagation(); window.closeGraphContextMenu(); openAnalyzeModal({ scope: 'file', fileMd5: ${jsString(md5)} })`)}">
                 <i class="fa-solid fa-robot" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-                <span>LLM</span>
-                <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
-
-                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 200px; background: var(--card-bg); border: 1px solid var(--border); z-index: 20006;">
-                    <div class="context-menu-item" onclick="${escapeAttr(`event.stopPropagation(); window.closeGraphContextMenu(); openFileAnalysisModal({ fileMd5: ${jsString(md5)} })`)}">
-                        <i class="fa-solid fa-file-waveform" style="width:16px; text-align:center; opacity:.8;"></i>
-                        <span>Analyze whole file</span>
-                    </div>
-                </div>
+                <span>Analyze with AI</span>
             </div>`;
     }
+
 
     function renderCopyItem(label, text, icon = 'fa-copy') {
         if (text === null || text === undefined || text === '') return '';

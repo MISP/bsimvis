@@ -475,8 +475,11 @@ function initResizableCards() {
 
         // Cache: the compact summary only; tables and the function graph load their
         // rows via paging, merging functions_metadata across pages.
-        binSimCtx = { collection, md5a, md5b, collB: collB || collection, poolId, sid: data.sid };
         const counts = data.counts || { matched: 0, unique_to_a: 0, unique_to_b: 0 };
+        // Counts ride along so the Analyze modal can say what each pass would
+        // select -- a pair with no unique functions has no changed-code pass to
+        // offer, and finding that out from a 400 is the worst way to learn it.
+        binSimCtx = { collection, md5a, md5b, collB: collB || collection, poolId, sid: data.sid, counts };
         binSimDataCache = {
             score: data.score,
             file_metadata_a: data.file_metadata_a,

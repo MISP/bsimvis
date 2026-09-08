@@ -172,12 +172,46 @@ const ANALYZE_SCOPES = {
     pair: { endpoint: '/api/llm/pair_analysis', icon: 'fa-code-compare', noun: 'comparison' }
 };
 
-// Quick triage skips trivial functions and caps a comparison at a
-// complexity-ranked subset; Full pass sends everything the scope selects.
+// Presets are intents, not knob bundles. For a comparison the intent that
+// matters is which half of the diff to read: two builds of the same malware
+// have nothing unique and no match under the threshold, so a changed-code pass
+// selects nothing at all -- on those pairs the shared code is the whole story.
 const ANALYZE_PRESETS = {
-    quick: { min_complexity: 10, max_functions: 50, include_unchanged: false },
-    full: { min_complexity: 0, max_functions: 0, include_unchanged: false }
+    quick: { min_complexity: 10, max_functions: 50, include_unique: true, include_unchanged: false },
+    shared: { min_complexity: 10, max_functions: 50, include_unique: false, include_unchanged: true },
+    full: { min_complexity: 0, max_functions: 0, include_unique: true, include_unchanged: true }
 };
+
+/** Presets offered for a scope, in display order, with what each would select. */
+function analyzePresetChoices(scope, counts) {
+    if (scope !== 'pair') {
+        return [
+            { key: 'quick', title: 'Quick triage', note: 'Skips trivial functions' },
+            { key: 'full', title: 'Full pass', note: 'Every candidate the scope selects' }
+        ];
+    }
+    const unique = (counts.unique_to_a || 0) + (counts.unique_to_b || 0);
+    const matched = counts.matched || 0;
+    return [
+        {
+            key: 'quick', title: 'What changed',
+            note: `${unique.toLocaleString()} unique + matches below the threshold`
+        },
+        {
+            key: 'shared', title: 'What they share',
+            note: `${matched.toLocaleString()} matched function${matched === 1 ? '' : 's'}`
+        },
+        { key: 'full', title: 'Everything', note: 'Both halves, no cap' }
+    ];
+}
+
+/** No unique functions means the two binaries are near-identical, and the
+ *  changed-code pass has nothing to work with. Open on the pass that does. */
+function defaultAnalyzePreset(scope, counts) {
+    if (scope !== 'pair') return 'quick';
+    const unique = (counts.unique_to_a || 0) + (counts.unique_to_b || 0);
+    return unique === 0 ? 'shared' : 'quick';
+}
 
 window.openAnalyzeModal = function (opts = {}) {
     const scope = opts.scope || (opts.fileMd5 ? 'file' : 'collection');
@@ -212,6 +246,10 @@ window.openAnalyzeModal = function (opts = {}) {
         ? `${pair.md5a} vs ${pair.md5b}`
         : (opts.fileMd5 ? `file ${opts.fileMd5}` : `collection ${collection}`);
     const isPair = scope === 'pair';
+    const counts = (pair && pair.counts) || {};
+    const choices = analyzePresetChoices(scope, counts);
+    const chosen = defaultAnalyzePreset(scope, counts);
+    const preset = ANALYZE_PRESETS[chosen];
 
     modal.innerHTML = `
         <form onsubmit="submitAnalyze(event)" style="width:540px; max-width:92vw; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:22px; color:var(--fg);">
@@ -224,12 +262,11 @@ window.openAnalyzeModal = function (opts = {}) {
             </div>
 
             <div class="analyze-presets">
-                <label class="analyze-preset"><input type="radio" name="analyze-preset" value="quick" checked
-                    onchange="applyAnalyzePreset('quick')"> <b>Quick triage</b>
-                    <small>Skips trivial functions${isPair ? ', caps at 50' : ''}</small></label>
-                <label class="analyze-preset"><input type="radio" name="analyze-preset" value="full"
-                    onchange="applyAnalyzePreset('full')"> <b>Full pass</b>
-                    <small>Every candidate the scope selects</small></label>
+                ${choices.map(choice => `
+                <label class="analyze-preset"><input type="radio" name="analyze-preset" value="${escapeAttr(choice.key)}"
+                    ${choice.key === chosen ? 'checked' : ''}
+                    onchange="applyAnalyzePreset('${escapeAttr(choice.key)}')"> <b>${escapeHtml(choice.title)}</b>
+                    <small>${escapeHtml(choice.note)}</small></label>`).join('')}
             </div>
 
             <label style="display:block; margin-bottom:14px;">Prompt <span style="color:var(--subtle); font-weight:normal;">(optional)</span>
@@ -245,22 +282,22 @@ window.openAnalyzeModal = function (opts = {}) {
                 <summary style="cursor:pointer; font-size:.8rem; color:var(--subtle);">Advanced</summary>
                 <div style="display:grid; grid-template-columns:${isPair ? '1fr 1fr 1fr' : '1fr'}; gap:12px; margin:12px 0;">
                     <label style="font-size:.8rem;">Minimum BSim features
-                        <input id="analyze-min" type="number" min="0" value="10" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+                        <input id="analyze-min" type="number" min="0" value="${preset.min_complexity}" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
                     </label>
                     ${isPair ? `
                     <label style="font-size:.8rem;">Changed-match threshold
                         <input id="analyze-threshold" type="number" min="0" max="1" step="0.01" value="0.90" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
                     </label>
                     <label style="font-size:.8rem;">Maximum functions
-                        <input id="analyze-max" type="number" min="0" value="50" title="0 = every diff-selected candidate. A number takes a complexity-ranked subset." style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+                        <input id="analyze-max" type="number" min="0" value="${preset.max_functions}" title="0 = every diff-selected candidate. A number takes a complexity-ranked subset." style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
                     </label>` : ''}
                 </div>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:9px; font-size:.82rem;">
                     <label><input id="analyze-skip-fid" type="checkbox" checked> Skip FID-tagged functions</label>
                     <label><input id="analyze-overwrite" type="checkbox"> Replace existing AI output</label>
                     ${isPair ? `
-                    <label><input id="analyze-unique" type="checkbox" checked> Analyze unique functions</label>
-                    <label title="Slower: also sends high-similarity matches"><input id="analyze-unchanged" type="checkbox"> Include unchanged matches</label>` : ''}
+                    <label><input id="analyze-unique" type="checkbox" ${preset.include_unique ? 'checked' : ''}> Analyze unique functions</label>
+                    <label title="Slower: also sends high-similarity matches"><input id="analyze-unchanged" type="checkbox" ${preset.include_unchanged ? 'checked' : ''}> Include unchanged matches</label>` : ''}
                 </div>
             </details>
 
@@ -283,6 +320,7 @@ window.applyAnalyzePreset = function (name) {
     const check = (id, value) => { const el = document.getElementById(id); if (el) el.checked = value; };
     set('analyze-min', preset.min_complexity);
     set('analyze-max', preset.max_functions);
+    check('analyze-unique', preset.include_unique);
     check('analyze-unchanged', preset.include_unchanged);
 };
 

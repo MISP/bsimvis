@@ -364,7 +364,7 @@ class BinSimService:
                     # Block-nested loop ordering to bound the working set
                     BLOCK_SIZE = 50
                     binaries.sort()
-                    b2_blocks = [binaries[k:k+BLOCK_SIZE] for k in range(0, len(binaries), BLOCK_SIZE)]
+                    blocks = [binaries[k:k+BLOCK_SIZE] for k in range(0, len(binaries), BLOCK_SIZE)]
                     for i, b1_block in enumerate(blocks):
                         for j in range(i, len(blocks)):
                             b2_block = blocks[j]

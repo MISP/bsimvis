@@ -3730,7 +3730,7 @@ def test_search_job():
             "/api/searches",
             data={
                 "collection": COLLECTION,
-                "query": "the function decrypting a .dat file",
+                "query": "the function that decrypts the embedded configuration",
                 "scope": {"type": "file", "md5": file_md5},
             },
         )
@@ -3748,7 +3748,7 @@ def test_search_job():
                 "search job carries the search_id and query",
                 (job or {}).get("type") == "search_classify"
                 and payload.get("search_id") == search_id
-                and payload.get("query") == "the function decrypting a .dat file"
+                and payload.get("query") == "the function that decrypts the embedded configuration"
                 and len(payload.get("func_ids") or []) > 0,
                 str(job)[:300],
             )
@@ -3764,7 +3764,7 @@ def test_search_job():
             detail = test_endpoint("GET", f"/api/searches/{search_id}")
             check(
                 "search detail preserves scope and query",
-                (detail or {}).get("query") == "the function decrypting a .dat file"
+                (detail or {}).get("query") == "the function that decrypts the embedded configuration"
                 and (detail or {}).get("scope", {}).get("type") == "file",
                 str(detail)[:300],
             )
@@ -3820,7 +3820,7 @@ def test_search_job():
                     "handoff job defaults custom_prompt to the search query",
                     (handoff_job or {}).get("type") == "llm_contextual_batch"
                     and (handoff_job or {}).get("payload", {}).get("custom_prompt")
-                    == "the function decrypting a .dat file",
+                    == "the function that decrypts the embedded configuration",
                     str(handoff_job)[:300],
                 )
                 test_endpoint("POST", f"/api/jobs/{handoff_job_id}/cancel")

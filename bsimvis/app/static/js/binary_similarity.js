@@ -453,6 +453,10 @@ function initResizableCards() {
                         style="display:flex; align-items:center; gap:7px; color:#ae81ff; border-color:#ae81ff;"
                         title="Analyze this comparison with evidence-bound automatic function tagging">
                         <i class="fa-solid fa-wand-magic-sparkles"></i> Analyze comparison</button>
+                    <button class="top-action-btn" onclick="openPairSearchModal()"
+                        style="display:flex; align-items:center; gap:7px; color:#60a5fa; border-color:#60a5fa;"
+                        title="Ask AI which functions of this comparison match a description">
+                        <i class="fa-solid fa-magnifying-glass"></i> AI search</button>
                 </div>
             `;
             // Pair notes -- including the report "Analyze comparison" writes --
@@ -1746,6 +1750,16 @@ window.openPairAnalysisModal = function() {
         return;
     }
     openAnalyzeModal({ scope: 'pair', pair: binSimCtx });
+};
+
+// Same context, cheaper pass: search classifies the pair's functions against a
+// question instead of writing notes and tags for all of them.
+window.openPairSearchModal = function() {
+    if (!binSimCtx) {
+        showToast('No comparison loaded', 'warning');
+        return;
+    }
+    openSearchModal({ scope: 'pair', ...binSimCtx });
 };
 
 window.trackPairAnalysis = function(jobId, ctx) {

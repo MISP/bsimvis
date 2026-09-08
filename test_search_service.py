@@ -68,7 +68,7 @@ FUNCS = {
     "a:func:m:3": {
         "func_id": "a:func:m:3",
         "func_name": "f3",
-        "code": "builds .dat wildcard byte by byte",
+        "code": "builds config path wildcard byte by byte",
     },
 }
 
@@ -80,8 +80,8 @@ def _fake_get_function(fid):
 def _fake_classify(members, query, vocabulary=None):
     out = {}
     for fid, _name, code in members:
-        if ".dat" in code.lower():
-            out[fid] = ("yes", "mentions .dat", None)
+        if "config" in code.lower():
+            out[fid] = ("yes", "mentions config", None)
         else:
             out[fid] = ("no", "", None)
     return out, [], None
@@ -100,9 +100,9 @@ def _run(svc, func_ids=None, classify=_fake_classify):
     ):
         mock_llm.classify_relevance_batch.side_effect = classify
         search_id, job_id, total = svc.create_search(
-            "main", {"type": "filter"}, "find .dat handling", func_ids
+            "main", {"type": "filter"}, "find config handling", func_ids
         )
-        ok = svc.run_search_classification(search_id, "main", func_ids, "find .dat handling")
+        ok = svc.run_search_classification(search_id, "main", func_ids, "find config handling")
     return search_id, job_id, total, ok
 
 

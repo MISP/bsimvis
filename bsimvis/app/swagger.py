@@ -3123,7 +3123,7 @@ search_create_model = api.model(
         "pool": fields.String(required=False, description="Alternative to collection"),
         "query": fields.String(
             required=True,
-            example="the function decrypting a .dat file",
+            example="the function that decrypts the embedded configuration",
             description="Free-text description of what the analyst is looking for.",
         ),
         "name": fields.String(required=False, description="Defaults to the query text"),

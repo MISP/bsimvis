@@ -55,16 +55,16 @@ class JobType(Enum):
 
 # Lease-based claims. A worker refreshes its lease while it holds a job; if the
 # process dies (SIGKILL, OOM, host reset) nothing refreshes it, the lease expires
-# and the reaper requeues the job. This replaces the old "sweep jobs:processing on
-# startup" remedy, which could not tell a dead claim from a live one.
+# and the reaper resolves the job (see MAX_ATTEMPTS). This replaces the old
+# "sweep jobs:processing on startup" remedy, which could not tell a dead claim
+# from a live one.
 #
 # The TTL is deliberately far longer than the heartbeat. The two failure costs
-# are not symmetric: a lease that expires under a *live* worker requeues a job
-# that is still running (duplicate work) and burns one of its MAX_ATTEMPTS, so
-# a few false expiries fail the job for good. A lease that expires late only
-# delays crash recovery -- and jobs here run for minutes anyway, so nobody is
-# waiting on it. At 60s/20s a mere two missed heartbeats requeued a live job;
-# a kvrocks stall (30s socket timeout) or a paused worker did it routinely.
+# are not symmetric: a lease that expires under a *live* worker condemns a job
+# that is still running, while a lease that expires late only delays crash
+# recovery -- and jobs here run for minutes anyway, so nobody is waiting on it.
+# At 60s/20s a mere two missed heartbeats caught a live job; a kvrocks stall
+# (30s socket timeout) or a paused worker did it routinely.
 LEASE_TTL = 300  # seconds a claim stays valid without a refresh
 HEARTBEAT_INTERVAL = 15  # seconds between refreshes; ~20 misses before expiry
 LEASE_KEY = "jobs:leased"  # ZSET job_id -> expiry timestamp
@@ -92,7 +92,11 @@ MEM_DEFAULT_COST = 512 * 1024**2
 # enrich_features jobs would not have saved any single one of them. This stops
 # the fleet from collectively overcommitting the host; it is necessary, not
 # sufficient.
-MAX_ATTEMPTS = 3  # requeue this many times before failing the job for good
+# 0 = a lease expiry is terminal: the job is failed on the spot and never
+# requeued. Duplicate work is the worse failure here -- a requeued analysis
+# re-enters a collection its first run is still writing into -- so a dead
+# worker's job is reported as failed, to be retried by hand if it mattered.
+MAX_ATTEMPTS = 0
 REAPER_LOCK_KEY = "jobs:reaper:lock"
 REAPER_RUN_KEY = "jobs:reaper:last_run"  # unix ts of the last completed sweep
 # Workers sweep every 30s. A gap past this means nobody swept -- the fleet was
@@ -400,12 +404,23 @@ class JobService:
                 self.r.rpush(pending_key, unit_id)
         return unit_id
 
-    def advance_lane(self, collection):
+    def advance_lane(self, collection, unit_id=None):
         """Called whenever a collection's active lane unit reaches a terminal
         state. Promotes the next pending unit, if any. The single
-        serialization point -- no job-type awareness at all."""
+        serialization point -- no job-type awareness at all.
+
+        `unit_id` is the unit that reached that state. Only the unit actually
+        holding the lane may advance it: a *queued* unit being cancelled, or a
+        second terminal event on the active one (a retry, a requeued leaf
+        reporting twice), otherwise pops the queue and starts a second unit
+        alongside the one still running. A queued unit that dies just leaves
+        the queue."""
         active_key = self._lane_key(collection, "active")
         pending_key = self._lane_key(collection, "pending")
+        if unit_id is not None and self.r.get(active_key) != unit_id:
+            self.r.lrem(pending_key, 0, unit_id)
+            self._maybe_clear_active_lanes(collection)
+            return
         next_id = self.r.eval(self._ADVANCE_LANE_LUA, 2, active_key, pending_key)
         if next_id:
             next_id = next_id.decode() if isinstance(next_id, bytes) else next_id
@@ -589,6 +604,38 @@ class JobService:
                 unsealed.append(job_id)
         return unsealed, tail
 
+    def _claimed_job_ids(self):
+        """Every job a worker holds right now -- the same evidence the reaper
+        judges a dead claim on: the lease ZSET plus the in-flight list.
+
+        Deliberately counts an *expired* lease as held too. Erring this way
+        only delays crash recovery by one reaper sweep (which clears those
+        entries); erring the other way runs a second tail against a collection
+        the first one is still writing into.
+        """
+        ids = set(self.r.zrange(LEASE_KEY, 0, -1))
+        ids.update(self.r.lrange("jobs:processing", 0, -1))
+        return {i.decode() if isinstance(i, bytes) else i for i in ids}
+
+    def _has_live_descendant(self, job_id, claimed, seen=None):
+        """True when any job in this subtree is currently claimed.
+
+        A pipeline is never claimed itself -- only its leaves are -- so its own
+        hash says nothing about whether the work under it is alive. Walked only
+        once the staleness check has already fired, so the cost is rare.
+        """
+        seen = seen if seen is not None else set()
+        if job_id in seen:
+            return False
+        seen.add(job_id)
+        if job_id in claimed:
+            return True
+        job = self.r.hgetall(f"job:{job_id}")
+        return any(
+            self._has_live_descendant(tid, claimed, seen)
+            for tid in self._task_ids(job)
+        )
+
     def tick_lanes(self):
         """Idle-loop sweep (called from Worker.run()'s idle branch): seals any
         wave past its deadline, and self-heals a lane whose active unit has
@@ -619,11 +666,20 @@ class JobService:
                 and updated_at
                 and now_ms - safe_int(updated_at) > lane_stale_ms
             ):
+                # An idle `updated_at` is not death. A unit waiting on a GHIDRA
+                # group runs for hours without its own hash being written, and
+                # promoting the next unit does not stop it -- so every stale
+                # tick added one more tail running against the same collection.
+                # Ask the leases instead, and kill nothing: a live subtree just
+                # gets its clock touched so the next tick is cheap.
+                if self._has_live_descendant(active_id, self._claimed_job_ids()):
+                    self.r.hset(f"job:{active_id}", "updated_at", now_ms)
+                    continue
                 self.add_log(
                     active_id,
                     "Lane self-heal: active unit stale (worker likely crashed), promoting next.",
                 )
-                self.advance_lane(collection)
+                self.advance_lane(collection, active_id)
 
     def enqueue_job(self, job_id, is_continuation=False):
         """Pushes a job ID onto the appropriate priority queue.
@@ -758,7 +814,7 @@ class JobService:
         else:
             collection = data.get("lane_collection")
             if collection:
-                self.advance_lane(collection)
+                self.advance_lane(collection, job_id)
 
     def advance_parent(self, parent_id, finished_job_id):
         """Advances the parent job based on its type (pipeline sequence or group barrier)."""
@@ -865,7 +921,7 @@ class JobService:
         else:
             collection = self.r.hget(f"job:{job_id}", "lane_collection")
             if collection:
-                self.advance_lane(collection)
+                self.advance_lane(collection, job_id)
 
     # ------------------------------------------------------------------
     # Leases: crash recovery for claimed jobs
@@ -999,7 +1055,10 @@ class JobService:
         return total
 
     def reap_expired(self, now=None):
-        """Requeues jobs whose worker died, and clears stale in-flight entries.
+        """Resolves jobs whose worker died, and clears stale in-flight entries.
+
+        "Resolves" is MAX_ATTEMPTS' call: at 0 (the default) an expired lease
+        fails the job outright, above 0 it is requeued that many times first.
 
         Returns (requeued, failed, cleaned). Held under a short lock so a fleet
         starting together does not requeue the same job several times.
@@ -1060,6 +1119,12 @@ class JobService:
                     continue
 
                 self.release_lease(job_id)
+
+                if MAX_ATTEMPTS <= 0:
+                    self.add_log(job_id, "Lease expired; failing (retries disabled).")
+                    self.fail_job(job_id, "Lease expired; retries are disabled.")
+                    failed += 1
+                    continue
 
                 # MAX_ATTEMPTS predates jobs being resumable. enrich_features
                 # now checkpoints every batch, so a job could be OOM-killed
@@ -1429,7 +1494,7 @@ class JobService:
         if not parent_id:
             collection = data.get("lane_collection")
             if collection:
-                self.advance_lane(collection)
+                self.advance_lane(collection, job_id)
 
         # Cancel all subtasks recursively
         if "task_ids" in data:
@@ -1501,8 +1566,18 @@ class JobService:
         if parent_id:
             self._update_pipeline_aggregate_progress(parent_id)
 
-    def _update_pipeline_aggregate_progress(self, pipeline_id):
-        """Recalculates pipeline progress based on subtasks."""
+    def _update_pipeline_aggregate_progress(self, pipeline_id, seen=None):
+        """Recalculates pipeline progress based on subtasks, up the whole chain.
+
+        Stopping at the immediate parent left a pipeline wrapping a group with
+        the `updated_at` it was created with, however busy that group was --
+        and tick_lanes reads exactly that field to decide the unit is dead.
+        `seen` caps the walk in case parent_id ever loops.
+        """
+        seen = seen if seen is not None else set()
+        if pipeline_id in seen:
+            return
+        seen.add(pipeline_id)
         pipe_data = self.r.hgetall(f"job:{pipeline_id}")
         if not pipe_data or "task_ids" not in pipe_data:
             return
@@ -1519,6 +1594,10 @@ class JobService:
         agg_progress = total_p // len(tids)
         self.r.hset(f"job:{pipeline_id}", "progress", agg_progress)
         self.r.hset(f"job:{pipeline_id}", "updated_at", int(time.time() * 1000))
+
+        parent_id = pipe_data.get("parent_id")
+        if parent_id:
+            self._update_pipeline_aggregate_progress(parent_id, seen)
 
     def get_global_stats(self):
         """Returns aggregate stats across all active and pending jobs."""

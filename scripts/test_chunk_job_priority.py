@@ -5,7 +5,15 @@ any normal job (LPUSH) that is already pending. Guards the batch-upload
 behaviour: functions get indexed while other files are still being analyzed.
 """
 
-from bsimvis.app.services.job_service import JobService, JobType
+import json
+import time
+
+from bsimvis.app.services.job_service import (
+    LEASE_TTL,
+    JobService,
+    JobStatus,
+    JobType,
+)
 from bsimvis.app.services.similarity_service import SimilarityService
 
 
@@ -48,7 +56,10 @@ class StubRedis:
         pass
 
     def lrem(self, key, count, val):
-        pass
+        lst = self.lists.get(key, [])
+        removed = lst.count(val)
+        self.lists[key] = [v for v in lst if v != val]
+        return removed
 
     def lrange(self, key, start, end):
         return list(self.lists.get(key, []))
@@ -107,8 +118,51 @@ class StubRedis:
     def zcard(self, key):
         return len(self.zsets.get(key, {}))
 
+    def zadd(self, key, mapping, xx=False, nx=False):
+        z = self.zsets.setdefault(key, {})
+        added = 0
+        for member, score in mapping.items():
+            if xx and member not in z:
+                continue
+            if nx and member in z:
+                continue
+            added += 0 if member in z else 1
+            z[member] = score
+        return added
+
+    def zrem(self, key, *members):
+        z = self.zsets.get(key, {})
+        return sum(1 for m in members if z.pop(m, None) is not None)
+
+    def zrangebyscore(self, key, low, high):
+        z = self.zsets.get(key, {})
+        return [m for m, score in sorted(z.items(), key=lambda kv: kv[1]) if low <= score <= high]
+
+    def zremrangebyscore(self, key, low, high):
+        z = self.zsets.get(key, {})
+        doomed = [m for m, score in z.items() if low <= score <= high]
+        for m in doomed:
+            del z[m]
+        return len(doomed)
+
+    def hincrby(self, key, field, amount=1):
+        h = self.hashes.setdefault(key, {})
+        h[field] = str(int(h.get(field, 0)) + amount)
+        return int(h[field])
+
+    def incrby(self, key, amount):
+        self.strings[key] = str(int(self.strings.get(key, 0)) + amount)
+        return int(self.strings[key])
+
+    def hvals(self, key):
+        return list(self.hashes.get(key, {}).values())
+
+    def hkeys(self, key):
+        return list(self.hashes.get(key, {}).keys())
+
     def zrange(self, key, start, end, withscores=False):
-        return []
+        members = [m for m, _ in sorted(self.zsets.get(key, {}).items(), key=lambda kv: kv[1])]
+        return members[start:] if end == -1 else members[start : end + 1]
 
     def pipeline(self, transaction=True):
         return StubPipeline(self)
@@ -642,6 +696,133 @@ def test_finalize_rejects_when_generations_changed_mid_build():
     assert r.hashes[f"global:pool:{pool_id}:meta"]["sync_status"] == "outdated"
 
 
+def test_progress_touches_every_ancestor_not_just_the_parent():
+    """A pipeline whose group is busy must not look untouched.
+
+    tick_lanes judges a lane unit dead from `updated_at`, and a pipeline
+    wrapping a multi-hour GHIDRA group never wrote its own hash -- so the lane
+    was handed to the next unit while this one was still running.
+    """
+    js = JobService()
+    js.r = StubRedis()
+
+    group_id = js.create_group(
+        [(JobType.GHIDRA_ANALYZE, {"collection": "main", "file_md5": "a"})],
+        enqueue=False,
+    )
+    pipeline_id = js.create_pipeline(
+        [group_id, (JobType.BUILD_SIM, {"collection": "main"})], enqueue=False
+    )
+    leaf_id = json.loads(js.r.hget(f"job:{group_id}", "task_ids"))[0]
+    js.r.hashes[f"job:{pipeline_id}"]["updated_at"] = "0"
+    js.r.hashes[f"job:{group_id}"]["updated_at"] = "0"
+
+    js.update_progress(leaf_id, 50)
+
+    assert int(js.r.hget(f"job:{group_id}", "updated_at")) > 0
+    assert int(js.r.hget(f"job:{pipeline_id}", "updated_at")) > 0
+
+
+def _lane_unit_over_a_group(js):
+    """A lane unit shaped like a sealed wave: a GHIDRA group, then its tail."""
+    group_id = js.create_group(
+        [(JobType.GHIDRA_ANALYZE, {"collection": "main", "file_md5": "a"})],
+        enqueue=False,
+    )
+    unit_id = js.submit_to_lane(
+        "main", [group_id, (JobType.BUILD_SIM, {"collection": "main"})]
+    )
+    leaf_id = json.loads(js.r.hget(f"job:{group_id}", "task_ids"))[0]
+    return unit_id, leaf_id
+
+
+def test_stale_unit_with_a_claimed_leaf_keeps_its_lane():
+    """The whole bug: five tails ran against one collection because a slow
+    unit reads as a crashed one."""
+    js = JobService()
+    js.r = StubRedis()
+
+    active, leaf_id = _lane_unit_over_a_group(js)
+    queued = js.submit_to_lane(
+        "main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})]
+    )
+
+    js.r.hashes[f"job:{active}"]["updated_at"] = "0"  # stale by any measure
+    js.claim_lease(leaf_id, "worker-1")  # ...but its analysis is running
+
+    js.tick_lanes()
+
+    assert js.r.hget(f"job:{queued}", "status") == JobStatus.PENDING.value
+    assert js.r.get("lane:main:active") == active
+    assert int(js.r.hget(f"job:{active}", "updated_at")) > 0
+
+
+def test_stale_unit_with_no_live_worker_still_hands_the_lane_over():
+    """Crash recovery has to keep working: nothing claimed, so promote."""
+    js = JobService()
+    js.r = StubRedis()
+
+    active, _leaf = _lane_unit_over_a_group(js)
+    queued = js.submit_to_lane(
+        "main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})]
+    )
+    js.r.hashes[f"job:{active}"]["updated_at"] = "0"
+
+    js.tick_lanes()
+
+    assert js.r.get("lane:main:active") == queued
+    assert js.r.hget(f"job:{queued}", "status") == JobStatus.RUNNING.value
+
+
+def test_only_the_active_unit_may_advance_the_lane():
+    """A cancelled *queued* unit used to promote a second unit alongside the
+    one still running."""
+    js = JobService()
+    js.r = StubRedis()
+
+    active = js.submit_to_lane("main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})])
+    second = js.submit_to_lane("main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})])
+    third = js.submit_to_lane("main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})])
+
+    js.cancel_job(third)
+
+    assert js.r.get("lane:main:active") == active
+    assert js.r.hget(f"job:{second}", "status") == JobStatus.PENDING.value
+    assert third not in js.r.lists.get("lane:main:pending", [])
+
+
+def test_duplicate_terminal_event_does_not_promote_twice():
+    js = JobService()
+    js.r = StubRedis()
+
+    active = js.submit_to_lane("main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})])
+    second = js.submit_to_lane("main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})])
+    third = js.submit_to_lane("main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})])
+
+    js.complete_job(active)
+    js.complete_job(active)  # a requeued leaf reporting twice, a retry, a race
+
+    assert js.r.get("lane:main:active") == second
+    assert js.r.hget(f"job:{third}", "status") == JobStatus.PENDING.value
+
+
+def test_expired_lease_fails_the_job_instead_of_requeuing_it():
+    js = JobService()
+    js.r = StubRedis()
+
+    job_id = js.create_job(JobType.GHIDRA_ANALYZE, {"collection": "main", "file_md5": "a"})
+    js.r.lists["jobs:pending"] = []
+    js.r.hset(f"job:{job_id}", "status", JobStatus.RUNNING.value)
+    js.claim_lease(job_id, "worker-1")
+    js.r.rpush("jobs:processing", job_id)
+
+    requeued, failed, _ = js.reap_expired(now=time.time() + LEASE_TTL + 1)
+
+    assert (requeued, failed) == (0, 1)
+    assert js.r.hget(f"job:{job_id}", "status") == JobStatus.FAILED.value
+    assert js.r.lists.get("jobs:pending", []) == []
+
+
 if __name__ == "__main__":
     test_chunk_jobs_jump_pending_analysis()
     test_lane_dispatches_immediately_when_idle()
@@ -664,4 +845,10 @@ if __name__ == "__main__":
     test_wave_seals_into_one_group_not_n_pipelines()
     test_finalize_runs_when_no_build_generations_baseline()
     test_finalize_rejects_when_generations_changed_mid_build()
+    test_progress_touches_every_ancestor_not_just_the_parent()
+    test_stale_unit_with_a_claimed_leaf_keeps_its_lane()
+    test_stale_unit_with_no_live_worker_still_hands_the_lane_over()
+    test_only_the_active_unit_may_advance_the_lane()
+    test_duplicate_terminal_event_does_not_promote_twice()
+    test_expired_lease_fails_the_job_instead_of_requeuing_it()
     print("ok")

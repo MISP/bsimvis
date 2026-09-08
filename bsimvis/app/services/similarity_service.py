@@ -2624,7 +2624,6 @@ class SimilarityService:
                 _feat,
                 fid_tags,
                 tag_meta_cache,
-                pick_cluster,
             )
 
             # Persist pool bin_sim

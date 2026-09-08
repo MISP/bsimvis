@@ -55,6 +55,18 @@ def get_active_timer() -> Timer:
     return getattr(_active_timers, "timer", None)
 
 
+def set_active_timer(timer):
+    """Makes `timer` the one TimedRedis records into on this thread."""
+    _active_timers.timer = timer
+
+
+def clear_active_timer():
+    """Drops this thread's timer. Must run on every exit path, or the next
+    request served by the same thread keeps recording into the old one."""
+    if hasattr(_active_timers, "timer"):
+        del _active_timers.timer
+
+
 @contextmanager
 def job_timer(job_id):
     """Context manager to track a job's performance."""

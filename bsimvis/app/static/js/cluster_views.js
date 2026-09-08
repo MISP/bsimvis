@@ -31,7 +31,7 @@ function getHierarchyTooltip() {
     if (!el) {
         el = document.createElement('div');
         el.id = 'hierarchy-tooltip';
-        el.style.cssText = "position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent,#66d9ef); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:calc(100vw - 30px); backdrop-filter:blur(15px); overflow:hidden;";
+        el.style.cssText = "position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent,#66d9ef); display:none; pointer-events:auto; font-size:0.8rem; max-width:calc(100vw - 30px); backdrop-filter:blur(15px); overflow:hidden;";
         document.body.appendChild(el);
         
         el.addEventListener('click', (event) => {
@@ -102,7 +102,11 @@ class ClusterHierarchy extends D3BaseLayout {
         let updated = false;
 
         this.root.each(d => {
-            if (d.data && etype === 'function' && d.data.runtime_members) {
+            if (d.data && etype === 'cluster' && String(d.data.tag_id || d.data.id) === String(eid)) {
+                d.data.user_tags = d.data.user_tags || [];
+                mutate(d.data.user_tags, tag, add);
+                updated = true;
+            } else if (d.data && etype === 'function' && d.data.runtime_members) {
                 d.data.runtime_members.forEach(m => {
                     const altEid = eid.includes(':func:') ? eid.replace(':func:', ':function:') : eid.replace(':function:', ':func:');
                     if (m.function_id === eid || m.function_id === altEid) {
@@ -150,8 +154,8 @@ class ClusterHierarchy extends D3BaseLayout {
 
         // Template for controls
         const hierControls = `
-            <div style="position:absolute; top:20px; left:20px; z-index:10; background:rgba(0,0,0,0.85); padding:15px; border-radius:8px; border:1px solid #333; width:240px; backdrop-filter:blur(10px);">
-                <div style="font-size:0.85rem; color:#fff; font-weight:bold; margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:5px;">Tree Filters</div>
+            <div style="position:absolute; top:20px; left:20px; z-index:10; background:var(--window-bg); padding:15px; border-radius:8px; border:1px solid var(--border); width:240px; backdrop-filter:blur(10px);">
+                <div style="font-size:0.85rem; color:var(--text); font-weight:bold; margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:5px;">Tree Filters</div>
                 
                 <div class="filter-category-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed');">
                     <span>Range Filters</span>
@@ -161,7 +165,7 @@ class ClusterHierarchy extends D3BaseLayout {
                     <!-- Size Range -->
                     <div style="margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <label style="font-size:0.75rem; color:#aaa;">Cluster Size</label>
+                            <label style="font-size:0.75rem; color:var(--meta-text-muted);">Cluster Size</label>
                             <span style="font-size:0.75rem; color:var(--accent); font-family:monospace; font-weight:bold;">
                                 <span id="val-min-size">${this.params.min_cluster_size}</span>-<span id="val-max-size">${this.params.max_cluster_size || '∞'}</span>
                             </span>
@@ -176,7 +180,7 @@ class ClusterHierarchy extends D3BaseLayout {
                     <!-- Cohesion Range -->
                     <div style="margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <label style="font-size:0.75rem; color:#aaa;">Cohesion %</label>
+                            <label style="font-size:0.75rem; color:var(--meta-text-muted);">Cohesion %</label>
                             <span style="font-size:0.75rem; color:var(--success); font-family:monospace; font-weight:bold;">
                                 <span id="val-coh-min">${(this.params.cohesion_min * 100).toFixed(0)}</span>-<span id="val-coh-max">${(this.params.cohesion_max > 0 ? (this.params.cohesion_max * 100).toFixed(0) : '100')}</span>%
                             </span>
@@ -191,7 +195,7 @@ class ClusterHierarchy extends D3BaseLayout {
                     <!-- Feature Range -->
                     <div style="margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <label style="font-size:0.75rem; color:#aaa;">Avg Features</label>
+                            <label style="font-size:0.75rem; color:var(--meta-text-muted);">Avg Features</label>
                             <span style="font-size:0.75rem; color:#ae81ff; font-family:monospace; font-weight:bold;">
                                 <span id="val-feat-min">${this.params.min_features || 0}</span>-<span id="val-feat-max">${this.params.max_features || '∞'}</span>
                             </span>
@@ -206,7 +210,7 @@ class ClusterHierarchy extends D3BaseLayout {
                     <!-- Stability Range -->
                     <div style="margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <label style="font-size:0.75rem; color:#aaa;">Stability</label>
+                            <label style="font-size:0.75rem; color:var(--meta-text-muted);">Stability</label>
                             <span style="font-size:0.75rem; color:#66d9ef; font-family:monospace; font-weight:bold;">
                                 <span id="val-stab-min">${this.params.stability_threshold.toFixed(1)}</span>+
                             </span>
@@ -227,27 +231,27 @@ class ClusterHierarchy extends D3BaseLayout {
                     <div style="display:flex; flex-direction:column; gap:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-show-parents" ${this.params.show_parents !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-show-parents" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show parents</label>
+                            <label for="input-show-parents" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Show parents</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-show-children" ${this.params.show_children !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-show-children" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show children</label>
+                            <label for="input-show-children" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Show children</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-path-compression" ${this.params.path_compression !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-path-compression" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Path compression</label>
+                            <label for="input-path-compression" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Path compression</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-show-members" ${this.params.show_members ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-show-members" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show members</label>
+                            <label for="input-show-members" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Show members</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-color-by-md5" ${this.params.color_by_md5 ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-color-by-md5" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Color by MD5</label>
+                            <label for="input-color-by-md5" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Color by MD5</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-show-binary-sankey" ${this.params.show_binary_sankey ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-show-binary-sankey" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Binary flow (Sankey)</label>
+                            <label for="input-show-binary-sankey" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Binary flow (Sankey)</label>
                         </div>
                     </div>
                 </div>
@@ -255,18 +259,18 @@ class ClusterHierarchy extends D3BaseLayout {
                 <button id="hier-refresh-btn" class="btn-primary" style="padding:10px; font-size:0.75rem; width:100%; margin-top:5px; text-transform:uppercase; letter-spacing:1.5px; font-weight:bold;">Update Visualization</button>
             </div>
 
-            <div style="position:absolute; bottom:20px; right:20px; z-index:10; background:rgba(0,0,0,0.8); padding:15px; border-radius:8px; border:1px solid #333; max-width:300px; display:none;" id="hierarchy-info-panel">
+            <div style="position:absolute; bottom:20px; right:20px; z-index:10; background:var(--window-bg); padding:15px; border-radius:8px; border:1px solid var(--border); max-width:300px; display:none;" id="hierarchy-info-panel">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                     <h4 id="hier-cluster-name" style="margin:0; color:var(--accent); font-size:0.9rem;">Cluster Info</h4>
-                    <button onclick="this.parentElement.parentElement.style.display='none'" style="background:none; border:none; color:#666; cursor:pointer;">&times;</button>
+                    <button onclick="this.parentElement.parentElement.style.display='none'" style="background:none; border:none; color:var(--subtle); cursor:pointer;">&times;</button>
                 </div>
-                <div id="hier-stats" style="font-size:0.85rem; color:#ccc;"></div>
+                <div id="hier-stats" style="font-size:0.85rem; color:var(--meta-text-muted);"></div>
                 <div style="margin-top:15px; display:flex; gap:10px;">
                     <button id="hier-view-btn" class="btn-action" style="flex:1">Functions</button>
                 </div>
             </div>
 
-            <div id="hierarchy-loader" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--accent); background:#0d0f14;">
+            <div id="hierarchy-loader" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--accent); background:var(--window-bg);">
                 <div style="text-align:center;">
                     <div class="spinner" style="margin-bottom:15px;"></div>
                     <div style="font-size:0.9rem; letter-spacing:1px;">Rebuilding Dendrogram...</div>
@@ -440,6 +444,8 @@ class ClusterHierarchy extends D3BaseLayout {
                 parent: m.parent ? String(m.parent) : null,
                 name: m.cluster_name || `Cluster ${m.cluster_id}`,
                 uuid: m.cluster_uuid,
+                tag_id: m.tag_id || String(m.cluster_id),
+                user_tags: m.user_tags || [],
                 size: m.count || 0,
                 stability: m.avg_stability || 0.0,
                 cohesion: m.cohesion_score || 0.0,
@@ -473,7 +479,7 @@ class ClusterHierarchy extends D3BaseLayout {
             }
 
             if (!nodes || nodes.length === 0) {
-                this.container.innerHTML += `<div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:#aaa; text-align:center; width:100%;">No clusters match these criteria.<br><span style="font-size:0.8rem; color:#666;">Try lowering the stability cut or minimum size.</span></div>`;
+                this.container.innerHTML += `<div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:var(--meta-text-muted); text-align:center; width:100%;">No clusters match these criteria.<br><span style="font-size:0.8rem; color:var(--subtle);">Try lowering the stability cut or minimum size.</span></div>`;
                 const loader = document.getElementById('hierarchy-loader');
                 if (loader) loader.remove();
                 return;
@@ -659,7 +665,7 @@ class ClusterHierarchy extends D3BaseLayout {
 
         const getCohesionColor = (cohesion) => {
             const hue = Math.max(0, Math.min(120, (cohesion || 0) * 120));
-            return `hsl(${hue}, 100%, 65%)`;
+            return `hsl(${hue}, var(--color-s-high), var(--color-l-high))`;
         };
 
         nodeEnter.append("circle")
@@ -679,7 +685,7 @@ class ClusterHierarchy extends D3BaseLayout {
                     if ((this.params.color_by_md5 || this.params.show_binary_sankey) && d.data.md5) {
                         return window.getMd5Color(d.data.md5);
                     }
-                    return "#0d0f14";
+                    return "var(--window-bg)";
                 }
                 return getCohesionColor(d.data.cohesion);
             });
@@ -688,13 +694,13 @@ class ClusterHierarchy extends D3BaseLayout {
             .attr("dy", ".35em")
             .attr("x", d => d.children || d._children ? -15 : 15)
             .attr("text-anchor", d => d.children || d._children ? "end" : "start")
-            .style("fill", d => d.data.is_member ? "#aaa" : "#fff")
+            .style("fill", d => d.data.is_member ? "var(--meta-text-muted)" : "var(--text)")
             .style("font-size", d => d.data.is_member ? "10px" : "12px")
             .style("font-style", d => d.data.is_member ? "italic" : "normal")
             .style("pointer-events", "none")
             .text(d => d.data.name)
             .clone(true).lower()
-            .attr("stroke", "#000")
+            .attr("stroke", "var(--window-tray)")
             .attr("stroke-width", 3);
 
         const dragDendro = d3.drag()
@@ -733,7 +739,7 @@ class ClusterHierarchy extends D3BaseLayout {
                     if ((this.params.color_by_md5 || this.params.show_binary_sankey) && d.data.md5) {
                         return window.getMd5Color(d.data.md5);
                     }
-                    return "#0d0f14";
+                    return "var(--window-bg)";
                 }
                 return getCohesionColor(d.data.cohesion);
             })
@@ -758,7 +764,7 @@ class ClusterHierarchy extends D3BaseLayout {
         const linkEnter = link.enter().insert("path", "g")
             .attr("class", "link")
             .attr("fill", "none")
-            .attr("stroke", "#333")
+            .attr("stroke", "var(--border)")
             .attr("stroke-width", 1.5)
             .attr("d", d => {
                 const o = { x: source.x, y: source.y };
@@ -766,7 +772,7 @@ class ClusterHierarchy extends D3BaseLayout {
             });
 
         link.merge(linkEnter).transition().duration(400)
-            .attr("stroke", "#333")
+            .attr("stroke", "var(--border)")
             .attr("d", d => diagonal(d.source, d.target));
 
         link.exit().transition().duration(400)
@@ -880,9 +886,9 @@ class ClusterHierarchy extends D3BaseLayout {
                 const showSankeyTooltip = (e, funcName, binName) => {
                     if (!tooltipEl) return;
                     tooltipEl.innerHTML = `
-                        <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Sankey Flow</div>
-                        <div style="font-size:0.75rem; margin-bottom:4px;"><span style="color:#aaa;">Function:</span> <b style="color:#fff;">${funcName}</b></div>
-                        <div style="font-size:0.75rem;"><span style="color:#aaa;">Binary:</span> <b style="color:var(--accent);">${binName}</b></div>
+                        <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid var(--border); padding-bottom:5px; margin-bottom:5px;">Sankey Flow</div>
+                        <div style="font-size:0.75rem; margin-bottom:4px;"><span style="color:var(--meta-text-muted);">Function:</span> <b style="color:var(--text);">${funcName}</b></div>
+                        <div style="font-size:0.75rem;"><span style="color:var(--meta-text-muted);">Binary:</span> <b style="color:var(--accent);">${binName}</b></div>
                     `;
                     tooltipEl.style.display = 'block';
                     positionTooltip(e);
@@ -891,9 +897,9 @@ class ClusterHierarchy extends D3BaseLayout {
                 const showSankeyBinaryTooltip = (e, binName, funcCount) => {
                     if (!tooltipEl) return;
                     tooltipEl.innerHTML = `
-                        <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Binary Destination</div>
-                        <div style="font-size:0.75rem; margin-bottom:4px;"><span style="color:#aaa;">Binary:</span> <b style="color:#fff;">${binName}</b></div>
-                        <div style="font-size:0.75rem;"><span style="color:#aaa;">Flows from:</span> <b style="color:var(--success);">${funcCount} functions</b></div>
+                        <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid var(--border); padding-bottom:5px; margin-bottom:5px;">Binary Destination</div>
+                        <div style="font-size:0.75rem; margin-bottom:4px;"><span style="color:var(--meta-text-muted);">Binary:</span> <b style="color:var(--text);">${binName}</b></div>
+                        <div style="font-size:0.75rem;"><span style="color:var(--meta-text-muted);">Flows from:</span> <b style="color:var(--success);">${funcCount} functions</b></div>
                     `;
                     tooltipEl.style.display = 'block';
                     positionTooltip(e);
@@ -981,13 +987,13 @@ class ClusterHierarchy extends D3BaseLayout {
                     .attr("y", d => d.height / 2)
                     .attr("dy", ".35em")
                     .attr("text-anchor", "start")
-                    .style("fill", "#fff")
+                    .style("fill", "var(--text)")
                     .style("font-size", "11px")
                     .style("font-weight", "bold")
                     .style("pointer-events", "none")
                     .text(d => d.name)
                     .clone(true).lower()
-                    .attr("stroke", "#000")
+                    .attr("stroke", "var(--window-tray)")
                     .attr("stroke-width", 3);
                 
                 const binNodesMerge = binNodes.merge(binNodesEnter);
@@ -1041,7 +1047,7 @@ class ClusterHierarchy extends D3BaseLayout {
     }
 
     formatFunctionInline(f) {
-        if (typeof f === 'string') return `<div style="margin-bottom:2px; color:#aaa;">• ${f}</div>`;
+        if (typeof f === 'string') return `<div style="margin-bottom:2px; color:var(--meta-text-muted);">• ${f}</div>`;
         return `
             <div style="margin-bottom:2px; padding: 2px 0;">
                 ${EntityRenderer.renderFunction(f, { showActions: false })}
@@ -1064,30 +1070,30 @@ class ClusterHierarchy extends D3BaseLayout {
 
             stats.innerHTML = `
                 <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid #555;">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid var(--subtle);">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
-                        <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">funcs</span></div>
+                        <div style="color:var(--meta-text); font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:var(--subtle); font-size:0.65rem;">funcs</span></div>
                     </div>
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid var(--accent);">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid var(--accent);">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
                         <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
                     </div>
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid var(--success);">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid var(--success);">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
                         <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
                     </div>
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid #ae81ff;">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid #ae81ff;">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Avg Features</div>
                         <div style="color:#ae81ff; font-weight:bold;">${(d.data.avg_features || 0).toFixed(1)}</div>
                     </div>
                 </div>
-                <div style="margin-top:15px; border-top:1px solid #333; padding-top:10px;">
-                    <div style="font-size:0.65rem; color:#666; margin-bottom:6px; text-transform:uppercase;">
+                <div style="margin-top:15px; border-top:1px solid var(--border); padding-top:10px;">
+                    <div style="font-size:0.65rem; color:var(--subtle); margin-bottom:6px; text-transform:uppercase;">
                         ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Loading Members...' : 'Sample Members (Live):'}
                     </div>
-                    <div style="color:#eee; font-family:monospace; font-size:0.75rem; line-height:1.4;">
+                    <div style="color:var(--meta-text); font-family:monospace; font-size:0.75rem; line-height:1.4;">
                         ${members.map(m => this.formatFunctionInline(m)).join('')}
-                        ${d.data.size > members.length ? `<div style="color:#444; margin-top:4px; font-size:0.7rem;">... and ${d.data.size - members.length} more</div>` : ''}
+                        ${d.data.size > members.length ? `<div style="color:var(--border); margin-top:4px; font-size:0.7rem;">... and ${d.data.size - members.length} more</div>` : ''}
                     </div>
                 </div>
             `;
@@ -1183,29 +1189,30 @@ class ClusterHierarchy extends D3BaseLayout {
                 <div class="hier-tooltip-container">
                     <div class="hier-left-col" style="padding: 12px;">
                         <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
-                        <div style="color:#666; font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
+                        <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:6px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
+                        <div style="margin-bottom:10px;">${EntityRenderer.renderTag('cluster', d.data.tag_id || d.data.id, [], d.data.user_tags || [])}</div>
                         
                         <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #555;">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--subtle);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
-                                <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">${this.clusterType === 'file' ? 'files' : 'funcs'}</span></div>
+                                <div style="color:var(--meta-text); font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:var(--subtle); font-size:0.65rem;">${this.clusterType === 'file' ? 'files' : 'funcs'}</span></div>
                             </div>
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
                                 <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
                             </div>
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
                                 <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
                             </div>
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #ae81ff;">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid #ae81ff;">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Avg Features</div>
                                 <div style="color:#ae81ff; font-weight:bold;">${(d.data.avg_features || 0).toFixed(1)}</div>
                             </div>
                         </div>
 
-                        <div style="border-top:1px solid #333; padding-top:10px; flex: 1; display: flex; flex-direction: column; overflow: hidden;">
-                            <div class="hier-samples-title" style="font-size:0.6rem; color:#555; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
+                        <div style="border-top:1px solid var(--border); padding-top:10px; flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+                            <div class="hier-samples-title" style="font-size:0.6rem; color:var(--subtle); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
                                 ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live...' : `${this.clusterType === 'file' ? 'Files' : 'Samples'} (${members.length}):`}
                             </div>
                             <div class="hier-function-list">
@@ -1213,7 +1220,7 @@ class ClusterHierarchy extends D3BaseLayout {
                                     ${members.map((m, i) => {
                                         if (this.clusterType === 'file') {
                                             return `
-                                                <div style="font-size: 0.7rem; padding: 2px; color: #eee; font-family: monospace;">
+                                                <div style="font-size: 0.7rem; padding: 2px; color: var(--meta-text); font-family: monospace;">
                                                     ${EntityRenderer.renderFileName(m.file_name, m.file_md5, getCurrentCollection())} ${m.avtype ? `| AV: ${m.avtype}` : ''}
                                                 </div>
                                             `;
@@ -1221,7 +1228,7 @@ class ClusterHierarchy extends D3BaseLayout {
                                         const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
                                         return `
                                             <div class="hier-function-item" data-index="${i}"
-                                                 data-entity-data='${JSON.stringify(m).replace(/'/g, "&apos;")}'
+                                                 data-entity-data='${escapeAttr(JSON.stringify(m))}'
                                                  oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                                                 <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                                                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
@@ -1232,11 +1239,11 @@ class ClusterHierarchy extends D3BaseLayout {
                                     }).join('')}
                                 </div>
                             </div>
-                            ${d.data.size > members.length ? `<div style="color:#444; margin-top:6px; font-size:0.65rem;">... and ${d.data.size - members.length} more</div>` : ''}
+                            ${d.data.size > members.length ? `<div style="color:var(--border); margin-top:6px; font-size:0.65rem;">... and ${d.data.size - members.length} more</div>` : ''}
                         </div>
                     </div>
                     <div class="hier-right-col" id="hier-snippet-container">
-                        <div class="hier-snippet-placeholder" style="padding: 20px; color: #666; text-align: center; font-size: 0.8rem;">
+                        <div class="hier-snippet-placeholder" style="padding: 20px; color: var(--subtle); text-align: center; font-size: 0.8rem;">
                             ${selectedFunc ? '<i class="fas fa-spinner fa-spin"></i> Loading Preview...' : 'Select a function to preview'}
                         </div>
                     </div>
@@ -1254,7 +1261,7 @@ class ClusterHierarchy extends D3BaseLayout {
                     const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
                     return `
                         <div class="hier-function-item" data-index="${i}"
-                             data-entity-data='${JSON.stringify(m).replace(/'/g, "&apos;")}'
+                             data-entity-data='${escapeAttr(JSON.stringify(m))}'
                              oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                             <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                             <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
@@ -1274,7 +1281,7 @@ class ClusterHierarchy extends D3BaseLayout {
                 itemEl.classList.toggle('selected', isSelected);
                 const nameSpan = itemEl.querySelector('.func-name-span');
                 if (nameSpan) {
-                    nameSpan.style.color = isSelected ? 'var(--accent)' : '#eee';
+                    nameSpan.style.color = isSelected ? 'var(--accent)' : 'var(--meta-text)';
                 }
             });
         }
@@ -1300,7 +1307,7 @@ class ClusterHierarchy extends D3BaseLayout {
             existingSnippet.style.opacity = '0.4';
         } else {
             container.innerHTML = `
-                <div class="hier-snippet-placeholder" style="padding: 20px; color: #666; text-align: center; font-size: 0.8rem;">
+                <div class="hier-snippet-placeholder" style="padding: 20px; color: var(--subtle); text-align: center; font-size: 0.8rem;">
                     <i class="fas fa-spinner fa-spin"></i> Loading Preview...
                 </div>
             `;
@@ -1338,11 +1345,11 @@ class ClusterHierarchy extends D3BaseLayout {
 
         let html = `
             <div class="hier-code-snippet" style="height: 100%; display: flex; flex-direction: column;">
-                <div style="padding: 10px 15px; border-bottom: 1px solid #222; background: rgba(0,0,0,0.3); flex-shrink: 0;">
+                <div style="padding: 10px 15px; border-bottom: 1px solid var(--meta-header-bg); background: var(--border); flex-shrink: 0;">
                     <div style="font-size: 0.75rem; color: var(--accent); font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                         ${m.return_type || ''} ${m.namespace ? m.namespace + '::' : ''}${func.function_name}
                     </div>
-                    <div style="font-size: 0.6rem; color: #555; font-family: monospace; margin-top: 2px;">
+                    <div style="font-size: 0.6rem; color: var(--subtle); font-family: monospace; margin-top: 2px;">
                         Addr: ${func.entrypoint_address} | Feat: ${func.bsim_features_count}
                     </div>
                 </div>
@@ -1408,7 +1415,11 @@ class ClusterPacking {
         let updated = false;
 
         this.root.each(d => {
-            if (d.data && etype === 'function' && d.data.runtime_members) {
+            if (d.data && etype === 'cluster' && String(d.data.tag_id || d.data.id) === String(eid)) {
+                d.data.user_tags = d.data.user_tags || [];
+                mutate(d.data.user_tags, tag, add);
+                updated = true;
+            } else if (d.data && etype === 'function' && d.data.runtime_members) {
                 d.data.runtime_members.forEach(m => {
                     const altEid = eid.includes(':func:') ? eid.replace(':func:', ':function:') : eid.replace(':function:', ':func:');
                     if (m.function_id === eid || m.function_id === altEid) {
@@ -1451,8 +1462,8 @@ class ClusterPacking {
         this.params.color_by_md5 = params.get('color_by_md5') === 'true';
 
         const packControls = `
-            <div style="position:absolute; top:20px; left:20px; z-index:10; background:rgba(0,0,0,0.85); padding:15px; border-radius:8px; border:1px solid #333; width:240px; backdrop-filter:blur(10px);">
-                <div style="font-size:0.85rem; color:#fff; font-weight:bold; margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:5px;">Packing Filters</div>
+            <div style="position:absolute; top:20px; left:20px; z-index:10; background:var(--window-bg); padding:15px; border-radius:8px; border:1px solid var(--border); width:240px; backdrop-filter:blur(10px);">
+                <div style="font-size:0.85rem; color:var(--text); font-weight:bold; margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:5px;">Packing Filters</div>
                 
                 <div class="filter-category-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed');">
                     <span>Range Filters</span>
@@ -1462,7 +1473,7 @@ class ClusterPacking {
                     <!-- Size Range -->
                     <div style="margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <label style="font-size:0.75rem; color:#aaa;">Cluster Size</label>
+                            <label style="font-size:0.75rem; color:var(--meta-text-muted);">Cluster Size</label>
                             <span style="font-size:0.75rem; color:var(--accent); font-family:monospace; font-weight:bold;">
                                 <span id="val-pack-min-size">${this.params.min_cluster_size}</span>-<span id="val-pack-max-size">${this.params.max_cluster_size || '∞'}</span>
                             </span>
@@ -1477,7 +1488,7 @@ class ClusterPacking {
                     <!-- Cohesion Range -->
                     <div style="margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <label style="font-size:0.75rem; color:#aaa;">Cohesion %</label>
+                            <label style="font-size:0.75rem; color:var(--meta-text-muted);">Cohesion %</label>
                             <span style="font-size:0.75rem; color:var(--success); font-family:monospace; font-weight:bold;">
                                 <span id="val-pack-coh-min">${(this.params.cohesion_min * 100).toFixed(0)}</span>-<span id="val-pack-coh-max">${(this.params.cohesion_max > 0 ? (this.params.cohesion_max * 100).toFixed(0) : '100')}</span>%
                             </span>
@@ -1492,7 +1503,7 @@ class ClusterPacking {
                     <!-- Feature Range -->
                     <div style="margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <label style="font-size:0.75rem; color:#aaa;">Avg Features</label>
+                            <label style="font-size:0.75rem; color:var(--meta-text-muted);">Avg Features</label>
                             <span style="font-size:0.75rem; color:#ae81ff; font-family:monospace; font-weight:bold;">
                                 <span id="val-pack-feat-min">${this.params.min_features || 0}</span>-<span id="val-pack-feat-max">${this.params.max_features || '∞'}</span>
                             </span>
@@ -1507,7 +1518,7 @@ class ClusterPacking {
                     <!-- Stability Range -->
                     <div style="margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <label style="font-size:0.75rem; color:#aaa;">Stability</label>
+                            <label style="font-size:0.75rem; color:var(--meta-text-muted);">Stability</label>
                             <span style="font-size:0.75rem; color:#66d9ef; font-family:monospace; font-weight:bold;">
                                 <span id="val-pack-stab-min">${this.params.stability_threshold.toFixed(1)}</span>+
                             </span>
@@ -1528,23 +1539,23 @@ class ClusterPacking {
                     <div style="display:flex; flex-direction:column; gap:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-pack-show-parents" ${this.params.show_parents !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-pack-show-parents" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show parents</label>
+                            <label for="input-pack-show-parents" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Show parents</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-pack-show-children" ${this.params.show_children !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-pack-show-children" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show children</label>
+                            <label for="input-pack-show-children" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Show children</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-pack-path-compression" ${this.params.path_compression !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-pack-path-compression" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Path compression</label>
+                            <label for="input-pack-path-compression" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Path compression</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-pack-show-members" ${this.params.show_members ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-pack-show-members" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show members</label>
+                            <label for="input-pack-show-members" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Show members</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-pack-color-by-md5" ${this.params.color_by_md5 ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-pack-color-by-md5" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Color by MD5</label>
+                            <label for="input-pack-color-by-md5" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Color by MD5</label>
                         </div>
                     </div>
                 </div>
@@ -1552,18 +1563,18 @@ class ClusterPacking {
                 <button id="pack-refresh-btn" class="btn-primary" style="padding:10px; font-size:0.75rem; width:100%; margin-top:5px; text-transform:uppercase; letter-spacing:1.5px; font-weight:bold;">Update Visualization</button>
             </div>
 
-            <div style="position:absolute; bottom:20px; right:20px; z-index:10; background:rgba(0,0,0,0.8); padding:15px; border-radius:8px; border:1px solid #333; max-width:300px; display:none;" id="pack-info-panel">
+            <div style="position:absolute; bottom:20px; right:20px; z-index:10; background:var(--window-bg); padding:15px; border-radius:8px; border:1px solid var(--border); max-width:300px; display:none;" id="pack-info-panel">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                     <h4 id="pack-cluster-name" style="margin:0; color:var(--accent); font-size:0.9rem;">Cluster Info</h4>
-                    <button onclick="this.parentElement.parentElement.style.display='none'" style="background:none; border:none; color:#666; cursor:pointer;">&times;</button>
+                    <button onclick="this.parentElement.parentElement.style.display='none'" style="background:none; border:none; color:var(--subtle); cursor:pointer;">&times;</button>
                 </div>
-                <div id="pack-stats" style="font-size:0.85rem; color:#ccc;"></div>
+                <div id="pack-stats" style="font-size:0.85rem; color:var(--meta-text-muted);"></div>
                 <div style="margin-top:15px; display:flex; gap:10px;">
                     <button id="pack-view-btn" class="btn-action" style="flex:1">Functions</button>
                 </div>
             </div>
 
-            <div id="pack-loader" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--accent); background:#0d0f14;">
+            <div id="pack-loader" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--accent); background:var(--window-bg);">
                 <div style="text-align:center;">
                     <div class="spinner" style="margin-bottom:15px;"></div>
                     <div style="font-size:0.9rem; letter-spacing:1px;">Rebuilding Packing Layout...</div>
@@ -1716,6 +1727,8 @@ class ClusterPacking {
                 parent: m.parent ? String(m.parent) : null,
                 name: m.cluster_name || `Cluster ${m.cluster_id}`,
                 uuid: m.cluster_uuid,
+                tag_id: m.tag_id || String(m.cluster_id),
+                user_tags: m.user_tags || [],
                 size: m.count || 0,
                 stability: m.avg_stability || 0.0,
                 cohesion: m.cohesion_score || 0.0,
@@ -1752,7 +1765,7 @@ class ClusterPacking {
             }
 
             if (!nodes || nodes.length === 0) {
-                this.container.innerHTML += `<div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:#aaa; text-align:center; width:100%;">No clusters match these criteria.<br><span style="font-size:0.8rem; color:#666;">Try lowering the stability cut or minimum size.</span></div>`;
+                this.container.innerHTML += `<div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:var(--meta-text-muted); text-align:center; width:100%;">No clusters match these criteria.<br><span style="font-size:0.8rem; color:var(--subtle);">Try lowering the stability cut or minimum size.</span></div>`;
                 const loader = document.getElementById('pack-loader');
                 if (loader) loader.remove();
                 return;
@@ -1810,7 +1823,7 @@ class ClusterPacking {
             .attr("viewBox", `0 0 ${width} ${height}`)
             .attr("width", "100%")
             .attr("height", "100%")
-            .attr("style", "background:#0d0f14; cursor:pointer;");
+            .attr("style", "background:var(--window-bg); cursor:pointer;");
 
         const stratify = d3.stratify()
             .id(d => d.id)
@@ -1871,7 +1884,7 @@ class ClusterPacking {
         const g = this.svg.append("g");
 
         const getCohesionFill = (d) => {
-            if (d.data.id === "VIRTUAL_ROOT" || d.data.uuid === "root") return "rgba(255,255,255,0.01)";
+            if (d.data.id === "VIRTUAL_ROOT" || d.data.uuid === "root") return "var(--border)";
             if (d.data.is_member) {
                 if (this.params.color_by_md5 && d.data.md5) {
                     const baseColor = window.getMd5Color(d.data.md5);
@@ -1882,16 +1895,16 @@ class ClusterPacking {
                     }
                     return baseColor;
                 }
-                return "rgba(102,217,239,0.15)";
+                return "color-mix(in srgb, var(--token-register) 15%, transparent)";
             }
             const cohesion = d.data.cohesion || 0;
             const hue = Math.max(0, Math.min(120, cohesion * 120));
             const opacity = d.children ? 0.03 : 0.15;
-            return `hsla(${hue}, 80%, 50%, ${opacity})`;
+            return `hsla(${hue}, var(--color-s-med), var(--color-l-dim), ${opacity})`;
         };
 
         const getCohesionStroke = (d) => {
-            if (d.data.id === "VIRTUAL_ROOT" || d.data.uuid === "root") return "rgba(255,255,255,0.15)";
+            if (d.data.id === "VIRTUAL_ROOT" || d.data.uuid === "root") return "var(--border)";
             if (d.data.is_member) {
                 if (this.params.color_by_md5 && d.data.md5) {
                     return window.getMd5Color(d.data.md5);
@@ -1900,7 +1913,7 @@ class ClusterPacking {
             }
             const cohesion = d.data.cohesion || 0;
             const hue = Math.max(0, Math.min(120, cohesion * 120));
-            return `hsl(${hue}, 85%, 60%)`;
+            return `hsl(${hue}, var(--color-s-low), var(--color-l-low))`;
         };
 
         const node = g.selectAll("circle")
@@ -1968,7 +1981,7 @@ class ClusterPacking {
             .join("text")
             .attr("text-anchor", "middle")
             .attr("dy", ".35em")
-            .style("fill", "#fff")
+            .style("fill", "var(--text)")
             .style("font-family", "sans-serif")
             .style("pointer-events", "none")
             .attr("x", d => d.x)
@@ -2059,7 +2072,7 @@ class ClusterPacking {
     }
 
     formatFunctionInline(f) {
-        if (typeof f === 'string') return `<div style="margin-bottom:2px; color:#aaa;">• ${f}</div>`;
+        if (typeof f === 'string') return `<div style="margin-bottom:2px; color:var(--meta-text-muted);">• ${f}</div>`;
         return `
             <div style="margin-bottom:2px; padding: 2px 0;">
                 ${EntityRenderer.renderFunction(f, { showActions: false })}
@@ -2083,30 +2096,30 @@ class ClusterPacking {
 
             stats.innerHTML = `
                 <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid #555;">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid var(--subtle);">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
-                        <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">funcs</span></div>
+                        <div style="color:var(--meta-text); font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:var(--subtle); font-size:0.65rem;">funcs</span></div>
                     </div>
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid var(--accent);">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid var(--accent);">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
                         <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
                     </div>
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid var(--success);">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid var(--success);">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
                         <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
                     </div>
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid #ae81ff;">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid #ae81ff;">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Avg Features</div>
                         <div style="color:#ae81ff; font-weight:bold;">${(d.data.avg_features || 0).toFixed(1)}</div>
                     </div>
                 </div>
-                <div style="margin-top:15px; border-top:1px solid #333; padding-top:10px;">
-                    <div style="font-size:0.65rem; color:#666; margin-bottom:6px; text-transform:uppercase;">
+                <div style="margin-top:15px; border-top:1px solid var(--border); padding-top:10px;">
+                    <div style="font-size:0.65rem; color:var(--subtle); margin-bottom:6px; text-transform:uppercase;">
                         ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Loading Members...' : 'Sample Members (Live):'}
                     </div>
-                    <div style="color:#eee; font-family:monospace; font-size:0.75rem; line-height:1.4;">
+                    <div style="color:var(--meta-text); font-family:monospace; font-size:0.75rem; line-height:1.4;">
                         ${members.map(m => this.formatFunctionInline(m)).join('')}
-                        ${d.data.size > members.length ? `<div style="color:#444; margin-top:4px; font-size:0.7rem;">... and ${d.data.size - members.length} more</div>` : ''}
+                        ${d.data.size > members.length ? `<div style="color:var(--border); margin-top:4px; font-size:0.7rem;">... and ${d.data.size - members.length} more</div>` : ''}
                     </div>
                 </div>
             `;
@@ -2217,29 +2230,30 @@ class ClusterPacking {
                 <div class="hier-tooltip-container">
                     <div class="hier-left-col" style="padding: 12px;">
                         <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
-                        <div style="color:#666; font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
+                        <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:6px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
+                        <div style="margin-bottom:10px;">${EntityRenderer.renderTag('cluster', d.data.tag_id || d.data.id, [], d.data.user_tags || [])}</div>
                         
                         <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #555;">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--subtle);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
-                                <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">${this.clusterType === 'file' ? 'files' : 'funcs'}</span></div>
+                                <div style="color:var(--meta-text); font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:var(--subtle); font-size:0.65rem;">${this.clusterType === 'file' ? 'files' : 'funcs'}</span></div>
                             </div>
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
                                 <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
                             </div>
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
                                 <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
                             </div>
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #ae81ff;">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid #ae81ff;">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Avg Features</div>
                                 <div style="color:#ae81ff; font-weight:bold;">${(d.data.avg_features || 0).toFixed(1)}</div>
                             </div>
                         </div>
 
-                        <div style="border-top:1px solid #333; padding-top:10px; flex: 1; display: flex; flex-direction: column; overflow: hidden;">
-                            <div class="hier-samples-title" style="font-size:0.6rem; color:#555; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
+                        <div style="border-top:1px solid var(--border); padding-top:10px; flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+                            <div class="hier-samples-title" style="font-size:0.6rem; color:var(--subtle); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
                                 ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live...' : `${this.clusterType === 'file' ? 'Files' : 'Samples'} (${members.length}):`}
                             </div>
                             <div class="hier-function-list">
@@ -2247,7 +2261,7 @@ class ClusterPacking {
                                     ${members.map((m, i) => {
                                         if (this.clusterType === 'file') {
                                             return `
-                                                <div style="font-size: 0.7rem; padding: 2px; color: #eee; font-family: monospace;">
+                                                <div style="font-size: 0.7rem; padding: 2px; color: var(--meta-text); font-family: monospace;">
                                                     ${EntityRenderer.renderFileName(m.file_name, m.file_md5, getCurrentCollection())} ${m.avtype ? `| AV: ${m.avtype}` : ''}
                                                 </div>
                                             `;
@@ -2255,7 +2269,7 @@ class ClusterPacking {
                                         const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
                                         return `
                                             <div class="hier-function-item" data-index="${i}"
-                                                 data-entity-data='${JSON.stringify(m).replace(/'/g, "&apos;")}'
+                                                 data-entity-data='${escapeAttr(JSON.stringify(m))}'
                                                  oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                                                 <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                                                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
@@ -2266,11 +2280,11 @@ class ClusterPacking {
                                     }).join('')}
                                 </div>
                             </div>
-                            ${d.data.size > members.length ? `<div style="color:#444; margin-top:6px; font-size:0.65rem;">... and ${d.data.size - members.length} more</div>` : ''}
+                            ${d.data.size > members.length ? `<div style="color:var(--border); margin-top:6px; font-size:0.65rem;">... and ${d.data.size - members.length} more</div>` : ''}
                         </div>
                     </div>
                     <div class="hier-right-col" id="hier-snippet-container">
-                        <div class="hier-snippet-placeholder" style="padding: 20px; color: #666; text-align: center; font-size: 0.8rem;">
+                        <div class="hier-snippet-placeholder" style="padding: 20px; color: var(--subtle); text-align: center; font-size: 0.8rem;">
                             ${selectedFunc ? '<i class="fas fa-spinner fa-spin"></i> Loading Preview...' : 'Select a function to preview'}
                         </div>
                     </div>
@@ -2288,7 +2302,7 @@ class ClusterPacking {
                     const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
                     return `
                         <div class="hier-function-item" data-index="${i}"
-                             data-entity-data='${JSON.stringify(m).replace(/'/g, "&apos;")}'
+                             data-entity-data='${escapeAttr(JSON.stringify(m))}'
                              oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                             <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                             <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
@@ -2308,7 +2322,7 @@ class ClusterPacking {
                 itemEl.classList.toggle('selected', isSelected);
                 const nameSpan = itemEl.querySelector('.func-name-span');
                 if (nameSpan) {
-                    nameSpan.style.color = isSelected ? 'var(--accent)' : '#eee';
+                    nameSpan.style.color = isSelected ? 'var(--accent)' : 'var(--meta-text)';
                 }
             });
         }
@@ -2334,7 +2348,7 @@ class ClusterPacking {
             existingSnippet.style.opacity = '0.4';
         } else {
             container.innerHTML = `
-                <div class="hier-snippet-placeholder" style="padding: 20px; color: #666; text-align: center; font-size: 0.8rem;">
+                <div class="hier-snippet-placeholder" style="padding: 20px; color: var(--subtle); text-align: center; font-size: 0.8rem;">
                     <i class="fas fa-spinner fa-spin"></i> Loading Preview...
                 </div>
             `;
@@ -2372,11 +2386,11 @@ class ClusterPacking {
 
         let html = `
             <div class="hier-code-snippet" style="height: 100%; display: flex; flex-direction: column;">
-                <div style="padding: 10px 15px; border-bottom: 1px solid #222; background: rgba(0,0,0,0.3); flex-shrink: 0;">
+                <div style="padding: 10px 15px; border-bottom: 1px solid var(--meta-header-bg); background: var(--border); flex-shrink: 0;">
                     <div style="font-size: 0.75rem; color: var(--accent); font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                         ${m.return_type || ''} ${m.namespace ? m.namespace + '::' : ''}${func.function_name}
                     </div>
-                    <div style="font-size: 0.6rem; color: #555; font-family: monospace; margin-top: 2px;">
+                    <div style="font-size: 0.6rem; color: var(--subtle); font-family: monospace; margin-top: 2px;">
                         Addr: ${func.entrypoint_address} | Feat: ${func.bsim_features_count}
                     </div>
                 </div>

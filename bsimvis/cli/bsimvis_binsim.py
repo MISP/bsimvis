@@ -78,7 +78,7 @@ def run_binsim(host, port, args):
                     else res.get("md5_a")
                 )
                 print(
-                    f"{other_md5:<35} | {res.get('score_collection_weighted', 0.0):.4f}     | {res.get('shared_clusters')}"
+                    f"{other_md5:<35} | {res.get('score', 0.0):.4f}     | {res.get('shared_clusters')}"
                 )
         except Exception as e:
             print(f"[!] Error fetching similar binaries: {e}")

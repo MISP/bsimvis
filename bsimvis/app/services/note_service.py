@@ -356,5 +356,137 @@ class NoteService:
         except:
             return []
 
+    # --- Bin_sim pair notes ---
+    #
+    # A bin_sim pair doc lives directly at its sid (no :meta suffix, per
+    # bin_sim_service), and unlike a func/file id, that sid IS the origin
+    # collection -- a pool-scope pair is its own separately-built document,
+    # not a reference back to a shared origin doc. So `collection` here must
+    # be the caller's exact pair_collection (matching the sid's own prefix),
+    # never resolved through resolve_origin_collection.
+
+    def _resolve_bin_sim_id(self, sid):
+        return sid
+
+    def add_bin_sim_note(self, collection, sid, text, owner="user"):
+        """Adds a note to a bin_sim pair and updates indices."""
+        r = self.r
+        text = text.strip()
+        if not text:
+            return None
+
+        doc_id = self._resolve_bin_sim_id(sid)
+        note = {
+            "id": str(uuid.uuid4()),
+            "text": text,
+            "owner": owner,
+            "timestamp": int(time.time() * 1000),
+        }
+
+        try:
+            doc = self._get_doc(doc_id)
+            if not doc:
+                logging.error(f"NoteService: bin_sim document {doc_id} not found.")
+                return None
+
+            json_field = "notes"
+            count_field = "note_count"
+            owner_field = "note_owners"
+
+            notes = doc.get(json_field, [])
+            if not isinstance(notes, list):
+                notes = []
+            notes.append(note)
+            doc[json_field] = notes
+            doc[count_field] = len(notes)
+
+            owners = doc.get(owner_field, [])
+            if not isinstance(owners, list):
+                owners = []
+            if owner not in owners:
+                owners.append(owner)
+                doc[owner_field] = owners
+
+            self._set_doc(doc_id, doc)
+
+            index_key = f"{collection}:idx:bin_sim:note_owners:{owner.lower()}"
+            r.sadd(index_key, doc_id)
+            r.sadd(f"{collection}:reg:bin_sim:note_owners", index_key)
+
+            return note
+        except Exception as e:
+            logging.error(f"NoteService: Error adding bin_sim note to {sid}: {e}")
+            return None
+
+    def update_bin_sim_note(self, collection, sid, note_id, text):
+        """Updates an existing bin_sim pair note's text."""
+        doc_id = self._resolve_bin_sim_id(sid)
+        json_field = "notes"
+
+        try:
+            doc = self._get_doc(doc_id)
+            if not doc:
+                return None
+            notes = doc.get(json_field, [])
+            for note in notes:
+                if note["id"] == note_id:
+                    note["text"] = text
+                    note["timestamp"] = int(time.time() * 1000)
+                    doc[json_field] = notes
+                    self._set_doc(doc_id, doc)
+                    return note
+            return None
+        except Exception as e:
+            logging.error(f"NoteService: Error updating bin_sim note {note_id}: {e}")
+            return None
+
+    def remove_bin_sim_note(self, collection, sid, note_id):
+        """Removes a bin_sim pair note and updates indices if necessary."""
+        r = self.r
+        doc_id = self._resolve_bin_sim_id(sid)
+        json_field = "notes"
+        count_field = "note_count"
+        owner_field = "note_owners"
+
+        try:
+            doc = self._get_doc(doc_id)
+            if not doc:
+                return False
+            notes = doc.get(json_field, [])
+            new_notes = [n for n in notes if n["id"] != note_id]
+
+            if len(new_notes) == len(notes):
+                return False
+
+            doc[json_field] = new_notes
+            doc[count_field] = len(new_notes)
+
+            remaining_owners = set(n["owner"] for n in new_notes)
+            old_owners = set(n["owner"] for n in notes)
+            removed_owners = old_owners - remaining_owners
+
+            doc[owner_field] = list(remaining_owners)
+            self._set_doc(doc_id, doc)
+
+            for owner in removed_owners:
+                index_key = f"{collection}:idx:bin_sim:note_owners:{owner.lower()}"
+                r.srem(index_key, doc_id)
+
+            return True
+        except Exception as e:
+            logging.error(f"NoteService: Error removing bin_sim note {note_id}: {e}")
+            return False
+
+    def get_bin_sim_notes(self, collection, sid):
+        """Returns all notes for a bin_sim pair."""
+        doc_id = self._resolve_bin_sim_id(sid)
+        try:
+            doc = self._get_doc(doc_id)
+            if not doc:
+                return []
+            return doc.get("notes", [])
+        except:
+            return []
+
 
 note_service = NoteService()

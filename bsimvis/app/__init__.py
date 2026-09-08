@@ -14,10 +14,20 @@ def create_app():
     # Disable default Flask static file caching
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
-    # Allow large JSON uploads (e.g., 1GB)
-    app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024 * 1024
-    # Increase form memory size for multi-part forms if needed
-    app.config["MAX_FORM_MEMORY_SIZE"] = 100 * 1024 * 1024 * 1024
+    # Upload caps. Both of these carried one `* 1024` more than their own
+    # comments claimed -- "1GB" was a terabyte and "100 MB" was 100 GB, so in
+    # practice a single upload was unbounded and the request body was read into
+    # memory before any handler could refuse it. Flask enforces these itself and
+    # answers 413, which is why this is the whole fix.
+    #
+    # Anything genuinely larger belongs on the chunked endpoint
+    # (/upload_chunk), which is what it exists for.
+    app.config["MAX_CONTENT_LENGTH"] = int(
+        os.getenv("MAX_UPLOAD_BYTES", 1024 * 1024 * 1024)
+    )
+    app.config["MAX_FORM_MEMORY_SIZE"] = int(
+        os.getenv("MAX_FORM_MEMORY_BYTES", 100 * 1024 * 1024)
+    )
     app.config["RESTX_MASK_SWAGGER"] = False
 
     logging.basicConfig(
@@ -30,9 +40,27 @@ def create_app():
     lua_manager.init_app(app)
 
     # 2. Performance Hooks
+    from .services.timer_service import (
+        Timer,
+        get_active_timer,
+        set_active_timer,
+        clear_active_timer,
+    )
+
+    # Off by default: recording appends a dict per redis command, and a bin_sim
+    # diff issues tens of thousands of them. Set BSIMVIS_TIMING=1 to get a
+    # Server-Timing header splitting db from python time on every response.
+    timing_on = os.environ.get("BSIMVIS_TIMING") == "1"
+
     @app.before_request
     def start_timer():
         g.start_time = time.time()
+        if timing_on:
+            set_active_timer(Timer())
+
+    @app.teardown_request
+    def stop_timer(exc=None):
+        clear_active_timer()
 
     @app.before_request
     def normalize_pool_params():
@@ -75,6 +103,16 @@ def create_app():
         )
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+
+        timer = get_active_timer()
+        if timer is not None:
+            t = timer.finalize()  # seconds; Server-Timing wants milliseconds
+            db_ms = (t["db_time"] + t["lua_time"]) * 1000
+            response.headers["Server-Timing"] = (
+                f"total;dur={t['total_time'] * 1000:.1f}, "
+                f"db;dur={db_ms:.1f}, "
+                f"py;dur={t['python_time'] * 1000:.1f}"
+            )
 
         if hasattr(g, "start_time"):
             elapsed = (time.time() - g.start_time) * 1000

@@ -16,24 +16,42 @@ mkdir -p "${SCRATCH_DIR}"
 
 echo "--- Installing Ghidra ${GHIDRA_VERSION} ---"
 
-# Check for Java
-if command -v java >/dev/null; then
-    # Improved Java version check
-    JAVA_VERSION_STR=$(java -version 2>&1 | head -n 1)
-    if [[ $JAVA_VERSION_STR =~ \"([0-9]+) ]]; then
-        JAVA_VERSION="${BASH_REMATCH[1]}"
-        if [ "$JAVA_VERSION" -lt 21 ]; then
-            echo "Warning: Ghidra 12+ requires Java 21 or higher. Found version $JAVA_VERSION."
-            echo "You might need to provide a newer JDK for Ghidra to run correctly."
-        else
-            echo "Found Java version $JAVA_VERSION."
-        fi
-    else
-        echo "Warning: Could not determine Java version. Please ensure Java 21+ is installed for Ghidra."
-    fi
+# Check for Java 21+ (Ghidra 12 requires it); install a portable Temurin JDK if missing.
+java_major() {
+    local out
+    out=$("$1" -version 2>&1 | head -n 1) || return 1
+    [[ $out =~ \"([0-9]+) ]] && echo "${BASH_REMATCH[1]}"
+}
+
+JDK_DIR=$(ls -d "${BIN_DIR}"/jdk-21* 2>/dev/null | head -n 1)
+if [ -n "$JDK_DIR" ] && [ -x "$JDK_DIR/bin/java" ]; then
+    JAVA_HOME_PATH="$JDK_DIR"
+    echo "Using portable JDK in ${JAVA_HOME_PATH}"
+elif command -v java >/dev/null && [ "$(java_major java || echo 0)" -ge 21 ] 2>/dev/null; then
+    echo "Found system Java $(java_major java)."
 else
-    echo "Warning: Java is not installed. Ghidra requires OpenJDK 21 or higher to run."
-    echo "You can download a portable JDK and add it to your PATH later."
+    # ponytail: Adoptium "latest 21 ga" redirect, no version pinning. Pin if reproducibility matters.
+    case "$(uname -m)" in
+        x86_64) JDK_ARCH="x64" ;;
+        aarch64|arm64) JDK_ARCH="aarch64" ;;
+        *) JDK_ARCH="" ;;
+    esac
+    if [ -z "$JDK_ARCH" ]; then
+        echo "Warning: no prebuilt JDK for $(uname -m). Install OpenJDK 21+ manually."
+    else
+        echo "Java 21+ not found. Installing portable Temurin JDK 21 into ${BIN_DIR}..."
+        JDK_URL="https://api.adoptium.net/v3/binary/latest/21/ga/linux/${JDK_ARCH}/jdk/hotspot/normal/eclipse"
+        if (
+            cd "${SCRATCH_DIR}" \
+            && curl -fsSL "${JDK_URL}" -o jdk21.tar.gz \
+            && tar xzf jdk21.tar.gz -C "${BIN_DIR}"
+        ); then
+            JAVA_HOME_PATH=$(ls -d "${BIN_DIR}"/jdk-21* | head -n 1)
+            echo "Installed JDK to ${JAVA_HOME_PATH}"
+        else
+            echo "Warning: JDK download failed. Ghidra needs OpenJDK 21+; install it manually."
+        fi
+    fi
 fi
 
 # Check for unzip
@@ -82,6 +100,27 @@ else
     echo "Ghidra already installed in ${GHIDRA_PATH}"
 fi
 
+# Function ID databases (threatrack/ghidra-fidb-repo, MIT) — source of the lib:* function tags.
+# Stock Ghidra only ships Visual Studio FIDBs, so ELF samples get nothing without these.
+FIDB_URL="https://github.com/threatrack/ghidra-fidb-repo/releases/download/20200530/ghidra-fidb-repo_20200530.zip"
+FID_DATA_DIR="${GHIDRA_PATH}/Ghidra/Features/FunctionID/data"
+
+if [ "${SKIP_FIDB:-}" = "1" ]; then
+    echo "Skipping FunctionID databases (SKIP_FIDB=1)."
+elif ls "${FID_DATA_DIR}"/libc-*.fidbf >/dev/null 2>&1; then
+    echo "FunctionID databases already installed in ${FID_DATA_DIR}"
+else
+    echo "Downloading FunctionID databases (67MB)..."
+    if ! (
+        cd "${SCRATCH_DIR}" \
+        && curl -fsSL "${FIDB_URL}" -o fidb.zip \
+        && mkdir -p "${FID_DATA_DIR}" \
+        && unzip -qo fidb.zip -d "${FID_DATA_DIR}"
+    ); then
+        echo "Warning: FunctionID database install failed; lib:* tags will stay empty."
+    fi
+fi
+
 # Update .env if it exists
 if [ -f .env ]; then
     if grep -q "GHIDRA_INSTALL_DIR" .env; then
@@ -96,6 +135,15 @@ if [ -f .env ]; then
 else
     echo "GHIDRA_INSTALL_DIR=${GHIDRA_PATH}" > .env
     echo "Created .env with GHIDRA_INSTALL_DIR"
+fi
+
+if [ -n "${JAVA_HOME_PATH:-}" ]; then
+    if grep -q "^JAVA_HOME=" .env; then
+        sed -i "s|^JAVA_HOME=.*|JAVA_HOME=${JAVA_HOME_PATH}|" .env
+    else
+        echo "JAVA_HOME=${JAVA_HOME_PATH}" >> .env
+    fi
+    echo "Updated .env with JAVA_HOME"
 fi
 
 echo "--- Ghidra Installation Complete ---"

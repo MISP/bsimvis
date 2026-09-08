@@ -120,6 +120,8 @@ class SimilarityService:
         sleep_time=0,
         index_depth="none",
         skip_write=False,
+        force=False,
+        _generation_retry=True,
     ):
         """
         Builds similarities for all functions in a batch or for a specific file.
@@ -140,6 +142,17 @@ class SimilarityService:
         if min_features is None:
             min_features = config_service.get("similarity.min_features", 0)
         r = self.r
+        generation_key = f"{collection}:features:generation"
+        start_generation = int(r.get(generation_key) or 0)
+        built_set_key = f"{collection}:built:functions:{algo}"
+
+        def unmark_targets(ids):
+            if batch_uuid or md5:
+                for i in range(0, len(ids), 1000):
+                    r.srem(built_set_key, *ids[i : i + 1000])
+            else:
+                r.delete(built_set_key)
+
         function_ids = []
 
         if batch_uuid:
@@ -167,11 +180,28 @@ class SimilarityService:
             r.delete(f"{collection}:built:functions:{algo}")
             function_ids = list(r.smembers(f"{collection}:indexed:functions"))
 
+        if force and function_ids:
+            unmark_targets(function_ids)
+
+        # Reconciliation passes (seal_wave / batch_finalize) re-target functions
+        # an earlier per-file build already covered. _process_chunk skips those,
+        # but only after the full list has been walked chunk by chunk -- and
+        # chunk_size collapses to 1 on a large collection, so a redundant pass
+        # cost one job progress write per already-built function. Drop them up
+        # front: a redundant pass is now one SISMEMBER sweep.
+        requested = len(function_ids)
+        function_ids = self._unbuilt(built_set_key, function_ids)
+
         total = len(function_ids)
         if total == 0:
-            logging.warning(
-                f"No functions found to build similarities for {batch_uuid or md5}"
-            )
+            if requested:
+                logging.info(
+                    f"[*] All {requested} functions already built for {batch_uuid or md5}, nothing to do"
+                )
+            else:
+                logging.warning(
+                    f"No functions found to build similarities for {batch_uuid or md5}"
+                )
             return True
 
         logging.info(
@@ -245,6 +275,34 @@ class SimilarityService:
             if sleep_time > 0 and i + chunk_size < total:
                 time.sleep(sleep_time)
 
+        end_generation = int(r.get(generation_key) or 0)
+        if end_generation != start_generation:
+            unmark_targets(function_ids)
+            logging.warning(
+                "Feature index changed during similarity build for %s (%s -> %s)",
+                collection,
+                start_generation,
+                end_generation,
+            )
+            if _generation_retry:
+                return self.build_batch(
+                    collection,
+                    batch_uuid=batch_uuid,
+                    md5=md5,
+                    algo=algo,
+                    top_k=top_k,
+                    min_score=min_score,
+                    min_features=min_features,
+                    job_service=job_service,
+                    job_id=job_id,
+                    sleep_time=sleep_time,
+                    index_depth=index_depth,
+                    skip_write=skip_write,
+                    force=True,
+                    _generation_retry=False,
+                )
+            return False
+
         # Final update
         if job_service and job_id:
             job_service.update_progress(
@@ -252,6 +310,23 @@ class SimilarityService:
             )
 
         return True
+
+    def _unbuilt(self, built_set_key, function_ids):
+        """function_ids minus the ones already marked built, order preserved.
+
+        Pipelined SISMEMBER rather than SMEMBERS: the built set is the whole
+        collection, the target list is usually one batch.
+        """
+        remaining = []
+        for i in range(0, len(function_ids), 1000):
+            window = function_ids[i : i + 1000]
+            pipe = self.r.pipeline(transaction=False)
+            for fid in window:
+                pipe.sismember(built_set_key, fid)
+            remaining.extend(
+                fid for fid, built in zip(window, pipe.execute()) if not built
+            )
+        return remaining
 
     def _compute_lsh_buckets(self, features_raw, num_bands=30, rows_per_band=4):
         """Generates SimHash LSH buckets for a set of features."""
@@ -349,7 +424,9 @@ class SimilarityService:
         processed_total = 0.0
         num_candidates = 0
 
-        for feat in features_sorted:
+        for i, feat in enumerate(features_sorted):
+            if i % 16 == 0:
+                self._pl_warm([item["key"] for item in features_sorted[i : i + 16]])
             remaining_norm_sq = target_norm_sq - processed_norm_sq
             remaining_total = target_total - processed_total
             can_add_new = True
@@ -1284,7 +1361,14 @@ class SimilarityService:
         Targeted similarity deletion.
         field: 'batch_uuid' or 'md5'
         """
-        return self._clear_script(args=[collection, field, value, algo or ""])
+        result = self._clear_script(args=[collection, field, value, algo or ""])
+        from bsimvis.app.services.cluster_common import clear_hier_state
+
+        for name in (
+            [algo] if algo else ["jaccard", "unweighted_cosine", "milvus_sparse"]
+        ):
+            clear_hier_state(self.r, f"{collection}:cluster:hier:{name}")
+        return result
 
     def clear_all(self, collection, algo=None):
         """Clears ALL similarities in the collection safely using SCAN."""
@@ -1294,9 +1378,12 @@ class SimilarityService:
         logging.info(f"[*] Clearing ALL similarities for collection: {collection}")
 
         # 1. Clear global ZSETs and SETs
+        from bsimvis.app.services.cluster_common import clear_hier_state
+
         for a in algos:
             r.delete(f"{collection}:sim:score:{a}")
             r.delete(f"{collection}:built:functions:{a}")
+            clear_hier_state(r, f"{collection}:cluster:hier:{a}")
 
         r.delete(f"{collection}:sim:all")
         r.delete(f"{collection}:sim:min_features")
@@ -1599,27 +1686,18 @@ class SimilarityService:
         return self.tag_service.add_user_tag(collection, "similarity", sid, tag)
 
     def _ensure_tag_metadata(self, collection: str, tag: str):
-        """Ensures a tag has metadata (color) in the global index."""
+        """Ensures a tag has a metadata row in the global index.
+
+        No colour, for the reason `tag_service._ensure_tag_metadata` gives: a
+        colour is derived from the tag id, and a stored one wins over it, so
+        rolling a palette entry here silently disabled the rule.
+        """
         r = self.r
         meta_key = f"{collection}:tags_metadata"
         if not r.hexists(meta_key, tag):
-            palette = [
-                "#FF5555",
-                "#50FA7B",
-                "#F1FA8C",
-                "#BD93F9",
-                "#FF79C6",
-                "#8BE9FD",
-                "#FFB86C",
-                "#A6E22E",
-                "#66D9EF",
-            ]
-            import random
-
-            color = random.choice(palette)
             import json
 
-            r.hset(meta_key, tag, json.dumps({"color": color, "priority": 0}))
+            r.hset(meta_key, tag, json.dumps({"priority": 0}))
 
     def untag_similarity(
         self, collection: str, id1: str, id2: str, algo: str, tag: str
@@ -2195,6 +2273,13 @@ class SimilarityService:
         import math
         import time
         from collections import defaultdict
+        from bsimvis.app.services.bin_sim_tags import (
+            score_pair,
+            merge_tag_fields,
+            load_tag_meta,
+            read_tags_rev,
+        )
+        from bsimvis.app.services.bin_sim_service import _zadd_score_split
 
         pool = pool_service.get_pool(pool_id)
         if not pool:
@@ -2391,6 +2476,16 @@ class SimilarityService:
                             pass
                     func_meta_cache[fid] = m if isinstance(m, dict) else {}
 
+        # Normalize each function's tags once here, not once per matched edge.
+        fid_tags = {}
+        for fid, m in func_meta_cache.items():
+            tags = merge_tag_fields(m)
+            if tags:
+                fid_tags[fid] = tags
+
+        tag_meta_cache = load_tag_meta(r, f"global:pool:{pool_id}") if fid_tags else {}
+        tags_rev = read_tags_rev(r, f"global:pool:{pool_id}")
+
         # 3. Generate Pairs (all combinations cross-collection/in pool)
         pairs = []
         for i in range(len(binaries)):
@@ -2440,7 +2535,9 @@ class SimilarityService:
                         if not res:
                             continue
                         try:
-                            doc = json.loads(res.decode() if isinstance(res, bytes) else res)
+                            doc = json.loads(
+                                res.decode() if isinstance(res, bytes) else res
+                            )
                         except Exception:
                             continue
                         f1, f2 = doc.get("id1"), doc.get("id2")
@@ -2468,32 +2565,19 @@ class SimilarityService:
                     yield b_src, b_par, edges
                 # buckets dropped here -> one binary's edges reclaimed before the next
 
-        # ponytail: precompute per-function "unique" entry + weight once.
-        # An unmatched function's diff entry + cluster scan depend only on (coll, fid),
-        # so they're identical in every one of the ~N pairs the fn stays unmatched.
-        # Building once turns O(pairs * funcs) dict/cluster work into O(funcs). Entries
-        # are read-only downstream (json.dumps), so sharing the dict by reference is safe.
-        unique_entry = {}
-        unique_feat = {}
-        for coll, md5 in binaries:
-            for fid in binary_fids[(coll, md5)]:
-                key = (coll, fid)
-                if key in unique_entry:
-                    continue
-                f_features = float(
-                    func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
-                )
-                if f_features <= 0:
-                    f_features = 1.0
-                full_fid = (
-                    fid if fid.startswith(f"{coll}:func:") else f"{coll}:func:{fid}"
-                )
-                # Slim doc (matches collection path); cluster tag derived at read.
-                unique_entry[key] = {
-                    "func_id": fid,
-                    "avg_features": f_features,
-                }
-                unique_feat[key] = f_features
+        # Feature weight of one function, the collection builder's lookup
+        # verbatim -- pool fids are already collection-qualified, so `fid` alone
+        # keys `func_meta_cache` here too.
+        #
+        # ponytail: this replaces a precomputed (coll, fid) -> unique-entry map
+        # that shared one dict per unmatched function across every pair. It was
+        # worth it when those entries carried a cluster scan; now that they are
+        # `{func_id, avg_features}`, rebuilding them per pair costs ~0.6s per
+        # 20k pairs against ~3.7s spent json-encoding the very same rows. Not
+        # worth a second copy of the scoring loop. If pools ever grow an order
+        # of magnitude, hand `score_pair` a row factory rather than forking it.
+        def _feat(fid):
+            return float(func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0))
 
         loop_t = time.time()
         total_pairs = len(pairs)
@@ -2513,127 +2597,44 @@ class SimilarityService:
 
             # Edges streamed pre-oriented (fid_a -> b1) for this source binary; b1 < b2
             # holds (generator only emits partners above the source).
-            # Sort edges by score descending (greedy match prioritizes best matches), using function IDs as deterministic tie-breakers
-            edges.sort(key=lambda x: (-x[2], x[0], x[1]))
-
-            assigned_a = set()
-            assigned_b = set()
-            diff_matched = []
-
-            sum_weighted_cohesion_sim = 0.0
-            sum_weights_sim = 0.0
-
-            sum_weighted_cohesion_col = 0.0
-            sum_weights_col = 0.0
-
-            sum_weighted_cohesion_unweighted = 0.0
-            sum_weights_unweighted = 0.0
-
-            for fid_a, fid_b, score in edges:
-                if fid_a not in assigned_a and fid_b not in assigned_b:
-                    assigned_a.add(fid_a)
-                    assigned_b.add(fid_b)
-
-                    f_features_a = float(
-                        func_meta_cache.get(fid_a, {}).get("bsim_features_count", 1.0)
-                    )
-                    f_features_b = float(
-                        func_meta_cache.get(fid_b, {}).get("bsim_features_count", 1.0)
-                    )
-                    f_features = max(f_features_a, f_features_b)
-
-                    # Slim doc: persist only the stable triple (+ avg_features),
-                    # matching the collection bin_sim path. Cluster tag / cohesion /
-                    # rarity are derived live at read (get_bin_sim ->
-                    # _enrich_diff_clusters, which handles pools) so a cluster
-                    # rebuild can't leave them stale.
-                    diff_matched.append(
-                        {
-                            "similarity": score,
-                            "avg_features": f_features,
-                            "func_a": fid_a,
-                            "func_b": fid_b,
-                        }
-                    )
-
-                    sum_weighted_cohesion_sim += score * f_features
-                    sum_weights_sim += f_features
-
-                    sum_weighted_cohesion_col += score * f_features
-                    sum_weights_col += f_features
-
-                    sum_weighted_cohesion_unweighted += score * f_features
-                    sum_weights_unweighted += f_features
-
-            # Unique/Unmatched functions logic
             all_funcs_a_total = binary_fids[b1]
             all_funcs_b_total = binary_fids[b2]
 
-            unassigned_a = all_funcs_a_total - assigned_a
-            unassigned_b = all_funcs_b_total - assigned_b
-
-            unique_to_a = [unique_entry[(coll_a, fid)] for fid in sorted(unassigned_a)]
-            uw_a = sum(unique_feat[(coll_a, fid)] for fid in unassigned_a)
-            sum_weights_sim += uw_a
-            sum_weights_col += uw_a
-            sum_weights_unweighted += uw_a
-
-            unique_to_b = [unique_entry[(coll_b, fid)] for fid in sorted(unassigned_b)]
-            uw_b = sum(unique_feat[(coll_b, fid)] for fid in unassigned_b)
-            sum_weights_sim += uw_b
-            sum_weights_col += uw_b
-            sum_weights_unweighted += uw_b
-
-            sim_score = (
-                (sum_weighted_cohesion_sim / sum_weights_sim)
-                if sum_weights_sim > 0
-                else 0.0
+            common = score_pair(
+                edges,
+                all_funcs_a_total,
+                all_funcs_b_total,
+                _feat,
+                fid_tags,
+                tag_meta_cache,
             )
-            col_weighted_score = (
-                (sum_weighted_cohesion_col / sum_weights_col)
-                if sum_weights_col > 0
-                else 0.0
-            )
-            unweighted_score = (
-                (sum_weighted_cohesion_unweighted / sum_weights_unweighted)
-                if sum_weights_unweighted > 0
-                else 0.0
-            )
-
-            final_score = sim_score
-            if algo == "unweighted_cosine":
-                final_score = unweighted_score
-            elif algo == "weighted_cosine":
-                final_score = col_weighted_score
 
             # Persist pool bin_sim
             sid = f"global:pool:{pool_id}:bin_sim:{algo}:{coll_a}:{md5_a}::{coll_b}:{md5_b}"
+            # Same field names as the collection bin_sim doc, plus the pool-only
+            # endpoints (coll_a/coll_b), so readers need no translation layer.
             doc = {
                 "type": "bin_sim",
                 "pool_id": pool_id,
+                "md5_a": md5_a,
+                "md5_b": md5_b,
+                "coll_a": coll_a,
+                "coll_b": coll_b,
                 "algo": algo,
-                "score": final_score,
-                "md5_1": md5_a,
-                "md5_2": md5_b,
-                "coll_1": coll_a,
-                "coll_2": coll_b,
-                "sim_weighted_score": sim_score,
-                "collection_weighted_score": col_weighted_score,
-                "unweighted_score": unweighted_score,
-                "matched_count": len(diff_matched),
-                "entry_date": now,
-                "diff": {
-                    "matched": diff_matched,
-                    "unique_to_a": unique_to_a,
-                    "unique_to_b": unique_to_b,
-                    "unclustered_a": [],
-                    "unclustered_b": [],
-                },
+                "functions_count_a": len(all_funcs_a_total),
+                "functions_count_b": len(all_funcs_b_total),
+                "computed_at": now,
+                "tags_rev": tags_rev,
+                # score / score_code / score_library / coverage / cluster counts /
+                # tag summaries / diff -- shared with the collection builder.
+                **common,
             }
 
             persist_pipe.set(sid, json.dumps(doc))
-            persist_pipe.zadd(
-                f"global:pool:{pool_id}:bin_sim:score:{algo}", {sid: final_score}
+            # `algo` is a provenance tag, not a choice of file score: the score is
+            # always the feature-weighted cohesion mean, as at collection level.
+            _zadd_score_split(
+                persist_pipe, f"global:pool:{pool_id}:bin_sim", algo, sid, common
             )
             persist_pipe.sadd(
                 f"global:pool:{pool_id}:bin_sim:involves:{coll_a}:{md5_a}", sid
@@ -2650,7 +2651,9 @@ class SimilarityService:
                 persist_pipe.execute()
                 persist_pipe = r.pipeline(transaction=False)
 
-        log(f"[*] All pairs computed + saved in {time.time() - loop_t:.1f}s; flushing final batch...")
+        log(
+            f"[*] All pairs computed + saved in {time.time() - loop_t:.1f}s; flushing final batch..."
+        )
         persist_pipe.execute()
         log(
             f"Pool binary similarity build finished. Found {len(pairs)} comparisons in {time.time() - start_time:.1f}s."
@@ -2705,18 +2708,21 @@ class SimilarityService:
                 d = json.loads(raw) if not isinstance(raw, dict) else raw
                 if isinstance(d, str):
                     d = json.loads(d)
-                c1, m1 = d.get("coll_1", ""), d.get("md5_1", "")
-                c2, m2 = d.get("coll_2", ""), d.get("md5_2", "")
+                c1, m1 = d.get("coll_a", ""), d.get("md5_a", "")
+                c2, m2 = d.get("coll_b", ""), d.get("md5_b", "")
                 slim = {
-                    "coll_1": c1,
-                    "md5_1": m1,
-                    "coll_2": c2,
-                    "md5_2": m2,
-                    "matched_count": d.get("matched_count", 0),
-                    "unweighted_score": d.get("unweighted_score", d.get("score", 0.0)),
-                    "sim_weighted_score": d.get("sim_weighted_score", 0.0),
-                    "collection_weighted_score": d.get("collection_weighted_score", 0.0),
-                    "entry_date": d.get("entry_date", 0),
+                    k: d.get(k)
+                    for k in (
+                        "coll_a",
+                        "md5_a",
+                        "coll_b",
+                        "md5_b",
+                        "score",
+                        "coverage_a",
+                        "coverage_b",
+                        "shared_clusters",
+                        "computed_at",
+                    )
                 }
                 docs.append((sid, slim))
                 md5set.add((c1, m1))
@@ -2742,27 +2748,18 @@ class SimilarityService:
 
         pipe = r.pipeline(transaction=False)
         for i, (sid, d) in enumerate(docs):
-            c1, m1 = d.get("coll_1", ""), d.get("md5_1", "")
-            c2, m2 = d.get("coll_2", ""), d.get("md5_2", "")
-            matched = d.get("matched_count", 0)
-            # Normalize pool doc field names to the collection shape _index_bin_sim_pair expects.
-            norm = {
-                "md5_a": m1,
-                "md5_b": m2,
-                "algo": algo,
-                "architecture_a": meta_map.get((c1, m1), {}).get("language_id", ""),
-                "architecture_b": meta_map.get((c2, m2), {}).get("language_id", ""),
-                "functions_count_a": func_map.get((c1, m1), 0),
-                "functions_count_b": func_map.get((c2, m2), 0),
-                "score": d.get("unweighted_score", d.get("score", 0.0)),
-                "score_sim_weighted": d.get("sim_weighted_score", 0.0),
-                "score_collection_weighted": d.get("collection_weighted_score", 0.0),
-                # pool build doesn't persist coverage; approximate as legacy search did
-                "coverage_a": 1.0 if matched > 0 else 0.0,
-                "coverage_b": 1.0 if matched > 0 else 0.0,
-                "shared_clusters": matched,
-                "computed_at": d.get("entry_date", 0),
-            }
+            c1, m1 = d.get("coll_a", ""), d.get("md5_a", "")
+            c2, m2 = d.get("coll_b", ""), d.get("md5_b", "")
+            # Pool docs already carry the collection field names; only the
+            # denormalized file metadata has to be filled in here.
+            norm = dict(
+                d,
+                algo=algo,
+                architecture_a=meta_map.get((c1, m1), {}).get("language_id", ""),
+                architecture_b=meta_map.get((c2, m2), {}).get("language_id", ""),
+                functions_count_a=func_map.get((c1, m1), 0),
+                functions_count_b=func_map.get((c2, m2), 0),
+            )
             _index_bin_sim_pair(
                 pipe, prefix, sid, norm, meta_map.get((c1, m1)), meta_map.get((c2, m2))
             )

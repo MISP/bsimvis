@@ -4,6 +4,31 @@ Dedupes the "pick the highest-cohesion cluster" logic that was previously copied
 bin_sim_service, similarity_service and cluster_service.
 """
 
+from collections import Counter
+
+MAX_CLUSTER_NAME_LEN = 40
+
+
+def default_bin_cluster_name(names_list, avtype_list, yara_list, fallback):
+    """Short, human-meaningful default name for a binary cluster.
+
+    A raw member filename (the old default) is often a long malware-scanner
+    submission name, which reads as noise in a cluster list. AV family labels
+    ('Emotet', 'Gafgyt') and YARA rule names are short and already describe
+    what the cluster *is*, so prefer them; fall back to a truncated filename,
+    then to the caller's generic placeholder.
+    """
+    if avtype_list:
+        return Counter(avtype_list).most_common(1)[0][0]
+    if yara_list:
+        return Counter(yara_list).most_common(1)[0][0]
+    if names_list:
+        name = Counter(names_list).most_common(1)[0][0]
+        if len(name) > MAX_CLUSTER_NAME_LEN:
+            name = name[: MAX_CLUSTER_NAME_LEN - 3] + "..."
+        return name
+    return fallback
+
 
 def pick_best_shared_cluster(cids_a, cids_b, cluster_meta):
     """Highest-cohesion cluster shared by two functions, or None.

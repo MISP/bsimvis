@@ -231,7 +231,9 @@ def run_single_file(
         )
 
         # Post to API
-        resp = requests.post(f"{API_BASE}/file/upload_file_data", json=data)
+        resp = requests.post(
+            f"{API_BASE}/file/upload_file_data?enqueue=true", json=data
+        )
         resp.raise_for_status()
         res = resp.json()
         pipeline_id = res.get("pipeline_id")

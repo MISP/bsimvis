@@ -209,6 +209,25 @@ window.Breadcrumbs = {
                     icon: 'fa-solid fa-server'
                 });
                 break;
+            case 'search':
+                segments.push({
+                    label: 'Searches',
+                    url: '/searches',
+                    icon: 'fa-solid fa-list-check'
+                });
+                break;
+            case 'search-detail':
+                segments.push({
+                    label: 'Searches',
+                    url: '/searches',
+                    icon: 'fa-solid fa-list-check'
+                });
+                segments.push({
+                    label: (restful.search_id || '').slice(0, 8) || 'Search',
+                    url: window.location.pathname,
+                    icon: 'fa-solid fa-list-check'
+                });
+                break;
             case 'upload':
                 segments.push({
                     label: route ? route.title : 'Upload',
@@ -423,11 +442,11 @@ window.Breadcrumbs = {
             if (index > 0) {
                 html += '<span class="breadcrumb-sep"><i class="fa-solid fa-chevron-right"></i></span>';
             }
-            const iconHtml = segment.icon ? `<i class="${segment.icon}"></i>` : '';
+            const iconHtml = segment.icon ? `<i class="${escapeAttr(segment.icon)}"></i>` : '';
             if (index === segments.length - 1) {
-                html += `<span class="breadcrumb-item current">${iconHtml}<span>${segment.label}</span></span>`;
+                html += `<span class="breadcrumb-item current">${iconHtml}<span>${escapeHtml(segment.label)}</span></span>`;
             } else {
-                html += `<a href="${segment.url}" class="breadcrumb-item" onclick="Nav.openPath('${segment.url}', event)">${iconHtml}<span>${segment.label}</span></a>`;
+                html += `<a href="${escapeAttr(segment.url)}" class="breadcrumb-item" onclick="Nav.openPath(${escapeAttr(jsString(segment.url))}, event)">${iconHtml}<span>${escapeHtml(segment.label)}</span></a>`;
             }
         });
         html += '</nav>';

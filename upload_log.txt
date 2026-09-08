@@ -1,0 +1,8 @@
+[i] Uploading to collections ['fidb17'] on hosts ['0.0.0.0:5001'] with batch uuid 5a623e35-69d6-4521-88dc-2158c4432e7e
+Analyzing:   0%|          | 0/1 [00:00<?, ?bin/s]Analyzing: 100%|██████████| 1/1 [00:00<00:00,  4.19bin/s]Analyzing: 100%|██████████| 1/1 [00:00<00:00,  4.18bin/s]
+[i] Success rate : 100.00% (1/1)
+[i] Uploaded     : 1
+[i] Skipped (dup): 0
+[i] Failed       : 0
+[i] Grouping and finalizing batch uploads for 1 host/collection pairs...
+[+] Batch finalize success on 0.0.0.0:5001! Master Pipeline ID: pipe_69920553-b127-4bee

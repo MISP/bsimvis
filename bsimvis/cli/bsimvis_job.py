@@ -428,6 +428,7 @@ def job_status(job_id, watch, logs):
                 print("\033[H\033[J", end="")  # Clear screen
                 print("=== GLOBAL JOB STATUS ===")
                 print(f"Active Workers: {stats['active_workers']}")
+                print(f"Active Jobs:    {stats.get('active_jobs_count', 0)}")
                 print(f"Pending Jobs:   {stats['pending_jobs']}")
                 print(f"Total Speed:    {stats['total_speed']} fn/s")
                 print(f"Avg Speed:      {stats['avg_speed']} fn/s")

@@ -44,6 +44,7 @@ These keys store the actual analysis results and decompiler output.
 |:--- |:--- |:--- |
 | `{coll}:file:{md5}` | **JSON** | Full binary file metadata. Analyst **file notes** live inline in this document (`notes` field + `note_owners`). |
 | `{coll}:file:{md5}:meta` | **JSON** | Redundant metadata for fast enrichment. |
+| `{coll}:file:{md5}:lib_tags` | **Set** | Library tags (`lib:name:version`) implied by the file's function tags. Accumulated by each `INDEX_FUNCTIONS` chunk, folded into the file doc's `tags` by `rollup_lib_tags` at `INDEX_FEATURES`. |
 | `{coll}:func:{md5}:{addr}` | **JSON** | Comprehensive function data (name, convention, etc). Analyst **function notes** live inline here (`notes` field + `note_owners`). |
 | `{coll}:func:{md5}:{addr}:source` | **JSON** | Decompiled C code and semantic tokens. |
 | `{coll}:func:{md5}:{addr}:vec:tf` | **ZSet** | BSim feature counts (Member: `hash`, Score: `TF`). |

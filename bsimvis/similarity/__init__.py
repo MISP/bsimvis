@@ -1,0 +1,82 @@
+from .backends import (
+    ExactSimilarityBackend,
+    GpuFirstExactBackend,
+    PythonExactBackend,
+    RustExactBackend,
+    VariableSiliconDriveBackend,
+    get_exact_backend,
+)
+from .generations import SimilarityGenerationManager
+from .compact import (
+    BoundedCompactWriter,
+    BoundedCompactQueryCache,
+    CompactSimilarityQueryAdapter,
+    CompactSimilarityOverlayStore,
+    CompactSimilarityStore,
+    RedisCompactMetadataLoader,
+    compact_generation_if_needed,
+    compact_overlay_depth,
+    resolve_compact_store,
+)
+from .resources import (
+    PerformancePlan,
+    WorkerPlan,
+    detect_performance_plan,
+    detect_worker_plan,
+    resolve_worker_count,
+    resolve_resource_pressure,
+    ResourcePressurePlan,
+)
+from .settings import (
+    DEFAULT_EXACT_BLOCK_MAX_FUNCTIONS,
+    configured_exact_block_max_functions,
+    safe_similarity_generations_enabled,
+)
+from .incremental import execute_routed_deletion, plan_deletion_strategy
+from .contracts import (
+    EXACT_V1,
+    DistantEvidence,
+    EvidenceState,
+    ProductState,
+    SimilarityProvenance,
+    distant_evidence,
+    exact_v1_envelope,
+)
+
+__all__ = [
+    "ExactSimilarityBackend",
+    "GpuFirstExactBackend",
+    "PythonExactBackend",
+    "RustExactBackend",
+    "VariableSiliconDriveBackend",
+    "SimilarityGenerationManager",
+    "CompactSimilarityStore",
+    "BoundedCompactWriter",
+    "BoundedCompactQueryCache",
+    "CompactSimilarityQueryAdapter",
+    "CompactSimilarityOverlayStore",
+    "RedisCompactMetadataLoader",
+    "resolve_compact_store",
+    "compact_overlay_depth",
+    "compact_generation_if_needed",
+    "WorkerPlan",
+    "PerformancePlan",
+    "DEFAULT_EXACT_BLOCK_MAX_FUNCTIONS",
+    "configured_exact_block_max_functions",
+    "detect_worker_plan",
+    "detect_performance_plan",
+    "get_exact_backend",
+    "resolve_worker_count",
+    "resolve_resource_pressure",
+    "ResourcePressurePlan",
+    "safe_similarity_generations_enabled",
+    "plan_deletion_strategy",
+    "execute_routed_deletion",
+    "EXACT_V1",
+    "ProductState",
+    "SimilarityProvenance",
+    "exact_v1_envelope",
+    "EvidenceState",
+    "DistantEvidence",
+    "distant_evidence",
+]

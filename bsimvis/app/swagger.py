@@ -45,6 +45,9 @@ ns_bin_sim = Namespace(
 ns_notes = Namespace("notes", description="Function notes management")
 ns_llm = Namespace("llm", description="Large Language Model integration (Ollama)")
 ns_pool = Namespace("pool", description="Cross-collection pool management")
+# Not `ns_search` -- that's already mounted at /api/search for unified query/
+# autocomplete. This is a distinct, persisted entity: /api/searches.
+ns_searches = Namespace("searches", description="Persisted fast-relevance searches")
 
 api.add_namespace(ns_index)
 api.add_namespace(ns_jobs)
@@ -64,6 +67,7 @@ api.add_namespace(ns_bin_sim)
 api.add_namespace(ns_notes)
 api.add_namespace(ns_llm)
 api.add_namespace(ns_pool)
+api.add_namespace(ns_searches)
 
 # --- Models & Examples ---
 
@@ -161,6 +165,16 @@ bulk_metadata_propagate_model = api.model(
     },
 )
 
+stage_metadata_model = api.model(
+    "StageBatchMetadata",
+    {
+        "batch_uuid": fields.String(required=True, description="Batch UUID"),
+        "updates": fields.Raw(
+            required=True, description="Mapping of MD5 to metadata dictionary"
+        ),
+    },
+)
+
 # Similarity Models
 similarity_build_model = api.model(
     "SimilarityBuild",
@@ -202,6 +216,7 @@ bin_sim_clear_model = api.model(
         "collection": fields.String(default="main"),
         "algo": fields.String(default="unweighted_cosine"),
         "md5": fields.String(),
+        "sid": fields.String(description="Exact stored pair ID to resplit"),
     },
 )
 
@@ -276,6 +291,38 @@ file_note_remove_model = api.model(
     },
 )
 
+bin_sim_note_add_model = api.model(
+    "BinSimNoteAdd",
+    {
+        "sid": fields.String(
+            required=True, example="main:bin_sim:unweighted_cosine:aaa...::bbb..."
+        ),
+        "text": fields.String(required=True, example="Confirmed same family"),
+        "owner": fields.String(example="user"),
+    },
+)
+
+bin_sim_note_update_model = api.model(
+    "BinSimNoteUpdate",
+    {
+        "sid": fields.String(
+            required=True, example="main:bin_sim:unweighted_cosine:..."
+        ),
+        "note_id": fields.String(required=True, example="uuid"),
+        "text": fields.String(required=True, example="Updated note text"),
+    },
+)
+
+bin_sim_note_remove_model = api.model(
+    "BinSimNoteRemove",
+    {
+        "sid": fields.String(
+            required=True, example="main:bin_sim:unweighted_cosine:..."
+        ),
+        "note_id": fields.String(required=True, example="uuid"),
+    },
+)
+
 # LLM Models
 llm_summary_request_model = api.model(
     "LLMSummaryRequest",
@@ -339,6 +386,34 @@ class IndexStatus(Resource):
         from bsimvis.app.routes.index import get_index_status
 
         return get_index_status()
+
+
+@ns_index.route("/home/stats")
+class HomeStats(Resource):
+    def get(self):
+        """Instance-wide counters (files, functions, collections, pools) plus job queue health."""
+        from bsimvis.app.routes.home import get_home_stats
+
+        return get_home_stats()
+
+
+@ns_index.route("/home/insights")
+class HomeInsights(Resource):
+    @ns_index.doc(params={"refresh": "true to bypass the 120s cache"})
+    def get(self):
+        """Heavier homepage panels: top tags, biggest binary clusters, recent batches (cached 120s)."""
+        from bsimvis.app.routes.home import get_home_insights
+
+        return get_home_insights()
+
+
+@ns_index.route("/languages")
+class IndexLanguages(Resource):
+    def get(self):
+        """Lists Ghidra language IDs and the compiler specs valid for each."""
+        from bsimvis.app.routes.index import get_languages
+
+        return get_languages()
 
 
 @ns_index.route("/config")
@@ -405,6 +480,27 @@ class JobDetail(Resource):
         return get_job(job_id)
 
 
+@ns_jobs.route("/pause")
+class JobPause(Resource):
+    def get(self):
+        """Returns whether workers are currently paused."""
+        from bsimvis.app.routes.jobs import get_pause_state
+
+        return get_pause_state()
+
+    def post(self):
+        """Pauses the fleet: workers finish their current job and claim no more."""
+        from bsimvis.app.routes.jobs import pause_jobs
+
+        return pause_jobs()
+
+    def delete(self):
+        """Resumes the fleet."""
+        from bsimvis.app.routes.jobs import resume_jobs
+
+        return resume_jobs()
+
+
 @ns_jobs.route("/all/cancel")
 class JobCancelAll(Resource):
     def post(self):
@@ -429,6 +525,33 @@ class JobCancel(Resource):
         from bsimvis.app.routes.jobs import cancel_job
 
         return cancel_job(job_id)
+
+
+@ns_jobs.route("/<string:job_id>/pause")
+class JobPauseOne(Resource):
+    @ns_jobs.doc(
+        params={
+            "job_id": {
+                "description": "Job, group or pipeline UUID to hold back",
+                "example": "7b8e23af-4b2a-4e6c-8a1d-3c9f2b1a0e5d",
+            }
+        }
+    )
+    def post(self, job_id):
+        """Pauses one job/group/pipeline. Other jobs keep being processed.
+
+        A running leaf finishes first; nothing underneath the paused job is
+        claimed again until it is resumed.
+        """
+        from bsimvis.app.routes.jobs import pause_job
+
+        return pause_job(job_id)
+
+    def delete(self, job_id):
+        """Resumes a paused job/group/pipeline."""
+        from bsimvis.app.routes.jobs import resume_job
+
+        return resume_job(job_id)
 
 
 @ns_jobs.route("/<string:job_id>/retry")
@@ -737,10 +860,23 @@ class RawFileUpload(Resource):
             "min_features": "Minimum feature count required",
             "algo": "Similarity algorithm (jaccard, unweighted_cosine, milvus_sparse)",
             "skip_sim": "Set to true to skip building similarities",
+            "enqueue": "Set to false to require batch_finalize (default: true)",
+            "debounce": "Set to true to batch uploads before building (default: false)",
+            "archive_password": "Password for an uploaded zip archive (default: infected)",
+            "unpack": "Set to false to analyze the upload exactly as-is (default: true)",
+            "parent_md5": "md5 of the container this file was extracted from",
+            "parent_file_name": "File name of the declared parent_md5 container",
+            "path_in_parent": "Path of this file inside the declared parent container",
         }
     )
     def post(self):
-        """Uploads a raw binary file for server-side analysis."""
+        """Uploads a raw binary, an archive/APK, or a packed executable.
+
+        Archives, APKs and fat Mach-O binaries are unpacked and every binary
+        inside is analyzed; a UPX-packed executable is analyzed both packed and
+        unpacked. Everything unpacked is tagged with the format it came from
+        (packer:upx, container:apk, ...) and carries the parent's md5.
+        """
         from bsimvis.app.routes.file import upload_raw_binary
 
         return upload_raw_binary()
@@ -764,6 +900,24 @@ class BatchFinalize(Resource):
         return finalize_batch_upload()
 
 
+@ns_file.route("/<string:file_md5>/lineage")
+class FileLineage(Resource):
+    @ns_file.doc(
+        params={"collection": "Collection name (default: main)"},
+        description=(
+            "Containment lineage for one file: the containers it came out of "
+            "(nearest first) and the files extracted out of it. Nodes carry an "
+            "`exists` flag, false for a container that was declared but never "
+            "uploaded."
+        ),
+    )
+    def get(self, file_md5):
+        """Returns the parents, ancestors and children of a file."""
+        from bsimvis.app.routes.file import get_file_lineage
+
+        return get_file_lineage(file_md5)
+
+
 @ns_file.route("/<string:file_md5>/metadata")
 class FileMetadata(Resource):
     @ns_file.doc(description="Updates metadata fields for a file and propagates them")
@@ -773,6 +927,23 @@ class FileMetadata(Resource):
         from bsimvis.app.routes.file import update_file_metadata
 
         return update_file_metadata(file_md5)
+
+
+@ns_file.route("/metadata/stage")
+class BatchMetadataStage(Resource):
+    @ns_file.doc(
+        description=(
+            "Stages a batch's MD5 -> metadata map. Uploads in that batch resolve "
+            "their own metadata by hash, including binaries that only exist after "
+            "server-side unpacking (archive members, UPX payloads, GPR programs)."
+        )
+    )
+    @ns_file.expect(stage_metadata_model)
+    def post(self):
+        """Stages a batch's MD5 -> metadata map for the ingest path."""
+        from bsimvis.app.routes.file import stage_batch_metadata
+
+        return stage_batch_metadata()
 
 
 @ns_file.route("/metadata/propagate")
@@ -788,9 +959,19 @@ class BulkMetadataPropagate(Resource):
 
 @ns_file.route("/call_graph")
 class FileCallGraph(Resource):
-    @ns_file.doc(params={"collection": "Collection name", "file_md5": "File MD5"})
+    @ns_file.doc(
+        params={
+            "collection": "Target collection",
+            "file_md5": "Target file MD5",
+            "retain": "Reference file MD5; retain only functions unique to the target",
+            "retain_collection": "Reference collection (defaults to target collection)",
+            "pool": "Pool ID for a cross-collection pair",
+            "algo": "Binary similarity algorithm",
+            "max_nodes": "Maximum retained nodes after degree/feature ranking",
+        }
+    )
     def get(self):
-        """Returns the full call graph for a file."""
+        """Returns a full file call graph or its unique subgraph versus a reference."""
         from bsimvis.app.routes.function_code import get_file_call_graph
 
         return get_file_call_graph()
@@ -853,7 +1034,14 @@ class FunctionSearch(Resource):
             },
             "exclude_user_tag": {"description": "Exclude functions with this user tag"},
             "exclude_func_tag": {
-                "description": "Exclude functions with this function-level tag"
+                "description": (
+                    "Exclude functions with this function-level tag. "
+                    "Matching is exact on the tag value; hierarchical tags also "
+                    "match by namespace, so `origin:lib` excludes "
+                    "`origin:lib:uclibc:0.9:seekdir`. "
+                    "Use `*` for wildcards (`origin:lib*`, `*uclibc*`) and wrap a value "
+                    'in double quotes to keep it literal ("DIR *").'
+                )
             },
             "exclude_func_static_tag": {
                 "description": "Exclude functions with this function-level static tag"
@@ -906,6 +1094,35 @@ class FunctionCode(Resource):
         from bsimvis.app.routes.function_code import get_function_code
 
         return get_function_code()
+
+
+@ns_function.route("/call_graph")
+class FunctionCallGraph(Resource):
+    @ns_function.doc(params={"id": "Function ID (idx:col:func:md5:addr)"})
+    def get(self):
+        """Returns the function plus its direct callers/callees (depth 1), without decompiled code."""
+        from bsimvis.app.routes.function_code import get_function_call_graph
+
+        return get_function_call_graph()
+
+
+@ns_function.route("/relations")
+class FunctionRelations(Resource):
+    @ns_function.doc(
+        params={
+            "ids": "Comma-separated function ids to check relations among",
+            "collection": "Collection name",
+            "pool": "Pool ID (targets a cross-collection pool similarity index)",
+            "algo": "Similarity algorithm (default: unweighted_cosine)",
+            "min_score": "Minimum similarity score to include (default: 0.85)",
+            "new_ids": "Comma-separated subset of ids that are new -- only checks new_ids x ids instead of every pair",
+        }
+    )
+    def get(self):
+        """Bulk relation lookup: every direct-call edge and every similarity edge among an arbitrary set of already-known function ids."""
+        from bsimvis.app.routes.function_code import get_function_relations
+
+        return get_function_relations()
 
 
 @ns_function.route("/diff")
@@ -981,6 +1198,40 @@ class FeatureDetails(Resource):
 
 
 # --- Search Namespace ---
+@ns_search.route("/unified")
+class SearchUnified(Resource):
+    @ns_search.doc(
+        params={
+            "q": {"description": "Free-text query", "required": True},
+            "limit": "Max results per entity type (default: 5)",
+            "collection": "Restrict to these collections (repeatable). Default: all",
+            "max_collections": "Cap on collections fanned out to (default: unlimited)",
+        }
+    )
+    def get(self):
+        """Searches batches, files, functions, clusters, tags, features, collections and pools at once."""
+        from bsimvis.app.routes.home import unified_search
+
+        return unified_search()
+
+
+@ns_search.route("/unified/stream")
+class SearchUnifiedStream(Resource):
+    @ns_search.doc(
+        params={
+            "q": {"description": "Free-text query", "required": True},
+            "limit": "Max results per entity type (default: 5)",
+            "collection": "Restrict to these collections (repeatable). Default: all",
+            "max_collections": "Cap on collections fanned out to (default: unlimited)",
+        }
+    )
+    def get(self):
+        """Streams the same unified search as NDJSON, one group per line as it is found."""
+        from bsimvis.app.routes.home import unified_search_stream
+
+        return unified_search_stream()
+
+
 @ns_search.route("/autocomplete")
 class SearchAutocomplete(Resource):
     @ns_search.doc(
@@ -1349,6 +1600,62 @@ class TagList(Resource):
         return get_tags()
 
 
+@ns_tags.route("/provenance")
+class TagProvenance(Resource):
+    @ns_tags.doc(
+        params={
+            "tag": {
+                "description": "Tag id; repeat for several, or pass a comma-separated `tags`",
+                "required": True,
+                "example": "yara:trojan:mirai#Linux_Trojan_Mirai",
+            }
+        }
+    )
+    def get(self):
+        """Returns the rule each tag came from, with a link to its source."""
+        from bsimvis.app.routes.tags import get_tag_provenance
+
+        return get_tag_provenance()
+
+
+@ns_tags.route("/rule_source")
+class TagRuleSource(Resource):
+    @ns_tags.doc(
+        params={
+            "id": {
+                "description": "Rule id as returned by /tags/provenance",
+                "required": True,
+                "example": "000067b2-3e11-4ac7-889a-0dc05e0efe91",
+            }
+        }
+    )
+    def get(self):
+        """Returns one rule's own source text, read from the ruleset on disk."""
+        from bsimvis.app.routes.tags import get_rule_source
+
+        return get_rule_source()
+
+
+@ns_tags.route("/match_provenance")
+class TagMatchProvenance(Resource):
+    @ns_tags.expect(
+        api.model(
+            "TagMatchProvenance",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "entity_ids": fields.List(
+                    fields.String, required=True, example=["main:file:1234"]
+                ),
+            },
+        )
+    )
+    def post(self):
+        """Returns match metadata (rules) for a list of entities."""
+        from bsimvis.app.routes.tags import get_match_provenance
+
+        return get_match_provenance()
+
+
 @ns_tags.route("/add")
 class TagAdd(Resource):
     @ns_tags.expect(
@@ -1357,10 +1664,19 @@ class TagAdd(Resource):
             {
                 "collection": fields.String(required=True, example="main"),
                 "entity_type": fields.String(
-                    required=True, enum=["file", "function", "similarity"]
+                    required=True,
+                    enum=[
+                        "file",
+                        "function",
+                        "similarity",
+                        "cluster",
+                        "bin_cluster",
+                    ],
                 ),
                 "entity_id": fields.String(required=True, example="16c2addf..."),
                 "tag": fields.String(required=True, example="vulnerable"),
+                "algo": fields.String(example="unweighted_cosine"),
+                "node_type": fields.String(enum=["file", "container"]),
             },
         )
     )
@@ -1401,6 +1717,8 @@ class TagRemove(Resource):
                 "entity_type": fields.String(required=True),
                 "entity_id": fields.String(required=True),
                 "tag": fields.String(required=True),
+                "algo": fields.String(example="unweighted_cosine"),
+                "node_type": fields.String(enum=["file", "container"]),
             },
         )
     )
@@ -1451,6 +1769,15 @@ class TagStats(Resource):
         return get_tag_stats()
 
 
+@ns_tags.route("/colors")
+class TagColorConfig(Resource):
+    def get(self):
+        """Returns the parameters tag colours are derived from."""
+        from bsimvis.app.routes.tags import get_color_config
+
+        return get_color_config()
+
+
 @ns_tags.route("/color")
 class TagSetColor(Resource):
     @ns_tags.expect(
@@ -1487,6 +1814,81 @@ class TagSetPriority(Resource):
         from bsimvis.app.routes.tags import set_priority
 
         return set_priority()
+
+
+@ns_tags.route("/list")
+class TagVocabularyList(Resource):
+    @ns_tags.doc(
+        params={
+            "collection": {"description": "Collection name", "required": True},
+            "q": {"description": "Substring filter on the tag name"},
+            "sort_by": {"description": "tag | priority | total_count | function_count"},
+            "sort_order": {"description": "asc | desc"},
+        }
+    )
+    def get(self):
+        """Lists the tag vocabulary with usage counts and the LLM flag."""
+        from bsimvis.app.routes.tags import list_tags
+
+        return list_tags()
+
+
+@ns_tags.route("/create")
+class TagCreate(Resource):
+    @ns_tags.expect(
+        api.model(
+            "TagCreate",
+            {
+                "collection": fields.String(required=True),
+                "tag": fields.String(required=True, example="crypto"),
+                "color": fields.String(example="#ff0000"),
+                "priority": fields.Integer(example=0),
+                "llm": fields.Boolean(example=True),
+            },
+        )
+    )
+    def post(self):
+        """Creates a tag in the vocabulary without tagging any entity."""
+        from bsimvis.app.routes.tags import create_tag
+
+        return create_tag()
+
+
+@ns_tags.route("/delete")
+class TagDelete(Resource):
+    @ns_tags.expect(
+        api.model(
+            "TagDelete",
+            {
+                "collection": fields.String(required=True),
+                "tag": fields.String(required=True),
+            },
+        )
+    )
+    def post(self):
+        """Deletes a tag AND strips it from every entity carrying it."""
+        from bsimvis.app.routes.tags import delete_tag
+
+        return delete_tag()
+
+
+@ns_tags.route("/llm")
+class TagSetLLM(Resource):
+    @ns_tags.expect(
+        api.model(
+            "TagSetLLM",
+            {
+                "collection": fields.String(required=True),
+                "tag": fields.String(required=True),
+                "llm": fields.Boolean(required=True),
+            },
+        )
+    )
+    def post(self):
+        """Includes or excludes a tag from the LLM tagging vocabulary."""
+        from bsimvis.app.routes.tags import set_llm_flag
+
+        return set_llm_flag()
 
 
 # --- Cluster Namespace ---
@@ -1569,6 +1971,8 @@ class ClusterList(Resource):
             "cluster_id": "Filter by cluster ID",
             "cluster_uuid": "Filter by cluster UUID",
             "cluster_name": "Filter by cluster name",
+            "cluster_tag": "Require a cluster user tag; repeat for AND filtering",
+            "exclude_cluster_tag": "Exclude clusters carrying this user tag",
             "show_members": "Whether to return direct member IDs/names (true/false)",
         }
     )
@@ -1713,6 +2117,8 @@ class BinClusterList(Resource):
             "cluster_id": "Filter by cluster ID",
             "cluster_uuid": "Filter by cluster UUID",
             "cluster_name": "Filter by cluster name",
+            "cluster_tag": "Require a cluster user tag; repeat for AND filtering",
+            "exclude_cluster_tag": "Exclude clusters carrying this user tag",
             "show_members": "Whether to return direct member IDs/names (true/false)",
         }
     )
@@ -1890,6 +2296,16 @@ class BinSimRebuild(Resource):
         return rebuild_bin_sim()
 
 
+@ns_bin_sim.route("/resplit")
+class BinSimResplit(Resource):
+    @ns_bin_sim.expect(bin_sim_clear_model)
+    def post(self):
+        """Recomputes the tag split of stored pairs (cheap; no rebuild)."""
+        from bsimvis.app.routes.bin_sim import resplit_bin_sim
+
+        return resplit_bin_sim()
+
+
 @ns_bin_sim.route("/clear")
 class BinSimClear(Resource):
     @ns_bin_sim.expect(bin_sim_clear_model)
@@ -1930,6 +2346,11 @@ class BinSimList(Resource):
             "md5": "Target binary MD5",
             "limit": "Max results",
             "offset": "Pagination offset",
+            "group": (
+                "Set to 'container' to fold every match that was extracted from "
+                "a container into that container's row, as `children`. Ignored "
+                "for pools."
+            ),
         }
     )
     def get(self):
@@ -1981,6 +2402,21 @@ class BinSimSearch(Resource):
             "max_coverage_b": {"description": "Maximum coverage for binary B"},
             "min_shared": {"description": "Minimum shared clusters", "example": 5},
             "max_shared": {"description": "Maximum shared clusters"},
+            "min_funcs": {
+                "description": "Minimum function count — both sides must reach it",
+                "example": 20,
+            },
+            "max_funcs": {
+                "description": "Maximum function count — both sides must stay under it"
+            },
+            "containers": {
+                "description": (
+                    "Container membership of the pair: 'both' (both sides are "
+                    "containers), 'any' (at least one), 'none' (plain files only). "
+                    "Empty = no filter."
+                ),
+                "example": "both",
+            },
             "sort_by": {
                 "description": "Sort by: score (default), coverage_a, coverage_b, shared_clusters, computed_at"
             },
@@ -2117,6 +2553,53 @@ class FileNoteList(Resource):
         return get_file_notes()
 
 
+# --- Bin_sim Pair Note Routes ---
+
+
+@ns_notes.route("/bin_sim/add")
+class BinSimNoteAdd(Resource):
+    @ns_notes.expect(bin_sim_note_add_model)
+    @ns_notes.response(200, "Success", note_model)
+    def post(self):
+        """Adds a note to a bin_sim pair."""
+        from bsimvis.app.routes.notes import add_bin_sim_note
+
+        return add_bin_sim_note()
+
+
+@ns_notes.route("/bin_sim/update")
+class BinSimNoteUpdate(Resource):
+    @ns_notes.expect(bin_sim_note_update_model)
+    @ns_notes.response(200, "Success", note_model)
+    def put(self):
+        """Updates an existing bin_sim pair note."""
+        from bsimvis.app.routes.notes import update_bin_sim_note
+
+        return update_bin_sim_note()
+
+
+@ns_notes.route("/bin_sim/remove")
+class BinSimNoteRemove(Resource):
+    @ns_notes.expect(bin_sim_note_remove_model)
+    @ns_notes.response(200, "Success")
+    def delete(self):
+        """Removes a note from a bin_sim pair."""
+        from bsimvis.app.routes.notes import remove_bin_sim_note
+
+        return remove_bin_sim_note()
+
+
+@ns_notes.route("/bin_sim/list")
+class BinSimNoteList(Resource):
+    @ns_notes.doc(params={"sid": "Bin_sim pair sid"})
+    @ns_notes.response(200, "Success", fields.List(fields.Nested(note_model)))
+    def get(self):
+        """Lists all notes for a bin_sim pair."""
+        from bsimvis.app.routes.notes import get_bin_sim_notes
+
+        return get_bin_sim_notes()
+
+
 # --- LLM Namespace ---
 
 
@@ -2153,6 +2636,273 @@ class LLMSummarizeFile(Resource):
         from bsimvis.app.routes.llm import summarize_file
 
         return summarize_file()
+
+
+@ns_llm.route("/batch")
+class LLMBatch(Resource):
+    @ns_llm.expect(
+        api.model(
+            "LLMBatchRequest",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "func_ids": fields.List(
+                    fields.String, description="Explicit function ids"
+                ),
+                "filters": fields.String(
+                    description="Function-search query string, resolved server-side "
+                    "(alternative to func_ids)",
+                    example="file_md5=16c2addf...&min_features=10",
+                ),
+                "actions": fields.List(
+                    fields.String, enum=["notes", "tags"], example=["notes", "tags"]
+                ),
+                "overwrite": fields.Boolean(default=False),
+                "custom_prompt": fields.String,
+                "tag_vocabulary": fields.List(fields.String),
+            },
+        )
+    )
+    def post(self):
+        """Starts a background LLM enrichment job (notes and/or tags) over functions."""
+        from bsimvis.app.routes.llm import batch
+
+        return batch()
+
+
+@ns_llm.route("/batch/<string:job_id>")
+class LLMBatchStatus(Resource):
+    def get(self, job_id):
+        """Returns progress, per-function state and errors for an LLM batch job."""
+        from bsimvis.app.routes.llm import batch_status
+
+        return batch_status(job_id)
+
+
+@ns_llm.route("/batch/<string:job_id>/cancel")
+class LLMBatchCancel(Resource):
+    def post(self, job_id):
+        """Cancels an LLM batch job."""
+        from bsimvis.app.routes.llm import batch_cancel
+
+        return batch_cancel(job_id)
+
+
+# --- Agentic analysis: interactive tool-using chat + context-aware batch ---
+
+
+@ns_llm.route("/chat/session")
+class LLMChatSession(Resource):
+    @ns_llm.expect(
+        api.model(
+            "LLMChatSessionStart",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "pool": fields.String(description="Pool id, alternative to collection"),
+                "system_prompt": fields.String(
+                    description="Overrides the default analyst system prompt"
+                ),
+                "context": fields.String(
+                    description="Appended to the system prompt, e.g. "
+                    "'Analyst is currently viewing function X.' so a "
+                    "panel opened on a specific function can start scoped."
+                ),
+            },
+        )
+    )
+    def post(self):
+        """Starts a new interactive analyst chat session with tool access to
+        the collection (function lookup, call graph, similarity, tags)."""
+        from bsimvis.app.routes.llm_analysis import start_chat_session
+
+        return start_chat_session()
+
+
+@ns_llm.route("/chat/session/<string:session_id>")
+class LLMChatSessionGet(Resource):
+    def get(self, session_id):
+        """Returns the message history for a chat session."""
+        from bsimvis.app.routes.llm_analysis import get_chat_session
+
+        return get_chat_session(session_id)
+
+
+@ns_llm.route("/chat/session/<string:session_id>/message")
+class LLMChatMessage(Resource):
+    @ns_llm.expect(
+        api.model(
+            "LLMChatMessage",
+            {
+                "message": fields.String(
+                    required=True,
+                    example="Does this function look like a fake installer?",
+                )
+            },
+        )
+    )
+    def post(self, session_id):
+        """Sends an analyst message; the model may call tools to look up
+        functions/call-graph/similarity/tags before answering. Streams one
+        NDJSON event per line as each tool call resolves, then a final
+        "done" (or "error") event with the reply."""
+        from bsimvis.app.routes.llm_analysis import chat_message
+
+        return chat_message(session_id)
+
+
+@ns_llm.route("/contextual_batch")
+class LLMContextualBatch(Resource):
+    @ns_llm.expect(
+        api.model(
+            "LLMContextualBatchRequest",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "func_ids": fields.List(
+                    fields.String, description="Explicit function ids"
+                ),
+                "filters": fields.String(
+                    description="Function-search query string (alternative to func_ids)"
+                ),
+                "actions": fields.List(
+                    fields.String, enum=["notes", "tags"], example=["notes", "tags"]
+                ),
+                "overwrite": fields.Boolean(default=False),
+                "custom_prompt": fields.String,
+                "unit_max_size": fields.Integer(
+                    default=5,
+                    description="Max functions batched into one LLM call for a "
+                    "call-connected, non-cyclic cluster. 1 or less disables "
+                    "batching (one call per function/SCC).",
+                ),
+            },
+        )
+    )
+    def post(self):
+        """Starts a background context-aware LLM tagging job: partitions the
+        selection by call-graph locality (bottom-up, mutually-recursive
+        groups combined) instead of judging each function in isolation."""
+        from bsimvis.app.routes.llm_analysis import contextual_batch
+
+        return contextual_batch()
+
+
+@ns_llm.route("/contextual_batch/<string:job_id>")
+class LLMContextualBatchStatus(Resource):
+    def get(self, job_id):
+        """Progress, per-function state and errors for a contextual batch job."""
+        from bsimvis.app.routes.llm_analysis import contextual_batch_status
+
+        return contextual_batch_status(job_id)
+
+
+@ns_llm.route("/contextual_batch/<string:job_id>/cancel")
+class LLMContextualBatchCancel(Resource):
+    def post(self, job_id):
+        """Cancels a contextual batch job."""
+        from bsimvis.app.routes.llm_analysis import contextual_batch_cancel
+
+        return contextual_batch_cancel(job_id)
+
+
+@ns_llm.route("/file_analysis")
+class LLMFileAnalysis(Resource):
+    @ns_llm.expect(
+        api.model(
+            "LLMFileAnalysisRequest",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "pool": fields.String(description="Pool id, alternative to collection"),
+                "file_md5": fields.String(
+                    required=False,
+                    example="16c2addf...",
+                    description="File to analyse; omit to analyse every file in the collection",
+                ),
+                "actions": fields.List(
+                    fields.String, enum=["notes", "tags"], example=["notes", "tags"]
+                ),
+                "overwrite": fields.Boolean(
+                    default=False,
+                    description="Re-analyse and replace this file's existing LLM "
+                    "tags/notes/report instead of skipping already-enriched functions",
+                ),
+                "skip_fid_tagged": fields.Boolean(
+                    default=True,
+                    description="Skip functions already carrying a fid: "
+                    "library-attribution tag",
+                ),
+                "min_complexity": fields.Integer(
+                    default=0,
+                    description="Skip functions with fewer than this many BSim "
+                    "features (0 = no floor)",
+                ),
+                "custom_prompt": fields.String,
+            },
+        )
+    )
+    def post(self):
+        """Starts agentic LLM analysis for one file or every file in a collection."""
+        from bsimvis.app.routes.llm_analysis import file_analysis
+
+        return file_analysis()
+
+
+@ns_llm.route("/file_analysis/<string:job_id>")
+class LLMFileAnalysisStatus(Resource):
+    def get(self, job_id):
+        """Progress, per-function state and errors for a file-analysis job."""
+        from bsimvis.app.routes.llm_analysis import contextual_batch_status
+
+        return contextual_batch_status(job_id)
+
+
+@ns_llm.route("/file_analysis/<string:job_id>/cancel")
+class LLMFileAnalysisCancel(Resource):
+    def post(self, job_id):
+        """Cancels a file-analysis job."""
+        from bsimvis.app.routes.llm_analysis import contextual_batch_cancel
+
+        return contextual_batch_cancel(job_id)
+
+
+@ns_llm.route("/pair_analysis")
+class LLMPairAnalysis(Resource):
+    @ns_llm.expect(
+        api.model(
+            "LLMPairAnalysisRequest",
+            {
+                "collection": fields.String(required=True),
+                "coll_b": fields.String,
+                "md5_a": fields.String(required=True),
+                "md5_b": fields.String(required=True),
+                "pool": fields.String(
+                    description="Pool id for a cross-collection pair"
+                ),
+                "algo": fields.String(default="unweighted_cosine"),
+                "threshold": fields.Float(
+                    default=0.9,
+                    description="Analyse matched functions below this similarity",
+                ),
+                "include_unique": fields.Boolean(default=True),
+                "include_unchanged": fields.Boolean(default=False),
+                "skip_fid_tagged": fields.Boolean(default=True),
+                "min_complexity": fields.Integer(default=0),
+                "max_functions": fields.Integer(
+                    default=0,
+                    description="0 (default) analyzes every diff-selected candidate. "
+                    "Set a positive number for a fast, complexity-ranked triage subset.",
+                ),
+                "actions": fields.List(
+                    fields.String, enum=["notes", "tags"], example=["notes", "tags"]
+                ),
+                "overwrite": fields.Boolean(default=False),
+                "custom_prompt": fields.String,
+            },
+        )
+    )
+    def post(self):
+        """Analyse differences, similarities and malicious functions in one pair."""
+        from bsimvis.app.routes.llm_analysis import pair_analysis
+
+        return pair_analysis()
 
 
 # --- Pool Namespace ---
@@ -2231,7 +2981,9 @@ class PoolList(Resource):
                 "example": "mirai",
             },
             "name": {"description": "Substring filter on pool name"},
-            "sync_status": {"description": "Exact sync status: current | outdated | created"},
+            "sync_status": {
+                "description": "Exact sync status: current | outdated | created"
+            },
             "sort_by": {
                 "description": "name | id | created_at | last_built_at | sync_status | count fields",
                 "example": "created_at",
@@ -2277,7 +3029,11 @@ class PoolDetail(Resource):
 
         return delete_pool(pool_id)
 
-    @ns_pool.expect(api.model("PoolUpdate", {"name": fields.String(required=True, example="New Name")}))
+    @ns_pool.expect(
+        api.model(
+            "PoolUpdate", {"name": fields.String(required=True, example="New Name")}
+        )
+    )
     def put(self, pool_id):
         """Updates the pool's name."""
         from bsimvis.app.routes.pools import edit_pool
@@ -2319,3 +3075,165 @@ class PoolRebuild(Resource):
         from bsimvis.app.routes.pools import rebuild_pool
 
         return rebuild_pool(pool_id)
+
+
+# --- Searches Namespace ---
+
+search_scope_model = api.model(
+    "SearchScope",
+    {
+        "type": fields.String(
+            required=True,
+            enum=["collection", "file", "filter", "pair"],
+            description="collection: every function in the collection. file: "
+            "one file (needs md5). filter: an arbitrary function-search "
+            "filter string (needs filters). pair: a bin_sim pair's diff "
+            "(needs md5_a/md5_b).",
+        ),
+        "md5": fields.String(description="scope.type=file"),
+        "filters": fields.String(
+            description="scope.type=filter -- same query-string syntax as /api/function/search"
+        ),
+        "md5_a": fields.String(description="scope.type=pair"),
+        "md5_b": fields.String(description="scope.type=pair"),
+        "coll_b": fields.String(description="scope.type=pair, defaults to collection"),
+        "pool_id": fields.String(description="scope.type=pair"),
+        "algo": fields.String(
+            default="unweighted_cosine", description="scope.type=pair"
+        ),
+        "state": fields.String(
+            enum=["all", "matched", "unique", "changed"],
+            description="scope.type=pair function state. When set, overrides "
+            "include_unique/include_unchanged; defaults to all.",
+        ),
+        "threshold": fields.Float(default=0.9, description="scope.type=pair"),
+        "include_unique": fields.Boolean(default=True, description="scope.type=pair"),
+        "include_unchanged": fields.Boolean(
+            default=True,
+            description="scope.type=pair -- defaults to True here (unlike deep "
+            "pair analysis) since fast triage is cheap and should not silently "
+            "skip matched functions.",
+        ),
+        "skip_fid_tagged": fields.Boolean(default=True, description="scope.type=pair"),
+        "min_complexity": fields.Integer(default=0, description="scope.type=pair"),
+        "max_functions": fields.Integer(
+            default=0, description="scope.type=pair, 0 = unlimited"
+        ),
+    },
+)
+
+search_create_model = api.model(
+    "SearchCreate",
+    {
+        "collection": fields.String(required=True, example="main"),
+        "pool": fields.String(required=False, description="Alternative to collection"),
+        "query": fields.String(
+            required=True,
+            example="the function that decrypts the embedded configuration",
+            description="Free-text description of what the analyst is looking for.",
+        ),
+        "name": fields.String(required=False, description="Defaults to the query text"),
+        "scope": fields.Nested(search_scope_model, required=True),
+    },
+)
+
+search_tag_model = api.model(
+    "SearchApplyTag",
+    {
+        "func_ids": fields.List(fields.String, required=True),
+        "tag": fields.String(required=True, example="category:persistence:file"),
+    },
+)
+
+search_analyze_model = api.model(
+    "SearchAnalyzeSelection",
+    {
+        "func_ids": fields.List(fields.String, required=True),
+        "actions": fields.List(
+            fields.String, enum=["notes", "tags"], example=["notes", "tags"]
+        ),
+        "overwrite": fields.Boolean(default=False),
+        "custom_prompt": fields.String(
+            description="Defaults to the search's own query when omitted"
+        ),
+    },
+)
+
+
+@ns_searches.route("")
+class SearchList(Resource):
+    @ns_searches.doc(
+        params={
+            "offset": {"description": "Pagination offset", "default": 0},
+            "limit": {"description": "Max results", "default": 50},
+        }
+    )
+    def get(self):
+        """Lists past searches, most recent first."""
+        from bsimvis.app.routes.searches import list_searches
+
+        return list_searches()
+
+    @ns_searches.expect(search_create_model)
+    def post(self):
+        """Resolves the given scope to a function set and starts a fast
+        relevance-triage classification job over it."""
+        from bsimvis.app.routes.searches import create_search
+
+        return create_search()
+
+
+@ns_searches.route("/<string:search_id>")
+class SearchDetail(Resource):
+    @ns_searches.doc(params={"search_id": "Search ID"})
+    def get(self, search_id):
+        """Returns a search's metadata, merging live job status while running."""
+        from bsimvis.app.routes.searches import get_search
+
+        return get_search(search_id)
+
+    def delete(self, search_id):
+        """Deletes a search (cancelling its job first if still running)."""
+        from bsimvis.app.routes.searches import delete_search
+
+        return delete_search(search_id)
+
+
+@ns_searches.route("/<string:search_id>/results")
+class SearchResults(Resource):
+    @ns_searches.doc(
+        params={
+            "search_id": "Search ID",
+            "offset": {"description": "Pagination offset", "default": 0},
+            "limit": {"description": "Max results", "default": 100},
+            "verdict": {
+                "description": "Filter to one or more verdicts (repeatable): yes | maybe | no"
+            },
+        }
+    )
+    def get(self, search_id):
+        """Ranked results (yes before maybe before no)."""
+        from bsimvis.app.routes.searches import get_search_results
+
+        return get_search_results(search_id)
+
+
+@ns_searches.route("/<string:search_id>/apply_tag")
+class SearchApplyTag(Resource):
+    @ns_searches.expect(search_tag_model)
+    def post(self, search_id):
+        """Directly tags the given functions -- synchronous, no job."""
+        from bsimvis.app.routes.searches import apply_tag
+
+        return apply_tag(search_id)
+
+
+@ns_searches.route("/<string:search_id>/analyze")
+class SearchAnalyzeSelection(Resource):
+    @ns_searches.expect(search_analyze_model)
+    def post(self, search_id):
+        """Hands the given functions off to the existing deep-analysis
+        pipeline (notes/tags/severity) as a normal LLM_CONTEXTUAL_BATCH job."""
+        from bsimvis.app.routes.searches import analyze_selection
+
+        return analyze_selection(search_id)

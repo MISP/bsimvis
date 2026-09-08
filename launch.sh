@@ -12,6 +12,13 @@ start_screen() {
     fi
 }
 
+# Print a terminal-clickable hyperlink (OSC 8; plain URL fallback in dumb terms)
+hyperlink() {
+    local url=$1
+    local label=${2:-$1}
+    printf '\033]8;;%s\033\\%s\033]8;;\033\\' "$url" "$label"
+}
+
 # Wait until a TCP port is accepting connections (max 30s)
 wait_for_port() {
     local port=$1
@@ -75,12 +82,26 @@ if [ -f .env ]; then
 fi
 
 # Defaults & Config
+APP_HOST=${APP_HOST:-0.0.0.0}
+APP_PORT=${APP_PORT:-5000}
 REDIS_PORT=${REDIS_PORT:-6379}
 KVROCKS_PORT=${KVROCKS_PORT:-6666}
+# Keep in sync with launch_tmux.sh: ~2.5 GB RSS per Ghidra JVM, 8 GB reserved
+# for kvrocks, redis and the desktop.
+WORKERS_MAX_BY_RAM=$(awk '/MemTotal/ {m=$2/1024/1024; n=int((m-8)/2.5); print (n>1?n:1)}' /proc/meminfo)
 WORKERS_COUNT=${WORKERS_COUNT:-5}
+if [ "$WORKERS_COUNT" -gt "$WORKERS_MAX_BY_RAM" ]; then
+    echo "Capping WORKERS_COUNT ${WORKERS_COUNT} -> ${WORKERS_MAX_BY_RAM} (host RAM)"
+    WORKERS_COUNT=$WORKERS_MAX_BY_RAM
+fi
 ENABLE_MILVUS=${ENABLE_MILVUS:-false}
 DATA_BASE_DIR=${DATA_BASE_DIR:-"$(pwd)/data"}
 PROJECT_NAME=${PROJECT_NAME:-bsimvis}
+
+# Portable JDK installed by scripts/install_ghidra.sh
+if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    export PATH="$JAVA_HOME/bin:$PATH"
+fi
 
 # Optional screen cleanup (default off, enable with --clear or CLEAN_SCREEN=true)
 CLEAN_SCREEN=${CLEAN_SCREEN:-$CLEAR}
@@ -192,6 +213,9 @@ for i in $(seq 1 $WORKERS_COUNT); do
 done
 
 echo "--------------------------"
+wait_for_port "${APP_PORT}" "App"
+APP_URL="http://localhost:${APP_PORT}"
+echo -n "Dashboard: "; hyperlink "${APP_URL}"; echo
 echo "All services started in screen sessions."
 echo "Use 'screen -ls' to see running sessions."
 echo "Use 'screen -r <name>' to attach to a session."

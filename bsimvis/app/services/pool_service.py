@@ -134,7 +134,9 @@ class PoolService:
             meta["total_func_clusters"] = int(meta["total_func_clusters"])
 
         # File similarities
-        file_algo = meta.get("file_sim_params", {}).get("algo", "unweighted_cosine")
+        # File bin_sim lives in the namespace of the function algo its clusters came
+        # from; there is no separate file algo.
+        file_algo = meta.get("algo", "unweighted_cosine")
         if "total_file_similarities" not in meta:
             total_file_sim = r.zcard(f"global:pool:{pool_id}:bin_sim:score:{file_algo}")
             meta["total_file_similarities"] = total_file_sim
@@ -283,12 +285,19 @@ class PoolService:
             )
             current_last_entry = int(zrange_res[0][1]) if zrange_res else 0
 
+            current_generation = int(r.get(f"{coll}:features:generation") or 0)
+
             snap = snapshots.get(coll, {})
             snap_count = snap.get("file_count", -1)
             snap_last_entry = snap.get("last_entry_date", -1)
 
-            coll_outdated = (current_count != snap_count) or (
-                current_last_entry > snap_last_entry
+            coll_outdated = (
+                (current_count != snap_count)
+                or (current_last_entry > snap_last_entry)
+                # A snapshot taken before generations were tracked has no baseline;
+                # don't read its absence as drift.
+                or current_generation
+                != snap.get("feature_generation", current_generation)
             )
             if coll_outdated:
                 is_outdated = True
@@ -298,6 +307,7 @@ class PoolService:
                 "current": {
                     "file_count": current_count,
                     "last_entry_date": current_last_entry,
+                    "feature_generation": current_generation,
                 },
                 "snapshot": snap,
             }
@@ -329,6 +339,7 @@ class PoolService:
             snapshot = {
                 "file_count": current_count,
                 "last_entry_date": current_last_entry,
+                "feature_generation": int(r.get(f"{coll}:features:generation") or 0),
             }
             pipe.hset(f"global:pool:{pool_id}:collections", coll, json.dumps(snapshot))
 
@@ -521,8 +532,16 @@ class PoolService:
 
         # Wipe old data
         self.wipe_pool_data(pool_id)
-        # Update snapshots
-        self.update_sync_snapshots(pool_id)
+        r.hset(
+            f"global:pool:{pool_id}:meta",
+            "build_generations",
+            json.dumps(
+                {
+                    coll: int(r.get(f"{coll}:features:generation") or 0)
+                    for coll in collections
+                }
+            ),
+        )
 
         from bsimvis.app.services.index_service import (
             FILE_TAG_FIELDS,
@@ -708,6 +727,26 @@ class PoolService:
             logging.info(f"No collections defined for pool {pool_id}")
             return True
 
+        # No baseline recorded (pool built before generations were tracked, or a
+        # finalize already consumed it) means there is nothing to compare against.
+        # Only an actual mismatch is a mid-build ingest.
+        expected_raw = r.hget(f"global:pool:{pool_id}:meta", "build_generations")
+        if expected_raw:
+            expected = json.loads(expected_raw)
+            current = {
+                coll: int(r.get(f"{coll}:features:generation") or 0)
+                for coll in collections
+            }
+            if current != expected:
+                logging.warning(
+                    "Pool %s feature generations changed during build: %s -> %s",
+                    pool_id,
+                    expected,
+                    current,
+                )
+                r.hset(f"global:pool:{pool_id}:meta", "sync_status", "outdated")
+                return False
+
         from bsimvis.app.services.index_config import get_fields_targeting_level
         from bsimvis.app.services.index_service import to_pool_indexed_id
 
@@ -821,6 +860,9 @@ class PoolService:
                 logging.info("zunionstore completed")
 
         r.hdel(f"global:pool:{pool_id}:meta", "total_func_similarities")
+
+        self.update_sync_snapshots(pool_id)
+        r.hdel(f"global:pool:{pool_id}:meta", "build_generations")
 
         return True
 

@@ -13,6 +13,8 @@ from bsimvis.app.services.index_service import (
     get_pool_id,
 )
 from bsimvis.app.services.lua_manager import lua_manager
+from bsimvis.app.services.query_syntax import resolve_targets
+from bsimvis.app.services.config_service import config_service
 
 DEFAULT_LIMIT = 100
 DEFAULT_POOL_LIMIT = 1000000
@@ -55,7 +57,11 @@ def search_functions():
             offset = int(request.args.get("offset", 0))
             limit = int(request.args.get("limit", DEFAULT_LIMIT))
             pool_limit = int(request.args.get("pool_limit", DEFAULT_POOL_LIMIT))
-            min_cohesion = float(request.args.get("min_cohesion", 0.95))
+            min_cohesion = float(
+                request.args.get(
+                    "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
+                )
+            )
         except ValueError:
             return {"error": "Invalid numeric parameter"}, 400
 
@@ -104,8 +110,14 @@ def search_functions():
 
         r = get_redis()
 
-        def get_group_targets(lvl, val, allowed_fields=None):
-            from bsimvis.app.services.index_config import INDEX_CONFIG, EXACT_FIELDS
+        # Match mode chosen per filter value, echoed in the response so a query
+        # that resolved differently than the user expected is visible instead of
+        # silently returning the wrong set.
+        filter_modes = []
+        filter_truncated = [False]
+
+        def get_group_targets(lvl, val, allowed_fields=None, default_kind="exact"):
+            from bsimvis.app.services.index_config import INDEX_CONFIG
 
             if not allowed_fields:
                 # Dynamically discover all fields allowed at this level from config
@@ -123,45 +135,18 @@ def search_functions():
                 # Deduplicate
                 allowed_fields = list(set(allowed_fields))
 
-            val_lower = val.lower()
             matches = []
-
             for field in allowed_fields:
-                registry_key = f"{col}:reg:{lvl}:{field}"
-                if r.exists(registry_key):
-                    matching_buckets = []
-
-                    # Check for perfect match fields
-                    if field in EXACT_FIELDS:
-                        target_bucket = f"{col}:idx:{lvl}:{field}:{val_lower}"
-                        if r.sismember(registry_key, target_bucket):
-                            matching_buckets = [target_bucket]
-                    else:
-                        try:
-                            for bucket in r.sscan_iter(
-                                registry_key, match=f"*{val_lower}*", count=1000
-                            ):
-                                bucket_str = (
-                                    bucket.decode()
-                                    if isinstance(bucket, bytes)
-                                    else str(bucket)
-                                )
-                                if val_lower in bucket_str.lower():
-                                    matching_buckets.append(bucket_str)
-                        except Exception as e:
-                            logging.warning(f"SSCAN failed for {registry_key}: {e}")
-
-                    targets = []
-                    if matching_buckets:
-                        prefix = f"{col}:idx:{lvl}:{field}:"
-                        targets = [
-                            b[len(prefix) :]
-                            for b in matching_buckets
-                            if b.startswith(prefix)
-                        ]
-
-                    if targets:
-                        matches.append((lvl, targets, field))
+                targets, truncated, spec = resolve_targets(
+                    r, col, lvl, field, val, default_kind=default_kind
+                )
+                if truncated:
+                    filter_truncated[0] = True
+                if targets:
+                    entry = spec.as_dict()
+                    entry.update({"level": lvl, "field": field})
+                    filter_modes.append(entry)
+                    matches.append((lvl, targets, field))
             return matches
 
         groups_raw = []
@@ -184,10 +169,14 @@ def search_functions():
                         pass
 
                 total_weight += weight
+                # No slice here. Capping the bucket list silently dropped
+                # documents out of both filters and exclusions; the bound now
+                # lives in query_syntax.resolve_targets, which reports when it
+                # is hit. The Lua side already chunks SUNION at 5000 keys.
                 normalized_subs.append(
                     {
                         "level": lvl,
-                        "targets": targets[:1000],
+                        "targets": targets,
                         "field": field,
                     }
                 )
@@ -233,7 +222,14 @@ def search_functions():
                     # We handle both the target name (e.g. file_tags) and common aliases (md5 -> file_md5)
                     val = request.args.get(target_field)
 
-                    if target_field in ["file_md5", "parent_md5", "related_md5", "file_name", "parent_file_name", "related_file_name"]:
+                    if target_field in [
+                        "file_md5",
+                        "parent_md5",
+                        "related_md5",
+                        "file_name",
+                        "parent_file_name",
+                        "related_file_name",
+                    ]:
                         continue
 
                     # Alias handling (for backward compat or convenience)
@@ -262,52 +258,64 @@ def search_functions():
         md5_val = request.args.get("md5") or request.args.get("file_md5")
         md5_configs = []
         if md5_val:
-            md5_paths = _paths_for_source("file", "file_md5") + _paths_for_source("file", "parent_md5") + _paths_for_source("file", "related_md5")
+            md5_paths = (
+                _paths_for_source("file", "file_md5")
+                + _paths_for_source("file", "parent_md5")
+                + _paths_for_source("file", "related_md5")
+            )
             md5_configs = [([md5_val], "any_md5", md5_paths)]
-            
+
         file_name_val = request.args.get("file_name")
         file_name_configs = []
         if file_name_val:
-            file_name_paths = _paths_for_source("file", "file_name") + _paths_for_source("file", "parent_file_name") + _paths_for_source("file", "related_file_name")
+            file_name_paths = (
+                _paths_for_source("file", "file_name")
+                + _paths_for_source("file", "parent_file_name")
+                + _paths_for_source("file", "related_file_name")
+            )
             file_name_configs = [([file_name_val], "any_file_name", file_name_paths)]
 
-        tag_filter_configs = md5_configs + file_name_configs + [
-            (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
-            (static_tag_filters, "static_tag", _paths("tags")),
-            (user_tag_filters, "user_tag", _paths("user_tags")),
-            (
-                func_tag_filters,
-                "func_tag",
-                _paths_for_source("func", "tags")
-                + _paths_for_source("func", "user_tags"),
-            ),
-            (
-                func_static_tag_filters,
-                "func_static_tag",
-                _paths_for_source("func", "tags"),
-            ),
-            (
-                func_user_tag_filters,
-                "func_user_tag",
-                _paths_for_source("func", "user_tags"),
-            ),
-            (
-                file_tag_filters,
-                "file_tag",
-                _paths_for_source("file", "tags")
-                + _paths_for_source("file", "user_tags"),
-            ),
-            (
-                file_static_tag_filters,
-                "file_static_tag",
-                _paths_for_source("file", "tags"),
-            ),
-            (
-                file_user_tag_filters,
-                "file_user_tag",
-                _paths_for_source("file", "user_tags"),
-            ),
-        ]
+        tag_filter_configs = (
+            md5_configs
+            + file_name_configs
+            + [
+                (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
+                (static_tag_filters, "static_tag", _paths("tags")),
+                (user_tag_filters, "user_tag", _paths("user_tags")),
+                (
+                    func_tag_filters,
+                    "func_tag",
+                    _paths_for_source("func", "tags")
+                    + _paths_for_source("func", "user_tags"),
+                ),
+                (
+                    func_static_tag_filters,
+                    "func_static_tag",
+                    _paths_for_source("func", "tags"),
+                ),
+                (
+                    func_user_tag_filters,
+                    "func_user_tag",
+                    _paths_for_source("func", "user_tags"),
+                ),
+                (
+                    file_tag_filters,
+                    "file_tag",
+                    _paths_for_source("file", "tags")
+                    + _paths_for_source("file", "user_tags"),
+                ),
+                (
+                    file_static_tag_filters,
+                    "file_static_tag",
+                    _paths_for_source("file", "tags"),
+                ),
+                (
+                    file_user_tag_filters,
+                    "file_user_tag",
+                    _paths_for_source("file", "user_tags"),
+                ),
+            ]
+        )
         for tfc in tag_filter_configs:
             if tfc[0]:
                 filter_configs.append(tfc)
@@ -417,7 +425,8 @@ def search_functions():
             for word in [w for w in search_q.split() if w.strip()]:
                 all_matches = []
                 for lvl in all_levels:
-                    matches = get_group_targets(lvl, word)
+                    # Free-text box: a bare word stays a substring search.
+                    matches = get_group_targets(lvl, word, default_kind="substring")
                     if matches:
                         all_matches.extend(matches)
 
@@ -553,7 +562,7 @@ def search_functions():
 
         # Phase 3: Fetch Cluster Metadata (DEDUPLICATED), filtered by min_cohesion
         cluster_meta_map = {}
-        algo = "unweighted_cosine"  # Default algo
+        algo = request.args.get("algo", "unweighted_cosine")
         if unique_cluster_ids:
             c_pipe = r.pipeline(transaction=False)
             c_list = list(unique_cluster_ids)
@@ -650,6 +659,8 @@ def search_functions():
             "offset": offset,
             "limit": limit,
             "pool_truncated": pool_truncated,
+            "filter_truncated": filter_truncated[0],
+            "filters": filter_modes,
             "clusters": clusters_response,
             "functions": functions_list,
             "collection": col,

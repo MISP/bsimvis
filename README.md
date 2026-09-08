@@ -42,7 +42,7 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 
 ### Analyst Notes & AI Insights
 - Analyst notes system for files and functions
-- Local LLM assistant for file and function summaries
+- LLM assistant for file and function summaries (local or remote via Ollama)
 
 ### API
 - REST API with Swagger documentation
@@ -71,10 +71,19 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 
 # Requirements
 
+- Java 21+ (Ghidra 12 requirement) — `install.sh` drops a portable Temurin JDK 21 into `bin/` and sets `JAVA_HOME` in `.env` if the system Java is missing or older
 - Ghidra and pyghidra install
 - Redis and Kvrocks databases
-
+- Function ID databases in the Ghidra install (see below) — without them, function library tags stay empty
+- Ollama (optional) for LLM analyst insights and function summaries. Can be run locally (default port `11434`) or remotely (configurable via `ollama_url` in `bsimvis_config.toml`).
 # Installation
+
+Copy the example configuration files and customize them:
+
+```bash
+cp .env.example .env
+cp bsimvis_config.toml.example bsimvis_config.toml
+```
 
 Run the install script to set up portable Redis, Kvrocks, and optionally Ghidra:
 
@@ -83,6 +92,33 @@ Run the install script to set up portable Redis, Kvrocks, and optionally Ghidra:
 ```
 
 Milvus support is optional and can be enabled via the `.env` file (`ENABLE_MILVUS=true`).
+
+## Function ID databases
+
+Ghidra's Function ID (FID) analyzer is what produces the `lib:<library>:<version>:<name>` tags BSimVis puts
+on functions: standard library code identified by exact and operand-masked instruction hashes. Stock Ghidra
+ships FID databases for Visual Studio runtimes only, so on ELF samples nothing gets identified until you add
+databases to `$GHIDRA_HOME/Ghidra/Features/FunctionID/data/`.
+
+`install.sh` fetches the open-source [threatrack/ghidra-fidb-repo](https://github.com/threatrack/ghidra-fidb-repo)
+(MIT — 67 MB download, 215 MB unpacked, 47 databases: glibc, uClibc/OpenWrt, gcc, OpenSSL, Qt5, SDL,
+libsodium, CentOS 6/7, across x86 32/64, ARM, AARCH64, MIPS, PowerPC, SPARC, SuperH, m68k). Skip it with
+`SKIP_FIDB=1 ./install.sh`.
+
+To install them by hand, into your own Ghidra:
+
+```bash
+curl -LO https://github.com/threatrack/ghidra-fidb-repo/releases/download/20200530/ghidra-fidb-repo_20200530.zip
+unzip ghidra-fidb-repo_20200530.zip -d "$GHIDRA_HOME/Ghidra/Features/FunctionID/data/"
+```
+
+Those are the pre-unpacked `.fidbf` files, so no Ghidra rebuild is needed. Restart the workers afterwards —
+Ghidra reads the data directory at startup.
+
+Coverage is per-architecture and per-toolchain. No database exists for PowerPC e500, MIPS64r6, RISC-V or
+LoongArch, and a statically linked binary built with a different compiler or `-O` level than the one the FIDB
+was built from misses every hash even where a database exists. Build your own with Ghidra's
+`Tools -> Function ID -> Populate Function ID Database` when a library matters and nothing matches it.
 
 # Running
 
@@ -105,13 +141,62 @@ Services are configured via `.env` (see `.env.example`). Key variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `KVROCKS_PORT` | `6666` | Kvrocks database port |
-| `REDIS_PORT` | `6379` | Redis job queue port |
+| `APP_HOST` | `0.0.0.0` | Bind address for the API server |
 | `APP_PORT` | `5000` | API / Web UI port |
+| `REDIS_HOST` | `localhost` | Redis host |
+| `REDIS_PORT` | `6379` | Redis job queue port |
+| `KVROCKS_HOST` | `localhost` | Kvrocks host |
+| `KVROCKS_PORT` | `6666` | Kvrocks database port |
 | `WORKERS_COUNT` | `5` | Number of background workers |
 | `DATA_BASE_DIR` | `./data` | Storage path for all service data |
 | `ENABLE_MILVUS` | `false` | Enable optional Milvus vector DB |
+| `MILVUS_HOST` | `localhost` | Milvus host (when enabled) |
+| `MILVUS_PORT` | `19530` | Milvus gRPC port |
+| `MILVUS_HEALTH_PORT` | `9091` | Milvus health-check port |
+| `MINIO_PORT` | `9000` | MinIO data port (Milvus storage) |
+| `MINIO_CONSOLE_PORT` | `9001` | MinIO console port |
+| `ETCD_PORT` | `2379` | Etcd port (Milvus metadata) |
+| `GHIDRA_INSTALL_DIR` | *(auto)* | Path to Ghidra install (set by `install.sh` if needed) |
 | `WORKER_MEMORY_MAX` | `3G` | Per-worker memory cap (`launch_tmux.sh` only) |
+
+## Configuration — `bsimvis_config.toml`
+
+Copy `bsimvis_config.toml.example` and edit to taste. Key sections:
+
+**Analysis profiles** (`[profiles.fast]` / `[profiles.full]` / `[profiles.no-analysis]`): sets of Ghidra analyzer toggles. Pass `profile=fast` (default) or `profile=full` on upload.
+
+**Similarity** (`[similarity]`):
+
+| Key | Default | Description |
+|---|---|---|
+| `algo` | `unweighted_cosine` | Default similarity algorithm |
+| `top_k` | `1000` | Max neighbours per function |
+| `min_score` | `0.9` | Minimum similarity score |
+| `min_features` | `10` | BSim floor — functions below it are matched by exact FunctionID hash |
+
+**Clustering** (`[clustering]`):
+
+| Key | Default | Description |
+|---|---|---|
+| `engine` | `threshold_uf` | Function cluster engine: `threshold_uf`, `hierarchical_uf`, or `hdbscan` |
+| `bin_engine` | `threshold_uf` | Binary cluster engine (same choices) |
+| `uf_threshold` | `0.98` | Similarity edge threshold for `threshold_uf` / `hierarchical_uf` |
+| `bin_uf_threshold` | `0.1` | Same, for binary clustering |
+| `cohesion_cut` | `0.9` | Minimum cohesion for a cluster to be kept |
+| `idle_debounce_seconds` | `30` | Quiet period after uploads before auto-cluster fires |
+| `lane_stale_seconds` | `1800` | Stale lane timeout (self-heals a crashed worker) |
+
+**Analysis modules** (`[analysis_modules]`): `enabled = []` lists modules that run on every upload by default. Choices: `FunctionID`, `capa`, `yara`, `rulezet`. Override per-request with `--enable`/`--disable` (CLI) or `enable=`/`disable=` (API).
+
+**LLM** (`[llm]`): `ollama_url`, `model`, `prompt`.
+
+**Ghidra** (`[ghidra]`): `max_heap_mb` (per-worker JVM heap cap), `max_ram_percent` (CLI upload only), `jvm_args` (GC tuning).
+
+**Rulezet** (`[rulezet]`): mirror of rulezet.org YARA rules. Set `url`, `api_key` (optional — enables single-call sync and tag recovery), `allow_licenses`, `baseline_dirs` (clean binaries for auto-quarantine gating), `drop` (tag glob blacklist), `[rulezet.tags]` (source-namespace → BSimVis-namespace routing). Synced with `bsimvis rulezet sync`.
+
+**Search** (`[search]`): `max_filter_buckets` — cap on index buckets one wildcard filter may resolve to (default `200000`).
+
+**Storage** (`[storage]`): `upload_dir` — where uploaded binaries are written before Ghidra analysis (default `data/uploads`).
 
 # Test script
 
@@ -136,19 +221,56 @@ Full endpoint reference in [doc/api_documentation.md](doc/api_documentation.md);
 
 ## Binary upload
 
+One call is the whole story: analysis, indexing, and per-file similarity all
+run as part of this one job, and the collection's function/binary clusters
+rebuild automatically a short while after uploads to it go quiet
+(`clustering.idle_debounce_seconds` in `bsimvis_config.toml`, default 30s) --
+see [Batch upload](#batch-upload-optional) below for why you don't need to
+call anything else, even for many files at once.
+
 ```
 # upload to /api/file/upload
 curl -X POST --data-binary "@/path/to/file" \
   "http://localhost:5000/api/file/upload?collection=main&file_name=my_binary&profile=fast"
 
-# Follow pipeline with response
+# Response
 {
     "status": "processing",
     "file_md5": "b7680c697c69aff3cd8f44fffcb7d683",
-    "pipeline_id": "pipe_f4f87081-ab7d-4077",
-    "message": "Binary uploaded. Analysis pipeline started."
+    "pipeline_id": "b2e1a4c0-...",
+    "message": "Binary uploaded. Analysis started."
 }
 ```
+
+Add `&priority=high` to jump this file's analysis ahead of other pending jobs
+on the shared worker pool -- useful when another collection has a long-running
+job tying up workers and you need one file processed fast regardless. It does
+not preempt a job already running, only reorders what an idle worker picks up
+next.
+
+## Supported upload formats
+
+`/api/file/upload` takes the raw bytes of whatever you have. Containers are unpacked server-side and every binary inside is analyzed as its own file, tagged with the format it came from and carrying the container's md5 in `parent_md5`.
+
+| Upload | What gets analyzed | Tag |
+|---|---|---|
+| Raw executable (ELF, PE, Mach-O, ...) | The file itself | — |
+| `.zip`, `.tar`, `.tar.gz`, `.tar.bz2`, `.tar.xz` | Every member, one file each | `container:archive` |
+| Encrypted zip (ZipCrypto or AES) | Same, password defaults to `infected` | `container:archive` |
+| `.apk`, `.aab` | Only `.dex`, `.so` and `.jar` members — resources and assets are skipped | `container:apk` |
+| Fat/universal Mach-O | One file per architecture slice, named `<file>:x86_64`, `<file>:arm64`, ... | `container:macho-fat` |
+| UPX-packed executable | **Both** the packed file and its unpacked child, so packed-vs-unpacked is a normal binary diff | `packer:upx` |
+| `.gpr.zip` (Ghidra project) | Imported whole, never unpacked — see below | — |
+
+Notes:
+
+- Archive password: `--archive-password` on the CLI, `archive_password=` on the API. Default is `infected`, the usual convention for shipped malware samples.
+- Unpacking UPX needs the `upx` binary, installed into `bin/` by `install.sh`. Without it a packed sample is still analyzed, just packed.
+- Containers are followed 2 levels deep, capped at 200 children.
+- `--no-unpack` (`unpack=false`) analyzes the upload exactly as-is.
+- Unpacked something with your own tooling? Declare the lineage yourself with `--parent-md5` / `--parent-name` (`parent_md5=` / `parent_file_name=`).
+
+Adding another format means one entry in `HANDLERS` in [`bsimvis/app/services/unpack_service.py`](bsimvis/app/services/unpack_service.py).
 
 ## Ghidra project upload 
 
@@ -163,6 +285,35 @@ zip -r "$gpr_name.gpr.zip" "$gpr_name.gpr" "$gpr_name.rep"
 curl -X POST --data-binary @$gpr_name.gpr.zip \
   "http://localhost:5000/api/file/upload?file_name=$gpr_name&collection=main&profile=fast"
 ```
+
+## Batch upload (optional)
+
+Just upload each file with plain `POST /api/file/upload` calls, in a loop or
+in parallel -- no `batch_uuid`, no finalize call needed. Every collection has
+its own lane: all the files you upload analyze fully in parallel across
+workers, and once uploads to that collection go quiet, the lane
+automatically groups everything uploaded in that window, clears old
+cluster/bin_sim results, and rebuilds function clusters, binary similarity,
+and binary clusters -- once, covering the whole batch:
+
+```
+for f in /path/to/*.bin; do
+  curl -s -X POST --data-binary "@$f" \
+    "http://localhost:5000/api/file/upload?collection=main&file_name=$(basename $f)"
+done
+# each upload analyzes immediately; clustering fires on its own ~30s after the last one
+```
+
+`POST /api/cluster/rebuild_all` and `POST /api/file/upload/batch_finalize`
+(explicit `pipeline_ids` list, `batch_uuid` grouping) still work for forcing
+a rebuild right now instead of waiting, or for scripts that already manage
+their own batching -- they queue behind whatever's currently active for that
+collection instead of racing it (a collection's lane only ever runs one
+clear/rebuild at a time; two overlapping requests used to corrupt each
+other's results). Add `"priority": "high"` to jump an explicit request ahead
+of other rebuilds already queued for that same collection. See
+[doc/api_documentation.md](doc/api_documentation.md#post-apifileuploadbatch_finalize)
+for `batch_finalize`'s full parameters.
 
 ## Follow pipeline progress
 
@@ -181,18 +332,28 @@ curl -s "http://localhost:5000/api/jobs/pipe_f4f87081-ab7d-4077"
 
 ## Build function clusters and Binary similarities
 
-```
-# With all binaries uploaded and ingestion pipeline completed
-# Or periodically schedule 
+Runs automatically after uploads to a collection go quiet (see
+[Batch upload](#batch-upload-optional) above). Call this directly to force it
+right now instead of waiting -- it queues behind whatever's currently active
+for that collection rather than running concurrently with it:
 
+```
 curl -X POST -H "Content-Type: application/json" \
  -d '{"collection": "main", "algo": "unweighted_cosine"}' \
  http://localhost:5000/api/cluster/rebuild_all
+
+# Response -- pipeline_id is pollable via GET /api/jobs/{pipeline_id} either way,
+# whether it started immediately or is waiting behind another active rebuild
+{
+    "job_id": "b2e1a4c0-...",
+    "pipeline_id": "b2e1a4c0-...",
+    "status": "queued"
+}
 ```
 
 # CLI tool
 
-## Upload BSIM data
+### Upload BSIM data
 
 Assuming you have the API running, upload binary or ghidra project (files in ghidra projects won´t get reanalyzed to not overwrite analyst work, meaning if no analyzers were ran in this project, no functions will be found)
 
@@ -200,7 +361,21 @@ Assuming you have the API running, upload binary or ghidra project (files in ghi
 uv run bsimvis upload <target1> <target2> ... <targetN> -c <collection_name>
 ```
 
-See `bsimvis_config.toml` for an example config file.
+Key upload flags:
+
+| Flag | Description |
+|---|---|
+| `--batch-split N` | Upload in independent batches of N files; each part is finalized and clustered before the next starts — results appear incrementally instead of at the end |
+| `--enable MODULE` | Enable an analysis module for this run (repeatable): `FunctionID`, `capa`, `yara`, `rulezet` |
+| `--disable MODULE` | Disable an analysis module for this run (repeatable) |
+| `--local-analysis` | Run Ghidra analysis locally instead of on the server (requires Ghidra + pyghidra installed locally) |
+| `--no-unpack` / `unpack=false` | Analyze the upload exactly as-is without unpacking archives or UPX |
+| `--metadata FILE` | Enrich uploads with a metadata CSV (pipe-delimited, matched by filename) |
+| `--archive-password PASSWORD` | Password for encrypted zip archives (default: `infected`) |
+| `--profile fast\|full` | Ghidra analysis profile (default: `fast`) |
+| `--save-json PATH` | Save analyzed JSON to disk (in addition to or instead of uploading) |
+
+See `bsimvis_config.toml` for analysis module defaults (`[analysis_modules].enabled`).
 
 ## Job management
 
@@ -210,6 +385,9 @@ uv run bsimvis job list
 
 # View logs of a specific job
 uv run bsimvis job status <job_id>
+
+# Performance stats for a job/pipeline
+uv run bsimvis job perf <job_id>
 
 # Cancel a job
 uv run bsimvis job cancel <job_id>
@@ -224,7 +402,7 @@ uv run bsimvis worker start --count 5
 
 ## Building clusters
 
-For now clustering is a manual job to run after ingesting all binaries. 
+Clustering fires automatically after uploads to a collection go quiet (see `clustering.idle_debounce_seconds`). To trigger it manually:
 
 ```bash
 uv run bsimvis cluster build -c <collection_name>
@@ -235,6 +413,9 @@ uv run bsimvis cluster build -c <collection_name>
 ```bash
 # Build binary similarities
 uv run bsimvis binsim build -c <collection_name>
+
+# Get binary similarity diff between two files
+uv run bsimvis binsim diff --md5-a <md5_a> --md5-b <md5_b> -c <collection_name>
 ```
 
 ## Collection management
@@ -254,15 +435,36 @@ uv run bsimvis collection clean -c <collection_name>
 uv run bsimvis metadata propagate -m <metadata_csv_path> -c <collection_name>
 ```
 
+## Rulezet YARA mirror
+
+Mirror and gate rules from [rulezet.org](https://rulezet.org) into `data/yara_rules/`. Configure the `[rulezet]` section in `bsimvis_config.toml` first.
+
+```bash
+# Fetch, tag, compile and auto-quarantine the mirror
+uv run bsimvis rulezet sync
+
+# Force a full re-fetch (ignores last sync date)
+uv run bsimvis rulezet sync --full
+
+# Recover curated MISP-galaxy tags (requires api_key in config)
+uv run bsimvis rulezet index-tags mitre-attack-pattern
+
+# Show quarantined rules (false-positive gated)
+uv run bsimvis rulezet quarantine
+
+# Release a specific rule from quarantine
+uv run bsimvis rulezet quarantine --release <uuid>
+```
+
 ## Full CLI reference
 
 ```
-usage: bsimvis [-h] [-H HOST] {features,index,sim,cluster,binsim,job,worker,upload,collection,metadata} ...
+usage: bsimvis [-h] [-H HOST] {features,index,sim,cluster,binsim,job,worker,upload,collection,metadata,rulezet} ...
 
 Unified BSimVis CLI
 
 positional arguments:
-  {features,index,sim,cluster,binsim,job,worker,upload,collection,metadata}
+  {features,index,sim,cluster,binsim,job,worker,upload,collection,metadata,rulezet}
     features            BSim Feature management (Indexing)
     index               Index health and statistics
     sim                 Similarity management
@@ -273,6 +475,7 @@ positional arguments:
     upload              Upload binaries to redis/kvrocks
     collection          Collection management
     metadata            Metadata management and propagation
+    rulezet             Mirror YARA rules from rulezet.org
 
 options:
   -h, --help            show this help message and exit

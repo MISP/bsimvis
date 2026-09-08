@@ -57,6 +57,30 @@ def in_range(val, rng):
     return rng[0] <= v <= rng[1]
 
 
+def fnum(name, args=None):
+    """Single float query param `?<name>=`, or None if absent/invalid.
+
+    Unlike num_range/in_range (fixed `min_<field>`/`max_<field>` naming, both-or-
+    neither validity), this reads one arbitrarily-named param and treats it as
+    just not set if it fails to parse — matching how a single stray bad value
+    already behaved in bin_sim.py's diff filter before this was extracted.
+    """
+    v = _args(args).get(name)
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def in_bounds(val, lo, hi):
+    """True if lo <= val <= hi; either bound may be None to mean open-ended."""
+    if lo is not None and val < lo:
+        return False
+    if hi is not None and val > hi:
+        return False
+    return True
+
+
 def sort_and_paginate(
     items, offset, limit, default_key, default_reverse, key_fns, args=None
 ):
@@ -95,6 +119,13 @@ def _selfcheck():
     assert in_range(15, r) and not in_range(5, r)
     assert in_range(1, None)  # no range = pass
     assert not in_range("x", (0, 5))  # non-numeric fails a real range
+
+    # fnum + in_bounds
+    assert fnum("sim_min", {}) is None
+    assert fnum("sim_min", {"sim_min": "0.5"}) == 0.5
+    assert fnum("sim_min", {"sim_min": "nope"}) is None
+    assert in_bounds(5, None, None)
+    assert in_bounds(5, 1, 10) and not in_bounds(0, 1, 10) and not in_bounds(11, 1, 10)
 
     # sort desc + paginate
     items = [{"n": v} for v in [3, 1, 2, 5, 4]]

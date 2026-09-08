@@ -1,16 +1,97 @@
 import logging
 import json
+import os
 import time
 import uuid
 from collections import Counter, defaultdict
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.cluster_utils import pick_best_shared_cluster
+from bsimvis.app.services.cluster_utils import default_bin_cluster_name
+from bsimvis.app.services import mem_util, sim_edges
+
+# Above this many nodes a dense size^2 float64 distance matrix stops being
+# survivable (0.8 GiB at 10k, 3.2 GiB at 20k) on a 3 GB per-worker cap.
+CLUSTER_MAX_COMPONENT = int(os.getenv("CLUSTER_MAX_COMPONENT", 10000))
+COHESION_SAMPLE_SIZE = 500
+COHESION_EXACT_MARGIN = 0.05
+
+_EMPTY_I = np.empty(0, dtype=np.int32)
+_EMPTY_F = np.empty(0, dtype=np.float32)
 
 try:
     import hdbscan
 except ImportError:
     hdbscan = None
+
+
+def _pairwise_cohesion(r, sim_score_key, sid_prefix, clean_members, memo):
+    """(sum, count) of stored similarity over every pair in `clean_members`.
+
+    Two things the naive `for each pair: r.zscore(...)` version got wrong on
+    a real collection, both of them latency, not server work (a 1.08M-ZSCORE
+    sample billed 8.2s inside kvrocks against ~180s of wall clock):
+
+    - One blocking round-trip per pair, plus a second one on every miss to
+      retry the reversed `b::a` key. Both orderings now go out in the same
+      pipeline, so a 200-member node costs ~20 round-trips instead of ~40k.
+    - `memo` is shared across every node scored in one run. Single-linkage
+      chains rescore a whole ancestor line, and each ancestor's member set
+      contains all of its child's, so an un-memoized run re-fetches the same
+      pair once per level -- O(sum of m^2) instead of O(m_max^2).
+
+    Denominator is pairs that actually have a stored similarity, not every
+    combinatorial pair: BSim only keeps each function's top-K neighbours, so
+    counting never-compared pairs as 0% crushes a genuinely tight cluster.
+    """
+    n = len(clean_members)
+    keys = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = clean_members[i], clean_members[j]
+            keys.append((a, b) if a <= b else (b, a))
+
+    want, seen = [], set()
+    for key in keys:
+        if key in memo or key in seen:
+            continue
+        seen.add(key)
+        want.append(key)
+
+    CHUNK = 2000
+    for i in range(0, len(want), CHUNK):
+        chunk = want[i : i + CHUNK]
+        pipe = r.pipeline(transaction=False)
+        for a, b in chunk:
+            pipe.zscore(sim_score_key, f"{sid_prefix}{a}::{b}")
+            pipe.zscore(sim_score_key, f"{sid_prefix}{b}::{a}")
+        res = pipe.execute()
+        for k, key in enumerate(chunk):
+            score = res[2 * k]
+            if score is None:
+                score = res[2 * k + 1]
+            memo[key] = float(score) if score is not None else None
+
+    total, count = 0.0, 0
+    for key in keys:
+        score = memo.get(key)
+        if score is not None:
+            total += score
+            count += 1
+    return total, count
+
+
+def _score_cohesion(adj_sim, member_indices, cohesion_cut, scratch, rng):
+    sources = None
+    if len(member_indices) > COHESION_SAMPLE_SIZE:
+        sources = rng.choice(member_indices, COHESION_SAMPLE_SIZE, replace=False)
+    total, count = adj_sim.cohesion(member_indices, scratch, sources)
+    score = total / count if count else 1.0
+    if sources is not None and (
+        not count or abs(score - cohesion_cut) <= COHESION_EXACT_MARGIN
+    ):
+        total, count = adj_sim.cohesion(member_indices, scratch)
+        score = total / count if count else 1.0
+    return score
 
 
 class ClusterService:
@@ -34,11 +115,25 @@ class ClusterService:
         selection_method=None,
         min_sim=None,
         min_features=None,
+        batch_uuid=None,
         job_service=None,
         job_id=None,
     ):
         """
-        Runs HDBSCAN clustering on similarity pairs stored in Kvrocks.
+        Runs clustering on similarity pairs stored in Kvrocks.
+
+        engine is clustering.engine ("hierarchical_uf" by default,
+        "threshold_uf" for a flat one-cut variant, "hdbscan" for the legacy
+        path). Under threshold_uf or hierarchical_uf, passing batch_uuid (set
+        by the upload pipeline for every newly-ingested batch) takes the
+        incremental path: only that batch's functions and the clusters they
+        touch are updated, instead of rebuilding every cluster in the
+        collection. hierarchical_uf's incremental path additionally needs a
+        persisted MST from a prior run under the same parameters (see
+        _incremental_cluster_hierarchical) -- falls back to a full rebuild
+        silently if there isn't one. Omit batch_uuid (or use the "Recluster"
+        action in the UI/CLI) to force a full rebuild, e.g. after changing
+        uf_threshold or cohesion_cut.
         """
         from bsimvis.app.services.config_service import config_service
 
@@ -54,6 +149,76 @@ class ClusterService:
             min_sim = config_service.get("clustering.min_sim", 0.0)
         if min_features is None:
             min_features = config_service.get("clustering.min_features", 0)
+
+        engine = config_service.get("clustering.engine", "threshold_uf")
+        if engine == "hierarchical_uf":
+            cohesion_cut = config_service.get("clustering.cohesion_cut", 0.9)
+            if batch_uuid and not collection.startswith("global:pool:"):
+                new_fids = list(
+                    self.r.smembers(f"{collection}:batch:{batch_uuid}:functions")
+                )
+                new_fids = [f.decode() if isinstance(f, bytes) else f for f in new_fids]
+                if new_fids:
+                    # The MST persisted by the last full/incremental run is a
+                    # sufficient summary of the whole graph for this tree --
+                    # see cluster_threshold.build_single_linkage_tree's
+                    # docstring. None means no usable state to build on
+                    # (never saved, config changed, or the LCA backend is
+                    # active) -- fall through to a full rebuild.
+                    res = self._incremental_cluster_hierarchical(
+                        collection,
+                        algo,
+                        new_fids,
+                        min_sim=min_sim,
+                        min_features=min_features,
+                        min_cluster_size=min_cluster_size,
+                        cohesion_cut=cohesion_cut,
+                        job_service=job_service,
+                        job_id=job_id,
+                    )
+                    if res is not None:
+                        return res
+                else:
+                    # Batch had no functions (e.g. all filtered out) -- nothing to do.
+                    return True
+            return self._run_clustering_hierarchical_uf(
+                collection,
+                algo=algo,
+                min_sim=min_sim,
+                min_features=min_features,
+                min_cluster_size=min_cluster_size,
+                cohesion_cut=cohesion_cut,
+                job_service=job_service,
+                job_id=job_id,
+            )
+        if engine == "threshold_uf":
+            threshold = config_service.get("clustering.uf_threshold", 0.98)
+            if batch_uuid and not collection.startswith("global:pool:"):
+                new_fids = list(
+                    self.r.smembers(f"{collection}:batch:{batch_uuid}:functions")
+                )
+                new_fids = [f.decode() if isinstance(f, bytes) else f for f in new_fids]
+                if new_fids:
+                    return self._incremental_cluster_functions(
+                        collection,
+                        algo,
+                        threshold,
+                        new_fids,
+                        job_service=job_service,
+                        job_id=job_id,
+                    )
+                # Batch had no functions (e.g. all filtered out) -- nothing to do.
+                return True
+            return self._run_clustering_threshold_uf(
+                collection,
+                algo=algo,
+                threshold=threshold,
+                min_sim=min_sim,
+                min_features=min_features,
+                job_service=job_service,
+                job_id=job_id,
+            )
+
         if hdbscan is None:
             logging.error(
                 "hdbscan library not installed. Please install it to use clustering."
@@ -79,27 +244,6 @@ class ClusterService:
                 job_id, f"Fetching similarity pairs for {collection} ({algo})..."
             )
 
-        # Use ZSCAN to be safe with large datasets
-        pairs = []
-        cursor = 0
-        while True:
-            cursor, results = r.zscan(sim_score_key, cursor=cursor, count=1000)
-            for sid, score in results:
-                pairs.append((sid.decode() if isinstance(sid, bytes) else sid, score))
-            if cursor == 0:
-                break
-            if len(pairs) % 10000 == 0:
-                logging.info(f"[*] Fetched {len(pairs)} similarity pairs...")
-
-        msg = f"Fetched {len(pairs)} similarity pairs."
-        logging.info(f"[+] {msg}")
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
-
-        if not pairs:
-            logging.warning(f"No similarity pairs found for {collection}:{algo}")
-            return True
-
         # 1.5 Feature Filtering
         allowed_fids = None
         if min_features > 0:
@@ -108,106 +252,58 @@ class ClusterService:
             if job_service and job_id:
                 job_service.add_log(job_id, msg)
 
-            unique_fids = set()
-            for sid, _ in pairs:
-                if not sid.startswith(prefix):
-                    continue
-
-                ids_part = sid[len(prefix) :]
-                if "::" not in ids_part:
-                    continue
-
-                c1, c2 = ids_part.split("::")
-                if is_pool:
-                    unique_fids.add(c1)
-                    unique_fids.add(c2)
-                else:
-                    unique_fids.add(f"{collection}:func:{c1}")
-                    unique_fids.add(f"{collection}:func:{c2}")
-
-            allowed_fids = set()
-            fids_list = list(unique_fids)
-            # Bulk fetch bsim_features_count
-            pipe = r.pipeline(transaction=False)
-            for fid in fids_list:
-                pipe.get(f"{fid}:meta")
-
-            raw_res = pipe.execute()
-            for fid, res in zip(fids_list, raw_res):
-                try:
-                    val = 0
-                    if res:
-                        doc = json.loads(res)
-                        val = doc.get("bsim_features_count", 0)
-                    if int(val) >= min_features:
-                        allowed_fids.add(fid)
-                except (ValueError, TypeError, IndexError):
-                    continue
-
+            allowed_fids = sim_edges.collect_allowed_fids(
+                r, sim_score_key, prefix, is_pool, collection, min_features
+            )
             logging.info(f"[+] {len(allowed_fids)} functions passed feature filter.")
 
-        # 2. Build identity mapping and edge list
-        # We need a numeric mapping for HDBSCAN
-        id_to_idx = {}
-        idx_to_id = {}
-        edges = []
+        # 2. Stream the ZSET straight into typed edge arrays.
+        # This used to build a `pairs` list of every member string first, then a
+        # second list of edge tuples. Measured on a real 5.4M-pair pool that was
+        # 2.15 GiB before clustering even started, against a 3 GB worker cap.
+        edge_set = sim_edges.load_edges(
+            r,
+            sim_score_key,
+            prefix,
+            is_pool,
+            collection,
+            min_sim=min_sim,
+            allowed_fids=allowed_fids,
+        )
+        id_to_idx = edge_set.id_to_idx
+        idx_to_id = edge_set.idx_to_id
 
-        for sid, score in pairs:
-            # sid format: {coll}:sim:{algo}:{clean_id1}::{clean_id2}
-            if not sid.startswith(prefix):
-                continue
+        msg = f"Fetched {edge_set.n_scanned} similarity pairs."
+        logging.info(f"[+] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+        mem_util.phase(
+            f"after streaming {edge_set.n_scanned} pairs", job_service, job_id
+        )
 
-            ids_part = sid[len(prefix) :]
-            if "::" not in ids_part:
-                continue
+        if edge_set.n_scanned == 0:
+            logging.warning(f"No similarity pairs found for {collection}:{algo}")
+            return True
 
-            c1, c2 = ids_part.split("::")
-            if is_pool:
-                fid1 = c1
-                fid2 = c2
-            else:
-                fid1 = f"{collection}:func:{c1}"
-                fid2 = f"{collection}:func:{c2}"
-
-            # Apply Feature Filter
-            if allowed_fids is not None:
-                if fid1 not in allowed_fids or fid2 not in allowed_fids:
-                    continue
-
-            for fid in [fid1, fid2]:
-                if fid not in id_to_idx:
-                    idx = len(id_to_idx)
-                    id_to_idx[fid] = idx
-                    idx_to_id[idx] = fid
-
-            # 2.5 Apply similarity threshold if provided
-            score_val = float(score)
-            if min_sim > 0 and score_val < min_sim:
-                continue
-
-            # HDBSCAN works with distance. Distance = 1 - score (for normalized cosine)
-            dist = max(0, 1.0 - score_val)
-            edges.append((id_to_idx[fid1], id_to_idx[fid2], dist))
-
-        if not edges:
+        if edge_set.src.size == 0:
             logging.warning(
-                f"No valid edges found for {collection}:{algo} after parsing {len(pairs)} pairs."
+                f"No valid edges found for {collection}:{algo} after parsing {edge_set.n_scanned} pairs."
             )
             if job_service and job_id:
                 job_service.add_log(
                     job_id,
-                    f"Error: No valid similarity edges found after parsing {len(pairs)} pairs. Check filters.",
+                    f"Error: No valid similarity edges found after parsing {edge_set.n_scanned} pairs. Check filters.",
                 )
             return True
 
         num_nodes = len(id_to_idx)
-        msg = f"Building graph with {num_nodes} functions and {len(edges)} similarity edges..."
+        msg = f"Building graph with {num_nodes} functions and {edge_set.src.size} similarity edges..."
         logging.info(f"[*] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
+        mem_util.phase(f"after building {edge_set.src.size} edges", job_service, job_id)
 
         # 3. Connected Components and Local HDBSCAN
-        import scipy.sparse as sp
         from scipy.sparse.csgraph import connected_components
         import pandas as pd
 
@@ -216,17 +312,10 @@ class ClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        rows = []
-        cols = []
-        data = []
-        for i, j, d in edges:
-            if d < 1.0:  # Only real similarity edges
-                rows.extend([i, j])
-                cols.extend([j, i])
-                data.extend([1, 1])
-
-        adj_matrix = sp.csr_matrix((data, (rows, cols)), shape=(num_nodes, num_nodes))
+        adj_matrix = sim_edges.build_adjacency(edge_set, num_nodes)
+        mem_util.phase("after adjacency matrix", job_service, job_id)
         n_components, labels = connected_components(csgraph=adj_matrix, directed=False)
+        del adj_matrix
 
         comp_to_nodes = {}
         for i, comp_id in enumerate(labels):
@@ -234,23 +323,28 @@ class ClusterService:
                 comp_to_nodes[comp_id] = []
             comp_to_nodes[comp_id].append(i)
 
-        comp_to_edges = {}
-        for i, j, d in edges:
-            c = labels[i]
-            if c == labels[j]:
-                if c not in comp_to_edges:
-                    comp_to_edges[c] = []
-                comp_to_edges[c].append((i, j, d))
+        # Views into one sorted permutation rather than a dict of tuple lists,
+        # which was a third full copy of every edge.
+        comp_to_edges = sim_edges.group_edges_by_component(edge_set, labels)
+
+        mem_util.phase("after comp_to_edges", job_service, job_id)
 
         msg = f"Found {n_components} connected components. Running local HDBSCAN..."
         logging.info(f"[*] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
+        biggest = max((len(v) for v in comp_to_nodes.values()), default=0)
+        logging.info(f"[*] Largest connected component: {biggest} nodes")
 
         global_tree_rows = []
         global_root_id = num_nodes
         next_cluster_id = num_nodes + 1
         comp_roots = []
+
+        # One scratch buffer for global-index -> component-local-index, reused
+        # across components. Allocating it per component would reintroduce a
+        # per-component O(num_nodes) allocation.
+        gmap = np.full(num_nodes, -1, dtype=np.int32)
 
         start_fit = time.time()
 
@@ -264,22 +358,26 @@ class ClusterService:
             sub_id_to_global = {
                 i: global_idx for i, global_idx in enumerate(comp_nodes)
             }
-            global_to_sub_id = {
-                global_idx: i for i, global_idx in enumerate(comp_nodes)
-            }
+
+            # Global index -> position within this component, vectorised. The
+            # per-edge Python loop that did this built three more lists per
+            # component on top of the edge copy it was reading from.
+            comp_nodes_arr = np.asarray(comp_nodes, dtype=np.int32)
+            gmap[comp_nodes_arr] = np.arange(size, dtype=np.int32)
+            e_src, e_dst, e_dist = comp_to_edges.get(
+                comp_id, (_EMPTY_I, _EMPTY_I, _EMPTY_F)
+            )
+            ui = gmap[e_src]
+            vi = gmap[e_dst]
 
             if size >= 5000:
                 from scipy.sparse.linalg import svds
+                import scipy.sparse as sp
 
-                rows_sp, cols_sp, data_sp = [], [], []
-                if comp_id in comp_to_edges:
-                    for u, v, d in comp_to_edges[comp_id]:
-                        ui = global_to_sub_id[u]
-                        vi = global_to_sub_id[v]
-                        sim = 1.0 - d
-                        rows_sp.extend([ui, vi])
-                        cols_sp.extend([vi, ui])
-                        data_sp.extend([sim, sim])
+                sim = 1.0 - e_dist
+                rows_sp = np.concatenate([ui, vi])
+                cols_sp = np.concatenate([vi, ui])
+                data_sp = np.concatenate([sim, sim])
 
                 comp_matrix = sp.csr_matrix(
                     (data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32
@@ -301,15 +399,16 @@ class ClusterService:
                 )
                 clusterer.fit(embeddings)
             else:
-                sub_dist = np.ones((size, size), dtype=np.float32)
+                # float64 up front. HDBSCAN's precomputed path needs float64
+                # anyway, so building this float32 and converting at fit time
+                # held BOTH the 100 MB original and its 200 MB copy alive at
+                # size=5000 -- 300 MB where 200 MB does the same work.
+                sub_dist = np.ones((size, size), dtype=np.float64)
                 np.fill_diagonal(sub_dist, 0)
 
-                if comp_id in comp_to_edges:
-                    for u, v, d in comp_to_edges[comp_id]:
-                        ui = global_to_sub_id[u]
-                        vi = global_to_sub_id[v]
-                        sub_dist[ui, vi] = d
-                        sub_dist[vi, ui] = d
+                if ui.size:
+                    sub_dist[ui, vi] = e_dist
+                    sub_dist[vi, ui] = e_dist
 
                 clusterer = hdbscan.HDBSCAN(
                     min_cluster_size=min(min_cluster_size, size),
@@ -319,7 +418,7 @@ class ClusterService:
                     metric="precomputed",
                     gen_min_span_tree=True,
                 )
-                clusterer.fit(sub_dist.astype(np.float64))
+                clusterer.fit(sub_dist)
 
             local_tree_df = clusterer.condensed_tree_.to_pandas()
             if local_tree_df.empty:
@@ -331,9 +430,9 @@ class ClusterService:
             # Ensure local root maps to a single global internal ID
             local_root_sub = local_tree_df["parent"].min()
 
-            for _, row in local_tree_df.iterrows():
-                parent = int(row["parent"])
-                child = int(row["child"])
+            for row in local_tree_df.itertuples(index=False):
+                parent = int(row.parent)
+                child = int(row.child)
 
                 if parent not in sub_internal_to_global:
                     sub_internal_to_global[parent] = next_cluster_id
@@ -351,8 +450,8 @@ class ClusterService:
                     {
                         "parent": sub_internal_to_global[parent],
                         "child": global_child,
-                        "lambda_val": float(row["lambda_val"]),
-                        "child_size": int(row["child_size"]),
+                        "lambda_val": float(row.lambda_val),
+                        "child_size": int(row.child_size),
                     }
                 )
 
@@ -387,15 +486,15 @@ class ClusterService:
         # Root birth is 0
         root_id = tree_df["parent"].min()
         birth_lambdas = {root_id: 0.0}
-        for _, row in tree_df.iterrows():
-            if row["child_size"] > 1:
-                birth_lambdas[int(row["child"])] = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            if row.child_size > 1:
+                birth_lambdas[int(row.child)] = float(row.lambda_val)
 
         # 2. Death lambdas for all clusters (max lambda of any child)
         death_lambdas = {}
-        for _, row in tree_df.iterrows():
-            p = int(row["parent"])
-            l = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            p = int(row.parent)
+            l = float(row.lambda_val)
             if p not in death_lambdas or l > death_lambdas[p]:
                 death_lambdas[p] = l
 
@@ -424,11 +523,11 @@ class ClusterService:
         # Build a pruned tree DataFrame
         if pruned_clusters:
             pruned_rows = []
-            for _, row in tree_df.iterrows():
-                parent = int(row["parent"])
-                child = int(row["child"])
-                child_size = int(row["child_size"])
-                lambda_val = float(row["lambda_val"])
+            for row in tree_df.itertuples(index=False):
+                parent = int(row.parent)
+                child = int(row.child)
+                child_size = int(row.child_size)
+                lambda_val = float(row.lambda_val)
 
                 if parent in pruned_clusters:
                     ancestor = get_nearest_non_pruned_ancestor(parent)
@@ -461,14 +560,14 @@ class ClusterService:
         # Store cluster parent-child relationships for dendrogram
         cluster_tree_key = f"{collection}:cluster:tree_links:{algo}"
         tree_links = []
-        for _, row in tree_df.iterrows():
-            if int(row["child_size"]) > 1:
+        for row in tree_df.itertuples(index=False):
+            if int(row.child_size) > 1:
                 tree_links.append(
                     {
-                        "parent": int(row["parent"]),
-                        "child": int(row["child"]),
-                        "lambda": float(row["lambda_val"]),
-                        "size": int(row["child_size"]),
+                        "parent": int(row.parent),
+                        "child": int(row.child),
+                        "lambda": float(row.lambda_val),
+                        "size": int(row.child_size),
                     }
                 )
         r.set(cluster_tree_key, json.dumps(tree_links))
@@ -501,9 +600,9 @@ class ClusterService:
 
         # Pre-calculate leaf deaths
         leaf_death_lambdas = {}
-        for _, row in tree_df.iterrows():
-            if row["child_size"] == 1:
-                leaf_death_lambdas[int(row["child"])] = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            if row.child_size == 1:
+                leaf_death_lambdas[int(row.child)] = float(row.lambda_val)
 
         # Calculate stability for each hierarchical cluster
         for label, members in cluster_members.items():
@@ -671,11 +770,11 @@ class ClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        adj_sim = {i: {} for i in range(num_nodes)}
-        for u, v, d in edges:
-            sim = 1.0 - d
-            adj_sim[u][v] = sim
-            adj_sim[v][u] = sim
+        # CSR, not a dict of dicts. Measured on the real 11.3M-pair pool, the
+        # dict version held 1.08 GiB and took the run from 1.70 GiB to 2.78 GiB
+        # against a 3 GB cap -- the single largest structure left in clustering.
+        adj_sim = sim_edges.SimAdjacency(edge_set, num_nodes)
+        mem_util.phase("after adj_sim", job_service, job_id)
 
         total_clusters = len(cluster_members)
         msg = f"Enriching metadata for {total_clusters} hierarchical clusters..."
@@ -704,21 +803,7 @@ class ClusterService:
                 member_indices = [id_to_idx[fid] for fid in members]
                 n_members = len(members)
 
-                total_sim = 0.0
-                if n_members < 50:
-                    for i in range(n_members):
-                        u = member_indices[i]
-                        for j in range(i + 1, n_members):
-                            v = member_indices[j]
-                            total_sim += adj_sim[u].get(v, 0.0)
-                else:
-                    member_set = set(member_indices)
-                    for u in member_indices:
-                        for v, sim in adj_sim[u].items():
-                            if v in member_set:
-                                total_sim += sim
-                    total_sim /= 2.0
-
+                total_sim = adj_sim.cohesion_sum(member_indices)
                 cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
             else:
                 cohesion_score = 1.0
@@ -799,12 +884,15 @@ class ClusterService:
                 r.delete(pool_cluster_list_key)
                 r.sadd(pool_cluster_list_key, *[str(k) for k in cluster_members.keys()])
 
-        logging.info(f"Update sim indexes...")
+        # Free the graph structures before clearing legacy indexes: even as CSR, adj_sim
+        # holds two entries per edge (~22M on the 11.3M-pair pool), and keeping
+        # it alive any longer needlessly raises peak memory.
+        del adj_sim, comp_to_edges, edge_set, all_member_meta
 
-        # 7. Update all similarities in the collection to propagate cluster info
-        self._update_similarity_indexing(
-            collection, algo, job_service=job_service, job_id=job_id
-        )
+        logging.info("Clearing legacy sim cluster indexes...")
+
+        # 7. Remove indexes no longer used by similarity search
+        self._clear_legacy_similarity_indexes(collection, algo)
 
         noise_count = sum(1 for clusters in leaf_to_clusters.values() if not clusters)
         summary = f"Clustering complete. Found {len(cluster_members)} hierarchical clusters. Noise: {noise_count} functions."
@@ -813,6 +901,1444 @@ class ClusterService:
             job_service.add_log(job_id, summary)
 
         return True
+
+    def _run_clustering_threshold_uf(
+        self,
+        collection,
+        algo,
+        threshold,
+        min_sim,
+        min_features,
+        job_service=None,
+        job_id=None,
+    ):
+        """Flat clustering via threshold Union-Find (see cluster_threshold.py).
+
+        Deterministic, exact-by-construction alternative to HDBSCAN: unions
+        whenever raw similarity clears `threshold`, so an edge at sim==1.0
+        always ends up in the same cluster -- no SVD embedding, no
+        mutual-reachability approximation. Flat (no hierarchy/tree/stability
+        concept), so persistence here is a strict subset of run_clustering's:
+        every function is in at most one cluster, membership is binary (not a
+        lambda-derived score), and there is no condensed tree to store.
+
+        Reuses the same Redis schema as run_clustering (members,
+        direct_members, meta, cluster:list, cluster_* indexes) so downstream
+        readers (search, bin-sim, and clear_clustering)
+        work unchanged regardless of which engine produced the clusters.
+        """
+        r = self.r
+        is_pool = collection.startswith("global:pool:")
+        if is_pool:
+            pool_id = collection[len("global:pool:") :]
+            sim_score_key = f"global:pool:{pool_id}:sim:score"
+            prefix = f"global:pool:{pool_id}:sim:"
+        else:
+            pool_id = None
+            sim_score_key = f"{collection}:sim:score:{algo}"
+            prefix = f"{collection}:sim:{algo}:"
+
+        msg = f"[threshold_uf] Fetching similarity pairs from {sim_score_key} (threshold={threshold})..."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        allowed_fids = None
+        if min_features > 0:
+            allowed_fids = sim_edges.collect_allowed_fids(
+                r, sim_score_key, prefix, is_pool, collection, min_features
+            )
+
+        edge_set = sim_edges.load_edges(
+            r,
+            sim_score_key,
+            prefix,
+            is_pool,
+            collection,
+            min_sim=min_sim,
+            allowed_fids=allowed_fids,
+        )
+        id_to_idx = edge_set.id_to_idx
+        idx_to_id = edge_set.idx_to_id
+
+        if edge_set.n_scanned == 0 or edge_set.src.size == 0:
+            logging.warning(f"No similarity edges found for {collection}:{algo}")
+            return True
+
+        num_nodes = len(id_to_idx)
+        msg = f"[threshold_uf] {num_nodes} functions, {edge_set.src.size} edges. Running union-find..."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        from bsimvis.app.services.cluster_threshold import build_threshold_clusters
+
+        start_fit = time.time()
+        uf = build_threshold_clusters(edge_set, threshold)
+        fit_time = time.time() - start_fit
+
+        # Root fid, not the numpy int label: a full rebuild and the
+        # incremental path (RedisUF, keyed on fid strings) must agree on
+        # cluster identity, or the two runs silently orphan each other's
+        # state the moment both ever touch the same collection. build_
+        # threshold_clusters() only ever picks an original leaf index as a
+        # root (union never invents a synthetic id), so idx_to_id[label] is
+        # always a real fid.
+        cluster_members = {
+            idx_to_id[label]: [idx_to_id[i] for i in members]
+            for label, members in uf.clusters(min_size=2).items()
+        }
+        label_to_uuid = {c: uuid.uuid4().hex[:12] for c in cluster_members}
+
+        msg = f"[threshold_uf] union-find done in {fit_time:.2f}s. Found {len(cluster_members)} clusters."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        # A full rebuild is the ground truth for this collection: wipe
+        # whatever's there first (any prior engine, any prior partial
+        # incremental state) so nothing orphaned survives underneath it.
+        self.clear_clustering(collection, algo, job_service=job_service, job_id=job_id)
+
+        self._persist_flat_clusters(
+            collection,
+            algo,
+            id_to_idx,
+            idx_to_id,
+            edge_set,
+            cluster_members,
+            label_to_uuid,
+            is_pool,
+            pool_id,
+            job_service,
+            job_id,
+        )
+
+        self._clear_legacy_similarity_indexes(collection, algo)
+
+        noise_count = num_nodes - sum(len(m) for m in cluster_members.values())
+        summary = f"Clustering complete (threshold_uf). Found {len(cluster_members)} clusters. Noise: {noise_count} functions."
+        logging.info(f"[+] {summary}")
+        if job_service and job_id:
+            job_service.add_log(job_id, summary)
+
+        return True
+
+    def _run_clustering_hierarchical_uf(
+        self,
+        collection,
+        algo,
+        min_sim,
+        min_features,
+        min_cluster_size,
+        cohesion_cut,
+        job_service=None,
+        job_id=None,
+    ):
+        """Full single-linkage hierarchy via Kruskal + Union-Find
+        (cluster_threshold.build_single_linkage_tree).
+
+        Unlike threshold_uf's one flat cut, this keeps the whole nested
+        structure -- a tight exact-dup pair inside a looser family inside an
+        even looser one -- and persists it as a real condensed tree
+        (cluster_common.hierarchical_membership() consumes it exactly like
+        it already consumes HDBSCAN's condensed_tree_, this module just
+        builds the input differently: exact, no SVD, O(E log E) instead of
+        O(size^2)).
+
+        Cohesion-cut extraction: each function gets ONE assigned "primary"
+        cluster for search/tags/indexing -- the SHALLOWEST (most inclusive)
+        surviving ancestor whose cohesion clears `cohesion_cut` (default
+        0.90), falling back to its deepest surviving ancestor if none clear
+        the bar. Nothing is deleted below that: the full tree is persisted
+        separately (cluster:tree/tree_links, same keys HDBSCAN already
+        wrote), so a lower-cohesion grouping is still visible to anyone
+        walking the dendrogram, just not picked as the "the" cluster.
+
+        This full-rebuild fallback self-cleans via clear_clustering() first -- same reasoning as
+        _run_clustering_threshold_uf: whatever engine last wrote this
+        collection's cluster keys, don't leave any of it underneath a fresh
+        rebuild.
+        """
+        import pandas as pd
+        from bsimvis.app.services.cluster_threshold import build_single_linkage_tree
+        from bsimvis.app.services.cluster_common import (
+            hierarchical_membership,
+            hier_fingerprint,
+            stabilise,
+            save_hier_state,
+        )
+
+        r = self.r
+        is_pool = collection.startswith("global:pool:")
+        if is_pool:
+            pool_id = collection[len("global:pool:") :]
+            sim_score_key = f"global:pool:{pool_id}:sim:score"
+            prefix = f"global:pool:{pool_id}:sim:"
+        else:
+            pool_id = None
+            sim_score_key = f"{collection}:sim:score:{algo}"
+            prefix = f"{collection}:sim:{algo}:"
+
+        msg = f"[hierarchical_uf] Fetching similarity pairs from {sim_score_key}..."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        allowed_fids = None
+        if min_features > 0:
+            allowed_fids = sim_edges.collect_allowed_fids(
+                r, sim_score_key, prefix, is_pool, collection, min_features
+            )
+
+        edge_set = sim_edges.load_edges(
+            r,
+            sim_score_key,
+            prefix,
+            is_pool,
+            collection,
+            min_sim=min_sim,
+            allowed_fids=allowed_fids,
+        )
+        id_to_idx = edge_set.id_to_idx
+        idx_to_id = edge_set.idx_to_id
+
+        if edge_set.n_scanned == 0 or edge_set.src.size == 0:
+            logging.warning(f"No similarity edges found for {collection}:{algo}")
+            return True
+
+        num_nodes = len(id_to_idx)
+        msg = f"[hierarchical_uf] {num_nodes} functions, {edge_set.src.size} edges. Building single-linkage tree..."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        start_fit = time.time()
+        tree_rows, global_root_id, _, mst = build_single_linkage_tree(edge_set)
+
+        hier_base = f"{collection}:cluster:hier:{algo}"
+        # Full rebuild also lands on stable (edge-keyed) ids from here,
+        # starting from an empty id table -- clear_clustering() below wipes any
+        # prior incremental state too, so there's nothing to carry forward.
+        # This just gets both paths onto the same id scheme (see
+        # _incremental_cluster_hierarchical's id-stability contract) so the
+        # NEXT upload has an MST to increment onto instead of falling back to
+        # a full rebuild again.
+        hier_state = {
+            "idx": dict(id_to_idx),
+            "next_idx": len(id_to_idx),
+            "mst": mst,
+            "node_ids": {},
+            "next_node_id": 1 << 30,
+            # is_lca=False: this engine's full rebuild always builds the tree
+            # from raw function edges. The LCA class projection is a
+            # discovery-time backend, and _incremental_cluster_hierarchical
+            # refuses to build on state whose tree didn't come from those
+            # edges, so it bails to a full rebuild before ever comparing
+            # fingerprints when the projection is active.
+            "fingerprint": hier_fingerprint(
+                min_sim, min_features, min_cluster_size, cohesion_cut, False
+            ),
+            "root_id": None,
+        }
+        tree_rows, global_root_id = stabilise(tree_rows, mst, hier_state)
+
+        tree_df = pd.DataFrame(tree_rows)
+        fit_time = time.time() - start_fit
+        msg = f"[hierarchical_uf] tree built in {fit_time:.2f}s, {len(tree_df)} rows."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        leaf_to_clusters, leaf_home = hierarchical_membership(
+            tree_df, num_nodes, global_root_id, min_size=min_cluster_size
+        )
+
+        # A full rebuild is the ground truth: wipe whatever's there first (any
+        # prior engine, e.g. threshold_uf's fid-rooted state, which would be
+        # meaningless key-namespace garbage under this engine's synthetic
+        # int-rooted cluster ids otherwise).
+        self.clear_clustering(collection, algo, job_service=job_service, job_id=job_id)
+
+        # Every node any leaf's chain passes through is a cohesion candidate.
+        node_members = {}
+        for leaf, chain in leaf_to_clusters.items():
+            for c in chain:
+                node_members.setdefault(c, []).append(idx_to_id[leaf])
+
+        msg = f"[hierarchical_uf] scoring cohesion for {len(node_members)} candidate nodes..."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        adj_sim = sim_edges.SimAdjacency(edge_set, num_nodes)
+        cohesion_scratch = np.zeros(num_nodes, dtype=bool)
+        cohesion_rng = np.random.default_rng(0)
+        node_cohesion = {}
+        for c, members in node_members.items():
+            if len(members) > 1:
+                member_indices = [id_to_idx[fid] for fid in members]
+                node_cohesion[c] = _score_cohesion(
+                    adj_sim,
+                    member_indices,
+                    cohesion_cut,
+                    cohesion_scratch,
+                    cohesion_rng,
+                )
+            else:
+                node_cohesion[c] = 1.0
+
+        # Cohesion-cut: chain is deepest-first (hierarchical_membership's
+        # contract), so the last qualifying entry is the shallowest (most
+        # inclusive) one that still clears cohesion_cut.
+        cluster_members = {}
+        for leaf, chain in leaf_to_clusters.items():
+            if not chain:
+                continue
+            qualifying = [c for c in chain if node_cohesion.get(c, 0.0) >= cohesion_cut]
+            chosen = qualifying[-1] if qualifying else chain[0]
+            cluster_members.setdefault(chosen, []).append(idx_to_id[leaf])
+
+        # node_members (every ancestor a leaf survives to, not just the
+        # cohesion-cut winner) is what the hierarchy view actually needs
+        # metadata for -- tree_links exposes every one of these as a
+        # navigable parent/child, so every one needs a :meta doc or the UI
+        # shows a nameless stub. cluster_members stays the source of truth
+        # for a function's single "primary" cluster (search/tags), unaffected.
+        label_to_uuid = {c: uuid.uuid4().hex[:12] for c in node_members}
+
+        msg = f"[hierarchical_uf] {len(cluster_members)} clusters at cohesion_cut={cohesion_cut}."
+        logging.info(msg)
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        self._persist_hierarchical_clusters(
+            collection,
+            algo,
+            id_to_idx,
+            idx_to_id,
+            adj_sim,
+            all_member_meta_fids=list(id_to_idx.keys()),
+            cluster_members=cluster_members,
+            node_members=node_members,
+            node_cohesion=node_cohesion,
+            label_to_uuid=label_to_uuid,
+            tree_df=tree_df,
+            is_pool=is_pool,
+            pool_id=pool_id,
+            job_service=job_service,
+            job_id=job_id,
+        )
+
+        if hier_state is not None:
+            save_hier_state(r, hier_base, hier_state)
+
+        self._clear_legacy_similarity_indexes(collection, algo)
+
+        noise_count = num_nodes - sum(len(m) for m in cluster_members.values())
+        summary = (
+            f"Clustering complete (hierarchical_uf). "
+            f"Found {len(cluster_members)} clusters at cohesion>={cohesion_cut}. "
+            f"Noise: {noise_count} functions."
+        )
+        logging.info(f"[+] {summary}")
+        if job_service and job_id:
+            job_service.add_log(job_id, summary)
+
+        return True
+
+    def _incremental_cluster_hierarchical(
+        self,
+        collection,
+        algo,
+        new_fids,
+        min_sim,
+        min_features,
+        min_cluster_size,
+        cohesion_cut,
+        job_service=None,
+        job_id=None,
+    ):
+        """Incremental hierarchical_uf update for one newly-uploaded batch.
+
+        The MST is a sufficient summary of the whole similarity graph for
+        rebuilding this tree (see cluster_threshold.build_single_linkage_tree
+        and cluster_threshold.demo_mst_is_a_sufficient_summary): every edge
+        NOT in the MST was rejected because its endpoints were already
+        connected by an earlier (>= similarity) edge, and adding more edges
+        elsewhere can never retroactively make a rejected edge relevant. So
+        this pulls only the new batch's own edges (via the same
+        sim:involves reverse index _incremental_cluster_functions uses),
+        rebuilds the FULL tree from persisted-MST + those new edges (cheap:
+        tens of thousands of edges, not the whole collection's ZSET), then
+        only WRITES the nodes that could have actually changed.
+
+        Returns None (not False) when there's no usable incremental state to
+        build on -- missing (never saved, or cleared), or saved under
+        different clustering parameters (fingerprint mismatch), or the LCA
+        class-projection backend is active (its tree isn't built from raw
+        function edges, so it can't seed this). None tells run_clustering()
+        to fall back to a full rebuild, same signal threshold_uf's
+        incremental path doesn't need (it always has fid-rooted state).
+        """
+        from bsimvis.app.services.cluster_common import (
+            load_hier_state,
+            save_hier_state,
+            edgeset_from,
+            stabilise,
+            dirty_ancestors,
+            hier_fingerprint,
+            hierarchical_membership,
+        )
+        from bsimvis.app.services.cluster_threshold import build_single_linkage_tree
+        import pandas as pd
+
+        r = self.r
+        is_pool = collection.startswith("global:pool:")
+
+        hier_base = f"{collection}:cluster:hier:{algo}"
+        state = load_hier_state(r, hier_base)
+        if state is None:
+            return None
+
+        # is_lca=False to match what _run_clustering_hierarchical_uf stamps:
+        # this engine always builds its tree from raw function edges here, so
+        # a persisted MST is always a valid seed.
+        fingerprint = hier_fingerprint(
+            min_sim, min_features, min_cluster_size, cohesion_cut, False
+        )
+        if state.get("fingerprint") != fingerprint:
+            return None
+
+        if is_pool:
+            pool_id = collection[len("global:pool:") :]
+            prefix = f"global:pool:{pool_id}:sim:"
+            sim_score_key = f"global:pool:{pool_id}:sim:score"
+        else:
+            pool_id = None
+            prefix = f"{collection}:sim:{algo}:"
+            sim_score_key = f"{collection}:sim:score:{algo}"
+
+        func_prefix = f"{collection}:func:"
+
+        def clean_id(fid):
+            return fid[len(func_prefix) :] if fid.startswith(func_prefix) else fid
+
+        msg = f"[hierarchical_uf] incremental update: {len(new_fids)} new functions..."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        # 1. Only the new batch's own edges, via the reverse index -- never
+        # the full ZSET.
+        pairs = []
+        for fid in new_fids:
+            clean = clean_id(fid)
+            sids = r.smembers(f"{collection}:sim:involves:func:{clean}")
+            for sid_raw in sids or ():
+                sid = sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
+                if not sid.startswith(prefix):
+                    continue
+                id_part = sid[len(prefix) :]
+                if "::" not in id_part:
+                    continue
+                c1, c2 = id_part.split("::")
+                pairs.append((sid, c1, c2))
+
+        if not pairs:
+            return True
+
+        unique_sids = sorted({p[0] for p in pairs})
+        scores = {}
+        CHUNK = 1000
+        for i in range(0, len(unique_sids), CHUNK):
+            chunk = unique_sids[i : i + CHUNK]
+            pipe = r.pipeline(transaction=False)
+            for sid in chunk:
+                pipe.zscore(sim_score_key, sid)
+            for sid, score in zip(chunk, pipe.execute()):
+                if score is not None:
+                    scores[sid] = float(score)
+
+        def to_fid(c):
+            return c if is_pool else f"{func_prefix}{c}"
+
+        allowed_fids = None
+        if min_features > 0:
+            candidates = sorted({to_fid(c) for _, c1, c2 in pairs for c in (c1, c2)})
+            allowed_fids = set()
+            for i in range(0, len(candidates), CHUNK):
+                chunk = candidates[i : i + CHUNK]
+                pipe = r.pipeline(transaction=False)
+                for fid in chunk:
+                    pipe.get(f"{fid}:meta")
+                for fid, raw in zip(chunk, pipe.execute()):
+                    try:
+                        val = (
+                            json.loads(raw).get("bsim_features_count", 0) if raw else 0
+                        )
+                        if int(val) >= min_features:
+                            allowed_fids.add(fid)
+                    except (ValueError, TypeError):
+                        continue
+
+        new_edges = []
+        for sid, c1, c2 in pairs:
+            score = scores.get(sid)
+            if score is None:
+                continue
+            if min_sim > 0 and score < min_sim:
+                continue
+            fid_a, fid_b = to_fid(c1), to_fid(c2)
+            if allowed_fids is not None and (
+                fid_a not in allowed_fids or fid_b not in allowed_fids
+            ):
+                continue
+            new_edges.append((fid_a, fid_b, score))
+
+        if not new_edges:
+            return True
+
+        # 2. Rebuild the FULL (small) tree from MST + new edges -- the whole
+        # algorithm. Stable ids preserve identity for every merge whose
+        # defining edge didn't change (cluster_common.stabilise).
+        old_mst_set = {(min(u, v), max(u, v)) for u, v, _ in state["mst"]}
+        edge_set = edgeset_from(state, new_edges)
+        tree_rows, _old_root, num_nodes, mst = build_single_linkage_tree(edge_set)
+        new_mst_set = {(min(u, v), max(u, v)) for u, v, _ in mst}
+        state["mst"] = mst
+        tree_rows, global_root_id = stabilise(tree_rows, mst, state)
+
+        tree_df = pd.DataFrame(tree_rows)
+        leaf_to_clusters, leaf_home = hierarchical_membership(
+            tree_df, num_nodes, global_root_id, min_size=min_cluster_size
+        )
+
+        node_members = {}
+        for leaf, chain in leaf_to_clusters.items():
+            for c in chain:
+                node_members.setdefault(c, []).append(edge_set.idx_to_id[leaf])
+
+        # 3. Dirty set: new leaves, plus endpoints of any MST edge that
+        # entered or left (exactly the "tighter edge inside an
+        # already-merged region" case the deferred comment on
+        # run_clustering() names), walked up to every ancestor whose
+        # recursive membership could have changed. Correct, not just a
+        # heuristic bound -- see cluster_common.dirty_ancestors' docstring.
+        new_leaf_idxs = {
+            edge_set.id_to_idx[fid] for fid in new_fids if fid in edge_set.id_to_idx
+        }
+        sym_diff = old_mst_set ^ new_mst_set
+        changed_endpoints = {u for u, v in sym_diff} | {v for u, v in sym_diff}
+        dirty_seed = new_leaf_idxs | changed_endpoints
+        dirty = dirty_ancestors(tree_rows, dirty_seed) if dirty_seed else set()
+        dirty &= set(node_members.keys())
+
+        prev_live = {
+            int(x.decode() if isinstance(x, bytes) else x)
+            for x in r.smembers(f"{collection}:cluster:list:{algo}")
+        }
+        new_live = set(node_members.keys())
+        retired = prev_live - new_live
+
+        if not dirty and not retired:
+            save_hier_state(r, hier_base, state)
+            return True
+
+        # Keep old cohesion for unchanged nodes; only dirty nodes are rescored.
+        node_meta = {}
+        live_nodes = sorted(node_members)
+        for i in range(0, len(live_nodes), 1000):
+            chunk = live_nodes[i : i + 1000]
+            pipe = r.pipeline(transaction=False)
+            for c in chunk:
+                pipe.get(f"{collection}:cluster:{algo}:{c}:meta")
+            for c, raw in zip(chunk, pipe.execute()):
+                node_meta[c] = json.loads(raw) if raw else {}
+        node_cohesion = {
+            c: meta.get("cohesion_score", 1.0) for c, meta in node_meta.items()
+        }
+
+        # Shared across every dirty node: nested ancestors re-ask for the
+        # exact same pairs, so the memo is what turns this from O(sum m^2)
+        # round-trips into O(m_max^2) pipelined ones.
+        # ponytail: still a full O(m^2) rescore per dirty node. A node that
+        # only GAINED members could instead keep its stored sum/count and add
+        # the O(m) new-member edges -- needs cohesion_sum/cohesion_pairs
+        # persisted in :meta alongside cohesion_score. Do that if the memo
+        # stops being enough.
+        pair_memo = {}
+        for c in dirty:
+            members = node_members[c]
+            if len(members) <= 1:
+                node_cohesion[c] = 1.0
+            elif len(members) <= 200:
+                total_sim, pair_count = _pairwise_cohesion(
+                    r,
+                    sim_score_key,
+                    prefix,
+                    [clean_id(m) for m in members],
+                    pair_memo,
+                )
+                node_cohesion[c] = total_sim / pair_count if pair_count else 1.0
+
+        # Re-evaluate the cut for affected leaves against both changed and
+        # unchanged ancestors; only those leaves are written back to Redis.
+        cluster_members = {}
+        primary_by_fid = {}
+        affected_leaves = {
+            leaf
+            for leaf, chain in leaf_to_clusters.items()
+            if chain and set(chain) & dirty
+        }
+        for leaf, chain in leaf_to_clusters.items():
+            if not chain:
+                continue
+            qualifying = [c for c in chain if node_cohesion[c] >= cohesion_cut]
+            chosen = qualifying[-1] if qualifying else chain[0]
+            fid = edge_set.idx_to_id[leaf]
+            cluster_members.setdefault(chosen, []).append(fid)
+            primary_by_fid[fid] = chosen
+
+        affected_fids = {edge_set.idx_to_id[leaf] for leaf in affected_leaves}
+        old_primary = set()
+        affected_list = sorted(affected_fids)
+        for i in range(0, len(affected_list), 1000):
+            chunk = affected_list[i : i + 1000]
+            pipe = r.pipeline(transaction=False)
+            for fid in chunk:
+                pipe.smembers(f"{fid}:clusters")
+            for values in pipe.execute():
+                for value in values or ():
+                    try:
+                        old_primary.add(
+                            int(value.decode() if isinstance(value, bytes) else value)
+                        )
+                    except (TypeError, ValueError):
+                        pass
+
+        write_nodes = (
+            dirty
+            | (old_primary & new_live)
+            | {primary_by_fid[fid] for fid in affected_fids if fid in primary_by_fid}
+        )
+        label_to_uuid = {
+            c: node_meta.get(c, {}).get("cluster_uuid") or uuid.uuid4().hex[:12]
+            for c in write_nodes
+        }
+
+        persisted = self._persist_hierarchical_clusters(
+            collection,
+            algo,
+            id_to_idx=None,
+            idx_to_id=None,
+            adj_sim=None,
+            all_member_meta_fids=[],
+            cluster_members=cluster_members,
+            node_members=node_members,
+            node_cohesion=node_cohesion,
+            label_to_uuid=label_to_uuid,
+            tree_df=tree_df,
+            is_pool=is_pool,
+            pool_id=pool_id,
+            job_service=job_service,
+            job_id=job_id,
+            only_nodes=write_nodes,
+            only_fids=affected_fids,
+            retired_nodes=retired,
+        )
+        if persisted is False:
+            return False
+
+        save_hier_state(r, hier_base, state)
+
+        self._clear_best_cluster_cache(collection, algo, affected_fids)
+
+        msg = (
+            f"[hierarchical_uf] incremental update done. "
+            f"{len(dirty)} node(s) touched, {len(retired)} retired."
+        )
+        logging.info(f"[+] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        return True
+
+    def _persist_hierarchical_clusters(
+        self,
+        collection,
+        algo,
+        id_to_idx,
+        idx_to_id,
+        adj_sim,
+        all_member_meta_fids,
+        cluster_members,
+        node_members,
+        node_cohesion,
+        label_to_uuid,
+        tree_df,
+        is_pool,
+        pool_id,
+        job_service,
+        job_id,
+        only_nodes=None,
+        only_fids=None,
+        retired_nodes=(),
+    ):
+        """Persist the full tree (every cohesion-candidate node) + the
+        cohesion-cut assignment.
+
+        Every node in `node_members` (every ancestor a leaf survives to) gets
+        a real :meta doc -- tree_links exposes all of them as navigable
+        parent/child, so a node with no :meta shows as a nameless stub in the
+        hierarchy view. `cluster_members` (the cohesion-cut winners) only
+        decides each function's single "primary" cluster for search/tags.
+
+        Cluster ids are STABLE ids keyed on each merge's defining edge (see
+        cluster_common.stabilise() and cluster_service.py's incremental
+        hierarchical_uf id-stability contract) -- not raw
+        build_single_linkage_tree() output ids, which are re-minted fresh
+        every call.
+
+        only_nodes: when given (the incremental path), only these node ids
+        get member-set/meta/index writes -- `node_members` must still be the
+        FULL current mapping (every node the just-rebuilt tree actually has,
+        same as a full rebuild would produce), just with the writes scoped
+        to what actually changed. None (a full rebuild) writes every node.
+        retired_nodes: node ids that existed before this run but don't
+        anymore -- their persisted keys are deleted outright, not just left
+        stale. Always empty on a full rebuild (clear_clustering() already
+        wiped everything before this is called).
+        """
+        r = self.r
+
+        write_nodes = (
+            set(node_members.keys())
+            if only_nodes is None
+            else set(only_nodes) & set(node_members.keys())
+        )
+        index_nodes = set(cluster_members) if only_nodes is None else write_nodes
+
+        # Tree + tree_links: always rewritten wholesale, same keys/shape
+        # run_clustering's HDBSCAN path already writes -- we hold the whole
+        # (small, MST-sized even on the incremental path) tree in memory
+        # regardless, so scoping this blob write would save nothing.
+        # Restricted to node_members so every link the UI can walk resolves
+        # to a real :meta doc -- raw tree_df also has pruned/non-surviving
+        # merges (shed noise, per hierarchical_membership's docstring) that
+        # were never real clusters to begin with.
+        r.set(f"{collection}:cluster:tree:{algo}", tree_df.to_json(orient="records"))
+        tree_links = [
+            {
+                "parent": int(row.parent),
+                "child": int(row.child),
+                "lambda": float(row.lambda_val),
+                "size": int(row.child_size),
+            }
+            for row in tree_df.itertuples(index=False)
+            if int(row.child_size) > 1 and int(row.child) in node_members
+        ]
+        r.set(f"{collection}:cluster:tree_links:{algo}", json.dumps(tree_links))
+
+        func_tag_fields = [
+            f for f in self.get_native_fields("func", False) if f.startswith("cluster_")
+        ]
+
+        pipe = r.pipeline(transaction=False)
+
+        # Retire nodes that no longer exist at all (displaced by an MST
+        # swap, or absorbed structurally) -- delete their keys outright and
+        # clean their name/uuid index buckets. Old meta is read first since
+        # that's the only place those bucket names are recorded (same
+        # pattern _incremental_cluster_functions uses for threshold_uf's
+        # stale/absorbed roots).
+        if retired_nodes:
+            old_metas = {}
+            for c in retired_nodes:
+                raw = r.get(f"{collection}:cluster:{algo}:{c}:meta")
+                old_metas[c] = json.loads(raw) if raw else {}
+            for c in retired_nodes:
+                pipe.delete(f"{collection}:cluster:{algo}:{c}:members")
+                pipe.delete(f"{collection}:cluster:{algo}:{c}:direct_members")
+                pipe.delete(f"{collection}:cluster:{algo}:{c}:meta")
+                if "cluster_id" in func_tag_fields:
+                    pipe.delete(f"{collection}:idx:func:cluster_id:{str(c).lower()}")
+                old_name = old_metas[c].get("cluster_name")
+                if old_name and "cluster_name" in func_tag_fields:
+                    pipe.delete(
+                        f"{collection}:idx:func:cluster_name:{old_name.lower()}"
+                    )
+                old_uuid = old_metas[c].get("cluster_uuid")
+                if old_uuid and "cluster_uuid" in func_tag_fields:
+                    pipe.delete(
+                        f"{collection}:idx:func:cluster_uuid:{old_uuid.lower()}"
+                    )
+            pipe.execute()
+
+        for c in write_nodes:
+            members = node_members[c]
+            # delete + sadd, not a bare sadd -- on the incremental path
+            # there's no clear_clustering() wipe underneath this, so a plain
+            # sadd would leave stale members that fell out of the cluster.
+            # A harmless no-op extra delete on the full-rebuild path, where
+            # clear_clustering() already emptied these keys.
+            pipe.delete(f"{collection}:cluster:{algo}:{c}:members")
+            pipe.sadd(f"{collection}:cluster:{algo}:{c}:members", *members)
+            direct = cluster_members.get(c)
+            pipe.delete(f"{collection}:cluster:{algo}:{c}:direct_members")
+            if direct:
+                pipe.sadd(f"{collection}:cluster:{algo}:{c}:direct_members", *direct)
+            if len(pipe) > 1000:
+                pipe.execute()
+        pipe.execute()
+
+        member_of = {
+            fid: c for c, members in cluster_members.items() for fid in members
+        }
+
+        # Full rebuild touches every fid the graph knows about; the
+        # incremental path only touches fids under a node that actually
+        # changed -- everyone else's :clusters/:cluster_scores are already
+        # correct and untouched in Redis.
+        fids_to_process = (
+            all_member_meta_fids
+            if only_nodes is None
+            else sorted(
+                only_fids
+                if only_fids is not None
+                else {fid for c in write_nodes for fid in node_members[c]}
+            )
+        )
+
+        for i, fid in enumerate(fids_to_process):
+            if is_pool:
+                clusters_key = f"{collection}:{fid}:clusters"
+                scores_key = f"{collection}:{fid}:cluster_scores"
+            else:
+                clusters_key = f"{fid}:clusters"
+                scores_key = f"{fid}:cluster_scores"
+
+            c = member_of.get(fid)
+            pipe.delete(clusters_key)
+            pipe.delete(scores_key)
+            if c is not None:
+                pipe.sadd(clusters_key, c)
+                pipe.hset(scores_key, mapping={str(c): node_cohesion.get(c, 1.0)})
+
+            if i % 500 == 0:
+                pipe.execute()
+                if job_service and job_id:
+                    job_service.update_progress(
+                        job_id, int((i / max(1, len(fids_to_process))) * 50)
+                    )
+        pipe.execute()
+
+        for idx, c in enumerate(index_nodes):
+            members = cluster_members.get(c, ())
+            if "cluster_id" in func_tag_fields:
+                bucket_key = f"{collection}:idx:func:cluster_id:{str(c).lower()}"
+                pipe.delete(bucket_key)
+                if members:
+                    pipe.sadd(bucket_key, *members)
+                    pipe.sadd(f"{collection}:reg:func:cluster_id", bucket_key)
+            if "cluster_uuid" in func_tag_fields:
+                c_uuid = label_to_uuid[c]
+                bucket_key = f"{collection}:idx:func:cluster_uuid:{c_uuid.lower()}"
+                pipe.delete(bucket_key)
+                if members:
+                    pipe.sadd(bucket_key, *members)
+                    pipe.sadd(f"{collection}:reg:func:cluster_uuid", bucket_key)
+            if idx % 100 == 0:
+                pipe.execute()
+        pipe.execute()
+
+        meta_fids_needed = sorted({fid for c in write_nodes for fid in node_members[c]})
+        all_member_meta = {}
+        for i in range(0, len(meta_fids_needed), 1000):
+            chunk = meta_fids_needed[i : i + 1000]
+            m_pipe = r.pipeline(transaction=False)
+            for fid in chunk:
+                m_pipe.get(f"{fid}:meta")
+            for fid, raw_meta in zip(chunk, m_pipe.execute()):
+                m = {}
+                if raw_meta:
+                    try:
+                        m = json.loads(raw_meta)
+                    except Exception:
+                        m = {}
+                all_member_meta[fid] = m
+
+        for label in write_nodes:
+            members = node_members[label]
+            names = [
+                all_member_meta.get(fid, {}).get("function_name")
+                for fid in members
+                if all_member_meta.get(fid, {}).get("function_name")
+            ]
+            feature_counts = [
+                all_member_meta.get(fid, {}).get("bsim_features_count", 0)
+                for fid in members
+            ]
+            default_name = (
+                Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
+            )
+            avg_features = float(np.mean(feature_counts)) if feature_counts else 0.0
+            cohesion_score = node_cohesion.get(label, 1.0)
+
+            unique_md5s = {
+                fid.split(":")[2] for fid in members if len(fid.split(":")) >= 3
+            }
+            samples = []
+            for fid in members[:5]:
+                m = all_member_meta.get(fid, {})
+                samples.append(
+                    {
+                        "function_id": fid,
+                        "function_name": m.get("function_name", "Unknown"),
+                        "entrypoint_address": m.get("entrypoint_address"),
+                        "file_md5": m.get("file_md5"),
+                        "file_name": m.get("file_name"),
+                        "collection": collection,
+                        "bsim_features_count": m.get("bsim_features_count", 0),
+                    }
+                )
+
+            meta = {
+                "cluster_id": label,
+                "snippet": (
+                    all_member_meta.get(members[0], {}).get("function_name", "unknown")
+                    if members
+                    else "unknown"
+                ),
+                "cluster_uuid": label_to_uuid[label],
+                "cluster_name": default_name,
+                "avg_features": avg_features,
+                "cohesion_score": float(cohesion_score),
+                "avg_stability": float(cohesion_score),
+                "cluster_stability": float(cohesion_score),
+                "member_count": len(members),
+                "unique_files_count": len(unique_md5s),
+                "sample_functions": samples,
+                "created_at": int(time.time() * 1000),
+            }
+            for k, v in meta.items():
+                if isinstance(v, float) and not np.isfinite(v):
+                    meta[k] = 0.0
+            pipe.set(f"{collection}:cluster:{algo}:{label}:meta", json.dumps(meta))
+
+            if label in index_nodes and "cluster_name" in func_tag_fields:
+                bucket_key = (
+                    f"{collection}:idx:func:cluster_name:{default_name.lower()}"
+                )
+                pipe.delete(bucket_key)
+                primary_members = cluster_members.get(label, ())
+                if primary_members:
+                    pipe.sadd(bucket_key, *primary_members)
+                    pipe.sadd(f"{collection}:reg:func:cluster_name", bucket_key)
+        pipe.execute()
+
+        cluster_list_key = f"{collection}:cluster:list:{algo}"
+        pool_cluster_list_key = (
+            f"global:pool:{pool_id}:cluster:list" if is_pool else None
+        )
+        if only_nodes is None:
+            r.delete(cluster_list_key)
+            if node_members:
+                r.sadd(cluster_list_key, *[str(k) for k in node_members.keys()])
+            if pool_cluster_list_key:
+                r.delete(pool_cluster_list_key)
+                if node_members:
+                    r.sadd(
+                        pool_cluster_list_key, *[str(k) for k in node_members.keys()]
+                    )
+        else:
+            # Targeted add/remove, not a full delete+rebuild -- everything
+            # not in write_nodes/retired_nodes is already correct in this
+            # set from a previous run.
+            if retired_nodes:
+                r.srem(cluster_list_key, *[str(k) for k in retired_nodes])
+                if pool_cluster_list_key:
+                    r.srem(pool_cluster_list_key, *[str(k) for k in retired_nodes])
+            if write_nodes:
+                r.sadd(cluster_list_key, *[str(k) for k in write_nodes])
+                if pool_cluster_list_key:
+                    r.sadd(pool_cluster_list_key, *[str(k) for k in write_nodes])
+
+    def _persist_flat_clusters(
+        self,
+        collection,
+        algo,
+        id_to_idx,
+        idx_to_id,
+        edge_set,
+        cluster_members,
+        label_to_uuid,
+        is_pool,
+        pool_id,
+        job_service,
+        job_id,
+    ):
+        """Persist flat (non-hierarchical) cluster membership + metadata.
+
+        Same Redis keys as run_clustering's persistence, minus everything
+        that only makes sense for a condensed tree (tree/tree_links,
+        birth/death lambdas, per-member membership *score* -- here membership
+        is binary, so scores are always 1.0).
+        """
+        func_tag_fields = [
+            f for f in self.get_native_fields("func", False) if f.startswith("cluster_")
+        ]
+
+        pipe = self.r.pipeline(transaction=False)
+
+        for c, members in cluster_members.items():
+            pipe.sadd(f"{collection}:cluster:{algo}:{c}:members", *members)
+            pipe.sadd(f"{collection}:cluster:{algo}:{c}:direct_members", *members)
+            if len(pipe) > 1000:
+                pipe.execute()
+        pipe.execute()
+
+        # Seed RedisUF's state (cluster_threshold.py) so a later incremental
+        # upload -- which reads this exact parent/uuid hash -- recognizes
+        # these roots instead of treating every member as an untouched
+        # singleton. Pools never take the incremental path, so skip it there.
+        if not is_pool:
+            parent_key = f"{collection}:cluster:{algo}:uf:parent"
+            uuid_key = f"{collection}:cluster:{algo}:uf:uuid"
+            for c, members in cluster_members.items():
+                pipe.hset(parent_key, mapping={m: c for m in members})
+                pipe.hset(uuid_key, c, label_to_uuid[c])
+                if len(pipe) > 1000:
+                    pipe.execute()
+            pipe.execute()
+
+        member_of = {
+            fid: c for c, members in cluster_members.items() for fid in members
+        }
+
+        for i, fid in enumerate(idx_to_id.values()):
+            if is_pool:
+                clusters_key = f"{collection}:{fid}:clusters"
+                scores_key = f"{collection}:{fid}:cluster_scores"
+            else:
+                clusters_key = f"{fid}:clusters"
+                scores_key = f"{fid}:cluster_scores"
+
+            c = member_of.get(fid)
+            pipe.delete(clusters_key)
+            pipe.delete(scores_key)
+            if c is not None:
+                pipe.sadd(clusters_key, c)
+                pipe.hset(scores_key, mapping={str(c): 1.0})
+
+            if i % 500 == 0:
+                pipe.execute()
+                if job_service and job_id:
+                    job_service.update_progress(
+                        job_id, int((i / max(1, len(idx_to_id))) * 50)
+                    )
+        pipe.execute()
+
+        for idx, (label, members) in enumerate(cluster_members.items()):
+            if "cluster_id" in func_tag_fields:
+                bucket_key = f"{collection}:idx:func:cluster_id:{str(label).lower()}"
+                pipe.sadd(bucket_key, *members)
+                pipe.sadd(f"{collection}:reg:func:cluster_id", bucket_key)
+            if "cluster_uuid" in func_tag_fields:
+                c_uuid = label_to_uuid[label]
+                bucket_key = f"{collection}:idx:func:cluster_uuid:{c_uuid.lower()}"
+                pipe.sadd(bucket_key, *members)
+                pipe.sadd(f"{collection}:reg:func:cluster_uuid", bucket_key)
+            if idx % 100 == 0:
+                pipe.execute()
+        pipe.execute()
+
+        # Metadata: name, cohesion, sample functions -- same shape as
+        # run_clustering's meta docs so search/UI read either engine's output
+        # identically. avg_stability/cluster_stability have no lambda-based
+        # meaning here; cohesion_score doubles for both fields.
+        all_member_fids = list(id_to_idx.keys())
+        all_member_meta = {}
+        for i in range(0, len(all_member_fids), 1000):
+            chunk = all_member_fids[i : i + 1000]
+            m_pipe = self.r.pipeline(transaction=False)
+            for fid in chunk:
+                m_pipe.get(f"{fid}:meta")
+            for fid, raw_meta in zip(chunk, m_pipe.execute()):
+                m = {}
+                if raw_meta:
+                    try:
+                        m = json.loads(raw_meta)
+                    except Exception:
+                        m = {}
+                all_member_meta[fid] = {
+                    "function_name": m.get("function_name"),
+                    "bsim_features_count": m.get("bsim_features_count", 0),
+                    "file_name": m.get("file_name"),
+                    "entrypoint_address": m.get("entrypoint_address"),
+                    "file_md5": m.get("file_md5"),
+                }
+
+        adj_sim = sim_edges.SimAdjacency(edge_set, len(id_to_idx))
+
+        for label, members in cluster_members.items():
+            names = [
+                all_member_meta.get(fid, {}).get("function_name")
+                for fid in members
+                if all_member_meta.get(fid, {}).get("function_name")
+            ]
+            feature_counts = [
+                all_member_meta.get(fid, {}).get("bsim_features_count", 0)
+                for fid in members
+            ]
+            default_name = (
+                Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
+            )
+            avg_features = float(np.mean(feature_counts)) if feature_counts else 0.0
+
+            member_indices = [id_to_idx[fid] for fid in members]
+            n_members = len(members)
+            if n_members > 1:
+                total_sim, pair_count = adj_sim.cohesion(member_indices)
+                cohesion_score = total_sim / pair_count if pair_count else 1.0
+            else:
+                cohesion_score = 1.0
+
+            unique_md5s = {
+                fid.split(":")[2] for fid in members if len(fid.split(":")) >= 3
+            }
+
+            samples = []
+            for fid in members[:5]:
+                m = all_member_meta.get(fid, {})
+                samples.append(
+                    {
+                        "function_id": fid,
+                        "function_name": m.get("function_name", "Unknown"),
+                        "entrypoint_address": m.get("entrypoint_address"),
+                        "file_md5": m.get("file_md5"),
+                        "file_name": m.get("file_name"),
+                        "collection": collection,
+                        "bsim_features_count": m.get("bsim_features_count", 0),
+                    }
+                )
+
+            meta = {
+                "cluster_id": label,
+                "snippet": (
+                    all_member_meta.get(members[0], {}).get("function_name", "unknown")
+                    if members
+                    else "unknown"
+                ),
+                "cluster_uuid": label_to_uuid[label],
+                "cluster_name": default_name,
+                "avg_features": avg_features,
+                "cohesion_score": float(cohesion_score),
+                "avg_stability": float(cohesion_score),
+                "cluster_stability": float(cohesion_score),
+                "member_count": len(members),
+                "unique_files_count": len(unique_md5s),
+                "sample_functions": samples,
+                "created_at": int(time.time() * 1000),
+            }
+            for k, v in meta.items():
+                if isinstance(v, float) and not np.isfinite(v):
+                    meta[k] = 0.0
+            pipe.set(f"{collection}:cluster:{algo}:{label}:meta", json.dumps(meta))
+
+            if "cluster_name" in func_tag_fields:
+                bucket_key = (
+                    f"{collection}:idx:func:cluster_name:{default_name.lower()}"
+                )
+                pipe.sadd(bucket_key, *members)
+                pipe.sadd(f"{collection}:reg:func:cluster_name", bucket_key)
+
+            if job_service and job_id and (idx + 1) % 50 == 0:
+                job_service.update_progress(
+                    job_id, 50 + int(((idx + 1) / max(1, len(cluster_members))) * 50)
+                )
+        pipe.execute()
+
+        cluster_list_key = f"{collection}:cluster:list:{algo}"
+        self.r.delete(cluster_list_key)
+        if cluster_members:
+            self.r.sadd(cluster_list_key, *[str(k) for k in cluster_members.keys()])
+            if is_pool:
+                pool_cluster_list_key = f"global:pool:{pool_id}:cluster:list"
+                self.r.delete(pool_cluster_list_key)
+                self.r.sadd(
+                    pool_cluster_list_key, *[str(k) for k in cluster_members.keys()]
+                )
+
+    def _incremental_cluster_functions(
+        self, collection, algo, threshold, new_fids, job_service=None, job_id=None
+    ):
+        """Incremental threshold-UF update for one newly-uploaded batch.
+
+        Only touches: the new functions themselves, whatever existing
+        clusters they end up unioned with, and (on the rare cross-cluster
+        merge) the clusters being merged. Every other cluster in the
+        collection is untouched -- no full edge stream, no full rebuild.
+
+        Cluster identity: a root's own fid IS its cluster_id (see RedisUF),
+        so no id-minting scheme is needed and ids survive merges (the bigger
+        side always keeps its key). cluster_uuid is minted once, the first
+        time a root's member count reaches 2, and carried forward from
+        there; an absorbed root's uuid is dropped along with it.
+        """
+        from bsimvis.app.services.cluster_threshold import RedisUF
+
+        r = self.r
+        func_prefix = f"{collection}:func:"
+        sim_prefix = f"{collection}:sim:{algo}:"
+        sim_score_key = f"{collection}:sim:score:{algo}"
+        parent_key = f"{collection}:cluster:{algo}:uf:parent"
+        uuid_key = f"{collection}:cluster:{algo}:uf:uuid"
+
+        def members_key(root):
+            return f"{collection}:cluster:{algo}:{root}:members"
+
+        def clean_id(fid):
+            return fid[len(func_prefix) :] if fid.startswith(func_prefix) else fid
+
+        uf = RedisUF(r, parent_key, members_key)
+
+        msg = f"[threshold_uf] incremental update: {len(new_fids)} new functions..."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        touched_roots = set()
+        for fid in new_fids:
+            clean = clean_id(fid)
+            sids = r.smembers(f"{collection}:sim:involves:func:{clean}")
+            for sid_raw in sids or ():
+                sid = sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
+                if not sid.startswith(sim_prefix):
+                    continue
+                id_part = sid[len(sim_prefix) :]
+                if "::" not in id_part:
+                    continue
+                c1, c2 = id_part.split("::")
+                other_clean = c2 if c1 == clean else c1
+                if other_clean == clean:
+                    continue
+                score = r.zscore(sim_score_key, sid)
+                if score is None or float(score) < threshold:
+                    continue
+                fid2 = f"{func_prefix}{other_clean}"
+
+                ra, rb = uf.find(fid), uf.find(fid2)
+                if ra == rb:
+                    touched_roots.add(ra)
+                    continue
+                survivor, absorbed = uf.union(fid, fid2)
+                touched_roots.add(survivor)
+                touched_roots.add(absorbed)
+
+        final_roots = {t for t in touched_roots if uf.find(t) == t}
+        stale_roots = touched_roots - final_roots
+
+        pipe = r.pipeline(transaction=False)
+
+        # Drop bookkeeping for roots absorbed into a bigger cluster this run.
+        for stale in stale_roots:
+            old_meta_raw = r.get(f"{collection}:cluster:{algo}:{stale}:meta")
+            old_meta = json.loads(old_meta_raw) if old_meta_raw else {}
+            pipe.delete(f"{collection}:cluster:{algo}:{stale}:meta")
+            pipe.delete(f"{collection}:cluster:{algo}:{stale}:direct_members")
+            pipe.srem(f"{collection}:cluster:list:{algo}", str(stale))
+            pipe.delete(f"{collection}:idx:func:cluster_id:{str(stale).lower()}")
+            old_name = old_meta.get("cluster_name")
+            if old_name:
+                pipe.delete(f"{collection}:idx:func:cluster_name:{old_name.lower()}")
+            old_uuid = r.hget(uuid_key, stale)
+            if old_uuid:
+                old_uuid = (
+                    old_uuid.decode() if isinstance(old_uuid, bytes) else old_uuid
+                )
+                pipe.delete(f"{collection}:idx:func:cluster_uuid:{old_uuid.lower()}")
+                pipe.hdel(uuid_key, stale)
+        pipe.execute()
+
+        # (Re)persist every touched, still-live cluster.
+        # ponytail: rewrites the WHOLE final member set of a touched root, not
+        # just the new arrivals -- correct and simple, but means adding one
+        # function to a very large existing cluster costs O(that cluster's
+        # size), not O(1). Fine while clusters stay small/medium; if a
+        # library-stub cluster grows into the tens of thousands, switch this
+        # to only touching members not already indexed under this root.
+        func_tag_fields = [
+            f for f in self.get_native_fields("func", False) if f.startswith("cluster_")
+        ]
+        all_members_raw = {}
+        if final_roots:
+            for root in final_roots:
+                mset = r.smembers(members_key(root))
+                members = sorted(
+                    m.decode() if isinstance(m, bytes) else m for m in (mset or ())
+                )
+                if len(members) < 2:
+                    continue
+                all_members_raw[root] = members
+
+            meta_fids = sorted({f for ms in all_members_raw.values() for f in ms})
+            all_member_meta = {}
+            for i in range(0, len(meta_fids), 1000):
+                chunk = meta_fids[i : i + 1000]
+                m_pipe = r.pipeline(transaction=False)
+                for fid in chunk:
+                    m_pipe.get(f"{fid}:meta")
+                for fid, raw_meta in zip(chunk, m_pipe.execute()):
+                    m = {}
+                    if raw_meta:
+                        try:
+                            m = json.loads(raw_meta)
+                        except Exception:
+                            m = {}
+                    all_member_meta[fid] = m
+
+            pair_memo = {}
+            for root, members in all_members_raw.items():
+                c_uuid = r.hget(uuid_key, root)
+                c_uuid = c_uuid.decode() if isinstance(c_uuid, bytes) else c_uuid
+                if not c_uuid:
+                    c_uuid = uuid.uuid4().hex[:12]
+                    r.hset(uuid_key, root, c_uuid)
+
+                pipe.delete(f"{collection}:cluster:{algo}:{root}:direct_members")
+                pipe.sadd(
+                    f"{collection}:cluster:{algo}:{root}:direct_members", *members
+                )
+
+                for fid in members:
+                    if collection.startswith("global:pool:"):
+                        clusters_key = f"{collection}:{fid}:clusters"
+                        scores_key = f"{collection}:{fid}:cluster_scores"
+                    else:
+                        clusters_key = f"{fid}:clusters"
+                        scores_key = f"{fid}:cluster_scores"
+                    pipe.delete(clusters_key)
+                    pipe.sadd(clusters_key, root)
+                    pipe.delete(scores_key)
+                    pipe.hset(scores_key, mapping={str(root): 1.0})
+
+                names = [
+                    all_member_meta.get(fid, {}).get("function_name")
+                    for fid in members
+                    if all_member_meta.get(fid, {}).get("function_name")
+                ]
+                feature_counts = [
+                    all_member_meta.get(fid, {}).get("bsim_features_count", 0)
+                    for fid in members
+                ]
+                default_name = (
+                    Counter(names).most_common(1)[0][0] if names else f"Cluster {root}"
+                )
+                avg_features = float(np.mean(feature_counts)) if feature_counts else 0.0
+
+                # Exact pairwise cohesion for clusters small enough that O(n^2)
+                # zscore lookups are cheap; bigger merges keep the previous
+                # score rather than paying for an exact recompute here.
+                # Denominator is pairs that actually have a computed
+                # similarity, not every combinatorial pair -- BSim only
+                # stores each function's top-K neighbours, so most pairs in a
+                # cluster were never directly compared. Counting those as 0%
+                # similar (the old bug) crushed a genuinely-0.99-cohesive
+                # cluster down to ~0.27 on real data (see debug session).
+                n_members = len(members)
+                if n_members <= 200:
+                    total_sim, pairs = _pairwise_cohesion(
+                        r,
+                        sim_score_key,
+                        sim_prefix,
+                        [clean_id(m) for m in members],
+                        pair_memo,
+                    )
+                    cohesion_score = total_sim / pairs if pairs else 1.0
+                else:
+                    old_meta_raw = r.get(f"{collection}:cluster:{algo}:{root}:meta")
+                    old_meta = json.loads(old_meta_raw) if old_meta_raw else {}
+                    cohesion_score = old_meta.get("cohesion_score", 1.0)
+
+                unique_md5s = {
+                    fid.split(":")[2] for fid in members if len(fid.split(":")) >= 3
+                }
+                samples = []
+                for fid in members[:5]:
+                    m = all_member_meta.get(fid, {})
+                    samples.append(
+                        {
+                            "function_id": fid,
+                            "function_name": m.get("function_name", "Unknown"),
+                            "entrypoint_address": m.get("entrypoint_address"),
+                            "file_md5": m.get("file_md5"),
+                            "file_name": m.get("file_name"),
+                            "collection": collection,
+                            "bsim_features_count": m.get("bsim_features_count", 0),
+                        }
+                    )
+
+                meta = {
+                    "cluster_id": root,
+                    "snippet": all_member_meta.get(members[0], {}).get(
+                        "function_name", "unknown"
+                    ),
+                    "cluster_uuid": c_uuid,
+                    "cluster_name": default_name,
+                    "avg_features": avg_features,
+                    "cohesion_score": float(cohesion_score),
+                    "avg_stability": float(cohesion_score),
+                    "cluster_stability": float(cohesion_score),
+                    "member_count": len(members),
+                    "unique_files_count": len(unique_md5s),
+                    "sample_functions": samples,
+                    "created_at": int(time.time() * 1000),
+                }
+                for k, v in meta.items():
+                    if isinstance(v, float) and not np.isfinite(v):
+                        meta[k] = 0.0
+                pipe.set(f"{collection}:cluster:{algo}:{root}:meta", json.dumps(meta))
+
+                if "cluster_id" in func_tag_fields:
+                    bucket_key = f"{collection}:idx:func:cluster_id:{str(root).lower()}"
+                    pipe.delete(bucket_key)
+                    pipe.sadd(bucket_key, *members)
+                    pipe.sadd(f"{collection}:reg:func:cluster_id", bucket_key)
+                if "cluster_uuid" in func_tag_fields:
+                    bucket_key = f"{collection}:idx:func:cluster_uuid:{c_uuid.lower()}"
+                    pipe.delete(bucket_key)
+                    pipe.sadd(bucket_key, *members)
+                    pipe.sadd(f"{collection}:reg:func:cluster_uuid", bucket_key)
+                if "cluster_name" in func_tag_fields:
+                    bucket_key = (
+                        f"{collection}:idx:func:cluster_name:{default_name.lower()}"
+                    )
+                    pipe.sadd(bucket_key, *members)
+                    pipe.sadd(f"{collection}:reg:func:cluster_name", bucket_key)
+
+                pipe.sadd(f"{collection}:cluster:list:{algo}", str(root))
+        pipe.execute()
+
+        # Drop any legacy cache after an incremental membership change.
+        changed_fids = {f for ms in all_members_raw.values() for f in ms}
+        changed_fids.update(new_fids)
+        self._clear_best_cluster_cache(collection, algo, changed_fids)
+
+        msg = (
+            f"[threshold_uf] incremental update done. "
+            f"{len(final_roots)} cluster(s) touched, {len(stale_roots)} merged away."
+        )
+        logging.info(f"[+] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        return True
+
+    def _clear_best_cluster_cache(self, collection, algo, fids):
+        """Discard the legacy cache; similarity search computes this per page."""
+        if fids:
+            self.r.delete(f"{collection}:sim:best_cluster:{algo}")
 
     def clear_clustering(
         self, collection, algo="unweighted_cosine", job_service=None, job_id=None
@@ -864,9 +2390,7 @@ class ClusterService:
         logging.info(f"[*] Updating similarity index...")
 
         # 0. Clear similarity-level cluster indexes first
-        self._update_similarity_indexing(
-            collection, algo, job_service=job_service, job_id=job_id, is_clear=True
-        )
+        self._clear_legacy_similarity_indexes(collection, algo)
 
         # 3. For each cluster, clear members
         for i, cid in enumerate(cluster_ids):
@@ -901,9 +2425,33 @@ class ClusterService:
                 pct = int((i / total_clusters) * 100)
                 job_service.update_progress(job_id, pct)
 
+        # Clear name/uuid index buckets. These are shared per-cluster (not
+        # per-member), so the per-member _unindex_tag loop above never
+        # touches them -- left stale otherwise, a rebuilt cluster's old
+        # cluster_uuid bucket keeps "matching" functions that no longer
+        # carry that cluster in their live cluster_scores, which is why
+        # min_cohesion filtering on /functions silently drops it (mirrors
+        # bin_cluster_service.clear_clusters, which already does this).
+        self._clear_indexes_via_registry(collection, "func", "cluster_name")
+        self._clear_indexes_via_registry(collection, "func", "cluster_uuid")
+
         # 4. Delete tree and cluster list
         r.delete(f"{collection}:cluster:tree:{algo}")
         r.delete(f"{collection}:cluster:list:{algo}")
+
+        # threshold_uf's incremental state (RedisUF in cluster_threshold.py):
+        # without this, a "cleared" collection's next incremental upload would
+        # find stale parent/uuid entries and silently resurrect the old grouping.
+        r.delete(f"{collection}:cluster:{algo}:uf:parent")
+        r.delete(f"{collection}:cluster:{algo}:uf:uuid")
+
+        # hierarchical_uf's incremental state (the persisted MST + id tables,
+        # cluster_common.load_hier_state/save_hier_state): same reasoning --
+        # without this, the next incremental upload resurrects the pre-clear
+        # tree instead of starting fresh.
+        from bsimvis.app.services.cluster_common import clear_hier_state
+
+        clear_hier_state(r, f"{collection}:cluster:hier:{algo}")
 
         if job_service and job_id:
             job_service.add_log(job_id, "Clustering data cleared successfully.")
@@ -915,365 +2463,35 @@ class ClusterService:
         """Delete all index buckets for a field using its registry, then clear the registry."""
         r = self.r
         reg_key = f"{collection}:reg:{level}:{field}"
-        buckets = r.smembers(reg_key)
+        buckets = list(r.smembers(reg_key))
         if buckets:
-            pipe = r.pipeline(transaction=False)
-            for b_raw in buckets:
-                b = b_raw.decode() if isinstance(b_raw, bytes) else b_raw
-                pipe.delete(b)
-            pipe.execute()
+            t0 = time.time()
+            # ponytail: fixed 1000-cmd chunks; one giant pipeline here was a multi-minute
+            # silent stall on big collections. Tune if a round trip ever dominates.
+            for i in range(0, len(buckets), 1000):
+                pipe = r.pipeline(transaction=False)
+                for b_raw in buckets[i : i + 1000]:
+                    b = b_raw.decode() if isinstance(b_raw, bytes) else b_raw
+                    pipe.delete(b)
+                pipe.execute()
+            logging.info(
+                f"[*] Cleared {len(buckets)} {level}:{field} index buckets in {time.time() - t0:.1f}s"
+            )
         r.delete(reg_key)
 
-    def _update_similarity_indexing(
-        self, collection, algo, job_service=None, job_id=None, is_clear=False
-    ):
-        """
-        Updates sim-level cluster indexes/registries only — no JSON writes to similarity docs.
-        On clear: wipes the sim cluster indexes via registry based on config.
-        On build: fetches function cluster metadata and re-indexes each similarity if propagation is enabled.
-        """
-        r = self.r
-        # Pool sim keys are namespaced under global:pool:{id} WITHOUT the algo segment,
-        # and pool member fids are full source-collection fids ({srccoll}:func:{md5}:{addr}),
-        # not algo-relative clean ids. Non-pool keys carry :{algo}: and strip to clean ids.
-        is_pool = collection.startswith("global:pool:")
-        sim_score_key = (
-            f"{collection}:sim:score"
-            if is_pool
-            else f"{collection}:sim:score:{algo}"
-        )
-
-        from bsimvis.app.services.index_service import (
-            _index_tag,
-            _index_num,
-            _unindex_tag,
-            _unindex_num,
-        )
-        from bsimvis.app.services.index_config import NUM_FIELDS
-
-        # Discover which cluster fields are propagated from func to sim
+    def _clear_legacy_similarity_indexes(self, collection, algo):
+        """Remove legacy sim-level cluster indexes and the best-cluster cache."""
         propagated = self.get_propagated_fields("sim")["func"]
-        cluster_prop = [p for p in propagated if p[0].startswith("cluster_")]
-
-        # Also check numeric fields (stability)
-        func_num_fields = self.get_native_fields("func", True)
-        cluster_prop_num = []
-        for f in func_num_fields:
-            if f.startswith("cluster_"):
-                # Check if it propagates to sim
-                from bsimvis.app.services.index_config import INDEX_CONFIG
-
-                if "sim" in INDEX_CONFIG.get("func", {}).get(f, []):
-                    cluster_prop_num.append(f)
-
-        # NOTE: don't early-return when no cluster_* fields are configured to propagate.
-        # The best-shared-cluster index ({col}:sim:best_cluster:{algo}) is always built
-        # from cluster membership, independent of the legacy per-field propagation config.
-        # Skipping the scan here left best_cluster empty → shared_clusters: [] in search.
-
-        if is_clear:
-            if job_service and job_id:
-                job_service.add_log(
-                    job_id, "Clearing sim cluster indexes via registry..."
-                )
-            for orig, target in cluster_prop:
+        for _, target in propagated:
+            if target.startswith("cluster_"):
                 self._clear_indexes_via_registry(collection, "sim", target)
-            for f in cluster_prop_num:
-                # Numeric indexes don't have registry, but we can wipe the ZSET
-                r.delete(f"{collection}:idx:sim:{f}")
-            r.delete(f"{collection}:sim:best_cluster:{algo}")
-            return True
 
-        # BUILD PATH
-        # 0. Wipe existing sim cluster indexes to avoid stale entries
-        for orig, target in cluster_prop:
-            self._clear_indexes_via_registry(collection, "sim", target)
-        for f in cluster_prop_num:
-            r.delete(f"{collection}:idx:sim:{f}")
-        r.delete(f"{collection}:sim:best_cluster:{algo}")
+        from bsimvis.app.services.index_config import INDEX_CONFIG
 
-        # 1. Pre-fetch all cluster metadata records matching {collection}:cluster:{algo}:*:meta
-        if job_service and job_id:
-            job_service.add_log(job_id, "Pre-fetching cluster metadata records...")
-
-        cluster_meta_map = {}
-        cluster_list_key = f"{collection}:cluster:list:{algo}"
-        cids_raw = r.smembers(cluster_list_key)
-        meta_keys = []
-        if cids_raw:
-            meta_keys = [
-                f"{collection}:cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
-                for cid in cids_raw
-            ]
-        else:
-            cursor = 0
-            while True:
-                cursor, keys = r.scan(
-                    cursor=cursor,
-                    match=f"{collection}:cluster:{algo}:*:meta",
-                    count=1000,
-                )
-                meta_keys.extend(
-                    [k.decode() if isinstance(k, bytes) else k for k in keys]
-                )
-                if cursor == 0:
-                    break
-
-        if meta_keys:
-            c_pipe = r.pipeline(transaction=False)
-            for k in meta_keys:
-                c_pipe.get(k)
-            res_list = c_pipe.execute()
-            for k, res in zip(meta_keys, res_list):
-                if res:
-                    cm = json.loads(res) if not isinstance(res, dict) else res
-                    if isinstance(cm, str):
-                        cm = json.loads(cm)
-                    if cm and "cluster_id" in cm:
-                        cid = str(cm["cluster_id"])
-                        cluster_meta_map[cid] = cm
-
-        # 2. Fetch function cluster metadata into memory (only for clustered functions)
-        if job_service and job_id:
-            job_service.add_log(
-                job_id, "Fetching function metadata for similarity re-indexing..."
-            )
-
-        # First, gather all clustered function IDs by reading the members of all discovered clusters
-        clustered_funcs_set = set()
-        if cluster_meta_map:
-            m_pipe = r.pipeline(transaction=False)
-            for cid in cluster_meta_map.keys():
-                m_pipe.smembers(f"{collection}:cluster:{algo}:{cid}:members")
-            for mem_set in m_pipe.execute():
-                if mem_set:
-                    for f_raw in mem_set:
-                        clustered_funcs_set.add(
-                            f_raw.decode() if isinstance(f_raw, bytes) else f_raw
-                        )
-
-        func_meta = {}
-        funcs_list = list(clustered_funcs_set)
-
-        for i in range(0, len(funcs_list), 1000):
-            chunk = funcs_list[i : i + 1000]
-            pipe = r.pipeline(transaction=False)
-            for fid_raw in chunk:
-                fid = fid_raw.decode() if isinstance(fid_raw, bytes) else fid_raw
-                if collection.startswith("global:pool:"):
-                    pipe.smembers(f"{collection}:{fid}:clusters")
-                    pipe.hgetall(f"{collection}:{fid}:cluster_scores")
-                else:
-                    pipe.smembers(f"{fid}:clusters")
-                    pipe.hgetall(f"{fid}:cluster_scores")
-
-            results = pipe.execute()
-
-            for idx, fid_raw in enumerate(chunk):
-                fid = fid_raw.decode() if isinstance(fid_raw, bytes) else fid_raw
-                clusters_res = results[idx * 2]
-                scores_res = results[idx * 2 + 1] or {}
-
-                # Decode cluster IDs (strings)
-                cluster_ids_str = (
-                    [
-                        c.decode() if isinstance(c, bytes) else str(c)
-                        for c in clusters_res
-                    ]
-                    if clusters_res
-                    else []
-                )
-
-                meta_entry = {}
-                if cluster_ids_str:
-                    cids = []
-                    uuids = []
-                    names = []
-                    stabilities = []
-                    for cid_str in cluster_ids_str:
-                        cm = cluster_meta_map.get(cid_str)
-                        if cm:
-                            if cm.get("cluster_id") is not None:
-                                cids.append(cm["cluster_id"])
-                            if cm.get("cluster_uuid"):
-                                uuids.append(cm["cluster_uuid"])
-                            if cm.get("cluster_name"):
-                                names.append(cm["cluster_name"])
-
-                            score = 0.0
-                            if isinstance(scores_res, dict):
-                                for k, v in scores_res.items():
-                                    k_str = k.decode() if isinstance(k, bytes) else k
-                                    if k_str == cid_str:
-                                        score = float(v)
-                                        break
-                            stabilities.append(
-                                score or float(cm.get("cluster_stability", 0.0))
-                            )
-
-                    if cids:
-                        meta_entry["cluster_id"] = cids
-                    if uuids:
-                        meta_entry["cluster_uuid"] = uuids
-                    if names:
-                        meta_entry["cluster_name"] = names
-                    if stabilities:
-                        meta_entry["cluster_stability"] = max(stabilities)
-
-                func_meta[fid] = meta_entry
-
-        # 3. Discover all similarities involving these clustered functions
-        clustered_clean_ids = set()
-        func_prefix = f"{collection}:func:"
-        for fid, m in func_meta.items():
-            if any(v is not None for v in m.values()):
-                # Pool fids are already the involves-index key form; non-pool strip the prefix.
-                clustered_clean_ids.add(fid if is_pool else fid[len(func_prefix) :])
-
-        if job_service and job_id:
-            job_service.add_log(
-                job_id,
-                f"Fetching similarity candidates for {len(clustered_clean_ids)} clustered functions...",
-            )
-
-        prefix = f"{collection}:sim:" if is_pool else f"{collection}:sim:{algo}:"
-        candidate_sids = set()
-        clean_ids_list = list(clustered_clean_ids)
-        involves_pipe = r.pipeline(transaction=False)
-
-        for i in range(0, len(clean_ids_list), 1000):
-            chunk = clean_ids_list[i : i + 1000]
-            for c1 in chunk:
-                involves_pipe.smembers(f"{collection}:sim:involves:func:{c1}")
-            results = involves_pipe.execute()
-            for res in results:
-                if res:
-                    for sid_raw in res:
-                        sid = (
-                            sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
-                        )
-                        if sid.startswith(prefix):
-                            candidate_sids.add(sid)
-
-        total_candidates = len(candidate_sids)
-        total_sims = r.zcard(sim_score_key) or 0
-        processed = 0
-        indexed = 0
-
-        if job_service and job_id:
-            job_service.add_log(
-                job_id,
-                f"Propagating cluster indexes to {total_candidates} candidate similarities "
-                f"(out of {total_sims} total sims)...",
-            )
-            logging.info(
-                f"[*] Starting similarity index propagation for {total_candidates} candidates..."
-            )
-
-        candidate_list = list(candidate_sids)
-        update_pipe = r.pipeline(transaction=False)
-
-        start_prop = time.time()
-
-        # Batch aggregators to compress Redis pipeline commands by over 99%
-        tag_buckets = {}  # bucket_key -> set of sids
-        reg_buckets = {}  # reg_key -> set of bucket_keys
-        num_zsets = {}  # zset_key -> dict of sid: val
-        # Forward map sid -> best shared cluster id, for display (search / bin_sim reads).
-        best_cluster_key = f"{collection}:sim:best_cluster:{algo}"
-        best_cluster_map = {}  # sid -> cluster_id
-
-        def flush_batch():
-            for b_key, sids in tag_buckets.items():
-                if sids:
-                    update_pipe.sadd(b_key, *sids)
-            for r_key, b_keys in reg_buckets.items():
-                if b_keys:
-                    update_pipe.sadd(r_key, *b_keys)
-            for z_key, mapping in num_zsets.items():
-                if mapping:
-                    update_pipe.zadd(z_key, mapping)
-            if best_cluster_map:
-                update_pipe.hset(best_cluster_key, mapping=best_cluster_map)
-            update_pipe.execute()
-            tag_buckets.clear()
-            reg_buckets.clear()
-            num_zsets.clear()
-            best_cluster_map.clear()
-
-        for idx, sid in enumerate(candidate_list):
-            id_part = sid[len(prefix) :]
-            if "::" not in id_part:
-                continue
-            c1, c2 = id_part.split("::")
-
-            # Skip if either function is not clustered
-            if c1 not in clustered_clean_ids or c2 not in clustered_clean_ids:
-                continue
-
-            # Pool c1/c2 are already full source fids (func_meta keys); non-pool wrap them.
-            fid1 = c1 if is_pool else f"{collection}:func:{c1}"
-            fid2 = c2 if is_pool else f"{collection}:func:{c2}"
-            m1 = func_meta.get(fid1, {})
-            m2 = func_meta.get(fid2, {})
-
-            # Pick the single best-matched shared cluster (highest cohesion). Indexing and
-            # display both key off this one cluster, so an edge is only associated with the
-            # cluster that actually best explains the match — not every cluster it touches.
-            cids1 = [str(c) for c in (m1.get("cluster_id") or [])]
-            cids2 = [str(c) for c in (m2.get("cluster_id") or [])]
-            best = pick_best_shared_cluster(cids1, cids2, cluster_meta_map)
-            if best is None:
-                continue
-            best_cid = str(best.get("cluster_id"))
-
-            # Index TAG fields for the best cluster only.
-            for orig, target in cluster_prop:
-                v = best.get(orig)
-                if v is None or v == "":
-                    continue
-                b_key = f"{collection}:idx:sim:{target}:{str(v).lower()}"
-                r_key = f"{collection}:reg:sim:{target}"
-                tag_buckets.setdefault(b_key, set()).add(sid)
-                reg_buckets.setdefault(r_key, set()).add(b_key)
-
-            # Index NUM fields for the best cluster only.
-            for f in cluster_prop_num:
-                v = best.get(f)
-                if v is not None:
-                    try:
-                        z_key = f"{collection}:idx:sim:{f}"
-                        num_zsets.setdefault(z_key, {})[sid] = float(v)
-                    except (ValueError, TypeError):
-                        pass
-
-            best_cluster_map[sid] = best_cid
-            indexed += 1
-            processed += 1
-
-            if processed % 5000 == 0:
-                flush_batch()
-                update_pipe = r.pipeline(transaction=False)
-                if job_service and job_id:
-                    pct = (
-                        int((processed / total_candidates) * 100)
-                        if total_candidates > 0
-                        else 100
-                    )
-                    job_service.update_progress(
-                        job_id,
-                        pct,
-                        f"Scanning similarities: {processed}/{total_candidates} ({indexed} indexed)",
-                    )
-
-        flush_batch()
-
-        prop_time = time.time() - start_prop
-        msg = f"Indexed {indexed} similarities with cluster info in {prop_time:.2f}s."
-        logging.info(f"[+] {msg}")
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
-
+        for field, targets in INDEX_CONFIG.get("func", {}).items():
+            if field.startswith("cluster_") and "sim" in targets:
+                self.r.delete(f"{collection}:idx:sim:{field}")
+        self.r.delete(f"{collection}:sim:best_cluster:{algo}")
         return True
 
     def run_pool_clustering(
@@ -1475,68 +2693,40 @@ class ClusterService:
                 f"[*] Fetching pool binary similarity pairs from {sim_score_key}",
             )
 
-        pairs = []
-        cursor = 0
-        while True:
-            cursor, results = r.zscan(sim_score_key, cursor=cursor, count=1000)
-            for sid, score in results:
-                pairs.append((sid.decode() if isinstance(sid, bytes) else sid, score))
-            if cursor == 0:
-                break
+        # Each half is "<coll>:<md5>", rebuilt as "<coll>:file:<md5>".
+        def _pool_bin_ids(c1, c2):
+            p1, p2 = c1.split(":"), c2.split(":")
+            if len(p1) < 2 or len(p2) < 2:
+                return None
+            return f"{p1[0]}:file:{p1[1]}", f"{p2[0]}:file:{p2[1]}"
 
-        if not pairs:
+        # Streamed into typed arrays instead of a `pairs` list plus an `edges`
+        # list. See sim_edges: that pattern cost 2.15 GiB on a real 5.4M-pair
+        # set, against a 3 GB per-worker cap.
+        edge_set = sim_edges.load_edges(
+            r,
+            sim_score_key,
+            prefix,
+            True,
+            None,
+            min_sim=min_sim,
+            id_fn=_pool_bin_ids,
+        )
+        id_to_idx = edge_set.id_to_idx
+        idx_to_id = edge_set.idx_to_id
+
+        if edge_set.n_scanned == 0:
             logging.warning(f"No binary similarity pairs found for pool {pool_id}")
             return True
 
-        id_to_idx = {}
-        idx_to_id = {}
-        edges = []
-
-        for sid, score in pairs:
-            if not sid.startswith(prefix):
-                continue
-            ids_part = sid[len(prefix) :]
-            if "::" not in ids_part:
-                continue
-            parts = ids_part.split("::")
-            if len(parts) != 2:
-                continue
-
-            p1 = parts[0].split(":")
-            p2 = parts[1].split(":")
-            if len(p1) < 2 or len(p2) < 2:
-                continue
-            file_id1 = f"{p1[0]}:file:{p1[1]}"
-            file_id2 = f"{p2[0]}:file:{p2[1]}"
-
-            for fid in [file_id1, file_id2]:
-                if fid not in id_to_idx:
-                    idx = len(id_to_idx)
-                    id_to_idx[fid] = idx
-                    idx_to_id[idx] = fid
-
-            score_val = float(score)
-            if min_sim > 0 and score_val < min_sim:
-                continue
-
-            dist = max(0, 1.0 - score_val)
-            edges.append((id_to_idx[file_id1], id_to_idx[file_id2], dist))
-
-        if not edges:
+        if edge_set.src.size == 0:
             logging.warning(f"No valid edges for pool {pool_id} after filtering.")
             return True
 
         num_nodes = len(id_to_idx)
 
         # Split into connected components (same as BinClusterService.run_clustering)
-        rows, cols, data = [], [], []
-        for i, j, d in edges:
-            if d < 1.0:  # Only real similarity edges
-                rows.extend([i, j])
-                cols.extend([j, i])
-                data.extend([1, 1])
-
-        adj_matrix = sp.csr_matrix((data, (rows, cols)), shape=(num_nodes, num_nodes))
+        adj_matrix = sim_edges.build_adjacency(edge_set, num_nodes)
         n_components, comp_labels = connected_components(
             csgraph=adj_matrix, directed=False
         )
@@ -1545,11 +2735,8 @@ class ClusterService:
         for i, comp_id in enumerate(comp_labels):
             comp_to_nodes.setdefault(comp_id, []).append(i)
 
-        comp_to_edges = {}
-        for i, j, d in edges:
-            c = comp_labels[i]
-            if c == comp_labels[j]:
-                comp_to_edges.setdefault(c, []).append((i, j, d))
+        # Views into one sorted permutation, not a dict of tuple lists.
+        comp_to_edges = sim_edges.group_edges_by_component(edge_set, comp_labels)
 
         if job_service and job_id:
             job_service.add_log(
@@ -1562,6 +2749,9 @@ class ClusterService:
         next_cluster_id = num_nodes + 1
         comp_roots = []
 
+        # Reused scratch: global index -> component-local index.
+        gmap_pb = np.full(num_nodes, -1, dtype=np.int32)
+
         for comp_id, comp_nodes in comp_to_nodes.items():
             size = len(comp_nodes)
             if size < min_cluster_size:
@@ -1570,14 +2760,40 @@ class ClusterService:
                 continue
 
             sub_id_to_global = {i: g for i, g in enumerate(comp_nodes)}
-            global_to_sub_id = {g: i for i, g in enumerate(comp_nodes)}
 
-            sub_dist = np.ones((size, size), dtype=np.float32)
+            # Unlike the function clustering paths, this one has no sparse
+            # fallback for big components -- it always builds a dense size^2
+            # float64 matrix. 0.8 GiB at 10k nodes, 3.2 GiB at 20k: an OOM kill
+            # with no warning. Refuse instead, and say why.
+            if size > CLUSTER_MAX_COMPONENT:
+                msg = (
+                    f"Pool binary component {comp_id} has {size} files; a dense "
+                    f"distance matrix would need {size * size * 8 / 1024**3:.1f} GiB. "
+                    f"Above CLUSTER_MAX_COMPONENT={CLUSTER_MAX_COMPONENT}, so its "
+                    f"files are left unclustered rather than OOM-killing the worker."
+                )
+                logging.warning(f"[!] {msg}")
+                if job_service and job_id:
+                    job_service.add_log(job_id, msg)
+                for node in comp_nodes:
+                    comp_roots.append((node, 1))
+                continue
+
+            # float64 up front; see run_clustering above. Building float32 and
+            # converting at fit time kept both matrices alive at once.
+            sub_dist = np.ones((size, size), dtype=np.float64)
             np.fill_diagonal(sub_dist, 0)
-            for u, v, d in comp_to_edges.get(comp_id, []):
-                ui, vi = global_to_sub_id[u], global_to_sub_id[v]
-                sub_dist[ui, vi] = d
-                sub_dist[vi, ui] = d
+
+            comp_nodes_arr = np.asarray(comp_nodes, dtype=np.int32)
+            gmap_pb[comp_nodes_arr] = np.arange(size, dtype=np.int32)
+            e_src, e_dst, e_dist = comp_to_edges.get(
+                comp_id, (_EMPTY_I, _EMPTY_I, _EMPTY_F)
+            )
+            if e_src.size:
+                ui = gmap_pb[e_src]
+                vi = gmap_pb[e_dst]
+                sub_dist[ui, vi] = e_dist
+                sub_dist[vi, ui] = e_dist
 
             clusterer = hdbscan.HDBSCAN(
                 min_cluster_size=min(min_cluster_size, size),
@@ -1587,7 +2803,7 @@ class ClusterService:
                 metric="precomputed",
                 gen_min_span_tree=True,
             )
-            clusterer.fit(sub_dist.astype(np.float64))
+            clusterer.fit(sub_dist)
 
             local_tree_df = clusterer.condensed_tree_.to_pandas()
             if local_tree_df.empty:
@@ -1598,9 +2814,9 @@ class ClusterService:
             sub_internal_to_global = {}
             local_root_sub = local_tree_df["parent"].min()
 
-            for _, row in local_tree_df.iterrows():
-                parent = int(row["parent"])
-                child = int(row["child"])
+            for row in local_tree_df.itertuples(index=False):
+                parent = int(row.parent)
+                child = int(row.child)
                 if parent not in sub_internal_to_global:
                     sub_internal_to_global[parent] = next_cluster_id
                     next_cluster_id += 1
@@ -1615,8 +2831,8 @@ class ClusterService:
                     {
                         "parent": sub_internal_to_global[parent],
                         "child": global_child,
-                        "lambda_val": float(row["lambda_val"]),
-                        "child_size": int(row["child_size"]),
+                        "lambda_val": float(row.lambda_val),
+                        "child_size": int(row.child_size),
                     }
                 )
 
@@ -1640,14 +2856,14 @@ class ClusterService:
         r.set(tree_key, tree_json)
 
         tree_links = []
-        for _, row in tree_df.iterrows():
-            if int(row["child_size"]) > 1:
+        for row in tree_df.itertuples(index=False):
+            if int(row.child_size) > 1:
                 tree_links.append(
                     {
-                        "parent": int(row["parent"]),
-                        "child": int(row["child"]),
-                        "lambda": float(row["lambda_val"]),
-                        "size": int(row["child_size"]),
+                        "parent": int(row.parent),
+                        "child": int(row.child),
+                        "lambda": float(row.lambda_val),
+                        "size": int(row.child_size),
                     }
                 )
         r.set(
@@ -1675,14 +2891,14 @@ class ClusterService:
 
         # Stability
         birth_lambdas = {root_id: 0.0}
-        for _, row in tree_df.iterrows():
-            if row["child_size"] > 1:
-                birth_lambdas[int(row["child"])] = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            if row.child_size > 1:
+                birth_lambdas[int(row.child)] = float(row.lambda_val)
 
         leaf_death_lambdas = {}
-        for _, row in tree_df.iterrows():
-            if row["child_size"] == 1:
-                leaf_death_lambdas[int(row["child"])] = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            if row.child_size == 1:
+                leaf_death_lambdas[int(row.child)] = float(row.lambda_val)
 
         stabilities = {}
         for label, members in cluster_members.items():
@@ -1693,12 +2909,9 @@ class ClusterService:
             )
             stabilities[label] = total_area
 
-        # Sparse adjacency for cohesion
-        adj_sim = {i: {} for i in range(num_nodes)}
-        for u, v, d in edges:
-            sim = 1.0 - d
-            adj_sim[u][v] = sim
-            adj_sim[v][u] = sim
+        # Sparse adjacency for cohesion. CSR rather than a dict of dicts -- see
+        # sim_edges.SimAdjacency.
+        adj_sim = sim_edges.SimAdjacency(edge_set, num_nodes)
 
         # Generate cluster UUIDs first
         label_to_uuid = {c: f"{uuid.uuid4().hex[:12]}" for c in cluster_members.keys()}
@@ -1774,10 +2987,8 @@ class ClusterService:
                         m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]]
                     )
 
-            default_name = (
-                Counter(names_list).most_common(1)[0][0]
-                if names_list
-                else f"Pool File Cluster {c_uuid}"
+            default_name = default_bin_cluster_name(
+                names_list, avtype_list, yara_list, f"Pool File Cluster {c_uuid}"
             )
 
             def build_freq(items):
@@ -1804,11 +3015,7 @@ class ClusterService:
             n_members = len(members)
             if n_members > 1:
                 member_indices = [id_to_idx[fid] for fid in members]
-                total_sim = sum(
-                    adj_sim[member_indices[i]].get(member_indices[j], 0.0)
-                    for i in range(n_members)
-                    for j in range(i + 1, n_members)
-                )
+                total_sim = adj_sim.cohesion_sum(member_indices)
                 cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
             else:
                 cohesion_score = 1.0
@@ -1946,3 +3153,80 @@ class ClusterService:
 
 
 cluster_service = ClusterService()
+
+
+def _demo_pairwise_cohesion():
+    """_pairwise_cohesion agrees with the naive per-pair ZSCORE it replaced,
+    and does it in far fewer round-trips (the whole point).
+    """
+
+    class _FakePipe:
+        def __init__(self, owner):
+            self.owner = owner
+            self.queued = []
+
+        def zscore(self, key, member):
+            self.queued.append((key, member))
+
+        def execute(self):
+            self.owner.roundtrips += 1
+            return [self.owner.scores.get(m) for _, m in self.queued]
+
+    class FakeZ:
+        """Minimal ZSCORE-only stand-in that counts round-trips."""
+
+        def __init__(self, scores):
+            self.scores = scores
+            self.roundtrips = 0
+
+        def zscore(self, _key, member):
+            return self.scores.get(member)
+
+        def pipeline(self, transaction=False):
+            return _FakePipe(self)
+
+    prefix = "col:sim:algo:"
+    # c::b is stored in the reversed order only; a::d was never compared.
+    scores = {
+        f"{prefix}a::b": 0.9,
+        f"{prefix}a::c": 0.8,
+        f"{prefix}c::b": 0.7,
+        f"{prefix}b::d": 0.6,
+        f"{prefix}c::d": 0.5,
+    }
+    members = ["a", "b", "c", "d"]
+
+    naive_total, naive_pairs = 0.0, 0
+    for i in range(len(members)):
+        for j in range(i + 1, len(members)):
+            x, y = members[i], members[j]
+            s = scores.get(f"{prefix}{x}::{y}")
+            if s is None:
+                s = scores.get(f"{prefix}{y}::{x}")
+            if s is not None:
+                naive_total += s
+                naive_pairs += 1
+
+    r = FakeZ(scores)
+    memo = {}
+    total, pairs = _pairwise_cohesion(r, "zk", prefix, members, memo)
+    assert pairs == naive_pairs == 5, f"{pairs} != {naive_pairs}"
+    assert abs(total - naive_total) < 1e-9, f"{total} != {naive_total}"
+    assert r.roundtrips == 1, f"6 pairs should be one pipeline, got {r.roundtrips}"
+
+    # The memo is the algorithmic win: an ancestor holding the same members
+    # rescores for free, and only a genuinely new pair costs a fetch.
+    before = r.roundtrips
+    total2, pairs2 = _pairwise_cohesion(r, "zk", prefix, members, memo)
+    assert (total2, pairs2) == (total, pairs)
+    assert r.roundtrips == before, "repeat scoring should hit the memo only"
+
+    total3, pairs3 = _pairwise_cohesion(r, "zk", prefix, members + ["e"], memo)
+    assert pairs3 == pairs, "e has no stored similarity to anyone"
+    assert abs(total3 - total) < 1e-9
+
+    print("_pairwise_cohesion demo OK")
+
+
+if __name__ == "__main__":
+    _demo_pairwise_cohesion()

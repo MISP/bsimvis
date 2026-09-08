@@ -4,6 +4,7 @@ import logging
 from flask import request
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import parse_timestamp
+from bsimvis.app.services.query_syntax import resolve_targets
 
 
 def _scan_feature_keys(r, collection, feature_prefix, offset, limit, sort_by):
@@ -295,38 +296,24 @@ def query_features_advanced(r, collection, filters):
         else:
             candidates.intersection_update(new_matches)
 
-    def get_field_matches(field_name, search_val):
-        registry_key = f"{collection}:reg:feature:{field_name}"
-        val_lower = search_val.lower()
-        matching_buckets = []
-        try:
-            for bucket in r.sscan_iter(
-                registry_key, match=f"*{val_lower}*", count=1000
-            ):
-                bucket_str = (
-                    bucket.decode() if isinstance(bucket, bytes) else str(bucket)
-                )
-                if val_lower in bucket_str.lower():
-                    matching_buckets.append(bucket_str)
-        except Exception as e:
-            logging.warning(f"Registry SSCAN failed for {registry_key}: {e}")
+    def get_field_matches(field_name, search_val, default_kind="exact"):
+        """Doc ids matching one filter value, via the shared value parser."""
+        bucket_values, _truncated, _spec = resolve_targets(
+            r, collection, "feature", field_name, search_val, default_kind=default_kind
+        )
+        if not bucket_values:
+            return set()
 
+        prefix = f"{collection}:idx:feature:{field_name}:"
         field_candidates = set()
-        if matching_buckets:
-            if len(matching_buckets) == 1:
-                field_candidates = {
-                    t.decode() if isinstance(t, bytes) else str(t)
-                    for t in r.smembers(matching_buckets[0])
-                }
-            else:
-                pipe = r.pipeline(transaction=False)
-                for b in matching_buckets:
-                    pipe.smembers(b)
-                for res in pipe.execute():
-                    if res:
-                        field_candidates.update(
-                            t.decode() if isinstance(t, bytes) else str(t) for t in res
-                        )
+        pipe = r.pipeline(transaction=False)
+        for v in bucket_values:
+            pipe.smembers(prefix + v)
+        for res in pipe.execute():
+            if res:
+                field_candidates.update(
+                    t.decode() if isinstance(t, bytes) else str(t) for t in res
+                )
         return field_candidates
 
     # 1. Global query q
@@ -336,7 +323,10 @@ def query_features_advanced(r, collection, filters):
         for word in [w for w in search_q.split() if w.strip()]:
             word_matches = set()
             for field in search_fields:
-                word_matches.update(get_field_matches(field, word))
+                # Free-text box: a bare word stays a substring search.
+                word_matches.update(
+                    get_field_matches(field, word, default_kind="substring")
+                )
             update_candidates(word_matches)
 
     # 2. Specific tag filters

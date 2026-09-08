@@ -8,7 +8,11 @@ feature_service = FeatureService()
 
 def get_status():
     """Returns indexing status for a collection."""
-    collection = request.args.get("collection", "main")
+    # See routes/index.py: an omitted collection used to return all zeros with
+    # HTTP 200, which reads exactly like an empty instance.
+    collection = request.args.get("collection")
+    if not collection:
+        return {"error": "collection parameter is required"}, 400
     batch_uuid = request.args.get("batch")
     md5 = request.args.get("md5")
 
@@ -47,7 +51,7 @@ def index_features():
         (JobType.INDEX_FEATURES, payload),
         (JobType.ENRICH_FEATURES, {"collection": collection}),
     ]
-    pipeline_id = job_service.create_pipeline(tasks)
+    pipeline_id = job_service.submit_to_lane(collection, tasks)
     return {"job_id": pipeline_id, "status": "enqueued"}
 
 
@@ -60,5 +64,6 @@ def clear_features():
 
     payload = {"collection": collection, "md5": md5, "batch_uuid": batch_uuid}
 
-    job_id = job_service.create_job(JobType.CLEAR_FEATURES, payload)
+    job_id = job_service.create_job(JobType.CLEAR_FEATURES, payload, enqueue=False)
+    job_service.submit_to_lane(collection, job_id)
     return {"job_id": job_id, "status": "enqueued"}

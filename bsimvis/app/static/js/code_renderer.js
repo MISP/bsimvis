@@ -53,20 +53,24 @@ window.applyLocks = function (container) {
 window.renderTokenHtml = function (t, options = {}) {
     if (!t) return '';
     const featClass = t.has_features ? 'feature-highlight' : '';
-    const hashes = (t.hash_list || []).join(' ');
-    const featClasses = (t.hash_list || []).map(h => `feat-${h}`).join(' ');
+    const hashes = escapeAttr((t.hash_list || []).join(' '));
+    const featClasses = (t.hash_list || []).map(h => `feat-${safeCssClassPart(h)}`).join(' ');
 
-    const calledAttr = t.called_func_id ? `data-called-func-id="${t.called_func_id}" data-is-external="${t.is_external || false}" data-target-name="${t.target_name || ''}"` : '';
+    const calledAttr = t.called_func_id
+        ? `data-called-func-id="${escapeAttr(t.called_func_id)}" data-is-external="${escapeAttr(t.is_external || false)}" data-target-name="${escapeAttr(t.target_name || '')}"`
+        : '';
     const clickClass = t.called_func_id ? (t.is_external ? 'func-call-external' : 'func-call-clickable') : '';
-    const titleAttr = t.called_func_id ? `title="Click to navigate to ${t.target_name || 'called function'}"` : '';
+    const titleAttr = t.called_func_id ? `title="Click to navigate to ${escapeAttr(t.target_name || 'called function')}"` : '';
 
-    const diffClass = t.diff_class || '';
-    const sideAttr = options.side ? `data-side="${options.side}"` : '';
+    const diffClass = safeCssClassPart(t.diff_class || '');
+    const sideAttr = options.side ? `data-side="${escapeAttr(options.side)}"` : '';
 
-    const escapedText = t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const escapedText = escapeHtml(t.text);
+    const tokenType = safeCssClassPart(t.type || 'default');
+    const idx = escapeAttr(t.global_idx ?? '');
     const hoverHandlers = options.inlineHoverHandlers ? `onmouseenter="handleHoverMove(event, true)" onmouseleave="handleHoverMove(event, false)"` : '';
 
-    return `<span class="token token-${t.type} ${featClass} ${clickClass} ${featClasses} ${diffClass}" data-idx="${t.global_idx}" data-hashes="${hashes}" ${calledAttr} ${titleAttr} ${sideAttr} ${hoverHandlers}>${escapedText}</span>`;
+    return `<span class="token token-${tokenType} ${featClass} ${clickClass} ${featClasses} ${diffClass}" data-idx="${idx}" data-hashes="${hashes}" ${calledAttr} ${titleAttr} ${sideAttr} ${hoverHandlers}>${escapedText}</span>`;
 };
 
 window.TOKEN_COLORS = {
@@ -89,8 +93,8 @@ window.TOKEN_COLORS = {
 
 window.renderRichHtml = function (rows, options = {}) {
     const noBg = options.noBg === true;
-    const bg = noBg ? 'transparent' : (options.bg || '#272822');
-    const fg = noBg ? '#222' : (options.fg || '#f8f8f2');
+    const bg = noBg ? 'transparent' : (options.bg || 'var(--card-bg)');
+    const fg = noBg ? 'var(--meta-header-bg)' : (options.fg || '#f8f8f2');
     const font = options.font || "Consolas, 'Courier New', monospace";
     const showGutter = options.showGutter === true; // Default to false
 
@@ -115,15 +119,15 @@ window.renderRichHtml = function (rows, options = {}) {
             
             // If no background, make the default color darker for better contrast on light docs
             if (noBg && (t.type === 'default' || !window.TOKEN_COLORS[t.type])) {
-                color = '#222';
+                color = 'var(--meta-header-bg)';
             }
             
             let tStyle = `color: ${color};`;
             
             // Highlight diffs if requested
             if (options.showDiffs) {
-                if (t.diff_class === 'diff-match') tStyle += " background-color: rgba(166, 226, 46, 0.15); border-bottom: 1px solid #a6e22e;";
-                else if (t.diff_class === 'diff-unique') tStyle += " background-color: rgba(249, 38, 114, 0.15); border-bottom: 1px solid #f92672;";
+                if (t.diff_class === 'diff-match') tStyle += " background-color: color-mix(in srgb, var(--token-symbol) 15%, transparent); border-bottom: 1px solid #a6e22e;";
+                else if (t.diff_class === 'diff-unique') tStyle += " background-color: color-mix(in srgb, var(--token-instruction) 15%, transparent); border-bottom: 1px solid #f92672;";
             }
 
             const escapedText = t.text.replace(/&/g, '&amp;')

@@ -22,6 +22,7 @@ All endpoints are prefixed with `/api`. Unless noted, `collection` defaults to `
 - [Notes](#notes)
 - [LLM](#llm)
 - [Pools (Cross-Collection)](#pools-cross-collection)
+- [Searches](#searches)
 
 ---
 
@@ -34,7 +35,17 @@ Database index statistics and counts.
 
 ### `GET /api/index/config`
 Returns default configuration values from `bsimvis_config.toml`.
-- **Returns:** `clustering` (`epsilon`, `min_cluster_size`, `min_samples`, `selection_method`, `min_sim`, `min_features`, `min_cohesion`) and `similarity` (`top_k`, `min_score`, `min_features`, `algo`).
+- **Returns:** `clustering` (`engine`, `bin_engine`, `uf_threshold`, `bin_uf_threshold`, `cohesion_cut`, `epsilon`, `min_cluster_size`, `min_samples`, `selection_method`, `min_sim`, `min_features`, `min_cohesion`, `idle_debounce_seconds`) and `similarity` (`top_k`, `min_score`, `min_features`, `algo`).
+
+### `GET /api/index/home/stats`
+Instance-wide counters (files, functions, collections, pools) plus job queue health. Cheap and uncached.
+
+### `GET /api/index/home/insights`
+Heavier homepage panels: top tags, biggest binary clusters, recent batches. Cached 120s in-process.
+- **Params:** `refresh=true` to bypass the cache.
+
+### `GET /api/index/languages`
+Lists Ghidra language IDs seen across the instance and the compiler specs valid for each.
 
 ---
 
@@ -59,6 +70,12 @@ Cancels all pending or running jobs and pipelines.
 
 ### `POST /api/jobs/<job_id>/retry`
 Retries a failed or cancelled job/pipeline (pipelines reset all sub-tasks).
+
+### `GET /api/jobs/pause` / `POST /api/jobs/pause` / `DELETE /api/jobs/pause`
+Fleet-level pause/resume. `GET` returns whether the fleet is paused. `POST` pauses it — workers finish their current job and claim no more. `DELETE` resumes it.
+
+### `POST /api/jobs/<job_id>/pause` / `DELETE /api/jobs/<job_id>/pause`
+Per-job pause/resume. Pauses one job, group or pipeline without affecting the rest of the fleet. A running leaf finishes first; nothing underneath the paused job is claimed again until it is resumed.
 
 ---
 
@@ -104,11 +121,14 @@ Full call graph for a file.
 - **Params:** `collection`, `file_md5`.
 
 ### `POST /api/file/upload`
-Uploads a raw binary for server-side Ghidra analysis. Params accepted as query or form.
+Uploads a raw binary for server-side Ghidra analysis. One job does analysis,
+indexing, and (unless `skip_sim`) per-file similarity build, all in-process —
+no follow-up call is needed for the file's own data. Params accepted as query or form.
 - **Config:** `collection`, `file_name`, `profile` (`fast`/`full`), `min_func_len` (default 10), `processor` (force Ghidra Language ID), `cspec` (force Compiler Spec ID).
 - **Similarity:** `algo` (`jaccard`/`unweighted_cosine`/`milvus_sparse`), `top_k`, `min_score`, `min_features`, `skip_sim`.
-- **Metadata:** `batch_uuid` (generated server-side if omitted), `batch_name` (default `Ghidra Batch`), `tags` (repeatable), `related_md5` (repeatable), `file_metadata_extra` (JSON object merged into the file document — this is how `parent_md5`, `parent_file_name` and `related_file_name` are supplied; all four parent/related fields are indexed and searchable at file, function and similarity level).
-- **Scheduling:** `enqueue` (default `true`; `false` creates the pipeline without starting it, for batch uploads finalized later).
+- **Metadata:** `batch_uuid` (generated server-side if omitted, kept for tagging/lookup — no longer required for batching, see below), `batch_name` (default `Ghidra Batch`), `tags` (repeatable), `related_md5` (repeatable), `file_metadata_extra` (JSON object merged into the file document — this is how `parent_md5`, `parent_file_name` and `related_file_name` are supplied; all four parent/related fields are indexed and searchable at file, function and similarity level).
+- **Scheduling:** `enqueue` (default `true`; `false` creates the job without starting it). `priority` (`high` to jump this file's analysis ahead of other pending jobs on the shared worker pool; doesn't preempt a job already running).
+- **Clustering:** every upload is recorded in its collection's job lane; once uploads to that collection go quiet (`clustering.idle_debounce_seconds`, default 30s), the lane automatically clears and rebuilds that collection's function/binary clusters covering everything uploaded since the last rebuild. See `POST /api/cluster/rebuild_all` and `POST /api/file/upload/batch_finalize` to force this immediately instead.
 - **Returns:** `status`, `file_md5`, `pipeline_id`, `batch_uuid`.
 
 ### `POST /api/file/upload_file_data`
@@ -121,12 +141,26 @@ Uploads pre-analyzed JSON metadata + function feature maps from client-side extr
 Uploads a chunk of function analysis data (streaming path to avoid memory bloat).
 
 ### `POST /api/file/upload/batch_finalize`
-Finalizes a multi-file batch upload by orchestrating a master pipeline.
-- **Body:** `pipeline_ids` (required), `batch_uuid`, `collection`, `algo`, `skip_sim`, `min_cohesion`.
+Finalizes a multi-file batch upload by orchestrating a master pipeline. Optional now
+that uploads auto-cluster on their own after a quiet period (see `POST /api/file/upload`)
+— use this to force it immediately for an explicit set of pipeline/job ids instead of
+waiting. Submitted through the collection's job lane: queues behind whatever's currently
+active for that collection rather than running concurrently with it (two overlapping
+finalize/rebuild calls used to race and corrupt each other's cluster/bin_sim results).
+- **Body:** `pipeline_ids` (required), `batch_uuid`, `collection`, `algo`, `skip_sim`, `min_cohesion`, `priority` (`high` to jump ahead of other rebuilds already queued for this collection).
+- **Returns:** `status` (`"queued"`), `master_pipeline_id`, `batch_uuid`. `master_pipeline_id` is pollable via `GET /api/jobs/{id}` whether it started immediately or is waiting on another active rebuild.
 
 ### `PATCH /api/file/<file_md5>/metadata`
 Partially updates metadata for a file and triggers propagation.
 - **Body:** `collection`, `metadata` (dict of fields to update).
+
+### `GET /api/file/<file_md5>/lineage`
+Returns the containment lineage of a file: the containers it was extracted from (nearest first) and the files extracted from it. Each node carries an `exists` flag (`false` for a container that was declared but never uploaded).
+- **Params:** `collection`.
+
+### `POST /api/file/metadata/stage`
+Stages a batch's MD5 → metadata map. Uploads in that batch resolve their own metadata by hash, including binaries that only exist after server-side unpacking (archive members, UPX payloads, GPR programs).
+- **Body:** `collection`, `batch_uuid`, `metadata` (dict of MD5 → metadata dict).
 
 ### `POST /api/file/metadata/propagate`
 Bulk metadata update + propagation.
@@ -158,6 +192,14 @@ Unified diff endpoint (alias of `/api/diff`). Without `addr_a`/`addr_b` returns 
 ### `GET /api/function/features`
 Lists all BSim features for a function with their code context.
 - **Params:** `id`.
+
+### `GET /api/function/call_graph`
+Call graph for a function: callers and callees with function metadata.
+- **Params:** `collection`, `id`.
+
+### `GET /api/function/relations`
+Bulk relation lookup for a set of function IDs across call and similarity edges.
+- **Params:** `collection`, `id` (repeatable), `algo`.
 
 ---
 
@@ -200,6 +242,14 @@ Autocomplete for indexed metadata field values.
 ### `GET /api/search/fields`
 Cardinality stats for metadata fields.
 - **Params:** `collection`, `level`, `field` (list).
+
+### `GET /api/search/unified`
+Ctrl+K palette backend. Searches all entity types (files, functions, similarities, clusters, pools, collections) by a free-text query string.
+- **Params:** `q` (required), `collection`, `limit`.
+
+### `GET /api/search/unified/stream`
+SSE streaming variant of `/api/search/unified`. Returns results as server-sent events as each entity type resolves, so the palette can start populating before all types finish.
+- **Params:** same as unified.
 
 ---
 
@@ -249,17 +299,26 @@ Adds/removes a user tag on a similarity pair.
 
 ## Function Clusters
 
-HDBSCAN-based clustering of functions.
+Clustering of functions by similarity. The default engine is `threshold_uf` (deterministic union-find); `hierarchical_uf` builds a full single-linkage hierarchy; `hdbscan` is the legacy path. All three are configured via `bsimvis_config.toml` `[clustering]`.
 
 ### `POST /api/cluster/build`
 Enqueues a clustering job.
-- **Body:** `collection`, `algo`, `min_cluster_size` (default 2), `min_samples` (default 1), `epsilon` (default 0.1), `selection_method` (default `eom`), `min_sim` (default 0.0), `min_features` (default 0).
+- **Body:** `collection`, `algo`, `engine` (`threshold_uf` / `hierarchical_uf` / `hdbscan`, default from config), `uf_threshold` (default from config), `cohesion_cut` (default from config), `min_cluster_size` (default 2), `min_samples` (default 1), `epsilon` (default 0.1), `selection_method` (default `eom`), `min_sim` (default 0.0), `min_features` (default 0). The HDBSCAN-specific params (`epsilon`, `min_samples`, `selection_method`) are ignored when `engine=threshold_uf`.
 
 ### `POST /api/cluster/rebuild`
-Clear + cluster pipeline. Same body as build.
+Clear + cluster pipeline (function clusters only, no bin_sim rebuild). Same body as
+build, plus `priority` (`high` to jump ahead of other rebuilds already queued for this
+collection). Submitted through the collection's job lane — see `rebuild_all` below.
 
 ### `POST /api/cluster/rebuild_all`
-Full re-analysis pipeline: function clusters + binary similarity. Same body as build.
+Full re-analysis pipeline: clear + function clusters + binary similarity + binary
+clusters. Same body as build, plus `priority`. Submitted through the collection's job
+lane: at most one rebuild runs per `(collection, algo)` at a time — a second call while
+one is active queues behind it instead of racing it (this used to corrupt cluster/bin_sim
+results when two rebuilds overlapped). Also fires automatically after uploads to a
+collection go quiet, so this endpoint is for forcing it now, not required routine
+maintenance. Returns `{"job_id", "pipeline_id", "status": "queued"}` — `pipeline_id` is
+pollable via `GET /api/jobs/{id}` whether it started immediately or is waiting.
 
 ### `POST /api/cluster/clear`
 Enqueues a cluster clear job. Body: `collection`, `algo`.
@@ -295,6 +354,10 @@ Enqueues a job to build binary similarities.
 ### `POST /api/bin_sim/rebuild`
 Clear + build pipeline. Same body as build.
 
+### `POST /api/bin_sim/resplit`
+Recomputes the tag split (Code / Library / Content score axes) of stored binary similarity pairs without triggering a full rebuild. Useful after tag changes that affect the score decomposition.
+- **Body:** `collection`, `algo`.
+
 ### `POST /api/bin_sim/clear`
 Clears binary similarities. Body: `collection`, `algo`, `md5`.
 
@@ -307,7 +370,7 @@ Searches binary similarity pairs with filtering and sorting. Accepts `pool`.
 - **Core:** `collection` or `pool`, `algo` (default `unweighted_cosine`), `q`, `md5` (matches either side, and also the sides' `parent_md5`/`related_md5`), `file_name` (either side, plus parent/related file names), `arch` (architecture / language ID, either side).
 - **Ranges:** `min_score`/`max_score`, `min_coverage`/`max_coverage`, `min_shared`/`max_shared`, `min_funcs`/`max_funcs` (function count).
 - **Tags:** `file_tag`, `exclude_file_tag`, `exclude_file_static_tag`, `exclude_file_user_tag` (resolved through the live file tag index, so tag edits take effect without a rebuild), plus similarity-level `tag`, `exclude_tag`, `exclude_static_tag`, `exclude_user_tag` (applied on the page). All repeatable.
-- **Paging/sort:** `sort_by` (alias `sort`; `score` (default), `score_sim_weighted`, `score_collection_weighted`, `coverage`, `shared_clusters`, `functions_count`, `computed_at`, `architecture`), `sort_order` (default `desc`), `offset`, `limit` (default 50).
+- **Paging/sort:** `sort_by` (alias `sort`; `score` (default), `coverage`, `shared_clusters`, `functions_count`, `computed_at`, `architecture`), `sort_order` (default `desc`), `offset`, `limit` (default 50).
 - **Returns:** `total`, `offset`, `limit`, `results` — each pair enriched with `md5_a`/`md5_b`, `coll_a`/`coll_b`, `file_name_a`/`file_name_b`, the `file_parent_*`/`file_related_*` md5 and name fields, `file_tags_*`/`file_user_tags_*`, `architecture_*`, `functions_count_*`, `compiler_*`, `entry_date_*`, `coverage_a`/`coverage_b`, `shared_clusters`.
 - Pool search uses the pool's own bin_sim index when present; otherwise it falls back to a slower full scan (run `bin_sim/reindex` with `pool_id` to build it).
 
@@ -358,7 +421,7 @@ Updates binary cluster metadata (e.g. rename).
 Unified diff endpoint. Without `addr_a`/`addr_b` returns the file-level bin_sim document; with them returns a side-by-side aligned function code diff. `/api/function/diff` and `/api/bin_sim/diff` are aliases of this endpoint (the latter also reads `algo`, default `unweighted_cosine`).
 - **Params:** `collection_a` (alias `collection`, default `main`), `collection_b` (alias `coll_b`, defaults to `collection_a`), `md5_a`, `md5_b`, `addr_a`, `addr_b`, `pool` (alias `pool_id`). `md5A`/`md5B`/`addrA`/`addrB` and the legacy `id1`/`id2` function-ID pair are also accepted.
 - **Function diff returns:** `rows` (aligned left/right), `left_tips`/`right_tips`, `meta1`/`meta2`.
-- **File diff returns:** `score`, `score_sim_weighted`, `score_collection_weighted`, `file_metadata_a`/`file_metadata_b`, `functions_metadata` (per function ID), and `diff` with the `matched`, `unique_to_a` and `unique_to_b` tables. Matched/unique rows carry `cluster_uuid`, `cluster_name`, `cohesion`, `similarity`, `avg_features`, `sim_rarity`, `is_clustered`.
+- **File diff returns:** `score`, `file_metadata_a`/`file_metadata_b`, `functions_metadata` (per function ID), and `diff` with the `matched`, `unique_to_a` and `unique_to_b` tables. Matched/unique rows carry `cluster_uuid`, `cluster_name`, `cohesion`, `similarity`, `avg_features`, `sim_rarity`, `is_clustered`.
 
 #### Server-side table paging (file diff)
 Adding `table` returns one filtered/sorted page of a single diff table instead of the whole document.
@@ -368,7 +431,7 @@ Adding `table` returns one filtered/sorted page of a single diff table instead o
 - **Returns:** `items`, `total`, `offset`, `limit`, `table`, `functions_metadata` (page rows only), `file_metadata_a`/`file_metadata_b`.
 
 #### Sankey projection (file diff)
-`view=sankey` returns a compact projection for the Sankey visualization: `score`, `score_sim_weighted`, `score_collection_weighted`, `file_metadata_a`/`file_metadata_b`, `counts` (per table), and `sankey` with cluster fields plus inlined feature counts (`feat_a`/`feat_b` for matched rows, `feat` for unique rows) — no names, tags or notes, so large binaries stay renderable. Ignored when `table` is present.
+`view=sankey` returns a compact projection for the Sankey visualization: `score`, `file_metadata_a`/`file_metadata_b`, `counts` (per table), and `sankey` with cluster fields plus inlined feature counts (`feat_a`/`feat_b` for matched rows, `feat` for unique rows) — no names, tags or notes, so large binaries stay renderable. Ignored when `table` is present.
 
 ---
 
@@ -398,11 +461,42 @@ Sets a tag color. Body: `collection`, `tag`, `color` (e.g. `#ff0000`).
 ### `POST /api/tags/priority`
 Sets a tag priority. Body: `collection`, `tag`, `priority` (int).
 
+### `GET /api/tags/colors`
+Returns the parameters used to derive tag colours (namespaces, special values, priority table).
+
+### `GET /api/tags/list`
+Lists the tag vocabulary with usage counts and the LLM flag.
+- **Params:** `collection` (required), `q` (substring filter), `sort_by` (`tag`/`priority`/`total_count`/`function_count`), `sort_order`.
+
+### `POST /api/tags/create`
+Creates a tag in the vocabulary without tagging any entity.
+- **Body:** `collection`, `tag`, `color` (optional), `priority` (optional), `llm` (bool — include in LLM tag vocabulary, optional).
+
+### `POST /api/tags/delete`
+Deletes a tag **and** strips it from every entity carrying it.
+- **Body:** `collection`, `tag`.
+
+### `POST /api/tags/llm`
+Includes or excludes a tag from the LLM tagging vocabulary.
+- **Body:** `collection`, `tag`, `llm` (bool).
+
+### `GET /api/tags/provenance`
+Returns the rule each analysis tag came from, with a link to its source.
+- **Params:** `tag` (repeatable), or `tags` (comma-separated).
+
+### `GET /api/tags/rule_source`
+Returns one rule's own source text, read from the mirror on disk.
+- **Params:** `id` (rule id as returned by `/tags/provenance`).
+
+### `POST /api/tags/match_provenance`
+Returns match metadata (which rules matched) for a list of entities.
+- **Body:** `collection`, `entity_ids` (list).
+
 ---
 
 ## Notes
 
-Analyst notes on functions and files. The `list` endpoints accept `pool` (alias `pool_id`) in place of `collection`.
+Analyst notes on functions, files, and binary similarity pairs. The `list` endpoints accept `pool` (alias `pool_id`) in place of `collection`.
 
 ### Function notes
 - `POST /api/notes/add` — Body: `collection`, `func_id`, `text`, `owner`.
@@ -416,11 +510,17 @@ Analyst notes on functions and files. The `list` endpoints accept `pool` (alias 
 - `DELETE /api/notes/file/remove` — Body: `collection`, `file_id`, `note_id`.
 - `GET /api/notes/file/list` — Params: `collection`, `file_id`.
 
+### Binary similarity pair notes
+- `POST /api/notes/bin_sim/add` — Body: `collection`, `md5_a`, `md5_b`, `algo`, `text`, `owner`.
+- `PUT /api/notes/bin_sim/update` — Body: `collection`, `md5_a`, `md5_b`, `algo`, `note_id`, `text`.
+- `DELETE /api/notes/bin_sim/remove` — Body: `collection`, `md5_a`, `md5_b`, `algo`, `note_id`.
+- `GET /api/notes/bin_sim/list` — Params: `collection`, `md5_a`, `md5_b`, `algo`.
+
 ---
 
 ## LLM
 
-Local LLM integration (Ollama).
+Local LLM integration (Ollama). Configure the model and system prompt in `bsimvis_config.toml` `[llm]`.
 
 ### `POST /api/llm/summarize`
 Generates a summary for a function.
@@ -434,7 +534,48 @@ Continues a discussion about a function.
 Streams a threat-intel summary for a binary using all available metadata.
 - **Body:** `file_id`.
 
----
+### `POST /api/llm/batch`
+Starts a background LLM enrichment job (notes and/or tags) over a set of functions.
+- **Body:** `collection` (required), `func_ids` (list) or `filters` (function-search query string), `actions` (`["notes", "tags"]`), `overwrite` (default `false`), `custom_prompt`, `tag_vocabulary`.
+- **Returns:** `job_id`.
+
+### `GET /api/llm/batch/<job_id>`
+Progress, per-function state and errors for an LLM batch job.
+
+### `POST /api/llm/batch/<job_id>/cancel`
+Cancels an LLM batch job.
+
+### `POST /api/llm/chat/session`
+Starts a new interactive analyst chat session with tool access to the collection (function lookup, call graph, similarity, tags).
+- **Body:** `collection` (required), `pool` (alternative), `system_prompt` (optional override), `context` (optional — appended to the system prompt, e.g. to scope the session to a specific function).
+- **Returns:** `session_id`.
+
+### `GET /api/llm/chat/session/<session_id>`
+Returns the message history for a chat session.
+
+### `POST /api/llm/chat/session/<session_id>/message`
+Sends an analyst message. The model may call tools to look up functions, call graph, similarity, and tags before answering. Streams one NDJSON event per line as each tool call resolves, then a final `done` (or `error`) event with the reply.
+- **Body:** `message` (required).
+
+### `POST /api/llm/contextual_batch`
+Starts a background context-aware LLM tagging job: partitions the selection by call-graph locality (bottom-up, mutually-recursive groups combined) instead of judging each function in isolation.
+- **Body:** `collection` (required), `func_ids` or `filters`, `actions`, `overwrite`, `custom_prompt`, `unit_max_size` (max functions per LLM call for a connected cluster, default 5).
+
+### `GET /api/llm/contextual_batch/<job_id>` / `POST /api/llm/contextual_batch/<job_id>/cancel`
+Progress/cancel for a contextual batch job.
+
+### `POST /api/llm/file_analysis`
+Starts agentic LLM analysis for one file or every file in a collection.
+- **Body:** `collection` (required), `pool` (alternative), `file_md5` (omit to analyse every file), `actions`, `overwrite`, `skip_fid_tagged` (default `true`), `min_complexity`, `custom_prompt`.
+
+### `GET /api/llm/file_analysis/<job_id>` / `POST /api/llm/file_analysis/<job_id>/cancel`
+Progress/cancel for a file-analysis job.
+
+### `POST /api/llm/pair_analysis`
+Analyses differences, similarities and malicious functions in one binary pair.
+- **Body:** `collection` (required), `coll_b`, `md5_a` (required), `md5_b` (required), `pool`, `algo`, `threshold` (default 0.9), `include_unique` (default `true`), `include_unchanged` (default `false`), `skip_fid_tagged` (default `true`), `min_complexity`, `max_functions` (0 = unlimited), `actions`, `overwrite`, `custom_prompt`.
+
+
 
 ## Pools (Cross-Collection)
 
@@ -478,3 +619,44 @@ Wipes all computed pool data and enqueues the full build pipeline. Returns `mess
 
 ### `GET /api/pool/<pool_id>/sync_check`
 Checks whether the pool is outdated compared to its source collections.
+
+---
+
+## Searches
+
+Fast LLM-powered relevance triage searches scoped to a collection, a single file, an arbitrary function filter, or a binary pair diff. Results are ranked `yes` / `maybe` / `no` and can be tagged or handed off to the deep-analysis pipeline.
+
+### `GET /api/searches`
+Lists past searches, most recent first.
+- **Params:** `offset`, `limit` (default 50).
+
+### `POST /api/searches`
+Resolves the given scope to a function set and starts a fast relevance-triage classification job.
+- **Body:**
+  - `collection` (required), `pool` (alternative).
+  - `query` (required) — free-text description of what the analyst is looking for.
+  - `name` (optional, defaults to the query text).
+  - `scope` (required):
+    - `type`: `collection` | `file` | `filter` | `pair`
+    - For `file`: `md5`, `skip_fid_tagged` (default `true`).
+    - For `filter`: `filters` (function-search query string).
+    - For `pair`: `md5_a`, `md5_b`, `coll_b`, `pool_id`, `algo`, `state` (`all`/`matched`/`unique`/`changed`), `threshold`, `include_unique`, `include_unchanged`, `skip_fid_tagged`, `min_complexity`, `max_functions`.
+- **Returns:** `search_id`, `job_id`.
+
+### `GET /api/searches/<search_id>`
+Returns the search's metadata, merging live job status while it is still running.
+
+### `DELETE /api/searches/<search_id>`
+Deletes a search (cancels its job first if still running).
+
+### `GET /api/searches/<search_id>/results`
+Ranked results for a completed search.
+- **Params:** `offset`, `limit` (default 100), `verdict` (repeatable: `yes` / `maybe` / `no`).
+
+### `POST /api/searches/<search_id>/apply_tag`
+Directly tags the given functions (synchronous, no background job).
+- **Body:** `func_ids` (list, required), `tag` (required).
+
+### `POST /api/searches/<search_id>/analyze`
+Hands the given functions to the deep contextual-batch analysis pipeline (notes/tags) as a normal `LLM_CONTEXTUAL_BATCH` job.
+- **Body:** `func_ids` (list, required), `actions`, `overwrite`, `custom_prompt` (defaults to the search's own query).

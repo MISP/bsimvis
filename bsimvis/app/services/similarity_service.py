@@ -2567,6 +2567,8 @@ class SimilarityService:
 
         processed = 0
         for b_src, b_par in pairs:
+            coll_a, md5_a = b_src
+            coll_b, md5_b = b_par
             if only_cross and b_src[0] == b_par[0]:
                 continue
                 
@@ -2619,6 +2621,7 @@ class SimilarityService:
                 _feat,
                 fid_tags,
                 tag_meta_cache,
+                pick_cluster,
             )
 
             # Persist pool bin_sim

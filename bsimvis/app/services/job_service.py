@@ -509,18 +509,7 @@ class JobService:
             # An explicit finalize names its batch; its members are pipeline ids
             # whose own payloads carry nothing to target.
             batch_uuids.add(options["batch_uuid"])
-            if not skip_sim:
-                seen.add(("batch_uuid", options["batch_uuid"]))
-                targets.append(
-                    (
-                        JobType.BUILD_SIM,
-                        {
-                            "collection": collection,
-                            "algo": algo,
-                            "batch_uuid": options["batch_uuid"],
-                        },
-                    )
-                )
+
         payload_pipe = self.r.pipeline(transaction=False)
         for member in members:
             payload_pipe.hget(f"job:{member}", "payload")
@@ -533,18 +522,7 @@ class JobService:
             target = ("batch_uuid", payload.get("batch_uuid"))
             if not target[1]:
                 target = ("md5", payload.get("md5") or payload.get("file_md5"))
-            if target[1] and target not in seen:
-                seen.add(target)
-                targets.append(
-                    (
-                        JobType.BUILD_SIM,
-                        {
-                            "collection": collection,
-                            "algo": algo,
-                            target[0]: target[1],
-                        },
-                    )
-                )
+
         # Deliberately not force: build_batch's generation guard already unmarks
         # anything built against a reverse index that moved underneath it, and a
         # pair found from either side is written for both functions, so what

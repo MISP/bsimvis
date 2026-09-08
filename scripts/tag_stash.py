@@ -22,6 +22,7 @@ touches tags.
     uv run python scripts/tag_stash.py apply 0    # restore, keep it stacked
     uv run python scripts/tag_stash.py drop 0      # discard without restoring
 """
+
 import argparse
 import json
 import sys
@@ -64,13 +65,21 @@ def _entity_tags(ts, collection, entity_type, entity_id, owner_filter, vocab):
 
 
 def snapshot_function(ns, ts, collection, func_id, owner_filter, vocab):
-    notes = [n for n in ns.get_notes(collection, func_id) if _owner_ok(owner_filter, n["owner"])]
+    notes = [
+        n
+        for n in ns.get_notes(collection, func_id)
+        if _owner_ok(owner_filter, n["owner"])
+    ]
     tags = _entity_tags(ts, collection, "function", func_id, owner_filter, vocab)
     return {"notes": notes, "tags": tags}
 
 
 def snapshot_file(ns, ts, collection, file_id, owner_filter, vocab):
-    notes = [n for n in ns.get_file_notes(collection, file_id) if _owner_ok(owner_filter, n["owner"])]
+    notes = [
+        n
+        for n in ns.get_file_notes(collection, file_id)
+        if _owner_ok(owner_filter, n["owner"])
+    ]
     tags = _entity_tags(ts, collection, "file", file_id, owner_filter, vocab)
     return {"notes": notes, "tags": tags}
 
@@ -166,7 +175,9 @@ def cmd_stash(args, r, ns, ts, sim):
     items = {"function": {}, "file": {}, "similarity": {}}
 
     if args.scope == "function":
-        snap = snapshot_function(ns, ts, args.collection, args.func_id, args.owner, vocab)
+        snap = snapshot_function(
+            ns, ts, args.collection, args.func_id, args.owner, vocab
+        )
         if snap["notes"] or snap["tags"]:
             items["function"][args.func_id] = snap
     elif args.scope == "file":
@@ -174,7 +185,9 @@ def cmd_stash(args, r, ns, ts, sim):
         if snap["notes"] or snap["tags"]:
             items["file"][args.file_id] = snap
     elif args.scope == "similarity":
-        snap = snapshot_similarity(ts, sim, args.collection, args.a, args.b, args.algo, args.owner, vocab)
+        snap = snapshot_similarity(
+            ts, sim, args.collection, args.a, args.b, args.algo, args.owner, vocab
+        )
         if snap["tags"]:
             sid = sim._canonicalize_sid(args.collection, args.a, args.b, args.algo)
             items["similarity"][sid] = snap
@@ -210,16 +223,21 @@ def cmd_stash(args, r, ns, ts, sim):
         clear_similarity(sim, args.collection, snap)
 
     stack = _load()
-    stack.insert(0, {
-        "timestamp": int(time.time()),
-        "message": args.message or "",
-        "scope": args.scope,
-        "collection": args.collection,
-        "owner": args.owner,
-        "items": items,
-    })
+    stack.insert(
+        0,
+        {
+            "timestamp": int(time.time()),
+            "message": args.message or "",
+            "scope": args.scope,
+            "collection": args.collection,
+            "owner": args.owner,
+            "items": items,
+        },
+    )
     _save(stack)
-    print(f"Stashed {n_notes} note(s), {n_tags} tag(s) as stash@{{0}}: {args.message or '(no message)'}")
+    print(
+        f"Stashed {n_notes} note(s), {n_tags} tag(s) as stash@{{0}}: {args.message or '(no message)'}"
+    )
 
 
 def _restore_entry(ns, ts, sim, entry, drop_after, stack, index):
@@ -234,7 +252,9 @@ def _restore_entry(ns, ts, sim, entry, drop_after, stack, index):
     n_notes = sum(len(v["notes"]) for v in entry["items"]["function"].values()) + sum(
         len(v["notes"]) for v in entry["items"]["file"].values()
     )
-    n_tags = sum(len(v["tags"]) for bucket in entry["items"].values() for v in bucket.values())
+    n_tags = sum(
+        len(v["tags"]) for bucket in entry["items"].values() for v in bucket.values()
+    )
     verb = "Popped" if drop_after else "Applied"
     print(f"{verb} stash@{{{index}}}: restored {n_notes} note(s), {n_tags} tag(s).")
 
@@ -271,7 +291,9 @@ def cmd_list(args):
         return
     for i, e in enumerate(stack):
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(e["timestamp"]))
-        print(f"stash@{{{i}}}: [{e['scope']}/{e['owner']}] {e['collection']} -- {e['message'] or '(no message)'} ({when})")
+        print(
+            f"stash@{{{i}}}: [{e['scope']}/{e['owner']}] {e['collection']} -- {e['message'] or '(no message)'} ({when})"
+        )
 
 
 def cmd_show(args):
@@ -283,24 +305,35 @@ def cmd_show(args):
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     ps = sub.add_parser("stash", help="snapshot + clear notes/tags")
     ps.add_argument("--collection", required=True)
-    ps.add_argument("--scope", required=True, choices=["function", "file", "file-functions", "similarity", "collection"])
+    ps.add_argument(
+        "--scope",
+        required=True,
+        choices=["function", "file", "file-functions", "similarity", "collection"],
+    )
     ps.add_argument("--func-id")
     ps.add_argument("--file-id")
-    ps.add_argument("--a", help="first entity id (similarity scope) -- a function id for a func-pair, a file id for a bin_sim/whole-binary pair")
+    ps.add_argument(
+        "--a",
+        help="first entity id (similarity scope) -- a function id for a func-pair, a file id for a bin_sim/whole-binary pair",
+    )
     ps.add_argument("--b", help="second entity id (similarity scope), same kind as --a")
     ps.add_argument("--algo", default="unweighted_cosine")
     ps.add_argument("--owner", default="all", choices=["all", "user", LLM_NOTE_OWNER])
     ps.add_argument("-m", "--message")
 
-    for name, help_ in [("pop", "restore stash@{N} and drop it (default N=0)"),
-                         ("apply", "restore stash@{N}, keep it stacked (default N=0)"),
-                         ("drop", "discard stash@{N} without restoring (default N=0)"),
-                         ("show", "print stash@{N} as JSON (default N=0)")]:
+    for name, help_ in [
+        ("pop", "restore stash@{N} and drop it (default N=0)"),
+        ("apply", "restore stash@{N}, keep it stacked (default N=0)"),
+        ("drop", "discard stash@{N} without restoring (default N=0)"),
+        ("show", "print stash@{N} as JSON (default N=0)"),
+    ]:
         sp = sub.add_parser(name, help=help_)
         sp.add_argument("index", nargs="?", type=int, default=0)
 
@@ -319,10 +352,14 @@ def main():
         cmd_stash(args, r, NoteService(r), TagService(r), SimilarityService(r))
     elif args.cmd == "pop":
         r = get_redis()
-        cmd_pop_apply(args, NoteService(r), TagService(r), SimilarityService(r), drop_after=True)
+        cmd_pop_apply(
+            args, NoteService(r), TagService(r), SimilarityService(r), drop_after=True
+        )
     elif args.cmd == "apply":
         r = get_redis()
-        cmd_pop_apply(args, NoteService(r), TagService(r), SimilarityService(r), drop_after=False)
+        cmd_pop_apply(
+            args, NoteService(r), TagService(r), SimilarityService(r), drop_after=False
+        )
     elif args.cmd == "drop":
         cmd_drop(args)
     elif args.cmd == "list":

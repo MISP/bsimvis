@@ -426,9 +426,7 @@ class SimilarityService:
 
         for i, feat in enumerate(features_sorted):
             if i % 16 == 0:
-                self._pl_warm(
-                    [item["key"] for item in features_sorted[i : i + 16]]
-                )
+                self._pl_warm([item["key"] for item in features_sorted[i : i + 16]])
             remaining_norm_sq = target_norm_sq - processed_norm_sq
             remaining_total = target_total - processed_total
             can_add_new = True
@@ -1366,7 +1364,9 @@ class SimilarityService:
         result = self._clear_script(args=[collection, field, value, algo or ""])
         from bsimvis.app.services.cluster_common import clear_hier_state
 
-        for name in ([algo] if algo else ["jaccard", "unweighted_cosine", "milvus_sparse"]):
+        for name in (
+            [algo] if algo else ["jaccard", "unweighted_cosine", "milvus_sparse"]
+        ):
             clear_hier_state(self.r, f"{collection}:cluster:hier:{name}")
         return result
 

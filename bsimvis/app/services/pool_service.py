@@ -296,9 +296,8 @@ class PoolService:
                 or (current_last_entry > snap_last_entry)
                 # A snapshot taken before generations were tracked has no baseline;
                 # don't read its absence as drift.
-                or current_generation != snap.get(
-                    "feature_generation", current_generation
-                )
+                or current_generation
+                != snap.get("feature_generation", current_generation)
             )
             if coll_outdated:
                 is_outdated = True

@@ -101,9 +101,7 @@ def main():
     )
     args = ap.parse_args()
 
-    pool_ids = (
-        [p["id"] for p in pool_service.list_pools()] if args.all else [args.pool]
-    )
+    pool_ids = [p["id"] for p in pool_service.list_pools()] if args.all else [args.pool]
     for pool_id in pool_ids:
         backfill(pool_id, args.algo, args.dry_run)
 

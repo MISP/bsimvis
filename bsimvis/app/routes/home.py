@@ -100,8 +100,10 @@ def _top_tags(cols, limit=20):
     top = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:limit]
     ns = {}
     for tag, n in counts.items():
-        prefix = tag.split(":", 1)[0] if ":" in tag else (
-            tag.split("/", 1)[0] if "/" in tag else "other"
+        prefix = (
+            tag.split(":", 1)[0]
+            if ":" in tag
+            else (tag.split("/", 1)[0] if "/" in tag else "other")
         )
         ns[prefix] = ns.get(prefix, 0) + n
     return {
@@ -187,6 +189,7 @@ def get_home_insights():
 
 
 # --- Unified search -------------------------------------------------------
+
 
 def _group(kind, items, mapper, limit):
     return {"kind": kind, "items": [mapper(i) for i in items[:limit]]}

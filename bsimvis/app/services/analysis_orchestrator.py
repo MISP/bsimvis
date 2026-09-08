@@ -330,9 +330,7 @@ def _cluster_units(units, adj, batch_size=CLUSTER_BATCH_SIZE):
             clustered.append(("scc", list(unit)))
             continue
         fid = unit[0]
-        connected = any(
-            fid in adj.get(b, ()) or b in adj.get(fid, ()) for b in batch
-        )
+        connected = any(fid in adj.get(b, ()) or b in adj.get(fid, ()) for b in batch)
         if batch and (not connected or len(batch) >= batch_size):
             flush()
         batch.append(fid)
@@ -594,7 +592,13 @@ class AnalysisOrchestrator:
                 "copied without a separate LLM call.)"
             )
             out[dup_fid] = self._finalize(
-                collection, dup_fid, rep_name, dup_summary, tags, actions, overwrite,
+                collection,
+                dup_fid,
+                rep_name,
+                dup_summary,
+                tags,
+                actions,
+                overwrite,
                 summaries,
             )
 
@@ -633,13 +637,27 @@ class AnalysisOrchestrator:
             return {func_id: ("failed", "empty LLM response")}
         out = {
             func_id: self._finalize(
-                collection, func_id, data["func_name"], summary, tags, actions,
-                overwrite, summaries,
+                collection,
+                func_id,
+                data["func_name"],
+                summary,
+                tags,
+                actions,
+                overwrite,
+                summaries,
             )
         }
         self._fanout_dups(
-            collection, func_id, data["func_name"], summary, tags, actions,
-            overwrite, summaries, dup_map or {}, out,
+            collection,
+            func_id,
+            data["func_name"],
+            summary,
+            tags,
+            actions,
+            overwrite,
+            summaries,
+            dup_map or {},
+            out,
         )
         return out
 
@@ -703,12 +721,26 @@ class AnalysisOrchestrator:
         out = {}
         for m in members:
             out[m["func_id"]] = self._finalize(
-                collection, m["func_id"], m["func_name"], summary, tags, actions,
-                overwrite, summaries,
+                collection,
+                m["func_id"],
+                m["func_name"],
+                summary,
+                tags,
+                actions,
+                overwrite,
+                summaries,
             )
             self._fanout_dups(
-                collection, m["func_id"], m["func_name"], summary, tags, actions,
-                overwrite, summaries, dup_map or {}, out,
+                collection,
+                m["func_id"],
+                m["func_name"],
+                summary,
+                tags,
+                actions,
+                overwrite,
+                summaries,
+                dup_map or {},
+                out,
             )
         return out
 
@@ -766,12 +798,26 @@ class AnalysisOrchestrator:
                 out[fid] = ("failed", "empty LLM response")
                 continue
             out[fid] = self._finalize(
-                collection, fid, m["func_name"], summary, tags, actions, overwrite,
+                collection,
+                fid,
+                m["func_name"],
+                summary,
+                tags,
+                actions,
+                overwrite,
                 summaries,
             )
             self._fanout_dups(
-                collection, fid, m["func_name"], summary, tags, actions, overwrite,
-                summaries, dup_map or {}, out,
+                collection,
+                fid,
+                m["func_name"],
+                summary,
+                tags,
+                actions,
+                overwrite,
+                summaries,
+                dup_map or {},
+                out,
             )
         for fid in missing:
             out[fid] = ("failed", "no result returned for this function in batch")
@@ -1149,11 +1195,15 @@ class AnalysisOrchestrator:
             for n in note_service.get_bin_sim_notes(pair_collection, sid) or []:
                 if n.get("owner") == LLM_NOTE_OWNER:
                     note_service.remove_bin_sim_note(pair_collection, sid, n.get("id"))
-        note_service.add_bin_sim_note(pair_collection, sid, report, owner=LLM_NOTE_OWNER)
+        note_service.add_bin_sim_note(
+            pair_collection, sid, report, owner=LLM_NOTE_OWNER
+        )
 
         if job_service and job_id:
             job_service.r.hset(f"job:{job_id}", "report", report)
-            job_service.add_log(job_id, "Binary comparison report saved as a pair note.")
+            job_service.add_log(
+                job_id, "Binary comparison report saved as a pair note."
+            )
         return True
 
     # --- whole-file analysis ---------------------------------------------

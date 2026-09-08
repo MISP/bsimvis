@@ -305,7 +305,9 @@ bin_sim_note_add_model = api.model(
 bin_sim_note_update_model = api.model(
     "BinSimNoteUpdate",
     {
-        "sid": fields.String(required=True, example="main:bin_sim:unweighted_cosine:..."),
+        "sid": fields.String(
+            required=True, example="main:bin_sim:unweighted_cosine:..."
+        ),
         "note_id": fields.String(required=True, example="uuid"),
         "text": fields.String(required=True, example="Updated note text"),
     },
@@ -314,7 +316,9 @@ bin_sim_note_update_model = api.model(
 bin_sim_note_remove_model = api.model(
     "BinSimNoteRemove",
     {
-        "sid": fields.String(required=True, example="main:bin_sim:unweighted_cosine:..."),
+        "sid": fields.String(
+            required=True, example="main:bin_sim:unweighted_cosine:..."
+        ),
         "note_id": fields.String(required=True, example="uuid"),
     },
 )
@@ -3094,7 +3098,9 @@ search_scope_model = api.model(
         "md5_b": fields.String(description="scope.type=pair"),
         "coll_b": fields.String(description="scope.type=pair, defaults to collection"),
         "pool_id": fields.String(description="scope.type=pair"),
-        "algo": fields.String(default="unweighted_cosine", description="scope.type=pair"),
+        "algo": fields.String(
+            default="unweighted_cosine", description="scope.type=pair"
+        ),
         "state": fields.String(
             enum=["all", "matched", "unique", "changed"],
             description="scope.type=pair function state. When set, overrides "

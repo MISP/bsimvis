@@ -118,9 +118,7 @@ def test_find_pair_sid_pool_namespaced_collection():
     )
 
     assert svc.find_pair_sid("mirai", "aa", "bb", "rondo", "7") == sid
-    assert (
-        svc.find_pair_sid("global:pool:7:col:mirai", "aa", "bb", "rondo", "7") == sid
-    )
+    assert svc.find_pair_sid("global:pool:7:col:mirai", "aa", "bb", "rondo", "7") == sid
     # both sides can arrive namespaced, and a wrong collection still misses
     assert (
         svc.find_pair_sid(

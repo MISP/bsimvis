@@ -76,7 +76,7 @@ def _tagged_files(r, collection, val, fields=("tags", "user_tags")):
                 # A tag itself carries colons (`packer:upx`), so this must strip
                 # the known prefix rather than split on the last `:` -- that used
                 # to chop `packer:upx` down to `upx` and lose the match entirely.
-                if bs.startswith(prefix) and val_l in bs[len(prefix):].lower():
+                if bs.startswith(prefix) and val_l in bs[len(prefix) :].lower():
                     buckets.append(bs)
         except Exception as e:
             logging.warning(f"file tag registry SSCAN failed for {reg}: {e}")
@@ -578,8 +578,14 @@ def _pool_page(r, pool_id, algo, f):
         b_is_anchor = bool(anchor) and anchor in m_b.lower()
         if a_is_anchor != b_is_anchor:
             excl_tags = tags_b if a_is_anchor else tags_a
-            excl_static = meta_b.get("tags", []) if a_is_anchor else meta_a.get("tags", [])
-            excl_user = meta_b.get("user_tags", []) if a_is_anchor else meta_a.get("user_tags", [])
+            excl_static = (
+                meta_b.get("tags", []) if a_is_anchor else meta_a.get("tags", [])
+            )
+            excl_user = (
+                meta_b.get("user_tags", [])
+                if a_is_anchor
+                else meta_a.get("user_tags", [])
+            )
         else:
             excl_tags = tags_a + tags_b
             excl_static = meta_a.get("tags", []) + meta_b.get("tags", [])
@@ -709,7 +715,8 @@ def search_bin_sims():
             # selector, used to filter min/max on the same field the UI sorts/shows.
             "score_field": SORT_ZSET_MAP.get(
                 (request.args.get("sort") or "score").strip(), "score"
-            ) or "score",
+            )
+            or "score",
             "min_score": parse_float(request.args.get("min_score")),
             "max_score": parse_float(request.args.get("max_score")),
             "min_cov": parse_float(request.args.get("min_coverage")),

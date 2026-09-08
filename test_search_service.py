@@ -89,20 +89,24 @@ def _fake_classify(members, query, vocabulary=None):
 
 def _run(svc, func_ids=None, classify=_fake_classify):
     func_ids = func_ids if func_ids is not None else list(FUNCS)
-    with patch(
-        "bsimvis.app.services.search_service.get_function",
-        side_effect=_fake_get_function,
-    ), patch(
-        "bsimvis.app.services.search_service.llm_service"
-    ) as mock_llm, patch(
-        "bsimvis.app.services.tag_service.tag_service.get_llm_vocabulary",
-        return_value=[],
+    with (
+        patch(
+            "bsimvis.app.services.search_service.get_function",
+            side_effect=_fake_get_function,
+        ),
+        patch("bsimvis.app.services.search_service.llm_service") as mock_llm,
+        patch(
+            "bsimvis.app.services.tag_service.tag_service.get_llm_vocabulary",
+            return_value=[],
+        ),
     ):
         mock_llm.classify_relevance_batch.side_effect = classify
         search_id, job_id, total = svc.create_search(
             "main", {"type": "filter"}, "find config handling", func_ids
         )
-        ok = svc.run_search_classification(search_id, "main", func_ids, "find config handling")
+        ok = svc.run_search_classification(
+            search_id, "main", func_ids, "find config handling"
+        )
     return search_id, job_id, total, ok
 
 
@@ -158,9 +162,14 @@ def test_list_and_delete_search():
 
 def test_delete_cancels_a_still_running_search():
     svc = SearchService(FakeRedis())
-    search_id, job_id, _total, _ok = _run(svc, classify=lambda members, query, vocabulary=None: (
-        {}, [fid for fid, _, _ in members], "boom"
-    ))
+    search_id, job_id, _total, _ok = _run(
+        svc,
+        classify=lambda members, query, vocabulary=None: (
+            {},
+            [fid for fid, _, _ in members],
+            "boom",
+        ),
+    )
     # force it back to "running" as if the job were still in flight
     svc.r.hset(f"search:{search_id}", "status", "running")
 
@@ -212,12 +221,15 @@ def test_resolve_scope_pair_defaults_include_unchanged_true():
     from bsimvis.app.routes.searches import _resolve_scope
 
     fake_pair = {"diff": {}}
-    with patch(
-        "bsimvis.app.services.bin_sim_service.bin_sim_service.load_pair",
-        return_value=("sid", fake_pair),
-    ), patch(
-        "bsimvis.app.services.analysis_orchestrator.analysis_orchestrator.pair_candidates"
-    ) as mock_candidates:
+    with (
+        patch(
+            "bsimvis.app.services.bin_sim_service.bin_sim_service.load_pair",
+            return_value=("sid", fake_pair),
+        ),
+        patch(
+            "bsimvis.app.services.analysis_orchestrator.analysis_orchestrator.pair_candidates"
+        ) as mock_candidates,
+    ):
         mock_candidates.return_value = [{"func_id": "a:func:m:1"}]
         ids, err = _resolve_scope(
             "main", {"type": "pair", "md5_a": "aa", "md5_b": "bb"}

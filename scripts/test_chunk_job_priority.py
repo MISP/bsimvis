@@ -137,7 +137,11 @@ class StubRedis:
 
     def zrangebyscore(self, key, low, high):
         z = self.zsets.get(key, {})
-        return [m for m, score in sorted(z.items(), key=lambda kv: kv[1]) if low <= score <= high]
+        return [
+            m
+            for m, score in sorted(z.items(), key=lambda kv: kv[1])
+            if low <= score <= high
+        ]
 
     def zremrangebyscore(self, key, low, high):
         z = self.zsets.get(key, {})
@@ -162,7 +166,9 @@ class StubRedis:
         return list(self.hashes.get(key, {}).keys())
 
     def zrange(self, key, start, end, withscores=False):
-        members = [m for m, _ in sorted(self.zsets.get(key, {}).items(), key=lambda kv: kv[1])]
+        members = [
+            m for m, _ in sorted(self.zsets.get(key, {}).items(), key=lambda kv: kv[1])
+        ]
         return members[start:] if end == -1 else members[start : end + 1]
 
     def pipeline(self, transaction=True):
@@ -781,9 +787,15 @@ def test_only_the_active_unit_may_advance_the_lane():
     js = JobService()
     js.r = StubRedis()
 
-    active = js.submit_to_lane("main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})])
-    second = js.submit_to_lane("main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})])
-    third = js.submit_to_lane("main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})])
+    active = js.submit_to_lane(
+        "main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})]
+    )
+    second = js.submit_to_lane(
+        "main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})]
+    )
+    third = js.submit_to_lane(
+        "main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})]
+    )
 
     js.cancel_job(third)
 
@@ -796,9 +808,15 @@ def test_duplicate_terminal_event_does_not_promote_twice():
     js = JobService()
     js.r = StubRedis()
 
-    active = js.submit_to_lane("main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})])
-    second = js.submit_to_lane("main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})])
-    third = js.submit_to_lane("main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})])
+    active = js.submit_to_lane(
+        "main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})]
+    )
+    second = js.submit_to_lane(
+        "main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})]
+    )
+    third = js.submit_to_lane(
+        "main", [(JobType.CLUSTER_FUNCTIONS, {"collection": "main"})]
+    )
 
     js.complete_job(active)
     js.complete_job(active)  # a requeued leaf reporting twice, a retry, a race
@@ -820,7 +838,9 @@ def test_expired_lease_fails_a_ghidra_job_instead_of_requeuing_it():
     js = JobService()
     js.r = StubRedis()
 
-    job_id = js.create_job(JobType.GHIDRA_ANALYZE, {"collection": "main", "file_md5": "a"})
+    job_id = js.create_job(
+        JobType.GHIDRA_ANALYZE, {"collection": "main", "file_md5": "a"}
+    )
     js.r.lists["jobs:pending"] = []
     _claim(js, job_id)
 

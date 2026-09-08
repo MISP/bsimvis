@@ -44,7 +44,14 @@ def add_tag():
     if not all([collection, etype, entry_id, tag]):
         return {"error": "Missing parameters"}, 400
 
-    if etype not in ["file", "function", "similarity", "cluster", "bin_cluster", "bin_sim"]:
+    if etype not in [
+        "file",
+        "function",
+        "similarity",
+        "cluster",
+        "bin_cluster",
+        "bin_sim",
+    ]:
         return {"error": "Invalid entity type"}, 400
 
     success = tag_service.add_user_tag(
@@ -101,7 +108,14 @@ def remove_tag():
     if not all([collection, etype, entry_id, tag]):
         return {"error": "Missing parameters"}, 400
 
-    if etype not in ["file", "function", "similarity", "cluster", "bin_cluster", "bin_sim"]:
+    if etype not in [
+        "file",
+        "function",
+        "similarity",
+        "cluster",
+        "bin_cluster",
+        "bin_sim",
+    ]:
         return {"error": "Invalid entity type"}, 400
 
     success = tag_service.remove_user_tag(

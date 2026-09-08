@@ -42,7 +42,9 @@ class ZStubRedis(StubRedis):
 
     def zrangebyscore(self, key, low, high):
         z = self.zsets.get(key, {})
-        return [m for m, s in sorted(z.items(), key=lambda kv: kv[1]) if low <= s <= high]
+        return [
+            m for m, s in sorted(z.items(), key=lambda kv: kv[1]) if low <= s <= high
+        ]
 
     def zrange(self, key, start, end, withscores=False):
         return list(self.zsets.get(key, {}))

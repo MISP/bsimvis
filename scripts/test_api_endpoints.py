@@ -822,8 +822,6 @@ def test_incremental_hierarchical_cluster_equivalence():
                 break
 
 
-
-
 # ---------------------------------------------------------------------------
 # Ghidra language / compiler-spec listing and upload validation
 # ---------------------------------------------------------------------------
@@ -3689,7 +3687,9 @@ def test_search_job():
     print(_color(f"{'='*60}", CYAN))
 
     if not file_md5:
-        print(_color("\n[SKIP] Need an uploaded binary – search checks skipped.", YELLOW))
+        print(
+            _color("\n[SKIP] Need an uploaded binary – search checks skipped.", YELLOW)
+        )
         return
 
     missing = requests.post(
@@ -3738,7 +3738,9 @@ def test_search_job():
         job_id = (started or {}).get("job_id")
         check(
             "search enqueues a classification job",
-            bool(search_id) and bool(job_id) and int((started or {}).get("total") or 0) > 0,
+            bool(search_id)
+            and bool(job_id)
+            and int((started or {}).get("total") or 0) > 0,
             str(started),
         )
         if job_id:
@@ -3748,7 +3750,8 @@ def test_search_job():
                 "search job carries the search_id and query",
                 (job or {}).get("type") == "search_classify"
                 and payload.get("search_id") == search_id
-                and payload.get("query") == "the function that decrypts the embedded configuration"
+                and payload.get("query")
+                == "the function that decrypts the embedded configuration"
                 and len(payload.get("func_ids") or []) > 0,
                 str(job)[:300],
             )
@@ -3757,14 +3760,18 @@ def test_search_job():
             listed = test_endpoint("GET", "/api/searches", label="GET /api/searches")
             check(
                 "new search appears in the list",
-                any(s.get("id") == search_id for s in (listed or {}).get("searches") or []),
+                any(
+                    s.get("id") == search_id
+                    for s in (listed or {}).get("searches") or []
+                ),
                 str(listed)[:200],
             )
 
             detail = test_endpoint("GET", f"/api/searches/{search_id}")
             check(
                 "search detail preserves scope and query",
-                (detail or {}).get("query") == "the function that decrypts the embedded configuration"
+                (detail or {}).get("query")
+                == "the function that decrypts the embedded configuration"
                 and (detail or {}).get("scope", {}).get("type") == "file",
                 str(detail)[:300],
             )
@@ -3849,7 +3856,12 @@ def test_bin_sim_notes_and_tags():
     print(_color(f"{'='*60}", CYAN))
 
     if not file_md5 or not file_md5_2:
-        print(_color("\n[SKIP] Need two binaries – bin_sim notes/tags checks skipped.", YELLOW))
+        print(
+            _color(
+                "\n[SKIP] Need two binaries – bin_sim notes/tags checks skipped.",
+                YELLOW,
+            )
+        )
         return
 
     # The plain (no `table`) diff response is the full doc, sid included.
@@ -3868,7 +3880,12 @@ def test_bin_sim_notes_and_tags():
     add_tag_resp = test_endpoint(
         "POST",
         "/api/tags/add",
-        data={"collection": COLLECTION, "entity_type": "bin_sim", "entity_id": sid, "tag": "reviewed"},
+        data={
+            "collection": COLLECTION,
+            "entity_type": "bin_sim",
+            "entity_id": sid,
+            "tag": "reviewed",
+        },
         label="POST /api/tags/add (bin_sim)",
     )
     check(
@@ -3881,10 +3898,19 @@ def test_bin_sim_notes_and_tags():
         resp = test_endpoint(
             "POST",
             "/api/tags/add",
-            data={"collection": COLLECTION, "entity_type": "bin_sim", "entity_id": sid, "tag": special},
+            data={
+                "collection": COLLECTION,
+                "entity_type": "bin_sim",
+                "entity_id": sid,
+                "tag": special,
+            },
             label=f"POST /api/tags/add (bin_sim {special})",
         )
-        check(f"bin_sim {special} tag add reports success", (resp or {}).get("status") == "success", str(resp))
+        check(
+            f"bin_sim {special} tag add reports success",
+            (resp or {}).get("status") == "success",
+            str(resp),
+        )
 
     diff2 = test_endpoint(
         "GET",
@@ -3905,7 +3931,9 @@ def test_bin_sim_notes_and_tags():
         params={"collection": COLLECTION},
         label="GET /api/bin_sim/search (after tagging)",
     )
-    matching = [r for r in (search_after_tag or {}).get("results", []) if r.get("_id") == sid]
+    matching = [
+        r for r in (search_after_tag or {}).get("results", []) if r.get("_id") == sid
+    ]
     check(
         "bin_sim search result exposes sid as _id",
         bool(matching),
@@ -3921,7 +3949,12 @@ def test_bin_sim_notes_and_tags():
     remove_tag_resp = test_endpoint(
         "POST",
         "/api/tags/remove",
-        data={"collection": COLLECTION, "entity_type": "bin_sim", "entity_id": sid, "tag": "reviewed"},
+        data={
+            "collection": COLLECTION,
+            "entity_type": "bin_sim",
+            "entity_id": sid,
+            "tag": "reviewed",
+        },
         label="POST /api/tags/remove (bin_sim)",
     )
     check(
@@ -4007,7 +4040,11 @@ def test_bin_sim_notes_and_tags():
         update_resp = test_endpoint(
             "PUT",
             "/api/notes/bin_sim/update",
-            data={"sid": sid, "note_id": note_id, "text": "Updated: same malware family, high confidence."},
+            data={
+                "sid": sid,
+                "note_id": note_id,
+                "text": "Updated: same malware family, high confidence.",
+            },
             label="PUT /api/notes/bin_sim/update",
         )
         check(
@@ -4041,7 +4078,12 @@ def test_bin_sim_notes_and_tags():
         test_endpoint(
             "POST",
             "/api/tags/remove",
-            data={"collection": COLLECTION, "entity_type": "bin_sim", "entity_id": sid, "tag": special},
+            data={
+                "collection": COLLECTION,
+                "entity_type": "bin_sim",
+                "entity_id": sid,
+                "tag": special,
+            },
             label=f"POST /api/tags/remove (bin_sim {special}, cleanup)",
         )
 

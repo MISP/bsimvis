@@ -26,7 +26,9 @@ from bsimvis.app.services.redis_client import get_redis
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ITERATIONS = 8
-SESSION_TTL = 7 * 24 * 3600  # a week -- long enough to resume, short enough to not pile up
+SESSION_TTL = (
+    7 * 24 * 3600
+)  # a week -- long enough to resume, short enough to not pile up
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a senior reverse engineer and malware analyst assisting a human "
@@ -133,9 +135,7 @@ class LLMChatService:
         tool_calls_made = []
 
         for _ in range(MAX_TOOL_ITERATIONS):
-            wire_messages = [
-                {k: v for k, v in m.items() if k != "ts"} for m in history
-            ]
+            wire_messages = [{k: v for k, v in m.items() if k != "ts"} for m in history]
             try:
                 response = client.chat(
                     model=self.model,

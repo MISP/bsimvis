@@ -915,7 +915,9 @@ def score_pair(edges, funcs_a, funcs_b, feat, fid_tags=None, tag_meta_cache=None
         return sum((feat(f) or 1.0) for f in fids)
 
     tag_fields = (
-        tag_split.summaries(total_weight(funcs_a), total_weight(funcs_b), tag_meta_cache)
+        tag_split.summaries(
+            total_weight(funcs_a), total_weight(funcs_b), tag_meta_cache
+        )
         if fid_tags
         else dict(EMPTY_SUMMARIES)
     )
@@ -1036,7 +1038,9 @@ def demo():
 
     # No library-tagged mass anywhere -> no library card.
     lib, code = code_library_split(
-        matched=[{"func_a": "fc", "func_b": "fd", "similarity": 0.4, "avg_features": 10.0}],
+        matched=[
+            {"func_a": "fc", "func_b": "fd", "similarity": 0.4, "avg_features": 10.0}
+        ],
         unique_to_a=[],
         unique_to_b=[],
         fid_tags=fid_tags,

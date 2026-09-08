@@ -342,11 +342,19 @@ def build_container_sims(
         pipe.set(sid, json.dumps(doc))
         pipe.zadd(f"{collection}:bin_sim:score:{algo}", {sid: doc["score"]})
         if doc["score_code"] is not None:
-            pipe.zadd(f"{collection}:bin_sim:score_code:{algo}", {sid: doc["score_code"]})
+            pipe.zadd(
+                f"{collection}:bin_sim:score_code:{algo}", {sid: doc["score_code"]}
+            )
         if doc["score_library"] is not None:
-            pipe.zadd(f"{collection}:bin_sim:score_library:{algo}", {sid: doc["score_library"]})
+            pipe.zadd(
+                f"{collection}:bin_sim:score_library:{algo}",
+                {sid: doc["score_library"]},
+            )
         if doc["score_content"] is not None:
-            pipe.zadd(f"{collection}:bin_sim:score_content:{algo}", {sid: doc["score_content"]})
+            pipe.zadd(
+                f"{collection}:bin_sim:score_content:{algo}",
+                {sid: doc["score_content"]},
+            )
         pipe.sadd(f"{collection}:bin_sim:involves:{p}", sid)
         pipe.sadd(f"{collection}:bin_sim:involves:{q}", sid)
         pipe.sadd(f"{collection}:bin_sim:built:{algo}", sid)
@@ -706,9 +714,14 @@ def demo():
         [("a1", "b1", 0.8, "s1"), ("a2", "b2", 0.4, "s2")],
         {"a1": 100, "a2": 100},
         {"b1": 100, "b2": 100},
-        child_scores={"s1": {"code": 0.9, "library": None}, "s2": {"code": 0.5, "library": 0.2}},
+        child_scores={
+            "s1": {"code": 0.9, "library": None},
+            "s2": {"code": 0.5, "library": 0.2},
+        },
     )
-    assert abs(agg["score_code"] - (0.9 * 100 + 0.5 * 100) / 200) < 1e-9, agg["score_code"]
+    assert abs(agg["score_code"] - (0.9 * 100 + 0.5 * 100) / 200) < 1e-9, agg[
+        "score_code"
+    ]
     # library only had one opinionated edge, so it is that edge's value alone.
     assert abs(agg["score_library"] - 0.2) < 1e-9, agg["score_library"]
 

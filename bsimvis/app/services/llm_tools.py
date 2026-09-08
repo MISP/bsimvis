@@ -115,7 +115,9 @@ def get_call_graph(func_id):
     return result
 
 
-def get_function_relations(func_ids, collection, algo="unweighted_cosine", min_score=0.85):
+def get_function_relations(
+    func_ids, collection, algo="unweighted_cosine", min_score=0.85
+):
     """Call edges and similarity edges among an arbitrary set of function ids.
 
     The bulk equivalent of `get_call_graph` for a whole working set at once --
@@ -133,7 +135,9 @@ def get_function_relations(func_ids, collection, algo="unweighted_cosine", min_s
         # call_edges -- skip the O(ids^2) pairwise similarity pass entirely.
         "sim_edges": "0",
     }
-    with _context_app().test_request_context("/api/function/relations", query_string=qs):
+    with _context_app().test_request_context(
+        "/api/function/relations", query_string=qs
+    ):
         result = _relations()
     if isinstance(result, tuple):
         return {"error": (result[0] or {}).get("detail", "relations lookup failed")}
@@ -158,7 +162,10 @@ def get_similar_functions(collection, md5, address, min_score=0.9, limit=10, poo
     if isinstance(result, tuple):
         return {"error": (result[0] or {}).get("error", "similarity search failed")}
     return {
-        "pairs": result.get("pairs") or result.get("items") or result.get("results") or [],
+        "pairs": result.get("pairs")
+        or result.get("items")
+        or result.get("results")
+        or [],
         "total": result.get("total"),
     }
 
@@ -186,7 +193,12 @@ def search_tags(collection, q="", limit=25):
     """
     from bsimvis.app.routes.tags import list_tags
 
-    qs = {"collection": collection, "q": q, "sort_by": "total_count", "sort_order": "desc"}
+    qs = {
+        "collection": collection,
+        "q": q,
+        "sort_by": "total_count",
+        "sort_order": "desc",
+    }
     with _context_app().test_request_context("/api/tags/list", query_string=qs):
         result = list_tags()
     if isinstance(result, tuple):
@@ -194,7 +206,11 @@ def search_tags(collection, q="", limit=25):
     items = (result.get("items") if isinstance(result, dict) else None) or []
     return {
         "tags": [
-            {"tag": i.get("tag"), "function_count": i.get("function_count"), "total_count": i.get("total_count")}
+            {
+                "tag": i.get("tag"),
+                "function_count": i.get("function_count"),
+                "total_count": i.get("total_count"),
+            }
             for i in items[:limit]
         ]
     }
@@ -383,7 +399,10 @@ TOOLS = [
                 "properties": {
                     "collection": {"type": "string"},
                     "md5": {"type": "string", "description": "File md5"},
-                    "address": {"type": "string", "description": "Function entry address"},
+                    "address": {
+                        "type": "string",
+                        "description": "Function entry address",
+                    },
                     "min_score": {"type": "number", "default": 0.9},
                     "limit": {"type": "integer", "default": 10},
                 },
@@ -526,9 +545,17 @@ def describe_api_call(name, args):
     single-cluster list filter), not a byte-for-byte replay, but close
     enough for an analyst to sanity-check the lookup."""
     if name == "get_function":
-        return {"method": "GET", "path": "/api/function/code", "query": {"id": args.get("func_id")}}
+        return {
+            "method": "GET",
+            "path": "/api/function/code",
+            "query": {"id": args.get("func_id")},
+        }
     if name == "get_call_graph":
-        return {"method": "GET", "path": "/api/function/call_graph", "query": {"id": args.get("func_id")}}
+        return {
+            "method": "GET",
+            "path": "/api/function/call_graph",
+            "query": {"id": args.get("func_id")},
+        }
     if name == "get_similar_functions":
         return {
             "method": "GET",
@@ -544,7 +571,9 @@ def describe_api_call(name, args):
     if name == "search_functions":
         query = {
             k: v[0] if len(v) == 1 else v
-            for k, v in parse_qs(args.get("filters_qs", ""), keep_blank_values=True).items()
+            for k, v in parse_qs(
+                args.get("filters_qs", ""), keep_blank_values=True
+            ).items()
         }
         query["collection"] = args.get("collection")
         query["limit"] = args.get("limit", 25)

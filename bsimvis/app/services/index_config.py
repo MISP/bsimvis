@@ -283,6 +283,7 @@ HIERARCHY_SEPARATORS = {
     "namespace": ["::", "/", "."],
 }
 
+
 def is_hierarchical(field: str) -> bool:
     """Whether this field's values roll up into ancestor buckets."""
     return field in TAG_FIELDS or field in HIERARCHY_SEPARATORS

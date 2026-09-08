@@ -12,7 +12,6 @@ from bsimvis.app.services.bin_sim_tags import (
     read_tags_rev,
 )
 
-
 BIN_SIM_TAG_FIELDS = (
     "md5_a",
     "md5_b",

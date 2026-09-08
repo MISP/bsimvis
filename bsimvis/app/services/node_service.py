@@ -68,7 +68,13 @@ def get_enriched_nodes(collection, md5, addr, limit=None):
         # File names for binary grouping in the call graph -- one extra pipeline
         # keyed by md5 (parsed out of "collection:func:md5:addr") so nodes from a
         # different binary than the center function can be labeled/clustered.
-        file_md5s = sorted({fid.split(":")[2] for fid in all_ids if not fid.startswith("ext:") and len(fid.split(":")) > 2})
+        file_md5s = sorted(
+            {
+                fid.split(":")[2]
+                for fid in all_ids
+                if not fid.startswith("ext:") and len(fid.split(":")) > 2
+            }
+        )
         file_name_map = {}
         if file_md5s:
             fpipe = r.pipeline(transaction=False)

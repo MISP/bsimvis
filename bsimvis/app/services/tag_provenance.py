@@ -544,7 +544,9 @@ def _one_rule(text, name):
     """The `rule <name> { ... }` block out of a multi-rule file."""
     if not text or not name:
         return text
-    m = re.search(rf"^\s*(?:private\s+|global\s+)*rule\s+{re.escape(name)}\b", text, re.M)
+    m = re.search(
+        rf"^\s*(?:private\s+|global\s+)*rule\s+{re.escape(name)}\b", text, re.M
+    )
     if not m:
         return text
     start = m.start()
@@ -607,7 +609,11 @@ def demo():
         {
             uuid: rulezet_row(
                 {"title": "Some Rule Title", "author": "someone", "license": "MIT"},
-                tags=["platform:linux", "rulezet:Mirror_Rule", "yara:trojan:x#Mirror_Rule"],
+                tags=[
+                    "platform:linux",
+                    "rulezet:Mirror_Rule",
+                    "yara:trojan:x#Mirror_Rule",
+                ],
             )
         },
         r,
@@ -664,7 +670,9 @@ def demo():
                                 "id": "T1082",
                             }
                         ],
-                        "mbc": [{"parts": ["File System", "Writes File"], "id": "C0052"}],
+                        "mbc": [
+                            {"parts": ["File System", "Writes File"], "id": "C0052"}
+                        ],
                         "examples": ["7351f8:0x401E14"],
                     },
                     "source": "rule:\n  meta:\n    name: write file\n",
@@ -692,9 +700,9 @@ def demo():
 
     _saved, _tp._redis = _tp._redis, lambda: r
     try:
-        assert rule_text("capa:host-interaction/file-system").startswith("rule:"), (
-            rule_text("capa:host-interaction/file-system")
-        )
+        assert rule_text("capa:host-interaction/file-system").startswith(
+            "rule:"
+        ), rule_text("capa:host-interaction/file-system")
         assert rule_text("capa:nursery/thing") is None
     finally:
         _tp._redis = _saved

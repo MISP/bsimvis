@@ -635,8 +635,7 @@ class JobService:
             return True
         job = self.r.hgetall(f"job:{job_id}")
         return any(
-            self._has_live_descendant(tid, claimed, seen)
-            for tid in self._task_ids(job)
+            self._has_live_descendant(tid, claimed, seen) for tid in self._task_ids(job)
         )
 
     def tick_lanes(self):

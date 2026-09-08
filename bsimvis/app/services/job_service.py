@@ -92,11 +92,14 @@ MEM_DEFAULT_COST = 512 * 1024**2
 # enrich_features jobs would not have saved any single one of them. This stops
 # the fleet from collectively overcommitting the host; it is necessary, not
 # sufficient.
-# 0 = a lease expiry is terminal: the job is failed on the spot and never
-# requeued. Duplicate work is the worse failure here -- a requeued analysis
-# re-enters a collection its first run is still writing into -- so a dead
-# worker's job is reported as failed, to be retried by hand if it mattered.
-MAX_ATTEMPTS = 0
+MAX_ATTEMPTS = 1  # requeue a job this many times before failing it for good
+# Types a requeue costs more than the failure. GHIDRA_ANALYZE has no resume --
+# a retry re-decompiles from function 0 -- and the redo re-enters a collection
+# its first run is still writing into. Everything else is guarded by a built
+# set or a checkpoint (similarity_service skips functions already built,
+# enrich_features resumes mid-drain), so a requeue finishes the work rather
+# than repeating it.
+NO_REQUEUE_TYPES = {JobType.GHIDRA_ANALYZE.value}
 REAPER_LOCK_KEY = "jobs:reaper:lock"
 REAPER_RUN_KEY = "jobs:reaper:last_run"  # unix ts of the last completed sweep
 # Workers sweep every 30s. A gap past this means nobody swept -- the fleet was
@@ -1057,8 +1060,9 @@ class JobService:
     def reap_expired(self, now=None):
         """Resolves jobs whose worker died, and clears stale in-flight entries.
 
-        "Resolves" is MAX_ATTEMPTS' call: at 0 (the default) an expired lease
-        fails the job outright, above 0 it is requeued that many times first.
+        "Resolves" is MAX_ATTEMPTS' call: a job is requeued that many times
+        before being failed for good, and a type in NO_REQUEUE_TYPES is failed
+        on its first expiry.
 
         Returns (requeued, failed, cleaned). Held under a short lock so a fleet
         starting together does not requeue the same job several times.
@@ -1120,9 +1124,14 @@ class JobService:
 
                 self.release_lease(job_id)
 
-                if MAX_ATTEMPTS <= 0:
-                    self.add_log(job_id, "Lease expired; failing (retries disabled).")
-                    self.fail_job(job_id, "Lease expired; retries are disabled.")
+                budget = 0 if job.get("type") in NO_REQUEUE_TYPES else MAX_ATTEMPTS
+                if budget <= 0:
+                    self.add_log(
+                        job_id, "Lease expired; failing (this type is never requeued)."
+                    )
+                    self.fail_job(
+                        job_id, "Lease expired; this job type is not requeued."
+                    )
                     failed += 1
                     continue
 
@@ -1151,7 +1160,7 @@ class JobService:
                     attempts = 0
                 else:
                     attempts = self.r.hincrby(f"job:{job_id}", "attempts", 1)
-                if attempts > MAX_ATTEMPTS:
+                if attempts > budget:
                     self.add_log(
                         job_id,
                         f"Abandoned after {attempts - 1} attempts (worker kept dying).",

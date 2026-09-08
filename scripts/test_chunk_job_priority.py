@@ -10,6 +10,7 @@ import time
 
 from bsimvis.app.services.job_service import (
     LEASE_TTL,
+    REAPER_LOCK_KEY,
     JobService,
     JobStatus,
     JobType,
@@ -806,18 +807,53 @@ def test_duplicate_terminal_event_does_not_promote_twice():
     assert js.r.hget(f"job:{third}", "status") == JobStatus.PENDING.value
 
 
-def test_expired_lease_fails_the_job_instead_of_requeuing_it():
+def _claim(js, job_id):
+    """Put a job in the state a worker holding it leaves behind."""
+    js.r.hset(f"job:{job_id}", "status", JobStatus.RUNNING.value)
+    js.claim_lease(job_id, "worker-1")
+    js.r.rpush("jobs:processing", job_id)
+
+
+def test_expired_lease_fails_a_ghidra_job_instead_of_requeuing_it():
+    """No resume: a retry re-decompiles from function 0 and re-enters a
+    collection its first run is still writing into."""
     js = JobService()
     js.r = StubRedis()
 
     job_id = js.create_job(JobType.GHIDRA_ANALYZE, {"collection": "main", "file_md5": "a"})
     js.r.lists["jobs:pending"] = []
-    js.r.hset(f"job:{job_id}", "status", JobStatus.RUNNING.value)
-    js.claim_lease(job_id, "worker-1")
-    js.r.rpush("jobs:processing", job_id)
+    _claim(js, job_id)
 
     requeued, failed, _ = js.reap_expired(now=time.time() + LEASE_TTL + 1)
 
+    assert (requeued, failed) == (0, 1)
+    assert js.r.hget(f"job:{job_id}", "status") == JobStatus.FAILED.value
+    assert js.r.lists.get("jobs:pending", []) == []
+
+
+def test_resumable_job_gets_one_requeue_then_fails():
+    """build_sim skips functions already in the built set, so a requeue
+    finishes the work instead of repeating it -- but only once."""
+    js = JobService()
+    js.r = StubRedis()
+
+    job_id = js.create_job(JobType.BUILD_SIM, {"collection": "main"})
+    js.r.lists["jobs:pending"] = []
+    _claim(js, job_id)
+    t0 = time.time()
+
+    requeued, failed, _ = js.reap_expired(now=t0 + LEASE_TTL + 1)
+    assert (requeued, failed) == (1, 0)
+    assert js.r.hget(f"job:{job_id}", "status") == JobStatus.PENDING.value
+    assert js.r.lists["jobs:pending"] == [job_id]
+
+    js.r.delete(REAPER_LOCK_KEY)
+    js.r.lists["jobs:pending"] = []
+    _claim(js, job_id)
+
+    # Inside REAPER_PAUSE_GRACE of the first sweep: a wider gap is read as a
+    # fleet-wide stall and renews every lease instead of judging it.
+    requeued, failed, _ = js.reap_expired(now=t0 + LEASE_TTL + 61)
     assert (requeued, failed) == (0, 1)
     assert js.r.hget(f"job:{job_id}", "status") == JobStatus.FAILED.value
     assert js.r.lists.get("jobs:pending", []) == []
@@ -850,5 +886,6 @@ if __name__ == "__main__":
     test_stale_unit_with_no_live_worker_still_hands_the_lane_over()
     test_only_the_active_unit_may_advance_the_lane()
     test_duplicate_terminal_event_does_not_promote_twice()
-    test_expired_lease_fails_the_job_instead_of_requeuing_it()
+    test_expired_lease_fails_a_ghidra_job_instead_of_requeuing_it()
+    test_resumable_job_gets_one_requeue_then_fails()
     print("ok")

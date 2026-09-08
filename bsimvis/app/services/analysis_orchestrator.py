@@ -970,6 +970,17 @@ class AnalysisOrchestrator:
         candidates = _select_pair_candidates(
             pair.get("diff") or {}, threshold, include_unique, include_unchanged
         )
+        if not candidates:
+            # Two near-identical binaries have no unique functions and no match
+            # under the threshold, so the changed-code selection is empty by
+            # construction. Say which flag emptied it rather than reporting a
+            # count the analyst cannot act on.
+            raise ValueError(
+                "Pair selection resolved to zero functions: nothing is unique "
+                f"and every match scores at or above {threshold}. Analyze what "
+                "the two share instead (include_unchanged), or lower the "
+                "changed-match threshold."
+            )
         pipe = self.r.pipeline(transaction=False)
         for row in candidates:
             pipe.get(_resolve_doc_id(row["func_id"]))
@@ -1039,7 +1050,12 @@ class AnalysisOrchestrator:
                 filtered.extend(sorted(unit, key=lambda item: item[1]["side"]))
                 last_side = None if bucket == "both" else bucket
         if not filtered:
-            raise ValueError("Pair selection resolved to zero functions")
+            raise ValueError(
+                f"Pair selection resolved to zero functions: {len(candidates)} "
+                "candidate(s) were all dropped by the post-filters "
+                f"(min_complexity={min_complexity}, "
+                f"skip_fid_tagged={skip_fid_tagged})."
+            )
         return [row for _, row in filtered]
 
     def run_pair_analysis(

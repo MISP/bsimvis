@@ -55,3 +55,22 @@ def test_discovery_batches_posting_list_misses():
     )
 
     assert service.r.pipeline_executes == 2
+
+
+def test_discovery_limits_prefetch_before_pruning():
+    service = object.__new__(SimilarityService)
+    service.r = FakeRedis()
+    service._pl_cache = OrderedDict()
+    service._pl_pairs = 0
+    service._pl_budget = 100
+    service._count_cache = {}
+    service._norm_cache = {}
+
+    features = [value for i in range(32) for value in (f"feature-{i}", 1)]
+    service._discover_find(
+        ["target", "collection", "unweighted_cosine", 0.9, 32, sqrt(32), 1000, 0]
+        + features
+    )
+
+    assert service.r.pipeline_executes == 2
+    assert len(service._pl_cache) == 16

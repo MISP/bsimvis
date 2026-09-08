@@ -424,8 +424,11 @@ class SimilarityService:
         processed_total = 0.0
         num_candidates = 0
 
-        self._pl_warm([feat["key"] for feat in features_sorted])
-        for feat in features_sorted:
+        for i, feat in enumerate(features_sorted):
+            if i % 16 == 0:
+                self._pl_warm(
+                    [item["key"] for item in features_sorted[i : i + 16]]
+                )
             remaining_norm_sq = target_norm_sq - processed_norm_sq
             remaining_total = target_total - processed_total
             can_add_new = True

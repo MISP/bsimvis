@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Fetch the third-party YARA rulesets into data/yara_rules/.
 #
-# Only the rules that exist nowhere else are tracked in git: house/ (written
-# here) and botnet/ + anomaly/ (hand-edited to carry meta.category/meta.malware).
-# Everything else is a verbatim copy of an upstream repo and is fetched by this
-# script instead of being vendored. See data/yara_rules/VENDORED_FROM.md.
+# No third-party rule is tracked in git. Only house/ is, because those rules
+# were written here and exist nowhere else. Everything else is fetched from a
+# pinned upstream commit; the meta.category/meta.malware fields that botnet/ and
+# anomaly/ need are re-applied from yara_meta.patch, which holds those added
+# lines and nothing else. See data/yara_rules/VENDORED_FROM.md.
 #
 # Not having run this is not fatal: yara_service.py treats a thin ruleset the
 # same as a missing one -- fewer tags, no failed jobs.
@@ -18,6 +19,10 @@ RL_DIRS=(backdoor certificate downloader exploit infostealer pua ransomware root
 
 EL_REPO=https://github.com/elastic/protections-artifacts
 EL_COMMIT=04edb141ad41aae8e0dc6bd4ee58054d15c14bbb
+
+SB_REPO=https://github.com/Neo23x0/signature-base
+SB_COMMIT=e737ebd96c27a52ee99485d4d3e02e9c256d1d3a
+META_PATCH="$(cd "$(dirname "$0")" && pwd)/yara_meta.patch"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -38,6 +43,20 @@ for d in "${RL_DIRS[@]}"; do
     cp -r "$tmp/rl/yara/$d" "$RULES_DIR/$d"
 done
 cp "$tmp/rl/LICENSE" "$RULES_DIR/LICENSE"
+
+# signature-base supplies the Linux/IoT botnet coverage the RL set has none of.
+# These three are the only fetched files that are not verbatim: each rule needs
+# meta.category/meta.malware so it tags as yara:<category>:<family>:<rule> rather
+# than collapsing into yara:unknown:unknown:*. yara_meta.patch adds exactly those
+# lines -- it applies with zero context, so it fails loudly if SB_COMMIT moves.
+echo "Neo23x0/signature-base $SB_COMMIT -> $RULES_DIR (DRL 1.1)"
+clone "$SB_REPO" "$SB_COMMIT" "$tmp/sb"
+rm -rf "${RULES_DIR:?}/botnet" "${RULES_DIR:?}/anomaly"
+mkdir -p "$RULES_DIR/botnet" "$RULES_DIR/anomaly"
+cp "$tmp/sb/yara/crime_mirai.yar" "$tmp/sb/yara/apt_vpnfilter.yar" "$RULES_DIR/botnet/"
+cp "$tmp/sb/yara/gen_elf_file_anomalies.yar" "$RULES_DIR/anomaly/"
+cp "$tmp/sb/LICENSE" "$RULES_DIR/LICENSE-neo23x0-DRL-1.1"
+patch -p1 --forward -d "$RULES_DIR" < "$META_PATCH"
 
 # Elastic License 2.0 is the strictest licence here: self-hosting is fine, but
 # it forbids offering a substantial set of its functionality as a hosted

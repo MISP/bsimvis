@@ -79,3 +79,7 @@ data/yara_rules/trojan/
 data/yara_rules/virus/
 data/yara_rules/LICENSE
 data/yara_rules/LICENSE-elastic-v2
+data/yara_rules/anomaly/
+data/yara_rules/botnet/
+data/yara_rules/LICENSE-neo23x0-DRL-1.1
+data/yara_rules/ELF_Mirai.yara

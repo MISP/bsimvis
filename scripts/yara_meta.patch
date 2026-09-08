@@ -1,0 +1,40 @@
+--- a/botnet/crime_mirai.yar
++++ b/botnet/crime_mirai.yar
+@@ -12,0 +13,2 @@
++		category = "botnet"
++		malware = "MIRAI"
+@@ -64,0 +67,2 @@
++      category = "botnet"
++      malware = "MIRAI"
+@@ -82,0 +87,2 @@
++      category = "botnet"
++      malware = "MIRAI"
+@@ -103,0 +110,2 @@
++      category = "botnet"
++      malware = "MIRAI"
+@@ -126,0 +135,2 @@
++      category = "botnet"
++      malware = "MIRAI"
+@@ -142,0 +153,2 @@
++      category = "botnet"
++      malware = "MIRAI"
+@@ -161,0 +174,2 @@
++      category = "botnet"
++      malware = "MIRAI"
+--- a/botnet/apt_vpnfilter.yar
++++ b/botnet/apt_vpnfilter.yar
+@@ -13,0 +14,2 @@
++      category = "botnet"
++      malware = "VPNFILTER"
+@@ -35,0 +38,2 @@
++      category = "botnet"
++      malware = "VPNFILTER"
+@@ -52,0 +57,2 @@
++      category = "botnet"
++      malware = "VPNFILTER"
+@@ -82,0 +89 @@
++      category = "anomaly"
+--- a/anomaly/gen_elf_file_anomalies.yar
++++ b/anomaly/gen_elf_file_anomalies.yar
+@@ -4,0 +5 @@
++      category = "anomaly"

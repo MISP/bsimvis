@@ -1,11 +1,13 @@
 # Vendored rulesets
 
-Only the rules that exist nowhere else are tracked in git: `house/`, and
-`botnet/` + `anomaly/`, which were hand-edited. Every other directory below is a
-verbatim copy of an upstream repo and is **not** tracked -- `install.sh` fetches
-it with `scripts/fetch_yara_rules.sh`, which pins the commits recorded here. Run
-that script by hand after a fresh clone if you skipped it (`SKIP_YARA=1`), and
-re-vendor by bumping a commit in the script rather than by copying files in.
+**No third-party rule is tracked in git.** `house/` is the only ruleset in the
+repo, because those rules were written here and exist nowhere else. Everything
+else described below is fetched from a pinned upstream commit by
+`scripts/fetch_yara_rules.sh`, which `install.sh` runs. Run it after a fresh
+clone, and after any pull that lands this change -- git deletes the previously
+vendored copies from your working tree, and until you re-fetch the `yara` module
+scans with `house/` alone. Re-vendor by bumping a commit in the script, never by
+copying files back in.
 
 `SKIP_ELASTIC=1 scripts/fetch_yara_rules.sh` leaves out the one ruleset with a
 non-OSI licence; see the `elastic/` section for the trade.
@@ -35,6 +37,13 @@ those two fields were added by hand to each rule copied in here so they tag
 onto the same `yara:<category>:<family>:<rule_name>` scheme instead of
 collapsing into `yara:unknown:unknown:*`. No string or condition logic was
 touched.
+
+Those additions now live in `scripts/yara_meta.patch`, which the fetch script
+applies after copying the three files in. The patch carries the added `meta`
+lines and nothing else -- no upstream rule text -- and applies with zero
+context, so bumping `SB_COMMIT` without refreshing it fails loudly rather than
+silently dropping the fields. Regenerate it with `diff -U0` against the new
+upstream copies.
 
 ## elastic/
 
@@ -67,6 +76,16 @@ Rules were also evaluated from Yara-Rules/rules (`malware/MALW_*` ELF set),
 ditekshen/detection and ESET/malware-ioc. All three added **zero** detections
 on that corpus over the above, so none are vendored -- which also avoids
 Yara-Rules' GPLv2. Do not re-add them without measuring first.
+
+## ELF_Mirai.yara -- removed, no fetchable source
+
+A single Mirai rule from YARAhub (author `NDA0E`, CC BY 4.0, uuid
+`386c1b6c-c5f9-4a9c-a83f-1f940f4d2c2e`). It used to sit untracked at the top
+level of this directory. YARAhub publishes no pinnable git commit, so the fetch
+script cannot reproduce it and it is simply gone. Mirai stays covered by the
+`elastic/` `Linux_Trojan_Mirai*` rules and by `house/`. To put it back, pull it
+from https://yaraify.abuse.ch/ by that uuid and drop it in -- anything outside
+`house/` is untracked, so it will not be committed.
 
 ## house/
 

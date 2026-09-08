@@ -131,7 +131,6 @@ def upload_file_data():
                 and build_sim_payload.get("algo") == "milvus_sparse"
             ):
                 pipeline_tasks.append((JobType.SYNC_MILVUS, {"collection": collection}))
-            pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
             if not data.get("skip_write", False):
                 pipeline_tasks.append(
                     (
@@ -314,14 +313,7 @@ def upload_chunk():
                     pipeline_tasks.append(
                         (JobType.SYNC_MILVUS, {"collection": collection})
                     )
-                pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
-                if not data.get("skip_write", False):
-                    pipeline_tasks.append(
-                        (
-                            JobType.INDEX_SIM,
-                            {"collection": collection, "md5": file_md5, "algo": algo},
-                        )
-                    )
+
 
             pipeline_id = job_service.submit_to_lane(collection, pipeline_tasks)
             return {

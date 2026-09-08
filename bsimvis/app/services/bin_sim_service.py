@@ -446,8 +446,10 @@ class BinSimService:
             ]
             binary_fids[md5] = set(fids)
 
-        # 3. Load function metadata (for bsim_features_count & names)
+        # 3. Load function metadata, vectors, and funcid hashes
         func_meta_cache = {}
+        func_vectors = {}
+        func_exact_hashes = {}
         all_unique_fids = set()
         for fids_set in binary_fids.values():
             all_unique_fids.update(fids_set)
@@ -456,22 +458,39 @@ class BinSimService:
             if job_service and job_id:
                 job_service.add_log(
                     job_id,
-                    f"[*] Loading metadata for {len(all_unique_fids)} functions...",
+                    f"[*] Loading metadata and vectors for {len(all_unique_fids)} functions...",
                 )
             fids_list = list(all_unique_fids)
             pipe = r.pipeline(transaction=False)
             for fid in fids_list:
                 pipe.get(f"{fid}:meta")
-            meta_results = pipe.execute()
-            for fid, res in zip(fids_list, meta_results):
-                if res:
-                    m = json.loads(res) if not isinstance(res, dict) else res
+                pipe.get(f"{fid}:funcid")
+                pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+            results = pipe.execute()
+            
+            for i, fid in enumerate(fids_list):
+                res_meta = results[i * 3]
+                res_funcid = results[i * 3 + 1]
+                res_vec = results[i * 3 + 2]
+                
+                if res_meta:
+                    m = json.loads(res_meta) if not isinstance(res_meta, dict) else res_meta
                     if isinstance(m, str):
                         try:
                             m = json.loads(m)
                         except ValueError:
                             pass
                     func_meta_cache[fid] = m if isinstance(m, dict) else {}
+                else:
+                    func_meta_cache[fid] = {}
+                    
+                if res_funcid:
+                    func_exact_hashes[fid] = res_funcid.decode() if isinstance(res_funcid, bytes) else res_funcid
+                
+                if res_vec:
+                    func_vectors[fid] = res_vec
+                else:
+                    func_vectors[fid] = []
 
         # Normalize each function's tags once here, not once per matched edge.
         fid_tags = {}
@@ -482,8 +501,31 @@ class BinSimService:
 
         tag_meta_cache = load_tag_meta(r, collection) if fid_tags else {}
         tags_rev = read_tags_rev(r, collection)
+        
+        # Prepare global feature mapping for scipy sparse matrix construction
+        # Only map features that actually appear
+        feature_to_idx = {}
+        for vec in func_vectors.values():
+            for feat_hash, tf in vec:
+                if feat_hash not in feature_to_idx:
+                    feature_to_idx[feat_hash] = len(feature_to_idx)
+        
+        num_features = len(feature_to_idx)
+        
+        def build_sparse_matrix(fids):
+            import scipy.sparse as sp
+            import numpy as np
+            rows, cols, data = [], [], []
+            for i, fid in enumerate(fids):
+                for feat_hash, tf in func_vectors.get(fid, []):
+                    idx = feature_to_idx.get(feat_hash)
+                    if idx is not None:
+                        rows.append(i)
+                        cols.append(idx)
+                        data.append(float(tf))
+            return sp.csr_matrix((data, (rows, cols)), shape=(len(fids), num_features))
 
-        # 5. Process Pairs (Direct Similarity Matching with Bipartite Greedy Selection)
+        # 5. Process Pairs (Direct in-memory Similarity Matching)
         processed = 0
         pipe = r.pipeline(transaction=False)
         pair_scores = {}
@@ -502,63 +544,65 @@ class BinSimService:
                 file_meta_cache[md5] = m if isinstance(m, dict) else {}
             else:
                 file_meta_cache[md5] = {}
+                
+        # To avoid re-building the same sparse matrix for each binary many times, cache them:
+        binary_matrices = {}
+        binary_ordered_fids = {}
+        for md5 in binaries:
+            fids = list(binary_fids[md5])
+            binary_ordered_fids[md5] = fids
+            binary_matrices[md5] = build_sparse_matrix(fids)
 
-        # ponytail: Determine if this collection is a pool or a normal collection
-        is_pool = collection.startswith("global:pool:") or collection.startswith(
-            "pool:"
-        )
-        if is_pool:
-            from bsimvis.app.services.index_service import get_pool_id
+        import numpy as np
+        from sklearn.metrics.pairwise import cosine_similarity
 
-            pool_id = get_pool_id(collection)
-            involves_file_prefix = f"global:pool:{pool_id}:sim:involves:file:"
-        else:
-            involves_file_prefix = f"{collection}:sim:involves:file:"
+        from bsimvis.app.services.config_service import config_service
+        # Get threshold dynamically like similarity_service does, default 0.9 if not provided
+        min_score_val = min_cohesion if min_cohesion is not None else config_service.get("similarity.min_score", 0.9)
+        # Use 0.9 as strict cutoff for edges, min_cohesion is for binary cohesion.
+        # Function sim threshold should be config's min_score.
+        func_sim_threshold = config_service.get("similarity.min_score", 0.9)
 
         for m_a, m_b in pairs:
             file_meta_a = file_meta_cache.get(m_a, {})
             file_meta_b = file_meta_cache.get(m_b, {})
 
-            # ponytail: Use Kvrocks SINTER to fetch similarities involving both files without temporary keys
-            involves_a = f"{involves_file_prefix}{m_a}"
-            involves_b = f"{involves_file_prefix}{m_b}"
-            sim_keys = [
-                k.decode() if isinstance(k, bytes) else str(k)
-                for k in r.sinter(involves_a, involves_b)
-            ]
-
-            # Fetch similarity documents in parallel
-            sim_docs = []
-            if sim_keys:
-                pipe_sim = r.pipeline(transaction=False)
-                for k in sim_keys:
-                    pipe_sim.get(k)
-                sim_res = pipe_sim.execute()
-                for res in sim_res:
-                    if res:
-                        sim_docs.append(
-                            json.loads(res.decode() if isinstance(res, bytes) else res)
-                        )
-
-            # Filter/extract edges
+            fids_a = binary_ordered_fids[m_a]
+            fids_b = binary_ordered_fids[m_b]
+            
             edges = []
-            for doc in sim_docs:
-                fid1 = doc.get("id1")
-                fid2 = doc.get("id2")
-                score = doc.get("score", 0.0)
-                if fid1 and fid2:
-                    # ponytail: Extract exact MD5 out of function IDs (casing-insensitive)
-                    parts1 = fid1.split(":")
-                    parts2 = fid2.split(":")
-                    if len(parts1) >= 2 and len(parts2) >= 2:
-                        m1 = parts1[-2].lower()
-                        m2 = parts2[-2].lower()
-                        m_a_clean = m_a.lower()
-                        m_b_clean = m_b.lower()
-                        if m1 == m_a_clean and m2 == m_b_clean:
-                            edges.append((fid1, fid2, score))
-                        elif m1 == m_b_clean and m2 == m_a_clean:
-                            edges.append((fid2, fid1, score))
+            
+            # Vector similarity using cached sparse matrices
+            mat_a = binary_matrices[m_a]
+            mat_b = binary_matrices[m_b]
+            if mat_a.nnz > 0 and mat_b.nnz > 0:
+                sim_matrix = cosine_similarity(mat_a, mat_b)
+                rows, cols = np.where(sim_matrix >= func_sim_threshold)
+                for r_idx, c_idx in zip(rows, cols):
+                    score = float(sim_matrix[r_idx, c_idx])
+                    edges.append((fids_a[r_idx], fids_b[c_idx], score))
+            
+            # Exact Hash Matches for small functions (or identical large ones, though vectors will catch large ones)
+            # Find common exact hashes
+            hash_to_fids_a = {}
+            for fid in fids_a:
+                h = func_exact_hashes.get(fid)
+                if h:
+                    hash_to_fids_a.setdefault(h, []).append(fid)
+                    
+            for fid_b in fids_b:
+                h = func_exact_hashes.get(fid_b)
+                if h and h in hash_to_fids_a:
+                    for fid_a in hash_to_fids_a[h]:
+                        edges.append((fid_a, fid_b, 1.0))
+                        
+            # Remove duplicate edges and keep the highest score if any overlaps
+            unique_edges = {}
+            for u, v, score in edges:
+                key = (u, v)
+                if key not in unique_edges or score > unique_edges[key]:
+                    unique_edges[key] = score
+            edges = [(u, v, s) for (u, v), s in unique_edges.items()]
 
             all_funcs_a_total = binary_fids[m_a]
             all_funcs_b_total = binary_fids[m_b]

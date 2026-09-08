@@ -234,7 +234,7 @@ const routes = {
             { label: 'Tag', sort: 'tag', width: '30%' },
             { label: 'Color', width: '8%' },
             { label: 'Priority', sort: 'priority', width: '10%' },
-            { label: 'LLM', width: '6%' },
+            { label: 'AI', width: '6%' },
             { label: 'Functions', sort: 'function_count', width: '12%' },
             { label: 'Files', sort: 'file_count', width: '12%' },
             { label: 'Similarities', width: '12%' },

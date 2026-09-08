@@ -282,7 +282,7 @@ function renderNotesPanelHTML(el) {
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <select id="note-owner-select" style="background: var(--bg); color: var(--meta-text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 0.8rem; outline: none;">
                         <option value="user">User</option>
-                        <option value="llm">LLM</option>
+                        <option value="llm">AI</option>
                     </select>
                     <button onclick="saveNote(currentNotesFuncId)" class="note-primary-btn">Add Note</button>
                 </div>

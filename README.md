@@ -453,7 +453,8 @@ uv run bsimvis metadata propagate -m <metadata_csv_path> -c <collection_name>
 
 ## Rulezet YARA mirror
 
-Mirror and gate rules from [rulezet.org](https://rulezet.org) into `data/yara_rules/`. Configure the `[rulezet]` section in `bsimvis_config.toml` first.
+Mirror and gate rules from [rulezet.org](https://rulezet.org) into `data/rulezet/` — a build artifact, never in git, separate
+from the `data/yara_rules/` set above. Configure the `[rulezet]` section in `bsimvis_config.toml` first.
 
 ```bash
 # Fetch, tag, compile and auto-quarantine the mirror

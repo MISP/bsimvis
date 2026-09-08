@@ -343,25 +343,46 @@ class BinSimService:
                     )
                     batch_binaries = list(batch_binaries - set(containers))
                     # pairs between batch and all binaries
-                    for b1 in batch_binaries:
-                        for b2 in binaries:
-                            if b1 == b2:
-                                continue
-                            if b1 < b2:
-                                pairs.append((b1, b2))
-                            else:
-                                pairs.append((b2, b1))
-                    pairs = list(set(pairs))
+                    # Block-nested loop ordering to bound the working set
+                    BLOCK_SIZE = 50
+                    batch_binaries.sort()
+                    b1_blocks = [batch_binaries[k:k+BLOCK_SIZE] for k in range(0, len(batch_binaries), BLOCK_SIZE)]
+                    binaries.sort()
+                    b2_blocks = [binaries[k:k+BLOCK_SIZE] for k in range(0, len(binaries), BLOCK_SIZE)]
+                    seen_pairs = set()
+                    
+                    for b1_blk in b1_blocks:
+                        for b2_blk in b2_blocks:
+                            for x in b1_blk:
+                                for y in b2_blk:
+                                    if x == y: continue
+                                    b1, b2 = (x, y) if x < y else (y, x)
+                                    if (b1, b2) not in seen_pairs:
+                                        seen_pairs.add((b1, b2))
+                                        pairs.append((b1, b2))
                 else:
-                    for i in range(len(binaries)):
-                        for j in range(i + 1, len(binaries)):
-                            b1, b2 = binaries[i], binaries[j]
-                            if b1 < b2:
-                                pairs.append((b1, b2))
-                            else:
-                                pairs.append((b2, b1))
-                # Sort pairs for determinism
-                pairs.sort()
+                    # Block-nested loop ordering to bound the working set
+                    BLOCK_SIZE = 50
+                    binaries.sort()
+                    b2_blocks = [binaries[k:k+BLOCK_SIZE] for k in range(0, len(binaries), BLOCK_SIZE)]
+                    for i, b1_block in enumerate(blocks):
+                        for j in range(i, len(blocks)):
+                            b2_block = blocks[j]
+                            for x in b1_block:
+                                for y in b2_block:
+                                    if x == y: continue
+                                    b1, b2 = (x, y) if x < y else (y, x)
+                                    pairs.append((b1, b2))
+                    
+                    # Deduplicate just in case, while preserving order
+                    seen_pairs = set()
+                    dedup_pairs = []
+                    for p in pairs:
+                        if p not in seen_pairs:
+                            seen_pairs.add(p)
+                            dedup_pairs.append(p)
+                    pairs = dedup_pairs
+                # Pairs are already deterministic based on sorted binaries
 
             if len(pairs) > CHUNK_SIZE:
                 pairs_key = f"{collection}:bin_sim_jobs:{job_id}:pairs"

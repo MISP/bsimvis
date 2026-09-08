@@ -137,7 +137,8 @@ window.FileView = {
                     <span id="file-title-text" style="font-weight:bold; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:30%;">unknown</span>
                     <span id="file-md5-text" style="font-family: 'JetBrains Mono', 'Consolas', monospace; color: var(--dim); font-size: 0.8rem; margin-right: 10px;">(MD5: ---)</span>
                     <span id="file-tags-container" style="display: inline-flex; gap: 4px; flex-wrap: wrap; align-items: center; min-width: 0; flex: 1;"></span>
-                    <span id="file-note-btn-container" style="margin-left:auto; display: inline-flex; align-items: center;"></span>
+                    <span id="file-actions-container" style="margin-left:auto; display: inline-flex; align-items: center; gap: 8px;"></span>
+                    <span id="file-note-btn-container" style="display: inline-flex; align-items: center; margin-left: 8px;"></span>
                 </div>
 
                 <div class="bsim-tabbar" id="file-view-tabs">
@@ -386,6 +387,16 @@ window.FileView = {
                     'file', file.file_id || fileId, file.tags || [], file.user_tags || []
                 );
             }
+            document.getElementById('file-actions-container').innerHTML = `
+                <button class="top-action-btn" onclick="openAnalyzeModal({ scope: 'file', collection: ${escapeAttr(jsString(collection))}, fileMd5: ${escapeAttr(jsString(file.file_md5))} })"
+                    style="color:#ae81ff; border-color:#ae81ff;"
+                    title="Analyze every candidate function of this file with AI">
+                    <i class="fa-solid fa-robot"></i> Analyze file</button>
+                <button class="top-action-btn" onclick="openSearchModal({ scope: 'file', collection: ${escapeAttr(jsString(collection))}, fileMd5: ${escapeAttr(jsString(file.file_md5))} })"
+                    style="color:#60a5fa; border-color:#60a5fa;"
+                    title="Ask AI which functions of this file match a description">
+                    <i class="fa-solid fa-magnifying-glass"></i> AI search</button>`;
+
             if (window.EntityRenderer) {
                 document.getElementById('file-note-btn-container').innerHTML = window.EntityRenderer.renderFileNoteButton(
                     file.file_id || fileId, file.note_owners || [], { raw_data: file }

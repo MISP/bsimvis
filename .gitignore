@@ -47,3 +47,18 @@ api_test_report.json
 
 # Local state cache for scripts/tag_stash.py
 scripts/.tag_stash.json
+
+# Benchmark / agent scratch output (was committed by accident)
+bsimvis-test-results/
+diff_output.txt
+diff_no_ws.txt
+upload_log.txt
+lca-corpus-result.json
+mirai-pilot-comparison.json
+
+# Ad-hoc scripts and one-off tests at repo root.
+# Real API tests live in scripts/test_api_endpoints.py
+/test_*.py
+/test_*.js
+/list_fid_opts.py
+/summarize_diff.py

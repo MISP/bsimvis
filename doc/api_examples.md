@@ -189,3 +189,119 @@ curl -X POST -H "Content-Type: application/json" \
   -d '{"pool_id":"<pool_id>"}' \
   http://localhost:5000/api/bin_sim/reindex
 ```
+
+## Jobs — Pause & Resume
+```bash
+# Pause the whole fleet (workers finish current job, claim no more)
+curl -X POST http://localhost:5000/api/jobs/pause
+
+# Resume
+curl -X DELETE http://localhost:5000/api/jobs/pause
+
+# Pause a single pipeline without affecting others
+curl -X POST http://localhost:5000/api/jobs/<job_id>/pause
+
+# Resume it
+curl -X DELETE http://localhost:5000/api/jobs/<job_id>/pause
+```
+
+## File Lineage
+```bash
+# Containment tree: what this file came from and what was extracted from it
+curl -s "http://localhost:5000/api/file/<md5>/lineage?collection=test_api"
+```
+
+## Binary Similarity — Resplit & Pair Notes
+```bash
+# Recompute tag splits on stored pairs (after tag edits) without a full rebuild
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection":"test_api","algo":"unweighted_cosine"}' \
+  http://localhost:5000/api/bin_sim/resplit
+
+# Add a note to a binary similarity pair
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection":"test_api","md5_a":"<md5a>","md5_b":"<md5b>","algo":"unweighted_cosine","text":"likely same family","owner":"analyst"}' \
+  http://localhost:5000/api/notes/bin_sim/add
+
+# List pair notes
+curl -s "http://localhost:5000/api/notes/bin_sim/list?collection=test_api&md5_a=<md5a>&md5_b=<md5b>&algo=unweighted_cosine"
+```
+
+## LLM — Agentic Tier
+```bash
+# Background batch: write notes + tags for all functions in a file
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection":"test_api","filters":"file_md5=<md5>&min_features=10","actions":["notes","tags"]}' \
+  http://localhost:5000/api/llm/batch
+
+# Poll batch progress
+curl -s "http://localhost:5000/api/llm/batch/<job_id>"
+
+# Cancel
+curl -X POST http://localhost:5000/api/llm/batch/<job_id>/cancel
+
+# Contextual batch: call-graph-aware grouping
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection":"test_api","filters":"file_md5=<md5>","actions":["notes","tags"],"unit_max_size":5}' \
+  http://localhost:5000/api/llm/contextual_batch
+
+# Whole-file agentic analysis
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection":"test_api","file_md5":"<md5>","actions":["notes","tags"],"skip_fid_tagged":true}' \
+  http://localhost:5000/api/llm/file_analysis
+
+# Binary pair comparison
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection":"test_api","md5_a":"<md5a>","md5_b":"<md5b>","actions":["notes","tags"],"include_unique":true,"include_unchanged":false}' \
+  http://localhost:5000/api/llm/pair_analysis
+
+# Start an interactive analyst chat session
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection":"test_api","context":"Viewing function at 0x00101144"}' \
+  http://localhost:5000/api/llm/chat/session
+
+# Send a message (streams NDJSON)
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"message":"What does this function do and is it suspicious?"}' \
+  http://localhost:5000/api/llm/chat/session/<session_id>/message
+
+# Session history
+curl -s "http://localhost:5000/api/llm/chat/session/<session_id>"
+```
+
+## Searches (Fast Relevance Triage)
+```bash
+# Search scoped to one file
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection":"test_api","query":"the function that decrypts the embedded config","scope":{"type":"file","md5":"<md5>"}}' \
+  http://localhost:5000/api/searches
+
+# Whole-collection search
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection":"test_api","query":"C2 communication handler","scope":{"type":"collection"}}' \
+  http://localhost:5000/api/searches
+
+# Pair diff search: find changed functions that look like persistence
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection":"test_api","query":"persistence mechanism","scope":{"type":"pair","md5_a":"<md5a>","md5_b":"<md5b>","state":"changed"}}' \
+  http://localhost:5000/api/searches
+
+# Poll search status
+curl -s "http://localhost:5000/api/searches/<search_id>"
+
+# Get ranked results
+curl -s "http://localhost:5000/api/searches/<search_id>/results?verdict=yes&limit=20"
+
+# Tag selected functions directly
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"func_ids":["test_api:func:<md5>:<addr>"],"tag":"category:persistence"}' \
+  http://localhost:5000/api/searches/<search_id>/apply_tag
+
+# Hand off to deep analysis
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"func_ids":["test_api:func:<md5>:<addr>"],"actions":["notes","tags"]}' \
+  http://localhost:5000/api/searches/<search_id>/analyze
+
+# Delete a search
+curl -X DELETE http://localhost:5000/api/searches/<search_id>
+```

@@ -2449,8 +2449,10 @@ class SimilarityService:
             else:
                 file_meta_cache[(coll, md5)] = {}
 
-        # Load function metadata (for bsim_features_count of functions)
+        # Load function metadata, vectors, and exact hashes
         func_meta_cache = {}
+        func_vectors = {}
+        func_exact_hashes = {}
         all_unique_fids = set()
         for fids_set in binary_fids.values():
             all_unique_fids.update(fids_set)
@@ -2459,22 +2461,38 @@ class SimilarityService:
             if job_service and job_id:
                 job_service.add_log(
                     job_id,
-                    f"[*] Loading metadata for {len(all_unique_fids)} functions...",
+                    f"[*] Loading metadata and vectors for {len(all_unique_fids)} functions...",
                 )
             fids_list = list(all_unique_fids)
             pipe = r.pipeline(transaction=False)
             for fid in fids_list:
                 pipe.get(f"{fid}:meta")
+                pipe.get(f"{fid}:funcid")
+                pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
             meta_results = pipe.execute()
-            for fid, res in zip(fids_list, meta_results):
-                if res:
-                    m = res.decode() if isinstance(res, bytes) else res
+            for i, fid in enumerate(fids_list):
+                res_meta = meta_results[i*3]
+                res_funcid = meta_results[i*3 + 1]
+                res_vec = meta_results[i*3 + 2]
+                
+                if res_meta:
+                    m = res_meta.decode() if isinstance(res_meta, bytes) else res_meta
                     if isinstance(m, str):
                         try:
                             m = json.loads(m)
                         except ValueError:
                             pass
                     func_meta_cache[fid] = m if isinstance(m, dict) else {}
+                else:
+                    func_meta_cache[fid] = {}
+                    
+                if res_funcid:
+                    func_exact_hashes[fid] = res_funcid.decode() if isinstance(res_funcid, bytes) else res_funcid
+                    
+                if res_vec:
+                    func_vectors[fid] = res_vec
+                else:
+                    func_vectors[fid] = []
 
         # Normalize each function's tags once here, not once per matched edge.
         fid_tags = {}
@@ -2485,6 +2503,26 @@ class SimilarityService:
 
         tag_meta_cache = load_tag_meta(r, f"global:pool:{pool_id}") if fid_tags else {}
         tags_rev = read_tags_rev(r, f"global:pool:{pool_id}")
+        
+        feature_to_idx = {}
+        for vec in func_vectors.values():
+            for feat_hash, tf in vec:
+                if feat_hash not in feature_to_idx:
+                    feature_to_idx[feat_hash] = len(feature_to_idx)
+        num_features = len(feature_to_idx)
+        
+        def build_sparse_matrix(fids):
+            import scipy.sparse as sp
+            import numpy as np
+            rows, cols, data = [], [], []
+            for i, fid in enumerate(fids):
+                for feat_hash, tf in func_vectors.get(fid, []):
+                    idx = feature_to_idx.get(feat_hash)
+                    if idx is not None:
+                        rows.append(i)
+                        cols.append(idx)
+                        data.append(float(tf))
+            return sp.csr_matrix((data, (rows, cols)), shape=(len(fids), num_features))
 
         # 3. Generate Pairs (all combinations cross-collection/in pool)
         pairs = []
@@ -2500,106 +2538,80 @@ class SimilarityService:
             if job_service and job_id:
                 job_service.add_log(job_id, msg)
 
-        # 4. Process Pairs (Direct Similarity Matching with Bipartite Greedy Selection)
+        # 4. Process Pairs (Direct in-memory Similarity Matching)
         persist_pipe = r.pipeline(transaction=False)
         now = int(time.time() * 1000)
 
-        involves_file_prefix = f"global:pool:{pool_id}:sim:involves:file:"
-
         log(f"[*] {num_binaries} binaries -> {len(pairs)} pairs to compare")
 
-        # (coll, md5.lower()) -> canonical binary tuple. Pools are multi-collection and
-        # the SAME md5 can appear in two collections, so partner MUST be resolved by
-        # (collection, md5), never md5 alone. Pool sim docs carry both endpoints
-        # (coll_1/md5_1, coll_2/md5_2), so read them straight from the doc.
-        bin_by_norm = {(coll, md5.lower()): (coll, md5) for coll, md5 in binaries}
+        binary_matrices = {}
+        binary_ordered_fids = {}
+        for b in binaries:
+            fids = list(binary_fids[b])
+            binary_ordered_fids[b] = fids
+            binary_matrices[b] = build_sparse_matrix(fids)
 
-        # ponytail: stream one source-binary at a time instead of loading all ~26M
-        # edges up front. For binary b_src we SMEMBERS+MGET only ITS sim docs (bounded
-        # by a single binary), bucket them by partner, and yield each pair (b_src,
-        # b_par) with b_par > b_src so every pair is emitted exactly once (at its lower
-        # binary). Peak RAM = one binary's docs, not the whole pool. Cost: each doc is
-        # read ~twice (once per endpoint) -- the RAM/IO trade that keeps big pools off
-        # swap. Edges are pre-oriented fid_a -> b_src (== b1), so the consumer is O(1).
-        def stream_pair_edges():
-            for b_src in binaries:
-                coll_i, md5_i = b_src
-                member_sids = [
-                    s.decode() if isinstance(s, bytes) else str(s)
-                    for s in r.smembers(f"{involves_file_prefix}{coll_i}:{md5_i}")
-                ]
-                buckets = defaultdict(list)
-                for k in range(0, len(member_sids), 10000):
-                    chunk = member_sids[k : k + 10000]
-                    for res in r.mget(chunk):
-                        if not res:
-                            continue
-                        try:
-                            doc = json.loads(
-                                res.decode() if isinstance(res, bytes) else res
-                            )
-                        except Exception:
-                            continue
-                        f1, f2 = doc.get("id1"), doc.get("id2")
-                        if not f1 or not f2:
-                            continue
-                        e1 = bin_by_norm.get(
-                            (doc.get("coll_1"), (doc.get("md5_1") or "").lower())
-                        )
-                        e2 = bin_by_norm.get(
-                            (doc.get("coll_2"), (doc.get("md5_2") or "").lower())
-                        )
-                        score = doc.get("score", 0.0)
-                        if e1 == b_src:
-                            b_par, edge = e2, (f1, f2, score)
-                        elif e2 == b_src:
-                            b_par, edge = e1, (f2, f1, score)
-                        else:
-                            continue
-                        # only partners above b_src -> pair emitted once, and this
-                        # also drops intra-binary docs (partner resolves to b_src).
-                        if not b_par or b_par <= b_src:
-                            continue
-                        buckets[b_par].append(edge)
-                for b_par, edges in buckets.items():
-                    yield b_src, b_par, edges
-                # buckets dropped here -> one binary's edges reclaimed before the next
+        import numpy as np
+        from sklearn.metrics.pairwise import cosine_similarity
+        
+        # Pull min_score from pool config
+        # Default for BSim is 0.9 if not specified
+        func_sim_params = pool.get("func_sim_params", {})
+        func_sim_threshold = func_sim_params.get("min_score")
+        if func_sim_threshold is None:
+            from bsimvis.app.services.config_service import config_service
+            func_sim_threshold = config_service.get("similarity.min_score", 0.9)
 
-        # Feature weight of one function, the collection builder's lookup
-        # verbatim -- pool fids are already collection-qualified, so `fid` alone
-        # keys `func_meta_cache` here too.
-        #
-        # ponytail: this replaces a precomputed (coll, fid) -> unique-entry map
-        # that shared one dict per unmatched function across every pair. It was
-        # worth it when those entries carried a cluster scan; now that they are
-        # `{func_id, avg_features}`, rebuilding them per pair costs ~0.6s per
-        # 20k pairs against ~3.7s spent json-encoding the very same rows. Not
-        # worth a second copy of the scoring loop. If pools ever grow an order
-        # of magnitude, hand `score_pair` a row factory rather than forking it.
-        def _feat(fid):
-            return float(func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0))
+        # Drop the same-collection pairs if pool is only_cross_collection
+        only_cross = pool.get("only_cross_collection", False)
 
-        loop_t = time.time()
-        total_pairs = len(pairs)
-        log(f"[*] Streaming {total_pairs} pairs (computed + saved incrementally)...")
+        processed = 0
+        for b_src, b_par in pairs:
+            if only_cross and b_src[0] == b_par[0]:
+                continue
+                
+            fids_src = binary_ordered_fids[b_src]
+            fids_par = binary_ordered_fids[b_par]
+            
+            edges = []
+            
+            mat_src = binary_matrices[b_src]
+            mat_par = binary_matrices[b_par]
+            if mat_src.nnz > 0 and mat_par.nnz > 0:
+                sim_matrix = cosine_similarity(mat_src, mat_par)
+                rows, cols = np.where(sim_matrix >= func_sim_threshold)
+                for r_idx, c_idx in zip(rows, cols):
+                    score = float(sim_matrix[r_idx, c_idx])
+                    edges.append((fids_src[r_idx], fids_par[c_idx], score))
+            
+            # Exact Hash Matches for small functions
+            hash_to_fids_src = {}
+            for fid in fids_src:
+                h = func_exact_hashes.get(fid)
+                if h:
+                    hash_to_fids_src.setdefault(h, []).append(fid)
+                    
+            for fid_par in fids_par:
+                h = func_exact_hashes.get(fid_par)
+                if h and h in hash_to_fids_src:
+                    for fid_src in hash_to_fids_src[h]:
+                        edges.append((fid_src, fid_par, 1.0))
+                        
+            # Unique edges keeping max score
+            unique_edges = {}
+            for u, v, score in edges:
+                key = (u, v)
+                if key not in unique_edges or score > unique_edges[key]:
+                    unique_edges[key] = score
+            edges = [(u, v, s) for (u, v), s in unique_edges.items()]
 
-        for pair_idx, (b1, b2, edges) in enumerate(stream_pair_edges()):
-            if pair_idx and pair_idx % 2000 == 0:
-                elapsed = time.time() - loop_t
-                rate = pair_idx / elapsed if elapsed else 0
-                eta = (total_pairs - pair_idx) / rate if rate else 0
-                log(
-                    f"[*] {pair_idx}/{total_pairs} pairs computed + saved "
-                    f"({rate:.0f}/s, ETA {eta:.0f}s)"
+            all_funcs_a_total = binary_fids[b_src]
+            all_funcs_b_total = binary_fids[b_par]
+
+            def _feat(fid):
+                return float(
+                    func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
                 )
-            coll_a, md5_a = b1
-            coll_b, md5_b = b2
-
-            # Edges streamed pre-oriented (fid_a -> b1) for this source binary; b1 < b2
-            # holds (generator only emits partners above the source).
-            all_funcs_a_total = binary_fids[b1]
-            all_funcs_b_total = binary_fids[b2]
-
             common = score_pair(
                 edges,
                 all_funcs_a_total,

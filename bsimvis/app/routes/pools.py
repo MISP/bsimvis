@@ -40,19 +40,10 @@ def create_pool():
             if len(parts) >= 3:
                 md5 = parts[2]
                 skip_write = config.get("skip_write", False)
-                file_tasks.append(
-                    (
-                        JobType.BUILD_POOL_SIM,
-                        {"pool_id": pool_id, "file_md5": md5, "skip_write": skip_write},
-                    )
-                )
+
 
     tasks = [(JobType.INIT_POOL_BUILD, {"pool_id": pool_id})]
-    if file_tasks:
-        group_id = job_service.create_group(file_tasks, enqueue=False)
-        tasks.append(group_id)
-    else:
-        tasks.append((JobType.BUILD_POOL_SIM, {"pool_id": pool_id}))
+
 
     tasks.extend(
         [
@@ -60,7 +51,7 @@ def create_pool():
             (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
             (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),
-            (JobType.INDEX_SIM, {"collection": "", "pool_id": pool_id}),
+
         ]
     )
 
@@ -187,19 +178,10 @@ def build_pool(pool_id):
                 skip_write = func_sim_params.get(
                     "skip_write", pool.get("skip_write", False)
                 )
-                file_tasks.append(
-                    (
-                        JobType.BUILD_POOL_SIM,
-                        {"pool_id": pool_id, "file_md5": md5, "skip_write": skip_write},
-                    )
-                )
+
 
     tasks = [(JobType.INIT_POOL_BUILD, {"pool_id": pool_id})]
-    if file_tasks:
-        group_id = job_service.create_group(file_tasks, enqueue=False)
-        tasks.append(group_id)
-    else:
-        tasks.append((JobType.BUILD_POOL_SIM, {"pool_id": pool_id}))
+
 
     tasks.extend(
         [
@@ -207,7 +189,7 @@ def build_pool(pool_id):
             (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
             (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),
-            (JobType.INDEX_SIM, {"collection": "", "pool_id": pool_id}),
+
         ]
     )
 
@@ -253,7 +235,7 @@ def cluster_pool(pool_id):
             (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
             (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),
-            (JobType.INDEX_SIM, {"collection": "", "pool_id": pool_id}),
+
         ]
     )
     return {"job_id": pipeline_id, "message": "Pool clustering pipeline enqueued"}
@@ -289,16 +271,10 @@ def rebuild_pool(pool_id):
             parts = k.split(":")
             if len(parts) >= 3:
                 md5 = parts[2]
-                file_tasks.append(
-                    (JobType.BUILD_POOL_SIM, {"pool_id": pool_id, "file_md5": md5})
-                )
+
 
     tasks = [(JobType.INIT_POOL_BUILD, {"pool_id": pool_id})]
-    if file_tasks:
-        group_id = job_service.create_group(file_tasks, enqueue=False)
-        tasks.append(group_id)
-    else:
-        tasks.append((JobType.BUILD_POOL_SIM, {"pool_id": pool_id}))
+
 
     tasks.extend(
         [
@@ -306,7 +282,7 @@ def rebuild_pool(pool_id):
             (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
             (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),
-            (JobType.INDEX_SIM, {"collection": "", "pool_id": pool_id}),
+
         ]
     )
 

@@ -623,7 +623,7 @@ class PivotickGraphController {
     }
 
     // Pivotick's own foreignObject auto-sizer (measure the rendered content
-    // on a rAF, call node.setBoxSize()) already can't be trusted to shrink a
+    // on a rAF, call node.setBorderBox()) already can't be trusted to shrink a
     // box (see the header-sizing comment this file used to carry for
     // clusters) -- in Firefox it undershoots growing one too, and Firefox
     // clips foreignObject content strictly to whatever box was last set, so
@@ -664,7 +664,7 @@ class PivotickGraphController {
                 fo.setAttribute('height', h);
                 fo.setAttribute('x', -w / 2);
                 fo.setAttribute('y', -h / 2);
-                if (typeof node.setBoxSize === 'function') node.setBoxSize(w, h);
+                if (typeof node.setBorderBox === 'function') node.setBorderBox(w, h);
                 touched = true;
             }
             if (touched) this.pInstance.onChange();
@@ -750,9 +750,9 @@ class PivotickGraphController {
                 // node-to-node distance (linkArc() does Math.hypot(dx,dy)),
                 // not anything shape-aware -- bows into huge arcs whenever
                 // two nodes end up far apart, which force layout does
-                // constantly. Only the straight-line renderer consults
-                // getNodeBorderRadius(), which is what actually anchors an
-                // arrowhead to a rectangular card's edge instead of its center.
+                // constantly. Straight edges anchor on the border box we
+                // declare in _fixNodeBoxSizes(), so an arrowhead stops at a
+                // rectangular card's edge instead of its center.
                 defaultEdgeStyle: { curveStyle: 'straight' },
             },
             callbacks: {

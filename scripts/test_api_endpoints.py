@@ -4995,6 +4995,11 @@ def test_pool_collection_equivalence():
                     for fk in ("func_a", "func_b", "func_id"):
                         if norm.get(fk):
                             norm[fk] = canon(norm[fk])
+                    # Round similarity: float precision differs between single and
+                    # pool builds (different matrix layouts -> different accumulation
+                    # order in dot products).
+                    if "similarity" in norm:
+                        norm["similarity"] = round(norm["similarity"], 4)
                     items.append(norm)
                 if key == "matched":
                     items.sort(key=lambda x: (x.get("func_a", ""), x.get("func_b", "")))

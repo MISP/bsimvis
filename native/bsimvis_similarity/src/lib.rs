@@ -909,7 +909,10 @@ fn wgpu_adapter_info() -> PyResult<HashMap<String, String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Algorithm, SparseVector, score, select_candidates, summarize_candidates};
+    use super::{
+        Algorithm, SparseVector, score, select_candidates, select_inverted_candidates,
+        summarize_candidates,
+    };
 
     fn vector(features: &[(u32, f64)]) -> SparseVector {
         SparseVector {
@@ -971,6 +974,50 @@ mod tests {
         // A positive top_k still caps.
         let capped = select_candidates(&vectors, 0, &[0, 1, 2, 3], Algorithm::Cosine, 2, 0.9);
         assert_eq!(capped.len(), 2);
+    }
+
+    #[test]
+    fn inverted_at_full_fraction_matches_brute_force() {
+        // build_lca_snapshot depends on this: max_posting_fraction = 1.0 skips
+        // no posting list, so the inverted scan is exact rather than a
+        // heuristic, and candidates sharing no feature (true cosine 0) are the
+        // only ones it never visits.
+        let vectors = vec![
+            vector(&[(1, 1.0), (2, 1.0), (3, 1.0)]),
+            vector(&[(1, 1.0), (2, 1.0), (3, 1.0)]),
+            vector(&[(1, 1.0), (2, 1.0), (3, 0.9)]),
+            vector(&[(7, 1.0)]),
+            vector(&[(1, 1.0), (4, 5.0)]),
+        ];
+        let mut postings: Vec<Vec<(usize, f64)>> = vec![Vec::new(); 8];
+        for (i, v) in vectors.iter().enumerate() {
+            for &(feature, value) in &v.features {
+                postings[feature as usize].push((i, value));
+            }
+        }
+        let eligible = vec![true; vectors.len()];
+        let all = (0..vectors.len()).collect::<Vec<_>>();
+        for target in 0..vectors.len() {
+            let brute = select_candidates(&vectors, target, &all, Algorithm::Cosine, 0, 0.5);
+            let (inverted, _) = select_inverted_candidates(
+                &vectors,
+                &postings,
+                target,
+                &eligible,
+                Algorithm::Cosine,
+                1.0,
+                0,
+                0.5,
+            );
+            assert_eq!(
+                brute.iter().map(|(c, _)| *c).collect::<Vec<_>>(),
+                inverted.iter().map(|(c, _)| *c).collect::<Vec<_>>(),
+                "candidate sets differ for target {target}"
+            );
+            for ((_, b), (_, i)) in brute.iter().zip(inverted.iter()) {
+                assert!((b - i).abs() < 1e-12, "score drift for target {target}");
+            }
+        }
     }
 
     #[test]

@@ -73,7 +73,7 @@ class SimilarityService:
 
 
     def build_lca_snapshot(
-        self, collection, algo="unweighted_cosine", workers=4,
+        self, collection, algo="unweighted_cosine", workers=None,
         job_service=None, job_id=None, target_batch_size=None,
     ):
         """Cross-vector-class fuzzy matching via the native discovery backend.
@@ -97,6 +97,11 @@ class SimilarityService:
         """
         if target_batch_size is None:
             target_batch_size = int(os.getenv("LCA_TARGET_BATCH_SIZE", 2000))
+        if workers is None:
+            # Was pinned at 4 by this signature's default, which no caller ever
+            # overrode -- so the rayon pool used 4 threads whatever the box had.
+            # Measured 2.9x on 14 cores at V=49370.
+            workers = int(os.getenv("LCA_WORKERS", 0)) or os.cpu_count() or 4
         # Reset on every call, including an early return below -- otherwise a
         # collection/build where this bails (native missing, no vclasses yet)
         # would silently reuse whatever _base_snapshot a PRIOR call (possibly
@@ -165,6 +170,28 @@ class SimilarityService:
                 except Exception as e:
                     logging.error(f"WGPU fallback on GPU failure with telemetry: {e}")
                     edges_raw = None
+
+            if edges_raw is None and hasattr(scorer, "select_inverted_target_block"):
+                # Same edges as the all-pairs sweep below, ~13x faster at
+                # V=49370 (565s -> 43s measured).
+                #
+                # max_posting_fraction=1.0 is what makes it exact rather than a
+                # heuristic: no feature's posting list is skipped, so the
+                # accumulated dot product is the true one, and any candidate
+                # sharing no feature with the target has a true cosine of 0 --
+                # below any min_score we ever use, so dropping it loses nothing.
+                # Do NOT lower it here: this call scores straight from the
+                # accumulator, so a skipped posting list silently under-counts
+                # the dot product (measured 49% recall at 0.1, 0.05% at 0.02).
+                # The shortlist-then-rescore variant
+                # (select_frequency_target_block) is the one that stays exact
+                # under a low fraction, if that trade is ever wanted.
+                edges_raw = [
+                    block
+                    for block, _candidate_count in scorer.select_inverted_target_block(
+                        target_batch, indices, algo, workers, 1.0, top_k, min_score
+                    )
+                ]
 
             if edges_raw is None:
                 edges_raw = scorer.select_target_block(target_batch, indices, algo, workers, top_k, min_score)

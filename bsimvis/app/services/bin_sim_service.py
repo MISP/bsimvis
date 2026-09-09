@@ -612,84 +612,136 @@ class BinSimService:
             ]
             binary_fids[md5] = set(fids)
 
-        # 3. Load function metadata, vectors, and funcid hashes
-        func_meta_cache = {}
-        func_vectors = {}
-        func_exact_hashes = {}
-        all_unique_fids = set()
-        for fids_set in binary_fids.values():
-            all_unique_fids.update(fids_set)
+        # 3. Load metadata, vectors and funcid hashes -- one binary at a time.
+        #
+        # This was a single un-batched pipeline over every function in the
+        # chunk whose replies were then kept whole: a parsed meta dict and a
+        # list of (feature, tf) tuples per function, for every function of
+        # every binary the chunk touches. On a collection of 1.5M functions
+        # that is ~10GB of Python objects, held for the whole chunk, so that
+        # the code below could read one number out of each meta and fold each
+        # vector into a sparse row.
+        #
+        # Nothing downstream wants the raw replies, so each binary is folded
+        # into its matrix as it arrives and only what is actually read
+        # survives: a weight, the tags, and the funcid row lists. Feature
+        # columns are numbered as they are first seen and every matrix widened
+        # to the final count afterwards, which keeps this one pass over the
+        # data rather than one to collect features and another to build.
+        import numpy as np
+        import scipy.sparse as sp
 
-        if all_unique_fids:
-            if job_service and job_id:
-                job_service.add_log(
-                    job_id,
-                    f"[*] Loading metadata and vectors for {len(all_unique_fids)} functions...",
-                )
-            fids_list = list(all_unique_fids)
-            pipe = r.pipeline(transaction=False)
-            for fid in fids_list:
-                pipe.get(f"{fid}:meta")
-                pipe.get(f"{fid}:funcid")
-                pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
-            results = pipe.execute()
-            
-            for i, fid in enumerate(fids_list):
-                res_meta = results[i * 3]
-                res_funcid = results[i * 3 + 1]
-                res_vec = results[i * 3 + 2]
-                
-                if res_meta:
-                    m = json.loads(res_meta) if not isinstance(res_meta, dict) else res_meta
-                    if isinstance(m, str):
-                        try:
-                            m = json.loads(m)
-                        except ValueError:
-                            pass
-                    func_meta_cache[fid] = m if isinstance(m, dict) else {}
-                else:
-                    func_meta_cache[fid] = {}
-                    
-                if res_funcid:
-                    func_exact_hashes[fid] = res_funcid.decode() if isinstance(res_funcid, bytes) else res_funcid
-                
-                if res_vec:
-                    func_vectors[fid] = res_vec
-                else:
-                    func_vectors[fid] = []
-
-        # Normalize each function's tags once here, not once per matched edge.
+        func_weight = {}
         fid_tags = {}
-        for fid, m in func_meta_cache.items():
-            tags = merge_tag_fields(m)
-            if tags:
-                fid_tags[fid] = tags
+        binary_ordered_fids = {}
+        binary_matrices = {}
+        binary_hash_rows = {}
+        feature_to_idx = {}
+
+        total_functions = sum(len(f) for f in binary_fids.values())
+        if job_service and job_id:
+            job_service.add_log(
+                job_id,
+                f"[*] Loading metadata and vectors for {total_functions} functions "
+                f"across {len(binaries)} binaries...",
+            )
+
+        LOAD_BATCH = int(os.getenv("BIN_SIM_LOAD_BATCH", 5000))
+        loaded = 0
+        for md5 in binaries:
+            # Sorted so a rebuild numbers the rows the same way twice running.
+            fids = sorted(binary_fids[md5])
+            binary_ordered_fids[md5] = fids
+            rows, cols, data = [], [], []
+            hash_rows = {}
+
+            for start_i in range(0, len(fids), LOAD_BATCH):
+                batch = fids[start_i : start_i + LOAD_BATCH]
+                pipe_load = r.pipeline(transaction=False)
+                for fid in batch:
+                    pipe_load.get(f"{fid}:meta")
+                    pipe_load.get(f"{fid}:funcid")
+                    pipe_load.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+                results = pipe_load.execute()
+
+                for n, fid in enumerate(batch):
+                    row = start_i + n
+                    res_meta = results[n * 3]
+                    res_funcid = results[n * 3 + 1]
+                    res_vec = results[n * 3 + 2]
+
+                    meta = {}
+                    if res_meta:
+                        meta = (
+                            json.loads(res_meta)
+                            if not isinstance(res_meta, dict)
+                            else res_meta
+                        )
+                        if isinstance(meta, str):
+                            try:
+                                meta = json.loads(meta)
+                            except ValueError:
+                                meta = {}
+                        if not isinstance(meta, dict):
+                            meta = {}
+
+                    # The only two things any caller reads out of a function's
+                    # meta. Normalising the tags here also keeps that off the
+                    # per-matched-edge path, as it was before.
+                    func_weight[fid] = float(meta.get("bsim_features_count", 1.0))
+                    tags = merge_tag_fields(meta)
+                    if tags:
+                        fid_tags[fid] = tags
+
+                    if res_funcid:
+                        digest = (
+                            res_funcid.decode()
+                            if isinstance(res_funcid, bytes)
+                            else res_funcid
+                        )
+                        hash_rows.setdefault(digest, []).append(row)
+
+                    for feat_hash, tf in res_vec or ():
+                        idx = feature_to_idx.get(feat_hash)
+                        if idx is None:
+                            idx = len(feature_to_idx)
+                            feature_to_idx[feat_hash] = idx
+                        rows.append(row)
+                        cols.append(idx)
+                        data.append(float(tf))
+
+                results = None
+                loaded += len(batch)
+
+            binary_hash_rows[md5] = hash_rows
+            # Built at the width known so far; widened to the final count below.
+            # Every column index here came from feature_to_idx, so none of them
+            # can fall outside it.
+            binary_matrices[md5] = sp.csr_matrix(
+                (
+                    np.asarray(data, dtype=float),
+                    (
+                        np.asarray(rows, dtype=np.int32),
+                        np.asarray(cols, dtype=np.int32),
+                    ),
+                ),
+                shape=(len(fids), max(len(feature_to_idx), 1)),
+            )
+            rows = cols = data = None
+
+            if job_service and job_id and total_functions:
+                job_service.update_progress(
+                    job_id,
+                    int(loaded / total_functions * 10),
+                    f"Loaded {loaded}/{total_functions} functions",
+                )
+
+        num_features = max(len(feature_to_idx), 1)
+        for mat in binary_matrices.values():
+            mat.resize((mat.shape[0], num_features))
 
         tag_meta_cache = load_tag_meta(r, collection) if fid_tags else {}
         tags_rev = read_tags_rev(r, collection)
-        
-        # Prepare global feature mapping for scipy sparse matrix construction
-        # Only map features that actually appear
-        feature_to_idx = {}
-        for vec in func_vectors.values():
-            for feat_hash, tf in vec:
-                if feat_hash not in feature_to_idx:
-                    feature_to_idx[feat_hash] = len(feature_to_idx)
-        
-        num_features = len(feature_to_idx)
-        
-        def build_sparse_matrix(fids):
-            import scipy.sparse as sp
-            import numpy as np
-            rows, cols, data = [], [], []
-            for i, fid in enumerate(fids):
-                for feat_hash, tf in func_vectors.get(fid, []):
-                    idx = feature_to_idx.get(feat_hash)
-                    if idx is not None:
-                        rows.append(i)
-                        cols.append(idx)
-                        data.append(float(tf))
-            return sp.csr_matrix((data, (rows, cols)), shape=(len(fids), num_features))
 
         # 5. Process Pairs (Direct in-memory Similarity Matching)
         processed = 0
@@ -711,60 +763,40 @@ class BinSimService:
             else:
                 file_meta_cache[md5] = {}
                 
-        # To avoid re-building the same sparse matrix for each binary many times, cache them:
-        binary_matrices = {}
-        binary_ordered_fids = {}
-        for md5 in binaries:
-            fids = list(binary_fids[md5])
-            binary_ordered_fids[md5] = fids
-            binary_matrices[md5] = build_sparse_matrix(fids)
-
-        import numpy as np
         from sklearn.metrics.pairwise import cosine_similarity
 
-        # Per-binary state for the pruning bound. `sq` holds the squared tf
-        # values so a single sparse mat-vec against another binary's feature
-        # mask yields every row's restricted squared norm at once; `norm2` is
-        # the same row sums unrestricted. Raw weights (no 1.0 clamp) because a
-        # smaller denominator is the safe side of the bound.
+        # Per-binary state for the pruning bound, built only when a threshold
+        # was asked for -- `sq` is a second copy of every matrix, which is not
+        # worth carrying for a build that is going to score every pair anyway.
+        # It holds the squared tf values so one sparse mat-vec against another
+        # binary's feature mask yields every row's restricted squared norm at
+        # once; `norm2` is the same row sums unrestricted. Raw weights (no 1.0
+        # clamp) because a smaller denominator is the safe side of the bound.
         binary_sq = {}
         binary_norm2 = {}
         binary_row_weights = {}
         binary_total_weight = {}
         binary_feature_cols = {}
-        binary_hash_rows = {}
-        for md5 in binaries:
-            mat = binary_matrices[md5]
-            sq = mat.copy()
-            sq.data = sq.data * sq.data
-            binary_sq[md5] = sq
-            binary_norm2[md5] = np.asarray(sq.sum(axis=1)).ravel()
-            weights = np.array(
-                [
-                    float(
-                        func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
-                    )
-                    for fid in binary_ordered_fids[md5]
-                ],
-                dtype=float,
-            )
-            binary_row_weights[md5] = weights
-            binary_total_weight[md5] = float(weights.sum())
-            binary_feature_cols[md5] = np.unique(mat.indices)
-            # Exact funcid matches make edges the feature vectors need not
-            # explain (an empty vector still pairs off against its twin), so
-            # they get their own candidacy path below.
-            hash_rows = {}
-            for i, fid in enumerate(binary_ordered_fids[md5]):
-                h = func_exact_hashes.get(fid)
-                if h:
-                    hash_rows.setdefault(h, []).append(i)
-            binary_hash_rows[md5] = hash_rows
-
-        # Scratch mask over the chunk's global feature space, refilled per pair
-        # rather than reallocated (num_features runs to millions).
-        feature_mask = np.zeros(num_features, dtype=float)
+        feature_mask = None
         pruned = 0
+        if min_pair_score:
+            for md5 in binaries:
+                mat = binary_matrices[md5]
+                sq = mat.copy()
+                sq.data = sq.data * sq.data
+                binary_sq[md5] = sq
+                binary_norm2[md5] = np.asarray(sq.sum(axis=1)).ravel()
+                weights = np.array(
+                    [func_weight.get(fid, 1.0) for fid in binary_ordered_fids[md5]],
+                    dtype=float,
+                )
+                binary_row_weights[md5] = weights
+                binary_total_weight[md5] = float(weights.sum())
+                binary_feature_cols[md5] = np.unique(mat.indices)
+
+            # Scratch mask over the chunk's global feature space, refilled per
+            # pair rather than reallocated (num_features runs to millions).
+            feature_mask = np.zeros(num_features, dtype=float)
 
         from bsimvis.app.services.config_service import config_service
         # Get threshold dynamically like similarity_service does, default 0.9 if not provided
@@ -841,17 +873,12 @@ class BinSimService:
             
             # Exact Hash Matches for small functions (or identical large ones, though vectors will catch large ones)
             # Find common exact hashes
-            hash_to_fids_a = {}
-            for fid in fids_a:
-                h = func_exact_hashes.get(fid)
-                if h:
-                    hash_to_fids_a.setdefault(h, []).append(fid)
-                    
-            for fid_b in fids_b:
-                h = func_exact_hashes.get(fid_b)
-                if h and h in hash_to_fids_a:
-                    for fid_a in hash_to_fids_a[h]:
-                        edges.append((fid_a, fid_b, 1.0))
+            hash_rows_a = binary_hash_rows[m_a]
+            for digest, rows_b in binary_hash_rows[m_b].items():
+                for row_a in hash_rows_a.get(digest, ()):
+                    fid_a = fids_a[row_a]
+                    for row_b in rows_b:
+                        edges.append((fid_a, fids_b[row_b], 1.0))
                         
             # Remove duplicate edges and keep the highest score if any overlaps
             unique_edges = {}
@@ -865,9 +892,7 @@ class BinSimService:
             all_funcs_b_total = binary_fids[m_b]
 
             def _feat(fid):
-                return float(
-                    func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
-                )
+                return func_weight.get(fid, 1.0)
 
             common = score_pair(
                 edges,

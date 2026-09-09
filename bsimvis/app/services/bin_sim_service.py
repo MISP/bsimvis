@@ -41,6 +41,59 @@ BIN_SIM_NUM_FIELDS = (
 )
 
 
+def pair_score_upper_bound(num_ub, min_sum, weight_a, weight_b):
+    """Exact upper bound on `score_pair(...)["score"]` for one binary pair.
+
+    `score_pair` greedily matches a subset M of the pair's candidate edges and
+    returns
+
+        num = sum over M of  s * max(w_a, w_b)
+        den = W(A) + W(B) - sum over M of min(w_a, w_b)
+        score = num / den
+
+    (`den` is `sum_weights`: matched functions contribute the larger of the two
+    weights once, unmatched ones contribute their own -- which is the same as
+    the two totals minus the smaller weight of every matched edge.)
+
+    Every term is >= 0 and M only ever matches a function once, so any
+    over-count of the numerator and any over-count of what is subtracted from
+    the denominator both push the ratio up. `sum over M of min(w_a, w_b) <=
+    min(W(A), W(B))`, so clamping with that keeps `den` positive. The result is
+    therefore >= the true score: a pair whose bound falls under the threshold
+    cannot reach it, and dropping it loses nothing. `leftovers()` clamps a zero
+    weight up to 1.0 while a matched function keeps its raw weight, so the real
+    denominator is only ever larger than the one bounded here -- still safe.
+    """
+    capped = min(min_sum, min(weight_a, weight_b))
+    den = weight_a + weight_b - capped
+    if den <= 0:
+        return 1.0
+    return min(1.0, num_ub / den)
+
+
+def candidate_rows(mass, norm2, threshold):
+    """Which functions on one side could still form an edge into the other.
+
+    `cosine_similarity` scores an edge `<a,b> / (||a|| * ||b||)`. Restricting
+    the dot product to the features `b` actually has can only grow it, and
+    Cauchy-Schwarz over those coordinates gives
+
+        <a,b> <= || a restricted to features(B) || * ||b||
+
+    so `cos(a, b) <= || a restricted to features(B) || / ||a||` for *every* b in
+    B at once. A function whose mass inside B's feature set falls below
+    `threshold * ||a||` can therefore not reach the edge threshold against any
+    function of B, and contributes nothing to the pair's numerator.
+
+    `mass` is that restricted squared norm per row, `norm2` the full squared
+    norm per row; both come straight from the sparse matrix the builder already
+    has. Returns the boolean row mask of the survivors, which is what the
+    numerator bound is built from. A zero-norm row (no features at all) has no
+    cosine edge to lose and stays in -- an exact funcid match can still pair it.
+    """
+    return mass >= (threshold * threshold) * norm2
+
+
 def _zadd_score_split(pipe, base, algo, sid, scores):
     """Write a pair's sort ZSETs. `base` is `{collection}:bin_sim` or
     `global:pool:{id}:bin_sim` -- the two builders and the resplit path share it
@@ -347,6 +400,7 @@ class BinSimService:
         batch_uuid=None,
         pairs_key=None,
         offset=0,
+        min_pair_score=None,
         job_service=None,
         job_id=None,
     ):
@@ -472,6 +526,7 @@ class BinSimService:
                 "batch_uuid": batch_uuid,
                 "pairs_key": pairs_key,
                 "offset": offset + CHUNK_SIZE,
+                "min_pair_score": min_pair_score,
             }
             if job_service and job_id:
                 # job:* hashes live on job_service's queue redis, not bin_sim_service's
@@ -630,6 +685,50 @@ class BinSimService:
         import numpy as np
         from sklearn.metrics.pairwise import cosine_similarity
 
+        # Per-binary state for the pruning bound. `sq` holds the squared tf
+        # values so a single sparse mat-vec against another binary's feature
+        # mask yields every row's restricted squared norm at once; `norm2` is
+        # the same row sums unrestricted. Raw weights (no 1.0 clamp) because a
+        # smaller denominator is the safe side of the bound.
+        binary_sq = {}
+        binary_norm2 = {}
+        binary_row_weights = {}
+        binary_total_weight = {}
+        binary_feature_cols = {}
+        binary_hash_rows = {}
+        for md5 in binaries:
+            mat = binary_matrices[md5]
+            sq = mat.copy()
+            sq.data = sq.data * sq.data
+            binary_sq[md5] = sq
+            binary_norm2[md5] = np.asarray(sq.sum(axis=1)).ravel()
+            weights = np.array(
+                [
+                    float(
+                        func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
+                    )
+                    for fid in binary_ordered_fids[md5]
+                ],
+                dtype=float,
+            )
+            binary_row_weights[md5] = weights
+            binary_total_weight[md5] = float(weights.sum())
+            binary_feature_cols[md5] = np.unique(mat.indices)
+            # Exact funcid matches make edges the feature vectors need not
+            # explain (an empty vector still pairs off against its twin), so
+            # they get their own candidacy path below.
+            hash_rows = {}
+            for i, fid in enumerate(binary_ordered_fids[md5]):
+                h = func_exact_hashes.get(fid)
+                if h:
+                    hash_rows.setdefault(h, []).append(i)
+            binary_hash_rows[md5] = hash_rows
+
+        # Scratch mask over the chunk's global feature space, refilled per pair
+        # rather than reallocated (num_features runs to millions).
+        feature_mask = np.zeros(num_features, dtype=float)
+        pruned = 0
+
         from bsimvis.app.services.config_service import config_service
         # Get threshold dynamically like similarity_service does, default 0.9 if not provided
         min_score_val = min_cohesion if min_cohesion is not None else config_service.get("similarity.min_score", 0.9)
@@ -643,7 +742,54 @@ class BinSimService:
 
             fids_a = binary_ordered_fids[m_a]
             fids_b = binary_ordered_fids[m_b]
-            
+
+            # Prune before the O(|A| x |B|) cosine, not after. The bound below
+            # is exact: it can only overshoot the score `score_pair` would have
+            # returned, so a pair it puts under `min_pair_score` could not have
+            # reached the threshold and is not worth computing. Costs one
+            # sparse mat-vec per side, against the |A| x |B| product it saves.
+            if min_pair_score:
+                cols_b = binary_feature_cols[m_b]
+                feature_mask[cols_b] = 1.0
+                cand_a = candidate_rows(
+                    binary_sq[m_a].dot(feature_mask),
+                    binary_norm2[m_a],
+                    func_sim_threshold,
+                )
+                feature_mask[cols_b] = 0.0
+
+                cols_a = binary_feature_cols[m_a]
+                feature_mask[cols_a] = 1.0
+                cand_b = candidate_rows(
+                    binary_sq[m_b].dot(feature_mask),
+                    binary_norm2[m_b],
+                    func_sim_threshold,
+                )
+                feature_mask[cols_a] = 0.0
+
+                hash_rows_a = binary_hash_rows[m_a]
+                hash_rows_b = binary_hash_rows[m_b]
+                for h in hash_rows_a.keys() & hash_rows_b.keys():
+                    cand_a[hash_rows_a[h]] = True
+                    cand_b[hash_rows_b[h]] = True
+
+                weight_a = binary_total_weight[m_a]
+                weight_b = binary_total_weight[m_b]
+                # Greedy matching uses each function once, so the numerator's
+                # `sum of s * max(w_a, w_b)` is at most the two candidate sides
+                # added up; `min(W(A), W(B))` is the most the denominator can
+                # lose. Both are the loosest-safe direction.
+                bound = pair_score_upper_bound(
+                    float(binary_row_weights[m_a][cand_a].sum())
+                    + float(binary_row_weights[m_b][cand_b].sum()),
+                    min(weight_a, weight_b),
+                    weight_a,
+                    weight_b,
+                )
+                if bound < min_pair_score:
+                    pruned += 1
+                    continue
+
             edges = []
             
             # Vector similarity using cached sparse matrices
@@ -739,6 +885,18 @@ class BinSimService:
                     )
 
         pipe.execute()
+
+        if min_pair_score:
+            # A pruned collection is missing pairs on purpose. Record the cutoff
+            # so a reader can tell "no pair below 0.4 exists" from "nothing was
+            # ever built", and log what the bound bought.
+            r.set(f"{collection}:bin_sim:min_pair_score:{algo}", min_pair_score)
+            if job_service and job_id:
+                job_service.add_log(
+                    job_id,
+                    f"[*] Pruned {pruned}/{len(pairs)} pairs that cannot reach "
+                    f"min_pair_score={min_pair_score}",
+                )
 
         # Containers were kept out of the sweep above because they hold no code
         # of their own. Roll the child pairs it just wrote up the containment
@@ -854,6 +1012,7 @@ class BinSimService:
                         break
 
             r.delete(f"{collection}:bin_sim:built:{algo}")
+            r.delete(f"{collection}:bin_sim:min_pair_score:{algo}")
             r.delete(f"{collection}:all_bin_sims")
 
             # Actual secondary indexes live under idx:bin_sim:* / reg:bin_sim:*

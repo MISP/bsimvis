@@ -4080,6 +4080,134 @@ def test_exact_pair_resplit():
     )
 
 
+def test_bin_sim_prune_bound():
+    """The pruning bound must never drop a pair that could reach the threshold.
+
+    build_bin_sim skips a binary pair outright once the bound says it cannot
+    reach min_pair_score, so the bound has to sit above the score score_pair
+    would have returned for that same pair. This rebuilds what the builder
+    actually does -- sparse tf matrices, cosine edges at the function
+    threshold, exact-funcid edges -- over randomised binaries and fails on the
+    first pair whose bound lands under its real score. The shapes that break a
+    naive bound are all in the generator: zero-weight functions, functions with
+    no features at all (only an exact funcid can pair those), and repeated
+    funcid hashes.
+    """
+    import random
+
+    import numpy as np
+    import scipy.sparse as sp
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    from bsimvis.app.services.bin_sim_service import (
+        candidate_rows,
+        pair_score_upper_bound,
+    )
+    from bsimvis.app.services.bin_sim_tags import score_pair
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-quater - bin_sim pruning bound is an upper bound", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    rng = random.Random(20260909)
+    threshold = 0.9
+    num_features = 64
+    violations = []
+    worst_slack = None
+    prunable = 0
+
+    def make_binary(name):
+        rows, cols, data = [], [], []
+        fids, weights, hashes = [], {}, {}
+        for i in range(rng.randint(1, 10)):
+            fid = f"{name}{i}"
+            fids.append(fid)
+            weights[fid] = rng.choice([0.0, 1.0, 1.0, 3.0, 17.0])
+            for f in rng.sample(range(num_features), rng.choice([0, 1, 2, 3, 5])):
+                rows.append(i)
+                cols.append(f)
+                data.append(float(rng.randint(1, 4)))
+            if rng.random() < 0.3:
+                hashes[fid] = f"h{rng.randrange(6)}"
+        mat = sp.csr_matrix(
+            (data, (rows, cols)), shape=(len(fids), num_features)
+        )
+        return fids, mat, weights, hashes
+
+    for _ in range(300):
+        fids_a, mat_a, w_a, hash_a = make_binary("a")
+        fids_b, mat_b, w_b, hash_b = make_binary("b")
+        weights = {**w_a, **w_b}
+
+        def feat(fid):
+            return weights.get(fid, 1.0)
+
+        # What build_bin_sim computes for the pair once it decides to.
+        edges = {}
+        if mat_a.nnz and mat_b.nnz:
+            sim_matrix = cosine_similarity(mat_a, mat_b)
+            for r_i, c_i in zip(*np.where(sim_matrix >= threshold)):
+                edges[(fids_a[r_i], fids_b[c_i])] = float(sim_matrix[r_i, c_i])
+        by_hash_a = {}
+        for fid in fids_a:
+            if fid in hash_a:
+                by_hash_a.setdefault(hash_a[fid], []).append(fid)
+        for fid_b in fids_b:
+            for fid_a in by_hash_a.get(hash_b.get(fid_b), []):
+                edges[(fid_a, fid_b)] = 1.0
+        score = score_pair(
+            [(u, v, s) for (u, v), s in edges.items()],
+            set(fids_a),
+            set(fids_b),
+            feat,
+        )["score"]
+
+        # What the prune computes instead, without touching the pair.
+        def candidate_weight(mat, other_mat, fids, mine, theirs):
+            sq = mat.copy()
+            sq.data = sq.data * sq.data
+            mask = np.zeros(num_features, dtype=float)
+            mask[np.unique(other_mat.indices)] = 1.0
+            cand = candidate_rows(
+                sq.dot(mask), np.asarray(sq.sum(axis=1)).ravel(), threshold
+            )
+            shared = set(mine.values()) & set(theirs.values())
+            for i, fid in enumerate(fids):
+                if mine.get(fid) in shared:
+                    cand[i] = True
+            row_weights = np.array([feat(f) for f in fids], dtype=float)
+            return float(row_weights[cand].sum()), float(row_weights.sum())
+
+        cand_a, total_a = candidate_weight(mat_a, mat_b, fids_a, hash_a, hash_b)
+        cand_b, total_b = candidate_weight(mat_b, mat_a, fids_b, hash_b, hash_a)
+        bound = pair_score_upper_bound(
+            cand_a + cand_b, min(total_a, total_b), total_a, total_b
+        )
+
+        if bound < score - 1e-9:
+            violations.append((round(bound, 6), round(score, 6), len(edges)))
+        slack = bound - score
+        if worst_slack is None or slack < worst_slack:
+            worst_slack = slack
+        if bound < 0.4:
+            prunable += 1
+
+    check(
+        "prune bound never sits below the real pair score",
+        not violations,
+        f"{len(violations)} violation(s), first: {violations[:1]}",
+    )
+    check(
+        "prune bound rejects pairs at a usable threshold",
+        prunable > 0,
+        "no randomised pair was prunable at 0.4 - the bound has no teeth",
+    )
+    print(
+        f"  tightest slack over 300 pairs: {worst_slack:+.6f}; "
+        f"{prunable} prunable at min_pair_score=0.4"
+    )
+
+
 def test_diff_injection_score():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-ter – unique function injection ranking", BOLD))
@@ -5890,6 +6018,7 @@ if __name__ == "__main__":
         test_search_job,
         test_bin_sim_notes_and_tags,
         test_exact_pair_resplit,
+        test_bin_sim_prune_bound,
         test_pool_collection_equivalence,
         test_diff_injection_score,
         test_retained_call_graph,

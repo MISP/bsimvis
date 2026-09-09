@@ -736,6 +736,7 @@ class Worker:
                 batch_uuid=payload.get("batch_uuid"),
                 pairs_key=payload.get("pairs_key"),
                 offset=payload.get("offset", 0),
+                min_pair_score=payload.get("min_pair_score"),
                 job_service=self.job_service,
                 job_id=job_id,
             )

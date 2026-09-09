@@ -196,6 +196,8 @@ def build_bin_sim():
     md5_a = data.get("md5_a")
     md5_b = data.get("md5_b")
     min_cohesion = data.get("min_cohesion", 0.5)
+    # Opt-in: skip pairs an exact bound says cannot reach this score.
+    min_pair_score = data.get("min_pair_score")
 
     job_id = job_service.create_job(
         JobType.BUILD_BIN_SIM.value,
@@ -205,6 +207,7 @@ def build_bin_sim():
             "md5_a": md5_a,
             "md5_b": md5_b,
             "min_cohesion": min_cohesion,
+            "min_pair_score": min_pair_score,
         },
     )
     job_service.enqueue_job(job_id)
@@ -272,6 +275,8 @@ def rebuild_bin_sim():
     md5_a = data.get("md5_a")
     md5_b = data.get("md5_b")
     min_cohesion = data.get("min_cohesion", 0.5)
+    # Opt-in: skip pairs an exact bound says cannot reach this score.
+    min_pair_score = data.get("min_pair_score")
 
     clear_payload = {
         "collection": collection,
@@ -285,6 +290,7 @@ def rebuild_bin_sim():
         "md5_a": md5_a,
         "md5_b": md5_b,
         "min_cohesion": min_cohesion,
+        "min_pair_score": min_pair_score,
     }
 
     pipeline_id = job_service.create_pipeline(

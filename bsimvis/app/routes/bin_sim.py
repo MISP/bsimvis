@@ -198,6 +198,11 @@ def build_bin_sim():
     min_cohesion = data.get("min_cohesion", 0.5)
     # Opt-in: skip pairs an exact bound says cannot reach this score.
     min_pair_score = data.get("min_pair_score")
+    # Drive the chunk walk by hand. A job created here has no parent pipeline,
+    # so it runs exactly one chunk and stops -- pass the pairs_key the offset-0
+    # job logged, plus the next offset, to run the one after it.
+    pairs_key = data.get("pairs_key")
+    offset = int(data.get("offset", 0) or 0)
 
     job_id = job_service.create_job(
         JobType.BUILD_BIN_SIM.value,
@@ -208,6 +213,8 @@ def build_bin_sim():
             "md5_b": md5_b,
             "min_cohesion": min_cohesion,
             "min_pair_score": min_pair_score,
+            "pairs_key": pairs_key,
+            "offset": offset,
         },
     )
     job_service.enqueue_job(job_id)

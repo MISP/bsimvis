@@ -1,3 +1,4 @@
+import os
 import time
 import json
 import logging
@@ -448,7 +449,13 @@ class BinSimService:
             return True
 
         # Generate Pairs and Chunking
-        CHUNK_SIZE = 10000
+        # Memory per chunk tracks the number of distinct binaries the chunk
+        # touches, not the number of pairs: every function of every binary in
+        # it gets its meta and tf vector pulled into this process. Pairs are
+        # sorted, so a chunk is a few `a` values against a wide spread of `b`
+        # values and touches nearly the whole collection whatever its size.
+        # Lower this when the collection is too big to hold at once.
+        CHUNK_SIZE = int(os.getenv("BIN_SIM_CHUNK_SIZE", 10000))
         if offset == 0:
             if md5_a and md5_b:
                 if md5_a < md5_b:
@@ -494,7 +501,17 @@ class BinSimService:
             if len(pairs) > CHUNK_SIZE:
                 pairs_key = f"{collection}:bin_sim_jobs:{job_id}:pairs"
                 # Store all pairs as JSON
-                r.set(pairs_key, json.dumps(pairs), ex=86400)
+                r.set(
+                    pairs_key,
+                    json.dumps(pairs),
+                    ex=int(os.getenv("BIN_SIM_PAIRS_TTL", 604800)),
+                )
+                if job_service and job_id:
+                    job_service.add_log(
+                        job_id,
+                        f"[*] {len(pairs)} pairs stored at {pairs_key} -- run a "
+                        f"later chunk with that pairs_key and an offset.",
+                    )
             else:
                 pairs_key = None
         else:
@@ -502,6 +519,14 @@ class BinSimService:
                 return True
             raw = r.get(pairs_key)
             if not raw:
+                # Expired or cleared. Returning quietly here is what let a build
+                # that outran the TTL report every remaining chunk as a success.
+                if job_service and job_id:
+                    job_service.add_log(
+                        job_id,
+                        f"[!] pairs key {pairs_key} is gone (expired or cleared). "
+                        f"Nothing to resume at offset {offset} -- rerun from offset 0.",
+                    )
                 return True
             pairs = json.loads(raw)
 
@@ -534,12 +559,24 @@ class BinSimService:
                 # parent_id silently falls back to job_id itself (a leaf task with no
                 # task_ids), and splice_tasks no-ops. That's why chunked builds always
                 # stopped after exactly one CHUNK_SIZE chunk.
-                job_service.splice_tasks(
+                spliced = job_service.splice_tasks(
                     parent_id=job_service.r.hget(f"job:{job_id}", "parent_id")
                     or job_id,
                     after_id=job_id,
                     new_tids=[(JobType.BUILD_BIN_SIM.value, next_payload)],
                 )
+                if not spliced:
+                    # `parent_id` is "" on a job created outside a pipeline, so
+                    # the fallback above points at the job itself -- a leaf with
+                    # no task_ids for splice_tasks to extend. The chain ends
+                    # here whatever the pair total says.
+                    job_service.add_log(
+                        job_id,
+                        f"[!] Could not queue the next chunk: this job has no "
+                        f"parent pipeline to splice into. {offset + CHUNK_SIZE} "
+                        f"of {total_pairs} pairs remain. Continue with "
+                        f"pairs_key={pairs_key} offset={offset + CHUNK_SIZE}.",
+                    )
         elif pairs_key:
             r.delete(pairs_key)
 

@@ -205,6 +205,11 @@ def build_bin_sim():
             "md5_a": md5_a,
             "md5_b": md5_b,
             "min_cohesion": min_cohesion,
+            # Lowest score worth storing a pair for; None falls back to
+            # $BIN_SIM_MIN_PAIR_SCORE, else 0.0. Enforced with an exact upper
+            # bound, so raising it never drops a pair that would have reached
+            # it -- see bin_sim_service.pair_score_upper_bound.
+            "min_pair_score": data.get("min_pair_score"),
         },
     )
     job_service.enqueue_job(job_id)

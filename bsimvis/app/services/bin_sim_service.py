@@ -41,6 +41,69 @@ BIN_SIM_NUM_FIELDS = (
 )
 
 
+def pair_score_upper_bound(num_ub, min_sum, weight_a, weight_b):
+    """Exact upper bound on `score_pair(...)["score"]` for one binary pair.
+
+    `score_pair` greedily matches a subset M of the pair's candidate edges and
+    returns
+
+        num = sum over M of  s * max(w_a, w_b)
+        den = W(A) + W(B) - sum over M of min(w_a, w_b)
+        score = num / den
+
+    (`den` is `sum_weights`: matched functions contribute the larger of the two
+    weights once, unmatched ones contribute their own -- which is the same as
+    the two totals minus the smaller weight of every matched edge.)
+
+    M is a subset of the pair's candidate edges, and every term is >= 0, so
+    summing `s * max` over ALL candidates can only overshoot the numerator, and
+    summing `min` over all candidates can only overshoot what is subtracted
+    from the denominator. `sum over M of min(w_a, w_b) <= min(W(A), W(B))` too,
+    since a function is matched at most once -- clamping with that keeps `den`
+    positive. Both moves push the ratio up, so the result is >= the true score:
+    a pair whose bound falls under the threshold cannot reach it, and dropping
+    it loses nothing. `leftovers()` clamps a zero weight up to 1.0 while a
+    matched function keeps its raw weight, so the real denominator is only ever
+    larger than the one bounded here -- still on the safe side.
+    """
+    capped = min(min_sum, min(weight_a, weight_b))
+    den = weight_a + weight_b - capped
+    if den <= 0:
+        return 1.0
+    return min(1.0, num_ub / den)
+
+
+def split_sim_sid(sid, prefix, collection):
+    """`{collection}:sim:{algo}:{md5_a}:{addr_a}::{md5_b}:{addr_b}` -> the two
+    md5s and the two full function ids, without fetching the doc.
+
+    `similarity_service` builds the sid from the function ids with the
+    `{collection}:func:` prefix stripped (see its `clean_id_a`), and
+    `index_service.save_function` files every function under that same
+    prefix -- so the ids are recoverable from the key alone, which is what
+    makes candidate discovery a key scan instead of a read of every doc.
+    Returns None for anything that doesn't parse.
+    """
+    if not sid.startswith(prefix):
+        return None
+    halves = sid[len(prefix) :].split("::")
+    if len(halves) != 2:
+        return None
+    out = []
+    for half in halves:
+        parts = half.split(":")
+        if len(parts) != 2 or not parts[0]:
+            return None
+        out.append(parts[0])
+    md5_a, md5_b = out
+    return (
+        md5_a,
+        md5_b,
+        f"{collection}:func:{halves[0]}",
+        f"{collection}:func:{halves[1]}",
+    )
+
+
 def _zadd_score_split(pipe, base, algo, sid, scores):
     """Write a pair's sort ZSETs. `base` is `{collection}:bin_sim` or
     `global:pool:{id}:bin_sim` -- the two builders and the resplit path share it
@@ -81,11 +144,20 @@ def read_bin_sim_rev(r, collection):
         return 0
 
 
-def _index_bin_sim_pair(pipe, collection, sid, doc, file_meta_a=None, file_meta_b=None):
-    """Write secondary indexes for a bin_sim pair doc."""
+def _index_bin_sim_pair(
+    pipe, collection, sid, doc, file_meta_a=None, file_meta_b=None, bump_rev=True
+):
+    """Write secondary indexes for a bin_sim pair doc.
+
+    `bump_rev=False` for a caller writing many pairs in one go: the generation
+    only has to move once for readers to revalidate, and a full build otherwise
+    sends one INCR per pair to a single key. That caller owns bumping it once
+    the batch is written.
+    """
     # Every pair-doc write in the codebase passes through here, so this is the
     # one place the generation above can be moved from. See read_bin_sim_rev.
-    pipe.incr(bin_sim_rev_key(collection))
+    if bump_rev:
+        pipe.incr(bin_sim_rev_key(collection))
 
     def tag_index(field, value):
         if value is None:
@@ -268,6 +340,165 @@ class BinSimService:
             maximum = address if maximum is None else max(maximum, address)
         return maximum
 
+    def _load_function_facts(
+        self, collection, binaries, job_service=None, job_id=None
+    ):
+        """Every binary's function ids, each function's feature weight and its
+        normalised tags -- read once for the whole build.
+
+        This used to happen inside the chunk loop, over the binaries appearing
+        in that chunk. Pairs are sorted, so a chunk of N pairs touches ~N
+        distinct binaries whatever N is, which made the total metadata read
+        O(total_pairs x functions_per_binary) -- every binary's functions
+        fetched and json-parsed once per pair it took part in. Hoisting it
+        makes it O(functions), once, and leaves CHUNK_SIZE a memory knob
+        rather than the thing that sets the cost of the build.
+
+        ponytail: holds the whole collection's function weights in memory
+        (tags only for functions that have any). Fine at ~10^6 functions; past
+        that, shard the build by md5_a so each shard loads only its own slice.
+        """
+        r = self.r
+        binary_fids = {}
+        for md5 in binaries:
+            binary_fids[md5] = {
+                (f.decode() if isinstance(f, bytes) else str(f)).replace(":meta", "")
+                for f in r.smembers(f"{collection}:idx:file:functions:{md5}")
+            }
+
+        all_fids = set()
+        for fids in binary_fids.values():
+            all_fids.update(fids)
+
+        func_weight = {}
+        fid_tags = {}
+        fids_list = list(all_fids)
+        BATCH = 10000
+        for start in range(0, len(fids_list), BATCH):
+            window = fids_list[start : start + BATCH]
+            pipe = r.pipeline(transaction=False)
+            for fid in window:
+                pipe.get(f"{fid}:meta")
+            for fid, res in zip(window, pipe.execute()):
+                if not res:
+                    continue
+                m = json.loads(res) if not isinstance(res, dict) else res
+                if isinstance(m, str):
+                    try:
+                        m = json.loads(m)
+                    except ValueError:
+                        continue
+                if not isinstance(m, dict):
+                    continue
+                # Same default as the old `_feat` closure: a function with no
+                # recorded count weighs one feature, not zero.
+                func_weight[fid] = float(m.get("bsim_features_count", 1.0))
+                tags = merge_tag_fields(m)
+                if tags:
+                    fid_tags[fid] = tags
+            if job_service and job_id:
+                job_service.add_log(
+                    job_id,
+                    f"[*] Loaded function metadata "
+                    f"({min(start + BATCH, len(fids_list))}/{len(fids_list)})",
+                )
+
+        binary_weight = {
+            md5: sum(func_weight.get(f, 1.0) for f in fids)
+            for md5, fids in binary_fids.items()
+        }
+        return binary_fids, func_weight, fid_tags, binary_weight
+
+    def _candidate_pairs(
+        self,
+        collection,
+        algo,
+        binaries,
+        func_weight,
+        binary_weight,
+        min_pair_score,
+        job_service=None,
+        job_id=None,
+    ):
+        """Binary pairs that can possibly score at or above `min_pair_score`.
+
+        Returns None when there is no function-similarity score index to read
+        (a pool namespace, or a collection whose function similarities were
+        never built), so the caller falls back to the full cross product.
+
+        `score_pair` given no edges returns 0.0, so a binary pair that no
+        function-similarity doc touches is *provably* zero -- dropping it is
+        not a heuristic, and costs no recall at any threshold above zero.
+        Scanning `sim:score:{algo}` once yields exactly the pairs with any
+        shared mass, and replaces the SINTER that used to run once per pair,
+        each one rescanning a whole `sim:involves:file:` set.
+
+        While scanning, accumulate the two sums `pair_score_upper_bound` needs.
+        Every sid carries both function ids, so this costs no document reads.
+
+        ponytail: one accumulator entry per candidate pair, in memory. Fine to
+        ~10^6 pairs; past that, shard the scan by md5_a.
+        """
+        r = self.r
+        score_key = f"{collection}:sim:score:{algo}"
+        try:
+            if not r.exists(score_key):
+                return None
+        except Exception:
+            return None
+
+        ready = set(binaries)
+        prefix = f"{collection}:sim:{algo}:"
+        acc = {}
+        scanned = 0
+        for member, score in r.zscan_iter(score_key, count=5000):
+            scanned += 1
+            parsed = split_sim_sid(
+                member.decode() if isinstance(member, bytes) else str(member),
+                prefix,
+                collection,
+            )
+            if not parsed:
+                continue
+            md5_a, md5_b, fid_a, fid_b = parsed
+            if md5_a == md5_b or md5_a not in ready or md5_b not in ready:
+                continue
+            w_a = func_weight.get(fid_a, 1.0)
+            w_b = func_weight.get(fid_b, 1.0)
+            key = (md5_a, md5_b) if md5_a < md5_b else (md5_b, md5_a)
+            slot = acc.get(key)
+            if slot is None:
+                slot = acc[key] = [0.0, 0.0]
+            slot[0] += float(score) * max(w_a, w_b)
+            slot[1] += min(w_a, w_b)
+            if job_service and job_id and scanned % 250000 == 0:
+                job_service.add_log(
+                    job_id,
+                    f"[*] Discovering pairs ({scanned} function similarities "
+                    f"scanned, {len(acc)} candidate pairs)",
+                )
+
+        pairs = []
+        for (m_a, m_b), (num_ub, min_sum) in acc.items():
+            if min_pair_score > 0:
+                bound = pair_score_upper_bound(
+                    num_ub, min_sum, binary_weight[m_a], binary_weight[m_b]
+                )
+                if bound < min_pair_score:
+                    continue
+            pairs.append((m_a, m_b))
+        pairs.sort()
+
+        if job_service and job_id:
+            job_service.add_log(
+                job_id,
+                f"[*] {scanned} function similarities -> {len(acc)} pairs with "
+                f"shared mass, {len(pairs)} kept at min_pair_score="
+                f"{min_pair_score} (of "
+                f"{len(binaries) * (len(binaries) - 1) // 2} possible pairs).",
+            )
+        return pairs
+
     def build_bin_sim(
         self,
         collection,
@@ -276,12 +507,26 @@ class BinSimService:
         md5_b=None,
         min_cohesion=0.5,
         batch_uuid=None,
+        min_pair_score=None,
         job_service=None,
         job_id=None,
     ):
         """
         Builds binary similarity diff docs and scores for pairs of binaries.
         Uses a cluster-first greedy sweep algorithm.
+
+        `min_pair_score` (default $BIN_SIM_MIN_PAIR_SCORE, else 0.0) is the
+        lowest `score` worth storing a pair doc for. It is enforced with an
+        exact upper bound (`pair_score_upper_bound`), not a sampled or
+        approximate one: a pair is only skipped once it is proven it cannot
+        reach the threshold, so raising it never drops a pair that would have
+        scored at or above it. At the 0.0 default nothing is thresholded and
+        only provably-zero pairs -- those sharing no function similarity at
+        all -- are skipped.
+
+        Pairs below the threshold are absent rather than stored as 0, so
+        readers must treat a missing pair as "below `min_pair_score`". The
+        value in force is kept at `{collection}:bin_sim:min_pair_score:{algo}`.
 
         Streamed and resumable, same shape as feature_service.enrich_features
         (job-system-rework-plan.md §6/§7.2): once there's more than one chunk
@@ -367,33 +612,61 @@ class BinSimService:
                 job_service.update_progress(job_id, 100)
             return True
 
+        if min_pair_score is None:
+            min_pair_score = os.getenv("BIN_SIM_MIN_PAIR_SCORE", 0.0)
+        min_pair_score = float(min_pair_score)
+
+        # Function weights, tags and per-binary function sets, once for the
+        # whole build -- the chunk loop below reads these instead of
+        # re-fetching every chunk binary's metadata per chunk.
+        binary_fids, func_weight, fid_tags, binary_weight = self._load_function_facts(
+            collection, binaries, job_service=job_service, job_id=job_id
+        )
+        tag_meta_cache = load_tag_meta(r, collection) if fid_tags else {}
+        tags_rev = read_tags_rev(r, collection)
+
+        CHUNK_SIZE = int(os.getenv("BIN_SIM_CHUNK_SIZE", 100))
+        # A hard-killed attempt leaves whatever it had not popped yet in this
+        # list, and that list *is* the checkpoint -- so look for it before
+        # generating pairs, not after. Discovery is a scan of the whole
+        # function-similarity index now; re-running it on every resume only to
+        # throw the result away would make a resume cost about what a fresh
+        # start does.
+        pairs_key = f"{collection}:bin_sim_jobs:{job_id}:pairs" if job_id else None
+        resume_len = r.llen(pairs_key) if pairs_key else 0
+
         # Generate pairs once, up front.
-        if md5_a and md5_b:
+        if resume_len:
+            pairs = []
+            total_pairs = int(r.get(f"{pairs_key}:total") or resume_len)
+            if job_service and job_id:
+                job_service.add_log(
+                    job_id,
+                    f"[*] Resuming binary similarity build: "
+                    f"{resume_len}/{total_pairs} pairs left.",
+                )
+        elif md5_a and md5_b:
             if md5_a < md5_b:
                 pairs = [(md5_a, md5_b)]
             else:
                 pairs = [(md5_b, md5_a)]
         else:
-            pairs = []
-            if batch_uuid:
-                func_keys = r.smembers(f"{collection}:batch:{batch_uuid}:functions")
-                batch_binaries = set(
-                    (k.decode() if isinstance(k, bytes) else k).split(":")[-2]
-                    for k in func_keys
-                    if len(k.split(":")) >= 3
-                )
-                batch_binaries = list(batch_binaries - set(containers))
-                # pairs between batch and all binaries
-                for b1 in batch_binaries:
-                    for b2 in binaries:
-                        if b1 == b2:
-                            continue
-                        if b1 < b2:
-                            pairs.append((b1, b2))
-                        else:
-                            pairs.append((b2, b1))
-                pairs = list(set(pairs))
-            else:
+            # Candidate pairs come from the function-similarity index, so pairs
+            # that share nothing (score 0 by construction) never enter the
+            # list. Falls back to the full cross product for namespaces with no
+            # such index -- pools, or similarities that were never built.
+            pairs = self._candidate_pairs(
+                collection,
+                algo,
+                binaries,
+                func_weight,
+                binary_weight,
+                min_pair_score,
+                job_service=job_service,
+                job_id=job_id,
+            )
+            if pairs is None:
+                pairs = []
                 for i in range(len(binaries)):
                     for j in range(i + 1, len(binaries)):
                         b1, b2 = binaries[i], binaries[j]
@@ -401,43 +674,45 @@ class BinSimService:
                             pairs.append((b1, b2))
                         else:
                             pairs.append((b2, b1))
-            # Sort pairs for determinism
-            pairs.sort()
+                pairs.sort()
+            if batch_uuid:
+                func_keys = r.smembers(f"{collection}:batch:{batch_uuid}:functions")
+                batch_binaries = set(
+                    (k.decode() if isinstance(k, bytes) else k).split(":")[-2]
+                    for k in func_keys
+                    if len(k.split(":")) >= 3
+                ) - set(containers)
+                # A batch build only owes pairs that touch the batch.
+                pairs = [p for p in pairs if p[0] in batch_binaries or p[1] in batch_binaries]
 
-        total_pairs = len(pairs)
-        if total_pairs == 0:
-            if job_service and job_id:
-                job_service.update_progress(job_id, 100, "No new binary pairs to compare.")
-            return True
+            # Readers can't tell "scored below the threshold" from "never
+            # built" unless the threshold in force is recorded somewhere. Only
+            # a sweep records it -- an explicit md5_a/md5_b build compares the
+            # pair it was asked for whatever its score, and must not restate
+            # the collection's threshold as 0.
+            r.set(f"{collection}:bin_sim:min_pair_score:{algo}", min_pair_score)
 
-        CHUNK_SIZE = int(os.getenv("BIN_SIM_CHUNK_SIZE", 100))
-        # Only worth the round-trips (and the resumability they buy) once
-        # there's more than one chunk to do -- the common md5_a/md5_b or
-        # small-batch call stays a single in-memory pass, same cost as before.
-        pairs_key = (
-            f"{collection}:bin_sim_jobs:{job_id}:pairs"
-            if job_id and total_pairs > CHUNK_SIZE
-            else None
-        )
-        if pairs_key:
-            existing_len = r.llen(pairs_key)
-            if existing_len:
-                # A previous attempt was hard-killed mid-run: the list is
-                # exactly what's left, so pick up from there.
-                total_pairs = int(r.get(f"{pairs_key}:total") or existing_len)
+        if not resume_len:
+            total_pairs = len(pairs)
+            if total_pairs == 0:
                 if job_service and job_id:
-                    job_service.add_log(
-                        job_id,
-                        f"[*] Resuming binary similarity build: "
-                        f"{existing_len}/{total_pairs} pairs left.",
+                    job_service.update_progress(
+                        job_id, 100, "No new binary pairs to compare."
                     )
-            else:
+                return True
+            # The list (and the resumability it buys) is only worth the
+            # round-trips once there's more than one chunk to do -- the common
+            # md5_a/md5_b or small-batch call stays a single in-memory pass.
+            if total_pairs > CHUNK_SIZE and pairs_key:
                 r.rpush(pairs_key, *[json.dumps(p) for p in pairs])
                 r.expire(pairs_key, 86400)
                 r.set(f"{pairs_key}:total", total_pairs, ex=86400)
+            else:
+                pairs_key = None
 
         processed_overall = total_pairs - (r.llen(pairs_key) if pairs_key else 0)
         done_with_single_pass = False
+        all_pair_scores = {}
 
         while True:
             # Checked before popping the next chunk, not after: whatever's
@@ -466,67 +741,10 @@ class BinSimService:
                     f"out of {total_pairs}...",
                 )
 
-            # Re-derive binaries list so we only fetch metadata for binaries in this chunk
-            chunk_binaries = set()
-            for p in chunk_pairs:
-                chunk_binaries.update(p)
-            binaries = list(chunk_binaries)
-            num_binaries = len(binaries)
+            # Function ids, weights and tags come from the one pre-pass above;
+            # only this chunk's file-level metadata is still per-chunk.
+            binaries = sorted({m for p in chunk_pairs for m in p})
             pairs = chunk_pairs
-            # 2. Load each binary's function IDs + counts (needed below for coverage,
-            # bsim_features_count, and the diff doc's functions_count_a/b).
-            binary_fids = {}
-            binary_func_counts = {}
-            for md5 in binaries:
-                func_set_key = f"{collection}:idx:file:functions:{md5}"
-                raw_ids = r.smembers(func_set_key)
-                binary_func_counts[md5] = len(raw_ids)
-                fids = [
-                    (
-                        fid.decode().replace(":meta", "")
-                        if isinstance(fid, bytes)
-                        else str(fid).replace(":meta", "")
-                    )
-                    for fid in raw_ids
-                ]
-                binary_fids[md5] = set(fids)
-
-            # 3. Load function metadata (for bsim_features_count & names)
-            func_meta_cache = {}
-            all_unique_fids = set()
-            for fids_set in binary_fids.values():
-                all_unique_fids.update(fids_set)
-
-            if all_unique_fids:
-                if job_service and job_id:
-                    job_service.add_log(
-                        job_id,
-                        f"[*] Loading metadata for {len(all_unique_fids)} functions...",
-                    )
-                fids_list = list(all_unique_fids)
-                pipe = r.pipeline(transaction=False)
-                for fid in fids_list:
-                    pipe.get(f"{fid}:meta")
-                meta_results = pipe.execute()
-                for fid, res in zip(fids_list, meta_results):
-                    if res:
-                        m = json.loads(res) if not isinstance(res, dict) else res
-                        if isinstance(m, str):
-                            try:
-                                m = json.loads(m)
-                            except ValueError:
-                                pass
-                        func_meta_cache[fid] = m if isinstance(m, dict) else {}
-
-            # Normalize each function's tags once here, not once per matched edge.
-            fid_tags = {}
-            for fid, m in func_meta_cache.items():
-                tags = merge_tag_fields(m)
-                if tags:
-                    fid_tags[fid] = tags
-
-            tag_meta_cache = load_tag_meta(r, collection) if fid_tags else {}
-            tags_rev = read_tags_rev(r, collection)
 
             # 5. Process Pairs (Direct Similarity Matching with Bipartite Greedy Selection)
             processed = 0
@@ -609,9 +827,7 @@ class BinSimService:
                 all_funcs_b_total = binary_fids[m_b]
 
                 def _feat(fid):
-                    return float(
-                        func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
-                    )
+                    return func_weight.get(fid, 1.0)
 
                 # Greedy match, cohesion mean, coverage, tag split and the
                 # code/library split all live in one place now, shared with the
@@ -634,8 +850,8 @@ class BinSimService:
                     "algo": algo,
                     "architecture_a": file_meta_a.get("language_id", ""),
                     "architecture_b": file_meta_b.get("language_id", ""),
-                    "functions_count_a": binary_func_counts.get(m_a, 0),
-                    "functions_count_b": binary_func_counts.get(m_b, 0),
+                    "functions_count_a": len(binary_fids.get(m_a, ())),
+                    "functions_count_b": len(binary_fids.get(m_b, ())),
                     "computed_at": int(time.time() * 1000),
                     # Bumped by every tag write, so a stored split can be told apart
                     # from the tag state it was computed against without rebuilding.
@@ -655,8 +871,17 @@ class BinSimService:
                 pipe.sadd(f"{collection}:bin_sim:involves:{m_b}", sid)
                 pipe.sadd(f"{collection}:bin_sim:built:{algo}", sid)
 
-                # Secondary indexes
-                _index_bin_sim_pair(pipe, collection, sid, doc, file_meta_a, file_meta_b)
+                # Secondary indexes. The generation is bumped once for the whole
+                # chunk below, not once per pair.
+                _index_bin_sim_pair(
+                    pipe,
+                    collection,
+                    sid,
+                    doc,
+                    file_meta_a,
+                    file_meta_b,
+                    bump_rev=False,
+                )
 
                 processed += 1
 
@@ -674,21 +899,10 @@ class BinSimService:
                             total=total_pairs,
                         )
 
+            if pair_scores:
+                pipe.incr(bin_sim_rev_key(collection))
             pipe.execute()
-
-            # Containers were kept out of the sweep above because they hold no code
-            # of their own. Roll the child pairs it just wrote up the containment
-            # edges, so an APK can be compared as a whole.
-            from bsimvis.app.services import container_sim_service
-
-            container_sim_service.build_container_sims(
-                collection,
-                algo,
-                pair_scores,
-                r,
-                job_service=job_service,
-                job_id=job_id,
-            )
+            all_pair_scores.update(pair_scores)
 
             processed_overall += len(chunk_pairs)
             if job_service and job_id:
@@ -704,6 +918,26 @@ class BinSimService:
         if pairs_key:
             r.delete(pairs_key)
             r.delete(f"{pairs_key}:total")
+
+        # Containers were kept out of the sweep above because they hold no code
+        # of their own. Roll the child pairs it just wrote up the containment
+        # edges, so an APK can be compared as a whole. Once, after the sweep --
+        # this used to run per chunk, which at the default CHUNK_SIZE meant
+        # re-walking the whole containment graph thousands of times per build
+        # for a result only the last call could be complete. A pair missing
+        # from `all_pair_scores` (a resumed run) is read back off the
+        # scoreboard by build_container_sims itself, so a partial map is still
+        # a correct one.
+        from bsimvis.app.services import container_sim_service
+
+        container_sim_service.build_container_sims(
+            collection,
+            algo,
+            all_pair_scores,
+            r,
+            job_service=job_service,
+            job_id=job_id,
+        )
 
         if job_service and job_id:
             job_service.update_progress(
@@ -809,6 +1043,9 @@ class BinSimService:
                         break
 
             r.delete(f"{collection}:bin_sim:built:{algo}")
+            # No pairs left, so no threshold is in force -- leaving the old one
+            # would tell readers that missing pairs scored below it.
+            r.delete(f"{collection}:bin_sim:min_pair_score:{algo}")
             r.delete(f"{collection}:all_bin_sims")
 
             # Actual secondary indexes live under idx:bin_sim:* / reg:bin_sim:*

@@ -4122,6 +4122,121 @@ def test_exact_pair_resplit():
     )
 
 
+def test_pair_score_upper_bound():
+    """The pruning bound must never sit below the score it is bounding.
+
+    build_bin_sim skips a binary pair once pair_score_upper_bound() says it
+    cannot reach min_pair_score. That is only safe while the bound is a true
+    upper bound on what score_pair() would have returned for the same pair, so
+    this drives both over randomised pairs and fails on the first violation.
+    Deliberately includes the shapes that break a naive bound: zero-weight
+    functions (score_pair clamps those to 1.0 only when they end up unmatched),
+    edges that all collide on one function, and pairs with no edges at all.
+    """
+    import random
+
+    from bsimvis.app.services.bin_sim_service import pair_score_upper_bound
+    from bsimvis.app.services.bin_sim_tags import score_pair
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-quater – bin_sim pruning bound is an upper bound", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    rng = random.Random(20260909)
+    worst_slack = None
+    violations = []
+    empty_scores_zero = True
+
+    for case in range(400):
+        n_a = rng.randint(1, 12)
+        n_b = rng.randint(1, 12)
+        funcs_a = {f"a{i}" for i in range(n_a)}
+        funcs_b = {f"b{i}" for i in range(n_b)}
+        # Zero weights are the interesting case: score_pair's leftovers() lifts
+        # them to 1.0, a matched one keeps its raw 0.
+        weights = {
+            f: rng.choice([0.0, 1.0, 1.0, 3.0, 17.0, 250.0])
+            for f in funcs_a | funcs_b
+        }
+
+        n_edges = rng.randint(0, n_a * n_b)
+        edges = []
+        for _ in range(n_edges):
+            fa = f"a{rng.randrange(n_a)}"
+            fb = f"b{rng.randrange(n_b)}"
+            edges.append((fa, fb, round(rng.uniform(0.5, 1.0), 4)))
+
+        def feat(fid):
+            return weights.get(fid, 1.0)
+
+        score = score_pair(edges, funcs_a, funcs_b, feat)["score"]
+
+        # Exactly what _candidate_pairs accumulates while scanning the
+        # function-similarity index: no matching, every candidate edge counted.
+        num_ub = sum(s * max(feat(u), feat(v)) for u, v, s in edges)
+        min_sum = sum(min(feat(u), feat(v)) for u, v, _ in edges)
+        weight_a = sum(feat(f) for f in funcs_a)
+        weight_b = sum(feat(f) for f in funcs_b)
+        bound = pair_score_upper_bound(num_ub, min_sum, weight_a, weight_b)
+
+        if not edges and score != 0.0:
+            empty_scores_zero = False
+        if bound < score - 1e-9:
+            violations.append((case, bound, score, len(edges)))
+        slack = bound - score
+        if worst_slack is None or slack < worst_slack:
+            worst_slack = slack
+
+    check(
+        "pruning bound is never below the real pair score",
+        not violations,
+        f"{len(violations)} violation(s), first: {violations[:1]}",
+    )
+    check(
+        "a pair with no shared function scores exactly 0",
+        empty_scores_zero,
+        "score_pair returned non-zero for an empty edge set -- pairs with no "
+        "function similarity can no longer be skipped as provably zero",
+    )
+    print(_color(f"  tightest bound seen was +{worst_slack:.4f} over the score", DIM))
+
+
+def test_split_sim_sid():
+    """Candidate discovery reads the md5s straight out of the similarity key,
+    so a change to how similarity_service builds that key has to fail here
+    rather than silently produce zero candidate pairs."""
+    from bsimvis.app.services.bin_sim_service import split_sim_sid
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-quinquies – similarity key parses back to its md5s", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    coll, algo = "somecoll", "unweighted_cosine"
+    md5_a, md5_b = "a" * 32, "b" * 32
+    # Built exactly as similarity_service does: the function ids with the
+    # "{collection}:func:" prefix stripped, joined by "::".
+    sid = f"{coll}:sim:{algo}:{md5_a}:00401000::{md5_b}:004abcde"
+    parsed = split_sim_sid(sid, f"{coll}:sim:{algo}:", coll)
+    check(
+        "similarity sid parses to both md5s and both full function ids",
+        parsed
+        == (
+            md5_a,
+            md5_b,
+            f"{coll}:func:{md5_a}:00401000",
+            f"{coll}:func:{md5_b}:004abcde",
+        ),
+        f"got {parsed!r}",
+    )
+    check(
+        "a key from another algo or namespace is rejected, not mis-parsed",
+        split_sim_sid(sid, f"{coll}:sim:jaccard:", coll) is None
+        and split_sim_sid(f"{coll}:sim:{algo}:nonsense", f"{coll}:sim:{algo}:", coll)
+        is None,
+        "split_sim_sid accepted a key it should have refused",
+    )
+
+
 def test_diff_injection_score():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-ter – unique function injection ranking", BOLD))
@@ -5927,6 +6042,8 @@ if __name__ == "__main__":
         test_search_job,
         test_bin_sim_notes_and_tags,
         test_exact_pair_resplit,
+        test_pair_score_upper_bound,
+        test_split_sim_sid,
         test_pool_collection_equivalence,
         test_diff_injection_score,
         test_retained_call_graph,

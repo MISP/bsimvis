@@ -750,6 +750,7 @@ class Worker:
                 md5_b=md5_b,
                 min_cohesion=min_cohesion,
                 batch_uuid=payload.get("batch_uuid"),
+                min_pair_score=payload.get("min_pair_score"),
                 job_service=self.job_service,
                 job_id=job_id,
             )

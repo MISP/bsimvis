@@ -1859,6 +1859,12 @@ window.resplitBinSimTags = async function() {
     const ctx = binSimCtx; // snapshot: user may navigate to another pair mid-poll
     setBinSimResplitBanner(`<span style="display:flex; align-items:center; gap:6px; font-size:0.78rem; font-weight:600; padding:5px 10px; border-radius:999px; border:1px solid ${BSIM_RESPLIT_AMBER}; color:#3a2400; background:${BSIM_RESPLIT_AMBER};">
         <i class="fa-solid fa-spinner fa-spin"></i> Resplitting&hellip;</span>`);
+    // This button refreshes the pair on screen, so it resplits that pair. The
+    // md5 scope below is every pair naming either binary -- 773 of them for one
+    // mirai sample, ~50s of reading function metadata for binaries nobody is
+    // looking at -- where one sid is a second. The rest of the collection is
+    // still stale and still says so; each pair clears when it is opened, or all
+    // at once via a collection-wide resplit (no sid, no md5).
     try {
         const res = await fetch('/api/bin_sim/resplit', {
             method: 'POST',
@@ -1866,9 +1872,9 @@ window.resplitBinSimTags = async function() {
             body: JSON.stringify({
                 collection: ctx.collection,
                 algo: new URLSearchParams(location.search).get('algo') || 'unweighted_cosine',
-                // Only pairs naming these two can have changed. Resplitting the
-                // whole collection would rewrite thousands of identical docs.
-                md5: [ctx.md5a, ctx.md5b],
+                // Falling back to the md5 scope matters: an omitted sid AND an
+                // omitted md5 is the whole collection, tens of thousands of pairs.
+                ...(ctx.sid ? { sid: ctx.sid } : { md5: [ctx.md5a, ctx.md5b] }),
             }),
         });
         const out = await res.json();

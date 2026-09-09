@@ -217,25 +217,35 @@ class BinSimService:
         algo="unweighted_cosine",
     ):
         sid = self.find_pair_sid(collection, md5_a, md5_b, coll_b, pool_id, algo)
-        raw = self.r.get(sid) if sid else None
-        if not raw:
-            return sid, None
-        pair = json.loads(raw) if not isinstance(raw, dict) else raw
-        if isinstance(pair, str):
-            pair = json.loads(pair)
-            
-        if "diff" in pair:
-            return sid, pair
-            
-        cache_key = f"{sid}:cache"
+        # If it's a pool and the pair wasn't stored, find_pair_sid returns None.
+        # We need a fallback sid to use for the cache key.
+        fallback_m_a, fallback_m_b = sorted((md5_a, md5_b))
+        actual_sid = sid or f"{collection}:bin_sim:{algo}:{fallback_m_a}::{fallback_m_b}"
+        
+        cache_key = f"{actual_sid}:cache"
         cache_raw = self.r.get(cache_key)
         if cache_raw:
             full_doc = json.loads(cache_raw)
-            return sid, full_doc
+            return actual_sid, full_doc
             
-        full_doc = self.compute_pair_diff(collection, pair.get("md5_a", md5_a), pair.get("md5_b", md5_b), algo, coll_a=pair.get("coll_a"), coll_b=pair.get("coll_b"))
+        raw = self.r.get(actual_sid)
+        if raw:
+            pair = json.loads(raw) if not isinstance(raw, dict) else raw
+            if isinstance(pair, str):
+                pair = json.loads(pair)
+            if "diff" in pair:
+                return actual_sid, pair
+        
+        # We generate it on the fly regardless of whether it existed as a stub
+        full_doc = self.compute_pair_diff(collection, md5_a, md5_b, algo, coll_a=_origin_coll(collection), coll_b=_origin_coll(coll_b or collection))
+        
+        # If there's a stored pair, make sure we use its exact side assignment
+        if raw and isinstance(pair, dict):
+            full_doc["md5_a"] = pair.get("md5_a", full_doc["md5_a"])
+            full_doc["md5_b"] = pair.get("md5_b", full_doc["md5_b"])
+            
         self.r.setex(cache_key, 3600, json.dumps(full_doc))
-        return sid, full_doc
+        return actual_sid, full_doc
 
     def unique_functions_for_pair(
         self,
@@ -702,7 +712,6 @@ class BinSimService:
             
             fm_a_raw = r.get(f"{collection}:file:{m_a}:meta")
             fm_b_raw = r.get(f"{collection}:file:{m_b}:meta")
-            import json
             def parse_fm(raw):
                 if not raw: return {}
                 res = json.loads(raw) if not isinstance(raw, dict) else raw

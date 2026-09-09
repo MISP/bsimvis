@@ -584,11 +584,6 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     req_coll_a, req_md5_a, req_coll_b, req_md5_b = coll_a, md5_a, coll_b, md5_b
 
     sid = bin_sim_service.find_pair_sid(collection, md5_a, md5_b, coll_b, pool_id, algo)
-    if not sid:
-        return {
-            "status": "not_found",
-            "message": "Similarity not calculated for this pair",
-        }, 404
     if not pool_id and md5_a > md5_b:
         md5_a, md5_b = md5_b, md5_a
         coll_a, coll_b = coll_b, coll_a

@@ -248,10 +248,30 @@ class TagService:
 
             data = self._get_doc(doc_id)
             if not data:
-                logging.error(
-                    f"TagService: Entity {doc_id} not found (from {entity_id})"
-                )
-                return False
+                if entity_type in ("bin_sim", "similarity") and ":bin_sim:" in doc_id:
+                    coll, rest = doc_id.split(":bin_sim:", 1)
+                    algo, rest = rest.split(":", 1)
+                    m_a, m_b = rest.split("::")
+                    from bsimvis.app.services.bin_sim_service import BinSimService
+                    from bsimvis.app.services.collection_service import _origin_coll
+                    bsim_srv = BinSimService(self.r)
+                    full = bsim_srv.compute_pair_diff(coll, m_a, m_b, algo, coll_a=_origin_coll(coll), coll_b=_origin_coll(coll))
+                    if "diff" in full:
+                        del full["diff"]
+                    self._set_doc(doc_id, full)
+                    
+                    common = {k: full[k] for k in ["score", "score_code", "score_library", "score_content", "coverage_a", "coverage_b", "shared_clusters"] if k in full}
+                    bsim_srv._zadd_score_split(self.r.pipeline(transaction=False), f"{coll}:bin_sim", algo, doc_id, common).execute()
+                    self.r.sadd(f"{coll}:bin_sim:involves:{m_a}", doc_id)
+                    self.r.sadd(f"{coll}:bin_sim:involves:{m_b}", doc_id)
+                    self.r.sadd(f"{coll}:bin_sim:built:{algo}", doc_id)
+                    
+                    data = full
+                else:
+                    logging.error(
+                        f"TagService: Entity {doc_id} not found (from {entity_id})"
+                    )
+                    return False
 
             json_field = "user_tags"
             user_tags = data.get(json_field, [])

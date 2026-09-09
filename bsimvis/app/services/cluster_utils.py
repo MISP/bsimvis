@@ -30,6 +30,23 @@ def default_bin_cluster_name(names_list, avtype_list, yara_list, fallback):
     return fallback
 
 
+def majority_name(names_list, fallback):
+    """Most common name in `names_list`, ties broken alphabetically.
+
+    Counter.most_common() leaves ties in insertion order, so the winner
+    depended on the order members happened to be appended -- and the
+    single-collection and pool clustering paths build that list in different
+    orders. A cluster with two `matrix_add` and two `matrix_transpose`
+    members therefore got a different name from each path, and a different
+    one between runs. Sorting by (-count, name) makes it a property of the
+    member set alone.
+    """
+    if not names_list:
+        return fallback
+    counts = Counter(names_list)
+    return min(counts, key=lambda n: (-counts[n], n))
+
+
 def pick_best_shared_cluster(cids_a, cids_b, cluster_meta):
     """Highest-cohesion cluster shared by two functions, or None.
 

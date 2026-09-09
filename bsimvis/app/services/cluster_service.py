@@ -6,7 +6,10 @@ import uuid
 from collections import Counter, defaultdict
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.cluster_utils import default_bin_cluster_name
+from bsimvis.app.services.cluster_utils import (
+    default_bin_cluster_name,
+    majority_name,
+)
 from bsimvis.app.services import mem_util, sim_edges
 
 # Above this many nodes a dense size^2 float64 distance matrix stops being
@@ -793,9 +796,7 @@ class ClusterService:
                 if "bsim_features_count" in m:
                     feature_counts.append(m.get("bsim_features_count", 0))
 
-            default_name = (
-                Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
-            )
+            default_name = majority_name(names, f"Cluster {label}")
             avg_features = np.mean(feature_counts) if feature_counts else 0
 
             # Exact Average Internal Similarity (Cohesion) using sparse adjacency map
@@ -815,8 +816,11 @@ class ClusterService:
                 if len(parts) >= 3:
                     unique_md5s.add(parts[2])
 
-            # Find representative function name/snippet
-            rep_fid = members[0] if members else None
+            # Find representative function name/snippet. min() rather than
+            # members[0]: the list order comes from leaf iteration, which the
+            # single-collection and pool paths build differently, so [0] gave
+            # the same cluster a different snippet from each path.
+            rep_fid = min(members) if members else None
             rep_meta = all_member_meta.get(rep_fid, {}) if rep_fid else {}
             snippet = rep_meta.get("function_name", "unknown")
 
@@ -1984,9 +1988,7 @@ class ClusterService:
                 all_member_meta.get(fid, {}).get("bsim_features_count", 0)
                 for fid in members
             ]
-            default_name = (
-                Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
-            )
+            default_name = majority_name(names, f"Cluster {label}")
             avg_features = float(np.mean(feature_counts)) if feature_counts else 0.0
             cohesion_score = node_cohesion.get(label, 1.0)
 
@@ -2011,7 +2013,7 @@ class ClusterService:
             meta = {
                 "cluster_id": label,
                 "snippet": (
-                    all_member_meta.get(members[0], {}).get("function_name", "unknown")
+                    all_member_meta.get(min(members), {}).get("function_name", "unknown")
                     if members
                     else "unknown"
                 ),
@@ -2199,9 +2201,7 @@ class ClusterService:
                 all_member_meta.get(fid, {}).get("bsim_features_count", 0)
                 for fid in members
             ]
-            default_name = (
-                Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
-            )
+            default_name = majority_name(names, f"Cluster {label}")
             avg_features = float(np.mean(feature_counts)) if feature_counts else 0.0
 
             member_indices = [id_to_idx[fid] for fid in members]
@@ -2234,7 +2234,7 @@ class ClusterService:
             meta = {
                 "cluster_id": label,
                 "snippet": (
-                    all_member_meta.get(members[0], {}).get("function_name", "unknown")
+                    all_member_meta.get(min(members), {}).get("function_name", "unknown")
                     if members
                     else "unknown"
                 ),
@@ -2440,9 +2440,7 @@ class ClusterService:
                     all_member_meta.get(fid, {}).get("bsim_features_count", 0)
                     for fid in members
                 ]
-                default_name = (
-                    Counter(names).most_common(1)[0][0] if names else f"Cluster {root}"
-                )
+                default_name = majority_name(names, f"Cluster {root}")
                 avg_features = float(np.mean(feature_counts)) if feature_counts else 0.0
 
                 # Exact pairwise cohesion for clusters small enough that O(n^2)
@@ -2489,7 +2487,7 @@ class ClusterService:
 
                 meta = {
                     "cluster_id": root,
-                    "snippet": all_member_meta.get(members[0], {}).get(
+                    "snippet": all_member_meta.get(min(members), {}).get(
                         "function_name", "unknown"
                     ),
                     "cluster_uuid": c_uuid,

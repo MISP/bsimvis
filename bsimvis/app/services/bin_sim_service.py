@@ -256,6 +256,71 @@ class BinSimService:
             },
         )
 
+    def _discover_binaries(self, collection, target_md5, min_cohesion=0.1):
+        """
+        Finds candidate similar binaries using Rare Feature Anchoring.
+        """
+        func_set_key = f"{collection}:idx:file:functions:{target_md5}"
+        fids = self.r.smembers(func_set_key)
+        if not fids:
+            return []
+        
+        # 1. Collect all features for target binary
+        pipe = self.r.pipeline(transaction=False)
+        for fid in fids:
+            fid_str = fid.decode() if isinstance(fid, bytes) else str(fid)
+            fid_str = fid_str.replace(":meta", "")
+            pipe.zrange(f"{fid_str}:vec:tf", 0, -1)
+        
+        results = pipe.execute()
+        
+        unique_features = set()
+        for res in results:
+            for f_hash in res:
+                f_hash_str = f_hash.decode() if isinstance(f_hash, bytes) else str(f_hash)
+                unique_features.add(f_hash_str)
+                
+        if not unique_features:
+            return []
+            
+        # 2. Sort features by rarity (ZCARD)
+        pipe = self.r.pipeline(transaction=False)
+        for f_hash in unique_features:
+            pipe.zcard(f"{collection}:feature:{f_hash}:functions")
+        
+        sizes = pipe.execute()
+        # Filter out features that only appear in this binary (size <= 1)
+        # as they cannot help us find other similar binaries.
+        valid_features = [(f, s) for f, s in zip(unique_features, sizes) if s > 1]
+        feature_sizes = sorted(valid_features, key=lambda x: x[1])
+        
+        # 3. Discard common features by taking the rarest anchors
+        num_anchors = max(10, int(len(unique_features) * 0.25))
+        anchors = [f_hash for f_hash, size in feature_sizes[:num_anchors]]
+        
+        # 4. Query reverse index for anchors
+        pipe = self.r.pipeline(transaction=False)
+        for f_hash in anchors:
+            pipe.smembers(f"{collection}:feature:{f_hash}:functions")
+            
+        anchor_results = pipe.execute()
+        
+        # 5. Vote
+        from collections import defaultdict
+        votes = defaultdict(int)
+        for res in anchor_results:
+            for fid in res:
+                fid_str = fid.decode() if isinstance(fid, bytes) else str(fid)
+                parts = fid_str.split(":")
+                if len(parts) >= 4:
+                    cand_md5 = parts[-2]
+                    if cand_md5 != target_md5:
+                        votes[cand_md5] += 1
+                        
+        # 6. Filter by min votes (at least 2 for noise reduction)
+        min_votes = 2
+        return [md5 for md5, count in votes.items() if count >= min_votes]
+
     def max_file_entrypoint(self, collection, md5):
         """Read the highest address from the file's function-ID index."""
         maximum = None
@@ -342,47 +407,31 @@ class BinSimService:
                         if len(k.split(":")) >= 3
                     )
                     batch_binaries = list(batch_binaries - set(containers))
-                    # pairs between batch and all binaries
-                    # Block-nested loop ordering to bound the working set
-                    BLOCK_SIZE = 50
-                    batch_binaries.sort()
-                    b1_blocks = [batch_binaries[k:k+BLOCK_SIZE] for k in range(0, len(batch_binaries), BLOCK_SIZE)]
-                    binaries.sort()
-                    b2_blocks = [binaries[k:k+BLOCK_SIZE] for k in range(0, len(binaries), BLOCK_SIZE)]
+                    # Fast discovery using Rare Feature Anchoring
                     seen_pairs = set()
-                    
-                    for b1_blk in b1_blocks:
-                        for b2_blk in b2_blocks:
-                            for x in b1_blk:
-                                for y in b2_blk:
-                                    if x == y: continue
-                                    b1, b2 = (x, y) if x < y else (y, x)
-                                    if (b1, b2) not in seen_pairs:
-                                        seen_pairs.add((b1, b2))
-                                        pairs.append((b1, b2))
+                    for target_md5 in batch_binaries:
+                        cands = self._discover_binaries(collection, target_md5, min_cohesion)
+                        for cand in cands:
+                            if cand in containers: continue
+                            if cand == target_md5: continue
+                            b1, b2 = (target_md5, cand) if target_md5 < cand else (cand, target_md5)
+                            if (b1, b2) not in seen_pairs:
+                                seen_pairs.add((b1, b2))
+                                pairs.append((b1, b2))
                 else:
-                    # Block-nested loop ordering to bound the working set
-                    BLOCK_SIZE = 50
-                    binaries.sort()
-                    blocks = [binaries[k:k+BLOCK_SIZE] for k in range(0, len(binaries), BLOCK_SIZE)]
-                    for i, b1_block in enumerate(blocks):
-                        for j in range(i, len(blocks)):
-                            b2_block = blocks[j]
-                            for x in b1_block:
-                                for y in b2_block:
-                                    if x == y: continue
-                                    b1, b2 = (x, y) if x < y else (y, x)
-                                    pairs.append((b1, b2))
-                    
-                    # Deduplicate just in case, while preserving order
+                    # Fast discovery using Rare Feature Anchoring
                     seen_pairs = set()
-                    dedup_pairs = []
-                    for p in pairs:
-                        if p not in seen_pairs:
-                            seen_pairs.add(p)
-                            dedup_pairs.append(p)
-                    pairs = dedup_pairs
-                # Pairs are already deterministic based on sorted binaries
+                    for target_md5 in binaries:
+                        cands = self._discover_binaries(collection, target_md5, min_cohesion)
+                        for cand in cands:
+                            if cand in containers: continue
+                            if cand == target_md5: continue
+                            b1, b2 = (target_md5, cand) if target_md5 < cand else (cand, target_md5)
+                            if (b1, b2) not in seen_pairs:
+                                seen_pairs.add((b1, b2))
+                                pairs.append((b1, b2))
+                pairs.sort()
+                # Pairs are deterministic for chunking
 
             if len(pairs) > CHUNK_SIZE:
                 pairs_key = f"{collection}:bin_sim_jobs:{job_id}:pairs"

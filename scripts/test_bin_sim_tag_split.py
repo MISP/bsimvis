@@ -704,6 +704,11 @@ class FakeRedis:
             def sadd(self, key, value):
                 self.ops.append(("noop",))
 
+            # ...and bumps the collection's bin_sim rev, so readers know the
+            # split they cached is behind.
+            def incr(self, key):
+                self.ops.append(("noop",))
+
             def execute(self):
                 out = []
                 for op in self.ops:
@@ -914,6 +919,60 @@ def test_score_pair_carries_every_field_both_builders_store():
         "diff",
     ):
         assert field in out, field
+
+
+def test_a_tag_covering_the_whole_pair_scores_exactly_the_pair_score():
+    """A split is a split: the parts must add back up to the thing they split.
+
+    The tag score used to weigh a matched edge on each side (w_a + w_b) while
+    leftovers were weighed once, so the ratio carried double the matched mass
+    and every tag read high -- up to 2x. On a real ARM/x86 pair where nothing
+    was library-tagged, the pair scored 0.043, `score_code` scored 0.043, and
+    the Original Code row that covered all of it scored 0.082.
+
+    Few matches against a lot of unmatched mass, because that is where the two
+    conventions diverge most: with no leftovers at all both denominators are
+    matched-only and the bug hides.
+    """
+    feats = {"a1": 100.0, "a2": 60.0, "a3": 40.0, "b1": 80.0, "b2": 60.0, "b3": 500.0}
+    # `{"a1": {}}` rather than `{}`: a falsy map skips the split entirely, and
+    # an empty tag map for a function still falls back to `original_code`.
+    out = score_pair(
+        [("a1", "b1", 0.9), ("a2", "b2", 0.3)],
+        {"a1", "a2", "a3"},
+        {"b1", "b2", "b3"},
+        lambda f: feats[f],
+        {"a1": {}},
+        {},
+    )
+    # (0.9*100 + 0.3*60) / (100 + 60 + 40 + 500), matched edges weighed max(a, b).
+    assert abs(out["score"] - 108.0 / 700.0) < 1e-9, out["score"]
+    assert out["score_library"] is None
+
+    untagged = by_id(out["tags_summary"])[TAG_UNTAGGED]
+    assert abs(untagged["score"] - out["score"]) < 1e-9, untagged["score"]
+    assert abs(untagged["score"] - out["score_code"]) < 1e-9
+    # The per-side accounting the rest of the row is built on is unchanged: a
+    # matched edge still reports its mass on both sides, which is what coverage
+    # and the composition flow ask for.
+    assert abs(untagged["matched_weight"] - 300.0) < 1e-9
+    assert abs(untagged["weight_a"] - 160.0) < 1e-9
+    assert abs(untagged["weight_b"] - 140.0) < 1e-9
+
+    # Same invariant on the library side of the split: one library covering
+    # everything must read exactly `score_library`.
+    lib = {"origin:lib:libc:2.31": 1.0}
+    out = score_pair(
+        [("a1", "b1", 0.9), ("a2", "b2", 0.3)],
+        {"a1", "a2", "a3"},
+        {"b1", "b2", "b3"},
+        lambda f: feats[f],
+        {f: lib for f in feats},
+        {},
+    )
+    libc = by_id(out["tags_summary"])["origin:lib:libc:2.31"]
+    assert abs(libc["score"] - out["score_library"]) < 1e-9, libc["score"]
+    assert abs(libc["score"] - out["score"]) < 1e-9
 
 
 if __name__ == "__main__":

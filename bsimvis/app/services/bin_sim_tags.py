@@ -158,7 +158,7 @@ DEFAULT_AXIS = AXIS_USER
 # schema is stale no matter what its `tags_rev` says -- without this, a doc
 # written by the two-axis code and one written here are indistinguishable, and
 # the UI silently renders an axis that was never computed.
-SPLIT_SCHEMA = 6
+SPLIT_SCHEMA = 7
 
 # Similarity is bucketed into fixed 5% bins so the UI can re-aggregate to any of
 # its 5/10/20/25% split settings without the backend knowing which is selected.
@@ -368,6 +368,11 @@ class TagSplit:
         self.untagged = untagged
         self._default = {untagged: 1.0} if untagged else {}
         self.cohesion = defaultdict(float)
+        # Matched mass as the *pair* score counts it -- one edge weighing
+        # max(w_a, w_b) once. Kept apart from `matched_w`, which is the same
+        # edge counted on each side, because the two answer different questions:
+        # see add_match.
+        self.score_w = defaultdict(float)
         self.matched_w = defaultdict(float)
         self.matched_n = defaultdict(float)
         self.side_w = {"a": defaultdict(float), "b": defaultdict(float)}
@@ -411,7 +416,6 @@ class TagSplit:
                 if tag_id in shared:
                     conf = min(tags_a[tag_id], tags_b[tag_id])
                 frac = conf / n
-                self.cohesion[tag_id] += score * weight * frac
                 self.matched_w[tag_id] += weight * frac
                 self.matched_n[tag_id] += frac
                 self.side_w[side][tag_id] += weight * frac
@@ -430,6 +434,28 @@ class TagSplit:
                 b = self.bins[tag_id][idx]
                 b[slot] += frac
                 b[slot + 1] += weight * frac
+
+        # The score is measured on the pair's own mass, exactly as the pair
+        # score measures it: one matched edge weighs max(w_a, w_b) once. Every
+        # accumulator above is deliberately per-side -- coverage, composition
+        # and drift are per-binary questions -- but weighing the score that way
+        # put w_a + w_b in the ratio against leftovers counted once, so a tag's
+        # score read up to twice the pair score it should equal when that tag
+        # covers the whole pair (0.08 against 0.04 on a 9-edge, 137-leftover
+        # pair, `matched_count` 18 for 9 matches).
+        w_pair = max(w_a, w_b)
+        union = set(tags_a) | set(tags_b)
+        for tag_id in union:
+            # Same confidence rule as above: a shared tag is only as strong as
+            # the weaker side, and a one-sided tag claims what its own side gave
+            # it -- the match is trusted, the way code_library_split trusts it.
+            if tag_id in shared:
+                conf = min(tags_a[tag_id], tags_b[tag_id])
+            else:
+                conf = tags_a.get(tag_id, tags_b.get(tag_id, 0.0))
+            frac = conf / len(union)
+            self.cohesion[tag_id] += score * w_pair * frac
+            self.score_w[tag_id] += w_pair * frac
 
     def add_unique(self, fid, weight, side):
         """Attribute one unmatched function to its own tags (no peer to share with)."""
@@ -487,7 +513,6 @@ class TagSplit:
             mm_a = self.mismatch_w["a"].get(tag_id, 0.0)
             mm_b = self.mismatch_w["b"].get(tag_id, 0.0)
             matched_n = self.matched_n.get(tag_id, 0.0)
-            cohesion = self.cohesion.get(tag_id, 0.0)
             w_a = self.side_w["a"].get(tag_id, 0.0)
             w_b = self.side_w["b"].get(tag_id, 0.0)
             uw_a = self.unique_w["a"].get(tag_id, 0.0)
@@ -496,13 +521,15 @@ class TagSplit:
             un_b = self.unique_n["b"].get(tag_id, 0.0)
             bins = {str(k): list(v) for k, v in self.bins.get(tag_id, {}).items()}
             drift = dict(self.mismatch_pairs.get(tag_id, {}))
+            cohesion = self.cohesion.get(tag_id, 0.0)
+            score_weight = self.score_w.get(tag_id, 0.0) + uw_a + uw_b
         else:
             matched_w = sum(r["matched_weight"] for r in merge)
             matched_n = sum(r["matched_count"] for r in merge)
-            # Reconstruct raw cohesion from each child's own score * denominator
-            # (matched + unique), not `matched_weight` alone -- `score` is no
-            # longer matched-only, so backing it out against matched_weight
-            # would silently drop the unique share these children already have.
+            # A child's own denominator is the only thing that reconstructs its
+            # cohesion: `score` is not matched-only, so backing it out against
+            # `matched_weight` would drop the unique share it already carries.
+            score_weight = sum(r["score_weight"] for r in merge)
             cohesion = sum(r["score"] * r["score_weight"] for r in merge)
             w_a = sum(r["weight_a"] for r in merge)
             w_b = sum(r["weight_b"] for r in merge)
@@ -526,12 +553,12 @@ class TagSplit:
 
         t_type, t_name, t_version = parse_tag_id(tag_id)
         meta = tag_meta.get(tag_id) or {}
-        # `score` mirrors the pair-level score formula: matched mass in the
-        # numerator, matched + unmatched (unique) mass of *this tag* in the
-        # denominator, so a tag that matched well but only covers a sliver of
-        # the binary doesn't read as 100% -- same coverage penalty `score` and
-        # `score_code`/`score_library` already apply.
-        score_weight = matched_w + uw_a + uw_b
+        # `score` is the pair-level score formula restricted to this tag:
+        # matched cohesion in the numerator, matched + unmatched (unique) mass
+        # of *this tag* in the denominator, both weighed per pair, so a tag that
+        # matched well but only covers a sliver of the binary doesn't read as
+        # 100% -- the same coverage penalty `score` and `score_code` apply. A tag
+        # that covers the whole pair therefore reads exactly the pair score.
         return {
             "tag_id": tag_id,
             "type": meta.get("type") or t_type,

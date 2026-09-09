@@ -137,6 +137,13 @@ class BinClusterService:
         sim_prefix = f"{collection}:bin_sim:{algo}:"
         sim_score_key = f"{collection}:bin_sim:score:{algo}"
         uuid_key = f"{collection}:bin_cluster:{algo}:uf:uuid"
+        # Nodes are file ids, not bare md5s: RedisUF's contract (see
+        # cluster_threshold.py) is that its nodes and member sets are the very
+        # ones the full rebuild writes, and every reader downstream -- the
+        # `idx:file:*` buckets file search resolves as doc ids, the `:meta`
+        # lookup in _enrich_and_persist_binary_clusters -- speaks that space.
+        # Rooting on bare md5s here wrote a second, parallel set of clusters.
+        file_prefix = f"{collection}:file:"
 
         def members_key(root):
             return f"{collection}:bin_cluster:{algo}:{root}:members"
@@ -160,11 +167,15 @@ class BinClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        containers = lineage_service.container_md5s(collection, r)
+        containers = {
+            f"{file_prefix}{m}" for m in lineage_service.container_md5s(collection, r)
+        }
 
         touched_roots = set()
         for md5 in new_files:
-            uf = uf_container if md5 in containers else uf_file
+            fid = f"{file_prefix}{md5}"
+            uf = uf_container if fid in containers else uf_file
+            # The `involves` index is keyed by md5, not by file id.
             sids = r.smembers(f"{collection}:bin_sim:involves:{md5}")
             for sid_raw in sids or ():
                 sid = sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
@@ -174,21 +185,21 @@ class BinClusterService:
                 if "::" not in id_part:
                     continue
                 c1, c2 = id_part.split("::")
-                other_md5 = c2 if c1 == md5 else c1
+                other_fid = f"{file_prefix}{c2 if c1 == md5 else c1}"
                 # Same-type only: a container never unions with a file, even
                 # via a stray edge that shouldn't exist upstream in the first
                 # place -- see the container_sim_service guard this backs up.
-                if other_md5 == md5 or (other_md5 in containers) != (md5 in containers):
+                if other_fid == fid or (other_fid in containers) != (fid in containers):
                     continue
                 score = r.zscore(sim_score_key, sid)
                 if score is None or float(score) < threshold:
                     continue
 
-                ra, rb = uf.find(md5), uf.find(other_md5)
+                ra, rb = uf.find(fid), uf.find(other_fid)
                 if ra == rb:
                     touched_roots.add(ra)
                     continue
-                survivor, absorbed = uf.union(md5, other_md5)
+                survivor, absorbed = uf.union(fid, other_fid)
                 touched_roots.add(survivor)
                 touched_roots.add(absorbed)
 
@@ -236,15 +247,26 @@ class BinClusterService:
                     continue
                 all_members_raw[root] = members
 
-            self._enrich_and_persist_binary_clusters(
-                collection,
-                algo,
-                all_members_raw,
-                uuid_key,
-                min_cohesion,
-                job_service,
-                job_id,
-            )
+            # Split by forest so each side's roots are seeded into the
+            # parent hash they actually belong to.
+            for uf in (uf_file, uf_container):
+                members_by_root = {
+                    root: members
+                    for root, members in all_members_raw.items()
+                    if (uf is uf_container) == (root in containers)
+                }
+                if not members_by_root:
+                    continue
+                self._enrich_and_persist_binary_clusters(
+                    collection,
+                    algo,
+                    members_by_root,
+                    uuid_key,
+                    min_cohesion,
+                    job_service,
+                    job_id,
+                    parent_key=uf.parent_key,
+                )
 
         msg = f"[threshold_uf] incremental binary update done. Touched {len(final_roots)} live clusters."
         logging.info(msg)
@@ -299,6 +321,11 @@ class BinClusterService:
             ("file", {"excluded_fids": container_fids}),
             ("container", {"allowed_fids": container_fids}),
         ):
+            pass_parent_key = (
+                f"{collection}:bin_cluster:{algo}:uf:parent"
+                if pass_name == "file"
+                else f"{collection}:bin_cluster:{algo}:container:uf:parent"
+            )
             if pass_name == "container" and not container_fids:
                 continue
 
@@ -341,6 +368,7 @@ class BinClusterService:
                 min_cohesion,
                 job_service,
                 job_id,
+                parent_key=pass_parent_key,
             )
             total_clusters += len(cluster_members)
 
@@ -363,6 +391,7 @@ class BinClusterService:
         min_cohesion,
         job_service,
         job_id,
+        parent_key=None,
     ):
         import uuid
         import time
@@ -379,7 +408,9 @@ class BinClusterService:
             chunk = all_member_file_ids[i : i + 1000]
             m_pipe = r.pipeline(transaction=False)
             for file_id in chunk:
-                m_pipe.get(f"{collection}:file:{file_id}:meta")
+                # file_id is already `{collection}:file:{md5}` -- the same space
+                # _persist_hierarchical_binary_clusters reads.
+                m_pipe.get(f"{file_id}:meta")
             for file_id, raw_meta in zip(chunk, m_pipe.execute()):
                 m = {}
                 if raw_meta:
@@ -544,6 +575,20 @@ class BinClusterService:
                 pipe.execute()
 
         pipe.execute()
+
+        # Seed RedisUF's state so the NEXT batch upload recognizes these roots
+        # instead of reading every already-clustered binary back as an
+        # untouched singleton -- the same seeding the function engine does in
+        # cluster_service._persist_flat_clusters. `parent_key` names which
+        # forest this pass belongs to (files and containers keep separate
+        # union-find state); callers that don't take the incremental path at
+        # all (pools) leave it None.
+        if parent_key:
+            for label, members in cluster_members.items():
+                pipe.hset(parent_key, mapping={m: label for m in members})
+                if len(pipe) > 1000:
+                    pipe.execute()
+            pipe.execute()
 
     def __init__(self, r=None):
         self.r = r or get_redis()

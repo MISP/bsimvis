@@ -602,7 +602,7 @@ class BinSimService:
                     batch_binaries = list(batch_binaries - set(containers))
                     # Fast discovery using Rare Feature Anchoring
                     seen_pairs = set()
-                    for target_md5 in batch_binaries:
+                    for idx, target_md5 in enumerate(batch_binaries):
                         cands = self._discover_binaries(collection, target_md5, min_cohesion)
                         for cand in cands:
                             if cand in containers: continue
@@ -611,10 +611,15 @@ class BinSimService:
                             if (b1, b2) not in seen_pairs:
                                 seen_pairs.add((b1, b2))
                                 pairs.append((b1, b2))
+                        if idx % 5 == 0 and job_service and job_id:
+                            pct = int((idx / max(1, len(batch_binaries))) * 10)
+                            job_service.update_progress(
+                                job_id, pct, f"Discovering batch pairs ({idx}/{len(batch_binaries)} files analyzed)"
+                            )
                 else:
                     # Fast discovery using Rare Feature Anchoring
                     seen_pairs = set()
-                    for target_md5 in binaries:
+                    for idx, target_md5 in enumerate(binaries):
                         cands = self._discover_binaries(collection, target_md5, min_cohesion)
                         for cand in cands:
                             if cand in containers: continue
@@ -623,6 +628,12 @@ class BinSimService:
                             if (b1, b2) not in seen_pairs:
                                 seen_pairs.add((b1, b2))
                                 pairs.append((b1, b2))
+                        if idx % 5 == 0 and job_service and job_id:
+                            # Use 0-10% of the progress bar for the discovery phase
+                            pct = int((idx / max(1, len(binaries))) * 10)
+                            job_service.update_progress(
+                                job_id, pct, f"Discovering pairs ({idx}/{len(binaries)} files analyzed)"
+                            )
                 pairs.sort()
                 # Pairs are deterministic for chunking
 

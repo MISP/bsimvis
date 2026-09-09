@@ -2627,7 +2627,7 @@ class SimilarityService:
                 i = fid.find(":func:")
                 return fid[i + 6 :] if i != -1 else fid
 
-            fid_full = {}  # short -> full, for _feat lookup
+            fid_full = {}  # short -> full, for mapping back
             for fid in all_funcs_a_total | all_funcs_b_total:
                 fid_full[_strip(fid)] = fid
 
@@ -2655,6 +2655,19 @@ class SimilarityService:
                 short_fid_tags,
                 tag_meta_cache,
             )
+
+            # Map the short FIDs back to full FIDs in the diff so downstream
+            # endpoints can resolve them correctly.
+            diff = common.get("diff", {})
+            for item in diff.get("matched", []):
+                if "func_a" in item:
+                    item["func_a"] = fid_full.get(item["func_a"], item["func_a"])
+                if "func_b" in item:
+                    item["func_b"] = fid_full.get(item["func_b"], item["func_b"])
+            for key in ("unique_to_a", "unique_to_b", "unclustered_a", "unclustered_b"):
+                for item in diff.get(key, []):
+                    if "func_id" in item:
+                        item["func_id"] = fid_full.get(item["func_id"], item["func_id"])
 
             # Persist pool bin_sim
             sid = f"global:pool:{pool_id}:bin_sim:{algo}:{coll_a}:{md5_a}::{coll_b}:{md5_b}"

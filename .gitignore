@@ -47,3 +47,4 @@ api_test_report.json
 
 # Local state cache for scripts/tag_stash.py
 scripts/.tag_stash.json
+*.orig\n*.patch\n*.rej

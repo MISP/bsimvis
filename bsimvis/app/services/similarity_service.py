@@ -2619,17 +2619,40 @@ class SimilarityService:
             all_funcs_a_total = binary_fids[b_src]
             all_funcs_b_total = binary_fids[b_par]
 
+            # Normalize FIDs to strip the collection prefix so that greedy
+            # assignment tie-breaking by fid string is consistent with the
+            # single-collection build (where all FIDs share the same prefix
+            # and sort only by md5:addr).
+            def _strip(fid):
+                i = fid.find(":func:")
+                return fid[i + 6 :] if i != -1 else fid
+
+            fid_full = {}  # short -> full, for _feat lookup
+            for fid in all_funcs_a_total | all_funcs_b_total:
+                fid_full[_strip(fid)] = fid
+
+            short_edges = [(_strip(u), _strip(v), s) for u, v, s in edges]
+            short_funcs_a = {_strip(f) for f in all_funcs_a_total}
+            short_funcs_b = {_strip(f) for f in all_funcs_b_total}
+            # Remap tag dict so tag_split lookups work with short FIDs.
+            short_fid_tags = (
+                {_strip(k): v for k, v in fid_tags.items() if _strip(k) in fid_full}
+                if fid_tags
+                else fid_tags
+            )
+
             def _feat(fid):
+                full = fid_full.get(fid, fid)
                 return float(
-                    func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
+                    func_meta_cache.get(full, {}).get("bsim_features_count", 1.0)
                 )
 
             common = score_pair(
-                edges,
-                all_funcs_a_total,
-                all_funcs_b_total,
+                short_edges,
+                short_funcs_a,
+                short_funcs_b,
                 _feat,
-                fid_tags,
+                short_fid_tags,
                 tag_meta_cache,
             )
 

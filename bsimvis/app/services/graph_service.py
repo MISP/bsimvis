@@ -9,17 +9,19 @@ class GraphService:
 
     def get_active_generation(self, collection):
         if not self.r:
-            from bsimvis.app.services.redis_client import get_redis
-            self.r = get_redis()
+            from bsimvis.app.services.redis_client import get_raw_redis
+            self.r = get_raw_redis()
         gen = self.r.get(f"{collection}:graph:active_gen")
         if gen is None:
             return 0
-        return int(gen)
+        # Raw client (partitions are packed binary), so this comes back as
+        # bytes -- int() takes str/int only.
+        return int(gen.decode() if isinstance(gen, bytes) else gen)
         
     def set_active_generation(self, collection, gen):
         if not self.r:
-            from bsimvis.app.services.redis_client import get_redis
-            self.r = get_redis()
+            from bsimvis.app.services.redis_client import get_raw_redis
+            self.r = get_raw_redis()
         self.r.set(f"{collection}:graph:active_gen", gen)
 
     def write_base_partitions(self, collection, gen, edges, part_offset=0):
@@ -29,8 +31,8 @@ class GraphService:
         returned by the previous one. Returns the next offset to use.
         """
         if not self.r:
-            from bsimvis.app.services.redis_client import get_redis
-            self.r = get_redis()
+            from bsimvis.app.services.redis_client import get_raw_redis
+            self.r = get_raw_redis()
         if not edges:
             return part_offset
 
@@ -52,8 +54,8 @@ class GraphService:
 
     def get_edges_for_gen(self, collection, gen):
         if not self.r:
-            from bsimvis.app.services.redis_client import get_redis
-            self.r = get_redis()
+            from bsimvis.app.services.redis_client import get_raw_redis
+            self.r = get_raw_redis()
             
         edges = []
         idx = 0
@@ -76,8 +78,8 @@ class GraphService:
     def compact_partitions(self, collection):
         logging.info(f"Compacting graph partitions for {collection}...")
         if not self.r:
-            from bsimvis.app.services.redis_client import get_redis
-            self.r = get_redis()
+            from bsimvis.app.services.redis_client import get_raw_redis
+            self.r = get_raw_redis()
             
         # keep last 3 generations, delete older
         active_gen = self.get_active_generation(collection)

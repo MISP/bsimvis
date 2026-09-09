@@ -1290,6 +1290,32 @@ class ClusterService:
             num_nodes = num_funcs
             id_to_idx = func_to_id
             idx_to_id = {v: k for k, v in func_to_id.items()}
+
+            # Cohesion below scores the FUNCTION-level edges, but the lines
+            # above just moved us out of edge_set's index space and into this
+            # branch's own func_to_id (only functions inside a linked
+            # vector-class). Reproject edge_set so SimAdjacency's indices and
+            # num_nodes refer to the same space -- otherwise a function index
+            # from the old space overruns the num_funcs-sided matrix.
+            # Endpoints outside func_to_id are dropped: they are not leaves of
+            # the class tree, so no cluster node can have them as members.
+            old_idx_to_id = edge_set.idx_to_id
+            r_src, r_dst, r_dist = [], [], []
+            for s_i, d_i, dist in zip(edge_set.src, edge_set.dst, edge_set.dist):
+                s_fid = old_idx_to_id.get(int(s_i))
+                d_fid = old_idx_to_id.get(int(d_i))
+                if s_fid in func_to_id and d_fid in func_to_id:
+                    r_src.append(func_to_id[s_fid])
+                    r_dst.append(func_to_id[d_fid])
+                    r_dist.append(dist)
+            edge_set = EdgeSet(
+                np.array(r_src, dtype=np.int32),
+                np.array(r_dst, dtype=np.int32),
+                np.array(r_dist, dtype=np.float32),
+                id_to_idx,
+                idx_to_id,
+                len(r_src),
+            )
         else:
             tree_rows, global_root_id, _, mst = build_single_linkage_tree(edge_set)
 

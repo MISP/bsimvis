@@ -13,6 +13,7 @@ from bsimvis.app.services.index_service import (
     get_pool_id,
 )
 from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.cluster_utils import pick_best_shared_cluster
 from bsimvis.app.services.query_syntax import resolve_targets, union_buckets
 
 DEFAULT_LIMIT = 100  # API RESULT LIMIT
@@ -1142,20 +1143,6 @@ def similarity_search():
                     if (cm.get("cohesion_score") or 0) >= min_cohesion:
                         cluster_meta_map[cid] = cm
 
-            # Phase 4b: best-shared cluster per pair, read from the prebuilt index
-            # ({col}:sim:best_cluster:{algo}, written during cluster propagation). No
-            # runtime per-function resolution — one best-matched cluster per edge.
-            best_cluster_by_sid = {}
-            bc_algo = algo
-            page_sids = list(sim_data_map.keys())
-            if page_sids:
-                raw = r.hmget(f"{col}:sim:best_cluster:{bc_algo}", page_sids)
-                for sid, cid in zip(page_sids, raw):
-                    if cid is not None:
-                        best_cluster_by_sid[sid] = (
-                            cid.decode() if isinstance(cid, bytes) else str(cid)
-                        )
-
             # Phase 5: Reconstruct Enriched Pairs
             for sid, sort_sc in page_results:
                 s_data = sim_data_map.get(sid)
@@ -1202,9 +1189,8 @@ def similarity_search():
 
                 # Single best-shared cluster for the pair (metadata in top-level map).
                 # None when the two functions share no cluster passing min_cohesion.
-                shared_cid = best_cluster_by_sid.get(sid)
-                if shared_cid is not None and shared_cid not in cluster_meta_map:
-                    shared_cid = None  # dropped by min_cohesion filter
+                best = pick_best_shared_cluster(s1, s2, cluster_meta_map)
+                shared_cid = str(best["cluster_id"]) if best else None
                 shared_clusters = [shared_cid] if shared_cid else []
 
                 # Cleanup function meta before embedding

@@ -10,6 +10,7 @@ Usage:
     python3 scripts/prune_orphaned_bin_sim_index.py --host HOST --port PORT \
         --collection COLLECTION [--algo unweighted_cosine] [--apply]
 """
+
 import argparse
 import sys
 
@@ -65,7 +66,9 @@ def prune(r, collection, algo, apply_):
         zkey = f"{collection}:idx:bin_sim:{field}"
         members = [_dec(s) for s in r.zrange(zkey, 0, -1)]
         stale = [
-            s for s in members if s.startswith(f"{collection}:bin_sim:{algo}:") and not doc_exists(s)
+            s
+            for s in members
+            if s.startswith(f"{collection}:bin_sim:{algo}:") and not doc_exists(s)
         ]
         checked += len(members)
         if stale:
@@ -128,7 +131,9 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=6666)
     ap.add_argument("--collection", required=True)
     ap.add_argument("--algo", default="unweighted_cosine")
-    ap.add_argument("--apply", action="store_true", help="Actually delete (default: dry run)")
+    ap.add_argument(
+        "--apply", action="store_true", help="Actually delete (default: dry run)"
+    )
     args = ap.parse_args()
 
     r = redis.Redis(host=args.host, port=args.port, decode_responses=False)

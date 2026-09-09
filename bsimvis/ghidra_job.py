@@ -34,7 +34,7 @@ from bsimvis.app.services.redis_client import get_queue_redis, get_redis, get_ra
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.lua_manager import lua_manager
 from bsimvis.app.services.ghidra_service import ghidra_service
-from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.config_service import config_service, upload_dir
 from bsimvis.app.services.metadata_service import staged_metadata
 from bsimvis.app.services.processing_service import ProcessingService
 from bsimvis.app.services.feature_service import FeatureService
@@ -305,7 +305,18 @@ class GhidraAnalyzer:
         self.processing_service.rollup_lib_tags(collection, file_md5)
         update_file_status(self.r_data, collection, file_md5, "analyzed")
 
-        if not skip_sim:
+        # A wave reconcile or a batch_finalize tail is already queued to build
+        # this batch (JobService.mark_tail_pending). Building here too meant
+        # discovering every function twice: once against a collection its
+        # siblings were still being written into -- which build_batch's
+        # generation guard then unmarks as stale -- and once for real after.
+        tail_pending = bool(self.job_service.r.hget(f"job:{job_id}", "tail_pending"))
+        if tail_pending and not skip_sim:
+            self.job_service.add_log(
+                job_id, "Similarities deferred to this batch's build_sim."
+            )
+
+        if not skip_sim and not tail_pending:
             algo = payload.get(
                 "algo", config_service.get("similarity.algo", "unweighted_cosine")
             )
@@ -378,7 +389,7 @@ class GhidraAnalyzer:
             if not orig_name:
                 orig_name = "unknown"
 
-            temp_dir = tempfile.mkdtemp(prefix="bsim_worker_")
+            temp_dir = tempfile.mkdtemp(prefix="bsim_worker_", dir=upload_dir())
             temp_path = os.path.join(temp_dir, orig_name)
             with open(temp_path, "wb") as f:
                 f.write(raw_bytes)

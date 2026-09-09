@@ -692,11 +692,16 @@ def test_cluster_tags():
 def test_cluster_response_contract():
     """Guards the response shape the unified search and homepage read.
 
-    The two-binary fixture never forms a cluster, so a cluster *hit* cannot be
-    asserted here. What can be asserted is the contract the fan-out depends on:
-    both cluster listings page under "results", and any row carries
-    `member_count` — not `count`. If either is renamed, this fails instead of
-    the homepage silently rendering an empty panel.
+    Both cluster listings page under "results", and a row spells its size
+    `count` — not `member_count`. The service layer calls it `member_count`
+    (cluster_service.py:847) but both routes rename it on the way out
+    (cluster.py:604, bin_cluster.py:481), and every consumer reads the renamed
+    one: the homepage panel (home.py:136) and the dashboard's renderer and
+    sort key (dashboard.js:318, 3515). If either is renamed, this fails instead
+    of the homepage silently rendering an empty panel.
+
+    This asserted `member_count` until the fixture started forming clusters --
+    with no rows the check never ran, so it never got to be wrong out loud.
     """
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" Cluster response contract", BOLD))
@@ -712,8 +717,8 @@ def test_cluster_response_contract():
         )
         if rows:
             check(
-                f"{path} rows carry member_count",
-                "member_count" in rows[0],
+                f"{path} rows carry count",
+                "count" in rows[0],
                 f"keys={sorted(rows[0])}",
             )
 
@@ -764,6 +769,14 @@ def test_incremental_hierarchical_cluster_equivalence():
             for cid in [raw.decode() if isinstance(raw, bytes) else raw]
         }
 
+    # This exercises hierarchical_uf specifically, which isn't the configured
+    # default engine -- pin it for the duration instead of relying on config.
+    from bsimvis.app.services.config_service import config_service
+
+    clustering_cfg = config_service._config.setdefault("clustering", {})
+    prior_engine = clustering_cfg.get("engine")
+    clustering_cfg["engine"] = "hierarchical_uf"
+
     try:
         add_batch(batch_1, ("a", "b", "c"), (("a", "b", 0.95), ("b", "c", 0.90)))
         initial_ok = cluster_service.run_clustering(collection, algo=algo)
@@ -795,6 +808,10 @@ def test_incremental_hierarchical_cluster_equivalence():
             f"{len(incremental)} incremental / {len(full)} full cluster(s)",
         )
     finally:
+        if prior_engine is None:
+            clustering_cfg.pop("engine", None)
+        else:
+            clustering_cfg["engine"] = prior_engine
         cluster_service.clear_clustering(collection, algo)
         cursor = 0
         while True:
@@ -803,8 +820,6 @@ def test_incremental_hierarchical_cluster_equivalence():
                 r.delete(*keys)
             if cursor == 0:
                 break
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -882,6 +897,26 @@ def test_ghidra_languages():
 # ---------------------------------------------------------------------------
 # Archive uploads: a zip/tar is unpacked and every member analyzed
 # ---------------------------------------------------------------------------
+def _analyze_payload(job):
+    """The GHIDRA_ANALYZE payload behind an upload's returned pipeline id.
+
+    A raw upload creates that job directly: the per-collection job lane
+    (fb36f65) replaced the single-task pipeline that used to wrap it, so
+    `pipeline_id` names the analysis job itself and its payload comes back
+    already decoded at the top level. The sub_tasks walk stays for the ids
+    that really are pipelines.
+    """
+    if not isinstance(job, dict):
+        return {}
+    if job.get("type") == "ghidra_analyze":
+        payload = job.get("payload")
+        return payload if isinstance(payload, dict) else {}
+    for task in job.get("sub_tasks") or []:
+        if task.get("type") == "ghidra_analyze" and task.get("payload"):
+            return json.loads(task["payload"])
+    return {}
+
+
 def test_archive_upload():
     """Uploads a zip of two binaries and checks both members get a pipeline."""
     import hashlib
@@ -953,10 +988,9 @@ def test_archive_upload():
 
     analyze_payloads = []
     for pid in (meta_body or {}).get("pipeline_ids") or []:
-        for tid in (_job(pid) or {}).get("task_ids") or []:
-            payload = (_job(tid) or {}).get("payload") or {}
-            if "file_metadata_extra" in payload:
-                analyze_payloads.append(payload)
+        payload = _analyze_payload(_job(pid))
+        if "file_metadata_extra" in payload:
+            analyze_payloads.append(payload)
     check(
         "inherited metadata does not rename archive members",
         len(analyze_payloads) == 2
@@ -967,7 +1001,10 @@ def test_archive_upload():
     )
     check(
         "inherited metadata still reaches archive members",
-        all(
+        # The length guard is the point: `all()` over the empty list this used
+        # to build passed while proving nothing.
+        len(analyze_payloads) == 2
+        and all(
             p["file_metadata_extra"].get("yara") == ["yara_from_zip"]
             for p in analyze_payloads
         ),
@@ -1014,10 +1051,9 @@ def test_archive_upload():
     )
     by_md5 = {}
     for pid in (staged_body or {}).get("pipeline_ids") or []:
-        for tid in (_job(pid) or {}).get("task_ids") or []:
-            payload = (_job(tid) or {}).get("payload") or {}
-            if "file_metadata_extra" in payload:
-                by_md5[payload.get("file_md5")] = payload
+        payload = _analyze_payload(_job(pid))
+        if "file_metadata_extra" in payload:
+            by_md5[payload.get("file_md5")] = payload
     own = by_md5.get(one_md5) or {}
     other = next((p for m, p in by_md5.items() if m != one_md5), {})
     check(
@@ -1581,6 +1617,30 @@ def run_all_tests():
             "unified search finds a file by md5",
             "files" in md5_kinds,
             f"kinds={sorted(md5_kinds)}",
+        )
+        # Every hit is a link the palette navigates to. A mapper reading a key
+        # the search route does not return yields ".../None" and a dead page.
+        urls = [
+            it.get("url", "")
+            for g in uni_md5.get("groups", [])
+            for it in g.get("items", [])
+        ]
+        bad = [u for u in urls if not u.startswith("/") or "/None" in u or "=None" in u]
+        check(
+            "unified search links carry no missing path segments",
+            urls and not bad,
+            f"{len(bad)} bad of {len(urls)}: {bad[:3]}",
+        )
+        file_urls = [
+            it["url"]
+            for g in uni_md5.get("groups", [])
+            if g["kind"] == "files"
+            for it in g["items"]
+        ]
+        check(
+            "unified search file links point at the file's md5",
+            file_urls and all(u.endswith(f"/files/{file_md5}") for u in file_urls),
+            str(file_urls[:3]),
         )
     empty = test_endpoint(
         "GET", "/api/search/unified", label="GET /api/search/unified (no query)"
@@ -2800,7 +2860,14 @@ SEARCH_SPECS = [
             ("min_tf_score", "tf_score", "min"),
             ("max_tf_score", "tf_score", "max"),
         ],
-        "substr": [("type", "type"), ("op", "op")],
+        # `type` and `op` are a controlled vocabulary (pcode op names, BSim
+        # feature kinds), so they are not in index_config.SUBSTRING_FIELDS and a
+        # wildcard-free filter on them is an exact bucket lookup -- the
+        # documented rule for every field that isn't free text. Sweeping them as
+        # substrings asked for `type=DATA` to match `DATA_...` and got the zero
+        # rows the design promises.
+        "substr": [],
+        "exact": [("type", "type"), ("op", "op")],
     },
     {
         "name": "clusters",
@@ -3006,6 +3073,45 @@ def _sweep_ranges(spec, ns, label):
             )
 
 
+def _sweep_exact(spec, ns, label):
+    """Controlled-vocabulary filters: feed back a whole value, assert it holds.
+
+    The counterpart to _sweep_substr for fields outside
+    index_config.SUBSTRING_FIELDS, where a wildcard-free value is an exact
+    bucket lookup and a prefix legitimately matches nothing.
+    """
+    base = dict(spec.get("base", {}), **ns)
+    baseline = _search_rows(spec["path"], dict(base, limit=100), spec["key"])
+    if not baseline:
+        return
+    for param, row_field in spec.get("exact", []):
+        value = next(
+            (str(row[row_field]) for row in baseline if row.get(row_field)), None
+        )
+        if not value or value == "N/A":
+            vprint(f"     [skip] {label} {spec['name']}: no usable {row_field} value")
+            continue
+        rows = _search_rows(
+            spec["path"], dict(base, limit=100, **{param: value}), spec["key"]
+        )
+        if not check(
+            f"{label}: {spec['name']} {param}={value!r} returns rows",
+            bool(rows),
+            f"{len(rows)} of {len(baseline)}",
+        ):
+            continue
+        off = [
+            str(row.get(row_field))
+            for row in rows
+            if str(row.get(row_field)).lower() != value.lower()
+        ]
+        check(
+            f"{label}: {spec['name']} {param}={value!r} returns only that value",
+            not off,
+            f"{len(rows)} row(s), other values={off[:3]}",
+        )
+
+
 def _sweep_substr(spec, ns, label):
     """Substring filters: take a real value from the data, assert every row carries it."""
     base = dict(spec.get("base", {}), **ns)
@@ -3104,6 +3210,7 @@ def _sweep_namespace(label, ns):
         _sweep_sorts(spec, ns, label)
         _sweep_ranges(spec, ns, label)
         _sweep_substr(spec, ns, label)
+        _sweep_exact(spec, ns, label)
     _sweep_bin_sim_pair_filters(ns, label)
 
 
@@ -3580,7 +3687,9 @@ def test_search_job():
     print(_color(f"{'='*60}", CYAN))
 
     if not file_md5:
-        print(_color("\n[SKIP] Need an uploaded binary – search checks skipped.", YELLOW))
+        print(
+            _color("\n[SKIP] Need an uploaded binary – search checks skipped.", YELLOW)
+        )
         return
 
     missing = requests.post(
@@ -3621,7 +3730,7 @@ def test_search_job():
             "/api/searches",
             data={
                 "collection": COLLECTION,
-                "query": "the function decrypting a .dat file",
+                "query": "the function that decrypts the embedded configuration",
                 "scope": {"type": "file", "md5": file_md5},
             },
         )
@@ -3629,7 +3738,9 @@ def test_search_job():
         job_id = (started or {}).get("job_id")
         check(
             "search enqueues a classification job",
-            bool(search_id) and bool(job_id) and int((started or {}).get("total") or 0) > 0,
+            bool(search_id)
+            and bool(job_id)
+            and int((started or {}).get("total") or 0) > 0,
             str(started),
         )
         if job_id:
@@ -3639,7 +3750,8 @@ def test_search_job():
                 "search job carries the search_id and query",
                 (job or {}).get("type") == "search_classify"
                 and payload.get("search_id") == search_id
-                and payload.get("query") == "the function decrypting a .dat file"
+                and payload.get("query")
+                == "the function that decrypts the embedded configuration"
                 and len(payload.get("func_ids") or []) > 0,
                 str(job)[:300],
             )
@@ -3648,14 +3760,18 @@ def test_search_job():
             listed = test_endpoint("GET", "/api/searches", label="GET /api/searches")
             check(
                 "new search appears in the list",
-                any(s.get("id") == search_id for s in (listed or {}).get("searches") or []),
+                any(
+                    s.get("id") == search_id
+                    for s in (listed or {}).get("searches") or []
+                ),
                 str(listed)[:200],
             )
 
             detail = test_endpoint("GET", f"/api/searches/{search_id}")
             check(
                 "search detail preserves scope and query",
-                (detail or {}).get("query") == "the function decrypting a .dat file"
+                (detail or {}).get("query")
+                == "the function that decrypts the embedded configuration"
                 and (detail or {}).get("scope", {}).get("type") == "file",
                 str(detail)[:300],
             )
@@ -3711,7 +3827,7 @@ def test_search_job():
                     "handoff job defaults custom_prompt to the search query",
                     (handoff_job or {}).get("type") == "llm_contextual_batch"
                     and (handoff_job or {}).get("payload", {}).get("custom_prompt")
-                    == "the function decrypting a .dat file",
+                    == "the function that decrypts the embedded configuration",
                     str(handoff_job)[:300],
                 )
                 test_endpoint("POST", f"/api/jobs/{handoff_job_id}/cancel")
@@ -3740,7 +3856,12 @@ def test_bin_sim_notes_and_tags():
     print(_color(f"{'='*60}", CYAN))
 
     if not file_md5 or not file_md5_2:
-        print(_color("\n[SKIP] Need two binaries – bin_sim notes/tags checks skipped.", YELLOW))
+        print(
+            _color(
+                "\n[SKIP] Need two binaries – bin_sim notes/tags checks skipped.",
+                YELLOW,
+            )
+        )
         return
 
     # The plain (no `table`) diff response is the full doc, sid included.
@@ -3759,7 +3880,12 @@ def test_bin_sim_notes_and_tags():
     add_tag_resp = test_endpoint(
         "POST",
         "/api/tags/add",
-        data={"collection": COLLECTION, "entity_type": "bin_sim", "entity_id": sid, "tag": "reviewed"},
+        data={
+            "collection": COLLECTION,
+            "entity_type": "bin_sim",
+            "entity_id": sid,
+            "tag": "reviewed",
+        },
         label="POST /api/tags/add (bin_sim)",
     )
     check(
@@ -3772,10 +3898,19 @@ def test_bin_sim_notes_and_tags():
         resp = test_endpoint(
             "POST",
             "/api/tags/add",
-            data={"collection": COLLECTION, "entity_type": "bin_sim", "entity_id": sid, "tag": special},
+            data={
+                "collection": COLLECTION,
+                "entity_type": "bin_sim",
+                "entity_id": sid,
+                "tag": special,
+            },
             label=f"POST /api/tags/add (bin_sim {special})",
         )
-        check(f"bin_sim {special} tag add reports success", (resp or {}).get("status") == "success", str(resp))
+        check(
+            f"bin_sim {special} tag add reports success",
+            (resp or {}).get("status") == "success",
+            str(resp),
+        )
 
     diff2 = test_endpoint(
         "GET",
@@ -3796,7 +3931,9 @@ def test_bin_sim_notes_and_tags():
         params={"collection": COLLECTION},
         label="GET /api/bin_sim/search (after tagging)",
     )
-    matching = [r for r in (search_after_tag or {}).get("results", []) if r.get("_id") == sid]
+    matching = [
+        r for r in (search_after_tag or {}).get("results", []) if r.get("_id") == sid
+    ]
     check(
         "bin_sim search result exposes sid as _id",
         bool(matching),
@@ -3812,7 +3949,12 @@ def test_bin_sim_notes_and_tags():
     remove_tag_resp = test_endpoint(
         "POST",
         "/api/tags/remove",
-        data={"collection": COLLECTION, "entity_type": "bin_sim", "entity_id": sid, "tag": "reviewed"},
+        data={
+            "collection": COLLECTION,
+            "entity_type": "bin_sim",
+            "entity_id": sid,
+            "tag": "reviewed",
+        },
         label="POST /api/tags/remove (bin_sim)",
     )
     check(
@@ -3848,11 +3990,61 @@ def test_bin_sim_notes_and_tags():
         str(list_notes_resp)[:200],
     )
 
+    search_after_note = test_endpoint(
+        "GET",
+        "/api/bin_sim/search",
+        params={"collection": COLLECTION},
+        label="GET /api/bin_sim/search (after note)",
+    )
+    matching = [
+        row
+        for row in (search_after_note or {}).get("results", [])
+        if row.get("_id") == sid
+    ]
+    check(
+        "bin_sim search omits note content but carries the note badge",
+        bool(matching)
+        and "notes" not in matching[0]
+        and "user" in (matching[0].get("note_owners") or [])
+        and matching[0].get("note_count", 0) >= 1,
+        str(matching[0] if matching else None)[:200],
+    )
+
+    # The comparison view is built from the compact `view=sankey` projection,
+    # not the full doc, and addresses the pair's notes by sid. Drop sid from
+    # that projection and the view has no way to reach the notes it just wrote.
+    sankey = test_endpoint(
+        "GET",
+        "/api/bin_sim/diff",
+        params={
+            "collection": COLLECTION,
+            "md5_a": file_md5,
+            "md5_b": file_md5_2,
+            "view": "sankey",
+        },
+        label="GET /api/bin_sim/diff (view=sankey, pair identity)",
+    )
+    check(
+        "sankey projection carries the pair's sid",
+        (sankey or {}).get("sid") == sid,
+        f"sid={sid}, got={(sankey or {}).get('sid')}",
+    )
+    check(
+        "sankey projection carries the pair's note badge",
+        "user" in ((sankey or {}).get("note_owners") or [])
+        and (sankey or {}).get("note_count", 0) >= 1,
+        f"note_owners={(sankey or {}).get('note_owners')}, note_count={(sankey or {}).get('note_count')}",
+    )
+
     if note_id:
         update_resp = test_endpoint(
             "PUT",
             "/api/notes/bin_sim/update",
-            data={"sid": sid, "note_id": note_id, "text": "Updated: same malware family, high confidence."},
+            data={
+                "sid": sid,
+                "note_id": note_id,
+                "text": "Updated: same malware family, high confidence.",
+            },
             label="PUT /api/notes/bin_sim/update",
         )
         check(
@@ -3886,7 +4078,12 @@ def test_bin_sim_notes_and_tags():
         test_endpoint(
             "POST",
             "/api/tags/remove",
-            data={"collection": COLLECTION, "entity_type": "bin_sim", "entity_id": sid, "tag": special},
+            data={
+                "collection": COLLECTION,
+                "entity_type": "bin_sim",
+                "entity_id": sid,
+                "tag": special,
+            },
             label=f"POST /api/tags/remove (bin_sim {special}, cleanup)",
         )
 
@@ -5144,14 +5341,18 @@ def test_container_similarity():
         check("container members analysed", False, "pipeline did not complete")
         return
 
-    built = test_endpoint(
-        "POST",
-        "/api/bin_sim/build",
-        data={"collection": coll, "algo": "unweighted_cosine"},
-        label="POST /api/bin_sim/build (container collection)",
-    )
-    if isinstance(built, dict) and built.get("job_id"):
-        wait_for_pipeline(built["job_id"], banner=" STEP 4b2 – Wait for bin_sim build")
+    # Every score below is cluster-derived, and an upload now seals its own
+    # wave (3cba696): the id it hands back is the master pipeline whose tail
+    # clusters, builds bin_sim and rolls the child pairs up the containment
+    # edges. Waiting on those tails above is therefore the whole setup, and it
+    # is lane-serialised, so the second upload's tail sees both apks.
+    #
+    # This used to fire /api/bin_sim/build here as well. That endpoint does not
+    # go through the collection lane, so once uploads started sealing their own
+    # waves it could run while a tail was still writing pair docs -- two
+    # sweeps interleaving, and build_container_sims rolling up from a partial
+    # pair_scores. Under the full suite's load that surfaced as a container
+    # pair listing itself among its own children.
 
     def pair_with(md5, other, params=None):
         body = test_endpoint(
@@ -5610,14 +5811,7 @@ def test_skip_modules_payload():
     job = requests.get(
         f"{BASE_URL}/api/jobs/{body.get('pipeline_id')}", timeout=10
     ).json()
-    ghidra_task = next(
-        (t for t in job.get("sub_tasks", []) if t.get("type") == "ghidra_analyze"), None
-    )
-    payload = (
-        json.loads(ghidra_task["payload"])
-        if ghidra_task and ghidra_task.get("payload")
-        else {}
-    )
+    payload = _analyze_payload(job)
     check(
         "enable=capa clears skip_capa on the queued job",
         payload.get("skip_capa") is False,
@@ -5664,15 +5858,7 @@ def test_skip_modules_payload():
         job2 = requests.get(
             f"{BASE_URL}/api/jobs/{body2.get('pipeline_id')}", timeout=10
         ).json()
-        ghidra_task2 = next(
-            (t for t in job2.get("sub_tasks", []) if t.get("type") == "ghidra_analyze"),
-            None,
-        )
-        payload2 = (
-            json.loads(ghidra_task2["payload"])
-            if ghidra_task2 and ghidra_task2.get("payload")
-            else {}
-        )
+        payload2 = _analyze_payload(job2)
         check(
             "disable=capa wins over enable=capa",
             payload2.get("skip_capa") is True,

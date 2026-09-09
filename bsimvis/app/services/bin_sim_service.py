@@ -6,13 +6,12 @@ from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services import lineage_service
 from bsimvis.app.services.bin_sim_tags import (
     AxisSplit,
-    EMPTY_SUMMARIES,
     code_library_split,
+    score_pair,
     merge_tag_fields,
     load_tag_meta,
     read_tags_rev,
 )
-
 
 BIN_SIM_TAG_FIELDS = (
     "md5_a",
@@ -42,8 +41,51 @@ BIN_SIM_NUM_FIELDS = (
 )
 
 
+def _zadd_score_split(pipe, base, algo, sid, scores):
+    """Write a pair's sort ZSETs. `base` is `{collection}:bin_sim` or
+    `global:pool:{id}:bin_sim` -- the two builders and the resplit path share it
+    so a new score type is added in one place.
+
+    `score_library` is None when the pair carries no library mass at all --
+    absence, not a zero score -- so it is removed rather than stored as 0,
+    keeping "sort by Library" a list of pairs that actually have one.
+    """
+    pipe.zadd(f"{base}:score:{algo}", {sid: scores["score"]})
+    pipe.zadd(f"{base}:score_code:{algo}", {sid: scores["score_code"]})
+    if scores.get("score_library") is not None:
+        pipe.zadd(f"{base}:score_library:{algo}", {sid: scores["score_library"]})
+    else:
+        pipe.zrem(f"{base}:score_library:{algo}", sid)
+
+
+def bin_sim_rev_key(collection):
+    return f"{collection}:bin_sim_rev"
+
+
+def read_bin_sim_rev(r, collection):
+    """Generation counter of a collection's bin_sim pair docs.
+
+    Bumped by every pair-doc rewrite. /api/diff memoizes the hydrated doc and
+    used to revalidate it against `tags_rev` alone -- which a rebuild never
+    touches -- so after a bin-sim rebuild it kept serving the previous split
+    while every other reader (`call_graph?retain=`, the container rollup, which
+    all go through `load_pair`) already saw the new one.
+    """
+    try:
+        raw = r.get(bin_sim_rev_key(collection))
+    except Exception:
+        return 0
+    try:
+        return int(raw.decode() if isinstance(raw, bytes) else raw)
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+
 def _index_bin_sim_pair(pipe, collection, sid, doc, file_meta_a=None, file_meta_b=None):
     """Write secondary indexes for a bin_sim pair doc."""
+    # Every pair-doc write in the codebase passes through here, so this is the
+    # one place the generation above can be moved from. See read_bin_sim_rev.
+    pipe.incr(bin_sim_rev_key(collection))
 
     def tag_index(field, value):
         if value is None:
@@ -124,6 +166,17 @@ def _unindex_bin_sim_pair(
     pipe.srem(f"{collection}:all_bin_sims", sid)
 
 
+def _origin_coll(collection):
+    """Pool bin_sim keys are qualified by the origin collection name.
+
+    A request carrying `pool` reaches the route with `collection` already
+    rewritten to `global:pool:{id}:col:{name}` (app/__init__.py
+    normalize_pool_params), so every pair lookup has to map it back or it
+    builds `...:involves:global:pool:{id}:col:{name}:{md5}` and finds nothing.
+    """
+    return collection.split(":col:")[-1] if collection else collection
+
+
 class BinSimService:
     def __init__(self, r=None):
         self.r = r or get_redis()
@@ -140,10 +193,9 @@ class BinSimService:
         """Resolve one stored pair without hydrating its function rows."""
         coll_b = coll_b or collection
         if pool_id:
+            coll_a, coll_b = _origin_coll(collection), _origin_coll(coll_b)
             pipe = self.r.pipeline(transaction=False)
-            pipe.smembers(
-                f"global:pool:{pool_id}:bin_sim:involves:{collection}:{md5_a}"
-            )
+            pipe.smembers(f"global:pool:{pool_id}:bin_sim:involves:{coll_a}:{md5_a}")
             pipe.smembers(f"global:pool:{pool_id}:bin_sim:involves:{coll_b}:{md5_b}")
             res_a, res_b = pipe.execute()
             a = {x.decode() if isinstance(x, bytes) else x for x in (res_a or set())}
@@ -191,8 +243,9 @@ class BinSimService:
             return sid, None, None
         if pair.get("is_container_pair"):
             return sid, pair, None
-        stored_a = (pair.get("coll_a") or collection, pair.get("md5_a"))
-        table = "unique_to_a" if stored_a == (collection, file_md5) else "unique_to_b"
+        asked = (_origin_coll(collection), file_md5)
+        stored_a = (pair.get("coll_a") or asked[0], pair.get("md5_a"))
+        table = "unique_to_a" if stored_a == asked else "unique_to_b"
         return (
             sid,
             pair,
@@ -552,129 +605,28 @@ class BinSimService:
                             elif m1 == m_b_clean and m2 == m_a_clean:
                                 edges.append((fid2, fid1, score))
 
-                # Sort edges by score descending (greedy match prioritizes best matches), using function IDs as deterministic tie-breakers
-                edges.sort(key=lambda x: (-x[2], x[0], x[1]))
-
-                assigned_a = set()
-                assigned_b = set()
-                diff_matched = []
-
-                sum_weighted_cohesion = 0.0
-                sum_weights = 0.0
-
-                tag_split = AxisSplit(fid_tags, tag_meta_cache)
-
-                # Match greedily
-                for fid_a, fid_b, score in edges:
-                    if fid_a not in assigned_a and fid_b not in assigned_b:
-                        assigned_a.add(fid_a)
-                        assigned_b.add(fid_b)
-
-                        f_features_a = float(
-                            func_meta_cache.get(fid_a, {}).get("bsim_features_count", 1.0)
-                        )
-                        f_features_b = float(
-                            func_meta_cache.get(fid_b, {}).get("bsim_features_count", 1.0)
-                        )
-                        f_features = max(f_features_a, f_features_b)
-
-                        # Slim doc: persist only the stable/expensive triple. Cluster tag +
-                        # rarity are derived live at read (get_bin_sim) from current cluster
-                        # meta, so a cluster rebuild can't leave them stale. [[Change 1]]
-                        diff_matched.append(
-                            {
-                                "similarity": score,
-                                "avg_features": f_features,
-                                "func_a": fid_a,
-                                "func_b": fid_b,
-                            }
-                        )
-
-                        sum_weighted_cohesion += score * f_features
-                        sum_weights += f_features
-
-                        tag_split.add_match(fid_a, fid_b, score, f_features_a, f_features_b)
-
                 all_funcs_a_total = binary_fids[m_a]
                 all_funcs_b_total = binary_fids[m_b]
 
-                unassigned_a = all_funcs_a_total - assigned_a
-                unassigned_b = all_funcs_b_total - assigned_b
-
-                unique_to_a = []
-                for fid in sorted(list(unassigned_a)):
-                    f_features = float(
+                def _feat(fid):
+                    return float(
                         func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
                     )
-                    if f_features <= 0:
-                        f_features = 1.0
 
-                    # Slim: cluster tag + rarity derived at read. [[Change 1]]
-                    unique_to_a.append(
-                        {
-                            "func_id": fid,
-                            "avg_features": f_features,
-                        }
-                    )
-                    sum_weights += f_features
-                    tag_split.add_unique(fid, f_features, "a")
-
-                unique_to_b = []
-                for fid in sorted(list(unassigned_b)):
-                    f_features = float(
-                        func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
-                    )
-                    if f_features <= 0:
-                        f_features = 1.0
-
-                    # Slim: cluster tag + rarity derived at read. [[Change 1]]
-                    unique_to_b.append(
-                        {
-                            "func_id": fid,
-                            "avg_features": f_features,
-                        }
-                    )
-                    sum_weights += f_features
-                    tag_split.add_unique(fid, f_features, "b")
-
-                score_unweighted = (
-                    sum_weighted_cohesion / sum_weights if sum_weights > 0 else 0.0
-                )
-
-                cov_a = (
-                    len(assigned_a) / len(all_funcs_a_total) if all_funcs_a_total else 0.0
-                )
-                cov_b = (
-                    len(assigned_b) / len(all_funcs_b_total) if all_funcs_b_total else 0.0
-                )
-
-                # Coverage is against each binary's whole mass, so "libc covers 40% of A"
-                # means 40% of everything A contains, matched or not.
-                def _total_weight(fids):
-                    return sum(
-                        float(func_meta_cache.get(f, {}).get("bsim_features_count", 1.0))
-                        or 1.0
-                        for f in fids
-                    )
-
-                tag_fields = (
-                    tag_split.summaries(
-                        _total_weight(all_funcs_a_total),
-                        _total_weight(all_funcs_b_total),
-                        tag_meta_cache,
-                    )
-                    if fid_tags
-                    else dict(EMPTY_SUMMARIES)
+                # Greedy match, cohesion mean, coverage, tag split and the
+                # code/library split all live in one place now, shared with the
+                # pool builder (bin_sim_tags.score_pair).
+                common = score_pair(
+                    edges,
+                    all_funcs_a_total,
+                    all_funcs_b_total,
+                    _feat,
+                    fid_tags,
+                    tag_meta_cache,
                 )
 
                 sid = f"{collection}:bin_sim:{algo}:{m_a}::{m_b}"
-                pair_scores[(m_a, m_b)] = score_unweighted
-
-                # Code/Library is the same weighted-cosine formula as `score`,
-                # restricted per category -- not a re-average of `tags_summary`.
-                score_library, score_code = code_library_split(
-                    diff_matched, unique_to_a, unique_to_b, fid_tags
-                )
+                pair_scores[(m_a, m_b)] = common["score"]
 
                 doc = {
                     "md5_a": m_a,
@@ -684,28 +636,13 @@ class BinSimService:
                     "architecture_b": file_meta_b.get("language_id", ""),
                     "functions_count_a": binary_func_counts.get(m_a, 0),
                     "functions_count_b": binary_func_counts.get(m_b, 0),
-                    "score": score_unweighted,
-                    "score_code": score_code,
-                    "score_library": score_library,
-                    "coverage_a": cov_a,
-                    "coverage_b": cov_b,
-                    "shared_clusters": len(diff_matched),
-                    "unique_clusters_a": len(unique_to_a),
-                    "unique_clusters_b": len(unique_to_b),
-                    "unclustered_a": len(unique_to_a),
-                    "unclustered_b": len(unique_to_b),
                     "computed_at": int(time.time() * 1000),
                     # Bumped by every tag write, so a stored split can be told apart
                     # from the tag state it was computed against without rebuilding.
                     "tags_rev": tags_rev,
-                    **tag_fields,
-                    "diff": {
-                        "matched": diff_matched,
-                        "unique_to_a": unique_to_a,
-                        "unique_to_b": unique_to_b,
-                        "unclustered_a": [],
-                        "unclustered_b": [],
-                    },
+                    # score / score_code / score_library / coverage / cluster counts /
+                    # tag summaries / diff -- shared with the pool builder.
+                    **common,
                 }
 
                 pipe.set(sid, json.dumps(doc))
@@ -713,12 +650,7 @@ class BinSimService:
                 # from), not a choice of file score. The sort score is always the
                 # unweighted cohesion mean so it means the same thing in every namespace
                 # and matches the pool-level score. The other aggregates stay in `doc`.
-                final_bin_score = score_unweighted
-
-                pipe.zadd(f"{collection}:bin_sim:score:{algo}", {sid: final_bin_score})
-                pipe.zadd(f"{collection}:bin_sim:score_code:{algo}", {sid: score_code})
-                if score_library is not None:
-                    pipe.zadd(f"{collection}:bin_sim:score_library:{algo}", {sid: score_library})
+                _zadd_score_split(pipe, f"{collection}:bin_sim", algo, sid, common)
                 pipe.sadd(f"{collection}:bin_sim:involves:{m_a}", sid)
                 pipe.sadd(f"{collection}:bin_sim:involves:{m_b}", sid)
                 pipe.sadd(f"{collection}:bin_sim:built:{algo}", sid)
@@ -731,7 +663,9 @@ class BinSimService:
                 if processed % 100 == 0:
                     pipe.execute()
                     if job_service and job_id:
-                        pct = min(99, int((processed_overall + processed) / total_pairs * 100))
+                        pct = min(
+                            99, int((processed_overall + processed) / total_pairs * 100)
+                        )
                         job_service.update_progress(
                             job_id,
                             pct,
@@ -1124,14 +1058,11 @@ class BinSimService:
                 doc["score_library"] = score_library
                 doc["score_code"] = score_code
                 pipe.set(sid, json.dumps(doc))
-                pipe.zadd(f"{collection}:bin_sim:score_code:{algo}", {sid: score_code})
-                if score_library is not None:
-                    pipe.zadd(
-                        f"{collection}:bin_sim:score_library:{algo}",
-                        {sid: score_library},
-                    )
-                else:
-                    pipe.zrem(f"{collection}:bin_sim:score_library:{algo}", sid)
+                _zadd_score_split(pipe, f"{collection}:bin_sim", algo, sid, doc)
+                # Search sorts off the `idx:` ZSETs, not the ones above, so a
+                # resplit that skipped this left "sort by Code" on pre-resplit
+                # values (or, for a pair that never had one, off the list).
+                _index_bin_sim_pair(pipe, collection, sid, doc)
             pipe.execute()
 
             done += len(chunk)

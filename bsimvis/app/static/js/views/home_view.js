@@ -48,6 +48,11 @@ window.HomeView = (function () {
             url: (c) => c ? `/collections/${encodeURIComponent(c)}/files` : '/collections'
         },
         {
+            icon: 'fa-robot', title: 'AI triage',
+            blurb: 'Analyze a file, a comparison or a whole collection: every candidate function gets a context-aware pass that writes notes and tags you can then filter on. Ask AI Insight questions about a collection from any page.',
+            url: (c) => c ? `/collections/${encodeURIComponent(c)}/files` : '/collections'
+        },
+        {
             icon: 'fa-server', title: 'Jobs',
             blurb: 'Ingestion, similarity builds and clustering all run as queued jobs on a worker fleet. Watch progress, pause the queue, retry failures.',
             url: () => '/jobs'

@@ -300,7 +300,7 @@ class LLMService:
             "text. Do not judge general maliciousness or severity here. "
             "Evidence is one short phrase citing the specific code, empty "
             "when the verdict is no. Identify each function by the number "
-            "in its \"=== FUNCTION N\" heading."
+            'in its "=== FUNCTION N" heading.'
         )
         response_format = {
             "type": "object",
@@ -1010,7 +1010,7 @@ def _selfcheck():
                     {
                         "idx": 0,
                         "verdict": "yes",
-                        "evidence": "builds .dat byte by byte",
+                        "evidence": "builds the config path byte by byte",
                         "suggested_tag": "category:persistence:file",
                     },
                     {
@@ -1043,7 +1043,11 @@ def _selfcheck():
         allowed_tags=["category:persistence:file"],
     )
     assert err is None
-    assert out["f1"] == ("yes", "builds .dat byte by byte", "category:persistence:file")
+    assert out["f1"] == (
+        "yes",
+        "builds the config path byte by byte",
+        "category:persistence:file",
+    )
     assert out["f2"] == ("no", "", None)
     assert "f3" not in out  # invalid verdict, not silently coerced
     assert missing == ["f3", "f4"]
@@ -1079,7 +1083,7 @@ def _selfcheck():
     long_func_id = "null:func:843841580c262ba277de71dc57336f70:00100780"
     try:
         results, missing, error = LLMService().classify_relevance_batch(
-            [(long_func_id, "f1", "code1")], "the .dat decrypt routine"
+            [(long_func_id, "f1", "code1")], "the config decrypt routine"
         )
     finally:
         globals()["Client"] = real_client
@@ -1092,7 +1096,9 @@ def _selfcheck():
     assert item_props["idx"]["enum"] == [0]
     assert "func_id" not in item_props
     # the short triage prompt, not the full severity/category grounding rules
-    assert "relevance" in fake_classify_client.calls[0]["messages"][0]["content"].lower()
+    assert (
+        "relevance" in fake_classify_client.calls[0]["messages"][0]["content"].lower()
+    )
     assert fake_classify_client.calls[0]["options"]["num_predict"] == 80
 
     # Real-world regression: a live qwen3.5:4b via Ollama ignored `format`

@@ -442,7 +442,7 @@ window.searchViewOpenNewForm = function(btn) {
             </div>
             <div id="search-form-scope-fields"></div>
             <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--dim);">What are you looking for?
-                <textarea id="search-form-query" rows="2" placeholder="e.g. the function decrypting a .dat file" style="padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-family:inherit; resize:vertical;"></textarea>
+                <textarea id="search-form-query" rows="2" placeholder="e.g. the function that decrypts the embedded configuration" style="padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-family:inherit; resize:vertical;"></textarea>
             </label>
             <div style="display:flex; gap:10px; justify-content:flex-end;">
                 <button onclick="document.getElementById('search-new-form-container').innerHTML=''" style="background:var(--hover); border:1px solid var(--border); color:var(--text); padding:8px 16px; border-radius:6px; cursor:pointer;">Cancel</button>
@@ -541,6 +541,12 @@ window.searchViewSubmitNew = async function(btn) {
         scope.md5_b = (document.getElementById('search-form-md5b') || {}).value?.trim();
         scope.state = (document.getElementById('search-form-pair-state') || {}).value || 'all';
         if (!scope.md5_a || !scope.md5_b) { alert('Both MD5 A and MD5 B are required.'); return; }
+        // Only the comparison view fills these; the list form's two dropdowns
+        // are always one collection, so absent means "same collection, no pool".
+        const collB = (document.getElementById('search-form-coll-b') || {}).value?.trim();
+        const pool = (document.getElementById('search-form-pool') || {}).value?.trim();
+        if (collB) scope.coll_b = collB;
+        if (pool) scope.pool_id = pool;
     }
 
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
@@ -552,9 +558,69 @@ window.searchViewSubmitNew = async function(btn) {
         });
         if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
         const data = await res.json();
+        window.closeSearchModal();
         Nav.openPath(`/searches/${encodeURIComponent(data.search_id)}`);
     } catch (e) {
         alert(`Failed to start search: ${e.message}`);
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-magnifying-glass"></i> Start Search'; }
     }
+};
+
+// --- pre-scoped search modal --------------------------------------------
+// Same entry shape as openAnalyzeModal: the file and comparison views already
+// know their scope, so this asks for the query and nothing else. It renders the
+// same field ids the list form uses, so submitting stays one code path.
+
+window.openSearchModal = function (opts = {}) {
+    const scope = opts.scope === 'pair' ? 'pair' : 'file';
+    const isPair = scope === 'pair';
+    const collection = opts.collection || (window.getRoutingState && getRoutingState().collection) || '';
+    if (!collection) { showToast('No collection selected', 'warning'); return; }
+    if (isPair ? !(opts.md5a && opts.md5b) : !opts.fileMd5) { showToast('Nothing loaded to search', 'warning'); return; }
+
+    const hidden = (id, value) => `<input type="hidden" id="${id}" value="${escapeAttr(value || '')}">`;
+    const target = isPair ? `${opts.md5a} vs ${opts.md5b}` : `file ${opts.fileMd5}`;
+
+    window.closeSearchModal();
+    const modal = document.createElement('div');
+    modal.id = 'search-modal';
+    modal.style.cssText = 'position:fixed; inset:0; z-index:30000; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.65); backdrop-filter:blur(4px);';
+    modal.innerHTML = `
+        <form onsubmit="event.preventDefault(); window.searchViewSubmitNew(this.querySelector('button[type=submit]'))"
+              style="width:520px; max-width:92vw; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:22px; color:var(--fg);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <h3 style="margin:0; color:#60a5fa;"><i class="fa-solid fa-magnifying-glass"></i> AI search</h3>
+                <button type="button" onclick="closeSearchModal()" style="background:none; border:0; color:var(--subtle); cursor:pointer; font-size:1.3rem;">&times;</button>
+            </div>
+            <div style="font-size:.75rem; color:var(--subtle); margin-bottom:16px; word-break:break-all;">
+                <i class="fa-solid ${isPair ? 'fa-code-compare' : 'fa-file-waveform'}"></i> ${escapeHtml(target)}
+            </div>
+            ${hidden('search-form-collection', collection)}
+            ${hidden('search-form-scope-type', scope)}
+            ${isPair
+                ? hidden('search-form-md5a', opts.md5a) + hidden('search-form-md5b', opts.md5b) +
+                  hidden('search-form-coll-b', opts.collB) + hidden('search-form-pool', opts.poolId)
+                : hidden('search-form-md5', opts.fileMd5)}
+            <label style="display:block; margin-bottom:14px;">What are you looking for?
+                <textarea id="search-form-query" rows="3" placeholder="e.g. the function that decrypts the embedded configuration"
+                    style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; resize:vertical; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;"></textarea>
+            </label>
+            ${isPair ? `<label style="display:block; margin-bottom:16px; font-size:.84rem;">Functions
+                <select id="search-form-pair-state" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+                    <option value="all">Matched and unique</option>
+                    <option value="matched">Matched only</option>
+                    <option value="unique">Unique only</option>
+                </select></label>` : ''}
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+                <button type="button" onclick="closeSearchModal()" class="top-action-btn">Cancel</button>
+                <button type="submit" class="top-action-btn" style="color:#60a5fa; border-color:#60a5fa;"><i class="fa-solid fa-magnifying-glass"></i> Start Search</button>
+            </div>
+        </form>`;
+    modal.onclick = e => { if (e.target === modal) closeSearchModal(); };
+    document.body.appendChild(modal);
+    document.getElementById('search-form-query').focus();
+};
+
+window.closeSearchModal = function () {
+    document.getElementById('search-modal')?.remove();
 };

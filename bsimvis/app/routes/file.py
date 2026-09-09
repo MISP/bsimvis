@@ -378,6 +378,7 @@ def _ingest_raw_binary(
         enqueue = enqueue_arg.lower() == "true"
     else:
         enqueue = True
+    debounce = request.args.get("debounce", "false").lower() in ("true", "1")
 
     # Register a pending stub immediately so the file shows up (with a status)
     # in searches/listings right away, instead of only after the whole
@@ -533,20 +534,42 @@ def _ingest_raw_binary(
         analysis_payload["priority"] = "high"
 
     job_id = job_service.create_job(
-        JobType.GHIDRA_ANALYZE, analysis_payload, enqueue=enqueue
+        JobType.GHIDRA_ANALYZE, analysis_payload, enqueue=False
     )
+    pipeline_id = job_id
     if enqueue:
-        job_service.open_or_extend_wave(
-            collection,
-            job_id,
-            config_service.get("clustering.idle_debounce_seconds", 30),
-        )
+        if debounce:
+            job_service.open_or_extend_wave(
+                collection,
+                job_id,
+                config_service.get("clustering.idle_debounce_seconds", 30),
+            )
+            job_service.enqueue_job(job_id)
+        else:
+            job_service.mark_tail_pending(job_id)
+            pipeline_id = job_service.seal_wave(
+                collection,
+                extra_members=[job_id],
+                options={
+                    "algo": analysis_payload.get("algo"),
+                    "batch_uuid": batch_uuid,
+                    "skip_sim": analysis_payload.get("skip_sim", False),
+                    "priority": priority,
+                    "enrich": True,
+                },
+            )
+    else:
+        # The upload page and the CLI both upload with enqueue=false and then
+        # call batch_finalize, so these jobs run from that finalize's group and
+        # its tail builds their similarities. Without this they built them
+        # in-line as well and the tail's build_sim had nothing left to do.
+        job_service.mark_tail_pending(job_id)
 
     return {
         "status": "processing" if enqueue else "queued",
         "file_md5": file_md5,
         "file_name": file_name,
-        "pipeline_id": job_id,
+        "pipeline_id": pipeline_id,
         "batch_uuid": batch_uuid,
         "message": "Binary uploaded. Analysis started.",
     }
@@ -802,8 +825,13 @@ def upload_raw_binary():
 
 def finalize_batch_upload():
     """
-    Finalizes a batch upload by wrapping all file pipelines in a group,
-    and appending clustering/bin_sim at the end.
+    Finalizes a batch upload: seals the collection's upload wave now instead of
+    waiting out its debounce, with these pipelines folded in.
+
+    Before, this built its own group + build_sim + cluster + bin_sim tail while
+    seal_wave built a near-identical one for the same files, so a CLI batch
+    upload clustered and bin-simmed the whole collection twice. The wave is the
+    single owner of that tail; finalize only says "now".
     """
     data = request.json
     if not data:
@@ -812,79 +840,31 @@ def finalize_batch_upload():
     pipeline_ids = data.get("pipeline_ids", [])
     batch_uuid = data.get("batch_uuid")
     collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
-    skip_sim = data.get("skip_sim", False)
-    min_cohesion = data.get("min_cohesion")
 
     if not pipeline_ids:
         return {"error": "No pipelines provided"}, 400
 
-    group_id = job_service.create_group(pipeline_ids, enqueue=False)
+    options = {
+        "algo": data.get("algo", "unweighted_cosine"),
+        "batch_uuid": batch_uuid,
+        "skip_sim": data.get("skip_sim", False),
+        "priority": str(data.get("priority", "")).lower() == "high",
+        "enrich": True,
+    }
+    if data.get("min_cohesion") is not None:
+        options["min_cohesion"] = data["min_cohesion"]
 
-    master_tasks = [group_id]
-
-    # Every file in the wave built its similarities against a reverse index the
-    # other files were still writing to, so their built markers can be hiding
-    # real edges. One forced batch-wide rebuild reconciles the whole wave.
-    if not skip_sim:
-        master_tasks.append(
-            (
-                JobType.BUILD_SIM,
-                {
-                    "collection": collection,
-                    "algo": algo,
-                    "batch_uuid": batch_uuid,
-                    "force": True,
-                },
-            )
+    # The wave may have sealed on its own while the client was still uploading
+    # (fixed 30s debounce). Everything already covered by that tail needs no
+    # second one - re-running it would rebuild bin-sim and re-cluster the whole
+    # collection again.
+    unsealed, sealed_into = job_service.split_sealed(pipeline_ids)
+    if not unsealed and sealed_into:
+        master_id = sealed_into
+    else:
+        master_id = job_service.seal_wave(
+            collection, extra_members=unsealed, options=options
         )
-
-    # BinSim depends on raw function similarities, not function clusters.
-    if not skip_sim:
-        build_payload = {
-            "collection": collection,
-            "algo": algo,
-            "batch_uuid": batch_uuid,
-        }
-        if min_cohesion is not None:
-            build_payload["min_cohesion"] = min_cohesion
-        master_tasks.append((JobType.BUILD_BIN_SIM.value, build_payload))
-
-        cluster_payload = {
-            "collection": collection,
-            "algo": algo,
-            "batch_uuid": batch_uuid,
-        }
-        if min_cohesion is not None:
-            cluster_payload["min_cohesion"] = min_cohesion
-        master_tasks.append((JobType.CLUSTER_BINARIES.value, cluster_payload))
-        master_tasks.append(
-            (
-                JobType.INDEX_SIM.value,
-                {
-                    "collection": collection,
-                    "algo": algo,
-                    "batch_uuid": batch_uuid,
-                },
-            )
-        )
-
-    master_tasks.append(
-        (
-            JobType.CLUSTER_FUNCTIONS.value,
-            {"collection": collection, "algo": algo, "batch_uuid": batch_uuid},
-        )
-    )
-    # Enrich features must be the absolute last job to run:
-    master_tasks.append(
-        (
-            JobType.ENRICH_FEATURES.value,
-            {"collection": collection, "batch_uuid": batch_uuid},
-        )
-    )
-
-    priority = str(data.get("priority", "")).lower() == "high"
-    master_id = job_service.submit_to_lane(collection, master_tasks, priority=priority)
 
     return {
         "status": "queued",

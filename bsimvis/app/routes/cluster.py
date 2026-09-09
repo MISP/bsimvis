@@ -161,10 +161,21 @@ def build_rebuild_all_tasks(collection, algo, skip_sim=False, data=None):
 
     batch_uuid = data.get("batch_uuid")
     if batch_uuid:
+        # ponytail: CLUSTER_BINARIES is deliberately absent. Handing it a
+        # batch_uuid routes it into BinClusterService._incremental_cluster_
+        # binaries, which two things make unsafe today: (1) the binary full
+        # rebuild never seeds `bin_cluster:{algo}:uf:parent` the way the
+        # function rebuild seeds `cluster:{algo}:uf:parent`, so every
+        # already-clustered binary reads back as an untouched singleton, and
+        # (2) that path roots clusters on the bare md5 while the full rebuild
+        # labels them `{collection}:file:{md5}` -- so it would write a second,
+        # parallel set of cluster keys instead of updating the existing ones.
+        # Binary clustering therefore stays a full rebuild. To enable it,
+        # seed the parent hash in _enrich_and_persist_binary_clusters() and
+        # make both paths agree on one label namespace.
         for job_type, payload in tasks:
             if job_type in {
                 JobType.BUILD_BIN_SIM,
-                JobType.CLUSTER_BINARIES,
                 JobType.INDEX_SIM,
                 JobType.CLUSTER_FUNCTIONS,
             }:

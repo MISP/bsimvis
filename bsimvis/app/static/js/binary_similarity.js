@@ -27,6 +27,10 @@ let binSimSortState = {
 // tree and the composition flow; rows are paged in on demand.
 const BINSIM_LIMIT = 100;
 let binSimCtx = null;        // {collection, md5a, md5b, collB, poolId}
+// The pair being viewed, for anything keyed by the pair itself rather than by
+// its functions (notes, the AI focus line). Set by both the function-diff and
+// container-pair renders, since both are "this comparison".
+let binSimPairCtx = null;    // {sid, collection, collB, md5a, md5b, nameA, nameB, score}
 
 function renderBinarySimilarityView(params) {
     const container = document.getElementById('binary-similarity-container');
@@ -108,10 +112,10 @@ function renderBinarySimilarityView(params) {
                     <div class="bsim-tabbar" id="bin-sim-tabs">
                         <button class="bsim-tab active" id="bin-sim-tab-btn-summary" onclick="switchBinSimTab('summary')">Summary</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-all" onclick="switchBinSimTab('all')">All</button>
-                        <button class="bsim-tab" id="bin-sim-tab-btn-matched" onclick="switchBinSimTab('matched')">Matched</button>
+                        <button class="bsim-tab" id="bin-sim-tab-btn-matched" onclick="switchBinSimTab('matched')">Common</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-unique_a" onclick="switchBinSimTab('unique_a')">Unique to A</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-unique_b" onclick="switchBinSimTab('unique_b')">Unique to B</button>
-                        <button class="bsim-tab" id="bin-sim-tab-btn-unmatched" onclick="switchBinSimTab('unmatched')">Unmatched</button>
+                        <button class="bsim-tab" id="bin-sim-tab-btn-unmatched" onclick="switchBinSimTab('unmatched')">All Unique</button>
                     </div>
 
                     <!-- Global scope chips: the tree selection, removable from here too -->
@@ -412,6 +416,11 @@ function initResizableCards() {
         Breadcrumbs.setFilename(md5b, data.file_metadata_b?.file_name || 'File');
         Breadcrumbs.refresh();
         
+        binSimPairCtx = {
+            sid: data.sid, collection, collB: collB || collection,
+            md5a, md5b, nameA, nameB, score: data.score, counts: data.counts,
+        };
+
         // Render Summary — prominent, score-colored
         const heroEl = document.getElementById('bin-sim-hero');
         if (heroEl) {
@@ -438,11 +447,23 @@ function initResizableCards() {
                     </div>
                     <div style="display:flex; gap:16px; margin-left:8px; border-left:1px solid var(--border); padding-left:24px;">${small}</div>
                 </div>
-                <button class="top-action-btn" onclick="openPairAnalysisModal()"
-                    style="position:absolute; right:18px; display:flex; align-items:center; gap:7px; color:#ae81ff; border-color:#ae81ff;"
-                    title="Analyze this comparison with evidence-bound automatic function tagging">
-                    <i class="fa-solid fa-wand-magic-sparkles"></i> Analyze comparison</button>
+                <div style="position:absolute; right:18px; display:flex; align-items:center; gap:10px;">
+                    <span id="bin-sim-pair-note"></span>
+                    <button class="top-action-btn" onclick="openPairAnalysisModal()"
+                        style="display:flex; align-items:center; gap:7px; color:#ae81ff; border-color:#ae81ff;"
+                        title="Analyze this comparison with evidence-bound automatic function tagging">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Analyze comparison</button>
+                    <button class="top-action-btn" onclick="openPairSearchModal()"
+                        style="display:flex; align-items:center; gap:7px; color:#60a5fa; border-color:#60a5fa;"
+                        title="Ask AI which functions of this comparison match a description">
+                        <i class="fa-solid fa-magnifying-glass"></i> AI search</button>
+                </div>
             `;
+            // Pair notes -- including the report "Analyze comparison" writes --
+            // hang off the pair's own sid, so the comparison view is where they
+            // belong. Without this the analysis report was only reachable from
+            // the pairs list.
+            loadBinSimPairNote(data);
         }
 
         resultsEl.style.display = 'flex';
@@ -458,8 +479,11 @@ function initResizableCards() {
 
         // Cache: the compact summary only; tables and the function graph load their
         // rows via paging, merging functions_metadata across pages.
-        binSimCtx = { collection, md5a, md5b, collB: collB || collection, poolId };
         const counts = data.counts || { matched: 0, unique_to_a: 0, unique_to_b: 0 };
+        // Counts ride along so the Analyze modal can say what each pass would
+        // select -- a pair with no unique functions has no changed-code pass to
+        // offer, and finding that out from a 400 is the worst way to learn it.
+        binSimCtx = { collection, md5a, md5b, collB: collB || collection, poolId, sid: data.sid, counts };
         binSimDataCache = {
             score: data.score,
             file_metadata_a: data.file_metadata_a,
@@ -501,10 +525,10 @@ function initResizableCards() {
         // A matched row is one function on each side, so All counts both sides.
         const allCount = (counts.matched || 0) * 2 + (counts.unique_to_a || 0) + (counts.unique_to_b || 0);
         if (btnAll) btnAll.textContent = `All (${allCount})`;
-        if (btnMatched) btnMatched.textContent = `Matched (${counts.matched})`;
+        if (btnMatched) btnMatched.textContent = `Common (${counts.matched})`;
         if (btnUniqueA) btnUniqueA.textContent = `Unique to A (${counts.unique_to_a})`;
         if (btnUniqueB) btnUniqueB.textContent = `Unique to B (${counts.unique_to_b})`;
-        if (btnUnmatched) btnUnmatched.textContent = `Unmatched (${counts.unique_to_a} / ${counts.unique_to_b})`;
+        if (btnUnmatched) btnUnmatched.textContent = `All Unique (${counts.unique_to_a} / ${counts.unique_to_b})`;
 
         window['bsim-flt-matched-q-val'] = new URLSearchParams(location.search).get('q') || '';
         // Tree + Summary render from the compact payload alone; the table and the
@@ -1717,98 +1741,25 @@ window.toggleFileSimNs = function(key) {
 // corner as a small amber pill, not a full-width row, so it stands out by
 // color instead of by size.
 // --- Pair analysis ---------------------------------------------------------
+// The form lives in tag_manager.js: a comparison is one scope of the shared
+// Analyze modal, not a second modal that happens to look like it.
 
 window.openPairAnalysisModal = function() {
     if (!binSimCtx) {
         showToast('No comparison loaded', 'warning');
         return;
     }
-    const ctx = binSimCtx;
-    let modal = document.getElementById('pair-analysis-modal');
-    if (!modal) {
-        modal = document.createElement('div');
-        modal.id = 'pair-analysis-modal';
-        modal.style.cssText = 'position:fixed; inset:0; z-index:30000; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.65); backdrop-filter:blur(4px);';
-        document.body.appendChild(modal);
-    }
-    modal.innerHTML = `
-        <form onsubmit="submitPairAnalysis(event)" style="width:540px; max-width:92vw; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:22px; color:var(--fg);">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-                <h3 style="margin:0; color:#ae81ff;"><i class="fa-solid fa-wand-magic-sparkles"></i> Analyze comparison</h3>
-                <button type="button" onclick="closePairAnalysisModal()" style="background:none; border:0; color:var(--subtle); cursor:pointer; font-size:1.3rem;">&times;</button>
-            </div>
-            <div style="font-size:.75rem; color:var(--subtle); margin-bottom:14px; word-break:break-all;">${escapeHtml(ctx.md5a)} vs ${escapeHtml(ctx.md5b)}</div>
-            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:14px;">
-                <label>Changed-match threshold
-                    <input id="pair-analysis-threshold" type="number" min="0" max="1" step="0.01" value="0.90" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
-                </label>
-                <label>Minimum BSim features
-                    <input id="pair-analysis-min" type="number" min="0" value="0" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
-                </label>
-                <label>Maximum functions
-                    <input id="pair-analysis-max" type="number" min="0" value="0" title="0 = whole analysis (every diff-selected candidate). Set a number for a fast, complexity-ranked triage subset." style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
-                </label>
-            </div>
-            <label style="display:block; margin-bottom:14px;">Prompt
-                <textarea id="pair-analysis-prompt" placeholder="Optional analyst focus" style="display:block; width:100%; min-height:90px; box-sizing:border-box; margin-top:5px; padding:8px; resize:vertical; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;"></textarea>
-            </label>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-bottom:18px; font-size:.84rem;">
-                <label><input id="pair-analysis-unique" type="checkbox" checked> Analyze unique functions</label>
-                <label title="Slower: also sends high-similarity matches"><input id="pair-analysis-unchanged" type="checkbox"> Include unchanged matches</label>
-                <label><input id="pair-analysis-skip-fid" type="checkbox" checked> Skip FID-tagged functions</label>
-                <label><input id="pair-analysis-overwrite" type="checkbox"> Replace existing LLM output</label>
-                <label><input id="pair-analysis-notes" type="checkbox" checked> Write notes</label>
-                <label><input id="pair-analysis-tags" type="checkbox" checked> Write tags + refresh split</label>
-            </div>
-            <div style="font-size:.72rem; color:var(--subtle); margin-bottom:16px;">Unique and low-similarity functions are triage candidates, not evidence of maliciousness.</div>
-            <div style="display:flex; justify-content:flex-end; gap:10px;">
-                <button type="button" onclick="closePairAnalysisModal()" class="top-action-btn">Cancel</button>
-                <button type="submit" class="top-action-btn" style="color:#ae81ff; border-color:#ae81ff;"><i class="fa-solid fa-play"></i> Create job</button>
-            </div>
-        </form>`;
-    modal.onclick = event => { if (event.target === modal) closePairAnalysisModal(); };
+    openAnalyzeModal({ scope: 'pair', pair: binSimCtx });
 };
 
-window.closePairAnalysisModal = function() {
-    document.getElementById('pair-analysis-modal')?.remove();
-};
-
-window.submitPairAnalysis = async function(event) {
-    event.preventDefault();
-    const actions = [];
-    if (document.getElementById('pair-analysis-notes').checked) actions.push('notes');
-    if (document.getElementById('pair-analysis-tags').checked) actions.push('tags');
-    if (!actions.length) {
-        showToast('Select notes, tags, or both', 'warning');
+// Same context, cheaper pass: search classifies the pair's functions against a
+// question instead of writing notes and tags for all of them.
+window.openPairSearchModal = function() {
+    if (!binSimCtx) {
+        showToast('No comparison loaded', 'warning');
         return;
     }
-    const ctx = { ...binSimCtx };
-    const body = {
-        collection: ctx.collection,
-        coll_b: ctx.collB,
-        md5_a: ctx.md5a,
-        md5_b: ctx.md5b,
-        pool: ctx.poolId || undefined,
-        threshold: Number(document.getElementById('pair-analysis-threshold').value),
-        min_complexity: Number(document.getElementById('pair-analysis-min').value),
-        max_functions: Number(document.getElementById('pair-analysis-max').value),
-        include_unique: document.getElementById('pair-analysis-unique').checked,
-        include_unchanged: document.getElementById('pair-analysis-unchanged').checked,
-        skip_fid_tagged: document.getElementById('pair-analysis-skip-fid').checked,
-        overwrite: document.getElementById('pair-analysis-overwrite').checked,
-        actions,
-    };
-    const prompt = document.getElementById('pair-analysis-prompt').value.trim();
-    if (prompt) body.custom_prompt = prompt;
-
-    try {
-        const result = await tagPost('/api/llm/pair_analysis', body);
-        closePairAnalysisModal();
-        showToast(`Comparison analysis queued for ${result.total} candidate function(s)`, 'success');
-        trackPairAnalysis(result.job_id, ctx);
-    } catch (error) {
-        showToast(`Could not start comparison analysis: ${error.message}`, 'error');
-    }
+    openSearchModal({ scope: 'pair', ...binSimCtx });
 };
 
 window.trackPairAnalysis = function(jobId, ctx) {
@@ -1831,7 +1782,16 @@ window.trackPairAnalysis = function(jobId, ctx) {
             if (binSimCtx && binSimCtx.md5a === ctx.md5a && binSimCtx.md5b === ctx.md5b) {
                 fetchAndRenderBinaryDiff(ctx.collection, ctx.md5a, ctx.md5b, ctx.collB, ctx.poolId);
             }
-            if (job.report) openPairAnalysisReport(job.report);
+            // The orchestrator already saved the report as a pair note, so a
+            // modal was a second, throwaway copy of it -- one you lost by
+            // navigating away. Open the note instead.
+            const sid = (binSimPairCtx && binSimPairCtx.sid) || ctx.sid;
+            if (job.report && sid) {
+                showToast('Comparison report saved as a pair note', 'success');
+                if (typeof showBinSimNotePanel === 'function') showBinSimNotePanel(sid);
+            } else if (job.report) {
+                showToast('Comparison analysis finished', 'success');
+            }
             setTimeout(() => card.remove(), 30000);
             unsubscribe();
         } else if (evt.type === 'job:failed') {
@@ -1849,23 +1809,6 @@ window.cancelPairAnalysis = async function(jobId) {
     } catch (error) {
         showToast(`Could not cancel analysis: ${error.message}`, 'error');
     }
-};
-
-window.openPairAnalysisReport = function(report) {
-    document.getElementById('pair-analysis-report')?.remove();
-    const modal = document.createElement('div');
-    modal.id = 'pair-analysis-report';
-    modal.style.cssText = 'position:fixed; inset:0; z-index:30001; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.65); backdrop-filter:blur(4px);';
-    modal.innerHTML = `
-        <div style="width:760px; max-width:92vw; max-height:86vh; overflow:auto; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:22px; color:var(--fg);">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-                <h3 style="margin:0; color:#ae81ff;">Comparison analysis</h3>
-                <button onclick="document.getElementById('pair-analysis-report')?.remove()" style="background:none; border:0; color:var(--subtle); cursor:pointer; font-size:1.3rem;">&times;</button>
-            </div>
-            <pre style="white-space:pre-wrap; word-break:break-word; font:inherit; line-height:1.55; margin:0;">${escapeHtml(report)}</pre>
-        </div>`;
-    modal.onclick = event => { if (event.target === modal) modal.remove(); };
-    document.body.appendChild(modal);
 };
 
 
@@ -2681,6 +2624,13 @@ async function renderContainerPairView(data, collection, md5a, md5b, collB, pool
     const nameA = data.file_metadata_a?.file_name || md5a;
     const nameB = data.file_metadata_b?.file_name || md5b;
     const activeScoreType = (new URLSearchParams(location.search)).get('sort') || 'score';
+    // A container pair has no functions of its own, so nothing here can drive
+    // the function tables -- but it is still a pair, and still takes notes.
+    binSimCtx = null;
+    binSimPairCtx = {
+        sid: data.sid, collection, collB: collB || collection,
+        md5a, md5b, nameA, nameB, score: data.score, counts: null,
+    };
 
     const side = (name, md5, coll, cov, analyzed, unanalyzed, childCount, funcs) => `
         <div style="flex:1; min-width:0;">
@@ -2701,6 +2651,7 @@ async function renderContainerPairView(data, collection, md5a, md5b, collB, pool
                 <span style="color:var(--subtle); text-transform:uppercase; font-size:0.8rem; font-weight:bold; letter-spacing:0.08em;">Container Similarity</span>
                 ${binSimScoreCards(data, activeScoreType)}
                 <span class="dim" style="font-size:0.72rem; max-width:280px;">rolled up from the files inside, weighted by function count</span>
+                <span id="bin-sim-pair-note" style="margin-left:auto;"></span>
             </div>
             <div style="display:flex; gap:20px; margin-bottom:14px;">
                 ${side(nameA, md5a, collection, data.coverage_a, data.analyzed_bytes_a, data.unanalyzed_bytes_a, data.child_count_a, data.functions_count_a)}
@@ -2722,6 +2673,8 @@ async function renderContainerPairView(data, collection, md5a, md5b, collB, pool
                 </div>
             </div>
         </div>`;
+
+    loadBinSimPairNote(data);
 
     let url = `/api/diff?table=all&limit=500&sort_col=similarity&sort_dir=desc&collection_a=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`;
     if (collB) url += `&collection_b=${encodeURIComponent(collB)}`;
@@ -3057,6 +3010,79 @@ window.refreshFunctionRow = async function(funcId) {
     }
 };
 
+
+// ---- Pair-level notes on the comparison view --------------------------
+// The pair's notes (analyst notes and the "Analyze comparison" report) are
+// keyed by the pair's own sid, not by either file.
+
+function renderBinSimPairNote(sid, noteOwners, noteCount) {
+    const el = document.getElementById('bin-sim-pair-note');
+    if (!el) return;
+    if (!sid || typeof EntityRenderer === 'undefined') { el.innerHTML = ''; return; }
+    el.innerHTML = EntityRenderer.renderBinSimNoteButton(sid, noteOwners || [], {
+        raw_data: { note_count: noteCount || (noteOwners || []).length }
+    });
+}
+
+/** Paint the badge from the diff payload, then correct it from the note list.
+ * ponytail: the diff response is cached per web process and a note write --
+ * an analysis report especially, written from a worker -- does not invalidate
+ * it, so the payload's note_owners can be a pair-load old. Reconciling costs
+ * one small request per comparison load; drop it the day the cache learns to
+ * expire on a note write across processes. */
+function loadBinSimPairNote(data) {
+    renderBinSimPairNote(data.sid, data.note_owners || [], data.note_count || 0);
+    if (data.sid) window.refreshBinSimRow(data.sid);
+}
+
+/** Note panels call this after a pair note is added or removed, and after any
+ * load -- the diff response is cached, so its note_owners can lag a write the
+ * cache never saw. `notes` is passed when the caller already has the list. */
+window.refreshBinSimRow = async function(sid, notes) {
+    if (!binSimPairCtx || binSimPairCtx.sid !== sid) return;
+    try {
+        if (!notes) {
+            const res = await fetch(`/api/notes/bin_sim/list?sid=${encodeURIComponent(sid)}`);
+            notes = (await res.json()).notes || [];
+        }
+        renderBinSimPairNote(sid, [...new Set(notes.map(n => n.owner))], notes.length);
+    } catch (e) {
+        console.error('Failed to refresh pair note badge:', e);
+    }
+};
+
+/** What the notes rail should open when nothing else is focused. The hero's
+ * note slot exists only while a comparison is on screen, so it doubles as the
+ * "is this still the view?" test -- binSimPairCtx alone outlives the view. */
+window.defaultNoteEntityId = function() {
+    if (!binSimPairCtx || !document.getElementById('bin-sim-pair-note')) return null;
+    return binSimPairCtx.sid || null;
+};
+
+/** "a.elf vs b.elf" for the pair the comparison view is showing. */
+window.binSimPairNames = function(sid) {
+    if (!binSimPairCtx || binSimPairCtx.sid !== sid) return null;
+    return `${binSimPairCtx.nameA} vs ${binSimPairCtx.nameB}`;
+};
+
+/** One line telling the AI agent what comparison is on screen. Its tools are
+ * per-function/per-file, so the pair itself has to arrive as context. */
+window.binSimFocusContext = function(sid) {
+    if (!binSimPairCtx || binSimPairCtx.sid !== sid) return null;
+    const c = binSimPairCtx;
+    const pct = v => `${((v || 0) * 100).toFixed(1)}%`;
+    const parts = [
+        `Side A is ${c.nameA} (md5 ${c.md5a}, collection ${c.collection});`,
+        `side B is ${c.nameB} (md5 ${c.md5b}, collection ${c.collB}).`,
+        `Overall binary similarity ${pct(c.score)}.`,
+    ];
+    const counts = c.counts;
+    if (counts) {
+        parts.push(`${counts.matched || 0} matched functions, ${counts.unique_to_a || 0} unique to A, ${counts.unique_to_b || 0} unique to B.`);
+    }
+    parts.push('Unique or low-similarity functions are triage candidates, not evidence of maliciousness.');
+    return parts.join(' ');
+};
 
 // ---- Slim per-binary strip (user tags + notes only) ----
 function renderBinSimStrip(containerId, m, fileId) {

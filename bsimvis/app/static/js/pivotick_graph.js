@@ -57,6 +57,7 @@ class PivotickGraphController {
         this.pInstance = null;
         this._simEdgesEnabled = true;
         this._clusterByBinary = false;
+        this._renderedClustered = false;
         // The one and only "why is this node here" bookkeeping: every
         // function is either in this set (the user put it here -- the
         // center, something they clicked to expand, or something they
@@ -581,11 +582,41 @@ class PivotickGraphController {
         await this.render();
     }
 
+    // Pivotick sizes an expanded cluster's circle off each child's
+    // getCircleRadius() (getRadiusForClusterNode: sqrt(childCount) * 2 *
+    // avg(childRadius + 16) + 50), meant for its own small default circle
+    // nodes. Our rectangular ~190px cards never get a circleRadius from
+    // node construction, so children sit at Node's built-in 10px default and
+    // a cluster is sized as if it only had to fit tiny dots -- the error
+    // grows with the child count, which is why it shows up as "clusters are
+    // too small once a binary has a lot of functions". setCircleRadius() is
+    // public on the live node; set it before the user can expand anything,
+    // so the radius Pivotick computes at expand time is already right.
+    _growClusterCircles() {
+        if (!this.pInstance) return;
+        const r = PivotickGraphController.NODE_WIDTH / 2;
+        let touched = false;
+        for (const node of this.pInstance.getMutableNodes()) {
+            if (typeof node.hasChildren !== 'function' || !node.hasChildren()) continue;
+            for (const child of node.children || []) {
+                if (typeof child.setCircleRadius !== 'function') continue;
+                if (child.getCircleRadius?.() >= r) continue;
+                child.setCircleRadius(r);
+                touched = true;
+            }
+        }
+        if (touched) this.pInstance.onChange();
+    }
+
     async render() {
         const flatEntries = this._flatEntries();
         const nodes = this._clusterByBinary ? this._buildClusteredEntries(flatEntries) : flatEntries;
         const edges = this._flatEdges();
-        const needsRebuild = !this.pInstance || this._clusterByBinary;
+        // Clustering off after being on still needs one rebuild: the
+        // incremental path below only ever *adds*, so the cluster parents
+        // from the previous render would survive it.
+        const needsRebuild = !this.pInstance || this._clusterByBinary || this._renderedClustered;
+        this._renderedClustered = this._clusterByBinary;
 
         if (needsRebuild) {
             const notes = await FunctionView.fetchGraphNotes(flatEntries);
@@ -600,6 +631,7 @@ class PivotickGraphController {
                 this.pInstance.setData(nodes, edges, notes);
             }
             this._tuneForceLinks();
+            this._growClusterCircles();
             this._positionFreshNotes(notes);
             this.pInstance.onChange();
             this._scheduleFixNodeBoxSizes();
@@ -623,7 +655,7 @@ class PivotickGraphController {
     }
 
     // Pivotick's own foreignObject auto-sizer (measure the rendered content
-    // on a rAF, call node.setBoxSize()) already can't be trusted to shrink a
+    // on a rAF, call node.setBorderBox()) already can't be trusted to shrink a
     // box (see the header-sizing comment this file used to carry for
     // clusters) -- in Firefox it undershoots growing one too, and Firefox
     // clips foreignObject content strictly to whatever box was last set, so
@@ -641,6 +673,12 @@ class PivotickGraphController {
         try {
             let touched = false;
             for (const node of this.pInstance.getMutableNodes()) {
+                // An expanded cluster's box is its whole child area, not its
+                // header card -- Pivotick's own fitCardToContent skips the
+                // border-box/radius update for that case too, and forcing the
+                // header's size on it would anchor every edge to the cluster
+                // at a rectangle much smaller than what's drawn.
+                if (node.expanded && node.hasChildren?.()) continue;
                 const el = typeof node.getGraphElement === 'function' ? node.getGraphElement() : null;
                 const fo = el?.querySelector(':scope > foreignObject');
                 const content = fo?.firstElementChild;
@@ -664,7 +702,7 @@ class PivotickGraphController {
                 fo.setAttribute('height', h);
                 fo.setAttribute('x', -w / 2);
                 fo.setAttribute('y', -h / 2);
-                if (typeof node.setBoxSize === 'function') node.setBoxSize(w, h);
+                if (typeof node.setBorderBox === 'function') node.setBorderBox(w, h);
                 touched = true;
             }
             if (touched) this.pInstance.onChange();
@@ -750,9 +788,9 @@ class PivotickGraphController {
                 // node-to-node distance (linkArc() does Math.hypot(dx,dy)),
                 // not anything shape-aware -- bows into huge arcs whenever
                 // two nodes end up far apart, which force layout does
-                // constantly. Only the straight-line renderer consults
-                // getNodeBorderRadius(), which is what actually anchors an
-                // arrowhead to a rectangular card's edge instead of its center.
+                // constantly. Straight edges anchor on the border box we
+                // declare in _fixNodeBoxSizes(), so an arrowhead stops at a
+                // rectangular card's edge instead of its center.
                 defaultEdgeStyle: { curveStyle: 'straight' },
             },
             callbacks: {

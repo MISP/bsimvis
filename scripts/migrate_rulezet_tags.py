@@ -45,7 +45,9 @@ from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.tag_provenance import RULE_META_KEY, TAG_RULES_PREFIX
 from bsimvis.app.services.tag_taxonomy import migrate_tag
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 log = logging.getLogger("migrate_rulezet_tags")
 
 BATCH = 500
@@ -82,7 +84,10 @@ def migrate_sidecar(apply=False):
             data[uuid] = new
 
     log.info(
-        "sidecar: %d/%d rules change, %d distinct old ids", touched, len(data), len(old_ids)
+        "sidecar: %d/%d rules change, %d distinct old ids",
+        touched,
+        len(data),
+        len(old_ids),
     )
     if apply and touched:
         backup = p.with_suffix(".json.bak")

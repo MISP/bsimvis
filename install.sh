@@ -150,6 +150,13 @@ else
     echo "capa already installed in bin/"
 fi
 
+echo "--- Installing YARA rulesets ---"
+if [ "${SKIP_YARA:-}" = "1" ]; then
+    echo "Skipping third-party YARA rulesets (SKIP_YARA=1)."
+elif ! ./scripts/fetch_yara_rules.sh; then
+    echo "Warning: YARA ruleset fetch failed; yara tagging falls back to the rules kept in git."
+fi
+
 echo "--- Installing Ghidra ---"
 ./scripts/install_ghidra.sh
 

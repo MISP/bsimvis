@@ -8,6 +8,7 @@ request context so the existing `request.args` parsing is reused verbatim.
 import json
 import logging
 import time
+from urllib.parse import quote
 
 from flask import current_app, request
 
@@ -99,8 +100,10 @@ def _top_tags(cols, limit=20):
     top = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:limit]
     ns = {}
     for tag, n in counts.items():
-        prefix = tag.split(":", 1)[0] if ":" in tag else (
-            tag.split("/", 1)[0] if "/" in tag else "other"
+        prefix = (
+            tag.split(":", 1)[0]
+            if ":" in tag
+            else (tag.split("/", 1)[0] if "/" in tag else "other")
         )
         ns[prefix] = ns.get(prefix, 0) + n
     return {
@@ -187,6 +190,7 @@ def get_home_insights():
 
 # --- Unified search -------------------------------------------------------
 
+
 def _group(kind, items, mapper, limit):
     return {"kind": kind, "items": [mapper(i) for i in items[:limit]]}
 
@@ -226,7 +230,7 @@ def _search_groups(q, limit, scope):
             lambda c: {
                 "title": c["name"],
                 "subtitle": f"{c.get('total_files', 0)} files",
-                "url": f"/collections/{c['name']}",
+                "url": f"/collections/{quote(c['name'])}",
             },
             limit,
         )
@@ -244,7 +248,7 @@ def _search_groups(q, limit, scope):
             lambda p: {
                 "title": p.get("name"),
                 "subtitle": f"{len(p.get('collections', []))} collections",
-                "url": f"/pools/{p.get('id') or p.get('pool_id')}",
+                "url": f"/pools/{quote(str(p.get('id') or p.get('pool_id')))}",
             },
             limit,
         )
@@ -258,13 +262,24 @@ def _search_groups(q, limit, scope):
         if len(tag_hits) >= limit:
             break
     if tag_hits:
+        # Counts only for the handful actually shown -- a tag lives on files or
+        # on functions, and linking to the wrong list view shows nothing.
+        for t in tag_hits[:limit]:
+            t["stats"] = tag_service.get_tag_stats(t["collection"], t["tag"])
         yield _group(
             "tags",
             tag_hits,
             lambda t: {
                 "title": t["tag"],
-                "subtitle": t["collection"],
-                "url": f"/collections/{t['collection']}/files?tag={t['tag']}",
+                "subtitle": (
+                    f"{t['collection']} \u00b7 {t['stats']['file']} files, "
+                    f"{t['stats']['function']} functions"
+                ),
+                "url": (
+                    f"/collections/{quote(t['collection'])}"
+                    f"/{'files' if t['stats']['file'] or not t['stats']['function'] else 'functions'}"
+                    f"?tag={quote(t['tag'])}"
+                ),
             },
             limit,
         )
@@ -287,9 +302,9 @@ def _search_groups(q, limit, scope):
             search_files,
             "files",
             lambda f: {
-                "title": f.get("file_name") or f.get("md5"),
-                "subtitle": f"{f['_collection']} · {f.get('md5', '')[:12]}",
-                "url": f"/collections/{f['_collection']}/files/{f.get('md5')}",
+                "title": f.get("file_name") or f.get("file_md5"),
+                "subtitle": f"{f['_collection']} · {f.get('file_md5', '')[:12]}",
+                "url": f"/collections/{quote(f['_collection'])}/files/{f.get('file_md5')}",
             },
         ),
         (
@@ -300,8 +315,8 @@ def _search_groups(q, limit, scope):
                 "title": f.get("function_name") or f.get("name"),
                 "subtitle": f"{f['_collection']} · {f.get('file_name', '')}",
                 "url": (
-                    f"/collections/{f['_collection']}/files/{f.get('file_md5') or f.get('md5')}"
-                    f"/functions/{f.get('address') or f.get('addr')}"
+                    f"/collections/{quote(f['_collection'])}/files/{f.get('file_md5')}"
+                    f"/functions/{f.get('entrypoint_address')}"
                 ),
             },
         ),
@@ -310,9 +325,9 @@ def _search_groups(q, limit, scope):
             search_batches,
             "batches",
             lambda b: {
-                "title": b.get("batch_name") or b.get("batch_uuid"),
+                "title": b.get("name") or b.get("batch_uuid"),
                 "subtitle": b["_collection"],
-                "url": f"/collections/{b['_collection']}/batches",
+                "url": f"/collections/{quote(b['_collection'])}/batches?q={b.get('batch_uuid')}",
             },
         ),
         (
@@ -321,8 +336,11 @@ def _search_groups(q, limit, scope):
             "results",
             lambda c: {
                 "title": c.get("cluster_name") or f"cluster {c.get('cluster_id')}",
-                "subtitle": f"{c['_collection']} · {c.get('member_count', 0)} members",
-                "url": f"/collections/{c['_collection']}/functions/clusters",
+                "subtitle": f"{c['_collection']} · {c.get('count', 0)} members",
+                "url": (
+                    f"/collections/{quote(c['_collection'])}/functions/clusters"
+                    f"?cluster_uuid={c.get('cluster_uuid')}"
+                ),
             },
         ),
         (
@@ -331,8 +349,11 @@ def _search_groups(q, limit, scope):
             "results",
             lambda c: {
                 "title": c.get("cluster_name") or f"cluster {c.get('cluster_id')}",
-                "subtitle": f"{c['_collection']} · {c.get('member_count', 0)} files",
-                "url": f"/collections/{c['_collection']}/files/clusters",
+                "subtitle": f"{c['_collection']} · {c.get('count', 0)} files",
+                "url": (
+                    f"/collections/{quote(c['_collection'])}/files/clusters"
+                    f"?cluster_uuid={c.get('cluster_uuid')}"
+                ),
             },
         ),
         (
@@ -341,8 +362,8 @@ def _search_groups(q, limit, scope):
             "features",
             lambda f: {
                 "title": f.get("feature") or f.get("hash"),
-                "subtitle": f"{f['_collection']} · {f.get('count', '')}",
-                "url": f"/collections/{f['_collection']}/features/{f.get('hash') or f.get('feature_hash')}",
+                "subtitle": f"{f['_collection']} · {f.get('frequency', 0)} functions",
+                "url": f"/collections/{quote(f['_collection'])}/features/{f.get('hash')}",
             },
         ),
     ]

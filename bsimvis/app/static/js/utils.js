@@ -330,6 +330,7 @@ window.getCollectionFromId = function (id) {
     if (id.includes(':func:')) return stripPoolPrefix(id.split(':func:')[0]) || '';
     if (id.includes(':function:')) return stripPoolPrefix(id.split(':function:')[0]) || '';
     if (id.includes(':file:')) return stripPoolPrefix(id.split(':file:')[0]) || '';
+    if (id.includes(':bin_sim:')) return id.split(':bin_sim:')[0] || '';
 
     const parts = id.split(':');
     if (parts.length >= 4 && (parts[parts.length - 1].startsWith('00') || parts[parts.length - 1].length < 10)) {

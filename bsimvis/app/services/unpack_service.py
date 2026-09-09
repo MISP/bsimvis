@@ -32,6 +32,7 @@ from pathlib import Path
 from shutil import which
 
 from bsimvis.app.services import archive_service
+from bsimvis.app.services.config_service import upload_dir
 
 # How deep we follow a container inside a container (a jar inside an APK).
 # Two levels covers every real sample seen so far and stops a zip bomb from
@@ -166,7 +167,7 @@ def _unpack_upx(raw_bytes, file_name, options):
     if not upx:
         raise UnpackError("upx is not installed (run ./install.sh)")
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(dir=upload_dir()) as tmp:
         packed = os.path.join(tmp, "packed")
         unpacked = os.path.join(tmp, "unpacked")
         with open(packed, "wb") as fh:

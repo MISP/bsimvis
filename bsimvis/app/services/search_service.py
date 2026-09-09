@@ -217,7 +217,12 @@ class SearchService:
                     data = code_cache.get(fid) or get_function(fid)
                     if "error" in data:
                         self._save_with_dups(
-                            search_id, fid, dup_map, "no", "function lookup failed", None
+                            search_id,
+                            fid,
+                            dup_map,
+                            "no",
+                            "function lookup failed",
+                            None,
                         )
                         continue
                     members.append(
@@ -231,8 +236,12 @@ class SearchService:
                     if err:
                         for fid, _, _ in members:
                             self._save_with_dups(
-                                search_id, fid, dup_map, "no",
-                                f"classification failed: {err}", None,
+                                search_id,
+                                fid,
+                                dup_map,
+                                "no",
+                                f"classification failed: {err}",
+                                None,
                             )
                     else:
                         for fid, (verdict, evidence, tag) in results.items():
@@ -241,8 +250,12 @@ class SearchService:
                             )
                         for fid in missing:
                             self._save_with_dups(
-                                search_id, fid, dup_map, "no",
-                                "no result returned", None,
+                                search_id,
+                                fid,
+                                dup_map,
+                                "no",
+                                "no result returned",
+                                None,
                             )
 
                 processed += len(_with_dups(chunk, dup_map))
@@ -264,7 +277,8 @@ class SearchService:
         self._finish(search_id, "completed")
         if job_service and job_id:
             job_service.add_log(
-                job_id, f"Search classification finished: {processed}/{total} functions."
+                job_id,
+                f"Search classification finished: {processed}/{total} functions.",
             )
         return True
 

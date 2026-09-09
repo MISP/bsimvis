@@ -234,7 +234,7 @@ const routes = {
             { label: 'Tag', sort: 'tag', width: '30%' },
             { label: 'Color', width: '8%' },
             { label: 'Priority', sort: 'priority', width: '10%' },
-            { label: 'LLM', width: '6%' },
+            { label: 'AI', width: '6%' },
             { label: 'Functions', sort: 'function_count', width: '12%' },
             { label: 'Files', sort: 'file_count', width: '12%' },
             { label: 'Similarities', width: '12%' },
@@ -2424,6 +2424,11 @@ function triggerTagSearch() {
     // through to the binary-similarity LIST search, which navigates.
     if (document.getElementById('tag-container-bsim-sim')) {
         binSimFilterChange(true);
+        return;
+    }
+    // File view's Functions table filters its own rows in place too.
+    if (document.getElementById('tag-container-fv-func') && window.FileView) {
+        FileView.applyFilters();
         return;
     }
     const { viewKey } = getRoutingState();

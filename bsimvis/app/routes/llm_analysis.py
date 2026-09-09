@@ -236,14 +236,18 @@ def file_analysis():
             )
         if not func_ids:
             return None, None, None
-        return {
-            "collection": collection,
-            "file_md5": md5,
-            "func_ids": func_ids,
-            "actions": actions,
-            "overwrite": bool(data.get("overwrite")),
-            "custom_prompt": data.get("custom_prompt"),
-        }, None, warning
+        return (
+            {
+                "collection": collection,
+                "file_md5": md5,
+                "func_ids": func_ids,
+                "actions": actions,
+                "overwrite": bool(data.get("overwrite")),
+                "custom_prompt": data.get("custom_prompt"),
+            },
+            None,
+            warning,
+        )
 
     job_service = JobService()
     if file_md5:

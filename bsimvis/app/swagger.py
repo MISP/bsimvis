@@ -305,7 +305,9 @@ bin_sim_note_add_model = api.model(
 bin_sim_note_update_model = api.model(
     "BinSimNoteUpdate",
     {
-        "sid": fields.String(required=True, example="main:bin_sim:unweighted_cosine:..."),
+        "sid": fields.String(
+            required=True, example="main:bin_sim:unweighted_cosine:..."
+        ),
         "note_id": fields.String(required=True, example="uuid"),
         "text": fields.String(required=True, example="Updated note text"),
     },
@@ -314,7 +316,9 @@ bin_sim_note_update_model = api.model(
 bin_sim_note_remove_model = api.model(
     "BinSimNoteRemove",
     {
-        "sid": fields.String(required=True, example="main:bin_sim:unweighted_cosine:..."),
+        "sid": fields.String(
+            required=True, example="main:bin_sim:unweighted_cosine:..."
+        ),
         "note_id": fields.String(required=True, example="uuid"),
     },
 )
@@ -925,6 +929,8 @@ class RawFileUpload(Resource):
             "min_features": "Minimum feature count required",
             "algo": "Similarity algorithm (jaccard, unweighted_cosine, milvus_sparse)",
             "skip_sim": "Set to true to skip building similarities",
+            "enqueue": "Set to false to require batch_finalize (default: true)",
+            "debounce": "Set to true to batch uploads before building (default: false)",
             "archive_password": "Password for an uploaded zip archive (default: infected)",
             "unpack": "Set to false to analyze the upload exactly as-is (default: true)",
             "parent_md5": "md5 of the container this file was extracted from",
@@ -3161,7 +3167,9 @@ search_scope_model = api.model(
         "md5_b": fields.String(description="scope.type=pair"),
         "coll_b": fields.String(description="scope.type=pair, defaults to collection"),
         "pool_id": fields.String(description="scope.type=pair"),
-        "algo": fields.String(default="unweighted_cosine", description="scope.type=pair"),
+        "algo": fields.String(
+            default="unweighted_cosine", description="scope.type=pair"
+        ),
         "state": fields.String(
             enum=["all", "matched", "unique", "changed"],
             description="scope.type=pair function state. When set, overrides "
@@ -3190,7 +3198,7 @@ search_create_model = api.model(
         "pool": fields.String(required=False, description="Alternative to collection"),
         "query": fields.String(
             required=True,
-            example="the function decrypting a .dat file",
+            example="the function that decrypts the embedded configuration",
             description="Free-text description of what the analyst is looking for.",
         ),
         "name": fields.String(required=False, description="Defaults to the query text"),

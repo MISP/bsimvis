@@ -13,6 +13,9 @@ __pycache__
 
 # Data storage
 data/*
+# throwaway stack scripts/wt-test.sh brings up in a worktree
+data-wttest/
+.env.wttest
 !data/bench/
 !data/.gitkeep
 !data/test/
@@ -47,3 +50,39 @@ data-wttest/
 
 # Local state cache for scripts/tag_stash.py
 scripts/.tag_stash.json
+
+# Benchmark / agent scratch output (was committed by accident)
+bsimvis-test-results/
+diff_output.txt
+diff_no_ws.txt
+upload_log.txt
+lca-corpus-result.json
+mirai-pilot-comparison.json
+
+# Ad-hoc scripts and one-off tests at repo root.
+# Real API tests live in scripts/test_api_endpoints.py
+/test_*.py
+/test_*.js
+/list_fid_opts.py
+/summarize_diff.py
+
+# Third-party YARA rulesets: fetched by scripts/fetch_yara_rules.sh, not tracked.
+# Only rules that exist nowhere else stay in git -- house/, and botnet/ +
+# anomaly/, which are hand-edited. See data/yara_rules/VENDORED_FROM.md.
+data/yara_rules/backdoor/
+data/yara_rules/certificate/
+data/yara_rules/downloader/
+data/yara_rules/elastic/
+data/yara_rules/exploit/
+data/yara_rules/infostealer/
+data/yara_rules/pua/
+data/yara_rules/ransomware/
+data/yara_rules/rootkit/
+data/yara_rules/trojan/
+data/yara_rules/virus/
+data/yara_rules/LICENSE
+data/yara_rules/LICENSE-elastic-v2
+data/yara_rules/anomaly/
+data/yara_rules/botnet/
+data/yara_rules/LICENSE-neo23x0-DRL-1.1
+data/yara_rules/ELF_Mirai.yara

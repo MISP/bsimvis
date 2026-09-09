@@ -11,6 +11,26 @@ job_service = JobService()
 similarity_service = SimilarityService()
 
 
+def _all_file_build_group(collection, payload):
+    prefix = f"{collection}:file:"
+    file_tasks = []
+    for raw in sorted(get_redis().smembers(f"{collection}:all_files")):
+        key = raw.decode() if isinstance(raw, bytes) else raw
+        if not key.startswith(prefix) or key.endswith(":meta"):
+            continue
+        child_payload = {
+            **payload,
+            "md5": key[len(prefix) :],
+            "batch_uuid": None,
+            "all": False,
+            "force": True,
+        }
+        file_tasks.append((JobType.BUILD_SIM, child_payload))
+    if not file_tasks:
+        return JobType.BUILD_SIM, payload
+    return job_service.create_group(file_tasks, enqueue=False)
+
+
 def list_similarities():
     """Lists similarities (scores) for a given md5 or batch_uuid."""
     collection = request.args.get("collection", "main")
@@ -99,6 +119,8 @@ def build_similarity():
     algo = data.get("algo")
     if algo is None:
         algo = config_service.get("similarity.algo", "unweighted_cosine")
+    if algo in ["milvus_sparse"] and not milvus_service.enabled:
+        return {"error": "Milvus is disabled. Cannot use milvus_sparse algorithm."}, 400
 
     if not md5 and not batch_uuid and not data.get("all"):
         return {"error": "md5, batch, or all required"}, 400
@@ -127,7 +149,12 @@ def build_similarity():
         "skip_write": data.get("skip_write", False),  # ponytail
     }
 
-    tasks = [(JobType.BUILD_SIM, payload)]
+    build_task = (
+        _all_file_build_group(collection, payload)
+        if data.get("all")
+        else (JobType.BUILD_SIM, payload)
+    )
+    tasks = [build_task]
     if not data.get("skip_write", False):
         tasks.append(
             (
@@ -142,10 +169,6 @@ def build_similarity():
         )
 
     if algo in ["milvus_sparse"]:
-        if not milvus_service.enabled:
-            return {
-                "error": "Milvus is disabled. Cannot use milvus_sparse algorithm."
-            }, 400
         tasks.insert(0, (JobType.SYNC_MILVUS, {"collection": collection}))
 
     pipeline_id = job_service.submit_to_lane(collection, tasks)
@@ -164,6 +187,8 @@ def rebuild_similarity():
     algo = data.get("algo")
     if algo is None:
         algo = config_service.get("similarity.algo", "unweighted_cosine")
+    if algo in ["milvus_sparse"] and not milvus_service.enabled:
+        return {"error": "Milvus is disabled. Cannot use milvus_sparse algorithm."}, 400
 
     if not md5 and not batch_uuid and not data.get("all"):
         return {"error": "md5, batch, or all required"}, 400
@@ -215,11 +240,10 @@ def rebuild_similarity():
         ),
     ]
 
+    if data.get("all"):
+        tasks[1] = _all_file_build_group(collection, tasks[1][1])
+
     if algo in ["milvus_sparse"]:
-        if not milvus_service.enabled:
-            return {
-                "error": "Milvus is disabled. Cannot use milvus_sparse algorithm."
-            }, 400
         tasks.insert(1, (JobType.SYNC_MILVUS, {"collection": collection}))
 
     pipeline_id = job_service.submit_to_lane(collection, tasks)

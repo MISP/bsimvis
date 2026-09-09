@@ -35,6 +35,16 @@ const NOTE_MODE_INFO = {
 };
 function noteMode() { return NOTE_MODE_INFO[entityMode] || NOTE_MODE_INFO.func; }
 
+/** A note attaches to an entity. The panel can be opened from its rail handle
+ * with nothing focused, and a null id used to POST straight through as
+ * `func_id: null`, which the API answers with "Missing parameters". */
+function requireNoteTarget(funcId) {
+    if (funcId) return true;
+    const msg = 'Open a function, file, or comparison first -- a note attaches to one of those.';
+    if (window.showToast) window.showToast(msg, 'warning'); else alert(msg);
+    return false;
+}
+
 /** Fires the per-mode "a note changed" hooks after a note write. */
 function notifyNoteChanged(funcId) {
     if (entityMode === 'func') {
@@ -82,13 +92,24 @@ function getChatScopeCollection() {
     return null;
 }
 
+/** Which NOTE_MODE_INFO entry an entity id belongs to. Match on the kind marker,
+ * never on segment 1: a pool pair sid is
+ * global:pool:<id>:bin_sim:<algo>:<md5a>::<md5b>, whose segment 1 is "pool" --
+ * reading that segment sent every pool pair's notes down the function path. */
+function entityKindFromId(id) {
+    id = String(id || '');
+    if (id.includes(':bin_sim:')) return 'bin_sim';
+    if (id.includes(':file:')) return 'file';
+    return 'func';
+}
+window.entityKindFromId = entityKindFromId;
+
 async function showNotes(funcId, expand = true) {
     const isNewFunc = funcId !== currentNotesFuncId;
     currentNotesFuncId = funcId;
     // ponytail: the id carries the entity kind, so derive it instead of trusting
     // the sticky flag showFileNotes() sets (stale after navigating file -> function)
-    const kindSegment = String(funcId).split(':')[1];
-    entityMode = kindSegment === 'file' ? 'file' : kindSegment === 'bin_sim' ? 'bin_sim' : 'func';
+    entityMode = entityKindFromId(funcId);
 
     // Ensure panels exist
     createPanelsIfMissing();
@@ -245,7 +266,7 @@ function setupPanelResize(panel, key) {
 function renderNotesPanelHTML(el) {
     el.innerHTML = `
         <div class="panel-v2-header">
-            <h3 style="margin: 0; font-size: 0.9rem; color: var(--note-accent);"><i class="fa-solid fa-comments"></i> Notes</h3>
+            <h3 style="margin: 0; font-size: 0.9rem; color: var(--note-accent);"><i class="fa-solid fa-comments"></i> Notes <span id="notes-scope-label" style="font-weight:400; color:var(--subtle); font-size:0.75rem;"></span></h3>
             <button onclick="closeNotesPanel()" style="background: none; border: none; color: var(--subtle); cursor: pointer; font-size: 1.1rem; padding: 4px; display: flex; align-items: center; transition: color 0.2s;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--subtle)'"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <div id="notes-column" style="flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden;">
@@ -261,7 +282,7 @@ function renderNotesPanelHTML(el) {
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <select id="note-owner-select" style="background: var(--bg); color: var(--meta-text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 0.8rem; outline: none;">
                         <option value="user">User</option>
-                        <option value="llm">LLM</option>
+                        <option value="llm">AI</option>
                     </select>
                     <button onclick="saveNote(currentNotesFuncId)" class="note-primary-btn">Add Note</button>
                 </div>
@@ -563,9 +584,18 @@ window.addSelectedNodesToActiveGraph = function() {
     else if (window.showToast) window.showToast('No functions selected', 'info');
 };
 
-function openNotesPanel() { 
-    isNotesOpen = true; 
-    updateLayout(); 
+function openNotesPanel() {
+    isNotesOpen = true;
+    // Opened from the rail handle rather than an entity's note button. The view
+    // usually is about something -- a comparison is about its pair -- so adopt
+    // that instead of showing an empty panel whose Add Note button 400s.
+    if (!currentNotesFuncId) {
+        const fallback = (window.defaultNoteEntityId || window.parent?.defaultNoteEntityId)?.();
+        // showNotes sets currentNotesFuncId before it calls back in here, so
+        // this cannot loop.
+        if (fallback) { showNotes(fallback); return; }
+    }
+    updateLayout();
     if (currentNotesFuncId && lastRenderedNotesFuncId !== currentNotesFuncId) {
         refreshNotes(currentNotesFuncId);
     }
@@ -794,9 +824,24 @@ function toggleContentExpand(btn) {
     }
 }
 
+/** What the notes panel is attached to, shown next to its title. A pair sid is
+ * unreadable on its own, so the comparison view supplies "A vs B" for it. */
+function noteScopeLabel(funcId) {
+    const id = String(funcId || '');
+    if (!id) return '';
+    if (entityMode === 'bin_sim') {
+        const names = (window.binSimPairNames || window.parent?.binSimPairNames)?.(id);
+        return names ? `\u00b7 ${names}` : '\u00b7 binary comparison';
+    }
+    if (entityMode === 'file') return `\u00b7 file ${id.split(':file:')[1] || ''}`;
+    return '';
+}
+
 async function refreshNotes(funcId) {
     const listEl = document.getElementById('notes-list');
     if (!listEl) return;
+    const scopeEl = document.getElementById('notes-scope-label');
+    if (scopeEl) scopeEl.textContent = noteScopeLabel(funcId);
     const collection = window.getCollectionFromId(funcId);
     const mode = noteMode();
     const idParam = `${mode.idKey}=${encodeURIComponent(funcId)}`;
@@ -808,6 +853,11 @@ async function refreshNotes(funcId) {
         if (data.status === 'success') {
             lastRenderedNotesFuncId = funcId;
             const notes = data.notes || [];
+            // The comparison view's badge reads a cached diff doc, so hand it the
+            // list we just fetched rather than let it show a stale count.
+            if (entityMode === 'bin_sim') {
+                (window.refreshBinSimRow || window.parent?.refreshBinSimRow)?.(funcId, notes);
+            }
             
             // Update handle badge
             const badge = document.getElementById('notes-handle-badge');
@@ -878,6 +928,7 @@ function getActivePool() {
 }
 
 async function saveNote(funcId) {
+    if (!requireNoteTarget(funcId)) return;
     const textEl = document.getElementById('new-note-text');
     const ownerEl = document.getElementById('note-owner-select');
     const text = textEl.value.trim();
@@ -918,6 +969,7 @@ function cancelEditNote(funcId) {
 }
 
 async function submitEditNote(funcId, noteId) {
+    if (!requireNoteTarget(funcId)) return;
     const textEl = document.getElementById(`edit-note-text-${noteId}`);
     const text = textEl.value.trim();
     if (!text) return;
@@ -952,6 +1004,7 @@ async function submitEditNote(funcId, noteId) {
 }
 
 async function deleteNote(funcId, note_id) {
+    if (!requireNoteTarget(funcId)) return;
     if (!confirm('Delete note?')) return;
     const mode = noteMode();
     const endpoint = `${mode.base}/remove`;
@@ -987,7 +1040,7 @@ async function readStream(response, onChunk) {
 async function generateSummary(funcId) {
     const statusEl = document.getElementById("llm-status");
     if (entityMode === 'bin_sim') {
-        if (statusEl) statusEl.innerText = 'Use "Run Pair Analysis" to generate a binary comparison report.';
+        if (statusEl) statusEl.innerText = 'Use "Analyze comparison" on the comparison view to generate a pair report note.';
         return;
     }
     if (statusEl) statusEl.innerText = "Summarizing...";
@@ -1169,7 +1222,13 @@ function currentFocusContextLine() {
     if (!currentNotesFuncId) {
         return "(No specific function or file is currently focused -- this is a general question about the collection.)";
     }
-    const kind = entityMode === 'file' ? 'file' : entityMode === 'bin_sim' ? 'binary comparison pair' : 'function';
+    if (entityMode === 'bin_sim') {
+        // A raw sid tells the agent nothing; the comparison view knows the two
+        // binaries and their scores, so let it describe its own focus.
+        const ctx = (window.binSimFocusContext || window.parent?.binSimFocusContext)?.(currentNotesFuncId);
+        return `(Analyst is currently viewing the binary comparison ${currentNotesFuncId}.${ctx ? ` ${ctx}` : ''} Assume this question refers to that comparison -- the two binaries and how they differ -- unless stated otherwise.)`;
+    }
+    const kind = entityMode === 'file' ? 'file' : 'function';
     return `(Analyst is currently viewing ${kind} ${currentNotesFuncId}. Assume this question refers to it unless stated otherwise.)`;
 }
 
@@ -1261,7 +1320,7 @@ async function saveMessageAsNote(funcId, index, btn) {
     // funcId here is the entity the button's onclick was rendered with
     // (currentNotesFuncId at render time) -- the chat thread itself is keyed
     // by collection, so look the message content up via that.
-    if (!funcId) { alert('No function or file is focused to attach this note to.'); return; }
+    if (!requireNoteTarget(funcId)) return;
     const collection = window.getCollectionFromId(funcId);
     const history = chatHistories[collection];
     if (!history || !history[index]) return;
@@ -1286,6 +1345,7 @@ async function saveMessageAsNote(funcId, index, btn) {
 }
 
 async function handleDroppedText(funcId, text) {
+    if (!requireNoteTarget(funcId)) return;
     const mode = noteMode();
     const endpoint = `${mode.base}/add`;
     try {
@@ -1347,6 +1407,13 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // --- Hover Tooltip for Notes ---
+/** A pair sid ends in an md5, so the plain tail would name one binary of two. */
+function previewNoteLabel(id, mode) {
+    if (mode !== 'bin_sim') return id.split(':').pop();
+    const names = (window.binSimPairNames || window.parent?.binSimPairNames)?.(id);
+    return names || 'binary comparison pair';
+}
+
 window.showNoteTooltip = async function(id, modeArg, e) {
     // Back-compat: callers used to pass a boolean (isFile).
     const mode = modeArg === true ? 'file' : modeArg === false ? 'func' : (modeArg || 'func');
@@ -1380,7 +1447,7 @@ window.showNoteTooltip = async function(id, modeArg, e) {
 
     tooltip.innerHTML = `
         <div class="preview-card" style="max-height:450px; display:flex; flex-direction:column;">
-            <div class="preview-header">Notes: ${escapeHtml(id.split(':').pop())}</div>
+            <div class="preview-header">Notes: ${escapeHtml(previewNoteLabel(id, mode))}</div>
             <div class="note-preview-scroll" style="flex:1; overflow-y:auto; padding: 10px;">
                 <div style="text-align: center; color: var(--subtle); font-style: italic; font-size: 0.8rem;">Loading notes...</div>
             </div>

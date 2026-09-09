@@ -453,7 +453,9 @@ def get_function_relations():
                 base_score = r.zscore(f"{base_pool}:sim:score", base_sid)
                 if base_score is not None:
                     if float(base_score) >= min_score:
-                        sim_edges.append({"id1": a, "id2": b, "score": float(base_score)})
+                        sim_edges.append(
+                            {"id1": a, "id2": b, "score": float(base_score)}
+                        )
                     continue
             misses.append((a, b))
 
@@ -466,7 +468,9 @@ def get_function_relations():
                 vec_pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
             vec_results = vec_pipe.execute()
             vecs = {
-                fid: {h.decode() if isinstance(h, bytes) else h: float(s) for h, s in raw}
+                fid: {
+                    h.decode() if isinstance(h, bytes) else h: float(s) for h, s in raw
+                }
                 for fid, raw in zip(miss_ids, vec_results)
                 if raw
             }
@@ -483,7 +487,9 @@ def get_function_relations():
                     dot = sum(d1[h] * d2[h] for h in common)
                     norm1 = sum(v**2 for v in d1.values()) ** 0.5
                     norm2 = sum(v**2 for v in d2.values()) ** 0.5
-                    score = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
+                    score = (
+                        (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
+                    )
                 if score >= min_score:
                     sim_edges.append({"id1": a, "id2": b, "score": score})
 
@@ -492,7 +498,11 @@ def get_function_relations():
         error_traceback = traceback.format_exc()
         print(error_traceback)
         return (
-            {"detail": str(e), "type": e.__class__.__name__, "traceback": error_traceback},
+            {
+                "detail": str(e),
+                "type": e.__class__.__name__,
+                "traceback": error_traceback,
+            },
             500,
         )
 

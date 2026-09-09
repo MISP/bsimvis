@@ -313,11 +313,15 @@ class BinSimService:
         sizes = pipe.execute()
         # Filter out features that only appear in this binary (size <= 1)
         # as they cannot help us find other similar binaries.
-        valid_features = [(f, s) for f, s in zip(unique_features, sizes) if s > 1]
+        # Also filter out extremely common features to avoid blowing up the pipeline.
+        valid_features = [(f, s) for f, s in zip(unique_features, sizes) if 1 < s < 1000]
         feature_sizes = sorted(valid_features, key=lambda x: x[1])
         
-        # 3. Discard common features by taking the rarest anchors
-        num_anchors = max(10, int(len(unique_features) * 0.25))
+        # 3. Use more features for discovery to catch low-similarity file pairs
+        # Taking only 25% misses pairs that share only semi-common library functions.
+        num_anchors = max(10, int(len(valid_features) * 1.0))
+        if num_anchors > 5000:
+            num_anchors = 5000
         anchors = [f_hash for f_hash, size in feature_sizes[:num_anchors]]
         
         # 4. Query reverse index for anchors (ZSET)

@@ -298,10 +298,10 @@ class BinSimService:
         num_anchors = max(10, int(len(unique_features) * 0.25))
         anchors = [f_hash for f_hash, size in feature_sizes[:num_anchors]]
         
-        # 4. Query reverse index for anchors
+        # 4. Query reverse index for anchors (ZSET)
         pipe = self.r.pipeline(transaction=False)
         for f_hash in anchors:
-            pipe.smembers(f"{collection}:feature:{f_hash}:functions")
+            pipe.zrange(f"{collection}:feature:{f_hash}:functions", 0, -1)
             
         anchor_results = pipe.execute()
         

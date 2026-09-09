@@ -96,7 +96,8 @@ class ExactSimilarityBackend(ABC):
                 if score > 0.0 and score >= min_score:
                     candidates.append((candidate_index, score))
             candidates.sort(key=lambda item: (-item[1], item[0]))
-            selected.append(candidates[: max(0, top_k)])
+            # top_k <= 0 means "no limit", matching the native backend.
+            selected.append(candidates if top_k <= 0 else candidates[:top_k])
         return selected
 
     def summarize_target_block(

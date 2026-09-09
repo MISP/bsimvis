@@ -98,7 +98,12 @@ fn select_candidates(
             .total_cmp(&left.1)
             .then_with(|| left.0.cmp(&right.0))
     });
-    candidates.truncate(top_k);
+    // top_k == 0 means "no limit", matching the `top_k <= 0` convention the
+    // callers in similarity_service use. Plain truncate(0) empties the vec,
+    // which silently discarded every cross-class edge the LCA snapshot found.
+    if top_k > 0 {
+        candidates.truncate(top_k);
+    }
     candidates
 }
 
@@ -364,7 +369,9 @@ fn select_inverted_candidates(
             .total_cmp(&left.1)
             .then_with(|| left.0.cmp(&right.0))
     });
-    selected.truncate(top_k);
+    if top_k > 0 {
+        selected.truncate(top_k);
+    }
     (selected, candidate_count)
 }
 
@@ -623,17 +630,27 @@ impl ExactScorer {
                                 .total_cmp(&left.1)
                                 .then_with(|| left.0.cmp(&right.0))
                         });
-                        if top_k == 0 || ranked.is_empty() {
+                        if ranked.is_empty() {
                             return Vec::new();
                         }
-                        let boundary = ranked[top_k.min(ranked.len()) - 1].1;
-                        let shortlist = ranked
-                            .into_iter()
-                            .take_while(|(_, candidate_score)| {
-                                *candidate_score >= boundary - score_margin
-                            })
-                            .map(|(candidate, _)| candidate)
-                            .collect::<Vec<_>>();
+                        // top_k == 0 means "no limit": there is no boundary to
+                        // widen by score_margin, so every ranked candidate goes
+                        // to the exact CPU rescore below.
+                        let shortlist = if top_k == 0 {
+                            ranked
+                                .into_iter()
+                                .map(|(candidate, _)| candidate)
+                                .collect::<Vec<_>>()
+                        } else {
+                            let boundary = ranked[top_k.min(ranked.len()) - 1].1;
+                            ranked
+                                .into_iter()
+                                .take_while(|(_, candidate_score)| {
+                                    *candidate_score >= boundary - score_margin
+                                })
+                                .map(|(candidate, _)| candidate)
+                                .collect::<Vec<_>>()
+                        };
                         select_candidates(vectors, target, &shortlist, algorithm, top_k, min_score)
                     })
                     .collect()
@@ -936,6 +953,24 @@ mod tests {
             select_candidates(&vectors, 0, &[0, 1, 2, 3], Algorithm::Cosine, 1, 0.0),
             vec![(1, 1.0)]
         );
+    }
+
+    #[test]
+    fn top_k_zero_means_no_limit() {
+        // Regression: truncate(0) emptied every result, so the LCA snapshot
+        // scored all pairs and threw the whole graph away.
+        let vectors = vec![
+            vector(&[(1, 1.0)]),
+            vector(&[(1, 1.0)]),
+            vector(&[(1, 1.0)]),
+            vector(&[(1, 1.0)]),
+        ];
+        let all = select_candidates(&vectors, 0, &[0, 1, 2, 3], Algorithm::Cosine, 0, 0.9);
+        assert_eq!(all.len(), 3, "top_k=0 must return every candidate");
+        assert!(all.iter().all(|(_, score)| (score - 1.0).abs() < 1e-12));
+        // A positive top_k still caps.
+        let capped = select_candidates(&vectors, 0, &[0, 1, 2, 3], Algorithm::Cosine, 2, 0.9);
+        assert_eq!(capped.len(), 2);
     }
 
     #[test]

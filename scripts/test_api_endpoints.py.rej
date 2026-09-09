@@ -1,0 +1,13 @@
+--- test_api_endpoints.py
++++ test_api_endpoints.py
+@@ -4901,6 +4904,10 @@
+         
+         s_score = r.zscore(f"{single}:bin_sim:score:{EQ_ALGO}", single_bs_key)
+         p_score = r.zscore(f"global:pool:{eq_pool}:bin_sim:score:{EQ_ALGO}", pool_bs_key)
++        print(f"DEBUG s_score: {s_score}")
++        print(f"DEBUG p_score: {p_score}")
++        if p_score is None:
++            print("DEBUG keys in pool bin_sim:score:", r.zrange(f"global:pool:{eq_pool}:bin_sim:score:{EQ_ALGO}", 0, -1, withscores=True))
+         
+         check(
+             "equivalence: bin_sim score exists on both sides",

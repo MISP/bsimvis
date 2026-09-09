@@ -426,9 +426,7 @@ class SimilarityService:
 
         for i, feat in enumerate(features_sorted):
             if i % 16 == 0:
-                self._pl_warm(
-                    [item["key"] for item in features_sorted[i : i + 16]]
-                )
+                self._pl_warm([item["key"] for item in features_sorted[i : i + 16]])
             remaining_norm_sq = target_norm_sq - processed_norm_sq
             remaining_total = target_total - processed_total
             can_add_new = True
@@ -1366,7 +1364,9 @@ class SimilarityService:
         result = self._clear_script(args=[collection, field, value, algo or ""])
         from bsimvis.app.services.cluster_common import clear_hier_state
 
-        for name in ([algo] if algo else ["jaccard", "unweighted_cosine", "milvus_sparse"]):
+        for name in (
+            [algo] if algo else ["jaccard", "unweighted_cosine", "milvus_sparse"]
+        ):
             clear_hier_state(self.r, f"{collection}:cluster:hier:{name}")
         return result
 
@@ -2388,7 +2388,7 @@ class SimilarityService:
                 )
                 for fid in raw_ids
             ]
-            
+
             # Ensure fully qualified!
             fids = [
                 fid if fid.startswith(f"{coll}:func:") else f"{coll}:func:{fid}"
@@ -2474,10 +2474,10 @@ class SimilarityService:
                 pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
             meta_results = pipe.execute()
             for i, fid in enumerate(fids_list):
-                res_meta = meta_results[i*3]
-                res_funcid = meta_results[i*3 + 1]
-                res_vec = meta_results[i*3 + 2]
-                
+                res_meta = meta_results[i * 3]
+                res_funcid = meta_results[i * 3 + 1]
+                res_vec = meta_results[i * 3 + 2]
+
                 if res_meta:
                     m = res_meta.decode() if isinstance(res_meta, bytes) else res_meta
                     if isinstance(m, str):
@@ -2488,10 +2488,14 @@ class SimilarityService:
                     func_meta_cache[fid] = m if isinstance(m, dict) else {}
                 else:
                     func_meta_cache[fid] = {}
-                    
+
                 if res_funcid:
-                    func_exact_hashes[fid] = res_funcid.decode() if isinstance(res_funcid, bytes) else res_funcid
-                    
+                    func_exact_hashes[fid] = (
+                        res_funcid.decode()
+                        if isinstance(res_funcid, bytes)
+                        else res_funcid
+                    )
+
                 if res_vec:
                     func_vectors[fid] = res_vec
                 else:
@@ -2506,17 +2510,18 @@ class SimilarityService:
 
         tag_meta_cache = load_tag_meta(r, f"global:pool:{pool_id}") if fid_tags else {}
         tags_rev = read_tags_rev(r, f"global:pool:{pool_id}")
-        
+
         feature_to_idx = {}
         for vec in func_vectors.values():
             for feat_hash, tf in vec:
                 if feat_hash not in feature_to_idx:
                     feature_to_idx[feat_hash] = len(feature_to_idx)
         num_features = len(feature_to_idx)
-        
+
         def build_sparse_matrix(fids):
             import scipy.sparse as sp
             import numpy as np
+
             rows, cols, data = [], [], []
             for i, fid in enumerate(fids):
                 for feat_hash, tf in func_vectors.get(fid, []):
@@ -2556,13 +2561,14 @@ class SimilarityService:
 
         import numpy as np
         from sklearn.metrics.pairwise import cosine_similarity
-        
+
         # Pull min_score from pool config
         # Default for BSim is 0.9 if not specified
         func_sim_params = pool.get("func_sim_params", {})
         func_sim_threshold = func_sim_params.get("min_score")
         if func_sim_threshold is None:
             from bsimvis.app.services.config_service import config_service
+
             func_sim_threshold = config_service.get("similarity.min_score", 0.9)
 
         # Drop the same-collection pairs if pool is only_cross_collection
@@ -2574,12 +2580,12 @@ class SimilarityService:
             coll_b, md5_b = b_par
             if only_cross and b_src[0] == b_par[0]:
                 continue
-                
+
             fids_src = binary_ordered_fids[b_src]
             fids_par = binary_ordered_fids[b_par]
-            
+
             edges = []
-            
+
             mat_src = binary_matrices[b_src]
             mat_par = binary_matrices[b_par]
             if mat_src.nnz > 0 and mat_par.nnz > 0:
@@ -2588,20 +2594,20 @@ class SimilarityService:
                 for r_idx, c_idx in zip(rows, cols):
                     score = float(sim_matrix[r_idx, c_idx])
                     edges.append((fids_src[r_idx], fids_par[c_idx], score))
-            
+
             # Exact Hash Matches for small functions
             hash_to_fids_src = {}
             for fid in fids_src:
                 h = func_exact_hashes.get(fid)
                 if h:
                     hash_to_fids_src.setdefault(h, []).append(fid)
-                    
+
             for fid_par in fids_par:
                 h = func_exact_hashes.get(fid_par)
                 if h and h in hash_to_fids_src:
                     for fid_src in hash_to_fids_src[h]:
                         edges.append((fid_src, fid_par, 1.0))
-                        
+
             # Unique edges keeping max score
             unique_edges = {}
             for u, v, score in edges:
@@ -2617,6 +2623,7 @@ class SimilarityService:
                 return float(
                     func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
                 )
+
             common = score_pair(
                 edges,
                 all_funcs_a_total,
@@ -2669,7 +2676,7 @@ class SimilarityService:
                 persist_pipe = r.pipeline(transaction=False)
 
         log(
-            f"[*] All pairs computed + saved in {time.time() - loop_t:.1f}s; flushing final batch..."
+            f"[*] All pairs computed + saved in {time.time() - start_time:.1f}s; flushing final batch..."
         )
         persist_pipe.execute()
         log(

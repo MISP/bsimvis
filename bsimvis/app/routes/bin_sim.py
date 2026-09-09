@@ -12,12 +12,12 @@ from bsimvis.app.services.index_service import normalize_tags
 from bsimvis.app.services.bin_sim_tags import (
     AXIS_ORIGIN,
     EMPTY_SUMMARIES,
-    SPLIT_SCHEMA,
     SUMMARY_FIELDS,
     TAG_UNTAGGED,
     merge_tag_fields,
     normalize_tags as tag_ids,
     read_tags_rev,
+    split_is_current,
     tag_axis,
 )
 from bsimvis.app.services.cluster_utils import (
@@ -312,15 +312,10 @@ def rebuild_bin_sim():
 def _split_current(diff_data, cur_rev):
     """Is this doc's tag split still the one we would compute today?
 
-    Two ways it can be out of date, and both must invalidate: the collection has
-    been re-tagged since (`tags_rev`), or the doc was written by an older
-    splitter and simply has no rows for axes that exist now (`split_schema`).
-    Revision alone is not enough -- a doc split before the four-axis rework
-    carries whatever revision was current then, which can equal today's.
+    The rule itself lives next to SPLIT_SCHEMA, because the resplit job has to
+    apply exactly the same one -- see `split_is_current`.
     """
-    if (diff_data.get("tags_rev") or 0) != cur_rev:
-        return False
-    return (diff_data.get("split_schema") or 0) >= SPLIT_SCHEMA
+    return split_is_current(diff_data, cur_rev)
 
 
 def _swap_side_keys(d):

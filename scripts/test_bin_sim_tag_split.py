@@ -785,6 +785,68 @@ def test_resplit_replays_the_split_from_the_stored_diff():
     assert crossed["severity:high"]["category:network"][0] == 10.0
 
 
+def test_resplit_skips_a_doc_that_is_already_current():
+    """Resplitting the same pair twice must not pay for it twice.
+
+    What a resplit actually costs is the function metadata it reads: 178k
+    `:meta` GETs for the 387 pairs naming one mirai sample, ~47s, against ~1.6s
+    of arithmetic. A doc already split at this schema and revision would be
+    rewritten to an identical value, so it never reaches that read.
+
+    It matters most right after a SPLIT_SCHEMA bump, when every pair in a
+    collection goes stale at once and the pair view resplits only the two md5s
+    it names -- consecutive pairs overlap heavily, and the overlap used to be
+    redone on every one of them.
+    """
+    from bsimvis.app.services.bin_sim_service import bin_sim_service
+
+    sid = "main:bin_sim:uc:aaa::bbb"
+    values = {
+        sid: json.dumps(
+            {
+                "md5_a": "aaa",
+                "md5_b": "bbb",
+                "score": 0.5,
+                "diff": {
+                    "matched": [],
+                    "unique_to_a": [{"func_id": "fa1"}],
+                    "unique_to_b": [],
+                },
+            }
+        ),
+        "main:tags_rev": "3",
+        "fa1:meta": json.dumps(
+            {"bsim_features_count": 10, "tags": ["origin:lib:libc:2.31"]}
+        ),
+    }
+    fake = FakeRedis(values, members=[sid])
+    old_r = bin_sim_service.r
+    bin_sim_service.r = fake
+    try:
+        assert bin_sim_service.resplit_bin_sim("main", algo="uc") is True
+        first = json.loads(fake.values[sid])
+        assert first["split_schema"] == SPLIT_SCHEMA and first["tags_rev"] == 3
+        assert by_id(first["tags_summary"])["origin:lib:libc:2.31"]
+
+        # Blank the split but leave the doc looking current. A second resplit
+        # that did the work would fill it back in; a skipped one leaves it.
+        doc = json.loads(fake.values[sid])
+        doc["tags_summary"] = []
+        fake.values[sid] = json.dumps(doc)
+        assert bin_sim_service.resplit_bin_sim("main", algo="uc") is True
+        assert json.loads(fake.values[sid])["tags_summary"] == [], "did the work twice"
+
+        # ...and the skip must not swallow a real re-tag: bumping the revision
+        # is exactly what tagging does, and the split has to be rebuilt then.
+        fake.values["main:tags_rev"] = "4"
+        assert bin_sim_service.resplit_bin_sim("main", algo="uc") is True
+        again = json.loads(fake.values[sid])
+        assert again["tags_rev"] == 4
+        assert by_id(again["tags_summary"])["origin:lib:libc:2.31"]
+    finally:
+        bin_sim_service.r = old_r
+
+
 def test_resplit_can_target_one_exact_pair():
     from bsimvis.app.services.bin_sim_service import bin_sim_service
 

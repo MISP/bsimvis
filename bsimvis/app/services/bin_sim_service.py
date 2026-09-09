@@ -10,6 +10,7 @@ from bsimvis.app.services.bin_sim_tags import (
     merge_tag_fields,
     load_tag_meta,
     read_tags_rev,
+    split_is_current,
 )
 
 BIN_SIM_TAG_FIELDS = (
@@ -910,6 +911,19 @@ class BinSimService:
                     doc = json.loads(doc)
                 if isinstance(doc, dict):
                     docs.append((sid, doc))
+
+            # A doc already split at this schema and this revision would be
+            # rewritten to an identical value, and the metadata reads below are
+            # what a resplit actually costs -- 178k function `:meta` GETs for
+            # the 387 pairs naming one mirai sample, ~47s, against ~1.6s of
+            # arithmetic. Skipping them is what makes a second resplit cheap.
+            #
+            # It matters most right after a SPLIT_SCHEMA bump, when every pair
+            # in the collection is stale at once: the pair view resplits only
+            # the two md5s it names, so opening pairs one after another used to
+            # redo the overlap every time. Same predicate the read path uses, or
+            # the badge it draws could never clear.
+            docs = [(sid, d) for sid, d in docs if not split_is_current(d, rev)]
 
             wanted = set()
             for _, doc in docs:

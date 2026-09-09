@@ -977,6 +977,25 @@ def score_pair(edges, funcs_a, funcs_b, feat, fid_tags=None, tag_meta_cache=None
     }
 
 
+def split_is_current(doc, tags_rev):
+    """Is this doc's tag split the one we would compute today?
+
+    Two ways it can be out of date, and both must invalidate: the collection has
+    been re-tagged since (`tags_rev`), or the doc was written by an older
+    splitter and has no rows for axes -- or no weighting -- that exist now
+    (`split_schema`). Revision alone is not enough: a doc split before a schema
+    change carries whatever revision was current then, which can equal today's.
+
+    The read path and the resplit job must both ask exactly this. If the reader
+    calls a doc stale while the resplit skips it as current, the UI offers a
+    "refresh split" that can never clear; if they disagree the other way, every
+    read rewrites a doc that was already right.
+    """
+    if (doc.get("tags_rev") or 0) != tags_rev:
+        return False
+    return (doc.get("split_schema") or 0) >= SPLIT_SCHEMA
+
+
 def tags_rev_key(collection):
     return f"{collection}:tags_rev"
 

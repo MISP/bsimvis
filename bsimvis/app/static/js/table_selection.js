@@ -76,18 +76,31 @@ class TableSelection {
     }
 
     /**
-     * What a click or Enter on a cell should trigger: a link or handler inside the
-     * cell, else one anywhere in its row, else the row's own handler — group header
-     * rows carry their expand/collapse on the `<tr>` itself.
+     * What a click or Enter on a cell should trigger: the link or handler inside
+     * the cell nearest the pointer, else the row's own handler — group header rows
+     * carry their expand/collapse on the `<tr>` itself.
      */
-    activationTarget(r, c) {
+    activationTarget(r, c, e) {
         const tr = this.tbody.children[r];
         if (!tr) return null;
         const selector = 'a[href]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn), [onclick]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn)';
         const cell = this.cellAt(r, c);
-        return (cell && cell.querySelector(selector))
-            || tr.querySelector(selector)
-            || (tr.getAttribute('onclick') ? tr : null);
+        const inCell = cell ? Array.from(cell.querySelectorAll(selector)) : [];
+        if (inCell.length) {
+            // A pair row stacks both sides in one cell, so the first link in the
+            // DOM is only right half the time. Activate the one the click landed
+            // next to. Keyboard activation has no pointer, so it takes the first.
+            if (!e || inCell.length === 1) return inCell[0];
+            const dist = el => {
+                const b = el.getBoundingClientRect();
+                return Math.abs(e.clientY - (b.top + b.height / 2));
+            };
+            return inCell.reduce((best, el) => (dist(el) < dist(best) ? el : best));
+        }
+        // Only the row's own action stands in for an empty cell. Reaching into
+        // the row for any control at all would fire whatever it happens to hold
+        // -- a Delete button, say -- from a click on unrelated whitespace.
+        return tr.getAttribute('onclick') ? tr : null;
     }
 
     /**
@@ -256,9 +269,16 @@ class TableSelection {
                     this.setSelection(this.tempFocus.r, this.tempFocus.c, this.tempFocus.r, this.tempFocus.c);
                     this.updateVisuals();
 
-                    const link = this.activationTarget(this.tempFocus.r, this.tempFocus.c);
+                    const link = this.activationTarget(this.tempFocus.r, this.tempFocus.c, e);
                     if (link && e.target !== link && !link.contains(e.target)) {
                         link.click();
+                        // The native click still follows this mouseup and would
+                        // reach the row's own onclick -- one click, two
+                        // navigations. Swallow it the same way a drag does.
+                        this.wasSelecting = true;
+                        setTimeout(() => {
+                            this.wasSelecting = false;
+                        }, 50);
                     }
                 }
             }

@@ -563,11 +563,18 @@ function initResizableCards() {
 // libc anywhere folds it everywhere, so the panes can never disagree about what
 // is being looked at.
 //
-// Composition similarity, tag by tag, is independent of how well individual
-// functions matched: a leaf tag scores min(count_a, count_b) / max(...) --
-// "A has 2 libc funcs, B has 4" -> 50%. A group is the mean of its children, so
-// a group with one perfect and one absent library reads 50%, not "mostly fine".
-// ponytail: counts, not feature weights. Switch to weight_* if count proves noisy.
+// A tag's similarity is the backend's own `score` for that tag: matched
+// cohesion over matched + unmatched mass (`bin_sim_tags._row`), the same
+// coverage-penalised formula the pair score uses. A group is the mean of its
+// children, so a group with one perfect and one absent library reads 50%, not
+// "mostly fine".
+//
+// It used to be min(count_a, count_b) / max(...) -- how evenly the two binaries
+// carry the tag. That is a real measure, but it is not similarity: a cross-arch
+// pair with zero matched functions still read "Original Code 22%" purely because
+// A had 224 untagged functions and B had 50. The counts are still the columns
+// either side of it; the Sankey still shows composition, where it is labelled as
+// such.
 
 
 // Selected tag node ids. Empty = the root "All" node = the whole pair.
@@ -591,11 +598,6 @@ function tagSideCounts(row) {
     });
     return [a, b];
 }
-
-function fileSimSim(a, b) {
-    return Math.max(a, b) > 0 ? Math.min(a, b) / Math.max(a, b) : 0;
-}
-
 
 // `category:network` -> `network`, `category:network:c2` -> `c2`. The parent is
 // already on screen above the leaf, so repeating it in the leaf reads as noise.
@@ -630,7 +632,7 @@ function fileSimTagChain(tagId) {
 function fileSimNestedNodes(rows) {
     const root = { children: new Map() };
 
-    const add = (tagId, a, b, drift) => {
+    const add = (tagId, a, b, drift, score, weight) => {
         // A tag with no functions on either side is not evidence of
         // dissimilarity, so it must not drag its parent's mean down.
         if (a === 0 && b === 0) return;
@@ -640,7 +642,8 @@ function fileSimNestedNodes(rows) {
             if (!next) {
                 next = {
                     id: prefix, label: fileSimLeafLabel(prefix), prefix,
-                    a: 0, b: 0, children: new Map(), drift: {}, tagIds: [],
+                    a: 0, b: 0, simNum: 0, simDen: 0,
+                    children: new Map(), drift: {}, tagIds: [],
                 };
                 node.children.set(prefix, next);
             }
@@ -650,6 +653,10 @@ function fileSimNestedNodes(rows) {
             // above them -- the same double-count the category axis already has
             // wherever one function carries two tags of one group.
             next.a += a; next.b += b;
+            // Weighted by the mass the score was measured over, which is how
+            // `TagSplit._row` merges children -- an unweighted mean here would
+            // let a three-function tag outvote a three-hundred-function one.
+            next.simNum += score * weight; next.simDen += weight;
             next.tagIds.push(tagId);
             Object.entries(drift || {}).forEach(([partner, w]) => {
                 next.drift[partner] = (next.drift[partner] || 0) + w;
@@ -666,12 +673,12 @@ function fileSimNestedNodes(rows) {
         if (kids.length) {
             kids.forEach(child => {
                 const [ca, cb] = tagSideCounts(child);
-                add(child.tag_id, ca, cb, child.drift);
+                add(child.tag_id, ca, cb, child.drift, +child.score || 0, +child.score_weight || 0);
             });
             return;
         }
         const [a, b] = tagSideCounts(row);
-        add(row.tag_id, a, b, row.drift);
+        add(row.tag_id, a, b, row.drift, +row.score || 0, +row.score_weight || 0);
     });
 
     return fileSimNestedFinish(root).children;
@@ -682,14 +689,17 @@ function fileSimNestedNodes(rows) {
 function fileSimNestedFinish(node) {
     const kids = [...node.children.values()]
         .map(fileSimNestedFinish)
-        .sort((x, y) => y.sim - x.sim);
+        // Mass breaks ties, because scores tie constantly: a pair that matched
+        // nothing scores every tag 0, and ordering that by score alone leaves
+        // the tree in whatever order the summary happened to arrive in.
+        .sort((x, y) => (y.sim - x.sim) || ((y.a + y.b) - (x.a + x.b)));
     node.children = kids;
-    // A leaf scores on its own counts; a branch is the mean of what is under it,
-    // so one absent family still shows instead of being averaged away by the
-    // mass of its siblings. Same rule the origin groups use.
+    // A leaf scores on its own matched mass; a branch is the mean of what is
+    // under it, so one absent family still shows instead of being averaged away
+    // by the mass of its siblings. Same rule the origin groups use.
     node.sim = kids.length
         ? kids.reduce((s, c) => s + c.sim, 0) / kids.length
-        : fileSimSim(node.a, node.b);
+        : (node.simDen > 0 ? node.simNum / node.simDen : 0);
     return node;
 }
 

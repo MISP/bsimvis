@@ -223,7 +223,19 @@ class BinSimService:
         pair = json.loads(raw) if not isinstance(raw, dict) else raw
         if isinstance(pair, str):
             pair = json.loads(pair)
-        return sid, pair
+            
+        if "diff" in pair:
+            return sid, pair
+            
+        cache_key = f"{sid}:cache"
+        cache_raw = self.r.get(cache_key)
+        if cache_raw:
+            full_doc = json.loads(cache_raw)
+            return sid, full_doc
+            
+        full_doc = self.compute_pair_diff(collection, pair.get("md5_a", md5_a), pair.get("md5_b", md5_b), algo, coll_a=pair.get("coll_a"), coll_b=pair.get("coll_b"))
+        self.r.setex(cache_key, 3600, json.dumps(full_doc))
+        return sid, full_doc
 
     def unique_functions_for_pair(
         self,
@@ -320,6 +332,173 @@ class BinSimService:
         # 6. Filter by min votes (at least 2 for noise reduction)
         min_votes = 2
         return [md5 for md5, count in votes.items() if count >= min_votes]
+
+    def compute_pair_diff(self, collection, md5_a, md5_b, algo="unweighted_cosine", coll_a=None, coll_b=None):
+        import time, json
+        import numpy as np
+        import scipy.sparse as sp
+        from sklearn.metrics.pairwise import cosine_similarity
+        from bsimvis.app.services.bin_sim_tags import score_pair, merge_tag_fields, load_tag_meta, read_tags_rev
+        from bsimvis.app.services.config_service import config_service
+        
+        r = self.r
+        
+        c_a = coll_a or collection
+        c_b = coll_b or collection
+        
+        # 1. Fetch file meta
+        pipe_meta = r.pipeline(transaction=False)
+        pipe_meta.get(f"{c_a}:file:{md5_a}:meta")
+        pipe_meta.get(f"{c_b}:file:{md5_b}:meta")
+        res_meta = pipe_meta.execute()
+        
+        file_meta_a = json.loads(res_meta[0]) if res_meta[0] else {}
+        file_meta_b = json.loads(res_meta[1]) if res_meta[1] else {}
+        if isinstance(file_meta_a, str): file_meta_a = json.loads(file_meta_a)
+        if isinstance(file_meta_b, str): file_meta_b = json.loads(file_meta_b)
+
+        # 2. Fetch fids
+        func_set_key_a = f"{c_a}:idx:file:functions:{md5_a}"
+        func_set_key_b = f"{c_b}:idx:file:functions:{md5_b}"
+        raw_ids_a = r.smembers(func_set_key_a)
+        raw_ids_b = r.smembers(func_set_key_b)
+        
+        functions_count_a = len(raw_ids_a)
+        functions_count_b = len(raw_ids_b)
+        
+        fids_a = [fid.decode().replace(":meta", "") if isinstance(fid, bytes) else str(fid).replace(":meta", "") for fid in raw_ids_a]
+        fids_b = [fid.decode().replace(":meta", "") if isinstance(fid, bytes) else str(fid).replace(":meta", "") for fid in raw_ids_b]
+        
+        all_unique_fids = set(fids_a) | set(fids_b)
+        
+        func_meta_cache = {}
+        func_vectors = {}
+        func_exact_hashes = {}
+        
+        if all_unique_fids:
+            fids_list = list(all_unique_fids)
+            pipe = r.pipeline(transaction=False)
+            for fid in fids_list:
+                pipe.get(f"{fid}:meta")
+                pipe.get(f"{fid}:funcid")
+                pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+            results = pipe.execute()
+            
+            for i, fid in enumerate(fids_list):
+                res_m = results[i * 3]
+                res_funcid = results[i * 3 + 1]
+                res_vec = results[i * 3 + 2]
+                
+                if res_m:
+                    m = json.loads(res_m) if not isinstance(res_m, dict) else res_m
+                    if isinstance(m, str):
+                        try: m = json.loads(m)
+                        except ValueError: pass
+                    func_meta_cache[fid] = m if isinstance(m, dict) else {}
+                else:
+                    func_meta_cache[fid] = {}
+                    
+                if res_funcid:
+                    func_exact_hashes[fid] = res_funcid.decode() if isinstance(res_funcid, bytes) else res_funcid
+                
+                func_vectors[fid] = res_vec if res_vec else []
+
+        fid_tags = {}
+        for fid, m in func_meta_cache.items():
+            tags = merge_tag_fields(m)
+            if tags:
+                fid_tags[fid] = tags
+
+        tag_meta_cache = {}
+        if fid_tags:
+            tag_meta_cache.update(load_tag_meta(r, c_a))
+            if c_a != c_b:
+                tag_meta_cache.update(load_tag_meta(r, c_b))
+        
+        tags_rev = read_tags_rev(r, c_a)
+        if c_a != c_b:
+            tags_rev = max(tags_rev, read_tags_rev(r, c_b))
+        
+        feature_to_idx = {}
+        for vec in func_vectors.values():
+            for feat_hash, tf in vec:
+                if feat_hash not in feature_to_idx:
+                    feature_to_idx[feat_hash] = len(feature_to_idx)
+        
+        num_features = len(feature_to_idx)
+        
+        def build_sparse_matrix(fids):
+            rows, cols, data = [], [], []
+            for i, fid in enumerate(fids):
+                for feat_hash, tf in func_vectors.get(fid, []):
+                    idx = feature_to_idx.get(feat_hash)
+                    if idx is not None:
+                        rows.append(i)
+                        cols.append(idx)
+                        data.append(float(tf))
+            if len(fids) == 0:
+                return sp.csr_matrix((0, num_features))
+            return sp.csr_matrix((data, (rows, cols)), shape=(len(fids), num_features))
+
+        mat_a = build_sparse_matrix(fids_a)
+        mat_b = build_sparse_matrix(fids_b)
+        
+        func_sim_threshold = config_service.get("similarity.min_score", 0.9)
+        edges = []
+        
+        if mat_a.nnz > 0 and mat_b.nnz > 0:
+            sim_matrix = cosine_similarity(mat_a, mat_b)
+            rows, cols = np.where(sim_matrix >= func_sim_threshold)
+            for r_idx, c_idx in zip(rows, cols):
+                score = float(sim_matrix[r_idx, c_idx])
+                edges.append((fids_a[r_idx], fids_b[c_idx], score))
+        
+        hash_to_fids_a = {}
+        for fid in fids_a:
+            h = func_exact_hashes.get(fid)
+            if h:
+                hash_to_fids_a.setdefault(h, []).append(fid)
+                
+        for fid_b in fids_b:
+            h = func_exact_hashes.get(fid_b)
+            if h and h in hash_to_fids_a:
+                for fid_a in hash_to_fids_a[h]:
+                    edges.append((fid_a, fid_b, 1.0))
+                    
+        unique_edges = {}
+        for u, v, score in edges:
+            key = (u, v)
+            if key not in unique_edges or score > unique_edges[key]:
+                unique_edges[key] = score
+        edges = [(u, v, s) for (u, v), s in unique_edges.items()]
+
+        def _feat(fid):
+            return float(func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0))
+
+        common = score_pair(
+            edges,
+            set(fids_a),
+            set(fids_b),
+            _feat,
+            fid_tags,
+            tag_meta_cache,
+        )
+
+        doc = {
+            "md5_a": md5_a,
+            "md5_b": md5_b,
+            "algo": algo,
+            "architecture_a": file_meta_a.get("language_id", ""),
+            "architecture_b": file_meta_b.get("language_id", ""),
+            "functions_count_a": functions_count_a,
+            "functions_count_b": functions_count_b,
+            "computed_at": int(time.time() * 1000),
+            "tags_rev": tags_rev,
+            **common,
+        }
+        
+        return doc
+
 
     def max_file_entrypoint(self, collection, md5):
         """Read the highest address from the file's function-ID index."""
@@ -498,234 +677,39 @@ class BinSimService:
                 job_id,
                 f"[*] Computing similarities for pairs {offset} to {offset+len(pairs)} out of {total_pairs}...",
             )
-        # 2. Load each binary's function IDs + counts (needed below for coverage,
-        # bsim_features_count, and the diff doc's functions_count_a/b).
-        binary_fids = {}
-        binary_func_counts = {}
-        for md5 in binaries:
-            func_set_key = f"{collection}:idx:file:functions:{md5}"
-            raw_ids = r.smembers(func_set_key)
-            binary_func_counts[md5] = len(raw_ids)
-            fids = [
-                (
-                    fid.decode().replace(":meta", "")
-                    if isinstance(fid, bytes)
-                    else str(fid).replace(":meta", "")
-                )
-                for fid in raw_ids
-            ]
-            binary_fids[md5] = set(fids)
-
-        # 3. Load function metadata, vectors, and funcid hashes
-        func_meta_cache = {}
-        func_vectors = {}
-        func_exact_hashes = {}
-        all_unique_fids = set()
-        for fids_set in binary_fids.values():
-            all_unique_fids.update(fids_set)
-
-        if all_unique_fids:
-            if job_service and job_id:
-                job_service.add_log(
-                    job_id,
-                    f"[*] Loading metadata and vectors for {len(all_unique_fids)} functions...",
-                )
-            fids_list = list(all_unique_fids)
-            pipe = r.pipeline(transaction=False)
-            for fid in fids_list:
-                pipe.get(f"{fid}:meta")
-                pipe.get(f"{fid}:funcid")
-                pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
-            results = pipe.execute()
-            
-            for i, fid in enumerate(fids_list):
-                res_meta = results[i * 3]
-                res_funcid = results[i * 3 + 1]
-                res_vec = results[i * 3 + 2]
-                
-                if res_meta:
-                    m = json.loads(res_meta) if not isinstance(res_meta, dict) else res_meta
-                    if isinstance(m, str):
-                        try:
-                            m = json.loads(m)
-                        except ValueError:
-                            pass
-                    func_meta_cache[fid] = m if isinstance(m, dict) else {}
-                else:
-                    func_meta_cache[fid] = {}
-                    
-                if res_funcid:
-                    func_exact_hashes[fid] = res_funcid.decode() if isinstance(res_funcid, bytes) else res_funcid
-                
-                if res_vec:
-                    func_vectors[fid] = res_vec
-                else:
-                    func_vectors[fid] = []
-
-        # Normalize each function's tags once here, not once per matched edge.
-        fid_tags = {}
-        for fid, m in func_meta_cache.items():
-            tags = merge_tag_fields(m)
-            if tags:
-                fid_tags[fid] = tags
-
-        tag_meta_cache = load_tag_meta(r, collection) if fid_tags else {}
-        tags_rev = read_tags_rev(r, collection)
-        
-        # Prepare global feature mapping for scipy sparse matrix construction
-        # Only map features that actually appear
-        feature_to_idx = {}
-        for vec in func_vectors.values():
-            for feat_hash, tf in vec:
-                if feat_hash not in feature_to_idx:
-                    feature_to_idx[feat_hash] = len(feature_to_idx)
-        
-        num_features = len(feature_to_idx)
-        
-        def build_sparse_matrix(fids):
-            import scipy.sparse as sp
-            import numpy as np
-            rows, cols, data = [], [], []
-            for i, fid in enumerate(fids):
-                for feat_hash, tf in func_vectors.get(fid, []):
-                    idx = feature_to_idx.get(feat_hash)
-                    if idx is not None:
-                        rows.append(i)
-                        cols.append(idx)
-                        data.append(float(tf))
-            return sp.csr_matrix((data, (rows, cols)), shape=(len(fids), num_features))
-
-        # 5. Process Pairs (Direct in-memory Similarity Matching)
+        # 2. Process Pairs (Delegated to compute_pair_diff for generating the full doc, and save stubs)
         processed = 0
         pipe = r.pipeline(transaction=False)
         pair_scores = {}
 
-        # Pre-fetch file metadata for all binaries (for indexing)
-        file_meta_cache = {}
-        pipe_meta = r.pipeline(transaction=False)
-        for md5 in binaries:
-            pipe_meta.get(f"{collection}:file:{md5}:meta")
-        meta_results = pipe_meta.execute()
-        for md5, res in zip(binaries, meta_results):
-            if res:
-                m = json.loads(res) if not isinstance(res, dict) else res
-                if isinstance(m, str):
-                    m = json.loads(m)
-                file_meta_cache[md5] = m if isinstance(m, dict) else {}
-            else:
-                file_meta_cache[md5] = {}
-                
-        # To avoid re-building the same sparse matrix for each binary many times, cache them:
-        binary_matrices = {}
-        binary_ordered_fids = {}
-        for md5 in binaries:
-            fids = list(binary_fids[md5])
-            binary_ordered_fids[md5] = fids
-            binary_matrices[md5] = build_sparse_matrix(fids)
-
-        import numpy as np
-        from sklearn.metrics.pairwise import cosine_similarity
-
-        from bsimvis.app.services.config_service import config_service
-        # Get threshold dynamically like similarity_service does, default 0.9 if not provided
-        min_score_val = min_cohesion if min_cohesion is not None else config_service.get("similarity.min_score", 0.9)
-        # Use 0.9 as strict cutoff for edges, min_cohesion is for binary cohesion.
-        # Function sim threshold should be config's min_score.
-        func_sim_threshold = config_service.get("similarity.min_score", 0.9)
-
         for m_a, m_b in pairs:
-            file_meta_a = file_meta_cache.get(m_a, {})
-            file_meta_b = file_meta_cache.get(m_b, {})
-
-            fids_a = binary_ordered_fids[m_a]
-            fids_b = binary_ordered_fids[m_b]
+            doc = self.compute_pair_diff(collection, m_a, m_b, algo)
             
-            edges = []
-            
-            # Vector similarity using cached sparse matrices
-            mat_a = binary_matrices[m_a]
-            mat_b = binary_matrices[m_b]
-            if mat_a.nnz > 0 and mat_b.nnz > 0:
-                sim_matrix = cosine_similarity(mat_a, mat_b)
-                rows, cols = np.where(sim_matrix >= func_sim_threshold)
-                for r_idx, c_idx in zip(rows, cols):
-                    score = float(sim_matrix[r_idx, c_idx])
-                    edges.append((fids_a[r_idx], fids_b[c_idx], score))
-            
-            # Exact Hash Matches for small functions (or identical large ones, though vectors will catch large ones)
-            # Find common exact hashes
-            hash_to_fids_a = {}
-            for fid in fids_a:
-                h = func_exact_hashes.get(fid)
-                if h:
-                    hash_to_fids_a.setdefault(h, []).append(fid)
-                    
-            for fid_b in fids_b:
-                h = func_exact_hashes.get(fid_b)
-                if h and h in hash_to_fids_a:
-                    for fid_a in hash_to_fids_a[h]:
-                        edges.append((fid_a, fid_b, 1.0))
-                        
-            # Remove duplicate edges and keep the highest score if any overlaps
-            unique_edges = {}
-            for u, v, score in edges:
-                key = (u, v)
-                if key not in unique_edges or score > unique_edges[key]:
-                    unique_edges[key] = score
-            edges = [(u, v, s) for (u, v), s in unique_edges.items()]
-
-            all_funcs_a_total = binary_fids[m_a]
-            all_funcs_b_total = binary_fids[m_b]
-
-            def _feat(fid):
-                return float(
-                    func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
-                )
-
-            common = score_pair(
-                edges,
-                all_funcs_a_total,
-                all_funcs_b_total,
-                _feat,
-                fid_tags,
-                tag_meta_cache,
-            )
-
             sid = f"{collection}:bin_sim:{algo}:{m_a}::{m_b}"
-            pair_scores[(m_a, m_b)] = common["score"]
-
-            doc = {
-                "md5_a": m_a,
-                "md5_b": m_b,
-                "algo": algo,
-                "architecture_a": file_meta_a.get("language_id", ""),
-                "architecture_b": file_meta_b.get("language_id", ""),
-                "functions_count_a": binary_func_counts.get(m_a, 0),
-                "functions_count_b": binary_func_counts.get(m_b, 0),
-                "computed_at": int(time.time() * 1000),
-                # Bumped by every tag write, so a stored split can be told apart
-                # from the tag state it was computed against without rebuilding.
-                "tags_rev": tags_rev,
-                # score / score_code / score_library / coverage / cluster counts /
-                # tag summaries / diff -- shared with the pool builder.
-                **common,
-            }
-
+            pair_scores[(m_a, m_b)] = doc["score"]
+            
+            # Remove heavy diff for persistence
+            if "diff" in doc:
+                del doc["diff"]
+                
             pipe.set(sid, json.dumps(doc))
-            # `algo` is a provenance tag (which function similarity the clusters came
-            # from), not a choice of file score. The sort score is always the
-            # unweighted cohesion mean so it means the same thing in every namespace
-            # and matches the pool-level score. The other aggregates stay in `doc`.
+            
+            common = {k: doc[k] for k in ["score", "score_code", "score_library", "score_content", "coverage_a", "coverage_b", "shared_clusters"] if k in doc}
             _zadd_score_split(pipe, f"{collection}:bin_sim", algo, sid, common)
             pipe.sadd(f"{collection}:bin_sim:involves:{m_a}", sid)
             pipe.sadd(f"{collection}:bin_sim:involves:{m_b}", sid)
             pipe.sadd(f"{collection}:bin_sim:built:{algo}", sid)
-
-            # Secondary indexes
-            _index_bin_sim_pair(pipe, collection, sid, doc, file_meta_a, file_meta_b)
-
+            
+            fm_a_raw = r.get(f"{collection}:file:{m_a}:meta")
+            fm_b_raw = r.get(f"{collection}:file:{m_b}:meta")
+            import json
+            def parse_fm(raw):
+                if not raw: return {}
+                res = json.loads(raw) if not isinstance(raw, dict) else raw
+                return json.loads(res) if isinstance(res, str) else res
+            _index_bin_sim_pair(pipe, collection, sid, doc, parse_fm(fm_a_raw), parse_fm(fm_b_raw))
+            
             processed += 1
-
             if processed % 100 == 0:
                 pipe.execute()
                 if job_service and job_id:

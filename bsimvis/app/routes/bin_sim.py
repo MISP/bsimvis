@@ -619,7 +619,7 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     if diff_data is not None and not _split_current(diff_data, cur_rev):
         diff_data = None
     if diff_data is None:
-        data_raw = r.get(sid)
+        _, data_raw = bin_sim_service.load_pair(collection, md5_a, md5_b, coll_b, pool_id, algo)
 
         if not data_raw:
             return {

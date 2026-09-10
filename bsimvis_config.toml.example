@@ -93,6 +93,22 @@
     # anything on a statically linked corpus, and refining on it would restore
     # the N^2. Lower it to trade time for recall.
     candidate_min_exact_ratio = 0.02
+    # "tiered" only: the second candidate source, for the files tier 1 cannot
+    # see at all. A binary rebuilt for another architecture or by another
+    # compiler shares no identical function with its sibling, so tier 1 proposes
+    # nothing and a real similarity is stored as no pair. An anchor holding
+    # under this share of its weight in exact matches has its rarest features
+    # read back instead, and any file sharing enough of them goes to tier 2
+    # regardless of candidate_min_exact_ratio. Rare features are cheap -- a
+    # feature the collection has seen twice has a two-entry posting list -- so
+    # this is a bounded pipeline of reads, not a second discovery walk.
+    # 0 turns the probe off and leaves tier 1 on exact matches alone.
+    tier1_fallback_max_exact_ratio = 0.02
+    # How many of the anchor's rarest features the probe reads back, and how
+    # many of them a file must share before it is proposed. More features is
+    # more recall for more reads; more hits is fewer, better candidates.
+    tier1_probe_features = 64
+    tier1_probe_min_hits = 2
     # File pairs scoring under this are not stored: no pair doc, no secondary
     # index, no bin_cluster edge. An exact bound skips the cosine for pairs that
     # cannot reach it (build_bin_sim), and the score itself is re-checked after

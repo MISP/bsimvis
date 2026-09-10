@@ -3362,10 +3362,47 @@ def test_search_filters_and_sorting():
         # ── Build bin_sim for the collection, BEFORE any tag exists ────────
         print(_color("\n  [Builds (no tags yet)]", BOLD))
         if file_md5_2:
-            built = test_endpoint(
+            # The default threshold first: the fixture pair scores a few percent,
+            # so a build that takes bin_sim.min_pair_score from the config must
+            # not store it. This is the check that the filter actually filters --
+            # it used to be opt-in and no caller ever opted in.
+            thresholded = test_endpoint(
                 "POST",
                 "/api/bin_sim/build",
                 data={"collection": COLLECTION, "algo": "unweighted_cosine"},
+                label="POST /api/bin_sim/build (default threshold)",
+            )
+            if isinstance(thresholded, dict) and thresholded.get("job_id"):
+                wait_for_pipeline(
+                    thresholded["job_id"],
+                    banner=" STEP 3c – Wait for thresholded bin_sim build",
+                )
+            weak = requests.get(
+                f"{BASE_URL}/api/bin_sim/diff",
+                params={
+                    "collection": COLLECTION,
+                    "md5_a": file_md5,
+                    "md5_b": file_md5_2,
+                },
+                timeout=30,
+            )
+            check(
+                "default min_pair_score drops a sub-threshold pair",
+                weak.status_code == 404,
+                f"pair was stored anyway (HTTP {weak.status_code})",
+            )
+            built = test_endpoint(
+                "POST",
+                "/api/bin_sim/build",
+                # min_pair_score=0: the two fixture binaries are barely alike
+                # and the product default (bin_sim.min_pair_score) would throw
+                # their pair away, which is the right call on a real corpus and
+                # useless here -- every diff check below needs that one pair.
+                data={
+                    "collection": COLLECTION,
+                    "algo": "unweighted_cosine",
+                    "min_pair_score": 0,
+                },
                 label="POST /api/bin_sim/build (collection)",
             )
             if isinstance(built, dict) and built.get("job_id"):
@@ -4083,105 +4120,59 @@ def test_exact_pair_resplit():
 def test_bin_sim_prune_bound():
     """The pruning bound must never drop a pair that could reach the threshold.
 
-    build_bin_sim skips a binary pair outright once the bound says it cannot
-    reach min_pair_score, so the bound has to sit above the score score_pair
-    would have returned for that same pair. This rebuilds what the builder
-    actually does -- sparse tf matrices, cosine edges at the function
-    threshold, exact-funcid edges -- over randomised binaries and fails on the
-    first pair whose bound lands under its real score. The shapes that break a
+    build_bin_sim scores a file pair from the function-sim edges between its two
+    files, and skips the pair outright once the bound over those edges says it
+    cannot reach min_pair_score -- so the bound has to sit above the score
+    score_pair would have returned for the same edge list. Greedy matching uses
+    each function once, so summing `s * max(w_a, w_b)` over every edge overshoots
+    the numerator and summing `min(w_a, w_b)` overshoots what the denominator
+    loses; this checks that on randomised edge lists. The shapes that break a
     naive bound are all in the generator: zero-weight functions, functions with
-    no features at all (only an exact funcid can pair those), and repeated
-    funcid hashes.
+    several edges, one-sided fan-out, and files whose every function matches.
     """
     import random
 
-    import numpy as np
-    import scipy.sparse as sp
-    from sklearn.metrics.pairwise import cosine_similarity
-
-    from bsimvis.app.services.bin_sim_service import (
-        candidate_rows,
-        pair_score_upper_bound,
-    )
+    from bsimvis.app.services.bin_sim_service import pair_score_upper_bound
     from bsimvis.app.services.bin_sim_tags import score_pair
 
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-quater - bin_sim pruning bound is an upper bound", BOLD))
     print(_color(f"{'='*60}", CYAN))
 
-    rng = random.Random(20260909)
-    threshold = 0.9
-    num_features = 64
+    rng = random.Random(20260910)
     violations = []
     worst_slack = None
     prunable = 0
 
-    def make_binary(name):
-        rows, cols, data = [], [], []
-        fids, weights, hashes = [], {}, {}
-        for i in range(rng.randint(1, 10)):
-            fid = f"{name}{i}"
-            fids.append(fid)
-            weights[fid] = rng.choice([0.0, 1.0, 1.0, 3.0, 17.0])
-            for f in rng.sample(range(num_features), rng.choice([0, 1, 2, 3, 5])):
-                rows.append(i)
-                cols.append(f)
-                data.append(float(rng.randint(1, 4)))
-            if rng.random() < 0.3:
-                hashes[fid] = f"h{rng.randrange(6)}"
-        mat = sp.csr_matrix(
-            (data, (rows, cols)), shape=(len(fids), num_features)
-        )
-        return fids, mat, weights, hashes
-
     for _ in range(300):
-        fids_a, mat_a, w_a, hash_a = make_binary("a")
-        fids_b, mat_b, w_b, hash_b = make_binary("b")
-        weights = {**w_a, **w_b}
+        fids_a = [f"a{i}" for i in range(rng.randint(1, 10))]
+        fids_b = [f"b{i}" for i in range(rng.randint(1, 10))]
+        weights = {
+            fid: rng.choice([0.0, 1.0, 1.0, 3.0, 17.0]) for fid in fids_a + fids_b
+        }
 
         def feat(fid):
             return weights.get(fid, 1.0)
 
-        # What build_bin_sim computes for the pair once it decides to.
+        # An edge list the way _edges_by_partner hands one over: every edge is
+        # already above the function threshold, a function can carry several,
+        # and exact-funcid matches come in at 1.0.
         edges = {}
-        if mat_a.nnz and mat_b.nnz:
-            sim_matrix = cosine_similarity(mat_a, mat_b)
-            for r_i, c_i in zip(*np.where(sim_matrix >= threshold)):
-                edges[(fids_a[r_i], fids_b[c_i])] = float(sim_matrix[r_i, c_i])
-        by_hash_a = {}
-        for fid in fids_a:
-            if fid in hash_a:
-                by_hash_a.setdefault(hash_a[fid], []).append(fid)
-        for fid_b in fids_b:
-            for fid_a in by_hash_a.get(hash_b.get(fid_b), []):
-                edges[(fid_a, fid_b)] = 1.0
-        score = score_pair(
-            [(u, v, s) for (u, v), s in edges.items()],
-            set(fids_a),
-            set(fids_b),
-            feat,
-        )["score"]
+        for _ in range(rng.randint(0, 14)):
+            fid_a = rng.choice(fids_a)
+            fid_b = rng.choice(fids_b)
+            edges[(fid_a, fid_b)] = rng.choice([0.9, 0.93, 0.97, 1.0])
+        edges = [(u, v, s) for (u, v), s in edges.items()]
 
-        # What the prune computes instead, without touching the pair.
-        def candidate_weight(mat, other_mat, fids, mine, theirs):
-            sq = mat.copy()
-            sq.data = sq.data * sq.data
-            mask = np.zeros(num_features, dtype=float)
-            mask[np.unique(other_mat.indices)] = 1.0
-            cand = candidate_rows(
-                sq.dot(mask), np.asarray(sq.sum(axis=1)).ravel(), threshold
-            )
-            shared = set(mine.values()) & set(theirs.values())
-            for i, fid in enumerate(fids):
-                if mine.get(fid) in shared:
-                    cand[i] = True
-            row_weights = np.array([feat(f) for f in fids], dtype=float)
-            return float(row_weights[cand].sum()), float(row_weights.sum())
+        score = score_pair(edges, set(fids_a), set(fids_b), feat)["score"]
 
-        cand_a, total_a = candidate_weight(mat_a, mat_b, fids_a, hash_a, hash_b)
-        cand_b, total_b = candidate_weight(mat_b, mat_a, fids_b, hash_b, hash_a)
+        num_ub = sum(s * max(feat(u), feat(v)) for u, v, s in edges)
+        min_ub = sum(min(feat(u), feat(v)) for u, v, _ in edges)
         bound = pair_score_upper_bound(
-            cand_a + cand_b, min(total_a, total_b), total_a, total_b
+            num_ub,
+            min_ub,
+            sum(feat(f) for f in fids_a),
+            sum(feat(f) for f in fids_b),
         )
 
         if bound < score - 1e-9:
@@ -4206,8 +4197,6 @@ def test_bin_sim_prune_bound():
         f"  tightest slack over 300 pairs: {worst_slack:+.6f}; "
         f"{prunable} prunable at min_pair_score=0.4"
     )
-
-
 def test_diff_injection_score():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-ter – unique function injection ranking", BOLD))
@@ -4999,7 +4988,9 @@ def test_pool_collection_equivalence():
                 {"collection": single, "all": True, "algo": EQ_ALGO, "top_k": 1000},
             ),
             ("/api/cluster/build", {"collection": single}),
-            ("/api/bin_sim/build", {"collection": single}),
+            # min_pair_score=0 to match the pool builder, which has no such
+            # threshold: this step compares the two paths' scores for one pair.
+            ("/api/bin_sim/build", {"collection": single, "min_pair_score": 0}),
         ):
             resp = requests.post(f"{BASE_URL}{path}", json=payload, timeout=10)
             resp.raise_for_status()
@@ -5459,6 +5450,24 @@ def test_container_similarity():
                 None,
             ),
             rows,
+        )
+
+    # The two members are the suite's two fixture binaries, whose pair scores a
+    # few percent -- under bin_sim.min_pair_score, so the wave tail's build
+    # drops it on purpose and there is no child pair to roll up. An explicit
+    # md5_a/md5_b build is answered whatever it scores (that is what
+    # /api/bin_sim/diff depends on), and its own container rollup runs on the
+    # pair it just wrote. The tails above have all completed, so nothing else is
+    # writing pair docs while this runs.
+    exact = test_endpoint(
+        "POST",
+        "/api/bin_sim/build",
+        data={"collection": coll, "md5_a": bin_a, "md5_b": bin_b},
+        label="POST /api/bin_sim/build (container members, exact pair)",
+    )
+    if isinstance(exact, dict) and exact.get("job_id"):
+        wait_for_pipeline(
+            exact["job_id"], banner=" STEP 4b2 – Wait for member pair build"
         )
 
     child, _ = pair_with(bin_a, bin_b)

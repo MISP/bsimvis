@@ -131,6 +131,13 @@ def upload_file_data():
                 and build_sim_payload.get("algo") == "milvus_sparse"
             ):
                 pipeline_tasks.append((JobType.SYNC_MILVUS, {"collection": collection}))
+            # build_bin_sim reads this collection's function-sim edges
+            # ({collection}:sim:involves:file:{md5}) instead of recomputing a
+            # cosine per file pair, so BUILD_SIM is what makes file pairs
+            # discoverable at all. Without it bin_sim has no edges and every
+            # pair scores 0 -- which is exactly what happened while it was
+            # missing from this pipeline.
+            pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
             if not data.get("skip_write", False):
                 pipeline_tasks.append(
                     (
@@ -313,7 +320,21 @@ def upload_chunk():
                     pipeline_tasks.append(
                         (JobType.SYNC_MILVUS, {"collection": collection})
                     )
-
+                # Same reason as the single-shot path above: bin_sim's file pairs
+                # come out of these function-sim edges, so the chunked upload has
+                # to bake them too.
+                pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
+                if not data.get("skip_write", False):
+                    pipeline_tasks.append(
+                        (
+                            JobType.INDEX_SIM,
+                            {
+                                "collection": collection,
+                                "md5": file_md5,
+                                "algo": algo,
+                            },
+                        )
+                    )
 
             pipeline_id = job_service.submit_to_lane(collection, pipeline_tasks)
             return {

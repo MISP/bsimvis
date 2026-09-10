@@ -196,11 +196,15 @@ def build_bin_sim():
     md5_a = data.get("md5_a")
     md5_b = data.get("md5_b")
     min_cohesion = data.get("min_cohesion", 0.5)
-    # Opt-in: skip pairs an exact bound says cannot reach this score.
+    # Pairs that cannot reach this score are not stored. None falls back to
+    # bin_sim.min_pair_score from the config; 0 stores every pair that shares a
+    # function.
     min_pair_score = data.get("min_pair_score")
     # Drive the chunk walk by hand. A job created here has no parent pipeline,
     # so it runs exactly one chunk and stops -- pass the pairs_key the offset-0
-    # job logged, plus the next offset, to run the one after it.
+    # job logged, plus the next offset, to run the one after it. The key holds
+    # the list of files to walk (pairs come out of each file's edges), so the
+    # offset counts files.
     pairs_key = data.get("pairs_key")
     offset = int(data.get("offset", 0) or 0)
 
@@ -282,7 +286,9 @@ def rebuild_bin_sim():
     md5_a = data.get("md5_a")
     md5_b = data.get("md5_b")
     min_cohesion = data.get("min_cohesion", 0.5)
-    # Opt-in: skip pairs an exact bound says cannot reach this score.
+    # Pairs that cannot reach this score are not stored. None falls back to
+    # bin_sim.min_pair_score from the config; 0 stores every pair that shares a
+    # function.
     min_pair_score = data.get("min_pair_score")
 
     clear_payload = {

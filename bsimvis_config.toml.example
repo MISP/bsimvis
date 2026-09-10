@@ -73,6 +73,14 @@
     # Choices: "FunctionID", "capa", "yara", "rulezet".
     enabled = []
 
+[bin_sim]
+    # File pairs scoring under this are not stored: no pair doc, no secondary
+    # index, no bin_cluster edge. An exact bound skips the cosine for pairs that
+    # cannot reach it (build_bin_sim), and the score itself is re-checked after
+    # matching because that bound is loose. 0 stores every pair that shares a
+    # single function, which is what filled the index with 1% pairs.
+    min_pair_score = 0.05
+
 [similarity]
     top_k = 1000
     min_score = 0.9

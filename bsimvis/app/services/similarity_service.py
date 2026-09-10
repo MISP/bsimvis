@@ -109,10 +109,18 @@ class SimilarityService:
         # edges into build_batch's discovery.
         self._base_snapshot = None
         if not NATIVE_AVAILABLE:
+            # Same visible symptom as a stale native module: no cross-class
+            # edges, so every similarity written is a same-vector-class 1.0.
+            # Say so once per build instead of returning silently.
+            logging.warning(
+                "[!] bsimvis_similarity_native missing -- LCA cross-class discovery "
+                "is skipped for %s, only byte-identical (score 1.0) pairs will be "
+                "written. Reinstall the native extension to get 0.9-1.0 matches.",
+                collection,
+            )
             return
         import bsimvis_similarity_native as sn
         from bsimvis.app.services.config_service import config_service
-        import logging
 
         r = self.r
         # KEYS blocks the whole server on a big keyspace; SCAN doesn't.
@@ -144,7 +152,15 @@ class SimilarityService:
 
         backend = config_service.get("similarity.discovery_backend", "rust_cpu")
         min_score = config_service.get("similarity.min_score", 0.9)
-        top_k = 0  # No top_k for discovery
+        # "No limit" for discovery, spelled as a real cap rather than 0.
+        # The native scorer only learned that top_k == 0 means unlimited in
+        # d8e9de6; an older compiled bsimvis_similarity_native (a venv that
+        # was not reinstalled after that commit) still does truncate(0) and
+        # silently returns zero cross-class edges, which leaves build_batch
+        # writing nothing but the same-vector-class 1.0 pairs -- the
+        # "every similarity is exactly 100%" report. v_total is >= every
+        # possible candidate count, so it caps nothing on any module version.
+        top_k = v_total
 
         from bsimvis.app.services.graph_service import graph_service
         gen = graph_service.get_active_generation(collection)

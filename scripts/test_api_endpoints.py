@@ -5483,6 +5483,58 @@ def test_bin_sim_without_function_similarities():
         f"bin_sim build created sim docs: {after}",
     )
 
+    # edge_source "tiered" proposes pairs off identical function hashes alone.
+    # Two builds of the same code for different architectures share almost no
+    # exact match, so tier 1 proposes nothing and their fuzzy similarity is
+    # never looked at. The rare feature probe is the second way in: a file
+    # holding under tier1_fallback_max_exact_ratio of its weight in exact
+    # matches has its rarest features read back, and any file sharing enough of
+    # them is handed to tier 2 regardless of the exact match gate.
+    #
+    # Forced rather than reproduced: candidate_min_exact_ratio 1.1 is
+    # unreachable, so every pair tier 1 proposes on its own is dropped and the
+    # pair can only survive by having been probed.
+    if pair:
+        from bsimvis.app.services.bin_sim_service import BinSimService
+        from bsimvis.app.services.config_service import config_service
+
+        saved = config_service._config.get("bin_sim")
+        config_service._config["bin_sim"] = dict(saved or {})
+        config_service._config["bin_sim"].update(
+            {
+                "edge_source": "tiered",
+                "candidate_min_exact_ratio": 1.1,
+                "tier1_fallback_max_exact_ratio": 1.0,
+            }
+        )
+        try:
+            BinSimService().build_bin_sim(coll, min_pair_score=0)
+        except Exception as exc:
+            check("tiered build with the rare feature probe ran", False, str(exc)[:300])
+        finally:
+            if saved is None:
+                config_service._config.pop("bin_sim", None)
+            else:
+                config_service._config["bin_sim"] = saved
+
+        body = test_endpoint(
+            "GET",
+            "/api/bin_sim/list",
+            params={"collection": coll, "md5": md5s[0], "limit": 50},
+            label="GET /api/bin_sim/list (tiered, rare feature probe)",
+        )
+        rows = (body or {}).get("results") or []
+        tiered = next(
+            (r for r in rows if md5s[1] in (r.get("md5_a"), r.get("md5_b"))),
+            None,
+        )
+        check(
+            "the rare feature probe proposes a pair tier 1's gate rejects",
+            isinstance(tiered, dict) and (tiered.get("score") or 0) > 0,
+            f"discovered={pair.get('score')} tiered={(tiered or {}).get('score')}: "
+            f"the probe found no candidate, or tier 2 refined it to nothing",
+        )
+
     try:
         resp = requests.post(
             f"{BASE_URL}/api/collection/delete",

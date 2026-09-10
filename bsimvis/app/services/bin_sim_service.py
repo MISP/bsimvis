@@ -541,6 +541,111 @@ class BinSimService:
             by_partner.setdefault(partner, []).append((fid_mine, fid_other, score))
         return by_partner
 
+    def _rare_feature_partners(
+        self,
+        collection,
+        md5,
+        fids,
+        canonical,
+        keep,
+        tf_cache,
+        k=64,
+        min_hits=2,
+    ):
+        """Candidate partners for one file, from the rarest features it holds.
+
+        Tier 1 asks "who has a function identical to mine". A binary rebuilt for
+        another architecture, or by another compiler, answers that question with
+        nothing at all -- the code is the same, the bytes are not, and the pair
+        is never looked at even when its fuzzy similarity is high. This is the
+        second way in: not "the same function", but "the same rare feature".
+
+        Rarity is the only property that is both cheap and discriminative. A
+        feature the collection has seen twice has a two-entry posting list --
+        reading it costs nothing -- and two files sharing it is real evidence,
+        where sharing a libc feature is none. So the anchor's features are
+        ranked by `{coll}:features:by_tf` (written at ingestion, so this needs
+        no index of its own and no Lua), its own contribution subtracted so a
+        feature it merely repeats does not look collection-wide, and only the
+        `k` rarest are read back.
+
+        Returns the partner md5s that show up in at least `min_hits` of them.
+        The probe proposes; it scores nothing. Tier 2 refines whatever it
+        proposes against the real matrices, and a partner it names wrongly
+        costs one sparse product and disappears.
+        """
+        from bsimvis.app.services.similarity_service import _fid_md5
+
+        r = self.r
+
+        # The anchor's own tf per feature, and the features it holds at all.
+        anchor_tf = {}
+        batch = int(os.getenv("BIN_SIM_LOAD_BATCH", 5000))
+        fids = sorted(fids)
+        for start in range(0, len(fids), batch):
+            window = fids[start : start + batch]
+            pipe = r.pipeline(transaction=False)
+            for fid in window:
+                pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+            for vec in pipe.execute():
+                for f_hash, tf in vec or ():
+                    key = f_hash.decode() if isinstance(f_hash, bytes) else str(f_hash)
+                    anchor_tf[key] = anchor_tf.get(key, 0.0) + float(tf)
+        if not anchor_tf:
+            return set()
+
+        miss = [h for h in anchor_tf if h not in tf_cache]
+        for start in range(0, len(miss), batch):
+            window = miss[start : start + batch]
+            pipe = r.pipeline(transaction=False)
+            for f_hash in window:
+                pipe.zscore(f"{collection}:features:by_tf", f_hash)
+            for f_hash, score in zip(window, pipe.execute()):
+                tf_cache[f_hash] = float(score or 0)
+
+        # What the rest of the collection holds of each feature. <= 0 is a
+        # feature only this file has: nothing to match, and the commonest are
+        # what tier 1 already fails on.
+        elsewhere = []
+        for f_hash, mine in anchor_tf.items():
+            rest = tf_cache.get(f_hash, 0.0) - mine
+            if rest > 0:
+                elsewhere.append((rest, f_hash))
+        if not elsewhere:
+            return set()
+        elsewhere.sort()
+
+        hits = {}
+        # ponytail: a flat budget on how much posting list one probe reads. A
+        # feature's list is at most as long as its tf, so the k rarest are short
+        # by construction -- this only bites when a file's *rarest* feature is
+        # still collection-wide, which is exactly when the probe has nothing to
+        # say. Make it adaptive if a corpus turns up where it does.
+        budget = 4096
+        chosen = []
+        for rest, f_hash in elsewhere[: k * 4]:
+            if len(chosen) >= k or rest > budget:
+                break
+            chosen.append(f_hash)
+            budget -= rest
+        if not chosen:
+            return set()
+
+        pipe = r.pipeline(transaction=False)
+        for f_hash in chosen:
+            pipe.zrange(f"{collection}:feature:{f_hash}:functions", 0, -1)
+        for members in pipe.execute():
+            partners = set()
+            for raw in members or ():
+                fid = raw.decode() if isinstance(raw, bytes) else str(raw)
+                other = canonical.get(_fid_md5(fid).lower())
+                if other is None or other == md5 or not keep(other):
+                    continue
+                partners.add(other)
+            for other in partners:
+                hits[other] = hits.get(other, 0) + 1
+        return {other for other, n in hits.items() if n >= min_hits}
+
     def _file_matrix(self, collection, md5, fids, feature_to_idx, cache):
         """L2-normalised sparse tf matrix of one file, rows in `fids` order.
 
@@ -703,6 +808,19 @@ class BinSimService:
         candidate_ratio = float(
             config_service.get("bin_sim.candidate_min_exact_ratio", 0.02)
         )
+        # A file whose functions almost never hash identically to another
+        # binary's is invisible to tier 1: a cross-architecture or
+        # cross-compiler build of the same code shares no exact match at all,
+        # so no pair is proposed and its fuzzy similarity is never looked at.
+        # Under this share of the anchor's weight in exact matches, the rare
+        # feature probe runs as a second candidate source.
+        fallback_ratio = float(
+            config_service.get(
+                "bin_sim.tier1_fallback_max_exact_ratio", candidate_ratio
+            )
+        )
+        probe_features = int(config_service.get("bin_sim.tier1_probe_features", 64))
+        probe_min_hits = int(config_service.get("bin_sim.tier1_probe_min_hits", 2))
 
         exact_pair = bool(md5_a and md5_b)
         if exact_pair:
@@ -888,7 +1006,10 @@ class BinSimService:
         discovered = 0
         refined = 0
         not_candidates = 0
+        probed = 0
+        probe_pairs = 0
         sim_service = None
+        feature_tf_cache = {}
         matrix_cache = {}
         feature_to_idx = {}
 
@@ -921,6 +1042,7 @@ class BinSimService:
                     return rank is None or rank > walk_rank[_anchor]
 
             funcs_a = self._file_funcs(collection, m_a, funcs_cache)
+            probe_partners = set()
 
             use_stored = edge_source == "stored" or (
                 edge_source == "auto"
@@ -953,6 +1075,31 @@ class BinSimService:
                     by_partner = self._exact_edges_by_partner(
                         sim_service, collection, m_a, funcs_a, canonical, keep
                     )
+                    self._func_weights(collection, sorted(funcs_a), weight_cache)
+                    anchor_weight = sum(weight_cache.get(f, 1.0) for f in funcs_a)
+                    matched = {e[0] for edges in by_partner.values() for e in edges}
+                    exact_share = (
+                        sum(weight_cache.get(f, 1.0) for f in matched) / anchor_weight
+                        if anchor_weight > 0
+                        else 1.0
+                    )
+                    if exact_share < fallback_ratio:
+                        probe_partners = self._rare_feature_partners(
+                            collection,
+                            m_a,
+                            funcs_a,
+                            canonical,
+                            keep,
+                            feature_tf_cache,
+                            k=probe_features,
+                            min_hits=probe_min_hits,
+                        )
+                        for partner in probe_partners:
+                            # No edges of its own: the probe says "look at this
+                            # pair", tier 2 says what the pair actually shares.
+                            by_partner.setdefault(partner, [])
+                        probed += 1
+                        probe_pairs += len(probe_partners)
                 else:
                     by_partner = self._discovered_edges_by_partner(
                         sim_service,
@@ -982,14 +1129,15 @@ class BinSimService:
                     # pair shares -- a pair under the ratio would need the fuzzy
                     # 0.9-1.0 band to carry it on its own, which is the recall
                     # this trade knowingly gives up for a cost that scales.
-                    exact_mass = sum(
-                        weight_cache.get(fid, 1.0)
-                        for fid in {e[0] for e in anchor_edges}
-                    )
-                    floor = min(weight_a, weight_b)
-                    if floor > 0 and exact_mass / floor < candidate_ratio:
-                        not_candidates += 1
-                        continue
+                    if m_b not in probe_partners:
+                        exact_mass = sum(
+                            weight_cache.get(fid, 1.0)
+                            for fid in {e[0] for e in anchor_edges}
+                        )
+                        floor = min(weight_a, weight_b)
+                        if floor > 0 and exact_mass / floor < candidate_ratio:
+                            not_candidates += 1
+                            continue
 
                     # Tier 2: the 0.9-1.0 band, for this candidate pair only.
                     mat_a = self._file_matrix(
@@ -1020,6 +1168,10 @@ class BinSimService:
                         merged.update({(u, v): s for u, v, s in anchor_edges})
                         anchor_edges = [(u, v, s) for (u, v), s in merged.items()]
                     refined += 1
+                    if not anchor_edges:
+                        # Only a probed pair gets here: the probe was wrong
+                        # about it and there is nothing to score.
+                        continue
 
                 # A pair is stored under its sorted md5s, and score_pair's diff
                 # is oriented a->b, so the edges are flipped here rather than
@@ -1140,7 +1292,15 @@ class BinSimService:
                 f"[*] tier 1 (exact function matches) proposed "
                 f"{refined + not_candidates} pairs, {not_candidates} of them "
                 f"under candidate_min_exact_ratio={candidate_ratio}; "
-                f"{refined} were refined against the 0.9-1.0 band.",
+                f"{refined} were refined against the 0.9-1.0 band."
+                + (
+                    f" {probed}/{len(chunk)} files held under "
+                    f"tier1_fallback_max_exact_ratio={fallback_ratio} of their "
+                    f"weight in exact matches; the rare feature probe proposed "
+                    f"{probe_pairs} pairs for them."
+                    if probed
+                    else ""
+                ),
             )
         if no_edges and job_service and job_id:
             job_service.add_log(

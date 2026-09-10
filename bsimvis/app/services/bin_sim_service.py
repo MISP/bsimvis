@@ -521,10 +521,8 @@ class BinSimService:
     ):
         """Candidate partners for one file, from exact function matches alone.
 
-        `{coll}:funcid:{hash}` is written at ingestion for every function
-        (ghidra_service computes the FID full hash, which masks relocatable
-        operands, and falls back to a mnemonic/operand-type digest for functions
-        FID declines). So "which files share an identical function with this one"
+        `{coll}:bsimhash:{hash}` is written at ingestion for every function.
+        So "which files share an identical BSim vector with this one"
         is one bucket read per function -- one lookup, against the ~50 feature
         posting lists per function a BSim discovery walks, which is the whole
         reason this scales where discovery does not.
@@ -534,7 +532,7 @@ class BinSimService:
         from bsimvis.app.services.similarity_service import _fid_md5
 
         by_partner = {}
-        for fid_mine, fid_other, score in sim_service._exact_funcid_edges(
+        for fid_mine, fid_other, score in sim_service._exact_bsim_edges(
             collection, sorted(fids)
         ):
             partner = canonical.get(_fid_md5(fid_other).lower())

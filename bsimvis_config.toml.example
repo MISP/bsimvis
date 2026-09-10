@@ -84,8 +84,8 @@
     # is one posting-list walk per function, which does not scale past a few
     # hundred files: prefer "tiered" on a large collection.
     # "tiered": two tiers, and the only option whose cost does not grow with the
-    # collection's feature sharing. Tier 1 asks {coll}:funcid:{hash} -- one
-    # lookup per function -- which files share an identical function; tier 2
+    # collection's feature sharing. Tier 1 asks {coll}:bsimhash:{hash} -- one
+    # lookup per function -- which files share an identical BSim vector; tier 2
     # runs the 0.9-1.0 cosine for those candidate pairs only.
     edge_source = "auto"
     # "tiered" only: how much of the smaller file must be in identical functions

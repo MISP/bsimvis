@@ -241,6 +241,44 @@ class SimilarityService:
             edges.extend(self._exact_funcid_edges(collection, small_fids))
         return edges
 
+    def _exact_bsim_edges(self, collection, fids):
+        """Exact architecture-independent BSim-hash edges (score 1.0) for `fids`, cross-binary only.
+        
+        Reads `{collection}:bsimhash:{hash}` to find identical BSim vectors.
+        """
+        r = self.r
+        pipe = r.pipeline(transaction=False)
+        for fid in fids:
+            pipe.get(f"{fid}:bsimhash")
+        fids_by_hash = {}
+        for fid, raw in zip(fids, pipe.execute()):
+            if not raw:
+                continue
+            digest = raw.decode() if isinstance(raw, bytes) else str(raw)
+            fids_by_hash.setdefault(digest, []).append(fid)
+        if not fids_by_hash:
+            return []
+
+        digests = list(fids_by_hash)
+        pipe = r.pipeline(transaction=False)
+        for digest in digests:
+            pipe.smembers(f"{collection}:bsimhash:{digest}")
+        edges = []
+        for digest, raw_members in zip(digests, pipe.execute()):
+            if not raw_members:
+                continue
+            query_fids = fids_by_hash[digest]
+            target_fids = [
+                m.decode() if isinstance(m, bytes) else str(m) for m in raw_members
+            ]
+            for fid_q in query_fids:
+                md5_q = _fid_md5(fid_q)
+                for fid_t in target_fids:
+                    # Cross-binary only
+                    if _fid_md5(fid_t) != md5_q:
+                        edges.append((fid_q, fid_t, 1.0))
+        return edges
+
     def _exact_funcid_edges(self, collection, fids):
         """Exact FunctionID-hash edges (score 1.0) for `fids`, cross-binary only.
 

@@ -339,6 +339,14 @@ class ProcessingService:
             if vec_tf_list:
                 zset_mapping = {item["hash"]: item["tf"] for item in vec_tf_list}
                 pipe.zadd(f"{base_func_key}:vec:tf", zset_mapping)
+                
+                # Compute bsimhash for architecture-independent exact matches
+                import hashlib
+                sorted_feats = sorted(vec_tf_list, key=lambda x: x["hash"])
+                canon_str = ",".join(f"{item['hash']}:{item['tf']}" for item in sorted_feats)
+                bsim_hash = hashlib.sha256(canon_str.encode()).hexdigest()
+                pipe.sadd(f"{collection}:bsimhash:{bsim_hash}", base_func_key)
+                pipe.set(f"{base_func_key}:bsimhash", bsim_hash)
 
             # --- Secondary Indexing ---
             save_function(pipe, collection, file_md5, addr, func_meta)

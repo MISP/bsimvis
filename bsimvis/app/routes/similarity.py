@@ -23,7 +23,6 @@ def _all_file_build_group(collection, payload):
             "md5": key[len(prefix) :],
             "batch_uuid": None,
             "all": False,
-            "force": True,
         }
         file_tasks.append((JobType.BUILD_SIM, child_payload))
     if not file_tasks:
@@ -114,6 +113,13 @@ def build_similarity():
     md5 = data.get("md5")
     batch_uuid = data.get("batch")
 
+    if not isinstance(data.get("split_by_file", True), bool) or not isinstance(
+        data.get("force", False), bool
+    ):
+        return {"error": "split_by_file and force must be booleans"}, 400
+    if data.get("all") and (md5 or batch_uuid):
+        return {"error": "all cannot be combined with md5 or batch"}, 400
+
     from bsimvis.app.services.config_service import config_service
 
     algo = data.get("algo")
@@ -146,12 +152,13 @@ def build_similarity():
         "top_k": top_k,
         "min_features": min_features,
         "all": data.get("all", False),
+        "force": data.get("force", False),
         "skip_write": data.get("skip_write", False),  # ponytail
     }
 
     build_task = (
         _all_file_build_group(collection, payload)
-        if data.get("all")
+        if data.get("all") and data.get("split_by_file", True)
         else (JobType.BUILD_SIM, payload)
     )
     tasks = [build_task]
@@ -181,6 +188,13 @@ def rebuild_similarity():
     collection = data.get("collection", "main")
     md5 = data.get("md5")
     batch_uuid = data.get("batch")
+
+    if not isinstance(data.get("split_by_file", True), bool) or not isinstance(
+        data.get("force", False), bool
+    ):
+        return {"error": "split_by_file and force must be booleans"}, 400
+    if data.get("all") and (md5 or batch_uuid):
+        return {"error": "all cannot be combined with md5 or batch"}, 400
 
     from bsimvis.app.services.config_service import config_service
 
@@ -240,7 +254,7 @@ def rebuild_similarity():
         ),
     ]
 
-    if data.get("all"):
+    if data.get("all") and data.get("split_by_file", True):
         tasks[1] = _all_file_build_group(collection, tasks[1][1])
 
     if algo in ["milvus_sparse"]:

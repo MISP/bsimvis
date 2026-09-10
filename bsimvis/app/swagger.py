@@ -187,6 +187,14 @@ similarity_build_model = api.model(
         "top_k": fields.Integer(default=20),
         "min_features": fields.Integer(default=0),
         "all": fields.Boolean(default=False),
+        "split_by_file": fields.Boolean(
+            default=True,
+            description="With all=true: one job per file; false builds the collection in one job.",
+        ),
+        "force": fields.Boolean(
+            default=False,
+            description="Recompute already-built functions; otherwise build incrementally.",
+        ),
     },
 )
 

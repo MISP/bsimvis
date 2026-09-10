@@ -1,3 +1,4 @@
+import os
 import redis
 import json
 import math
@@ -9,6 +10,12 @@ from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.index_config import get_propagated_fields
 
 # --- Shared Lua Scripts ---
+
+
+def _fid_md5(fid):
+    """The file md5 out of a `{coll}:func:{md5}:{addr}` function id."""
+    parts = str(fid).split(":")
+    return parts[-2] if len(parts) >= 2 else ""
 
 
 class SimilarityService:
@@ -105,6 +112,171 @@ class SimilarityService:
             for i, v in zip(miss, pipe.execute()):
                 cache[i] = float(v or 0)
         return [cache[i] for i in ids]
+
+    def discover_file_edges(
+        self,
+        collection,
+        md5,
+        algo=None,
+        top_k=None,
+        min_score=None,
+        min_features=None,
+    ):
+        """Every cross-binary function-sim edge of one file, computed now and
+        stored nowhere.
+
+        This is the discovery half of `build_batch` with the persistence left
+        out: rarest-feature-first accumulation over the collection's feature
+        posting lists for functions above the BSim feature floor, plus exact
+        FunctionID-hash matches for the ones below it (`_hash_match_small`'s rule,
+        which is the only signal tiny functions get). Everything it reads --
+        `{coll}:feature:*:functions`, `idx:func:bsim_features_count`,
+        `{fid}:vec:norm`, `{coll}:funcid:*` -- is written at ingestion, so a
+        collection whose functions were never similarity-built still answers.
+
+        That is what lets build_bin_sim score a collection uploaded with
+        --skip-sim: no function-sim docs are written, none are needed, and the
+        work is one discovery per function instead of one cosine per file pair.
+        The per-build read caches make the posting lists shared across every
+        function of every file in the walk, so the cost is proportional to the
+        collection's features, not to its pairs.
+
+        Returns `[(fid_in_this_file, fid_in_another_file, score), ...]`.
+        """
+        from bsimvis.app.services.config_service import config_service
+        from bsimvis.app.services.collection_config import get_collection_param
+
+        if algo is None:
+            algo = config_service.get("similarity.algo", "unweighted_cosine")
+        if top_k is None:
+            top_k = config_service.get("similarity.top_k", 1000)
+        # min_score / min_features are collection-sticky: a collection that has
+        # been sim-built once keeps the values it was built with, and edges
+        # discovered now have to use the same ones or they would not be
+        # interchangeable with the stored ones.
+        if min_score is None:
+            min_score = get_collection_param(
+                collection,
+                "min_score",
+                config_service.get("similarity.min_score", 0.9),
+            )
+        if min_features is None:
+            min_features = get_collection_param(
+                collection,
+                "min_features",
+                config_service.get("similarity.min_features", 0),
+            )
+
+        r = self.r
+        raw_ids = r.smembers(f"{collection}:idx:file:functions:{md5}") or ()
+        fids = sorted(
+            (x.decode() if isinstance(x, bytes) else str(x)).replace(":meta", "")
+            for x in raw_ids
+        )
+        if not fids:
+            return []
+
+        edges = []
+        small_fids = []
+        batch = int(os.getenv("BIN_SIM_LOAD_BATCH", 5000))
+        for start in range(0, len(fids), batch):
+            window = fids[start : start + batch]
+            pipe = r.pipeline(transaction=False)
+            for fid in window:
+                pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+            for fid, features_raw in zip(window, pipe.execute()):
+                if not features_raw or len(features_raw) < min_features:
+                    # Under the floor: BSim is false-positive-prone here, so the
+                    # only edge these get is an exact FunctionID match.
+                    small_fids.append(fid)
+                    continue
+
+                target_total = 0.0
+                target_norm_sq = 0.0
+                feature_args = []
+                for f_hash, f_tf_raw in features_raw:
+                    f_tf = float(f_tf_raw)
+                    target_total += f_tf
+                    target_norm_sq += f_tf * f_tf
+                    feature_args.extend(
+                        [
+                            (
+                                f_hash.decode()
+                                if isinstance(f_hash, bytes)
+                                else str(f_hash)
+                            ),
+                            str(f_tf),
+                        ]
+                    )
+                args = [
+                    fid,
+                    collection,
+                    algo,
+                    min_score,
+                    target_total,
+                    math.sqrt(target_norm_sq),
+                    top_k,
+                    min_features,
+                ]
+                if algo == "minhash_lsh":
+                    num_bands = 30
+                    args.append(num_bands)
+                    args.extend(
+                        b_hash
+                        for _band, b_hash in self._compute_lsh_buckets(
+                            features_raw, num_bands=num_bands
+                        )
+                    )
+                args.extend(feature_args)
+
+                flat = self._discover(args) or ()
+                for k in range(0, len(flat), 3):
+                    other = flat[k]
+                    other = other.decode() if isinstance(other, bytes) else str(other)
+                    if _fid_md5(other) == _fid_md5(fid):
+                        continue  # same-binary duplicate: not a file-diff signal
+                    edges.append((fid, other, float(flat[k + 1])))
+
+        if small_fids:
+            edges.extend(self._exact_funcid_edges(collection, small_fids))
+        return edges
+
+    def _exact_funcid_edges(self, collection, fids):
+        """Exact FunctionID-hash edges (score 1.0) for `fids`, cross-binary only.
+
+        The read-only half of `_hash_match_small`: same buckets, same rule, no
+        writes. Bucket size is deliberately uncapped -- an (A,B) match is
+        intrinsic to the two functions and must not depend on how many other
+        binaries share the hash.
+        """
+        r = self.r
+        pipe = r.pipeline(transaction=False)
+        for fid in fids:
+            pipe.get(f"{fid}:funcid")
+        fids_by_hash = {}
+        for fid, raw in zip(fids, pipe.execute()):
+            if not raw:
+                continue
+            digest = raw.decode() if isinstance(raw, bytes) else str(raw)
+            fids_by_hash.setdefault(digest, []).append(fid)
+        if not fids_by_hash:
+            return []
+
+        digests = list(fids_by_hash)
+        pipe = r.pipeline(transaction=False)
+        for digest in digests:
+            pipe.smembers(f"{collection}:funcid:{digest}")
+        edges = []
+        for digest, members in zip(digests, pipe.execute()):
+            mates = [
+                (m.decode() if isinstance(m, bytes) else str(m)) for m in members or ()
+            ]
+            for fid in fids_by_hash[digest]:
+                mine = _fid_md5(fid)
+                for mate in mates:
+                    if mate != fid and _fid_md5(mate) != mine:
+                        edges.append((fid, mate, 1.0))
+        return edges
 
     def build_batch(
         self,

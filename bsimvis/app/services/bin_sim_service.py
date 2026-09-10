@@ -467,6 +467,55 @@ class BinSimService:
                 by_partner.setdefault(partner, []).append((fid_mine, fid_other, score))
         return by_partner, missing
 
+    def _file_was_sim_built(self, collection, algo, fids, sample=32):
+        """Did a BUILD_SIM ever cover this file's functions?
+
+        `built:functions:{algo}` is marked per function by the function-sim
+        build, so it is the one signal that separates "this file has no stored
+        edges because nothing matched it" from "this file has no stored edges
+        because nobody built any" -- an empty `sim:involves:file:{md5}` looks
+        identical in both cases. A sample is enough: the build marks every
+        function of a file it processes, including the ones it finds nothing for.
+        """
+        if not fids:
+            return True  # nothing to discover either way
+        window = sorted(fids)[:sample]
+        pipe = self.r.pipeline(transaction=False)
+        for fid in window:
+            pipe.sismember(f"{collection}:built:functions:{algo}", fid)
+        return any(pipe.execute())
+
+    def _discovered_edges_by_partner(
+        self, sim_service, collection, algo, md5, canonical, keep, min_score
+    ):
+        """`_edges_by_partner`'s shape, from edges computed now instead of read.
+
+        Delegates to `discover_file_edges`, which runs the function-sim discovery
+        against the feature posting lists and funcid buckets ingestion wrote and
+        persists nothing. Partner files are resolved through `canonical` and
+        filtered by `keep` exactly as the stored path does, so which side of a
+        pair owns a pair does not depend on where its edges came from.
+
+        `sim_service` is built once per build_bin_sim call and carries the read
+        caches (posting lists, norms, feature counts) across every file of the
+        walk -- which is what keeps the cost proportional to the collection's
+        features instead of to its files. It must not outlive the build: those
+        caches are only valid while ingestion is not moving underneath them.
+        """
+        from bsimvis.app.services.similarity_service import _fid_md5
+
+        edges = sim_service.discover_file_edges(
+            collection, md5, algo=algo, min_score=min_score
+        )
+
+        by_partner = {}
+        for fid_mine, fid_other, score in edges:
+            partner = canonical.get(_fid_md5(fid_other).lower())
+            if partner is None or not keep(partner):
+                continue
+            by_partner.setdefault(partner, []).append((fid_mine, fid_other, score))
+        return by_partner
+
     def build_bin_sim(
         self,
         collection,
@@ -481,14 +530,30 @@ class BinSimService:
         job_service=None,
         job_id=None,
     ):
-        """Build binary similarity diff docs and scores by joining the
-        collection's function-sim edges, one anchor file at a time.
+        """Build binary similarity diff docs and scores from the collection's
+        function-sim edges, one anchor file at a time.
 
-        The walk is over *files*, not pairs: each file's edges are read once and
+        The walk is over *files*, not pairs: each file's edges are taken once and
         grouped by the file on the other end, so a pair is visited exactly once
         (at whichever of its two files comes first in the walk) and a pair with
         no shared function is never visited at all. `pairs_key` holds that file
         walk for a chunked build and `offset` is an index into it.
+
+        Where a file's edges come from is `bin_sim.edge_source`:
+
+        `stored` reads the function-sim docs a BUILD_SIM baked
+        (`sim:involves:file:{md5}`) -- cheapest, and the only option that needs
+        no computation, but a collection uploaded with --skip-sim has none.
+
+        `discover` computes them now and writes none, straight off the feature
+        posting lists and funcid buckets that ingestion already wrote. That is
+        the fast-bin-sim path: no function-sim graph to build, store or keep in
+        sync, at the cost of redoing the discovery on every rebuild.
+
+        `auto` (the default) picks per file: stored when that file's functions
+        are in `built:functions:{algo}`, discover when they are not. A mixed
+        collection -- some files similarity-built, some uploaded --skip-sim --
+        therefore needs no flag, and neither does either pure case.
         """
         r = self.r
 
@@ -504,9 +569,23 @@ class BinSimService:
             min_pair_score = config_service.get("bin_sim.min_pair_score", 0.05)
         min_pair_score = float(min_pair_score or 0)
 
-        # Edges below the current function threshold are ignored even if an
-        # older, looser build left them in the graph.
-        func_sim_threshold = float(config_service.get("similarity.min_score", 0.9))
+        # Edges below the function threshold are ignored even if an older,
+        # looser build left them in the graph. Collection-sticky: a collection
+        # keeps the min_score it was first built with, so reading raw config
+        # here would drop edges the graph legitimately holds.
+        from bsimvis.app.services.collection_config import get_collection_param
+
+        func_sim_threshold = float(
+            get_collection_param(
+                collection,
+                "min_score",
+                config_service.get("similarity.min_score", 0.9),
+            )
+        )
+
+        edge_source = str(config_service.get("bin_sim.edge_source", "auto")).lower()
+        if edge_source not in ("auto", "stored", "discover"):
+            edge_source = "auto"
 
         exact_pair = bool(md5_a and md5_b)
         if exact_pair:
@@ -689,6 +768,8 @@ class BinSimService:
         dropped = 0
         no_edges = 0
         missing_scores = 0
+        discovered = 0
+        sim_service = None
 
         def file_meta(md5):
             if md5 not in file_meta_cache:
@@ -718,16 +799,48 @@ class BinSimService:
                     rank = walk_rank.get(partner)
                     return rank is None or rank > walk_rank[_anchor]
 
-            by_partner, missing = self._edges_by_partner(
-                collection, algo, m_a, canonical, keep, func_sim_threshold
+            funcs_a = self._file_funcs(collection, m_a, funcs_cache)
+
+            use_stored = edge_source == "stored" or (
+                edge_source == "auto"
+                and (
+                    # Any stored edge is direct evidence the graph covers this
+                    # file. Only when it has none does it matter whether that
+                    # means "built, nothing matched" or "never built".
+                    r.scard(f"{collection}:sim:involves:file:{m_a}") > 0
+                    or self._file_was_sim_built(collection, algo, funcs_a)
+                )
             )
-            missing_scores += missing
+            if use_stored:
+                by_partner, missing = self._edges_by_partner(
+                    collection, algo, m_a, canonical, keep, func_sim_threshold
+                )
+                missing_scores += missing
+                if not by_partner:
+                    no_edges += 1
+            else:
+                if sim_service is None:
+                    from bsimvis.app.services.similarity_service import (
+                        SimilarityService,
+                    )
+
+                    # One per build: its read caches are only valid for as long
+                    # as ingestion is not writing, and they are what makes the
+                    # walk share one fetch of each posting list.
+                    sim_service = SimilarityService(r)
+                by_partner = self._discovered_edges_by_partner(
+                    sim_service,
+                    collection,
+                    algo,
+                    m_a,
+                    canonical,
+                    keep,
+                    func_sim_threshold,
+                )
+                discovered += 1
             if exact_pair:
                 by_partner.setdefault(other, [])
-            if not by_partner:
-                no_edges += 1
 
-            funcs_a = self._file_funcs(collection, m_a, funcs_cache)
             self._func_weights(collection, sorted(funcs_a), weight_cache)
             weight_a = sum(weight_cache.get(f, 1.0) for f in funcs_a)
 
@@ -842,12 +955,20 @@ class BinSimService:
 
         pipe.execute()
 
+        if job_service and job_id and discovered:
+            job_service.add_log(
+                job_id,
+                f"[*] {discovered}/{len(chunk)} files had their edges discovered "
+                f"on the fly (no function-sim docs written); "
+                f"{len(chunk) - discovered} read stored edges.",
+            )
         if no_edges and job_service and job_id:
             job_service.add_log(
                 job_id,
-                f"[!] {no_edges}/{len(chunk)} walked files have no function-sim "
-                f"edges for algo {algo}. Pairs come out of that graph, so a file "
-                f"uploaded with --skip-sim (or before BUILD_SIM ran) has none.",
+                f"[!] {no_edges}/{len(chunk)} walked files were similarity-built "
+                f"for algo {algo} but have no stored function-sim edges, so they "
+                f"form no pair. Rebuild their function similarities, or set "
+                f"bin_sim.edge_source = discover to compute edges per build.",
             )
         if missing_scores and job_service and job_id:
             job_service.add_log(

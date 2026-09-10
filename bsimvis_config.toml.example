@@ -74,6 +74,14 @@
     enabled = []
 
 [bin_sim]
+    # Where a file's function-sim edges come from when pairs are built.
+    # "auto" (default): stored edges for files a BUILD_SIM covered, discovered
+    # on the fly for files it did not -- so a --skip-sim collection works with
+    # no extra step and a built one pays nothing.
+    # "stored": only read baked edges; a file with none forms no pair.
+    # "discover": always compute, never read -- no function-sim docs are written
+    # or needed, at the cost of redoing the discovery on every rebuild.
+    edge_source = "auto"
     # File pairs scoring under this are not stored: no pair doc, no secondary
     # index, no bin_cluster edge. An exact bound skips the cosine for pairs that
     # cannot reach it (build_bin_sim), and the score itself is re-checked after

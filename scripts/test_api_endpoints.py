@@ -5360,6 +5360,142 @@ def test_pool_collection_equivalence():
 
 
 # ---------------------------------------------------------------------------
+# Step 4b3 – Pairs on a collection whose functions were never similarity-built
+#
+# The fast-bin-sim case: files uploaded with skip_sim, so there is no
+# function-sim graph and nothing for build_bin_sim to read. bin_sim.edge_source
+# "auto" has to notice that and discover the edges off the feature posting lists
+# and funcid buckets ingestion wrote -- without writing a single sim doc, which
+# is the whole point of not building them.
+# ---------------------------------------------------------------------------
+def test_bin_sim_without_function_similarities():
+    if not (os.path.isfile(TEST_BINARY) and os.path.isfile(SECOND_BINARY)):
+        print(_color("\n[SKIP] no-sim bin_sim needs both test binaries.", YELLOW))
+        return
+
+    coll = f"{COLLECTION}_nosim"
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 4b3 – bin_sim with no function similarities", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    md5s = []
+    pipelines = []
+    for path in (TEST_BINARY, SECOND_BINARY):
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        body = test_endpoint(
+            "POST",
+            "/api/file/upload",
+            params={
+                "collection": coll,
+                "file_name": os.path.basename(path),
+                "profile": "fast",
+                "min_func_len": 10,
+                # The whole point: no function similarities are ever built here.
+                "skip_sim": "true",
+            },
+            raw_body=raw,
+            headers={"Content-Type": "application/octet-stream"},
+            label=f"POST /api/file/upload (skip_sim, {os.path.basename(path)})",
+        )
+        if not isinstance(body, dict):
+            check("no-sim upload accepted", False, str(body)[:200])
+            return
+        md5s.append(body.get("file_md5"))
+        if body.get("pipeline_id"):
+            pipelines.append(body["pipeline_id"])
+
+    for pid in pipelines:
+        wait_for_pipeline(pid, banner=" STEP 4b3 – Wait for skip_sim analysis")
+
+    # No function-sim docs exist for either file, and none may be created.
+    def sim_total(md5):
+        body = test_endpoint(
+            "GET",
+            "/api/similarity/list",
+            params={"collection": coll, "md5": md5},
+            label=f"GET /api/similarity/list (md5={md5[:8]}, expect none)",
+        )
+        return (body or {}).get("total", -1)
+
+    before = [sim_total(m) for m in md5s]
+    check(
+        "skip_sim upload built no function similarities",
+        before == [0, 0],
+        f"expected no sim docs, got totals {before}",
+    )
+
+    built = test_endpoint(
+        "POST",
+        "/api/bin_sim/build",
+        data={"collection": coll, "min_pair_score": 0},
+        label="POST /api/bin_sim/build (no function-sim graph)",
+    )
+    if isinstance(built, dict) and built.get("job_id"):
+        wait_for_pipeline(
+            built["job_id"], banner=" STEP 4b3 – Wait for discovered bin_sim build"
+        )
+
+    body = test_endpoint(
+        "GET",
+        "/api/bin_sim/list",
+        params={"collection": coll, "md5": md5s[0], "limit": 50},
+        label="GET /api/bin_sim/list (discovered pair)",
+    )
+    rows = (body or {}).get("results") or []
+    pair = next(
+        (r for r in rows if md5s[1] in (r.get("md5_a"), r.get("md5_b"))),
+        None,
+    )
+    check(
+        "a pair is scored with no function-sim graph to read",
+        isinstance(pair, dict) and (pair.get("score") or 0) > 0,
+        f"no pair between the two skip_sim files: {str(rows)[:200]}",
+    )
+    if pair:
+        # The edges came from discovery, not from the stored graph, so the score
+        # has to agree with what the stored path produces for the same two files
+        # -- that is the only thing making the two sources interchangeable.
+        # STEP 3c built this same pair in the main collection with the same
+        # thresholds, so compare against it.
+        main_body = test_endpoint(
+            "GET",
+            "/api/bin_sim/list",
+            params={"collection": COLLECTION, "md5": md5s[0], "limit": 50},
+            label="GET /api/bin_sim/list (stored pair, for comparison)",
+        )
+        main_rows = (main_body or {}).get("results") or []
+        stored = next(
+            (r for r in main_rows if md5s[1] in (r.get("md5_a"), r.get("md5_b"))),
+            None,
+        )
+        if stored:
+            check(
+                "discovered edges score the pair the same as stored edges",
+                abs((pair.get("score") or 0) - (stored.get("score") or 0)) < 1e-6,
+                f"discovered={pair.get('score')} stored={stored.get('score')}",
+            )
+
+    after = [sim_total(m) for m in md5s]
+    check(
+        "scoring pairs wrote no function-sim docs",
+        after == [0, 0],
+        f"bin_sim build created sim docs: {after}",
+    )
+
+    try:
+        resp = requests.post(
+            f"{BASE_URL}/api/collection/delete",
+            json={"collection": coll},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            _wait_all([resp.json().get("job_id")], "collection cleanup")
+    except Exception as exc:
+        vprint(f"     cleanup of {coll} failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Step 4b2 – Container similarity: child scores roll up the containment edges
 #
 # An APK holds no code of its own, so build_bin_sim leaves it out of the pair
@@ -6035,6 +6171,7 @@ if __name__ == "__main__":
         test_unpack_upload,
         test_lineage,
         test_container_similarity,
+        test_bin_sim_without_function_similarities,
         test_lib_tag_rollup,
         test_skip_modules_payload,
         run_all_tests,

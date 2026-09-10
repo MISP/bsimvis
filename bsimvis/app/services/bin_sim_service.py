@@ -516,6 +516,117 @@ class BinSimService:
             by_partner.setdefault(partner, []).append((fid_mine, fid_other, score))
         return by_partner
 
+    def _exact_edges_by_partner(
+        self, sim_service, collection, md5, fids, canonical, keep
+    ):
+        """Candidate partners for one file, from exact function matches alone.
+
+        `{coll}:funcid:{hash}` is written at ingestion for every function
+        (ghidra_service computes the FID full hash, which masks relocatable
+        operands, and falls back to a mnemonic/operand-type digest for functions
+        FID declines). So "which files share an identical function with this one"
+        is one bucket read per function -- one lookup, against the ~50 feature
+        posting lists per function a BSim discovery walks, which is the whole
+        reason this scales where discovery does not.
+
+        Returns `{partner_md5: [(fid_mine, fid_other, 1.0), ...]}`.
+        """
+        from bsimvis.app.services.similarity_service import _fid_md5
+
+        by_partner = {}
+        for fid_mine, fid_other, score in sim_service._exact_funcid_edges(
+            collection, sorted(fids)
+        ):
+            partner = canonical.get(_fid_md5(fid_other).lower())
+            if partner is None or not keep(partner):
+                continue
+            by_partner.setdefault(partner, []).append((fid_mine, fid_other, score))
+        return by_partner
+
+    def _file_matrix(self, collection, md5, fids, feature_to_idx, cache):
+        """L2-normalised sparse tf matrix of one file, rows in `fids` order.
+
+        Rows are normalised on the way in so a pair's cosine is one sparse
+        matrix product with no per-pair normalisation, and `feature_to_idx` is
+        shared across the build so any two files' matrices are column-compatible
+        (they are widened to the current feature count before multiplying).
+        """
+        import numpy as np
+        import scipy.sparse as sp
+
+        cached = cache.get(md5)
+        if cached is not None:
+            return cached
+
+        rows, cols, data = [], [], []
+        batch = int(os.getenv("BIN_SIM_LOAD_BATCH", 5000))
+        for start in range(0, len(fids), batch):
+            window = fids[start : start + batch]
+            pipe = self.r.pipeline(transaction=False)
+            for fid in window:
+                pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+            for n, vec in enumerate(pipe.execute()):
+                row = start + n
+                norm = 0.0
+                for _feat, tf in vec or ():
+                    norm += float(tf) * float(tf)
+                norm = norm**0.5
+                if norm <= 0:
+                    continue
+                for feat_hash, tf in vec:
+                    key = feat_hash.decode() if isinstance(feat_hash, bytes) else feat_hash
+                    idx = feature_to_idx.get(key)
+                    if idx is None:
+                        idx = len(feature_to_idx)
+                        feature_to_idx[key] = idx
+                    rows.append(row)
+                    cols.append(idx)
+                    data.append(float(tf) / norm)
+
+        mat = sp.csr_matrix(
+            (
+                np.asarray(data, dtype=float),
+                (np.asarray(rows, dtype=np.int32), np.asarray(cols, dtype=np.int32)),
+            ),
+            shape=(len(fids), max(len(feature_to_idx), 1)),
+        )
+        cache[md5] = mat
+        # Bounded: the walk touches one anchor and its candidates at a time, so a
+        # small cache absorbs the repeats without holding the collection.
+        limit = int(os.getenv("BIN_SIM_MATRIX_CACHE", 24))
+        while len(cache) > limit:
+            cache.pop(next(iter(cache)))
+        return mat
+
+    def _refine_pair_edges(self, mat_a, fids_a, mat_b, fids_b, threshold):
+        """Function pairs above `threshold` between two files, sparsely.
+
+        Both matrices are already row-normalised, so the cosine is `A · Bt` --
+        and taking that product sparsely is the point: the old builder called
+        sklearn's cosine_similarity, which materialises a dense |A| x |B| matrix
+        (32MB for two 2000-function files) for every pair before thresholding
+        it. Here the product only holds entries for function pairs that actually
+        share a feature, so the cost follows the real overlap.
+        """
+        import numpy as np
+
+        if mat_a.nnz == 0 or mat_b.nnz == 0:
+            return []
+        width = max(mat_a.shape[1], mat_b.shape[1])
+        if mat_a.shape[1] != width:
+            mat_a.resize((mat_a.shape[0], width))
+        if mat_b.shape[1] != width:
+            mat_b.resize((mat_b.shape[0], width))
+
+        product = (mat_a @ mat_b.T).tocoo()
+        keep = product.data >= threshold
+        return [
+            (fids_a[int(i)], fids_b[int(j)], float(s))
+            for i, j, s in zip(
+                product.row[keep], product.col[keep], np.clip(product.data[keep], 0, 1)
+            )
+        ]
+
     def build_bin_sim(
         self,
         collection,
@@ -584,8 +695,16 @@ class BinSimService:
         )
 
         edge_source = str(config_service.get("bin_sim.edge_source", "auto")).lower()
-        if edge_source not in ("auto", "stored", "discover"):
+        if edge_source not in ("auto", "stored", "discover", "tiered"):
             edge_source = "auto"
+        # Tier 1 proposes a pair only when the two files share identical
+        # functions carrying at least this share of the smaller file's weight.
+        # "At least one shared function" is far too weak a filter on a corpus of
+        # statically linked binaries -- one identical libc stub would drag every
+        # pair into tier 2 and put the N^2 straight back.
+        candidate_ratio = float(
+            config_service.get("bin_sim.candidate_min_exact_ratio", 0.02)
+        )
 
         exact_pair = bool(md5_a and md5_b)
         if exact_pair:
@@ -769,7 +888,11 @@ class BinSimService:
         no_edges = 0
         missing_scores = 0
         discovered = 0
+        refined = 0
+        not_candidates = 0
         sim_service = None
+        matrix_cache = {}
+        feature_to_idx = {}
 
         def file_meta(md5):
             if md5 not in file_meta_cache:
@@ -828,15 +951,20 @@ class BinSimService:
                     # as ingestion is not writing, and they are what makes the
                     # walk share one fetch of each posting list.
                     sim_service = SimilarityService(r)
-                by_partner = self._discovered_edges_by_partner(
-                    sim_service,
-                    collection,
-                    algo,
-                    m_a,
-                    canonical,
-                    keep,
-                    func_sim_threshold,
-                )
+                if edge_source == "tiered":
+                    by_partner = self._exact_edges_by_partner(
+                        sim_service, collection, m_a, funcs_a, canonical, keep
+                    )
+                else:
+                    by_partner = self._discovered_edges_by_partner(
+                        sim_service,
+                        collection,
+                        algo,
+                        m_a,
+                        canonical,
+                        keep,
+                        func_sim_threshold,
+                    )
                 discovered += 1
             if exact_pair:
                 by_partner.setdefault(other, [])
@@ -848,6 +976,52 @@ class BinSimService:
                 funcs_b = self._file_funcs(collection, m_b, funcs_cache)
                 self._func_weights(collection, sorted(funcs_b), weight_cache)
                 weight_b = sum(weight_cache.get(f, 1.0) for f in funcs_b)
+
+                if edge_source == "tiered" and not exact_pair:
+                    # Tier 1 found identical functions; tier 2 only runs when
+                    # enough of the smaller file is in them. The exact edges are
+                    # real matches, so their weight is a lower bound on what the
+                    # pair shares -- a pair under the ratio would need the fuzzy
+                    # 0.9-1.0 band to carry it on its own, which is the recall
+                    # this trade knowingly gives up for a cost that scales.
+                    exact_mass = sum(
+                        weight_cache.get(fid, 1.0)
+                        for fid in {e[0] for e in anchor_edges}
+                    )
+                    floor = min(weight_a, weight_b)
+                    if floor > 0 and exact_mass / floor < candidate_ratio:
+                        not_candidates += 1
+                        continue
+
+                    # Tier 2: the 0.9-1.0 band, for this candidate pair only.
+                    mat_a = self._file_matrix(
+                        collection,
+                        m_a,
+                        sorted(funcs_a),
+                        feature_to_idx,
+                        matrix_cache,
+                    )
+                    mat_b = self._file_matrix(
+                        collection,
+                        m_b,
+                        sorted(funcs_b),
+                        feature_to_idx,
+                        matrix_cache,
+                    )
+                    fuzzy = self._refine_pair_edges(
+                        mat_a,
+                        sorted(funcs_a),
+                        mat_b,
+                        sorted(funcs_b),
+                        func_sim_threshold,
+                    )
+                    if fuzzy:
+                        # Exact edges win a duplicate: they are 1.0 by
+                        # construction and the cosine can only tie them.
+                        merged = {(u, v): s for u, v, s in fuzzy}
+                        merged.update({(u, v): s for u, v, s in anchor_edges})
+                        anchor_edges = [(u, v, s) for (u, v), s in merged.items()]
+                    refined += 1
 
                 # A pair is stored under its sorted md5s, and score_pair's diff
                 # is oriented a->b, so the edges are flipped here rather than
@@ -958,9 +1132,17 @@ class BinSimService:
         if job_service and job_id and discovered:
             job_service.add_log(
                 job_id,
-                f"[*] {discovered}/{len(chunk)} files had their edges discovered "
+                f"[*] {discovered}/{len(chunk)} files had their edges computed "
                 f"on the fly (no function-sim docs written); "
                 f"{len(chunk) - discovered} read stored edges.",
+            )
+        if job_service and job_id and edge_source == "tiered":
+            job_service.add_log(
+                job_id,
+                f"[*] tier 1 (exact function matches) proposed "
+                f"{refined + not_candidates} pairs, {not_candidates} of them "
+                f"under candidate_min_exact_ratio={candidate_ratio}; "
+                f"{refined} were refined against the 0.9-1.0 band.",
             )
         if no_edges and job_service and job_id:
             job_service.add_log(

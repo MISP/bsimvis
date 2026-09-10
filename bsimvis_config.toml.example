@@ -80,8 +80,19 @@
     # no extra step and a built one pays nothing.
     # "stored": only read baked edges; a file with none forms no pair.
     # "discover": always compute, never read -- no function-sim docs are written
-    # or needed, at the cost of redoing the discovery on every rebuild.
+    # or needed, at the cost of redoing the discovery on every rebuild. Its cost
+    # is one posting-list walk per function, which does not scale past a few
+    # hundred files: prefer "tiered" on a large collection.
+    # "tiered": two tiers, and the only option whose cost does not grow with the
+    # collection's feature sharing. Tier 1 asks {coll}:funcid:{hash} -- one
+    # lookup per function -- which files share an identical function; tier 2
+    # runs the 0.9-1.0 cosine for those candidate pairs only.
     edge_source = "auto"
+    # "tiered" only: how much of the smaller file must be in identical functions
+    # before the pair is worth refining. One shared libc stub is not evidence of
+    # anything on a statically linked corpus, and refining on it would restore
+    # the N^2. Lower it to trade time for recall.
+    candidate_min_exact_ratio = 0.02
     # File pairs scoring under this are not stored: no pair doc, no secondary
     # index, no bin_cluster edge. An exact bound skips the cosine for pairs that
     # cannot reach it (build_bin_sim), and the score itself is re-checked after

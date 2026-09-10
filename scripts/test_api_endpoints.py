@@ -2178,6 +2178,24 @@ def run_all_tests():
                 "Fields: tag_id, score, contribution_pct, coverage_pct_a/b, bins",
             )
 
+        # The list path strips the per-version tree off every summary row: only
+        # the detail view (/diff) renders it, and leaving it in made a page of
+        # 50 pairs a 150 MB response. Top-level rows must survive, children
+        # must not.
+        summary_rows = [
+            row
+            for pair in bs_search["results"]
+            for field, val in pair.items()
+            if field.endswith("_summary")
+            for row in (val if isinstance(val, list) else [])
+            if isinstance(row, dict)
+        ]
+        check(
+            "bin_sim search summary rows carry no version children",
+            not any("children" in row for row in summary_rows),
+            f"Checked {len(summary_rows)} summary rows across the page",
+        )
+
         # Severity, behaviour and user ride alongside the origin split: separate
         # rows, separate mass, plus the one joint table that crosses any two of
         # them. The schema stamp is what tells a reader the doc has all four.

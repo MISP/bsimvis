@@ -6,6 +6,7 @@ from flask import request
 from bsimvis.app.services import lineage_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import normalize_tags, enrich_pool_data
+from bsimvis.app.services.bin_sim_tags import SUMMARY_FIELDS
 
 DEFAULT_LIMIT = 50
 
@@ -787,6 +788,17 @@ def search_bin_sims():
             doc["_id"] = sid
             doc.pop("diff", None)
             doc.pop("notes", None)
+            # ponytail: the list view and the chord graph read only the
+            # top-level summary rows -- the per-version tree hanging under them
+            # is the detail view's, and it arrives there via /diff. One FID row
+            # can carry >1200 version children, which is 2 MB of pair doc nobody
+            # on this endpoint looks at (154.9 MB -> 4.58 MB for a page of 50 on
+            # full_arbor2). Ceiling: the doc is still GET-ed and parsed in full
+            # above; moving the summaries to their own key is the real fix.
+            for _field in SUMMARY_FIELDS:
+                for _row in doc.get(_field) or ():
+                    if isinstance(_row, dict):
+                        _row.pop("children", None)
 
             m_a = doc.get("md5_a") or ld["m_a"]
             m_b = doc.get("md5_b") or ld["m_b"]

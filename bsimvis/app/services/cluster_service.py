@@ -20,9 +20,9 @@ COHESION_EXACT_MARGIN = 0.05
 # members" rule that left big nodes on a stale score, or on the 1.0 default
 # when they were newly created -- and 1.0 clears cohesion_cut, so those nodes
 # always won the primary-cluster pick in _run_clustering_hierarchical_uf.
-COHESION_PAIR_CAP = 4096
-COHESION_PAIR_FLOOR = 256
-COHESION_PAIR_BUDGET = 200_000
+COHESION_PAIR_CAP = 65536
+COHESION_PAIR_FLOOR = 1024
+COHESION_PAIR_BUDGET = 5_000_000
 
 _EMPTY_I = np.empty(0, dtype=np.int32)
 _EMPTY_F = np.empty(0, dtype=np.float32)
@@ -56,22 +56,47 @@ def _pairwise_cohesion(
     (The binary side counts every pair instead -- bin_sim stores explicit
     zeros rather than a top-K cut, so there a missing pair really is a zero.)
 
-    `max_pairs` caps the read: above it the pairs are sampled uniformly
-    instead of enumerated, which is what lets a caller score a node of any
-    size rather than skipping the big ones. Sorted first so the sample
+    `max_pairs` caps the read *and the work*: above it the pairs are sampled
+    uniformly instead of enumerated, which is what lets a caller score a node
+    of any size rather than skipping the big ones. Capping only the read is
+    the bug this once had -- see the sparse branch below. Sorted first so the sample
     depends on the member SET, not on the order Redis returned it in, and
     seeded off the set so a re-run reports the same number.
     """
     n = len(clean_members)
-    keys = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            a, b = clean_members[i], clean_members[j]
-            keys.append((a, b) if a <= b else (b, a))
+    total = n * (n - 1) // 2
 
-    if max_pairs is not None and len(keys) > max_pairs:
-        keys.sort()
-        keys = random.Random(f"{keys[0]}:{len(keys)}").sample(keys, max_pairs)
+    if max_pairs is not None and total > 2 * max_pairs:
+        # Sparse cut: sample pair *indices*, never materialise the full C(n,2)
+        # list to then throw almost all of it away. The top node of a
+        # single-linkage tree holds every leaf in the collection, so on a
+        # 161k-function collection the enumerate-then-sample version built
+        # 13 billion tuples (~900 GB) before it ever reached the cut -- the
+        # job did not crash, it just never came back.
+        members = sorted(clean_members)
+        rnd = random.Random(f"{members[0]}:{total}")
+        picked = set()
+        while len(picked) < max_pairs:
+            i = rnd.randrange(n)
+            j = rnd.randrange(n)
+            if i == j:
+                continue
+            a, b = members[i], members[j]
+            picked.add((a, b) if a <= b else (b, a))
+        keys = sorted(picked)
+    else:
+        # Dense (or uncapped): enumerate. Bounded by 2*max_pairs when capped,
+        # and rejection sampling would thrash this close to the full set --
+        # drawing the last few of N pairs costs O(N log N) draws.
+        keys = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                a, b = clean_members[i], clean_members[j]
+                keys.append((a, b) if a <= b else (b, a))
+
+        if max_pairs is not None and len(keys) > max_pairs:
+            keys.sort()
+            keys = random.Random(f"{keys[0]}:{len(keys)}").sample(keys, max_pairs)
 
     want, seen = [], set()
     for key in keys:
@@ -3271,6 +3296,47 @@ def _demo_pairwise_cohesion():
     shuffled = list(reversed(big))
     total5, pairs5 = _pairwise_cohesion(r2, "zk", prefix, shuffled, {}, max_pairs=cap)
     assert (total5, pairs5) == (total4, pairs4), "sample must not depend on order"
+
+    # The cap must bound the WORK, not just the reads. The top node of a
+    # single-linkage tree holds every leaf in the collection; enumerating
+    # C(n,2) first and sampling after is what hung a real 161k-function
+    # clustering job indefinitely. 200k members = 2e10 pairs, so this returns
+    # in milliseconds or it does not return at all.
+    class _AllSame(FakeZ):
+        def __init__(self):
+            super().__init__({})
+
+        def pipeline(self, transaction=False):
+            return _AllSamePipe(self)
+
+    class _AllSamePipe(_FakePipe):
+        def execute(self):
+            self.owner.roundtrips += 1
+            return [0.4] * len(self.queued)
+
+    huge = [f"g{i:06d}" for i in range(200_000)]
+    started = time.time()
+    total7, pairs7 = _pairwise_cohesion(
+        _AllSame(), "zk", prefix, huge, {}, max_pairs=256
+    )
+    elapsed = time.time() - started
+    assert pairs7 == 256, pairs7
+    assert elapsed < 5, f"capped scoring enumerated the pairs ({elapsed:.1f}s)"
+
+    # Dense band: total just over the cap, so the sparse rejection sampler
+    # would spend O(N log N) draws chasing the last few pairs. Enumerate there
+    # instead -- still bounded, still the right count.
+    band = [f"h{i:04d}" for i in range(70)]  # 2,415 pairs vs a 2,000 cap
+    band_scores = {
+        f"{prefix}{a}::{b}": 0.4 for i, a in enumerate(band) for b in band[i + 1 :]
+    }
+    started = time.time()
+    total8, pairs8 = _pairwise_cohesion(
+        FakeZ(band_scores), "zk", prefix, band, {}, max_pairs=2000
+    )
+    assert pairs8 == 2000, pairs8
+    assert abs(total8 / pairs8 - 0.4) < 1e-9
+    assert time.time() - started < 5, "dense-band sampling thrashed"
 
     # Under the cap nothing is sampled away.
     total6, pairs6 = _pairwise_cohesion(

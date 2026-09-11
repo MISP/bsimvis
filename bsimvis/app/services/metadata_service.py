@@ -16,6 +16,7 @@ from bsimvis.app.services.bin_sim_service import (
     _unindex_bin_sim_pair,
 )
 from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.cluster_utils import bin_cluster_ns
 
 # `upload --metadata` matches CSV rows by md5, but unpacking only happens on the
 # server: the md5 of an archive member or a UPX-unpacked payload does not exist
@@ -266,17 +267,19 @@ class MetadataService:
                 cid.decode() if isinstance(cid, bytes) else str(cid)
                 for cid in r.smembers(bin_clusters_key)
             ]
+            # A label only identifies a cluster within its node-type namespace.
             for algo in algos:
+                ns = bin_cluster_ns(algo, new_meta.get("is_container"))
                 for cid in affected_clusters:
-                    affected_clusters_to_recalculate.add((algo, cid))
+                    affected_clusters_to_recalculate.add((ns, cid))
 
         # 9. Recalculate affected binary clusters exactly once per cluster
         if affected_clusters_to_recalculate:
             logging.info(
                 f"[*] Recalculating statistics for {len(affected_clusters_to_recalculate)} affected binary clusters..."
             )
-            for algo, cid in affected_clusters_to_recalculate:
-                meta_key = f"{collection}:bin_cluster:{algo}:{cid}:meta"
+            for ns, cid in affected_clusters_to_recalculate:
+                meta_key = f"{collection}:bin_cluster:{ns}:{cid}:meta"
                 if not r.exists(meta_key):
                     continue
 
@@ -289,7 +292,7 @@ class MetadataService:
                 if isinstance(old_cm, str):
                     old_cm = json.loads(old_cm)
 
-                members_key = f"{collection}:bin_cluster:{algo}:{cid}:members"
+                members_key = f"{collection}:bin_cluster:{ns}:{cid}:members"
                 members = [
                     m.decode() if isinstance(m, bytes) else str(m)
                     for m in r.smembers(members_key)

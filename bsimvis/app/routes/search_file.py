@@ -7,6 +7,7 @@ from flask import request
 from bsimvis.app.services import lineage_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.query_syntax import resolve_targets, union_buckets
+from bsimvis.app.services.cluster_utils import fetch_bin_cluster_meta
 from bsimvis.app.services.index_service import (
     query_ids,
     parse_timestamp,
@@ -179,7 +180,6 @@ def search_files():
         results = pipe.execute()
         t2 = time.perf_counter()
         files_list = []
-        unique_cluster_ids = set()
 
         # First pass: collect results and unique cluster IDs
         raw_files_data = []
@@ -202,12 +202,9 @@ def search_files():
                 data["function_count"] = func_count
             data["child_count"] = child_count or 0
             data["file_id"] = doc_id
-            cluster_ids = (
+            data["bin_clusters"] = (
                 list(cluster_res) if isinstance(cluster_res, (list, set)) else []
             )
-            data["bin_clusters"] = cluster_ids
-            for cid in cluster_ids:
-                unique_cluster_ids.add(cid)
 
             raw_files_data.append(data)
 
@@ -221,30 +218,25 @@ def search_files():
             )
         )
         t3 = t2  # default: no cluster fetch
-        if unique_cluster_ids:
-            is_pool = pool_id is not None
+        if any(d["bin_clusters"] for d in raw_files_data):
             algo = request.args.get("algo", "unweighted_cosine")
-            c_pipe = r.pipeline(transaction=False)
-            c_list = list(unique_cluster_ids)
-            for cid in c_list:
-                if is_pool:
-                    c_pipe.get(f"global:pool:{pool_id}:bin_cluster:{cid}:meta")
-                else:
-                    c_pipe.get(f"{col}:bin_cluster:{algo}:{cid}:meta")
-            c_results = c_pipe.execute()
+            # Labels are namespaced by node type, so they are resolved per file
+            # and replaced by the cluster uuid the client can key on.
+            meta_by_uuid, uuids_per_file = fetch_bin_cluster_meta(
+                r,
+                col,
+                [(d["bin_clusters"], d.get("is_container")) for d in raw_files_data],
+                algo=algo,
+                pool_id=pool_id,
+            )
             t3 = time.perf_counter()
-            for cid, res in zip(c_list, c_results):
-                cm = (
-                    json.loads(res)
-                    if res and not isinstance(res, dict)
-                    else (res or {})
-                )
-                if isinstance(cm, str):
-                    cm = json.loads(cm)
-
-                # Apply cohesion filter
-                if (cm.get("cohesion_score") or 0) >= min_cohesion:
-                    cluster_meta_map[cid] = cm
+            cluster_meta_map = {
+                u: cm
+                for u, cm in meta_by_uuid.items()
+                if (cm.get("cohesion_score") or 0) >= min_cohesion
+            }
+            for data, uuids in zip(raw_files_data, uuids_per_file):
+                data["bin_clusters"] = uuids
 
         # Third pass: finalize files list
         for data in raw_files_data:
@@ -589,34 +581,17 @@ def get_file_details(collection, file_md5):
 
         cluster_ids = list(cluster_res) if isinstance(cluster_res, (list, set)) else []
 
-        # Ensure array fields are set to actual arrays instead of strings, etc.
-        data["bin_clusters"] = [
-            c.decode() if isinstance(c, bytes) else str(c) for c in cluster_ids
-        ]
-
-        # 2. Fetch cluster metadata
-        cluster_meta_map = {}
-        if cluster_ids:
-            algo = request.args.get("algo", "unweighted_cosine")
-            c_pipe = r.pipeline(transaction=False)
-            c_list = data["bin_clusters"]
-            is_pool = pool_id is not None
-            for cid in c_list:
-                if is_pool:
-                    # ponytail: Pool clusters do not use algo prefix in metadata keys
-                    c_pipe.get(f"global:pool:{pool_id}:bin_cluster:{cid}:meta")
-                else:
-                    c_pipe.get(f"{collection}:bin_cluster:{algo}:{cid}:meta")
-            c_results = c_pipe.execute()
-            for cid, c_res in zip(c_list, c_results):
-                cm = (
-                    json.loads(c_res)
-                    if c_res and not isinstance(c_res, dict)
-                    else (c_res or {})
-                )
-                if isinstance(cm, str):
-                    cm = json.loads(cm)
-                cluster_meta_map[cid] = cm
+        # 2. Fetch cluster metadata. The stored labels only mean something in
+        # the namespace their node type was clustered in, so the client gets
+        # the uuids back instead.
+        cluster_meta_map, (cluster_uuids,) = fetch_bin_cluster_meta(
+            r,
+            collection,
+            [(cluster_ids, data.get("is_container"))],
+            algo=request.args.get("algo", "unweighted_cosine"),
+            pool_id=pool_id,
+        )
+        data["bin_clusters"] = cluster_uuids
 
         # 3. Compute inferred metadata (server-side)
         from bsimvis.app.services.config_service import config_service

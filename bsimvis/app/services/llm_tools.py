@@ -28,6 +28,7 @@ from urllib.parse import parse_qs
 from flask import current_app, has_app_context
 from werkzeug.datastructures import MultiDict
 
+from bsimvis.app.services.cluster_utils import bin_cluster_ns, fetch_bin_cluster_meta
 from bsimvis.app.services.function_service import fetch_function_data
 from bsimvis.app.services.redis_client import get_redis
 
@@ -315,8 +316,24 @@ def get_file_info(collection, file_md5):
     if isinstance(file_meta, str):
         file_meta = json.loads(file_meta)
 
-    cluster_ids_raw = r.smembers(f"{collection}:file:{file_md5}:bin_clusters") or []
-    cluster_ids = [c.decode() if isinstance(c, bytes) else c for c in cluster_ids_raw]
+    is_container = bool(file_meta.get("is_container"))
+    meta_by_uuid, _ = fetch_bin_cluster_meta(
+        r,
+        collection,
+        [(r.smembers(f"{collection}:file:{file_md5}:bin_clusters"), is_container)],
+    )
+    # The raw labels are ambiguous on their own (see bin_cluster_ns), so the
+    # cluster is named here rather than handed over as a bare id.
+    clusters = [
+        {
+            "cluster_uuid": cm.get("cluster_uuid"),
+            "cluster_id": str(cm.get("cluster_id") or "").lstrip("c"),
+            "cluster_name": cm.get("cluster_name"),
+            "cohesion_score": cm.get("cohesion_score"),
+            "node_type": cm.get("node_type") or "file",
+        }
+        for cm in meta_by_uuid.values()
+    ]
 
     return {
         "file_md5": file_md5,
@@ -326,15 +343,24 @@ def get_file_info(collection, file_md5):
         "yara": file_meta.get("yara"),
         "cc_ip": file_meta.get("cc_ip"),
         "function_count": file_meta.get("function_count"),
-        "cluster_ids": cluster_ids,
+        "is_container": is_container,
+        "clusters": clusters,
     }
 
 
-def get_cluster_info(collection, cluster_id, algo="unweighted_cosine"):
+def get_cluster_info(
+    collection, cluster_id, algo="unweighted_cosine", node_type="file"
+):
     """Metadata + member distribution for a binary cluster (name, cohesion,
-    yara/avtype/filename distributions, bookmarks/tags already on it)."""
+    yara/avtype/filename distributions, bookmarks/tags already on it).
+
+    node_type must match the one get_file_info reported for the cluster:
+    container clusters are numbered independently of file clusters."""
     r = get_redis()
-    raw = r.get(f"{collection}:bin_cluster:{algo}:{cluster_id}:meta")
+    raw = r.get(
+        f"{collection}:bin_cluster:{bin_cluster_ns(algo, node_type == 'container')}"
+        f":{cluster_id}:meta"
+    )
     if not raw:
         return {"error": "Cluster not found"}
     meta = json.loads(raw) if not isinstance(raw, dict) else raw
@@ -506,6 +532,15 @@ TOOLS = [
                     "collection": {"type": "string"},
                     "cluster_id": {"type": "string"},
                     "algo": {"type": "string", "default": "unweighted_cosine"},
+                    "node_type": {
+                        "type": "string",
+                        "enum": ["file", "container"],
+                        "default": "file",
+                        "description": (
+                            "Node type the cluster belongs to, as reported by "
+                            "get_file_info. Labels collide across the two."
+                        ),
+                    },
                 },
                 "required": ["collection", "cluster_id"],
             },
@@ -529,7 +564,10 @@ DISPATCH = {
     "search_tags": lambda a: search_tags(a["collection"], a["q"], a.get("limit", 25)),
     "get_file_info": lambda a: get_file_info(a["collection"], a["file_md5"]),
     "get_cluster_info": lambda a: get_cluster_info(
-        a["collection"], a["cluster_id"], a.get("algo", "unweighted_cosine")
+        a["collection"],
+        a["cluster_id"],
+        a.get("algo", "unweighted_cosine"),
+        a.get("node_type", "file"),
     ),
 }
 

@@ -1,6 +1,7 @@
 from flask import request, Response, stream_with_context
 from bsimvis.app.services.llm_service import llm_service
 from bsimvis.app.services.function_service import fetch_function_data
+from bsimvis.app.services.cluster_utils import fetch_bin_cluster_meta
 import json
 import logging
 
@@ -297,26 +298,19 @@ def summarize_file():
         file_meta = json.loads(file_meta)
 
     # Fetch cluster membership and metadata
-    cluster_ids_raw = r.smembers(f"{collection}:file:{md5}:bin_clusters")
-    cluster_ids = [
-        c.decode() if isinstance(c, bytes) else c for c in (cluster_ids_raw or [])
-    ]
+    cluster_ids = r.smembers(f"{collection}:file:{md5}:bin_clusters") or []
 
     algo = "unweighted_cosine"
     min_cohesion = float(config_service.get("clustering.min_cohesion", 0.5))
-    clusters = []
 
-    if cluster_ids:
-        pipe = r.pipeline(transaction=False)
-        for cid in cluster_ids:
-            pipe.get(f"{collection}:bin_cluster:{algo}:{cid}:meta")
-        results = pipe.execute()
-        for cid, res in zip(cluster_ids, results):
-            cm = json.loads(res) if res and not isinstance(res, dict) else (res or {})
-            if isinstance(cm, str):
-                cm = json.loads(cm)
-            if (cm.get("cohesion_score") or 0) >= min_cohesion:
-                clusters.append(cm)
+    meta_by_uuid, _ = fetch_bin_cluster_meta(
+        r, collection, [(cluster_ids, file_meta.get("is_container"))], algo=algo
+    )
+    clusters = [
+        cm
+        for cm in meta_by_uuid.values()
+        if (cm.get("cohesion_score") or 0) >= min_cohesion
+    ]
 
     def _to_set(val):
         """Normalizes a field that may be a list, string, or None into a flat set of strings."""

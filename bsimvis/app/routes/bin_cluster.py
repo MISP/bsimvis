@@ -388,8 +388,18 @@ def list_bin_clusters():
                 valid_nodes = set()
             else:
                 # ponytail: use the inverse index (file -> clusters) to avoid overfetching
+                # A file's stored labels belong to its own node-type namespace,
+                # and the two namespaces reuse the same numbers, so a file's
+                # label would otherwise match an unrelated container cluster.
+                from bsimvis.app.services import lineage_service
+
+                containers = lineage_service.container_md5s(collection, r)
                 c_pipe = r.pipeline(transaction=False)
-                matched_fids_list = list(matched_fids)
+                matched_fids_list = [
+                    fid
+                    for fid in matched_fids
+                    if (fid.split(":")[-1] in containers) == (node_type == "container")
+                ]
                 for fid in matched_fids_list:
                     parts = fid.split(":")
                     md5 = parts[-1]

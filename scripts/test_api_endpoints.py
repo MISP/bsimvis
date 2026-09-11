@@ -2343,6 +2343,79 @@ def run_all_tests():
                 label="GET /api/file/search (by bulk propagated yara)",
             )
 
+    # ── Collection Params ──────────────────────────────────────────────────
+    print(_color("\n  [Collection Params]", BOLD))
+    params_body = test_endpoint(
+        "GET",
+        "/api/collection/params",
+        params={"collection": COLLECTION},
+        label="GET /api/collection/params",
+    )
+    original = ((params_body or {}).get("params") or {}).get("min_features") or {}
+    check(
+        "collection params expose min_features (value/default/locked)",
+        {"value", "default", "locked"} <= set(original.keys()),
+        f"min_features={original}",
+    )
+
+    set_body = test_endpoint(
+        "POST",
+        "/api/collection/params",
+        data={"collection": COLLECTION, "min_features": 7},
+        label="POST /api/collection/params (min_features=7)",
+    )
+    check(
+        "POST /api/collection/params overwrites the locked min_features",
+        (set_body or {}).get("updated", {}).get("min_features") == 7,
+        f"updated={(set_body or {}).get('updated')}",
+    )
+
+    reread = test_endpoint(
+        "GET",
+        "/api/collection/params",
+        params={"collection": COLLECTION},
+        label="GET /api/collection/params (after set)",
+    )
+    after = ((reread or {}).get("params") or {}).get("min_features") or {}
+    check(
+        "changed min_features reads back as locked",
+        after.get("value") == 7 and after.get("locked") is True,
+        f"min_features={after}",
+    )
+
+    try:
+        bad = requests.post(
+            f"{BASE_URL}/api/collection/params",
+            json={"collection": COLLECTION, "min_score": 5},
+            timeout=30,
+        )
+        check(
+            "out-of-range min_score is rejected",
+            bad.status_code == 400,
+            f"status={bad.status_code} body={bad.text[:200]}",
+        )
+        empty = requests.post(
+            f"{BASE_URL}/api/collection/params",
+            json={"collection": COLLECTION, "total_files": 0},
+            timeout=30,
+        )
+        check(
+            "non-whitelisted collection meta field is not writable",
+            empty.status_code == 400,
+            f"status={empty.status_code} body={empty.text[:200]}",
+        )
+    except Exception as exc:
+        check("collection params validation", False, str(exc))
+
+    # Put the collection back the way the rest of the suite expects it
+    if original.get("value") is not None:
+        test_endpoint(
+            "POST",
+            "/api/collection/params",
+            data={"collection": COLLECTION, "min_features": original["value"]},
+            label="POST /api/collection/params (restore)",
+        )
+
     # ── Collection Clean ───────────────────────────────────────────────────
     print(_color("\n  [Collection Clean]", BOLD))
     clean_body = test_endpoint(

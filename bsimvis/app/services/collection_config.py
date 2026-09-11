@@ -44,3 +44,40 @@ def resolve_and_lock(collection, name, requested):
     value = requested if requested is not None else default
     get_redis().hsetnx(_META.format(coll=collection), name, value)
     return get_collection_param(collection, name, default)
+
+
+# Only these are settable through the API — the meta hash also holds counters
+# (total_files, total_functions, ...) a client must never be able to write.
+LOCKED_PARAMS = ("min_features", "min_score")
+
+
+def get_collection_params(collection):
+    """`{name: {value, default, locked}}` for every sticky similarity param."""
+    meta = get_redis().hgetall(_META.format(coll=collection)) or {}
+    meta = {
+        (k.decode() if isinstance(k, bytes) else k): (
+            v.decode() if isinstance(v, bytes) else v
+        )
+        for k, v in meta.items()
+    }
+    out = {}
+    for name in LOCKED_PARAMS:
+        default = config_service.get(f"similarity.{name}", 0)
+        raw = meta.get(name)
+        out[name] = {
+            "value": _coerce(raw, default) if raw is not None else default,
+            "default": default,
+            "locked": raw is not None,
+        }
+    return out
+
+
+def set_collection_param(collection, name, value):
+    """Overwrite a locked param (resolve_and_lock only ever initializes one).
+    Already-built similarity edges are NOT recomputed — rebuild after changing."""
+    if name not in LOCKED_PARAMS:
+        raise ValueError(f"unknown collection param: {name}")
+    default = config_service.get(f"similarity.{name}", 0)
+    value = _coerce(value, default)
+    get_redis().hset(_META.format(coll=collection), name, value)
+    return value

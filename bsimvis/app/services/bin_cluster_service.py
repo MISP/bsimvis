@@ -355,6 +355,7 @@ class BinClusterService:
                 min_cohesion,
                 job_service,
                 job_id,
+                min_sim=min_sim or 0.0,
             )
             total_clusters += len(cluster_members)
 
@@ -377,6 +378,7 @@ class BinClusterService:
         min_cohesion,
         job_service,
         job_id,
+        min_sim=0.0,
     ):
         import uuid
         import time
@@ -402,6 +404,23 @@ class BinClusterService:
                     except Exception:
                         pass
                 all_member_meta[file_id] = m
+
+        # ponytail: unlike the hierarchical path, min_cohesion does NOT gate
+        # inferred-metadata indexing here -- at the default bin_uf_threshold
+        # of 0.1 a threshold cut's average pair sits well under min_cohesion,
+        # so gating would blank almost every inferred tag. Cohesion is
+        # reported honestly; wiring the gate is a separate call.
+        # Same read budget the hierarchical path uses, spread over the
+        # clusters this call writes.
+        score_key = f"{collection}:bin_sim:score:{algo}"
+        sim_prefix = f"{collection}:bin_sim:{algo}:"
+        pair_budget = max(
+            self._COHESION_MIN_PAIRS,
+            min(
+                self._COHESION_MAX_PAIRS,
+                self._COHESION_BUDGET // max(1, len(cluster_members)),
+            ),
+        )
 
         for label, members in cluster_members.items():
             pipe.sadd(f"{collection}:bin_cluster:{algo}:{label}:members", *members)
@@ -480,8 +499,14 @@ class BinClusterService:
             filename_freq = build_freq(names_list)
             md5_freq = build_freq(md5s_list)
 
-            # Simple average cohesion proxy (for true cohesion, we'd need sparse adjacency, but for incremental this is an approximation or skip if too slow)
-            cohesion_score = 1.0  # placeholder for now to guarantee indexing, or compute exact. UF threshold is already a cohesion guarantee!
+            # A threshold-UF cut guarantees every member is TRANSITIVELY
+            # linked above the threshold, not that the average pair is -- the
+            # chain A-B-C with A~C never compared is a valid cluster at any
+            # threshold. So this has to be measured, not assumed; the 1.0 that
+            # used to sit here reported every cluster as perfectly cohesive.
+            cohesion_score, cohesion_exact = self._node_cohesion(
+                label, members, sim_prefix, score_key, min_sim, pair_budget
+            )
 
             sample_members = []
             for file_id in members[:5]:
@@ -504,6 +529,7 @@ class BinClusterService:
                 "cluster_uuid": c_uuid,
                 "cluster_name": default_name,
                 "cohesion_score": float(cohesion_score),
+                "cohesion_exact": bool(cohesion_exact),
                 "avg_stability": 1.0,
                 "cluster_stability": 1.0,
                 "member_count": len(members),
@@ -796,7 +822,10 @@ class BinClusterService:
             cohesion_exact = {}
             budget = max(
                 self._COHESION_MIN_PAIRS,
-                min(self._COHESION_MAX_PAIRS, self._COHESION_BUDGET // max(1, len(dirty))),
+                min(
+                    self._COHESION_MAX_PAIRS,
+                    self._COHESION_BUDGET // max(1, len(dirty)),
+                ),
             )
             for c in dirty:
                 cohesion[c], cohesion_exact[c] = self._node_cohesion(
@@ -2023,9 +2052,7 @@ def _demo():
     assert n * (n - 1) // 2 > BinClusterService._COHESION_MAX_PAIRS
     md5s = [f"m{i:04d}" for i in range(n)]
     # Every pair stored at 0.25 -> any unbiased sample must return 0.25.
-    scores = {
-        f"p:{a}::{b}": 0.25 for i, a in enumerate(md5s) for b in md5s[i + 1 :]
-    }
+    scores = {f"p:{a}::{b}": 0.25 for i, a in enumerate(md5s) for b in md5s[i + 1 :]}
     big = svc_for(scores)
     members = [f"c:file:{m}" for m in md5s]
     coh, exact = big._node_cohesion("n3", members, "p:", "sk", 0.0, cap)

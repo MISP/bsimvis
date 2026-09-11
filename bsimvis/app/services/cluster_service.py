@@ -1,6 +1,7 @@
 import logging
 import json
 import os
+import random
 import time
 import uuid
 from collections import Counter, defaultdict
@@ -14,6 +15,14 @@ from bsimvis.app.services import mem_util, sim_edges
 CLUSTER_MAX_COMPONENT = int(os.getenv("CLUSTER_MAX_COMPONENT", 10000))
 COHESION_SAMPLE_SIZE = 500
 COHESION_EXACT_MARGIN = 0.05
+# Pair reads one incremental node spends on cohesion, and the ceiling across
+# all the nodes one batch dirties. Replaces a flat "skip anything over 200
+# members" rule that left big nodes on a stale score, or on the 1.0 default
+# when they were newly created -- and 1.0 clears cohesion_cut, so those nodes
+# always won the primary-cluster pick in _run_clustering_hierarchical_uf.
+COHESION_PAIR_CAP = 4096
+COHESION_PAIR_FLOOR = 256
+COHESION_PAIR_BUDGET = 200_000
 
 _EMPTY_I = np.empty(0, dtype=np.int32)
 _EMPTY_F = np.empty(0, dtype=np.float32)
@@ -24,7 +33,9 @@ except ImportError:
     hdbscan = None
 
 
-def _pairwise_cohesion(r, sim_score_key, sid_prefix, clean_members, memo):
+def _pairwise_cohesion(
+    r, sim_score_key, sid_prefix, clean_members, memo, max_pairs=None
+):
     """(sum, count) of stored similarity over every pair in `clean_members`.
 
     Two things the naive `for each pair: r.zscore(...)` version got wrong on
@@ -42,6 +53,14 @@ def _pairwise_cohesion(r, sim_score_key, sid_prefix, clean_members, memo):
     Denominator is pairs that actually have a stored similarity, not every
     combinatorial pair: BSim only keeps each function's top-K neighbours, so
     counting never-compared pairs as 0% crushes a genuinely tight cluster.
+    (The binary side counts every pair instead -- bin_sim stores explicit
+    zeros rather than a top-K cut, so there a missing pair really is a zero.)
+
+    `max_pairs` caps the read: above it the pairs are sampled uniformly
+    instead of enumerated, which is what lets a caller score a node of any
+    size rather than skipping the big ones. Sorted first so the sample
+    depends on the member SET, not on the order Redis returned it in, and
+    seeded off the set so a re-run reports the same number.
     """
     n = len(clean_members)
     keys = []
@@ -49,6 +68,10 @@ def _pairwise_cohesion(r, sim_score_key, sid_prefix, clean_members, memo):
         for j in range(i + 1, n):
             a, b = clean_members[i], clean_members[j]
             keys.append((a, b) if a <= b else (b, a))
+
+    if max_pairs is not None and len(keys) > max_pairs:
+        keys.sort()
+        keys = random.Random(f"{keys[0]}:{len(keys)}").sample(keys, max_pairs)
 
     want, seen = [], set()
     for key in keys:
@@ -1468,17 +1491,26 @@ class ClusterService:
         # persisted in :meta alongside cohesion_score. Do that if the memo
         # stops being enough.
         pair_memo = {}
+        node_budget = max(
+            COHESION_PAIR_FLOOR,
+            min(COHESION_PAIR_CAP, COHESION_PAIR_BUDGET // max(1, len(dirty))),
+        )
         for c in dirty:
             members = node_members[c]
             if len(members) <= 1:
                 node_cohesion[c] = 1.0
-            elif len(members) <= 200:
+            else:
+                # No size cut-off: a node left on the 1.0 default clears
+                # cohesion_cut unconditionally and so always wins the
+                # primary-cluster pick below, which is precisely the
+                # assignment this score is supposed to decide.
                 total_sim, pair_count = _pairwise_cohesion(
                     r,
                     sim_score_key,
                     prefix,
                     [clean_id(m) for m in members],
                     pair_memo,
+                    max_pairs=node_budget,
                 )
                 node_cohesion[c] = total_sim / pair_count if pair_count else 1.0
 
@@ -2237,29 +2269,24 @@ class ClusterService:
                 )
                 avg_features = float(np.mean(feature_counts)) if feature_counts else 0.0
 
-                # Exact pairwise cohesion for clusters small enough that O(n^2)
-                # zscore lookups are cheap; bigger merges keep the previous
-                # score rather than paying for an exact recompute here.
+                # Exact below COHESION_PAIR_CAP pairs, sampled above it:
+                # keeping the previous score for bigger merges left a newly
+                # created root on the 1.0 default forever.
                 # Denominator is pairs that actually have a computed
                 # similarity, not every combinatorial pair -- BSim only
                 # stores each function's top-K neighbours, so most pairs in a
                 # cluster were never directly compared. Counting those as 0%
                 # similar (the old bug) crushed a genuinely-0.99-cohesive
                 # cluster down to ~0.27 on real data (see debug session).
-                n_members = len(members)
-                if n_members <= 200:
-                    total_sim, pairs = _pairwise_cohesion(
-                        r,
-                        sim_score_key,
-                        sim_prefix,
-                        [clean_id(m) for m in members],
-                        pair_memo,
-                    )
-                    cohesion_score = total_sim / pairs if pairs else 1.0
-                else:
-                    old_meta_raw = r.get(f"{collection}:cluster:{algo}:{root}:meta")
-                    old_meta = json.loads(old_meta_raw) if old_meta_raw else {}
-                    cohesion_score = old_meta.get("cohesion_score", 1.0)
+                total_sim, pairs = _pairwise_cohesion(
+                    r,
+                    sim_score_key,
+                    sim_prefix,
+                    [clean_id(m) for m in members],
+                    pair_memo,
+                    max_pairs=COHESION_PAIR_CAP,
+                )
+                cohesion_score = total_sim / pairs if pairs else 1.0
 
                 unique_md5s = {
                     fid.split(":")[2] for fid in members if len(fid.split(":")) >= 3
@@ -3224,6 +3251,32 @@ def _demo_pairwise_cohesion():
     total3, pairs3 = _pairwise_cohesion(r, "zk", prefix, members + ["e"], memo)
     assert pairs3 == pairs, "e has no stored similarity to anyone"
     assert abs(total3 - total) < 1e-9
+
+    # max_pairs samples instead of enumerating, so a node of any size is
+    # scorable rather than skipped. Every pair here is stored at 0.4, so any
+    # unbiased sample must come back at 0.4 -- and the read count must track
+    # the cap, not the member count.
+    big = [f"f{i:04d}" for i in range(300)]  # 44,850 pairs
+    big_scores = {
+        f"{prefix}{a}::{b}": 0.4 for i, a in enumerate(big) for b in big[i + 1 :]
+    }
+    cap = 2000
+    r2 = FakeZ(big_scores)
+    total4, pairs4 = _pairwise_cohesion(r2, "zk", prefix, big, {}, max_pairs=cap)
+    assert pairs4 == cap, f"expected {cap} sampled pairs, got {pairs4}"
+    assert abs(total4 / pairs4 - 0.4) < 1e-9, total4 / pairs4
+
+    # Seeded off the member set, so the same cluster reports the same number
+    # -- and independent of the order Redis happened to return members in.
+    shuffled = list(reversed(big))
+    total5, pairs5 = _pairwise_cohesion(r2, "zk", prefix, shuffled, {}, max_pairs=cap)
+    assert (total5, pairs5) == (total4, pairs4), "sample must not depend on order"
+
+    # Under the cap nothing is sampled away.
+    total6, pairs6 = _pairwise_cohesion(
+        FakeZ(scores), "zk", prefix, members, {}, max_pairs=cap
+    )
+    assert (pairs6, round(total6, 9)) == (pairs, round(total, 9))
 
     print("_pairwise_cohesion demo OK")
 

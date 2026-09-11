@@ -105,13 +105,54 @@ def test_disagreement_stays_on_its_own_tag():
 
     # A's libc mass is on libc, matched, both times -- not shunted elsewhere.
     assert abs(rows["origin:lib:libc:2.31"]["weight_a"] - 20.0) < 1e-9
-    assert abs(rows["origin:lib:libc:2.31"]["weight_b"]) < 1e-9
     assert abs(rows["origin:lib:uclibc:0.9"]["weight_b"] - 10.0) < 1e-9
-    # B's untagged partner is reported as untagged, on B's side only.
-    assert abs(rows[TAG_UNTAGGED]["weight_b"] - 10.0) < 1e-9
-    # Disagreement is still visible, as a field rather than a stolen bucket.
-    assert abs(rows["origin:lib:libc:2.31"]["mismatch_weight_a"] - 20.0) < 1e-9
+    # b2 has no evidence of its own but matched a libc function, so it borrows
+    # libc rather than landing in original_code (test_library_origin_is_borrowed).
+    assert abs(rows["origin:lib:libc:2.31"]["weight_b"] - 10.0) < 1e-9
+    assert TAG_UNTAGGED not in rows
+    # Disagreement is still visible, as a field rather than a stolen bucket --
+    # and only for the pair that actually disagreed (a1/b1), not the borrowed one.
+    assert abs(rows["origin:lib:libc:2.31"]["mismatch_weight_a"] - 10.0) < 1e-9
     assert TAG_MISMATCH not in rows
+
+
+def test_library_origin_is_borrowed_across_a_match():
+    """Function ID identifies the pair, not one binary.
+
+    A libc hit on one side of a match used to leave the other side in
+    `original_code`, so half of every one-sided library match polluted the
+    original-code score -- the score meant to answer "how much of this is
+    nobody else's code". The library tag is trusted across the edge instead,
+    exactly as `code_library_split` trusts it. A `malware:` bundle names the
+    whole sample rather than these bytes, so it never travels.
+    """
+    fid_tags = {
+        "a1": {"fid:libc:2.31#memcpy": 1.0},
+        "b1": {},  # Function ID missed this side
+        "a2": {"malware:mirai": 1.0},
+        "b2": {},  # a bundle tag is not evidence about the partner
+        "a3": {},
+        "b3": {},  # neither side identified: genuinely original
+    }
+    ts = TagSplit(fid_tags)
+    for a, b in (("a1", "b1"), ("a2", "b2"), ("a3", "b3")):
+        ts.add_match(a, b, 1.0, 10.0, 10.0)
+    rows = by_id(ts.summary(30.0, 30.0))
+
+    # The borrowed side counts as libc, and agrees -- no drift, no mismatch.
+    libc = rows["fid:libc:2.31"]
+    assert abs(libc["weight_b"] - 10.0) < 1e-9
+    assert abs(libc["mismatch_weight_a"] + libc["mismatch_weight_b"]) < 1e-9
+    # original_code keeps only the pair nobody identified, plus the bundle's
+    # untagged partner -- 10 per side each.
+    assert abs(rows[TAG_UNTAGGED]["weight_a"] - 10.0) < 1e-9
+    assert abs(rows[TAG_UNTAGGED]["weight_b"] - 20.0) < 1e-9
+    # An unmatched function has no partner to borrow from and stays original.
+    ts2 = TagSplit(fid_tags)
+    ts2.add_unique("b1", 10.0, "b")
+    assert abs(
+        by_id(ts2.summary(0.0, 10.0))[TAG_UNTAGGED]["unique_weight_b"] - 10.0
+    ) < 1e-9
 
 
 def test_drift_names_its_counterpart():
@@ -296,6 +337,40 @@ def test_tag_scope_is_a_prefix_match():
     assert page("tags=original_code")["total"] == 3  # untagged is selectable
     # Prefix must respect the separator: `lib` must not match a `libfoo:` tag.
     assert page("tags=origin:lib:libc:2")["total"] == 0
+
+
+def test_half_identified_match_is_not_original_code():
+    """The table must agree with the split about a one-sided library hit.
+
+    Browsing the Original Code node is how a user finds code that is nobody
+    else's; a match whose partner Function ID recognised as libc belongs to
+    libc, so listing it there too made the node a mix of original and
+    boilerplate.
+    """
+    diff = {
+        "diff": {
+            "matched": [
+                {"func_a": "ha", "func_b": "hb", "similarity": 0.99},
+                {"func_a": "oa", "func_b": "ob", "similarity": 0.99},
+            ],
+            "unique_to_a": [],
+            "unique_to_b": [],
+        },
+        "functions_metadata": {
+            "ha": {"name": "memcpy", "tags": ["fid:libc:2.31#memcpy"]},
+            "hb": {"name": "FUN_00401000", "tags": []},  # Function ID missed it
+            "oa": {"name": "attack_init", "tags": []},
+            "ob": {"name": "attack_init", "tags": []},
+        },
+    }
+
+    def hpage(qs=""):
+        with _APP.test_request_context("/?" + qs):
+            return _page_diff(diff, "all")
+
+    assert hpage("tags=fid:libc")["total"] == 1
+    assert hpage("tags=original_code")["total"] == 1
+    assert hpage("tags=original_code")["items"][0]["func_a"] == "oa"
 
 
 def test_tag_scope_reads_user_tags():

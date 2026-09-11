@@ -14,6 +14,7 @@ from bsimvis.app.services.bin_sim_tags import (
     EMPTY_SUMMARIES,
     SUMMARY_FIELDS,
     TAG_UNTAGGED,
+    is_library_tag,
     merge_tag_fields,
     normalize_tags as tag_ids,
     read_tags_rev,
@@ -848,13 +849,22 @@ def _row_tags(item, fmeta):
     has no *origin* tag -- not when it has no tag at all. Otherwise a function
     carrying only `category:...` would vanish from the Original Code node the
     split still counts it under (bin_sim_tags.py:540).
+
+    A library origin on either side covers the whole row, exactly as the split
+    borrows it across a matched edge (`TagSplit._untagged_side`): a Function ID
+    hit identifies the pair, so a row whose other side was missed must not also
+    list under Original Code -- that node is what the user browses to find code
+    that is nobody else's.
     """
     tags = set()
-    for fid in (item.get("func_a"), item.get("func_b"), item.get("func_id")):
-        if not fid:
-            continue
-        own = set(merge_tag_fields(fmeta.get(fid) or {}))
-        if not any(tag_axis(t) == AXIS_ORIGIN for t in own):
+    sides = [
+        set(merge_tag_fields(fmeta.get(fid) or {}))
+        for fid in (item.get("func_a"), item.get("func_b"), item.get("func_id"))
+        if fid
+    ]
+    library = any(is_library_tag(t) for own in sides for t in own)
+    for own in sides:
+        if not library and not any(tag_axis(t) == AXIS_ORIGIN for t in own):
             own.add(TAG_UNTAGGED)
         tags |= own
     return tags

@@ -31,7 +31,8 @@ from collections import defaultdict
 from bsimvis.app.services.tag_taxonomy import TAG_AXES, tag_body
 
 # Two distinct kinds of "we can't attribute this to a library", kept apart on
-# purpose: UNTAGGED means at least one side carries no tag at all (no evidence),
+# purpose: UNTAGGED means no evidence -- neither the function nor, for a matched
+# one, its partner carries a library origin (`TagSplit._untagged_side`);
 # MISMATCH means both sides are tagged but share nothing -- the interesting case,
 # e.g. libc 2.31 matching libc 2.35, or libc matching uclibc.
 TAG_UNTAGGED = "original_code"
@@ -143,6 +144,22 @@ ORIGIN_PRIORITY = {
 }
 DEFAULT_ORIGIN_PRIORITY = 0
 
+# Origin namespaces whose mass counts as "library" rather than "code" for the
+# Code/Library score split.
+#
+# Every detector that identifies library code belongs here, not just the one in
+# use today: the namespace names who found it, so reading only `fid:` would make
+# the library score silently halve the day BSim starts tagging alongside Function
+# ID. `malware:` is deliberately absent -- a bundle names the sample, which is
+# the code under analysis rather than a library it links against.
+LIBRARY_ORIGIN_PREFIXES = ("fid:", "bsim:", "pkg:", "origin:lib:", "origin:stdlib:")
+
+
+def is_library_tag(tag_id, namespaces=LIBRARY_ORIGIN_PREFIXES):
+    """True when this tag says "a detector recognised this as library code"."""
+    return str(tag_id).startswith(namespaces)
+
+
 # Origin ids are `origin:kind:name:version[:func]`. Bundles have no natural
 # version but carry this placeholder anyway, so the roll-up depth is one constant
 # instead of a per-kind table. `parse_tag_id` hides it again for display.
@@ -158,7 +175,7 @@ DEFAULT_AXIS = AXIS_USER
 # schema is stale no matter what its `tags_rev` says -- without this, a doc
 # written by the two-axis code and one written here are indistinguishable, and
 # the UI silently renders an axis that was never computed.
-SPLIT_SCHEMA = 7
+SPLIT_SCHEMA = 8
 
 # Similarity is bucketed into fixed 5% bins so the UI can re-aggregate to any of
 # its 5/10/20/25% split settings without the backend knowing which is selected.
@@ -389,6 +406,27 @@ class TagSplit:
         # sides are tracked because a match need not be tagged the same on each.
         self.bins = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0, 0.0, 0.0]))
 
+    def _untagged_side(self, partner):
+        """Tags for a side that carries none of its own.
+
+        Function ID identifies the *pair*, not one binary: if the partner was
+        recognised as libc and this side matched it, this side is libc too, and
+        calling it `original_code` is how half of every one-sided library match
+        pollutes the original-code score (and puts `fid:` rows under the
+        Original Code node). So a library origin is borrowed across the edge,
+        the same trust `code_library_split` already places in a match.
+
+        Only library origins travel. A `malware:` bundle tag names the whole
+        sample rather than the bytes, so borrowing it would manufacture family
+        attribution; and the non-origin axes have no default at all
+        (`self._default` empty), so nothing is borrowed there either -- a capa
+        hit on one side is not evidence about the other.
+        """
+        if not self._default or not partner:
+            return self._default
+        borrowed = {t: c for t, c in partner.items() if is_library_tag(t)}
+        return borrowed or self._default
+
     def add_match(self, fid_a, fid_b, score, w_a, w_b):
         """Attribute one matched pair. `w_a`/`w_b` are each side's feature counts.
 
@@ -400,8 +438,10 @@ class TagSplit:
         when it succeeded. Disagreement is recorded per tag as `mismatch_*`
         instead of moving the mass somewhere else.
         """
-        tags_a = self.fid_tags.get(fid_a) or self._default
-        tags_b = self.fid_tags.get(fid_b) or self._default
+        raw_a = self.fid_tags.get(fid_a)
+        raw_b = self.fid_tags.get(fid_b)
+        tags_a = raw_a or self._untagged_side(raw_b)
+        tags_b = raw_b or self._untagged_side(raw_a)
         shared = set(tags_a) & set(tags_b)
         idx = _bin_index(score)
 
@@ -719,7 +759,7 @@ class AxisSplit:
     def __bool__(self):
         return any(self.fid_axes[axis] for axis in AXES)
 
-    def _cross(self, fid, weight, w_slot, n_slot):
+    def _cross(self, fid, weight, w_slot, n_slot, partner=None):
         """Spread one function's mass over its (origin, severity, category, user) cell.
 
         A function carrying `crypto` and `network` goes to one cell named for
@@ -742,7 +782,9 @@ class AxisSplit:
         if not any(combos):
             return
         inner = joint_key(*combos)
-        origin = self.fid_axes[AXIS_ORIGIN].get(fid) or {TAG_UNTAGGED: 1.0}
+        origin = self.fid_axes[AXIS_ORIGIN].get(fid) or self.origin._untagged_side(
+            self.fid_axes[AXIS_ORIGIN].get(partner) if partner else None
+        )
         n_o = len(origin)
         for o, conf in origin.items():
             share = conf / n_o
@@ -753,8 +795,8 @@ class AxisSplit:
     def add_match(self, fid_a, fid_b, score, w_a, w_b):
         for split in self.splits.values():
             split.add_match(fid_a, fid_b, score, w_a, w_b)
-        self._cross(fid_a, w_a, 0, 4)
-        self._cross(fid_b, w_b, 1, 5)
+        self._cross(fid_a, w_a, 0, 4, fid_b)
+        self._cross(fid_b, w_b, 1, 5, fid_a)
 
     def add_unique(self, fid, weight, side):
         for split in self.splits.values():
@@ -810,17 +852,6 @@ EMPTY_SUMMARIES = {
 }
 
 
-# Origin namespaces whose mass counts as "library" rather than "code" for the
-# Code/Library score split.
-#
-# Every detector that identifies library code belongs here, not just the one in
-# use today: the namespace names who found it, so reading only `fid:` would make
-# the library score silently halve the day BSim starts tagging alongside Function
-# ID. `malware:` is deliberately absent -- a bundle names the sample, which is
-# the code under analysis rather than a library it links against.
-LIBRARY_ORIGIN_PREFIXES = ("fid:", "bsim:", "pkg:", "origin:lib:", "origin:stdlib:")
-
-
 def code_library_split(
     matched, unique_to_a, unique_to_b, fid_tags, namespaces=LIBRARY_ORIGIN_PREFIXES
 ):
@@ -846,7 +877,7 @@ def code_library_split(
         tags = fid_tags.get(fid) if fid_tags else None
         if not tags:
             return False
-        return any(tag_id.startswith(ns) for ns in namespaces for tag_id in tags)
+        return any(is_library_tag(tag_id, namespaces) for tag_id in tags)
 
     lib_num = lib_w = code_num = code_w = 0.0
     for m in matched or []:

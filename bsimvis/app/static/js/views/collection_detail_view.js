@@ -29,10 +29,11 @@ window.CollectionDetailView = {
             </div>`;
 
         try {
-            const [collRes, poolsRes, jobsStatsRes] = await Promise.all([
+            const [collRes, poolsRes, jobsStatsRes, paramsRes] = await Promise.all([
                 fetch(`/api/collection/search?q=${encodeURIComponent(collName)}`),
                 fetch(`/api/pool?collection=${encodeURIComponent(collName)}`),
-                fetch('/api/jobs/stats').catch(() => null)
+                fetch('/api/jobs/stats').catch(() => null),
+                fetch(`/api/collection/params?collection=${encodeURIComponent(collName)}`).catch(() => null)
             ]);
 
             if (!collRes.ok) throw new Error('Failed to load collections list');
@@ -43,6 +44,12 @@ window.CollectionDetailView = {
             if (poolsRes.ok) {
                 const pd = await poolsRes.json();
                 associatedPools = pd.pools || [];
+            }
+
+            let params = {};
+            if (paramsRes && paramsRes.ok) {
+                const pj = await paramsRes.json();
+                params = pj.params || {};
             }
 
             let collectionActiveJobs = [];
@@ -59,9 +66,9 @@ window.CollectionDetailView = {
                     total_functions: 0,
                     total_batches: 0,
                     last_updated: 0
-                }, associatedPools, collectionActiveJobs);
+                }, associatedPools, collectionActiveJobs, params);
             } else {
-                container.innerHTML = this._renderPage(collection, associatedPools, collectionActiveJobs);
+                container.innerHTML = this._renderPage(collection, associatedPools, collectionActiveJobs, params);
             }
 
             if (this.refreshInterval) clearInterval(this.refreshInterval);
@@ -93,7 +100,48 @@ window.CollectionDetailView = {
         return `<span style="background:rgba(156,163,175,0.15); border:1px solid rgba(156,163,175,0.3); color:#9ca3af; padding:4px 12px; border-radius:20px; font-size:0.8rem; font-weight:700; display:inline-flex; align-items:center; gap:6px;"><i class="fa-solid fa-circle"></i> ${status || 'created'}</span>`;
     },
 
-    _renderPage(coll, pools, collectionActiveJobs = []) {
+    _paramRow(key, label, hint, p, step) {
+        const p2 = p || {};
+        const value = p2.value !== undefined ? p2.value : '';
+        const origin = p2.locked
+            ? `locked on this collection`
+            : `not set — falls back to the global default`;
+        return `
+        <div style="padding:10px 0; border-bottom:1px solid var(--border);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                <div>
+                    <div style="font-size:0.82rem; color:var(--text); font-weight:600;">${label}</div>
+                    <div style="font-size:0.72rem; color:var(--dim); margin-top:2px;">${hint}</div>
+                </div>
+                <input id="coll-param-${key}" type="number" step="${step}" value="${value}"
+                    style="width:110px; padding:6px 10px; background:var(--hover); border:1px solid var(--border); border-radius:6px; color:var(--accent); font-family:monospace; font-weight:600; font-size:0.85rem; text-align:right;">
+            </div>
+            <div style="font-size:0.7rem; color:var(--dim); margin-top:6px;">${origin} · global default <code>${p2.default !== undefined ? p2.default : '—'}</code></div>
+        </div>`;
+    },
+
+    _renderParamsCard(name, params) {
+        return `
+        <div>
+            <div style="font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--dim); margin-bottom:12px; display:flex; align-items:center; gap:7px;">
+                <i class="fa-solid fa-sliders"></i> Similarity Parameters
+            </div>
+            <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:18px;">
+                ${this._paramRow('min_features', 'Min Features', 'Functions below this many features skip the BSim vector and match by exact FunctionID hash only.', params.min_features, '1')}
+                ${this._paramRow('min_score', 'Min Score', 'Similarity floor — pairs scoring below this are not stored.', params.min_score, '0.01')}
+                <div style="display:flex; align-items:center; gap:8px; margin-top:14px; padding:10px 12px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.3); border-radius:6px; font-size:0.75rem; color:#f59e0b;">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <span>These are locked on the first similarity build. Changing them does not rescore existing edges — rebuild the collection to apply.</span>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
+                    <button onclick="window.collectionDetailSaveParams(${escapeAttr(jsString(name))}, this)" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:7px 16px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px;"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+                    <button onclick="window.collectionDetailRebuildSim(${escapeAttr(jsString(name))}, this)" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:7px 16px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px;"><i class="fa-solid fa-rotate-right"></i> Rebuild Similarity</button>
+                </div>
+            </div>
+        </div>`;
+    },
+
+    _renderPage(coll, pools, collectionActiveJobs = [], params = {}) {
         const name = coll.name;
         const files = coll.total_files !== undefined ? coll.total_files : 0;
         const funcs = coll.total_functions !== undefined ? coll.total_functions : 0;
@@ -219,6 +267,7 @@ window.CollectionDetailView = {
 
                 <!-- RIGHT COLUMN -->
                 <div style="display:flex; flex-direction:column; gap:20px;">
+                    ${this._renderParamsCard(name, params)}
                     <div>
                         <div style="font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--dim); margin-bottom:12px; display:flex; align-items:center; gap:7px;">
                             <i class="fa-solid fa-diagram-project"></i> Associated Pools
@@ -334,6 +383,50 @@ window.collectionDetailCluster = async function(collName, btn) {
         alert(`Failed to enqueue re-analysis: ${e.message}`);
     } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-circle-nodes"></i> Cluster'; }
+    }
+};
+
+window.collectionDetailSaveParams = async function(collName, btn) {
+    const minFeatures = document.getElementById('coll-param-min_features');
+    const minScore = document.getElementById('coll-param-min_score');
+    const body = { collection: collName };
+    if (minFeatures && minFeatures.value !== '') body.min_features = Number(minFeatures.value);
+    if (minScore && minScore.value !== '') body.min_score = Number(minScore.value);
+
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
+    try {
+        const res = await fetch('/api/collection/params', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        alert(`Saved: ${Object.entries(data.updated).map(([k, v]) => `${k}=${v}`).join(', ')}\n\nExisting similarity edges keep their old scores until you rebuild.`);
+        Nav.openPath(window.location.pathname);
+    } catch(e) {
+        alert(`Failed to save parameters: ${e.message}`);
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Save'; }
+    }
+};
+
+window.collectionDetailRebuildSim = async function(collName, btn) {
+    if (!confirm(`Clear and rebuild every function similarity in "${collName}" with the current parameters? This can take a long time on a large collection.`)) return;
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
+    try {
+        const res = await fetch('/api/similarity/rebuild', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ collection: collName, all: true })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        alert(`Similarity rebuild enqueued! Job ID: ${data.job_id}`);
+    } catch(e) {
+        alert(`Failed to enqueue rebuild: ${e.message}`);
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> Rebuild Similarity'; }
     }
 };
 

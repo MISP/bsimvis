@@ -293,3 +293,53 @@ def clean_collection():
     except Exception as e:
         logging.error(f"Error in clean_collection route: {e}", exc_info=True)
         return {"error": str(e)}, 500
+
+
+def get_collection_config():
+    """Sticky similarity params for one collection (locked value + config default)."""
+    from bsimvis.app.services.collection_config import get_collection_params
+
+    collection = request.args.get("collection")
+    if not collection:
+        return {"error": "collection parameter is required"}, 400
+    return {"collection": collection, "params": get_collection_params(collection)}
+
+
+_PARAM_RANGES = {"min_features": (0, 10000), "min_score": (0.0, 1.0)}
+
+
+def set_collection_config():
+    """Overwrites sticky similarity params. Does not recompute existing edges."""
+    from bsimvis.app.services.collection_config import (
+        LOCKED_PARAMS,
+        get_collection_params,
+        set_collection_param,
+    )
+
+    data = request.json or {}
+    collection = data.get("collection") or request.args.get("collection")
+    if not collection:
+        return {"error": "collection parameter is required"}, 400
+
+    updated = {}
+    for name in LOCKED_PARAMS:
+        if data.get(name) is None:
+            continue
+        lo, hi = _PARAM_RANGES[name]
+        try:
+            num = float(data[name])
+        except (TypeError, ValueError):
+            return {"error": f"{name} must be a number"}, 400
+        if not (lo <= num <= hi):
+            return {"error": f"{name} must be between {lo} and {hi}"}, 400
+        updated[name] = set_collection_param(collection, name, num)
+
+    if not updated:
+        return {"error": f"no param given (expected one of {list(LOCKED_PARAMS)})"}, 400
+
+    return {
+        "collection": collection,
+        "updated": updated,
+        "params": get_collection_params(collection),
+        "note": "existing similarity edges keep their old scores until rebuilt",
+    }

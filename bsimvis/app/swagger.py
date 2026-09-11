@@ -629,6 +629,42 @@ class CollectionDelete(Resource):
         return delete_collection()
 
 
+@ns_collection.route("/params")
+class CollectionParams(Resource):
+    @ns_collection.doc(
+        params={
+            "collection": {
+                "description": "Collection name",
+                "required": True,
+                "example": "main",
+            }
+        }
+    )
+    def get(self):
+        """Sticky similarity params of a collection (locked value + config default)."""
+        from bsimvis.app.routes.search_collection import get_collection_config
+
+        return get_collection_config()
+
+    @ns_collection.expect(
+        api.model(
+            "CollectionParams",
+            {
+                "collection": fields.String(required=True, description="Collection"),
+                "min_features": fields.Integer(
+                    description="BSim-vs-FunctionID-hash floor (0-10000)"
+                ),
+                "min_score": fields.Float(description="Edge score floor (0.0-1.0)"),
+            },
+        )
+    )
+    def post(self):
+        """Overwrites the collection's locked similarity params. Existing edges are not recomputed — rebuild the collection to apply."""
+        from bsimvis.app.routes.search_collection import set_collection_config
+
+        return set_collection_config()
+
+
 @ns_collection.route("/clean")
 class CollectionClean(Resource):
     @ns_collection.expect(

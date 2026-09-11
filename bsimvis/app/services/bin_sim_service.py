@@ -1,6 +1,8 @@
 import os
 import time
 import json
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services import lineage_service
 from bsimvis.app.services.bin_sim_tags import (
@@ -11,6 +13,36 @@ from bsimvis.app.services.bin_sim_tags import (
     load_tag_meta,
     read_tags_rev,
 )
+
+# A kvrocks stall -- compaction, or another worker holding its global Lua lock --
+# reaches us as "Timeout reading from socket", after redis-py has already
+# reconnected and resent the command KVROCKS_SOCKET_TIMEOUT seconds at a time.
+# Letting it out of the walk failed the whole job, which cascades: the parent
+# pipeline fails and cancels the chunks already spliced behind it, so a
+# 1133-file build died on one busy minute and lost every file it had walked.
+# One anchor file is the unit of work that can be redone safely, so a stall
+# waits the server out and redoes that file instead.
+KV_STALL = (RedisTimeoutError, RedisConnectionError)
+
+
+def _stall_delay(attempt):
+    """Seconds to let kvrocks breathe before redoing an anchor file."""
+    return min(60, 5 * 3 ** (attempt - 1))
+
+
+def _stall_action(attempt, attempts, consecutive, max_skips, exact_pair):
+    """What a kvrocks stall on one anchor file costs: retry it, skip it, or fail.
+
+    Skipping is only right while the server is *busy*: a run of files that all
+    stall means it is down or the command is simply too slow for the socket
+    timeout, and then failing loudly beats walking 1100 files into a hole.
+    A one-pair build has nothing to skip to, so it always fails.
+    """
+    if attempt < attempts:
+        return "retry"
+    if exact_pair or consecutive + 1 >= max_skips:
+        return "fail"
+    return "skip"
 
 
 BIN_SIM_TAG_FIELDS = (
@@ -1024,261 +1056,340 @@ class BinSimService:
                 file_meta_cache[md5] = meta if isinstance(meta, dict) else {}
             return file_meta_cache[md5]
 
+        # A kvrocks stall is survivable; losing the build is not. See KV_STALL.
+        stall_attempts = int(os.getenv("BIN_SIM_STALL_ATTEMPTS", 4))
+        max_stall_skips = int(os.getenv("BIN_SIM_STALL_MAX_SKIPS", 3))
+        stalled_files = []
+        consecutive_stalls = 0
+
         pipe = r.pipeline(transaction=False)
         for walked, m_a in enumerate(chunk):
-            if exact_pair:
-                other = max(md5_a, md5_b)
+            for attempt in range(1, stall_attempts + 1):
+                try:
+                    if exact_pair:
+                        other = max(md5_a, md5_b)
 
-                def keep(partner, _other=other):
-                    return partner == _other
+                        def keep(partner, _other=other):
+                            return partner == _other
 
-            else:
+                    else:
 
-                def keep(partner, _anchor=m_a):
-                    # Whoever comes first in the walk owns the pair; a partner
-                    # outside the walk (an older file on an incremental build)
-                    # is always this anchor's responsibility.
-                    rank = walk_rank.get(partner)
-                    return rank is None or rank > walk_rank[_anchor]
+                        def keep(partner, _anchor=m_a):
+                            # Whoever comes first in the walk owns the pair; a partner
+                            # outside the walk (an older file on an incremental build)
+                            # is always this anchor's responsibility.
+                            rank = walk_rank.get(partner)
+                            return rank is None or rank > walk_rank[_anchor]
 
-            funcs_a = self._file_funcs(collection, m_a, funcs_cache)
-            probe_partners = set()
+                    funcs_a = self._file_funcs(collection, m_a, funcs_cache)
+                    probe_partners = set()
 
-            use_stored = edge_source == "stored" or (
-                edge_source == "auto"
-                and (
-                    # Any stored edge is direct evidence the graph covers this
-                    # file. Only when it has none does it matter whether that
-                    # means "built, nothing matched" or "never built".
-                    r.scard(f"{collection}:sim:involves:file:{m_a}") > 0
-                    or self._file_was_sim_built(collection, algo, funcs_a)
-                )
-            )
-            if use_stored:
-                by_partner, missing = self._edges_by_partner(
-                    collection, algo, m_a, canonical, keep, func_sim_threshold
-                )
-                missing_scores += missing
-                if not by_partner:
-                    no_edges += 1
-            else:
-                if sim_service is None:
-                    from bsimvis.app.services.similarity_service import (
-                        SimilarityService,
+                    use_stored = edge_source == "stored" or (
+                        edge_source == "auto"
+                        and (
+                            # Any stored edge is direct evidence the graph covers this
+                            # file. Only when it has none does it matter whether that
+                            # means "built, nothing matched" or "never built".
+                            r.scard(f"{collection}:sim:involves:file:{m_a}") > 0
+                            or self._file_was_sim_built(collection, algo, funcs_a)
+                        )
                     )
+                    if use_stored:
+                        by_partner, missing = self._edges_by_partner(
+                            collection, algo, m_a, canonical, keep, func_sim_threshold
+                        )
+                        missing_scores += missing
+                        if not by_partner:
+                            no_edges += 1
+                    else:
+                        if sim_service is None:
+                            from bsimvis.app.services.similarity_service import (
+                                SimilarityService,
+                            )
 
-                    # One per build: its read caches are only valid for as long
-                    # as ingestion is not writing, and they are what makes the
-                    # walk share one fetch of each posting list.
-                    sim_service = SimilarityService(r)
-                if edge_source == "tiered":
-                    by_partner = self._exact_edges_by_partner(
-                        sim_service, collection, m_a, funcs_a, canonical, keep
-                    )
+                            # One per build: its read caches are only valid for as long
+                            # as ingestion is not writing, and they are what makes the
+                            # walk share one fetch of each posting list.
+                            sim_service = SimilarityService(r)
+                        if edge_source == "tiered":
+                            by_partner = self._exact_edges_by_partner(
+                                sim_service, collection, m_a, funcs_a, canonical, keep
+                            )
+                            self._func_weights(
+                                collection, sorted(funcs_a), weight_cache
+                            )
+                            anchor_weight = sum(
+                                weight_cache.get(f, 1.0) for f in funcs_a
+                            )
+                            matched = {
+                                e[0] for edges in by_partner.values() for e in edges
+                            }
+                            exact_share = (
+                                sum(weight_cache.get(f, 1.0) for f in matched)
+                                / anchor_weight
+                                if anchor_weight > 0
+                                else 1.0
+                            )
+                            if exact_share < fallback_ratio:
+                                probe_partners = self._rare_feature_partners(
+                                    collection,
+                                    m_a,
+                                    funcs_a,
+                                    canonical,
+                                    keep,
+                                    feature_tf_cache,
+                                    k=probe_features,
+                                    min_hits=probe_min_hits,
+                                )
+                                for partner in probe_partners:
+                                    # No edges of its own: the probe says "look at this
+                                    # pair", tier 2 says what the pair actually shares.
+                                    by_partner.setdefault(partner, [])
+                                probed += 1
+                                probe_pairs += len(probe_partners)
+                        else:
+                            by_partner = self._discovered_edges_by_partner(
+                                sim_service,
+                                collection,
+                                algo,
+                                m_a,
+                                canonical,
+                                keep,
+                                func_sim_threshold,
+                            )
+                        discovered += 1
+                    if exact_pair:
+                        by_partner.setdefault(other, [])
+
                     self._func_weights(collection, sorted(funcs_a), weight_cache)
-                    anchor_weight = sum(weight_cache.get(f, 1.0) for f in funcs_a)
-                    matched = {e[0] for edges in by_partner.values() for e in edges}
-                    exact_share = (
-                        sum(weight_cache.get(f, 1.0) for f in matched) / anchor_weight
-                        if anchor_weight > 0
-                        else 1.0
-                    )
-                    if exact_share < fallback_ratio:
-                        probe_partners = self._rare_feature_partners(
-                            collection,
-                            m_a,
-                            funcs_a,
-                            canonical,
-                            keep,
-                            feature_tf_cache,
-                            k=probe_features,
-                            min_hits=probe_min_hits,
+                    weight_a = sum(weight_cache.get(f, 1.0) for f in funcs_a)
+
+                    for m_b, anchor_edges in by_partner.items():
+                        funcs_b = self._file_funcs(collection, m_b, funcs_cache)
+                        self._func_weights(collection, sorted(funcs_b), weight_cache)
+                        weight_b = sum(weight_cache.get(f, 1.0) for f in funcs_b)
+
+                        if edge_source == "tiered" and not exact_pair:
+                            # Tier 1 found identical functions; tier 2 only runs when
+                            # enough of the smaller file is in them. The exact edges are
+                            # real matches, so their weight is a lower bound on what the
+                            # pair shares -- a pair under the ratio would need the fuzzy
+                            # 0.9-1.0 band to carry it on its own, which is the recall
+                            # this trade knowingly gives up for a cost that scales.
+                            if m_b not in probe_partners:
+                                exact_mass = sum(
+                                    weight_cache.get(fid, 1.0)
+                                    for fid in {e[0] for e in anchor_edges}
+                                )
+                                floor = min(weight_a, weight_b)
+                                if floor > 0 and exact_mass / floor < candidate_ratio:
+                                    not_candidates += 1
+                                    continue
+
+                            # Tier 2: the 0.9-1.0 band, for this candidate pair only.
+                            mat_a = self._file_matrix(
+                                collection,
+                                m_a,
+                                sorted(funcs_a),
+                                feature_to_idx,
+                                matrix_cache,
+                            )
+                            mat_b = self._file_matrix(
+                                collection,
+                                m_b,
+                                sorted(funcs_b),
+                                feature_to_idx,
+                                matrix_cache,
+                            )
+                            fuzzy = self._refine_pair_edges(
+                                mat_a,
+                                sorted(funcs_a),
+                                mat_b,
+                                sorted(funcs_b),
+                                func_sim_threshold,
+                            )
+                            if fuzzy:
+                                # Exact edges win a duplicate: they are 1.0 by
+                                # construction and the cosine can only tie them.
+                                merged = {(u, v): s for u, v, s in fuzzy}
+                                merged.update({(u, v): s for u, v, s in anchor_edges})
+                                anchor_edges = [
+                                    (u, v, s) for (u, v), s in merged.items()
+                                ]
+                            refined += 1
+                            if not anchor_edges:
+                                # Only a probed pair gets here: the probe was wrong
+                                # about it and there is nothing to score.
+                                continue
+
+                        # A pair is stored under its sorted md5s, and score_pair's diff
+                        # is oriented a->b, so the edges are flipped here rather than
+                        # scored twice.
+                        if m_a <= m_b:
+                            key_a, key_b = m_a, m_b
+                            edges = anchor_edges
+                            pair_funcs_a, pair_funcs_b = funcs_a, funcs_b
+                        else:
+                            key_a, key_b = m_b, m_a
+                            edges = [(b, a, s) for a, b, s in anchor_edges]
+                            pair_funcs_a, pair_funcs_b = funcs_b, funcs_a
+
+                        # Bound the pair from its edge list before fetching a single
+                        # tag: greedy matching uses each function once, so summing
+                        # `s * max(w_a, w_b)` over *every* edge can only overshoot the
+                        # numerator, and the denominator can lose at most
+                        # `sum over edges of min(w_a, w_b)`.
+                        if min_pair_score:
+                            num_ub = 0.0
+                            min_ub = 0.0
+                            for fid_a, fid_b, score in edges:
+                                w_a = weight_cache.get(fid_a, 1.0)
+                                w_b = weight_cache.get(fid_b, 1.0)
+                                num_ub += score * max(w_a, w_b)
+                                min_ub += min(w_a, w_b)
+                            if (
+                                pair_score_upper_bound(
+                                    num_ub, min_ub, weight_a, weight_b
+                                )
+                                < min_pair_score
+                            ):
+                                pruned += 1
+                                continue
+
+                        fid_tags = dict(
+                            self._func_tags(collection, m_a, funcs_a, tags_cache)
                         )
-                        for partner in probe_partners:
-                            # No edges of its own: the probe says "look at this
-                            # pair", tier 2 says what the pair actually shares.
-                            by_partner.setdefault(partner, [])
-                        probed += 1
-                        probe_pairs += len(probe_partners)
-                else:
-                    by_partner = self._discovered_edges_by_partner(
-                        sim_service,
-                        collection,
-                        algo,
-                        m_a,
-                        canonical,
-                        keep,
-                        func_sim_threshold,
-                    )
-                discovered += 1
-            if exact_pair:
-                by_partner.setdefault(other, [])
-
-            self._func_weights(collection, sorted(funcs_a), weight_cache)
-            weight_a = sum(weight_cache.get(f, 1.0) for f in funcs_a)
-
-            for m_b, anchor_edges in by_partner.items():
-                funcs_b = self._file_funcs(collection, m_b, funcs_cache)
-                self._func_weights(collection, sorted(funcs_b), weight_cache)
-                weight_b = sum(weight_cache.get(f, 1.0) for f in funcs_b)
-
-                if edge_source == "tiered" and not exact_pair:
-                    # Tier 1 found identical functions; tier 2 only runs when
-                    # enough of the smaller file is in them. The exact edges are
-                    # real matches, so their weight is a lower bound on what the
-                    # pair shares -- a pair under the ratio would need the fuzzy
-                    # 0.9-1.0 band to carry it on its own, which is the recall
-                    # this trade knowingly gives up for a cost that scales.
-                    if m_b not in probe_partners:
-                        exact_mass = sum(
-                            weight_cache.get(fid, 1.0)
-                            for fid in {e[0] for e in anchor_edges}
+                        fid_tags.update(
+                            self._func_tags(collection, m_b, funcs_b, tags_cache)
                         )
-                        floor = min(weight_a, weight_b)
-                        if floor > 0 and exact_mass / floor < candidate_ratio:
-                            not_candidates += 1
+
+                        def _feat(fid):
+                            return weight_cache.get(fid, 1.0)
+
+                        common = score_pair(
+                            edges,
+                            pair_funcs_a,
+                            pair_funcs_b,
+                            _feat,
+                            fid_tags,
+                            tag_meta_cache,
+                        )
+
+                        if min_pair_score and common["score"] < min_pair_score:
+                            dropped += 1
                             continue
 
-                    # Tier 2: the 0.9-1.0 band, for this candidate pair only.
-                    mat_a = self._file_matrix(
-                        collection,
-                        m_a,
-                        sorted(funcs_a),
-                        feature_to_idx,
-                        matrix_cache,
-                    )
-                    mat_b = self._file_matrix(
-                        collection,
-                        m_b,
-                        sorted(funcs_b),
-                        feature_to_idx,
-                        matrix_cache,
-                    )
-                    fuzzy = self._refine_pair_edges(
-                        mat_a,
-                        sorted(funcs_a),
-                        mat_b,
-                        sorted(funcs_b),
-                        func_sim_threshold,
-                    )
-                    if fuzzy:
-                        # Exact edges win a duplicate: they are 1.0 by
-                        # construction and the cosine can only tie them.
-                        merged = {(u, v): s for u, v, s in fuzzy}
-                        merged.update({(u, v): s for u, v, s in anchor_edges})
-                        anchor_edges = [(u, v, s) for (u, v), s in merged.items()]
-                    refined += 1
-                    if not anchor_edges:
-                        # Only a probed pair gets here: the probe was wrong
-                        # about it and there is nothing to score.
-                        continue
+                        file_meta_a = file_meta(key_a)
+                        file_meta_b = file_meta(key_b)
+                        sid = f"{collection}:bin_sim:{algo}:{key_a}::{key_b}"
+                        pair_scores[(key_a, key_b)] = common["score"]
 
-                # A pair is stored under its sorted md5s, and score_pair's diff
-                # is oriented a->b, so the edges are flipped here rather than
-                # scored twice.
-                if m_a <= m_b:
-                    key_a, key_b = m_a, m_b
-                    edges = anchor_edges
-                    pair_funcs_a, pair_funcs_b = funcs_a, funcs_b
-                else:
-                    key_a, key_b = m_b, m_a
-                    edges = [(b, a, s) for a, b, s in anchor_edges]
-                    pair_funcs_a, pair_funcs_b = funcs_b, funcs_a
+                        doc = {
+                            "md5_a": key_a,
+                            "md5_b": key_b,
+                            "algo": algo,
+                            "architecture_a": file_meta_a.get("language_id", ""),
+                            "architecture_b": file_meta_b.get("language_id", ""),
+                            "functions_count_a": len(
+                                self._file_funcs(collection, key_a, funcs_cache)
+                            ),
+                            "functions_count_b": len(
+                                self._file_funcs(collection, key_b, funcs_cache)
+                            ),
+                            "computed_at": int(time.time() * 1000),
+                            # Bumped by every tag write, so a stored split can be told apart
+                            # from the tag state it was computed against without rebuilding.
+                            "tags_rev": tags_rev,
+                            # score / score_code / score_library / coverage / cluster counts /
+                            # tag summaries / diff -- shared with the pool builder.
+                            **common,
+                        }
 
-                # Bound the pair from its edge list before fetching a single
-                # tag: greedy matching uses each function once, so summing
-                # `s * max(w_a, w_b)` over *every* edge can only overshoot the
-                # numerator, and the denominator can lose at most
-                # `sum over edges of min(w_a, w_b)`.
-                if min_pair_score:
-                    num_ub = 0.0
-                    min_ub = 0.0
-                    for fid_a, fid_b, score in edges:
-                        w_a = weight_cache.get(fid_a, 1.0)
-                        w_b = weight_cache.get(fid_b, 1.0)
-                        num_ub += score * max(w_a, w_b)
-                        min_ub += min(w_a, w_b)
-                    if (
-                        pair_score_upper_bound(num_ub, min_ub, weight_a, weight_b)
-                        < min_pair_score
-                    ):
-                        pruned += 1
-                        continue
+                        pipe.set(sid, json.dumps(doc))
+                        # `algo` is a provenance tag (which function similarity the clusters came
+                        # from), not a choice of file score. The sort score is always the
+                        # unweighted cohesion mean so it means the same thing in every namespace
+                        # and matches the pool-level score. The other aggregates stay in `doc`.
+                        _zadd_score_split(
+                            pipe, f"{collection}:bin_sim", algo, sid, common
+                        )
+                        pipe.sadd(f"{collection}:bin_sim:involves:{key_a}", sid)
+                        pipe.sadd(f"{collection}:bin_sim:involves:{key_b}", sid)
+                        pipe.sadd(f"{collection}:bin_sim:built:{algo}", sid)
 
-                fid_tags = dict(
-                    self._func_tags(collection, m_a, funcs_a, tags_cache)
-                )
-                fid_tags.update(self._func_tags(collection, m_b, funcs_b, tags_cache))
+                        # Secondary indexes
+                        _index_bin_sim_pair(
+                            pipe, collection, sid, doc, file_meta_a, file_meta_b
+                        )
 
-                def _feat(fid):
-                    return weight_cache.get(fid, 1.0)
+                        processed += 1
+                        if processed % 100 == 0:
+                            pipe.execute()
+                            pipe = r.pipeline(transaction=False)
 
-                common = score_pair(
-                    edges,
-                    pair_funcs_a,
-                    pair_funcs_b,
-                    _feat,
-                    fid_tags,
-                    tag_meta_cache,
-                )
-
-                if min_pair_score and common["score"] < min_pair_score:
-                    dropped += 1
-                    continue
-
-                file_meta_a = file_meta(key_a)
-                file_meta_b = file_meta(key_b)
-                sid = f"{collection}:bin_sim:{algo}:{key_a}::{key_b}"
-                pair_scores[(key_a, key_b)] = common["score"]
-
-                doc = {
-                    "md5_a": key_a,
-                    "md5_b": key_b,
-                    "algo": algo,
-                    "architecture_a": file_meta_a.get("language_id", ""),
-                    "architecture_b": file_meta_b.get("language_id", ""),
-                    "functions_count_a": len(
-                        self._file_funcs(collection, key_a, funcs_cache)
-                    ),
-                    "functions_count_b": len(
-                        self._file_funcs(collection, key_b, funcs_cache)
-                    ),
-                    "computed_at": int(time.time() * 1000),
-                    # Bumped by every tag write, so a stored split can be told apart
-                    # from the tag state it was computed against without rebuilding.
-                    "tags_rev": tags_rev,
-                    # score / score_code / score_library / coverage / cluster counts /
-                    # tag summaries / diff -- shared with the pool builder.
-                    **common,
-                }
-
-                pipe.set(sid, json.dumps(doc))
-                # `algo` is a provenance tag (which function similarity the clusters came
-                # from), not a choice of file score. The sort score is always the
-                # unweighted cohesion mean so it means the same thing in every namespace
-                # and matches the pool-level score. The other aggregates stay in `doc`.
-                _zadd_score_split(pipe, f"{collection}:bin_sim", algo, sid, common)
-                pipe.sadd(f"{collection}:bin_sim:involves:{key_a}", sid)
-                pipe.sadd(f"{collection}:bin_sim:involves:{key_b}", sid)
-                pipe.sadd(f"{collection}:bin_sim:built:{algo}", sid)
-
-                # Secondary indexes
-                _index_bin_sim_pair(pipe, collection, sid, doc, file_meta_a, file_meta_b)
-
-                processed += 1
-                if processed % 100 == 0:
+                    if job_service and job_id and chunk:
+                        job_service.update_progress(
+                            job_id,
+                            10 + int((walked + 1) / len(chunk) * 80),
+                            f"Walked {walked + 1}/{len(chunk)} files, {processed} pairs stored",
+                        )
+                    # This anchor file is done: flush it before moving on, so a
+                    # stall on a later file can never cost writes that belong to
+                    # an earlier one (a dropped connection takes the whole buffer
+                    # with it, and a retry only ever redoes the current file).
                     pipe.execute()
+                    consecutive_stalls = 0
+                    break
+                except KV_STALL as err:
+                    # The connection is gone and so is whatever it had buffered.
+                    pipe.reset()
                     pipe = r.pipeline(transaction=False)
-
-            if job_service and job_id and chunk:
-                job_service.update_progress(
-                    job_id,
-                    10 + int((walked + 1) / len(chunk) * 80),
-                    f"Walked {walked + 1}/{len(chunk)} files, {processed} pairs stored",
-                )
+                    action = _stall_action(
+                        attempt,
+                        stall_attempts,
+                        consecutive_stalls,
+                        max_stall_skips,
+                        exact_pair,
+                    )
+                    if action == "retry":
+                        delay = _stall_delay(attempt)
+                        if job_service and job_id:
+                            job_service.add_log(
+                                job_id,
+                                f"[~] kvrocks stalled on {m_a} ({err}); waiting "
+                                f"{delay}s and redoing the file "
+                                f"(attempt {attempt}/{stall_attempts}).",
+                            )
+                        time.sleep(delay)
+                        continue
+                    if action == "fail":
+                        raise
+                    consecutive_stalls += 1
+                    stalled_files.append(m_a)
+                    if job_service and job_id:
+                        job_service.add_log(
+                            job_id,
+                            f"[!] kvrocks would not answer for {m_a} after "
+                            f"{stall_attempts} attempts ({err}); skipping it. Its "
+                            f"pairs are missing from this build -- it is recorded "
+                            f"in {collection}:bin_sim:stalled:{algo} for a rerun.",
+                        )
+                    try:
+                        r.sadd(f"{collection}:bin_sim:stalled:{algo}", m_a)
+                    except KV_STALL:
+                        pass
+                    break
 
         pipe.execute()
 
+        if job_service and job_id and stalled_files:
+            skipped = ", ".join(stalled_files)
+            job_service.add_log(
+                job_id,
+                f"[!] {len(stalled_files)} of {len(chunk)} files were skipped after "
+                f"kvrocks stalled on them: {skipped}. Rerun the build for those "
+                f"files to fill in their pairs.",
+            )
         if job_service and job_id and discovered:
             job_service.add_log(
                 job_id,

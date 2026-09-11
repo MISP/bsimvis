@@ -996,16 +996,13 @@ class SimilarityService:
             ]
             discovery.append((fid, md5, addr, counts.get(fid, 0.0), items))
 
-        # index_depth="none": skip search-index propagation (save_similarity) — it's the
-        # per-doc bottleneck and hash dupes flood it. involves:file + the sim doc (all
-        # build_bin_sim reads) are written regardless. Exact tiny-func dupes needn't be searchable.
         self._persist_and_index_batch(
             collection,
             algo,
             discovery,
             pool_id=pool_id,
             min_features=0,
-            index_depth="none",
+            index_depth=index_depth,
         )
 
     def _persist_and_index_batch(
@@ -1090,9 +1087,7 @@ class SimilarityService:
 
                 if func_ids_needed:
                     func_ids_list = list(func_ids_needed)
-                    raw_func_metas = r.json().mget(
-                        [f"{fid}:meta" for fid in func_ids_list], "$"
-                    )
+                    raw_func_metas = r.mget([f"{fid}:meta" for fid in func_ids_list])
                     for fid, raw in zip(func_ids_list, raw_func_metas):
                         if raw:
                             m = raw[0] if isinstance(raw, list) else raw
@@ -1104,9 +1099,7 @@ class SimilarityService:
 
                 if file_ids_needed:
                     file_ids_list = list(file_ids_needed)
-                    raw_file_metas = r.json().mget(
-                        [f"{fid}:meta" for fid in file_ids_list], "$"
-                    )
+                    raw_file_metas = r.mget([f"{fid}:meta" for fid in file_ids_list])
                     for fid, raw in zip(file_ids_list, raw_file_metas):
                         if raw:
                             m = raw[0] if isinstance(raw, list) else raw
@@ -2898,7 +2891,7 @@ class SimilarityService:
             batch_ids = similarity_ids[i : i + batch_size]
 
             # 1. Fetch similarity documents
-            sim_docs_raw = r.json().mget(batch_ids, "$")
+            sim_docs_raw = r.mget(batch_ids)
             valid_docs = []
             func_ids_needed = set()
             file_ids_needed = set()
@@ -2935,9 +2928,7 @@ class SimilarityService:
             # 2. Fetch required function metadata
             if func_ids_needed:
                 func_ids_list = list(func_ids_needed)
-                raw_func_metas = r.json().mget(
-                    [f"{fid}:meta" for fid in func_ids_list], "$"
-                )
+                raw_func_metas = r.mget([f"{fid}:meta" for fid in func_ids_list])
                 for fid, raw in zip(func_ids_list, raw_func_metas):
                     if raw:
                         m = raw[0] if isinstance(raw, list) else raw
@@ -2950,9 +2941,7 @@ class SimilarityService:
             # 3. Fetch required file metadata
             if file_ids_needed:
                 file_ids_list = list(file_ids_needed)
-                raw_file_metas = r.json().mget(
-                    [f"{fid}:meta" for fid in file_ids_list], "$"
-                )
+                raw_file_metas = r.mget([f"{fid}:meta" for fid in file_ids_list])
                 for fid, raw in zip(file_ids_list, raw_file_metas):
                     if raw:
                         m = raw[0] if isinstance(raw, list) else raw

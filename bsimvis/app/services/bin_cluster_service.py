@@ -18,6 +18,20 @@ except ImportError:
 
 
 class BinClusterService:
+    # Pair reads the incremental path spends on cohesion, split over the
+    # nodes one upload dirties. Measured against kvrocks (~27k pipelined
+    # ZSCOREs/s): ~3.5s per upload while _BUDGET/|dirty| stays above _MIN,
+    # which holds to ~800 dirty nodes; past that _MIN wins and cost grows by
+    # ~10ms per extra node (18s at 3000). The pre-fix loop spent 35s on 30
+    # nodes -- sequential ZSCOREs run 6x slower than pipelined ones -- while
+    # silently skipping every node over 200 members, so this is cheaper than
+    # what it replaces at every size measured. _MIN is where a sampled mean
+    # is still worth printing: max error ~1pt over 25 trials. See
+    # _node_cohesion.
+    _COHESION_MAX_PAIRS = 4096
+    _COHESION_MIN_PAIRS = 256
+    _COHESION_BUDGET = 200_000
+
     def run_clustering(
         self,
         collection,
@@ -618,6 +632,64 @@ class BinClusterService:
 
         return birth_lambdas, death_lambdas
 
+    def _node_cohesion(self, label, members, prefix, score_key, min_sim, max_pairs):
+        """Mean similarity over the pairs inside one cluster.
+
+        Cohesion is defined over all n(n-1)/2 pairs, with an unstored pair
+        counting as 0 -- the same convention the full rebuild gets from its
+        adjacency, where a pair below min_sim simply has no edge. Single
+        linkage means a node is a CHAIN of merges, so most of those pairs are
+        genuinely unrelated and the zeros are the whole point of the number.
+
+        Reading every pair is what the incremental path cannot afford: `dirty`
+        always contains the root (dirty_ancestors walks each new leaf's whole
+        root-path), so "every pair of every dirty node" is the entire edge
+        set on every upload -- exactly the O(E) scan this path exists to
+        avoid. So above _COHESION_MAX_PAIRS this samples uniformly instead.
+
+        ponytail: uniform pair sample, standard error sigma/sqrt(k) -- under
+        0.008 at k=4096 even in the worst case (sigma <= 0.5), and far tighter
+        in practice because the pair distribution is mostly zeros. Swap in an
+        LCA-assignment pass (charge each edge to the LCA of its endpoints, roll
+        the sums up the tree) if an exact number is ever worth one O(E) pass.
+        """
+        import random
+
+        n = len(members)
+        if n <= 1:
+            return 1.0, True
+
+        md5s = sorted(m.rsplit(":", 1)[-1] for m in members)
+        total_pairs = n * (n - 1) // 2
+        exact = total_pairs <= max_pairs
+        if exact:
+            pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
+        else:
+            # Seeded on the label so a re-run of the same cluster reports the
+            # same number instead of jittering by a fraction of a point.
+            rng = random.Random(f"{label}:{n}")
+            seen = set()
+            while len(seen) < max_pairs:
+                i = rng.randrange(n - 1)
+                j = rng.randrange(i + 1, n)
+                seen.add((i, j))
+            pairs = list(seen)
+
+        # find_pair_sid stores a collection pair under sorted(md5_a, md5_b),
+        # so the sorted md5 list above makes i < j already canonical -- one
+        # ZSCORE per pair, no second probe for the reversed spelling.
+        r = self.r
+        total = 0.0
+        for start in range(0, len(pairs), 1000):
+            chunk = pairs[start : start + 1000]
+            pipe = r.pipeline(transaction=False)
+            for i, j in chunk:
+                pipe.zscore(score_key, f"{prefix}{md5s[i]}::{md5s[j]}")
+            for score in pipe.execute():
+                if score is not None and float(score) >= min_sim:
+                    total += float(score)
+        return total / len(pairs), exact
+
     def _incremental_cluster_hierarchical(
         self,
         collection,
@@ -761,23 +833,20 @@ class BinClusterService:
             cohesion = {
                 c: meta.get("cohesion_score", 1.0) for c, meta in node_meta.items()
             }
+            # Every dirty node is recomputed, and `dirty` holds the whole
+            # root-path of every new leaf, so the node count grows with the
+            # collection even when the batch is one file. Spreading a fixed
+            # read budget over them keeps an upload's cost flat instead of
+            # letting it track corpus size.
+            cohesion_exact = {}
+            budget = max(
+                self._COHESION_MIN_PAIRS,
+                min(self._COHESION_MAX_PAIRS, self._COHESION_BUDGET // max(1, len(dirty))),
+            )
             for c in dirty:
-                members = node_members[c]
-                if len(members) <= 1:
-                    cohesion[c] = 1.0
-                elif len(members) <= 200:
-                    total, pairs = 0.0, 0
-                    for i in range(len(members)):
-                        for j in range(i + 1, len(members)):
-                            left = members[i].rsplit(":", 1)[-1]
-                            right = members[j].rsplit(":", 1)[-1]
-                            score = r.zscore(score_key, f"{prefix}{left}::{right}")
-                            if score is None:
-                                score = r.zscore(score_key, f"{prefix}{right}::{left}")
-                            if score is not None:
-                                total += float(score)
-                                pairs += 1
-                    cohesion[c] = total / pairs if pairs else 1.0
+                cohesion[c], cohesion_exact[c] = self._node_cohesion(
+                    c, node_members[c], prefix, score_key, min_sim, budget
+                )
 
             uuids = {
                 c: node_meta.get(c, {}).get("cluster_uuid") or uuid.uuid4().hex[:12]
@@ -837,6 +906,7 @@ class BinClusterService:
                 node_type=node_type,
                 label_to_uuid=uuids,
                 cohesion_by_label=cohesion,
+                cohesion_exact_by_label=cohesion_exact,
                 only_nodes=dirty,
                 only_fids=affected_fids,
                 retired_nodes=retired,
@@ -1350,6 +1420,7 @@ class BinClusterService:
         node_type="file",
         label_to_uuid=None,
         cohesion_by_label=None,
+        cohesion_exact_by_label=None,
         only_nodes=None,
         only_fids=None,
         retired_nodes=(),
@@ -1707,9 +1778,13 @@ class BinClusterService:
             md5_freq = build_freq(md5s_list)
 
             # Incremental rebuilds carry or recompute cohesion before clearing;
-            # full rebuilds use the complete edge-set adjacency.
+            # full rebuilds use the complete edge-set adjacency, which is
+            # always exact.
+            cohesion_exact = True
             if cohesion_by_label is not None:
                 cohesion_score = cohesion_by_label.get(label, 1.0)
+                if cohesion_exact_by_label is not None:
+                    cohesion_exact = cohesion_exact_by_label.get(label, True)
             elif len(members) > 1:
                 member_indices = [id_to_idx[file_id] for file_id in members]
                 n_members = len(members)
@@ -1752,6 +1827,9 @@ class BinClusterService:
                 "cluster_uuid": label_to_uuid[label],
                 "cluster_name": default_name,
                 "cohesion_score": float(cohesion_score),
+                # False when cohesion came off a pair sample rather than every
+                # pair -- see BinClusterService._node_cohesion.
+                "cohesion_exact": bool(cohesion_exact),
                 "avg_stability": float(stabilities.get(label, 0.0)),
                 "cluster_stability": float(stabilities.get(label, 0.0)),
                 "member_count": len(members),
@@ -1941,3 +2019,75 @@ class BinClusterService:
 
 
 bin_cluster_service = BinClusterService()
+
+
+def _demo():
+    """Self-check for incremental cohesion (no Redis needed)."""
+
+    class _Pipe:
+        def __init__(self, scores):
+            self.scores, self.ops = scores, []
+
+        def zscore(self, _key, member):
+            self.ops.append(member)
+
+        def execute(self):
+            out = [self.scores.get(m) for m in self.ops]
+            self.ops = []
+            return out
+
+    class _R:
+        def __init__(self, scores):
+            self.scores, self.calls = scores, 0
+
+        def pipeline(self, transaction=False):
+            self.calls += 1
+            return _Pipe(self.scores)
+
+    def svc_for(scores):
+        s = BinClusterService.__new__(BinClusterService)
+        s.r = _R(scores)
+        return s
+
+    # An A-B-C chain: A~B and B~C are 1.0, A~C was never scored. Mean pairwise
+    # similarity is 2/3, not 1.0 -- dividing by the number of STORED pairs, and
+    # returning 1.0 when none were stored, is what reported single-linkage
+    # chains (which is what every node in the hierarchy is) as perfect.
+    svc = svc_for({"p:m1::m2": 1.0, "p:m2::m3": 1.0})
+    members = ["c:file:m3", "c:file:m1", "c:file:m2"]  # unsorted on purpose
+    cap = BinClusterService._COHESION_MAX_PAIRS
+    coh, exact = svc._node_cohesion("n1", members, "p:", "sk", 0.0, cap)
+    assert exact is True, exact
+    assert abs(coh - 2.0 / 3.0) < 1e-9, coh
+
+    # A cluster with no stored pair at all scores 0, not 1.0.
+    coh, _ = svc_for({})._node_cohesion("n2", members, "p:", "sk", 0.0, cap)
+    assert coh == 0.0, coh
+
+    # Above the cap the estimate is sampled, and the read cost stops growing
+    # with n: exactly _COHESION_MAX_PAIRS pairs, however big the cluster is.
+    n = 400
+    assert n * (n - 1) // 2 > BinClusterService._COHESION_MAX_PAIRS
+    md5s = [f"m{i:04d}" for i in range(n)]
+    # Every pair stored at 0.25 -> any unbiased sample must return 0.25.
+    scores = {
+        f"p:{a}::{b}": 0.25 for i, a in enumerate(md5s) for b in md5s[i + 1 :]
+    }
+    big = svc_for(scores)
+    members = [f"c:file:{m}" for m in md5s]
+    coh, exact = big._node_cohesion("n3", members, "p:", "sk", 0.0, cap)
+    assert exact is False, exact
+    assert abs(coh - 0.25) < 1e-9, coh
+    reads = BinClusterService._COHESION_MAX_PAIRS
+    assert big.r.calls == -(-reads // 1000), big.r.calls
+
+    # Seeded on the label, so the same cluster reports the same number twice
+    # instead of jittering between runs.
+    again, _ = svc_for(scores)._node_cohesion("n3", members, "p:", "sk", 0.0, cap)
+    assert again == coh, (again, coh)
+
+    print("incremental cohesion demo OK")
+
+
+if __name__ == "__main__":
+    _demo()

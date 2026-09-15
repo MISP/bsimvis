@@ -561,7 +561,7 @@ window.applyClusterFilter = (uuid, isBinary = false) => {
     }
 };
 
-window.showClusterCardTooltip = function(event, uuid, name, size, stability, cohesion, avg_features, clusterType = 'function') {
+window.showClusterCardTooltip = function(event, uuid, name, size, stability, cohesion, avg_features, clusterType = 'function', axis = null) {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
     let adjustedEvent = event;
     if (targetWindow !== window) {
@@ -576,8 +576,8 @@ window.showClusterCardTooltip = function(event, uuid, name, size, stability, coh
         }
     }
     
-    if (clusterType === 'file' && typeof targetWindow.showBinClusterTableTooltip === 'function') {
-        targetWindow.showBinClusterTableTooltip(adjustedEvent, uuid, name, size, stability, cohesion, avg_features, null);
+    if ((clusterType === 'file' || clusterType === 'container') && typeof targetWindow.showBinClusterTableTooltip === 'function') {
+        targetWindow.showBinClusterTableTooltip(adjustedEvent, uuid, name, size, stability, cohesion, avg_features, null, clusterType, axis);
     } else if (typeof targetWindow.showClusterTableTooltip === 'function') {
         targetWindow.showClusterTableTooltip(adjustedEvent, uuid, name, size, stability, cohesion, avg_features, null, clusterType);
     }
@@ -653,42 +653,58 @@ window.moveClusterCardTooltip = function(e) {
     }
 };
 
-window.renderClusterCards = (clusters, isBinary = false) => {
+window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null) => {
     if (!clusters || clusters.length === 0) return '';
 
     // No client-side cohesion re-filter here: the server already applied
-    // min_cohesion when building this list. A second, independently-defaulted
-    // threshold (UIParams.cohesionThreshold, 0.95) silently dropped clusters
-    // the caller had already asked the API to include.
-    const sorted = [...clusters].sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
-    
+    // min_cohesion when building this list.
+    let pool = [...clusters];
+    // For binary clusters, filter by selected axes if provided
+    if (isBinary && visibleAxes && visibleAxes.size > 0) {
+        pool = pool.filter(c => visibleAxes.has(c.axis || 'overall'));
+        if (!pool.length) return '';
+    }
+    const sorted = pool.sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
+
     const renderCard = (c, isHidden = false) => {
         const name = c.cluster_name || `Cluster ${c.cluster_id}`;
         const score = (c.cohesion_score || 0).toFixed(2);
         const uuid = c.cluster_uuid;
         const hue = Math.max(0, Math.min(120, (c.cohesion_score || 0) * 120));
         const color = `hsl(${hue}, var(--color-s-high), var(--color-l-high))`;
-        
-        let displayName = name;
-        if (isBinary) {
-            let extra = '';
-            if (c.yara_distribution && c.yara_distribution.length > 0) {
-                extra = `${c.yara_distribution[0].value} (${c.yara_distribution[0].percent}%)`;
-            } else if (c.avtype_distribution && c.avtype_distribution.length > 0) {
-                extra = `${c.avtype_distribution[0].value} (${c.avtype_distribution[0].percent}%)`;
-            }
-            if (extra) {
-                displayName = `${extra}`;
-            }
-        }
-        
-        const maxWidth = isBinary ? '160px' : '80px';
         const cardClass = isHidden ? 'tag-card cluster-card cluster-hidden' : 'tag-card cluster-card';
         const clusterType = isBinary ? 'file' : 'function';
 
+        if (isBinary) {
+            // Show axis icon + member count; name lives in tooltip
+            const axis = c.axis || 'overall';
+            const axisKey = axis === 'overall' ? 'score' : `score_${axis}`;
+            const types = window.BinSimScoreTypes || {};
+            const axisIcon = (types[axisKey] || {}).icon || 'fa-solid fa-layer-group';
+            const axisColor = (types[axisKey] || {}).color || color;
+            // Cohesion 0→1 drives color strength: faded = uncertain, vivid = tight cluster
+            const coh = Math.max(0, Math.min(1, c.cohesion_score || 0));
+            const borderAlpha = Math.round(10 + coh * 40);   // 10%→50%
+            const bgAlpha     = Math.round(3  + coh * 17);   // 3%→20%
+            const textOpacity = (0.35 + coh * 0.65).toFixed(2); // 0.35→1.0
+            return `
+            <span class="${cardClass}"
+                  onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))}, ${escapeAttr(jsString(c.axis))})"
+                  onmouseleave="hideClusterCardTooltip(event)"
+                  onmousemove="moveClusterCardTooltip(event)"
+                  onclick="applyClusterFilter(${escapeAttr(jsString(uuid))}, ${isBinary})"
+                  style="border-color:${tagAlpha(axisColor, borderAlpha)}; color:${axisColor}; background:${tagAlpha(axisColor, bgAlpha)}; opacity:${textOpacity}; align-items:center; gap:4px; padding:2px 6px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;" title="${escapeAttr(name)} (cohesion: ${coh.toFixed(2)})">
+                <i class="${escapeHtml(axisIcon)}" style="font-size:0.6rem;"></i>
+                <span style="font-family:monospace; font-size:0.65rem;">${Number(c.member_count || 0)}</span>
+            </span>`;
+        }
+
+        let displayName = name;
+        const maxWidth = '80px';
+
         return `
         <span class="${cardClass}"
-              onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))})"
+              onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))}, ${escapeAttr(jsString(c.axis))})"
               onmouseleave="hideClusterCardTooltip(event)"
               onmousemove="moveClusterCardTooltip(event)"
               onclick="applyClusterFilter(${escapeAttr(jsString(uuid))}, ${isBinary})"
@@ -702,6 +718,28 @@ window.renderClusterCards = (clusters, isBinary = false) => {
             <span style="opacity:0.8; font-family:monospace; font-size:0.65rem;">${Number(c.member_count || 0)}</span>
         </span>`;
     };
+
+    if (isBinary) {
+        // Cap at 2 visible badges; remaining in hover overflow box
+        const BINARY_VISIBLE = 2;
+        const visible = sorted.slice(0, BINARY_VISIBLE);
+        const hidden  = sorted.slice(BINARY_VISIBLE);
+        const hiddenHtml = hidden.map(c => renderCard(c, false)).join('');
+        const overflowBox = hidden.length ? `
+            <div class="cluster-overflow-box">
+                <div style="font-size:0.6rem; color:var(--subtle); margin-bottom:4px; text-transform:uppercase; letter-spacing:1px; padding:0 4px;">More clusters</div>
+                ${hiddenHtml}
+            </div>` : '';
+        const moreHtml = hidden.length ? `
+            <span class="analysis-tag-badge cluster-card-more"
+                  style="cursor:help; margin:2px; font-size:0.65rem; padding:2px 6px;">
+                +${hidden.length}
+            </span>` : '';
+        const visibleHtml = visible.map(c => renderCard(c, false)).join('');
+        return `<div class="cluster-cards-container" style="position:relative; display:inline-flex; align-items:center; padding:6px; margin:-6px; cursor:default;">
+            ${visibleHtml}${moreHtml}${overflowBox}
+        </div>`;
+    }
 
     const hasMore = sorted.length > 1;
     const moreHtml = hasMore ? `

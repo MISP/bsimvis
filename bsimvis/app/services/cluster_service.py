@@ -2437,8 +2437,6 @@ class ClusterService:
                 f"Cleaning up clustering data for {total_clusters} clusters (including noise)...",
             )
 
-        from bsimvis.app.services.index_service import _unindex_tag, _unindex_num
-
         logging.info(f"[*] Updating similarity index...")
 
         # 0. Clear similarity-level cluster indexes first
@@ -2452,21 +2450,23 @@ class ClusterService:
 
             members = r.smembers(members_key)
             if members:
-                pipe = r.pipeline(transaction=False)
-                for j, mid_raw in enumerate(members):
-                    mid = mid_raw.decode() if isinstance(mid_raw, bytes) else mid_raw
-
-                    _unindex_tag(pipe, collection, "func", "cluster_id", cid, mid)
+                members = [
+                    mid.decode() if isinstance(mid, bytes) else mid for mid in members
+                ]
+                bucket = f"{collection}:idx:func:cluster_id:{str(cid).lower()}"
+                for start in range(0, len(members), 1000):
+                    chunk = members[start : start + 1000]
+                    pipe = r.pipeline(transaction=False)
+                    pipe.srem(bucket, *chunk)
                     if collection.startswith("global:pool:"):
-                        pipe.delete(f"{collection}:{mid}:clusters")
-                        pipe.delete(f"{collection}:{mid}:cluster_scores")
+                        pipe.delete(*[f"{collection}:{mid}:clusters" for mid in chunk])
+                        pipe.delete(
+                            *[f"{collection}:{mid}:cluster_scores" for mid in chunk]
+                        )
                     else:
-                        pipe.delete(f"{mid}:clusters")
-                        pipe.delete(f"{mid}:cluster_scores")
-
-                    if j % 500 == 0:
-                        pipe.execute()
-                pipe.execute()
+                        pipe.delete(*[f"{mid}:clusters" for mid in chunk])
+                        pipe.delete(*[f"{mid}:cluster_scores" for mid in chunk])
+                    pipe.execute()
 
             if cid != "noise":
                 r.delete(f"{collection}:cluster:{algo}:{cid}:members")
@@ -2477,9 +2477,8 @@ class ClusterService:
                 pct = int((i / total_clusters) * 100)
                 job_service.update_progress(job_id, pct)
 
-        # Clear name/uuid index buckets. These are shared per-cluster (not
-        # per-member), so the per-member _unindex_tag loop above never
-        # touches them -- left stale otherwise, a rebuilt cluster's old
+        # Clear name/uuid index buckets. These are shared per-cluster, so the
+        # per-member cluster-id removal above never touches them. Left stale,
         # cluster_uuid bucket keeps "matching" functions that no longer
         # carry that cluster in their live cluster_scores, which is why
         # min_cohesion filtering on /functions silently drops it (mirrors

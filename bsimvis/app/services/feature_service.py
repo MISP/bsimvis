@@ -228,33 +228,35 @@ class FeatureService:
             f"[*] Clearing features for {len(function_ids)} functions in {collection}..."
         )
         affected_features = set()
-        for fid in function_ids:
-            meta_key = f"{fid}:vec:meta"
-            raw_meta = r.get(meta_key)
-            if raw_meta:
-                raw_meta = json.loads(raw_meta)
-                if isinstance(raw_meta, list) and len(raw_meta) == 1:
-                    raw_meta = raw_meta[0]
-
-            if not raw_meta:
-                continue
+        for start in range(0, len(function_ids), 100):
+            fids = function_ids[start : start + 100]
+            reader = r.pipeline(transaction=False)
+            for fid in fids:
+                reader.get(f"{fid}:vec:meta")
 
             pipe = r.pipeline(transaction=False)
-            for feat in raw_meta:
-                f_hash = feat.get("hash")
-                tf = feat.get("tf", 1)
-                if not f_hash:
+            for fid, raw_meta in zip(fids, reader.execute()):
+                if raw_meta:
+                    raw_meta = json.loads(raw_meta)
+                    if isinstance(raw_meta, list) and len(raw_meta) == 1:
+                        raw_meta = raw_meta[0]
+
+                if not raw_meta:
                     continue
 
-                affected_features.add(f_hash)
-                # Remove from inverted index and subtract from global rank
-                pipe.zrem(f"{collection}:feature:{f_hash}:functions", fid)
-                pipe.zincrby(f"{collection}:features:by_tf", -float(tf), f_hash)
-                # Remove from feature details HASH
-                pipe.hdel(f"{collection}:feature:{f_hash}:meta", fid)
+                for feat in raw_meta:
+                    f_hash = feat.get("hash")
+                    tf = feat.get("tf", 1)
+                    if not f_hash:
+                        continue
 
-            pipe.delete(f"{fid}:vec:norm")
-            pipe.srem(f"{collection}:indexed:functions", fid)
+                    affected_features.add(f_hash)
+                    pipe.zrem(f"{collection}:feature:{f_hash}:functions", fid)
+                    pipe.zincrby(f"{collection}:features:by_tf", -float(tf), f_hash)
+                    pipe.hdel(f"{collection}:feature:{f_hash}:meta", fid)
+
+                pipe.delete(f"{fid}:vec:norm")
+                pipe.srem(f"{collection}:indexed:functions", fid)
             pipe.execute()
 
         # Re-index remaining occurrences for affected features

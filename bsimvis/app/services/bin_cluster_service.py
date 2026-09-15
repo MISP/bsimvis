@@ -1976,19 +1976,17 @@ class BinClusterService:
                 members_key = f"{collection}:bin_cluster:{algo_ns}:{cid}:members"
                 members = r.smembers(members_key)
                 if members:
-                    pipe = r.pipeline(transaction=False)
-                    for j, mid_raw in enumerate(members):
-                        mid = (
-                            mid_raw.decode() if isinstance(mid_raw, bytes) else mid_raw
-                        )
-                        _unindex_tag(
-                            pipe, collection, "file", "bin_cluster_id", cid, mid
-                        )
-                        pipe.delete(f"{mid}:bin_clusters:{algo_ns}")
-
-                        if j % 500 == 0:
-                            pipe.execute()
-                    pipe.execute()
+                    members = [
+                        mid.decode() if isinstance(mid, bytes) else mid
+                        for mid in members
+                    ]
+                    bucket = f"{collection}:idx:file:bin_cluster_id:{str(cid).lower()}"
+                    for start in range(0, len(members), 1000):
+                        chunk = members[start : start + 1000]
+                        pipe = r.pipeline(transaction=False)
+                        pipe.srem(bucket, *chunk)
+                        pipe.delete(*[f"{mid}:bin_clusters:{algo_ns}" for mid in chunk])
+                        pipe.execute()
 
                 r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:members")
                 r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:direct_members")

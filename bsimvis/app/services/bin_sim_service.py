@@ -793,24 +793,28 @@ class BinSimService:
                     reader.get(sid)
                 raw_docs = reader.execute()
 
-                meta_cache = {}
-
-                def _meta(m):
-                    if m not in meta_cache:
-                        raw = r.get(f"{collection}:file:{m}:meta")
-                        try:
-                            meta_cache[m] = json.loads(raw) if raw else {}
-                        except (ValueError, TypeError):
-                            meta_cache[m] = {}
-                    return meta_cache[m]
-
-                pipe = r.pipeline(transaction=False)
-                for sid, raw in zip(sids, raw_docs):
+                docs = []
+                md5s = set()
+                for raw in raw_docs:
                     try:
                         doc = json.loads(raw) if raw else {}
                     except (ValueError, TypeError):
                         doc = {}
+                    docs.append(doc)
+                    md5s.update(m for m in (doc.get("md5_a"), doc.get("md5_b")) if m)
 
+                meta_reader = r.pipeline(transaction=False)
+                for value in md5s:
+                    meta_reader.get(f"{collection}:file:{value}:meta")
+                meta_cache = {}
+                for value, raw in zip(md5s, meta_reader.execute()):
+                    try:
+                        meta_cache[value] = json.loads(raw) if raw else {}
+                    except (ValueError, TypeError):
+                        meta_cache[value] = {}
+
+                pipe = r.pipeline(transaction=False)
+                for sid, doc in zip(sids, docs):
                     pipe.delete(sid)
                     pipe.zrem(f"{collection}:bin_sim:score:{algo}", sid)
                     pipe.zrem(f"{collection}:bin_sim:score_code:{algo}", sid)
@@ -828,7 +832,12 @@ class BinSimService:
                         pipe.srem(f"{collection}:bin_sim:involves:{other_md5}", sid)
                     if doc:
                         _unindex_bin_sim_pair(
-                            pipe, collection, sid, doc, _meta(m_a), _meta(m_b)
+                            pipe,
+                            collection,
+                            sid,
+                            doc,
+                            meta_cache.get(m_a, {}),
+                            meta_cache.get(m_b, {}),
                         )
 
                 pipe.delete(involves_key)

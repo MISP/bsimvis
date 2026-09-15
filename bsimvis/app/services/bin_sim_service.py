@@ -268,6 +268,119 @@ class BinSimService:
             maximum = address if maximum is None else max(maximum, address)
         return maximum
 
+    def on_demand_pair_sid(
+        self, collection, md5_a, md5_b, algo, coll_b=None, pool_id=None
+    ):
+        if not pool_id:
+            md5_a, md5_b = sorted((md5_a, md5_b))
+            return f"{collection}:bin_sim:{algo}:{md5_a}::{md5_b}"
+        endpoints = sorted(
+            (
+                (_origin_coll(collection), md5_a),
+                (_origin_coll(coll_b or collection), md5_b),
+            )
+        )
+        return (
+            f"global:pool:{pool_id}:bin_sim:{algo}:"
+            f"{endpoints[0][0]}:{endpoints[0][1]}::{endpoints[1][0]}:{endpoints[1][1]}"
+        )
+
+    def cached_pair_from_stored_sims(
+        self, collection, md5_a, md5_b, algo, coll_b=None, pool_id=None
+    ):
+        """Build one transient file diff from stored function-sim docs."""
+        coll_a = _origin_coll(collection) if pool_id else collection
+        coll_b = _origin_coll(coll_b or collection) if pool_id else collection
+        if not pool_id and md5_a > md5_b:
+            md5_a, md5_b = md5_b, md5_a
+
+        def decode(raw):
+            if not raw:
+                return {}
+            value = json.loads(raw) if not isinstance(raw, dict) else raw
+            return json.loads(value) if isinstance(value, str) else value
+
+        def file_fids(coll, md5):
+            return {
+                (fid.decode() if isinstance(fid, bytes) else str(fid)).removesuffix(
+                    ":meta"
+                )
+                for fid in self.r.smembers(f"{coll}:idx:file:functions:{md5}")
+            }
+
+        fids_a, fids_b = file_fids(coll_a, md5_a), file_fids(coll_b, md5_b)
+        fids = fids_a | fids_b
+        sim_prefix = (
+            f"global:pool:{pool_id}:sim:involves:file:"
+            if pool_id
+            else f"{collection}:sim:involves:file:"
+        )
+        involves_a = (
+            f"{sim_prefix}{coll_a}:{md5_a}" if pool_id else f"{sim_prefix}{md5_a}"
+        )
+        involves_b = (
+            f"{sim_prefix}{coll_b}:{md5_b}" if pool_id else f"{sim_prefix}{md5_b}"
+        )
+        sim_keys = self.r.sinter(involves_a, involves_b)
+        pipe = self.r.pipeline(transaction=False)
+        for key in sim_keys:
+            pipe.get(key)
+        for fid in fids:
+            pipe.get(f"{fid}:meta")
+        pipe.get(f"{coll_a}:file:{md5_a}:meta")
+        pipe.get(f"{coll_b}:file:{md5_b}:meta")
+        results = pipe.execute()
+
+        sim_count = len(sim_keys)
+        sim_docs = (decode(raw) for raw in results[:sim_count])
+        meta = {fid: decode(raw) for fid, raw in zip(fids, results[sim_count:-2])}
+        raw_file_meta_a, raw_file_meta_b = results[-2:]
+        if not raw_file_meta_a or not raw_file_meta_b:
+            return None
+        file_meta_a, file_meta_b = map(decode, (raw_file_meta_a, raw_file_meta_b))
+        edges = []
+        for doc in sim_docs:
+            fid1, fid2 = doc.get("id1"), doc.get("id2")
+            if pool_id:
+                endpoint_a = (doc.get("coll_1"), doc.get("md5_1"))
+                endpoint_b = (doc.get("coll_2"), doc.get("md5_2"))
+                if endpoint_a == (coll_a, md5_a) and endpoint_b == (coll_b, md5_b):
+                    edges.append((fid1, fid2, doc.get("score", 0.0)))
+                elif endpoint_b == (coll_a, md5_a) and endpoint_a == (coll_b, md5_b):
+                    edges.append((fid2, fid1, doc.get("score", 0.0)))
+            elif fid1 in fids_a and fid2 in fids_b:
+                edges.append((fid1, fid2, doc.get("score", 0.0)))
+            elif fid1 in fids_b and fid2 in fids_a:
+                edges.append((fid2, fid1, doc.get("score", 0.0)))
+
+        fid_tags = {
+            fid: tags
+            for fid, value in meta.items()
+            if (tags := merge_tag_fields(value))
+        }
+        tag_scope = f"global:pool:{pool_id}" if pool_id else collection
+        common = score_pair(
+            edges,
+            fids_a,
+            fids_b,
+            lambda fid: float(meta.get(fid, {}).get("bsim_features_count", 1.0)),
+            fid_tags,
+            load_tag_meta(self.r, tag_scope) if fid_tags else {},
+        )
+        return {
+            "md5_a": md5_a,
+            "md5_b": md5_b,
+            "algo": algo,
+            "architecture_a": file_meta_a.get("language_id", ""),
+            "architecture_b": file_meta_b.get("language_id", ""),
+            "functions_count_a": len(fids_a),
+            "functions_count_b": len(fids_b),
+            "computed_at": int(time.time() * 1000),
+            "tags_rev": read_tags_rev(self.r, tag_scope),
+            **({"coll_a": coll_a, "coll_b": coll_b} if pool_id else {}),
+            **common,
+        }
+
     def build_bin_sim(
         self,
         collection,

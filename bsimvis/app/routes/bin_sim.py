@@ -580,6 +580,10 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     req_coll_a, req_md5_a, req_coll_b, req_md5_b = coll_a, md5_a, coll_b, md5_b
 
     sid = bin_sim_service.find_pair_sid(collection, md5_a, md5_b, coll_b, pool_id, algo)
+    if not sid and pool_id:
+        sid = bin_sim_service.on_demand_pair_sid(
+            collection, md5_a, md5_b, algo, coll_b, pool_id
+        )
     if not sid:
         return {
             "status": "not_found",
@@ -617,6 +621,16 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     if diff_data is None:
         data_raw = r.get(sid)
 
+        if not data_raw:
+            data_raw = r.get(f"{sid}:cache")
+        if not data_raw:
+            # A file diff is a projection of stored function similarities, so it
+            # can be answered without having run the bin-sim batch first.
+            data_raw = bin_sim_service.cached_pair_from_stored_sims(
+                collection, md5_a, md5_b, algo, coll_b, pool_id
+            )
+            if data_raw:
+                r.setex(f"{sid}:cache", 3600, json.dumps(data_raw))
         if not data_raw:
             return {
                 "status": "not_found",

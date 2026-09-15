@@ -2,6 +2,7 @@ import logging
 import json
 import time
 import uuid
+import heapq
 from collections import Counter
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
@@ -32,6 +33,50 @@ class BinClusterService:
     _COHESION_MIN_PAIRS = 256
     _COHESION_BUDGET = 200_000
 
+    @staticmethod
+    def _snn_distances(edge_set, min_samples):
+        """Return distances after weighting raw similarity by closed SNN overlap."""
+        k = max(1, int(min_samples))
+        nearest = [[] for _ in range(len(edge_set.idx_to_id))]
+        for u, v, dist in zip(edge_set.src, edge_set.dst, edge_set.dist):
+            sim = 1.0 - float(dist)
+            for node, neighbor in ((int(u), int(v)), (int(v), int(u))):
+                heap = nearest[node]
+                candidate = (sim, neighbor)
+                if len(heap) < k:
+                    heapq.heappush(heap, candidate)
+                elif candidate > heap[0]:
+                    heapq.heapreplace(heap, candidate)
+
+        neighborhoods = [
+            {node, *(neighbor for _, neighbor in heap)}
+            for node, heap in enumerate(nearest)
+        ]
+        snn_dist = edge_set.dist.copy()
+        for i, (u, v, dist) in enumerate(
+            zip(edge_set.src, edge_set.dst, edge_set.dist)
+        ):
+            left, right = neighborhoods[int(u)], neighborhoods[int(v)]
+            overlap = len(left & right) / len(left | right)
+            snn_dist[i] = 1.0 - (1.0 - float(dist)) * overlap
+        return snn_dist
+
+    @staticmethod
+    def _raw_mst(mst, edge_set):
+        """Restore raw similarities for persisted incremental MST edges."""
+        raw_sims = {
+            (min(int(u), int(v)), max(int(u), int(v))): 1.0 - float(dist)
+            for u, v, dist in zip(edge_set.src, edge_set.dst, edge_set.dist)
+        }
+        return [(u, v, raw_sims[(min(u, v), max(u, v))]) for u, v, _ in mst]
+
+    @staticmethod
+    def _hierarchical_algo_ns(algo, axis, node_type, use_snn):
+        algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
+        if use_snn:
+            algo_ns = f"{algo_ns}:snn"
+        return f"{algo_ns}:container" if node_type == "container" else algo_ns
+
     def run_clustering(
         self,
         collection,
@@ -51,7 +96,8 @@ class BinClusterService:
 
         engine = config_service.get("clustering.bin_engine", "threshold_uf")
 
-        if engine == "hierarchical_uf":
+        if engine in ("hierarchical_uf", "hierarchical_snn"):
+            use_snn = engine == "hierarchical_snn"
             if min_cluster_size is None:
                 min_cluster_size = config_service.get("clustering.min_cluster_size", 2)
             if min_sim is None:
@@ -72,6 +118,7 @@ class BinClusterService:
                     job_service,
                     job_id,
                     axis=axis,
+                    use_snn=use_snn,
                 )
                 if result is not None:
                     return result
@@ -84,6 +131,7 @@ class BinClusterService:
                 job_id=job_id,
                 min_cohesion=min_cohesion,
                 axis=axis,
+                use_snn=use_snn,
             )
 
         if engine == "threshold_uf":
@@ -157,7 +205,11 @@ class BinClusterService:
         r = self.r
         algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
         sim_prefix = f"{collection}:bin_sim:{algo}:"
-        sim_score_key = f"{collection}:bin_sim:score_{axis}:{algo}" if axis != "overall" else f"{collection}:bin_sim:score:{algo}"
+        sim_score_key = (
+            f"{collection}:bin_sim:score_{axis}:{algo}"
+            if axis != "overall"
+            else f"{collection}:bin_sim:score:{algo}"
+        )
         uuid_key = f"{collection}:bin_cluster:{algo_ns}:uf:uuid"
 
         def members_key(root):
@@ -170,7 +222,9 @@ class BinClusterService:
         # from file-space into container-space. Each side still clusters
         # normally against its own kind (container-rollup pairs keep forming
         # container clusters); they just never merge into one cluster.
-        uf_file = RedisUF(r, f"{collection}:bin_cluster:{algo_ns}:uf:parent", members_key)
+        uf_file = RedisUF(
+            r, f"{collection}:bin_cluster:{algo_ns}:uf:parent", members_key
+        )
         uf_container = RedisUF(
             r, f"{collection}:bin_cluster:{algo_ns}:container:uf:parent", members_key
         )
@@ -298,7 +352,11 @@ class BinClusterService:
             min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
 
         r = self.r
-        sim_score_key = f"{collection}:bin_sim:score_{axis}:{algo}" if axis != "overall" else f"{collection}:bin_sim:score:{algo}"
+        sim_score_key = (
+            f"{collection}:bin_sim:score_{axis}:{algo}"
+            if axis != "overall"
+            else f"{collection}:bin_sim:score:{algo}"
+        )
         algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
         prefix = f"{collection}:bin_sim:{algo}:"
         uuid_key = f"{collection}:bin_cluster:{algo_ns}:uf:uuid"
@@ -565,7 +623,9 @@ class BinClusterService:
                 "created_at": int(time.time() * 1000),
             }
 
-            pipe.set(f"{collection}:bin_cluster:{algo_ns}:{label}:meta", json.dumps(meta))
+            pipe.set(
+                f"{collection}:bin_cluster:{algo_ns}:{label}:meta", json.dumps(meta)
+            )
 
             # Indexes
             bucket_key = (
@@ -703,6 +763,7 @@ class BinClusterService:
         job_service=None,
         job_id=None,
         axis="overall",
+        use_snn=False,
     ):
         import pandas as pd
 
@@ -719,18 +780,26 @@ class BinClusterService:
         from bsimvis.app.services.cluster_threshold import build_single_linkage_tree
 
         r = self.r
-        sim_score_key = f"{collection}:bin_sim:score_{axis}:{algo}" if axis != "overall" else f"{collection}:bin_sim:score:{algo}"
+        sim_score_key = (
+            f"{collection}:bin_sim:score_{axis}:{algo}"
+            if axis != "overall"
+            else f"{collection}:bin_sim:score:{algo}"
+        )
         prefix = f"{collection}:bin_sim:{algo}:"
         file_prefix = f"{collection}:file:"
         containers = set(lineage_service.container_md5s(collection, r))
+        min_samples = config_service.get("clustering.min_samples", 5)
         fingerprint = hier_fingerprint(
-            min_sim, 0, min_cluster_size, min_cohesion, False
+            min_sim,
+            min_samples if use_snn else 0,
+            min_cluster_size,
+            min_cohesion,
+            False,
         )
         results = []
 
         for node_type in ("file", "container"):
-            algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
-            algo_ns = f"{algo_ns}:container" if node_type == "container" else algo_ns
+            algo_ns = self._hierarchical_algo_ns(algo, axis, node_type, use_snn)
             base = f"{collection}:bin_cluster:hier:{algo_ns}"
             state = load_hier_state(r, base)
             if state is None:
@@ -790,8 +859,13 @@ class BinClusterService:
 
             old_mst = {(min(u, v), max(u, v)) for u, v, _ in state["mst"]}
             edge_set = edgeset_from(state, new_edges)
-            tree_rows, _, num_nodes, mst = build_single_linkage_tree(edge_set)
-            state["mst"] = mst
+            tree_edge_set = (
+                edge_set._replace(dist=self._snn_distances(edge_set, min_samples))
+                if use_snn
+                else edge_set
+            )
+            tree_rows, _, num_nodes, mst = build_single_linkage_tree(tree_edge_set)
+            state["mst"] = self._raw_mst(mst, edge_set) if use_snn else mst
             tree_rows, root_id = stabilise(tree_rows, mst, state)
             tree_df = pd.DataFrame(tree_rows)
             leaf_to_clusters, _ = hierarchical_membership(
@@ -875,6 +949,7 @@ class BinClusterService:
                     dirty,
                     affected_fids,
                     retired,
+                    algo_ns,
                 )
             )
 
@@ -895,10 +970,11 @@ class BinClusterService:
             dirty,
             affected_fids,
             retired,
+            algo_ns,
         ) in results:
             persisted = self._persist_hierarchical_binary_clusters(
                 collection,
-                algo,
+                algo_ns,
                 edge_set,
                 edge_set.id_to_idx,
                 edge_set.idx_to_id,
@@ -933,6 +1009,7 @@ class BinClusterService:
         job_id=None,
         min_cohesion=None,
         axis="overall",
+        use_snn=False,
     ):
         """Full single-linkage hierarchy via Kruskal + Union-Find over binary
         similarity pairs (cluster_threshold.build_single_linkage_tree) --
@@ -959,9 +1036,16 @@ class BinClusterService:
             min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
 
         r = self.r
-        sim_score_key = f"{collection}:bin_sim:score_{axis}:{algo}" if axis != "overall" else f"{collection}:bin_sim:score:{algo}"
+        sim_score_key = (
+            f"{collection}:bin_sim:score_{axis}:{algo}"
+            if axis != "overall"
+            else f"{collection}:bin_sim:score:{algo}"
+        )
         prefix = f"{collection}:bin_sim:{algo}:"
-        msg = f"[hierarchical_uf] Fetching binary similarity pairs from {sim_score_key}..."
+        engine_name = "hierarchical_snn" if use_snn else "hierarchical_uf"
+        msg = (
+            f"[{engine_name}] Fetching binary similarity pairs from {sim_score_key}..."
+        )
         logging.info(msg)
         if job_service and job_id:
             job_service.add_log(job_id, msg)
@@ -995,34 +1079,47 @@ class BinClusterService:
                 continue
 
             num_nodes = len(id_to_idx)
-            msg = f"[hierarchical_uf/{node_type}] {num_nodes} binaries, {edge_set.src.size} edges. Building single-linkage tree..."
+            msg = f"[{engine_name}/{node_type}] {num_nodes} binaries, {edge_set.src.size} edges. Building single-linkage tree..."
             logging.info(msg)
             if job_service and job_id:
                 job_service.add_log(job_id, msg)
 
             start_fit = time.time()
-            tree_rows, global_root_id, _, mst = build_single_linkage_tree(edge_set)
-            
-            algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
-            algo_ns = f"{algo_ns}:container" if node_type == "container" else algo_ns
+            tree_edge_set = (
+                edge_set._replace(
+                    dist=self._snn_distances(
+                        edge_set, config_service.get("clustering.min_samples", 5)
+                    )
+                )
+                if use_snn
+                else edge_set
+            )
+            tree_rows, global_root_id, _, mst = build_single_linkage_tree(tree_edge_set)
+
+            algo_ns = self._hierarchical_algo_ns(algo, axis, node_type, use_snn)
             hier_base = f"{collection}:bin_cluster:hier:{algo_ns}"
             hier_state = {
                 "idx": dict(id_to_idx),
                 "next_idx": len(id_to_idx),
-                "mst": mst,
+                "mst": self._raw_mst(mst, edge_set) if use_snn else mst,
                 "node_ids": {},
                 "next_node_id": 1 << 30,
                 "fingerprint": hier_fingerprint(
-                    min_sim, 0, min_cluster_size, min_cohesion, False
+                    min_sim,
+                    config_service.get("clustering.min_samples", 5) if use_snn else 0,
+                    min_cluster_size,
+                    min_cohesion,
+                    False,
                 ),
                 "root_id": None,
             }
             tree_rows, global_root_id = stabilise(tree_rows, mst, hier_state)
-            
+
             import pandas as pd
+
             tree_df = pd.DataFrame(tree_rows)
             fit_time = time.time() - start_fit
-            msg = f"[hierarchical_uf/{node_type}] tree built in {fit_time:.2f}s, {len(tree_df)} rows."
+            msg = f"[{engine_name}/{node_type}] tree built in {fit_time:.2f}s, {len(tree_df)} rows."
             logging.info(msg)
             if job_service and job_id:
                 job_service.add_log(job_id, msg)
@@ -1093,7 +1190,11 @@ class BinClusterService:
             return False
 
         r = self.r
-        sim_score_key = f"{collection}:bin_sim:score_{axis}:{algo}" if axis != "overall" else f"{collection}:bin_sim:score:{algo}"
+        sim_score_key = (
+            f"{collection}:bin_sim:score_{axis}:{algo}"
+            if axis != "overall"
+            else f"{collection}:bin_sim:score:{algo}"
+        )
         algo_ns_base = f"{algo}:{axis}" if axis != "overall" else algo
 
         # 1. Fetch all similarity pairs
@@ -1459,7 +1560,7 @@ class BinClusterService:
             algo = algo_ns.split(":")[0]
         if sim_score_key is None:
             sim_score_key = f"{collection}:bin_sim:score:{algo}"
-        
+
         label_key = (lambda label: f"c{label}") if node_type == "container" else str
 
         # 4. Extract Condensed Tree for UI
@@ -1926,7 +2027,12 @@ class BinClusterService:
         return True
 
     def clear_clusters(
-        self, collection, algo="unweighted_cosine", job_service=None, job_id=None, axis="overall"
+        self,
+        collection,
+        algo="unweighted_cosine",
+        job_service=None,
+        job_id=None,
+        axis="overall",
     ):
         """
         Clears all binary clustering data for a collection and algorithm --
@@ -1936,9 +2042,14 @@ class BinClusterService:
         r = self.r
 
         from bsimvis.app.services.cluster_common import clear_hier_state
-        from bsimvis.app.services.index_service import _unindex_tag
+        from bsimvis.app.services.config_service import config_service
 
         base_algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
+        if (
+            config_service.get("clustering.bin_engine", "threshold_uf")
+            == "hierarchical_snn"
+        ):
+            base_algo_ns = f"{base_algo_ns}:snn"
         for algo_ns in (base_algo_ns, f"{base_algo_ns}:container"):
             cluster_list_key = f"{collection}:bin_cluster:list:{algo_ns}"
             cids_raw = r.smembers(cluster_list_key)
@@ -1987,7 +2098,6 @@ class BinClusterService:
                         pipe.srem(bucket, *chunk)
                         pipe.delete(*[f"{mid}:bin_clusters:{algo_ns}" for mid in chunk])
                         pipe.execute()
-
                 r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:members")
                 r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:direct_members")
                 r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:meta")

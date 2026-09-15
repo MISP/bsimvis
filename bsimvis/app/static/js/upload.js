@@ -21,6 +21,7 @@ let selectedFiles = [];
 // 1.2 MB binary. yara/rulezet come from the yara_service module docstring.
 const ANALYSIS_MODULES = [
     { id: 'FunctionID', label: 'Function ID', hint: 'library tagging', cost: mb => 1 + 30 * mb },
+    { id: 'boilerplate', label: 'Boilerplate', hint: 'CRT and startup tags', cost: mb => 0 },
     { id: 'capa', label: 'Capa', hint: 'capability tags', cost: mb => 8 + 420 * mb },
     { id: 'yara', label: 'Yara', hint: 'vendored rules', cost: mb => 1 + 0.3 * mb },
     { id: 'rulezet', label: 'Rulezet', hint: 'mirrored rules', cost: mb => 1 + 0.5 * mb },

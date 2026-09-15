@@ -494,6 +494,7 @@ def _ingest_raw_binary(
     analysis_payload["skip_capa"] = "capa" not in enabled
     analysis_payload["skip_yara"] = "yara" not in enabled
     analysis_payload["skip_rulezet"] = "rulezet" not in enabled
+    analysis_payload["skip_boilerplate"] = "boilerplate" not in enabled
 
     extra_meta = {}
     if "file_metadata_extra" in request.args:

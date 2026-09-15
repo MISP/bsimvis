@@ -70,7 +70,7 @@
     # (doc/bench-fid-cost.md). List the ones every upload should run unless
     # overridden per-request via `enable`/`disable` (CLI: --enable/--disable;
     # API: repeatable `enable`/`disable` query params on /api/file/upload).
-    # Choices: "FunctionID", "capa", "yara", "rulezet".
+    # Choices: "FunctionID", "boilerplate", "capa", "yara", "rulezet".
     enabled = []
 
 [similarity]

@@ -80,7 +80,7 @@ ORIGIN_KIND_NAMESPACE = {"bundle": "malware"}
 # Mirrors bin_sim_tags.TAG_NAMESPACES' origin entries. `pkg:` is reserved for
 # SBOM-sourced facts: purl identifies a package, which is a different claim from
 # "these bytes are libc", so a detector never writes it.
-ORIGIN_NAMESPACES = ("fid", "bsim", "malware", "pkg", "original")
+ORIGIN_NAMESPACES = ("fid", "bsim", "boilerplate", "malware", "pkg", "original")
 
 # Kept only so `migrate_tag` can recognise the placeholder version in a legacy
 # `origin:bundle:mirai:unknown`. New ids omit a version they do not have --
@@ -149,6 +149,7 @@ VULN_NAMESPACES = ("cve", "ghsa", "pysec")
 TAG_AXES = {
     "fid": "origin",
     "bsim": "origin",
+    "boilerplate": "origin",
     "malware": "origin",
     "pkg": "origin",
     "original": "origin",

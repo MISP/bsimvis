@@ -14,6 +14,9 @@ from pyghidra.launcher import HeadlessPyGhidraLauncher
 import tomllib
 
 from bsimvis.app.services import tag_taxonomy
+from bsimvis.app.services.boilerplate_tag_service import (
+    boilerplate_tag_for_function_name,
+)
 
 GHIDRA_DECOMP_MAX_TIMEOUT = 10
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
@@ -663,6 +666,7 @@ class GhidraService:
             )
 
         skip_function_id = bool(options.get("skip_function_id"))
+        skip_boilerplate = bool(options.get("skip_boilerplate", True))
 
         # The hash is per-function identity we ship either way, so the service
         # is opened even when Function ID tagging is skipped -- hashing touches
@@ -745,6 +749,11 @@ class GhidraService:
             for ft in fid_tags:
                 if ft not in func_tags:
                     func_tags.append(ft)
+
+            if not skip_boilerplate:
+                boilerplate_tag = boilerplate_tag_for_function_name(func_name)
+                if boilerplate_tag:
+                    func_tags.append(boilerplate_tag)
 
             # Insert Capa tags based on function address
             addr_hex = hex(func.getEntryPoint().getOffset())

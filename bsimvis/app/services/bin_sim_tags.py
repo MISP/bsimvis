@@ -134,6 +134,7 @@ TAG_NAMESPACES = TAG_AXES
 ORIGIN_PRIORITY = {
     "fid": 100,
     "bsim": 90,
+    "boilerplate": 90,
     "pkg": 60,
     "malware": 50,
     "original": 0,
@@ -152,7 +153,7 @@ DEFAULT_ORIGIN_PRIORITY = 0
 # the library score silently halve the day BSim starts tagging alongside Function
 # ID. `malware:` is deliberately absent -- a bundle names the sample, which is
 # the code under analysis rather than a library it links against.
-LIBRARY_ORIGIN_PREFIXES = ("fid:", "bsim:", "pkg:", "origin:lib:", "origin:stdlib:")
+LIBRARY_ORIGIN_PREFIXES = ("fid:", "bsim:", "boilerplate:", "pkg:", "origin:lib:", "origin:stdlib:")
 
 
 def is_library_tag(tag_id, namespaces=LIBRARY_ORIGIN_PREFIXES):

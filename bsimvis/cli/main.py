@@ -526,18 +526,18 @@ def main():
     decomp_args.add_argument(
         "--enable",
         action="append",
-        choices=["FunctionID", "capa", "yara", "rulezet"],
+        choices=["FunctionID", "boilerplate", "capa", "yara", "rulezet"],
         metavar="MODULE",
         default=[],
         help="Enable an analysis module for this run (repeatable), on top of "
         "the server's [analysis_modules].enabled default: FunctionID "
-        "(library tagging), capa, yara (vendored rules), rulezet (mirrored "
+        "(library tagging), boilerplate (CRT/startup tags), capa, yara (vendored rules), rulezet (mirrored "
         "rules)",
     )
     decomp_args.add_argument(
         "--disable",
         action="append",
-        choices=["FunctionID", "capa", "yara", "rulezet"],
+        choices=["FunctionID", "boilerplate", "capa", "yara", "rulezet"],
         metavar="MODULE",
         default=[],
         help="Disable an analysis module for this run (repeatable), even if "

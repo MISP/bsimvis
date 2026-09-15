@@ -366,6 +366,12 @@ def process_target(target, args, config, batch_order) -> tuple[int, list]:
         try:
             t0 = time.time()
             options = vars(args).copy()
+            enabled_modules = set(
+                (config or {}).get("analysis_modules", {}).get("enabled", [])
+            )
+            enabled_modules.update(options.get("enable") or [])
+            enabled_modules.difference_update(options.get("disable") or [])
+            options["skip_boilerplate"] = "boilerplate" not in enabled_modules
             options["batch_order"] = batch_order
 
             pipeline_details = []
@@ -947,18 +953,18 @@ def cli_main():
     decomp_args.add_argument(
         "--enable",
         action="append",
-        choices=["FunctionID", "capa", "yara", "rulezet"],
+        choices=["FunctionID", "boilerplate", "capa", "yara", "rulezet"],
         metavar="MODULE",
         default=[],
         help="Enable an analysis module for this run (repeatable), on top of "
         "the server's [analysis_modules].enabled default: FunctionID "
-        "(library tagging), capa, yara (vendored rules), rulezet (mirrored "
+        "(library tagging), boilerplate (CRT/startup tags), capa, yara (vendored rules), rulezet (mirrored "
         "rules)",
     )
     decomp_args.add_argument(
         "--disable",
         action="append",
-        choices=["FunctionID", "capa", "yara", "rulezet"],
+        choices=["FunctionID", "boilerplate", "capa", "yara", "rulezet"],
         metavar="MODULE",
         default=[],
         help="Disable an analysis module for this run (repeatable), even if "

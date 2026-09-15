@@ -7,7 +7,11 @@ from flask import request
 from bsimvis.app.services import lineage_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.query_syntax import resolve_targets, union_buckets
-from bsimvis.app.services.cluster_utils import fetch_bin_cluster_meta, fetch_bin_cluster_meta_all_axes
+from bsimvis.app.services.cluster_utils import (
+    fetch_bin_cluster_meta,
+    fetch_bin_cluster_meta_all_axes,
+)
+from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.index_service import (
     query_ids,
     parse_timestamp,
@@ -170,12 +174,18 @@ def search_files():
             actual_col = doc_id.split(":")[0]
             md5 = doc_id.split(":")[-1]
             pipe.scard(f"{actual_col}:idx:file:functions:{md5}")
-            # One SMEMBERS per axis
             for axis in _AXES:
                 axis_algo_ns = f"{algo_p}:{axis}" if axis != "overall" else algo_p
                 if pool_id:
-                    pipe.smembers(f"pool:{pool_id}:file:{md5}:bin_clusters:{axis_algo_ns}")
+                    pipe.smembers(
+                        f"pool:{pool_id}:file:{md5}:bin_clusters:{axis_algo_ns}"
+                    )
                 else:
+                    if (
+                        config_service.get("clustering.bin_engine", "threshold_uf")
+                        == "hierarchical_snn"
+                    ):
+                        axis_algo_ns = f"{axis_algo_ns}:snn"
                     pipe.smembers(f"{doc_id}:bin_clusters:{axis_algo_ns}")
             # Whether this row can be expanded into a lineage subtree.
             pipe.smembers(f"{actual_col}:lineage:children:{md5}")
@@ -217,7 +227,6 @@ def search_files():
 
         # Second pass: fetch cluster metadata for all 4 axes
         cluster_meta_map = {}
-        from bsimvis.app.services.config_service import config_service
 
         min_cohesion = float(
             request.args.get(
@@ -242,7 +251,9 @@ def search_files():
             # Flatten to a list of uuids (axis is encoded in meta["axis"])
             for data, uuids_by_axis in zip(raw_files_data, uuids_per_file_by_axis):
                 data["bin_clusters"] = [
-                    u for uuids in uuids_by_axis.values() for u in uuids
+                    u
+                    for uuids in uuids_by_axis.values()
+                    for u in uuids
                     if u in cluster_meta_map
                 ]
 
@@ -563,9 +574,18 @@ def get_file_details(collection, file_md5):
         for axis in _AXES:
             axis_algo_ns = f"{algo_p}:{axis}" if axis != "overall" else algo_p
             if pool_id:
-                pipe.smembers(f"pool:{pool_id}:file:{file_md5}:bin_clusters:{axis_algo_ns}")
+                pipe.smembers(
+                    f"pool:{pool_id}:file:{file_md5}:bin_clusters:{axis_algo_ns}"
+                )
             else:
-                pipe.smembers(f"{collection}:file:{file_md5}:bin_clusters:{axis_algo_ns}")
+                if (
+                    config_service.get("clustering.bin_engine", "threshold_uf")
+                    == "hierarchical_snn"
+                ):
+                    axis_algo_ns = f"{axis_algo_ns}:snn"
+                pipe.smembers(
+                    f"{collection}:file:{file_md5}:bin_clusters:{axis_algo_ns}"
+                )
         pipe.smembers(f"{sub_collection}:lineage:children:{file_md5}")
         results = pipe.execute()
 
@@ -607,12 +627,10 @@ def get_file_details(collection, file_md5):
             pool_id=pool_id,
         )
         data["bin_clusters"] = {
-            axis: uuids
-            for axis, uuids in uuids_per_file_by_axis[0].items()
+            axis: uuids for axis, uuids in uuids_per_file_by_axis[0].items()
         }
 
         # 3. Compute inferred metadata (server-side)
-        from bsimvis.app.services.config_service import config_service
 
         min_cohesion = float(
             request.args.get(

@@ -262,14 +262,14 @@ class MetadataService:
             pass
 
             # 8. Track affected binary clusters for recalculation at the end
-            bin_clusters_key = f"{file_base_id}:bin_clusters:unweighted_cosine"
-            affected_clusters = [
-                cid.decode() if isinstance(cid, bytes) else str(cid)
-                for cid in r.smembers(bin_clusters_key)
-            ]
-            # A label only identifies a cluster within its node-type namespace.
             for algo in algos:
                 ns = bin_cluster_ns(algo, new_meta.get("is_container"))
+                base_algo_ns = ns.replace(":container", "")
+                bin_clusters_key = f"{file_base_id}:bin_clusters:{base_algo_ns}"
+                affected_clusters = [
+                    cid.decode() if isinstance(cid, bytes) else str(cid)
+                    for cid in r.smembers(bin_clusters_key)
+                ]
                 for cid in affected_clusters:
                     affected_clusters_to_recalculate.add((ns, cid))
 

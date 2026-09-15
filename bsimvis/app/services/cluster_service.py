@@ -3179,7 +3179,7 @@ class ClusterService:
             parts = file_id.split(":")
             if len(parts) >= 3:
                 md5 = parts[2]
-                clusters_key = f"pool:{pool_id}:file:{md5}:bin_clusters:unweighted_cosine"
+                clusters_key = f"pool:{pool_id}:file:{md5}:bin_clusters:{algo}"
                 if clusters:
                     cluster_uuids = [
                         label_to_uuid[c] for c in clusters if c in label_to_uuid

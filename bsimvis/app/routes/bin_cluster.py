@@ -157,7 +157,7 @@ def list_bin_clusters():
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
     axis = request.args.get("axis", "overall").strip().lower()
-    
+
     # Containers and files cluster in two separate graphs (a container holds
     # no code of its own, so it can never share a similarity edge with a
     # file) and persist under two separate key namespaces -- see
@@ -165,9 +165,14 @@ def list_bin_clusters():
     # picks which one this listing reads.
     node_type = request.args.get("node_type", "file").strip().lower()
     algo = f"{algo}:{axis}" if axis != "overall" else algo
-    if config_service.get("clustering.bin_engine", "threshold_uf") == "hierarchical_snn":
-        algo = f"{algo}:snn"
-    algo = f"{algo}:container" if node_type == "container" else algo
+    is_pool = collection.startswith("global:pool:")
+    if not is_pool:
+        if (
+            config_service.get("clustering.bin_engine", "threshold_uf")
+            == "hierarchical_snn"
+        ):
+            algo = f"{algo}:snn"
+        algo = f"{algo}:container" if node_type == "container" else algo
 
     # Filtering
     format_arg = request.args.get("format")
@@ -415,7 +420,9 @@ def list_bin_clusters():
                     parts = fid.split(":")
                     md5 = parts[-1]
                     if is_pool:
-                        c_pipe.smembers(f"pool:{pool_id}:file:{md5}:bin_clusters:{algo}")
+                        c_pipe.smembers(
+                            f"pool:{pool_id}:file:{md5}:bin_clusters:{algo}"
+                        )
                     else:
                         c_pipe.smembers(f"{fid}:bin_clusters:{algo}")
                 associated_clusters_raw = c_pipe.execute()
@@ -626,12 +633,15 @@ def get_bin_cluster_tree():
     axis = request.args.get("axis", "overall").strip().lower()
     node_type = request.args.get("node_type", "file").strip().lower()
     algo = f"{algo}:{axis}" if axis != "overall" else algo
-    if config_service.get("clustering.bin_engine", "threshold_uf") == "hierarchical_snn":
-        algo = f"{algo}:snn"
-    algo = f"{algo}:container" if node_type == "container" else algo
-
     pool_id = request.args.get("pool") or get_pool_id(collection)
     is_pool = pool_id is not None
+    if not is_pool:
+        if (
+            config_service.get("clustering.bin_engine", "threshold_uf")
+            == "hierarchical_snn"
+        ):
+            algo = f"{algo}:snn"
+        algo = f"{algo}:container" if node_type == "container" else algo
 
     r = get_redis()
     if is_pool:
@@ -654,14 +664,17 @@ def update_bin_cluster_meta():
     axis = data.get("axis", "overall").strip().lower()
     node_type = (data.get("node_type") or "file").strip().lower()
     algo = f"{algo}:{axis}" if axis != "overall" else algo
-    if config_service.get("clustering.bin_engine", "threshold_uf") == "hierarchical_snn":
-        algo = f"{algo}:snn"
-    algo = f"{algo}:container" if node_type == "container" else algo
-    cluster_id = data.get("cluster_id")
-    cluster_name = data.get("cluster_name")
-
     pool_id = data.get("pool") or get_pool_id(collection)
     is_pool = pool_id is not None
+    if not is_pool:
+        if (
+            config_service.get("clustering.bin_engine", "threshold_uf")
+            == "hierarchical_snn"
+        ):
+            algo = f"{algo}:snn"
+        algo = f"{algo}:container" if node_type == "container" else algo
+    cluster_id = data.get("cluster_id")
+    cluster_name = data.get("cluster_name")
 
     if not cluster_id or not cluster_name:
         return {"error": "cluster_id and cluster_name required"}, 400
@@ -727,9 +740,15 @@ def list_bin_cluster_members():
     axis = request.args.get("axis", "overall").strip().lower()
     node_type = request.args.get("node_type", "file").strip().lower()
     algo = f"{algo}:{axis}" if axis != "overall" else algo
-    if config_service.get("clustering.bin_engine", "threshold_uf") == "hierarchical_snn":
-        algo = f"{algo}:snn"
-    algo = f"{algo}:container" if node_type == "container" else algo
+    pool_id = request.args.get("pool") or get_pool_id(collection)
+    is_pool = pool_id is not None
+    if not is_pool:
+        if (
+            config_service.get("clustering.bin_engine", "threshold_uf")
+            == "hierarchical_snn"
+        ):
+            algo = f"{algo}:snn"
+        algo = f"{algo}:container" if node_type == "container" else algo
     cluster_id = request.args.get("cluster_id")
     limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
@@ -738,8 +757,6 @@ def list_bin_cluster_members():
         return {"error": "cluster_id required"}, 400
 
     r = get_redis()
-    pool_id = request.args.get("pool") or get_pool_id(collection)
-    is_pool = pool_id is not None
 
     if is_pool:
         cluster_set_key = f"global:pool:{pool_id}:bin_cluster:{cluster_id}:members"
@@ -790,12 +807,15 @@ def get_bin_cluster_files():
     # algo, needs it.
     node_type = request.args.get("node_type", "file").strip().lower()
     algo = f"{algo}:{axis}" if axis != "overall" else algo
-    if config_service.get("clustering.bin_engine", "threshold_uf") == "hierarchical_snn":
-        algo = f"{algo}:snn"
-    algo = f"{algo}:container" if node_type == "container" else algo
-
     pool_id = request.args.get("pool") or get_pool_id(collection)
     is_pool = pool_id is not None
+    if not is_pool:
+        if (
+            config_service.get("clustering.bin_engine", "threshold_uf")
+            == "hierarchical_snn"
+        ):
+            algo = f"{algo}:snn"
+        algo = f"{algo}:container" if node_type == "container" else algo
 
     if not collection and not pool_id:
         return {"error": "collection or pool required"}, 400

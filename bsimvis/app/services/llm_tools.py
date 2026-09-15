@@ -316,11 +316,25 @@ def get_file_info(collection, file_md5):
     if isinstance(file_meta, str):
         file_meta = json.loads(file_meta)
 
+    from bsimvis.app.services.config_service import config_service
+
+    algo = "unweighted_cosine"
+    if (
+        config_service.get("clustering.bin_engine", "threshold_uf")
+        == "hierarchical_snn"
+    ):
+        algo = f"{algo}:snn"
+
     is_container = bool(file_meta.get("is_container"))
     meta_by_uuid, _ = fetch_bin_cluster_meta(
         r,
         collection,
-        [(r.smembers(f"{collection}:file:{file_md5}:bin_clusters:unweighted_cosine"), is_container)],
+        [
+            (
+                r.smembers(f"{collection}:file:{file_md5}:bin_clusters:{algo}"),
+                is_container,
+            )
+        ],
     )
     # The raw labels are ambiguous on their own (see bin_cluster_ns), so the
     # cluster is named here rather than handed over as a bare id.

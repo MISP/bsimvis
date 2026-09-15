@@ -664,6 +664,22 @@ class BinClusterService:
             if len(pipe) > 1000:
                 pipe.execute()
 
+        # Populate file -> cluster mapping
+        base_algo_ns = algo_ns.replace(":container", "")
+        for label, members in cluster_members.items():
+            for file_id in members:
+                # members are just the md5, need to prefix collection if not there
+                if not file_id.startswith(f"{collection}:file:"):
+                    full_file_id = f"{collection}:file:{file_id}"
+                else:
+                    full_file_id = file_id
+
+                # We should append to the existing set for hierarchical compatibility
+                pipe.sadd(f"{full_file_id}:bin_clusters:{base_algo_ns}", str(label))
+
+            if len(pipe) > 1000:
+                pipe.execute()
+
         pipe.execute()
 
     def __init__(self, r=None):
@@ -1739,7 +1755,8 @@ class BinClusterService:
             ]
 
         for i, (file_id, clusters) in enumerate(file_clusters):
-            clusters_key = f"{file_id}:bin_clusters:{algo_ns}"
+            base_algo_ns = algo_ns.replace(":container", "")
+            clusters_key = f"{file_id}:bin_clusters:{base_algo_ns}"
             pipe.delete(clusters_key)
             if clusters:
                 pipe.sadd(clusters_key, *clusters)

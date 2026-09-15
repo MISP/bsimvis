@@ -64,6 +64,14 @@ def bin_cluster_ns(algo, is_container):
     plain files. A label is only meaningful together with the namespace that
     wrote it.
     """
+    from bsimvis.app.services.config_service import config_service
+
+    if (
+        config_service.get("clustering.bin_engine", "threshold_uf")
+        == "hierarchical_snn"
+    ):
+        if not algo.endswith(":snn"):
+            algo = f"{algo}:snn"
     return f"{algo}:container" if is_container else algo
 
 
@@ -129,7 +137,9 @@ def fetch_bin_cluster_meta(
 _AXES = ["overall", "code", "library", "content"]
 
 
-def fetch_bin_cluster_meta_all_axes(r, collection, entries, algo="unweighted_cosine", pool_id=None):
+def fetch_bin_cluster_meta_all_axes(
+    r, collection, entries, algo="unweighted_cosine", pool_id=None
+):
     """Like fetch_bin_cluster_meta but fetches all 4 axes at once.
 
     entries: iterable of (cluster_ids_by_axis, is_container) where
@@ -148,7 +158,10 @@ def fetch_bin_cluster_meta_all_axes(r, collection, entries, algo="unweighted_cos
         for axis in _AXES:
             axis_algo = f"{algo}:{axis}" if axis != "overall" else algo
             ns = bin_cluster_ns(axis_algo, bool(is_container))
-            cids = [c.decode() if isinstance(c, bytes) else str(c) for c in (cids_by_axis.get(axis) or [])]
+            cids = [
+                c.decode() if isinstance(c, bytes) else str(c)
+                for c in (cids_by_axis.get(axis) or [])
+            ]
             by_axis[axis] = (ns, cids)
             for cid in cids:
                 lookups.append((entry_idx, axis, ns, cid))

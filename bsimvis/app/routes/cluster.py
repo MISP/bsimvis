@@ -79,9 +79,8 @@ def build_rebuild_all_tasks(collection, algo, skip_sim=False, data=None):
         tasks.append((JobType.CLEAR_CLUSTER, {"collection": collection, "algo": algo}))
     if not skip_sim and not incremental:
         tasks.append((JobType.CLEAR_BIN_SIM, {"collection": collection, "algo": algo}))
-        tasks.append(
-            (JobType.CLEAR_BIN_CLUSTER, {"collection": collection, "algo": algo})
-        )
+        for ax in ["overall", "code", "library", "content"]:
+            tasks.append((JobType.CLEAR_BIN_CLUSTER, {"collection": collection, "algo": algo, "axis": ax}))
 
     if not skip_sim:
         tasks.append(
@@ -94,36 +93,38 @@ def build_rebuild_all_tasks(collection, algo, skip_sim=False, data=None):
                 },
             )
         )
-        tasks.append(
-            (
-                JobType.CLUSTER_BINARIES,
-                {
-                    "collection": collection,
-                    "algo": algo,
-                    "min_cluster_size": data.get(
-                        "min_cluster_size",
-                        config_service.get("clustering.min_cluster_size", 2),
-                    ),
-                    "min_samples": data.get(
-                        "min_samples", config_service.get("clustering.min_samples", 1)
-                    ),
-                    "epsilon": data.get(
-                        "epsilon", config_service.get("clustering.epsilon", 0.1)
-                    ),
-                    "selection_method": data.get(
-                        "selection_method",
-                        config_service.get("clustering.selection_method", "eom"),
-                    ),
-                    "min_sim": data.get(
-                        "min_sim", config_service.get("clustering.min_sim", 0.0)
-                    ),
-                    "min_cohesion": data.get(
-                        "min_cohesion",
-                        config_service.get("clustering.min_cohesion", 0.5),
-                    ),
-                },
+        for ax in ["overall", "code", "library", "content"]:
+            tasks.append(
+                (
+                    JobType.CLUSTER_BINARIES,
+                    {
+                        "collection": collection,
+                        "algo": algo,
+                        "axis": ax,
+                        "min_cluster_size": data.get(
+                            "min_cluster_size",
+                            config_service.get("clustering.min_cluster_size", 2),
+                        ),
+                        "min_samples": data.get(
+                            "min_samples", config_service.get("clustering.min_samples", 1)
+                        ),
+                        "epsilon": data.get(
+                            "epsilon", config_service.get("clustering.epsilon", 0.1)
+                        ),
+                        "selection_method": data.get(
+                            "selection_method",
+                            config_service.get("clustering.selection_method", "eom"),
+                        ),
+                        "min_sim": data.get(
+                            "min_sim", config_service.get("clustering.min_sim", 0.0)
+                        ),
+                        "min_cohesion": data.get(
+                            "min_cohesion",
+                            config_service.get("clustering.min_cohesion", 0.5),
+                        ),
+                    },
+                )
             )
-        )
         tasks.append((JobType.INDEX_SIM, {"collection": collection, "algo": algo}))
 
     tasks.append(

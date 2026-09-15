@@ -262,7 +262,7 @@ class MetadataService:
             pass
 
             # 8. Track affected binary clusters for recalculation at the end
-            bin_clusters_key = f"{file_base_id}:bin_clusters"
+            bin_clusters_key = f"{file_base_id}:bin_clusters:unweighted_cosine"
             affected_clusters = [
                 cid.decode() if isinstance(cid, bytes) else str(cid)
                 for cid in r.smembers(bin_clusters_key)

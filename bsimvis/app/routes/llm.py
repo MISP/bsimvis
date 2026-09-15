@@ -298,7 +298,7 @@ def summarize_file():
         file_meta = json.loads(file_meta)
 
     # Fetch cluster membership and metadata
-    cluster_ids = r.smembers(f"{collection}:file:{md5}:bin_clusters") or []
+    cluster_ids = r.smembers(f"{collection}:file:{md5}:bin_clusters:unweighted_cosine") or []
 
     algo = "unweighted_cosine"
     min_cohesion = float(config_service.get("clustering.min_cohesion", 0.5))

@@ -818,20 +818,22 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
             const viewMode = p.get('view') || 'table';
             if (viewMode === 'table') {
                 const nodeType = p.get('node_type') || 'file';
-                const fileActive = nodeType === 'file';
-                const containerActive = nodeType === 'container';
                 gridHeader.innerHTML = `
                     <div style="padding: 24px; border-bottom: 1px solid var(--border); background: var(--bg); display: flex; flex-direction: column;">
                         <div style="display: flex; gap: 24px; flex-wrap: wrap;">
                             <div class="home-card" style="padding: 16px; min-width: 300px;">
                                 <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
+                                    <h3 style="margin: 0; font-size: 0.9rem; color: var(--text);">Scoring Metric</h3>
+                                    <span class="home-tip" tabindex="0" data-tip="The dimensions of similarity calculated between two binaries. Overall combines multiple factors, while Library, Code, and Content scores isolate specific types of matches."><i class="fa-solid fa-circle-info"></i></span>
+                                </div>
+                                ${binSimScoreTypeTagsHtml(p)}
+                            </div>
+                            <div class="home-card" style="padding: 16px; min-width: 300px;">
+                                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
                                     <h3 style="margin: 0; font-size: 0.9rem; color: var(--text);">Node Type</h3>
                                     <span class="home-tip" tabindex="0" data-tip="Switch between viewing single-file clusters and top-level container clusters."><i class="fa-solid fa-circle-info"></i></span>
                                 </div>
-                                <div style="display:flex; flex-wrap:wrap; gap:8px;">
-                                    <span class="bsim-nt-pill" onclick="changeBinClusterNodeType('file')" style="${binSimPillStyle(fileActive, 'var(--info, #3b82f6)')}" title="View file clusters"><i class="fa-solid fa-file"></i>File</span>
-                                    <span class="bsim-nt-pill" onclick="changeBinClusterNodeType('container')" style="${binSimPillStyle(containerActive, 'var(--warning, #d97706)')}" title="View container clusters"><i class="fa-solid fa-box"></i>Container</span>
-                                </div>
+                                ${binSimNodeTypeTagsHtml(p)}
                             </div>
                         </div>
                     </div>
@@ -1176,7 +1178,9 @@ function binSimPillStyle(active, color) {
 }
 
 function binSimScoreTypeTagsHtml(p) {
-    const active = p.get('sort') || 'score';
+    const state = window.getRoutingState && window.getRoutingState();
+    const isBinCluster = state && state.viewKey === 'bin-clusters';
+    const active = isBinCluster ? (p.get('axis') ? (p.get('axis') === 'overall' ? 'score' : `score_${p.get('axis')}`) : 'score') : (p.get('sort') || 'score');
     const types = window.BinSimScoreTypes || { score: { label: 'Overall', icon: 'fa-solid fa-layer-group', color: 'var(--success)' } };
     const pills = Object.entries(types).map(([v, meta]) => {
         const on = v === active;
@@ -1186,9 +1190,10 @@ function binSimScoreTypeTagsHtml(p) {
 }
 
 function binSimNodeTypeTagsHtml(p) {
-    const cur = p.has('containers') ? p.get('containers') : 'none';
-    const fileActive = cur !== 'both';
-    const containerActive = cur !== 'none';
+    const isBinCluster = window.getRoutingState && window.getRoutingState().viewKey === 'bin-clusters';
+    const cur = isBinCluster ? (p.has('node_type') ? p.get('node_type') : 'file') : (p.has('containers') ? p.get('containers') : 'none');
+    const fileActive = isBinCluster ? (cur === 'file') : (cur !== 'both');
+    const containerActive = isBinCluster ? (cur === 'container') : (cur !== 'none');
     return `<input type="hidden" id="bsim-containers" value="${escapeAttr(cur)}">
         <div style="display:flex; flex-wrap:wrap; gap:8px;">
             <span id="bsim-nt-file" class="bsim-nt-pill" onclick="toggleBinSimNodeType('file')" style="${binSimPillStyle(fileActive, 'var(--info, #3b82f6)')}" title="Include file ↔ file pairs"><i class="fa-solid fa-file"></i>File <span id="bsim-count-nt-file" style="font-size:0.75rem; opacity:0.8; font-weight:normal;"></span></span>
@@ -1217,24 +1222,39 @@ window.toggleBinSimHidePacked = toggleBinSimHidePacked;
 function setBinSimScoreType(v) {
     const el = document.getElementById('bsim-score-type');
     if (el) el.value = v;
-    if (window.applyBinSimSearch) window.applyBinSimSearch();
+    const { viewKey } = getRoutingState();
+    if (viewKey === 'bin-clusters') {
+        if (window.applyBinClusterSearch) window.applyBinClusterSearch();
+    } else if (viewKey === 'file' || window.location.pathname.includes('/files/')) {
+        if (window.renderFileClustersTab) window.renderFileClustersTab();
+    } else {
+        if (window.applyBinSimSearch) window.applyBinSimSearch();
+    }
 }
 window.setBinSimScoreType = setBinSimScoreType;
 
 function toggleBinSimNodeType(which) {
     const el = document.getElementById('bsim-containers');
     if (!el) return;
-    let fileActive = el.value !== 'both';
-    let containerActive = el.value !== 'none';
-    if (which === 'file') fileActive = !fileActive; else containerActive = !containerActive;
-    if (!fileActive && !containerActive) { fileActive = true; containerActive = true; } // never both off
-    el.value = (fileActive && containerActive) ? 'all' : (fileActive ? 'none' : 'both');
-    if (window.applyBinSimSearch) window.applyBinSimSearch();
+    const { viewKey } = getRoutingState();
+    if (viewKey === 'bin-clusters') {
+        el.value = which; // Exclusive
+        if (window.applyBinClusterSearch) window.applyBinClusterSearch();
+    } else {
+        let fileActive = el.value !== 'both';
+        let containerActive = el.value !== 'none';
+        if (which === 'file') fileActive = !fileActive; else containerActive = !containerActive;
+        if (!fileActive && !containerActive) { fileActive = true; containerActive = true; } // never both off
+        el.value = (fileActive && containerActive) ? 'all' : (fileActive ? 'none' : 'both');
+        if (window.applyBinSimSearch) window.applyBinSimSearch();
+    }
 }
 window.toggleBinSimNodeType = toggleBinSimNodeType;
 
 function syncBinSimTags(p) {
-    const active = p.get('sort') || 'score';
+    const state = window.getRoutingState && window.getRoutingState();
+    const isBinCluster = state && state.viewKey === 'bin-clusters';
+    const active = isBinCluster ? (p.get('axis') ? (p.get('axis') === 'overall' ? 'score' : `score_${p.get('axis')}`) : 'score') : (p.get('sort') || 'score');
     const hidden = document.getElementById('bsim-score-type');
     if (hidden) hidden.value = active;
     document.querySelectorAll('#bsim-score-type-tags .bsim-tag-pill').forEach(el => {
@@ -1242,11 +1262,11 @@ function syncBinSimTags(p) {
         const on = el.dataset.value === active;
         el.setAttribute('style', binSimPillStyle(on, meta.color));
     });
-    const cur = p.has('containers') ? p.get('containers') : 'none';
+    const cur = isBinCluster ? (p.has('node_type') ? p.get('node_type') : 'file') : (p.has('containers') ? p.get('containers') : 'none');
     const hiddenC = document.getElementById('bsim-containers');
     if (hiddenC) hiddenC.value = cur;
-    const fileActive = cur !== 'both';
-    const containerActive = cur !== 'none';
+    const fileActive = isBinCluster ? (cur === 'file') : (cur !== 'both');
+    const containerActive = isBinCluster ? (cur === 'container') : (cur !== 'none');
     const fileEl = document.getElementById('bsim-nt-file');
     const contEl = document.getElementById('bsim-nt-container');
     if (fileEl) fileEl.setAttribute('style', binSimPillStyle(fileActive, 'var(--info, #3b82f6)'));
@@ -1672,6 +1692,29 @@ function updateUI(viewKey, collection, params, route, force = false) {
                                     <input type="number" id="flt-file-min-cohesion" placeholder="Min coh..." value="${escapeAttr(p.get('min_cohesion') || '0.5')}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                     <span class="dim" style="font-size:0.6rem">-</span>
                                     <input type="number" id="flt-file-max-cohesion" placeholder="Max coh..." value="${escapeAttr(p.get('max_cohesion') || '')}" step="0.05" min="0" max="1" title="Max Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                </div>
+                                <div id="flt-file-cluster-axes" style="display:flex; flex-wrap:wrap; gap:2px; margin-top:2px;">
+                                    ${(() => {
+                                        const activeAxes = new Set((p.get('bin_cluster_axes') || '').split(',').map(s => s.trim()).filter(Boolean));
+                                        const types = window.BinSimScoreTypes || {};
+                                        return [
+                                            { key: 'overall', label: 'Overall', axisKey: 'score' },
+                                            { key: 'code',    label: 'Code',    axisKey: 'score_code' },
+                                            { key: 'library', label: 'Library', axisKey: 'score_library' },
+                                            { key: 'content', label: 'Content', axisKey: 'score_content' },
+                                        ].map(({ key, label, axisKey }) => {
+                                            const on = activeAxes.has(key);
+                                            const meta = types[axisKey] || {};
+                                            const color = meta.color || 'var(--dim)';
+                                            const icon  = meta.icon  || 'fa-solid fa-layer-group';
+                                            return `<span
+                                                onclick="toggleBinClusterAxisFilter('${key}')"
+                                                title="${label} clusters"
+                                                style="cursor:pointer; display:inline-flex; align-items:center; gap:3px; padding:1px 5px; border-radius:10px; font-size:0.6rem; border:1px solid ${on ? color : 'var(--border)'}; color:${on ? color : 'var(--dim)'}; background:${on ? `color-mix(in srgb,${color} 12%,transparent)` : 'transparent'}; transition:all 0.15s;">
+                                                <i class="${icon}" style="font-size:0.55rem;"></i>${label}
+                                            </span>`;
+                                        }).join('');
+                                    })()}
                                 </div>
                             </div>
                         </th>
@@ -2362,6 +2405,10 @@ function applyAdvancedFileSearch() {
     if (clusterNameFlt) params.set('bin_cluster_name', clusterNameFlt); else params.delete('bin_cluster_name');
     params.set('min_cohesion', minCohesionFlt || '0.5');
     if (maxCohesionFlt) params.set('max_cohesion', maxCohesionFlt); else params.delete('max_cohesion');
+
+    // bin_cluster_axes is toggled by pill clicks — read back from current params, not from a DOM input
+    // (the pills update params directly via toggleBinClusterAxisFilter)
+    // so we just preserve whatever is currently in params for this key.
     if (yaraFlt) params.set('yara', yaraFlt); else params.delete('yara');
     if (avtypeFlt) params.set('avtype', avtypeFlt); else params.delete('avtype');
     if (ccipFlt) params.set('cc_ip', ccipFlt); else params.delete('cc_ip');
@@ -2399,6 +2446,43 @@ function applyAdvancedFileSearch() {
     isEndOfResults = false;
     navigate(viewKey, params);
 }
+
+function toggleBinClusterAxisFilter(axis) {
+    const { viewKey, params } = getRoutingState();
+    const current = new Set((params.get('bin_cluster_axes') || '').split(',').map(s => s.trim()).filter(Boolean));
+    if (current.has(axis)) current.delete(axis); else current.add(axis);
+    if (current.size > 0) params.set('bin_cluster_axes', [...current].join(','));
+    else params.delete('bin_cluster_axes');
+
+    // Re-render cluster cells client-side — data is already in DOM, no API call needed
+    const visibleAxes = current.size > 0 ? current : null;
+    document.querySelectorAll('.cluster-cards-cell[data-is-binary="true"]').forEach(cell => {
+        try {
+            const clusters = JSON.parse(cell.dataset.clusters || '[]');
+            cell.innerHTML = (typeof renderClusterCards === 'function')
+                ? renderClusterCards(clusters, true, visibleAxes)
+                : '';
+        } catch (e) {}
+    });
+
+    // Update pill appearance in-place
+    const types = window.BinSimScoreTypes || {};
+    document.querySelectorAll('#flt-file-cluster-axes span').forEach(span => {
+        const key = span.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
+        if (!key) return;
+        const axisKey = key === 'overall' ? 'score' : `score_${key}`;
+        const meta = types[axisKey] || {};
+        const color = meta.color || 'var(--dim)';
+        const on = current.has(key);
+        span.style.borderColor = on ? color : 'var(--border)';
+        span.style.color = on ? color : 'var(--dim)';
+        span.style.background = on ? `color-mix(in srgb,${color} 12%,transparent)` : 'transparent';
+    });
+
+    // Push to URL (triggers a full reload to sync pagination)
+    navigate(viewKey, params);
+}
+window.toggleBinClusterAxisFilter = toggleBinClusterAxisFilter;
 
 function applyJobSearch() {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
@@ -3778,6 +3862,17 @@ function applyBinClusterSearch() {
 
     const globalQ = document.getElementById('bin-cluster-search-input')?.value;
     params.set('q', globalQ || '');
+    
+    const scoreType = document.getElementById('bsim-score-type')?.value;
+    if (scoreType) {
+        if (scoreType === 'score') params.set('axis', 'overall');
+        else params.set('axis', scoreType.replace('score_', ''));
+    }
+    
+    const nt = document.getElementById('bsim-containers')?.value;
+    if (nt) {
+        params.set('node_type', nt);
+    }
 
     const cid = document.getElementById('flt-bin-cluster-id')?.value;
     const cuuid = document.getElementById('flt-bin-cluster-uuid')?.value;

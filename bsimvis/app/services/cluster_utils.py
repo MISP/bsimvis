@@ -126,6 +126,74 @@ def fetch_bin_cluster_meta(
     return meta_by_uuid, per_entry
 
 
+_AXES = ["overall", "code", "library", "content"]
+
+
+def fetch_bin_cluster_meta_all_axes(r, collection, entries, algo="unweighted_cosine", pool_id=None):
+    """Like fetch_bin_cluster_meta but fetches all 4 axes at once.
+
+    entries: iterable of (cluster_ids_by_axis, is_container) where
+             cluster_ids_by_axis is a dict {axis: [cid, ...]} as built by
+             search_file when it SMEMBERS all 4 axis keys per file.
+
+    Returns (meta_by_uuid, uuids_per_entry_by_axis).
+    - meta_by_uuid: {uuid -> meta dict, with "axis" key injected}
+    - uuids_per_entry_by_axis: list of {axis -> [uuid, ...]} per entry
+    """
+    # Build flat list of (axis, ns, cid, entry_idx) tuples to pipeline
+    lookups = []
+    norm_entries = []
+    for entry_idx, (cids_by_axis, is_container) in enumerate(entries):
+        by_axis = {}
+        for axis in _AXES:
+            axis_algo = f"{algo}:{axis}" if axis != "overall" else algo
+            ns = bin_cluster_ns(axis_algo, bool(is_container))
+            cids = [c.decode() if isinstance(c, bytes) else str(c) for c in (cids_by_axis.get(axis) or [])]
+            by_axis[axis] = (ns, cids)
+            for cid in cids:
+                lookups.append((entry_idx, axis, ns, cid))
+        norm_entries.append(by_axis)
+
+    # Single pipeline for all keys
+    pipe = r.pipeline(transaction=False)
+    for _, axis, ns, cid in lookups:
+        if pool_id:
+            pipe.get(f"global:pool:{pool_id}:bin_cluster:{cid}:meta")
+        else:
+            pipe.get(f"{collection}:bin_cluster:{ns}:{cid}:meta")
+
+    meta_by_uuid = {}
+    # (entry_idx, axis, cid) -> uuid
+    resolved = {}
+    for (entry_idx, axis, ns, cid), raw in zip(lookups, pipe.execute()):
+        if not raw:
+            continue
+        cm = json.loads(raw) if not isinstance(raw, dict) else raw
+        if isinstance(cm, str):
+            cm = json.loads(cm)
+        if not cm:
+            continue
+        uuid = cm.get("cluster_uuid") or cid
+        cm["axis"] = axis
+        meta_by_uuid[uuid] = cm
+        resolved[(entry_idx, axis, cid)] = uuid
+
+    uuids_per_entry_by_axis = []
+    for entry_idx, by_axis in enumerate(norm_entries):
+        result = {}
+        for axis, (ns, cids) in by_axis.items():
+            uuids = []
+            for cid in cids:
+                uuid = resolved.get((entry_idx, axis, cid))
+                if uuid:
+                    uuids.append(uuid)
+            if uuids:
+                result[axis] = uuids
+        uuids_per_entry_by_axis.append(result)
+
+    return meta_by_uuid, uuids_per_entry_by_axis
+
+
 def demo():
     """The collision this resolver exists for: one label, two namespaces."""
 

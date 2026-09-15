@@ -549,54 +549,97 @@ window.FileView = {
                 `;
             }
 
-            // Render Clusters
-            const clusterIds = file.bin_clusters || [];
-            document.getElementById('cluster-count').innerText = clusterIds.length;
-            let clustersHtml = '';
-            
-            if (clusterIds.length === 0) {
-                clustersHtml = '<div class="dim" style="text-align:center; padding: 20px;">Binary does not belong to any clusters.</div>';
-            } else {
-                clusterIds.sort((a, b) => {
-                    const cmA = this.clusters[a] || {};
-                    const cmB = this.clusters[b] || {};
-                    return (cmB.cohesion_score || 0) - (cmA.cohesion_score || 0);
-                });
+            // Export render function so dashboard pills can trigger it
+            window.renderFileClustersTab = () => {
+                const binClusters = file.bin_clusters || {};
+                const isArray = Array.isArray(binClusters); // Backward compat
+                
+                // Read active axis from the pill state or URL
+                let activeAxis = document.getElementById('bsim-score-type') ? document.getElementById('bsim-score-type').value : (new URLSearchParams(window.location.search).get('axis') || 'overall');
+                if (activeAxis.startsWith('score_')) activeAxis = activeAxis.replace('score_', '');
+                if (activeAxis === 'score') activeAxis = 'overall';
 
-                clusterIds.forEach(cid => {
-                    const cm = this.clusters[cid];
-                    if (!cm) return;
-                    
-                    const name = cm.cluster_name || `Cluster ${cid}`;
-                    const size = cm.size || cm.member_count || cm.members || cm.count || 0;
-                    const cohesionScore = cm.cohesion_score || 0;
-                    const cohesion = cohesionScore.toFixed(2);
-                    const cohesionColor = d3.interpolateRdYlGn(cohesionScore);
-                    
-                    let distBadges = '';
-                    distBadges += renderDist('Yara Distributions', 'fa-solid fa-biohazard', cm.yara_distribution);
-                    distBadges += renderDist('AV Type Distributions', 'fa-solid fa-shield', cm.avtype_distribution);
-                    distBadges += renderDist('File Type Distributions', 'fa-solid fa-file-code', cm.filetype_distribution);
-                    distBadges += renderDist('CC IP Distributions', 'fa-solid fa-network-wired', cm.ccip_distribution);
-                    distBadges += renderDist('File Name Distributions', 'fa-solid fa-file', cm.filename_distribution);
-                    distBadges += renderDist('MD5 Distributions', 'fa-solid fa-fingerprint', cm.md5_distribution);
-
-                    clustersHtml += `
-                        <div class="cluster-item" style="background: var(--border); border: 1px solid var(--border); border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:8px;">
-                            <div class="cluster-item-header" style="margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center; font-weight:bold; font-size:0.95rem; color:var(--text);">
-                                <span style="color: var(--accent);"><i class="fa-solid fa-bullseye" style="margin-right: 6px;"></i>${name}</span>
-                                <a href="#" style="font-size:0.75rem; color:var(--dim); text-decoration:none;" onclick="FileView.openClusterFiles(event, ${escapeAttr(jsString(cm.cluster_uuid))})">View Binaries <i class="fa-solid fa-arrow-right"></i></a>
-                            </div>
-                            <div class="cluster-stat-badges" style="margin-bottom: 5px; display:flex; gap:10px; flex-wrap:wrap;">
-                                <div class="stat-badge" style="background: var(--hover); border: 1px solid var(--border); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-users" style="color:var(--dim);"></i><span>Members: <span class="val" style="color:var(--accent); font-family: 'JetBrains Mono', 'Consolas', monospace;">${size}</span></span></div>
-                                <div class="stat-badge" style="background: var(--hover); border: 1px solid var(--border); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-bullseye" style="color:var(--dim);"></i><span>Cohesion: <span class="val" style="color: ${cohesionColor}; font-family: 'JetBrains Mono', 'Consolas', monospace;">${cohesion}</span></span></div>
-                            </div>
-                            ${distBadges}
+                const bst = window.BinSimScoreTypes || {
+                    score: { label: 'Overall', icon: 'fa-solid fa-layer-group', color: 'var(--success)' },
+                    score_code: { label: 'Code', icon: 'fa-solid fa-code', color: 'var(--info, #3b82f6)' },
+                    score_library: { label: 'Library', icon: 'fa-solid fa-cubes', color: 'var(--warning, #d97706)' },
+                    score_content: { label: 'Content', icon: 'fa-solid fa-file-image', color: 'var(--accent, #9333ea)' }
+                };
+                
+                // Mock URL params for the pill generators
+                const mockParams = new URLSearchParams();
+                mockParams.set('axis', activeAxis);
+                mockParams.set('node_type', file.is_container ? 'container' : 'file'); // lock to file's actual type
+                
+                const actionsHtml = `
+                    <div style="display:flex; flex-direction:column; gap:12px;">
+                        <div style="display:flex; gap:16px; align-items:center;">
+                            <div style="font-size:0.75rem; color:var(--meta-text-muted); text-transform:uppercase; letter-spacing:0.5px; width:80px;">Axis</div>
+                            ${binSimScoreTypeTagsHtml(mockParams)}
                         </div>
-                    `;
-                });
-            }
-            document.getElementById('cluster-list').innerHTML = clustersHtml;
+                        <div style="display:flex; gap:16px; align-items:center; opacity: 0.7; pointer-events: none;">
+                            <div style="font-size:0.75rem; color:var(--meta-text-muted); text-transform:uppercase; letter-spacing:0.5px; width:80px;">Node Type</div>
+                            ${binSimNodeTypeTagsHtml(mockParams)}
+                        </div>
+                    </div>
+                `;
+                
+                let containerHtml = '<div id="file-cluster-hero-container"></div><div id="file-cluster-chips-container" style="padding: 24px;"></div>';
+                document.getElementById('cluster-list').innerHTML = containerHtml;
+                
+                const heroContainer = document.getElementById('file-cluster-hero-container');
+                renderHeroHeader(heroContainer, 'file-clusters-hero', 'Binary Clusters group structurally identical files into a single family. Select an axis to explore different types of similarity for this file.', actionsHtml);
+
+                // Render the chips for the active axis
+                const cids = isArray ? binClusters : (binClusters[activeAxis] || []);
+                document.getElementById('cluster-count').innerText = cids.length;
+                
+                let chipsHtml = '';
+                if (cids.length === 0) {
+                    chipsHtml = '<div class="dim" style="text-align:center; padding: 40px;">This binary does not belong to any clusters on this axis.</div>';
+                } else {
+                    chipsHtml = '<div style="display:flex; flex-wrap:wrap; gap:12px;">';
+                    cids.sort((a, b) => {
+                        const cmA = this.clusters[a] || {};
+                        const cmB = this.clusters[b] || {};
+                        return (cmB.cohesion_score || 0) - (cmA.cohesion_score || 0);
+                    });
+
+                    cids.forEach(cid => {
+                        const cm = this.clusters[cid];
+                        if (!cm) return;
+                        
+                        const name = cm.cluster_name || `Cluster ${cid}`;
+                        const size = cm.size || cm.member_count || cm.members || cm.count || 0;
+                        const cohesionScore = cm.cohesion_score || 0;
+                        const cohesionColor = d3.interpolateRdYlGn(cohesionScore);
+                        const stability = cm.avg_stability || 0;
+                        const features = cm.avg_features || 0;
+                        
+                        const clusterUrl = Nav.buildUIUrl(collection, ['files']) + '?bin_cluster_uuid=' + encodeURIComponent(cm.cluster_uuid);
+
+                        chipsHtml += `
+                            <a href="${clusterUrl}" onclick="Nav.openPath('${clusterUrl}', event)" class="cluster-chip" 
+                               onmouseenter="if(window.showBinClusterTableTooltip) showBinClusterTableTooltip(event, '${cm.cluster_uuid}', '${escapeAttr(jsString(name))}', ${size}, ${stability}, ${cohesionScore}, ${features}, null, '${file.is_container ? 'container' : 'file'}', '${activeAxis}')" 
+                               onmouseleave="if(window.hideBinClusterTableTooltip) hideBinClusterTableTooltip()"
+                               onmousemove="if(window.moveBinClusterTableTooltip) moveBinClusterTableTooltip(event)"
+                               style="display:flex; align-items:center; gap:8px; padding:6px 12px; background:var(--hover); border:1px solid var(--border); border-left:3px solid ${cohesionColor}; border-radius:6px; text-decoration:none; color:var(--text); transition:background 0.2s;">
+                               <span style="font-weight:600; font-size:0.85rem; max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</span>
+                               <span style="display:inline-flex; align-items:center; gap:4px; font-size:0.7rem; color:var(--dim); background:var(--bg); padding:2px 6px; border-radius:10px;"><i class="fa-solid fa-users"></i> ${size}</span>
+                            </a>
+                        `;
+                    });
+                    chipsHtml += '</div>';
+                }
+                
+                document.getElementById('file-cluster-chips-container').innerHTML = chipsHtml;
+                
+                // Sync UI state
+                if (window.syncBinSimTags) window.syncBinSimTags(mockParams);
+            };
+            
+            // Initial render
+            window.renderFileClustersTab();
 
             // Render Inferred Rows
             const renderInferredRow = (icon, label, mapObj) => {

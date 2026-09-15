@@ -171,6 +171,7 @@ class BinClusterHierarchy {
         this.params.color_by_md5 = params.get('color_by_md5') === 'true';
         this.params.q = params.get('q') || '';
         this.params.node_type = params.get('node_type') || 'file';
+        this.params.axis = params.get('axis') || 'overall';
 
         const hierControls = `
             <div style="position:absolute; top:20px; left:20px; z-index:10; background:var(--window-bg); padding:15px; border-radius:8px; border:1px solid var(--border); width:240px; backdrop-filter:blur(10px);">
@@ -180,6 +181,17 @@ class BinClusterHierarchy {
                 <div style="margin-bottom:15px; display:flex; gap:8px;">
                     <span class="bsim-nt-pill" onclick="window.toggleHierNodeType('file'); document.getElementById('hier-refresh-btn').click()" id="hier-nt-file" style="${this.params.node_type === 'file' ? 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--info, #3b82f6); color:var(--info, #3b82f6); background:var(--info, #3b82f6)22;' : 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--border); color:var(--subtle); background:var(--window-tray, transparent);'}" title="File clusters"><i class="fa-solid fa-file"></i>File</span>
                     <span class="bsim-nt-pill" onclick="window.toggleHierNodeType('container'); document.getElementById('hier-refresh-btn').click()" id="hier-nt-container" style="${this.params.node_type === 'container' ? 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--warning, #d97706); color:var(--warning, #d97706); background:var(--warning, #d97706)22;' : 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--border); color:var(--subtle); background:var(--window-tray, transparent);'}" title="Container clusters"><i class="fa-solid fa-box"></i>Container</span>
+                </div>
+
+                <!-- Axis -->
+                <div style="margin-bottom:15px; display:flex; flex-direction:column; gap:6px;">
+                    <label style="font-size:0.75rem; color:var(--meta-text-muted);">Scoring Metric</label>
+                    <select id="hier-axis-select" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:4px 8px; border-radius:4px; font-size:0.75rem; cursor:pointer; width:100%; outline:none;">
+                        <option value="overall" ${this.params.axis === 'overall' ? 'selected' : ''}>Overall</option>
+                        <option value="code" ${this.params.axis === 'code' ? 'selected' : ''}>Code (Instructions)</option>
+                        <option value="library" ${this.params.axis === 'library' ? 'selected' : ''}>Library (Calls)</option>
+                        <option value="content" ${this.params.axis === 'content' ? 'selected' : ''}>Content (Strings/Data)</option>
+                    </select>
                 </div>
 
                 <!-- Search -->
@@ -346,6 +358,14 @@ class BinClusterHierarchy {
         if (md5Check) {
             md5Check.onchange = () => { this.params.color_by_md5 = md5Check.checked; };
         }
+        
+        const axisSelect = document.getElementById('hier-axis-select');
+        if (axisSelect) {
+            axisSelect.onchange = () => {
+                this.params.axis = axisSelect.value;
+                document.getElementById('hier-refresh-btn').click();
+            };
+        }
 
         document.getElementById('hier-refresh-btn').onclick = () => {
             const qs = window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '');
@@ -363,6 +383,7 @@ class BinClusterHierarchy {
             p.set('show_members', this.params.show_members ? 'true' : 'false');
             p.set('color_by_md5', this.params.color_by_md5 ? 'true' : 'false');
             p.set('node_type', this.params.node_type);
+            p.set('axis', this.params.axis);
             
             if (typeof navigate === 'function') {
                 navigate(parseRestfulPath().view || 'bin-clusters', p);
@@ -386,6 +407,7 @@ class BinClusterHierarchy {
             queryParams.set('show_children', this.params.show_children !== false);
             queryParams.set('show_members', this.params.show_members === true);
             queryParams.set('node_type', this.params.node_type);
+            queryParams.set('axis', this.params.axis);
 
             const url = `/api/bin_cluster/list?` + queryParams.toString();
             const res = await fetch(url, { signal });
@@ -715,7 +737,7 @@ class BinClusterHierarchy {
             try {
                 const col = getCurrentCollection();
                 const nodeType = this.params && this.params.node_type ? this.params.node_type : 'file';
-                const res = await fetch(`/api/bin_cluster/files?collection=${col}&cluster_uuid=${d.data.uuid}&node_type=${nodeType}&limit=100`);
+                const res = await fetch(`/api/bin_cluster/files?collection=${col}&cluster_uuid=${d.data.uuid}&node_type=${nodeType}&axis=${this.params.axis}&limit=100`);
                 const data = await res.json();
                 d.data.runtime_members = data.files;
                 this.renderTooltip(tooltip, d);
@@ -733,10 +755,27 @@ class BinClusterHierarchy {
         
         if (!isSameNode) {
             this._renderedNodeUuid = d.data.uuid;
+            const _ntInfo = { file: { icon: 'fa-solid fa-file', color: 'var(--info, #3b82f6)', label: 'File' }, container: { icon: 'fa-solid fa-box', color: 'var(--warning, #d97706)', label: 'Container' } };
+            const _axis = (this.params && this.params.axis) || 'overall';
+            const _nt = (this.params && this.params.node_type) || 'file';
+            const bst = window.BinSimScoreTypes || {
+                score: { label: 'Overall', icon: 'fa-solid fa-layer-group', color: 'var(--success)' },
+                score_code: { label: 'Code', icon: 'fa-solid fa-code', color: 'var(--info, #3b82f6)' },
+                score_library: { label: 'Library', icon: 'fa-solid fa-cubes', color: 'var(--warning, #d97706)' },
+                score_content: { label: 'Content', icon: 'fa-solid fa-file-image', color: 'var(--accent, #9333ea)' }
+            };
+            const axisKey = _axis === 'overall' ? 'score' : `score_${_axis}`;
+            const _ai = bst[axisKey] || bst.score;
+            const _ni = _ntInfo[_nt] || _ntInfo.file;
+            const _typeBadges = `<div style="display:flex; gap:6px; margin-bottom:8px;">
+                <span style="display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:10px; font-size:0.65rem; font-weight:600; border:1px solid ${_ni.color}44; color:${_ni.color}; background:${_ni.color}11;"><i class="${_ni.icon}" style="font-size:0.6rem;"></i>${_ni.label}</span>
+                <span style="display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:10px; font-size:0.65rem; font-weight:600; border:1px solid ${_ai.color}44; color:${_ai.color}; background:${_ai.color}11;"><i class="${_ai.icon}" style="font-size:0.6rem;"></i>${_ai.label}</span>
+            </div>`;
             tooltip.innerHTML = `
                 <div class="hier-tooltip-container" style="display:flex; flex-direction:row; min-width:450px; height:320px; background:var(--window-bg);">
                     <div class="hier-left-col" style="flex:1; padding:15px; border-right:1px solid var(--border); display:flex; flex-direction:column;">
                         <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
+                        ${_typeBadges}
                         <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:6px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
                         <div style="margin-bottom:10px;">${EntityRenderer.renderTag('bin_cluster', d.data.tag_id || d.data.id, [], d.data.user_tags || [])}</div>
                         
@@ -922,12 +961,38 @@ class BinClusterHierarchy {
 
 const binClusterTooltipMockCache = new Map();
 
-function showBinClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features, customMembers = null) {
+function showBinClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features, customMembers = null, nodeType = null, axis = null) {
     const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
     if (isMenuOpen) return;
     if (window.setTrigger) window.setTrigger(event);
     if (!window.binHierarchyInstance) {
         window.binHierarchyInstance = new BinClusterHierarchy('hierarchy-view-container');
+    }
+
+    let urlParams = null;
+    if (window.getRoutingState) {
+        urlParams = window.getRoutingState().params;
+    } else if (window.parent && window.parent.getRoutingState) {
+        urlParams = window.parent.getRoutingState().params;
+    } else {
+        const qs = window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '');
+        urlParams = new URLSearchParams(qs);
+    }
+    
+    if (axis) {
+        window.binHierarchyInstance.params.axis = axis;
+    } else if (urlParams && urlParams.has('axis')) {
+        window.binHierarchyInstance.params.axis = urlParams.get('axis');
+    } else {
+        window.binHierarchyInstance.params.axis = 'overall';
+    }
+    
+    if (nodeType) {
+        window.binHierarchyInstance.params.node_type = nodeType;
+    } else if (urlParams && urlParams.has('node_type')) {
+        window.binHierarchyInstance.params.node_type = urlParams.get('node_type');
+    } else {
+        window.binHierarchyInstance.params.node_type = 'file';
     }
 
     if (!binClusterTooltipMockCache.has(uuid)) {
@@ -1045,6 +1110,7 @@ class BinClusterPacking {
         this.params.color_by_md5 = params.get('color_by_md5') === 'true';
         this.params.q = params.get('q') || '';
         this.params.node_type = params.get('node_type') || 'file';
+        this.params.axis = params.get('axis') || 'overall';
 
         const packControls = `
             <div style="position:absolute; top:20px; left:20px; z-index:10; background:var(--window-bg); padding:15px; border-radius:8px; border:1px solid var(--border); width:240px; backdrop-filter:blur(10px);">
@@ -1054,6 +1120,17 @@ class BinClusterPacking {
                 <div style="margin-bottom:15px; display:flex; gap:8px;">
                     <span class="bsim-nt-pill" onclick="window.togglePackNodeType('file'); document.getElementById('bin-pack-refresh-btn').click()" id="pack-nt-file" style="${this.params.node_type === 'file' ? 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--info, #3b82f6); color:var(--info, #3b82f6); background:var(--info, #3b82f6)22;' : 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--border); color:var(--subtle); background:var(--window-tray, transparent);'}" title="File clusters"><i class="fa-solid fa-file"></i>File</span>
                     <span class="bsim-nt-pill" onclick="window.togglePackNodeType('container'); document.getElementById('bin-pack-refresh-btn').click()" id="pack-nt-container" style="${this.params.node_type === 'container' ? 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--warning, #d97706); color:var(--warning, #d97706); background:var(--warning, #d97706)22;' : 'display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid var(--border); color:var(--subtle); background:var(--window-tray, transparent);'}" title="Container clusters"><i class="fa-solid fa-box"></i>Container</span>
+                </div>
+
+                <!-- Axis -->
+                <div style="margin-bottom:15px; display:flex; flex-direction:column; gap:6px;">
+                    <label style="font-size:0.75rem; color:var(--meta-text-muted);">Scoring Metric</label>
+                    <select id="pack-axis-select" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:4px 8px; border-radius:4px; font-size:0.75rem; cursor:pointer; width:100%; outline:none;">
+                        <option value="overall" ${this.params.axis === 'overall' ? 'selected' : ''}>Overall</option>
+                        <option value="code" ${this.params.axis === 'code' ? 'selected' : ''}>Code (Instructions)</option>
+                        <option value="library" ${this.params.axis === 'library' ? 'selected' : ''}>Library (Calls)</option>
+                        <option value="content" ${this.params.axis === 'content' ? 'selected' : ''}>Content (Strings/Data)</option>
+                    </select>
                 </div>
 
                 <!-- Search -->
@@ -1207,6 +1284,14 @@ class BinClusterPacking {
         if (md5CheckBp) {
             md5CheckBp.onchange = (e) => { this.params.color_by_md5 = e.target.checked; };
         }
+        
+        const packAxisSelect = document.getElementById('pack-axis-select');
+        if (packAxisSelect) {
+            packAxisSelect.onchange = () => {
+                this.params.axis = packAxisSelect.value;
+                document.getElementById('bin-pack-refresh-btn').click();
+            };
+        }
 
         document.getElementById('bin-pack-refresh-btn').onclick = () => {
             const qs = window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '');
@@ -1223,6 +1308,7 @@ class BinClusterPacking {
             p.set('show_members', this.params.show_members ? 'true' : 'false');
             p.set('color_by_md5', this.params.color_by_md5 ? 'true' : 'false');
             p.set('node_type', this.params.node_type);
+            p.set('axis', this.params.axis);
             if (typeof navigate === 'function') {
                 navigate(parseRestfulPath().view || 'bin-clusters', p);
             } else if (window.parent && typeof window.parent.navigate === 'function') {
@@ -1245,6 +1331,7 @@ class BinClusterPacking {
             queryParams.set('show_children', this.params.show_children !== false);
             queryParams.set('show_members', this.params.show_members === true);
             queryParams.set('node_type', this.params.node_type);
+            queryParams.set('axis', this.params.axis);
 
             const url = `/api/bin_cluster/list?` + queryParams.toString();
             const res = await fetch(url, { signal });
@@ -1530,7 +1617,7 @@ class BinClusterPacking {
             try {
                 const col = getCurrentCollection();
                 const nodeType = this.params && this.params.node_type ? this.params.node_type : 'file';
-                const res = await fetch(`/api/bin_cluster/files?collection=${col}&cluster_uuid=${d.data.uuid}&node_type=${nodeType}&limit=100`);
+                const res = await fetch(`/api/bin_cluster/files?collection=${col}&cluster_uuid=${d.data.uuid}&node_type=${nodeType}&axis=${this.params.axis}&limit=100`);
                 const data = await res.json();
                 d.data.runtime_members = data.files;
                 if (this._activeD === d) this.renderTooltip(tooltip, d);

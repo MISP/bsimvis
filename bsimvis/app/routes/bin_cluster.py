@@ -16,6 +16,7 @@ def build_bin_cluster():
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
+    axis = data.get("axis", "overall")
     min_cluster_size = data.get(
         "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
     )
@@ -23,6 +24,7 @@ def build_bin_cluster():
     payload = {
         "collection": collection,
         "algo": algo,
+        "axis": axis,
         "min_cluster_size": min_cluster_size,
         "min_samples": data.get(
             "min_samples", config_service.get("clustering.min_samples", 1)
@@ -46,6 +48,7 @@ def rebuild_bin_cluster():
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
+    axis = data.get("axis", "overall")
     min_cluster_size = data.get(
         "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
     )
@@ -56,6 +59,7 @@ def rebuild_bin_cluster():
             {
                 "collection": collection,
                 "algo": algo,
+                "axis": axis,
             },
         ),
         (
@@ -63,6 +67,7 @@ def rebuild_bin_cluster():
             {
                 "collection": collection,
                 "algo": algo,
+                "axis": axis,
                 "min_cluster_size": min_cluster_size,
                 "min_samples": data.get(
                     "min_samples", config_service.get("clustering.min_samples", 1)
@@ -93,10 +98,11 @@ def clear_bin_cluster():
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
+    axis = data.get("axis", "overall")
 
     job_id = job_service.create_job(
         JobType.CLEAR_BIN_CLUSTER,
-        {"collection": collection, "algo": algo},
+        {"collection": collection, "algo": algo, "axis": axis},
     )
     return {"job_id": job_id, "status": "enqueued"}
 
@@ -150,12 +156,15 @@ def list_bin_clusters():
     t_start = time.perf_counter()
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
+    axis = request.args.get("axis", "overall").strip().lower()
+    
     # Containers and files cluster in two separate graphs (a container holds
     # no code of its own, so it can never share a similarity edge with a
     # file) and persist under two separate key namespaces -- see
     # BinClusterService._persist_hierarchical_binary_clusters. node_type
     # picks which one this listing reads.
     node_type = request.args.get("node_type", "file").strip().lower()
+    algo = f"{algo}:{axis}" if axis != "overall" else algo
     algo = f"{algo}:container" if node_type == "container" else algo
 
     # Filtering
@@ -404,9 +413,9 @@ def list_bin_clusters():
                     parts = fid.split(":")
                     md5 = parts[-1]
                     if is_pool:
-                        c_pipe.smembers(f"pool:{pool_id}:file:{md5}:bin_clusters")
+                        c_pipe.smembers(f"pool:{pool_id}:file:{md5}:bin_clusters:{algo}")
                     else:
-                        c_pipe.smembers(f"{fid}:bin_clusters")
+                        c_pipe.smembers(f"{fid}:bin_clusters:{algo}")
                 associated_clusters_raw = c_pipe.execute()
 
                 associated_clusters = set()
@@ -612,7 +621,9 @@ def get_bin_cluster_tree():
     """Returns the condensed tree for binary clustering."""
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
+    axis = request.args.get("axis", "overall").strip().lower()
     node_type = request.args.get("node_type", "file").strip().lower()
+    algo = f"{algo}:{axis}" if axis != "overall" else algo
     algo = f"{algo}:container" if node_type == "container" else algo
 
     pool_id = request.args.get("pool") or get_pool_id(collection)
@@ -636,7 +647,9 @@ def update_bin_cluster_meta():
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
+    axis = data.get("axis", "overall").strip().lower()
     node_type = (data.get("node_type") or "file").strip().lower()
+    algo = f"{algo}:{axis}" if axis != "overall" else algo
     algo = f"{algo}:container" if node_type == "container" else algo
     cluster_id = data.get("cluster_id")
     cluster_name = data.get("cluster_name")
@@ -705,7 +718,9 @@ def list_bin_cluster_members():
     """Lists all file IDs in a specific binary cluster."""
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
+    axis = request.args.get("axis", "overall").strip().lower()
     node_type = request.args.get("node_type", "file").strip().lower()
+    algo = f"{algo}:{axis}" if axis != "overall" else algo
     algo = f"{algo}:container" if node_type == "container" else algo
     cluster_id = request.args.get("cluster_id")
     limit = request.args.get("limit", 100, type=int)
@@ -760,11 +775,13 @@ def get_bin_cluster_files():
     collection = request.args.get("collection")
     cluster_uuid = request.args.get("cluster_uuid")
     algo = request.args.get("algo", "unweighted_cosine")
+    axis = request.args.get("axis", "overall").strip().lower()
     # The primary lookup below (idx:file:bin_cluster_uuid:*) needs no
     # node_type at all -- uuids are random and never collide between the
     # file and container namespaces. Only the fallback meta-scan, keyed by
     # algo, needs it.
     node_type = request.args.get("node_type", "file").strip().lower()
+    algo = f"{algo}:{axis}" if axis != "overall" else algo
     algo = f"{algo}:container" if node_type == "container" else algo
 
     pool_id = request.args.get("pool") or get_pool_id(collection)
@@ -816,7 +833,7 @@ def get_bin_cluster_files():
                             k_str = k.decode() if isinstance(k, bytes) else k
                             parts = k_str.split(":")
                             if len(parts) >= 4:
-                                matching_cluster_id = parts[3]
+                                matching_cluster_id = parts[-2]
                                 break
                 if matching_cluster_id or cursor == 0:
                     break

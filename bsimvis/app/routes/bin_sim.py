@@ -288,21 +288,28 @@ def rebuild_bin_sim():
         "min_cohesion": min_cohesion,
     }
 
-    pipeline_id = job_service.create_pipeline(
-        [
-            (JobType.CLEAR_BIN_SIM.value, clear_payload),
-            (JobType.CLEAR_BIN_CLUSTER.value, {"collection": collection, "algo": algo}),
-            (JobType.BUILD_BIN_SIM.value, build_payload),
+    tasks = [
+        (JobType.CLEAR_BIN_SIM.value, clear_payload),
+    ]
+    for ax in ["overall", "code", "library", "content"]:
+        tasks.append((JobType.CLEAR_BIN_CLUSTER.value, {"collection": collection, "algo": algo, "axis": ax}))
+    
+    tasks.append((JobType.BUILD_BIN_SIM.value, build_payload))
+    
+    for ax in ["overall", "code", "library", "content"]:
+        tasks.append(
             (
                 JobType.CLUSTER_BINARIES.value,
                 {
                     "collection": collection,
                     "algo": algo,
+                    "axis": ax,
                     "min_cohesion": min_cohesion,
                 },
-            ),
-        ]
-    )
+            )
+        )
+
+    pipeline_id = job_service.create_pipeline(tasks)
     return {
         "status": "success",
         "pipeline_id": pipeline_id,

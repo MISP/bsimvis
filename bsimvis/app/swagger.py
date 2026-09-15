@@ -2094,6 +2094,7 @@ class BinClusterBuild(Resource):
             {
                 "collection": fields.String(default="main"),
                 "algo": fields.String(default="unweighted_cosine"),
+                "axis": fields.String(default="overall", description="overall, code, library, content"),
                 "min_cluster_size": fields.Integer(default=2),
                 "min_samples": fields.Integer(default=1),
                 "epsilon": fields.Float(default=0.1),
@@ -2127,6 +2128,7 @@ class BinClusterClear(Resource):
             {
                 "collection": fields.String(default="main"),
                 "algo": fields.String(default="unweighted_cosine"),
+                "axis": fields.String(default="overall", description="overall, code, library, content"),
             },
         )
     )
@@ -2143,6 +2145,7 @@ class BinClusterList(Resource):
         params={
             "collection": "Collection name",
             "algo": "Algorithm",
+            "axis": "Similarity axis (overall, code, library, content)",
             "min_stability": "Min cluster stability",
             "min_count": "Min member count",
             "min_cohesion": "Min cohesion score",
@@ -2167,7 +2170,7 @@ class BinClusterList(Resource):
 
 @ns_bin_cluster.route("/tree")
 class BinClusterTree(Resource):
-    @ns_bin_cluster.doc(params={"collection": "Collection name", "algo": "Algorithm"})
+    @ns_bin_cluster.doc(params={"collection": "Collection name", "algo": "Algorithm", "axis": "Similarity axis"})
     def get(self):
         """Returns the condensed tree for binary clustering."""
         from bsimvis.app.routes.bin_cluster import get_bin_cluster_tree
@@ -2183,6 +2186,8 @@ class BinClusterMeta(Resource):
             {
                 "collection": fields.String(required=True),
                 "algo": fields.String(default="unweighted_cosine"),
+                "axis": fields.String(default="overall"),
+                "node_type": fields.String(default="file"),
                 "cluster_id": fields.String(required=True),
                 "cluster_name": fields.String(required=True),
             },
@@ -2201,6 +2206,8 @@ class BinClusterMembers(Resource):
         params={
             "collection": "Collection name",
             "algo": "Algorithm",
+            "axis": "Similarity axis",
+            "node_type": "Node type (file/container)",
             "cluster_id": "Target cluster ID",
             "limit": "Max results",
             "offset": "Pagination offset",
@@ -2219,6 +2226,8 @@ class BinClusterFiles(Resource):
         params={
             "collection": "Collection name",
             "algo": "Algorithm",
+            "axis": "Similarity axis",
+            "node_type": "Node type (file/container)",
             "cluster_uuid": "Target cluster UUID",
             "limit": "Max results",
             "offset": "Pagination offset",

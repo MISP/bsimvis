@@ -701,6 +701,7 @@ class Worker:
             min_cohesion = payload.get(
                 "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
             )
+            axis = payload.get("axis", "overall")
 
             return bin_cluster_service.run_clustering(
                 collection,
@@ -713,12 +714,14 @@ class Worker:
                 job_service=self.job_service,
                 job_id=job_id,
                 min_cohesion=min_cohesion,
+                axis=axis,
             )
 
         elif jtype == JobType.CLEAR_BIN_CLUSTER.value:
             algo = payload.get("algo", "unweighted_cosine")
+            axis = payload.get("axis", "overall")
             return bin_cluster_service.clear_clusters(
-                collection, algo=algo, job_service=self.job_service, job_id=job_id
+                collection, algo=algo, job_service=self.job_service, job_id=job_id, axis=axis
             )
 
         elif jtype == JobType.BUILD_BIN_SIM.value:

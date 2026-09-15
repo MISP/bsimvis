@@ -379,6 +379,10 @@ window.TableRenderers = {
 
             const clusters = (Array.isArray(f['bin_clusters']) ? f['bin_clusters'] : []).map(cid => clustersMap[cid]).filter(Boolean);
 
+            // Build axis filter from URL param (empty = show all)
+            const axesParam = (getRoutingState().params || new URLSearchParams()).get('bin_cluster_axes') || '';
+            const visibleAxes = axesParam ? new Set(axesParam.split(',').map(s => s.trim()).filter(Boolean)) : null;
+
             // A node the lineage edges declared but whose bytes were never
             // uploaded has no name of its own to link to.
             const nameHtml = (f['exists'] === false)
@@ -473,7 +477,7 @@ window.TableRenderers = {
                     ${EntityRenderer.renderFileNoteButton(fileId, f.note_owners, { isTable: true, raw_data: f })}
                 </td>
                 <td class="cluster-cards-cell" data-is-binary="true" data-clusters='${escapeAttr(JSON.stringify(clusters))}'>
-                    ${EntityRenderer.renderClusterCard(clusters, true)}
+                    ${EntityRenderer.renderClusterCard(clusters, true, visibleAxes)}
                 </td>
                 <td class="sim-cell dim">${formatDate(f['entry_date'])}</td>
                 <td>

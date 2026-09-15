@@ -45,6 +45,7 @@ class BinClusterService:
         job_service=None,
         job_id=None,
         min_cohesion=None,
+        axis="overall",
     ):
         from bsimvis.app.services.config_service import config_service
 
@@ -70,6 +71,7 @@ class BinClusterService:
                     min_cohesion,
                     job_service,
                     job_id,
+                    axis=axis,
                 )
                 if result is not None:
                     return result
@@ -81,6 +83,7 @@ class BinClusterService:
                 job_service=job_service,
                 job_id=job_id,
                 min_cohesion=min_cohesion,
+                axis=axis,
             )
 
         if engine == "threshold_uf":
@@ -96,6 +99,7 @@ class BinClusterService:
                         job_service=job_service,
                         job_id=job_id,
                         min_cohesion=min_cohesion,
+                        axis=axis,
                     )
                 return True
             return self._run_clustering_threshold_uf(
@@ -106,6 +110,7 @@ class BinClusterService:
                 job_service=job_service,
                 job_id=job_id,
                 min_cohesion=min_cohesion,
+                axis=axis,
             )
 
         return self._run_clustering_hdbscan(
@@ -119,6 +124,7 @@ class BinClusterService:
             job_service,
             job_id,
             min_cohesion,
+            axis=axis,
         )
 
     def _batch_files(self, collection, batch_uuid):
@@ -139,6 +145,7 @@ class BinClusterService:
         job_service=None,
         job_id=None,
         min_cohesion=None,
+        axis="overall",
     ):
         from bsimvis.app.services.cluster_threshold import RedisUF
         from bsimvis.app.services.config_service import config_service
@@ -148,12 +155,13 @@ class BinClusterService:
             min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
 
         r = self.r
+        algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
         sim_prefix = f"{collection}:bin_sim:{algo}:"
-        sim_score_key = f"{collection}:bin_sim:score:{algo}"
-        uuid_key = f"{collection}:bin_cluster:{algo}:uf:uuid"
+        sim_score_key = f"{collection}:bin_sim:score_{axis}:{algo}" if axis != "overall" else f"{collection}:bin_sim:score:{algo}"
+        uuid_key = f"{collection}:bin_cluster:{algo_ns}:uf:uuid"
 
         def members_key(root):
-            return f"{collection}:bin_cluster:{algo}:{root}:members"
+            return f"{collection}:bin_cluster:{algo_ns}:{root}:members"
 
         # Two forests, not one: a container (APK/ZIP wrapper) and a plain
         # file are never the same md5, so roots from the two never collide
@@ -162,9 +170,9 @@ class BinClusterService:
         # from file-space into container-space. Each side still clusters
         # normally against its own kind (container-rollup pairs keep forming
         # container clusters); they just never merge into one cluster.
-        uf_file = RedisUF(r, f"{collection}:bin_cluster:{algo}:uf:parent", members_key)
+        uf_file = RedisUF(r, f"{collection}:bin_cluster:{algo_ns}:uf:parent", members_key)
         uf_container = RedisUF(
-            r, f"{collection}:bin_cluster:{algo}:container:uf:parent", members_key
+            r, f"{collection}:bin_cluster:{algo_ns}:container:uf:parent", members_key
         )
 
         msg = f"[threshold_uf] incremental binary update: {len(new_files)} new files..."
@@ -215,13 +223,13 @@ class BinClusterService:
 
         pipe = r.pipeline(transaction=False)
         for stale in stale_roots:
-            old_meta_raw = r.get(f"{collection}:bin_cluster:{algo}:{stale}:meta")
+            old_meta_raw = r.get(f"{collection}:bin_cluster:{algo_ns}:{stale}:meta")
             import json
 
             old_meta = json.loads(old_meta_raw) if old_meta_raw else {}
-            pipe.delete(f"{collection}:bin_cluster:{algo}:{stale}:meta")
-            pipe.delete(f"{collection}:bin_cluster:{algo}:{stale}:direct_members")
-            pipe.srem(f"{collection}:bin_cluster:list:{algo}", str(stale))
+            pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{stale}:meta")
+            pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{stale}:direct_members")
+            pipe.srem(f"{collection}:bin_cluster:list:{algo_ns}", str(stale))
             pipe.delete(f"{collection}:idx:file:bin_cluster_id:{str(stale).lower()}")
             old_name = old_meta.get("cluster_name")
             if old_name:
@@ -252,12 +260,14 @@ class BinClusterService:
 
             self._enrich_and_persist_binary_clusters(
                 collection,
-                algo,
+                algo_ns,
                 all_members_raw,
                 uuid_key,
                 min_cohesion,
                 job_service,
                 job_id,
+                algo=algo,
+                sim_score_key=sim_score_key,
             )
 
         msg = f"[threshold_uf] incremental binary update done. Touched {len(final_roots)} live clusters."
@@ -276,6 +286,7 @@ class BinClusterService:
         job_service=None,
         job_id=None,
         min_cohesion=None,
+        axis="overall",
     ):
         import time
         import logging
@@ -287,9 +298,10 @@ class BinClusterService:
             min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
 
         r = self.r
-        sim_score_key = f"{collection}:bin_sim:score:{algo}"
+        sim_score_key = f"{collection}:bin_sim:score_{axis}:{algo}" if axis != "overall" else f"{collection}:bin_sim:score:{algo}"
+        algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
         prefix = f"{collection}:bin_sim:{algo}:"
-        uuid_key = f"{collection}:bin_cluster:{algo}:uf:uuid"
+        uuid_key = f"{collection}:bin_cluster:{algo_ns}:uf:uuid"
 
         msg = f"[threshold_uf] Fetching binary similarity pairs from {sim_score_key} (threshold={threshold})..."
         logging.info(msg)
@@ -349,13 +361,15 @@ class BinClusterService:
 
             self._enrich_and_persist_binary_clusters(
                 collection,
-                algo,
+                algo_ns,
                 cluster_members,
                 uuid_key,
                 min_cohesion,
                 job_service,
                 job_id,
                 min_sim=min_sim or 0.0,
+                algo=algo,
+                sim_score_key=sim_score_key,
             )
             total_clusters += len(cluster_members)
 
@@ -372,18 +386,25 @@ class BinClusterService:
     def _enrich_and_persist_binary_clusters(
         self,
         collection,
-        algo,
+        algo_ns,
         cluster_members,
         uuid_key,
         min_cohesion,
         job_service,
         job_id,
         min_sim=0.0,
+        algo=None,
+        sim_score_key=None,
     ):
         import uuid
         import time
         import json
         from collections import Counter
+
+        if algo is None:
+            algo = algo_ns.split(":")[0]  # rough fallback
+        if sim_score_key is None:
+            sim_score_key = f"{collection}:bin_sim:score:{algo}"
 
         r = self.r
         pipe = r.pipeline(transaction=False)
@@ -412,7 +433,7 @@ class BinClusterService:
         # reported honestly; wiring the gate is a separate call.
         # Same read budget the hierarchical path uses, spread over the
         # clusters this call writes.
-        score_key = f"{collection}:bin_sim:score:{algo}"
+        score_key = sim_score_key
         sim_prefix = f"{collection}:bin_sim:{algo}:"
         pair_budget = max(
             self._COHESION_MIN_PAIRS,
@@ -423,11 +444,11 @@ class BinClusterService:
         )
 
         for label, members in cluster_members.items():
-            pipe.sadd(f"{collection}:bin_cluster:{algo}:{label}:members", *members)
+            pipe.sadd(f"{collection}:bin_cluster:{algo_ns}:{label}:members", *members)
             pipe.sadd(
-                f"{collection}:bin_cluster:{algo}:{label}:direct_members", *members
+                f"{collection}:bin_cluster:{algo_ns}:{label}:direct_members", *members
             )
-            pipe.sadd(f"{collection}:bin_cluster:list:{algo}", str(label))
+            pipe.sadd(f"{collection}:bin_cluster:list:{algo_ns}", str(label))
 
             # Ensure UUID
             c_uuid = r.hget(uuid_key, label)
@@ -544,7 +565,7 @@ class BinClusterService:
                 "created_at": int(time.time() * 1000),
             }
 
-            pipe.set(f"{collection}:bin_cluster:{algo}:{label}:meta", json.dumps(meta))
+            pipe.set(f"{collection}:bin_cluster:{algo_ns}:{label}:meta", json.dumps(meta))
 
             # Indexes
             bucket_key = (
@@ -681,6 +702,7 @@ class BinClusterService:
         min_cohesion,
         job_service=None,
         job_id=None,
+        axis="overall",
     ):
         import pandas as pd
 
@@ -697,8 +719,8 @@ class BinClusterService:
         from bsimvis.app.services.cluster_threshold import build_single_linkage_tree
 
         r = self.r
+        sim_score_key = f"{collection}:bin_sim:score_{axis}:{algo}" if axis != "overall" else f"{collection}:bin_sim:score:{algo}"
         prefix = f"{collection}:bin_sim:{algo}:"
-        score_key = f"{collection}:bin_sim:score:{algo}"
         file_prefix = f"{collection}:file:"
         containers = set(lineage_service.container_md5s(collection, r))
         fingerprint = hier_fingerprint(
@@ -707,7 +729,8 @@ class BinClusterService:
         results = []
 
         for node_type in ("file", "container"):
-            algo_ns = f"{algo}:container" if node_type == "container" else algo
+            algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
+            algo_ns = f"{algo_ns}:container" if node_type == "container" else algo_ns
             base = f"{collection}:bin_cluster:hier:{algo_ns}"
             state = load_hier_state(r, base)
             if state is None:
@@ -747,7 +770,7 @@ class BinClusterService:
                 chunk = sid_list[i : i + 1000]
                 pipe = r.pipeline(transaction=False)
                 for sid in chunk:
-                    pipe.zscore(score_key, sid)
+                    pipe.zscore(sim_score_key, sid)
                 for sid, score in zip(chunk, pipe.execute()):
                     if score is not None:
                         scores[sid] = float(score)
@@ -829,7 +852,7 @@ class BinClusterService:
             )
             for c in dirty:
                 cohesion[c], cohesion_exact[c] = self._node_cohesion(
-                    c, node_members[c], prefix, score_key, min_sim, budget
+                    c, node_members[c], prefix, sim_score_key, min_sim, budget
                 )
 
             uuids = {
@@ -909,6 +932,7 @@ class BinClusterService:
         job_service=None,
         job_id=None,
         min_cohesion=None,
+        axis="overall",
     ):
         """Full single-linkage hierarchy via Kruskal + Union-Find over binary
         similarity pairs (cluster_threshold.build_single_linkage_tree) --
@@ -935,17 +959,13 @@ class BinClusterService:
             min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
 
         r = self.r
-        sim_score_key = f"{collection}:bin_sim:score:{algo}"
+        sim_score_key = f"{collection}:bin_sim:score_{axis}:{algo}" if axis != "overall" else f"{collection}:bin_sim:score:{algo}"
         prefix = f"{collection}:bin_sim:{algo}:"
-
         msg = f"[hierarchical_uf] Fetching binary similarity pairs from {sim_score_key}..."
         logging.info(msg)
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        # Container clusters and file clusters are built as two independent
-        # trees -- see _persist_hierarchical_binary_clusters for why they
-        # can't share a label namespace.
         container_fids = {
             f"{collection}:file:{m}"
             for m in lineage_service.container_md5s(collection, r)
@@ -972,9 +992,6 @@ class BinClusterService:
             idx_to_id = edge_set.idx_to_id
 
             if edge_set.n_scanned == 0 or edge_set.src.size == 0:
-                logging.warning(
-                    f"No binary similarity edges found for {collection}:{algo} ({node_type})"
-                )
                 continue
 
             num_nodes = len(id_to_idx)
@@ -985,7 +1002,9 @@ class BinClusterService:
 
             start_fit = time.time()
             tree_rows, global_root_id, _, mst = build_single_linkage_tree(edge_set)
-            algo_ns = f"{algo}:container" if node_type == "container" else algo
+            
+            algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
+            algo_ns = f"{algo_ns}:container" if node_type == "container" else algo_ns
             hier_base = f"{collection}:bin_cluster:hier:{algo_ns}"
             hier_state = {
                 "idx": dict(id_to_idx),
@@ -999,6 +1018,8 @@ class BinClusterService:
                 "root_id": None,
             }
             tree_rows, global_root_id = stabilise(tree_rows, mst, hier_state)
+            
+            import pandas as pd
             tree_df = pd.DataFrame(tree_rows)
             fit_time = time.time() - start_fit
             msg = f"[hierarchical_uf/{node_type}] tree built in {fit_time:.2f}s, {len(tree_df)} rows."
@@ -1010,7 +1031,7 @@ class BinClusterService:
 
             persisted = self._persist_hierarchical_binary_clusters(
                 collection,
-                algo,
+                algo_ns,
                 edge_set,
                 id_to_idx,
                 idx_to_id,
@@ -1023,6 +1044,8 @@ class BinClusterService:
                 job_service,
                 job_id,
                 node_type=node_type,
+                algo=algo,
+                sim_score_key=sim_score_key,
             )
             if persisted is False:
                 return False
@@ -1042,6 +1065,7 @@ class BinClusterService:
         job_service=None,
         job_id=None,
         min_cohesion=None,
+        axis="overall",
     ):
         """
         Runs HDBSCAN clustering on similarity pairs stored in Kvrocks.
@@ -1069,7 +1093,8 @@ class BinClusterService:
             return False
 
         r = self.r
-        sim_score_key = f"{collection}:bin_sim:score:{algo}"
+        sim_score_key = f"{collection}:bin_sim:score_{axis}:{algo}" if axis != "overall" else f"{collection}:bin_sim:score:{algo}"
+        algo_ns_base = f"{algo}:{axis}" if axis != "overall" else algo
 
         # 1. Fetch all similarity pairs
         logging.info(f"[*] Fetching binary similarity pairs from {sim_score_key}...")
@@ -1365,9 +1390,12 @@ class BinClusterService:
 
                 tree_df = pd.DataFrame(pruned_rows)
 
+            algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
+            algo_ns = f"{algo_ns}:container" if node_type == "container" else algo_ns
+
             self._persist_hierarchical_binary_clusters(
                 collection,
-                algo,
+                algo_ns,
                 edge_set,
                 id_to_idx,
                 idx_to_id,
@@ -1380,6 +1408,8 @@ class BinClusterService:
                 job_service,
                 job_id,
                 node_type=node_type,
+                algo=algo,
+                sim_score_key=sim_score_key,
             )
 
         return True
@@ -1387,7 +1417,7 @@ class BinClusterService:
     def _persist_hierarchical_binary_clusters(
         self,
         collection,
-        algo,
+        algo_ns,
         edge_set,
         id_to_idx,
         idx_to_id,
@@ -1406,6 +1436,8 @@ class BinClusterService:
         only_nodes=None,
         only_fids=None,
         retired_nodes=(),
+        algo=None,
+        sim_score_key=None,
     ):
         """Shared tail for every hierarchical binary engine (HDBSCAN,
         hierarchical_uf): given a condensed/single-linkage tree_df (columns
@@ -1423,7 +1455,11 @@ class BinClusterService:
         the one index (`bin_cluster_id`) that isn't algo-scoped at all today.
         """
         r = self.r
-        algo_ns = f"{algo}:container" if node_type == "container" else algo
+        if algo is None:
+            algo = algo_ns.split(":")[0]
+        if sim_score_key is None:
+            sim_score_key = f"{collection}:bin_sim:score:{algo}"
+        
         label_key = (lambda label: f"c{label}") if node_type == "container" else str
 
         # 4. Extract Condensed Tree for UI
@@ -1602,7 +1638,7 @@ class BinClusterService:
             ]
 
         for i, (file_id, clusters) in enumerate(file_clusters):
-            clusters_key = f"{file_id}:bin_clusters"
+            clusters_key = f"{file_id}:bin_clusters:{algo_ns}"
             pipe.delete(clusters_key)
             if clusters:
                 pipe.sadd(clusters_key, *clusters)
@@ -1890,7 +1926,7 @@ class BinClusterService:
         return True
 
     def clear_clusters(
-        self, collection, algo="unweighted_cosine", job_service=None, job_id=None
+        self, collection, algo="unweighted_cosine", job_service=None, job_id=None, axis="overall"
     ):
         """
         Clears all binary clustering data for a collection and algorithm --
@@ -1902,7 +1938,8 @@ class BinClusterService:
         from bsimvis.app.services.cluster_common import clear_hier_state
         from bsimvis.app.services.index_service import _unindex_tag
 
-        for algo_ns in (algo, f"{algo}:container"):
+        base_algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
+        for algo_ns in (base_algo_ns, f"{base_algo_ns}:container"):
             cluster_list_key = f"{collection}:bin_cluster:list:{algo_ns}"
             cids_raw = r.smembers(cluster_list_key)
             all_meta_keys = []
@@ -1947,7 +1984,7 @@ class BinClusterService:
                         _unindex_tag(
                             pipe, collection, "file", "bin_cluster_id", cid, mid
                         )
-                        pipe.delete(f"{mid}:bin_clusters")
+                        pipe.delete(f"{mid}:bin_clusters:{algo_ns}")
 
                         if j % 500 == 0:
                             pipe.execute()

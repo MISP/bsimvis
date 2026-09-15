@@ -7,7 +7,7 @@ from flask import request
 from bsimvis.app.services import lineage_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.query_syntax import resolve_targets, union_buckets
-from bsimvis.app.services.cluster_utils import fetch_bin_cluster_meta
+from bsimvis.app.services.cluster_utils import fetch_bin_cluster_meta, fetch_bin_cluster_meta_all_axes
 from bsimvis.app.services.index_service import (
     query_ids,
     parse_timestamp,
@@ -161,20 +161,23 @@ def search_files():
         paged_ids = ordered_ids[offset : offset + limit]
 
         # 4. Fetch full JSON, function counts, and cluster assignments for the page
+        # We fetch all 4 axes at once so the UI can show per-axis badges.
+        _AXES = ["overall", "code", "library", "content"]
+        algo_p = request.args.get("algo", "unweighted_cosine")
         pipe = r.pipeline(transaction=False)
         for doc_id in paged_ids:
             pipe.get(f"{doc_id}:meta")
             actual_col = doc_id.split(":")[0]
             md5 = doc_id.split(":")[-1]
             pipe.scard(f"{actual_col}:idx:file:functions:{md5}")
-            if pool_id:
-                pipe.smembers(f"pool:{pool_id}:file:{md5}:bin_clusters")
-            else:
-                pipe.smembers(f"{doc_id}:bin_clusters")
-            # Whether this row can be expanded into a lineage subtree. Counted
-            # here rather than guessed from tags: a packed executable is not a
-            # container yet still holds children. SMEMBERS, not SCARD -- the
-            # set holds more than one spelling of the same edge.
+            # One SMEMBERS per axis
+            for axis in _AXES:
+                axis_algo_ns = f"{algo_p}:{axis}" if axis != "overall" else algo_p
+                if pool_id:
+                    pipe.smembers(f"pool:{pool_id}:file:{md5}:bin_clusters:{axis_algo_ns}")
+                else:
+                    pipe.smembers(f"{doc_id}:bin_clusters:{axis_algo_ns}")
+            # Whether this row can be expanded into a lineage subtree.
             pipe.smembers(f"{actual_col}:lineage:children:{md5}")
 
         results = pipe.execute()
@@ -182,12 +185,16 @@ def search_files():
         files_list = []
 
         # First pass: collect results and unique cluster IDs
+        # Each file: meta, func_count, <4 axis smembers>, children = 7 results
+        _STRIDE = 2 + len(_AXES) + 1
         raw_files_data = []
         for i, doc_id in enumerate(paged_ids):
-            res = results[4 * i]
-            func_count = results[4 * i + 1]
-            cluster_res = results[4 * i + 2]
-            child_count = lineage_service.count_members(results[4 * i + 3])
+            base = _STRIDE * i
+            res = results[base]
+            func_count = results[base + 1]
+            axis_cluster_raws = results[base + 2 : base + 2 + len(_AXES)]
+            child_raw = results[base + 2 + len(_AXES)]
+            child_count = lineage_service.count_members(child_raw)
 
             if not res:
                 continue
@@ -196,19 +203,19 @@ def search_files():
             if isinstance(data, str):
                 data = json.loads(data)
 
-            # A container has no functions of its own; its stored count is the
-            # rolled-up subtree total that lineage_service restates.
             if not data.get("is_container"):
                 data["function_count"] = func_count
             data["child_count"] = child_count or 0
             data["file_id"] = doc_id
-            data["bin_clusters"] = (
-                list(cluster_res) if isinstance(cluster_res, (list, set)) else []
-            )
+            # Store as {axis: [cids]} dict
+            data["bin_clusters"] = {
+                axis: list(raw) if isinstance(raw, (list, set)) else []
+                for axis, raw in zip(_AXES, axis_cluster_raws)
+            }
 
             raw_files_data.append(data)
 
-        # Second pass: fetch cluster metadata
+        # Second pass: fetch cluster metadata for all 4 axes
         cluster_meta_map = {}
         from bsimvis.app.services.config_service import config_service
 
@@ -217,16 +224,13 @@ def search_files():
                 "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
             )
         )
-        t3 = t2  # default: no cluster fetch
-        if any(d["bin_clusters"] for d in raw_files_data):
-            algo = request.args.get("algo", "unweighted_cosine")
-            # Labels are namespaced by node type, so they are resolved per file
-            # and replaced by the cluster uuid the client can key on.
-            meta_by_uuid, uuids_per_file = fetch_bin_cluster_meta(
+        t3 = t2
+        if any(any(v for v in d["bin_clusters"].values()) for d in raw_files_data):
+            meta_by_uuid, uuids_per_file_by_axis = fetch_bin_cluster_meta_all_axes(
                 r,
                 col,
                 [(d["bin_clusters"], d.get("is_container")) for d in raw_files_data],
-                algo=algo,
+                algo=algo_p,
                 pool_id=pool_id,
             )
             t3 = time.perf_counter()
@@ -235,8 +239,12 @@ def search_files():
                 for u, cm in meta_by_uuid.items()
                 if (cm.get("cohesion_score") or 0) >= min_cohesion
             }
-            for data, uuids in zip(raw_files_data, uuids_per_file):
-                data["bin_clusters"] = uuids
+            # Flatten to a list of uuids (axis is encoded in meta["axis"])
+            for data, uuids_by_axis in zip(raw_files_data, uuids_per_file_by_axis):
+                data["bin_clusters"] = [
+                    u for uuids in uuids_by_axis.values() for u in uuids
+                    if u in cluster_meta_map
+                ]
 
         # Third pass: finalize files list
         for data in raw_files_data:
@@ -545,23 +553,27 @@ def get_file_details(collection, file_md5):
         r = get_redis()
         file_id = f"{sub_collection}:file:{file_md5}"
 
-        if pool_id:
-            clusters_key = f"pool:{pool_id}:file:{file_md5}:bin_clusters"
-        else:
-            clusters_key = f"{collection}:file:{file_md5}:bin_clusters"
+        algo_p = request.args.get("algo", "unweighted_cosine")
+        _AXES = ["overall", "code", "library", "content"]
 
         # 1. Fetch full JSON, function counts, and cluster assignments
         pipe = r.pipeline(transaction=False)
         pipe.get(f"{file_id}:meta")
         pipe.scard(f"{sub_collection}:idx:file:functions:{file_md5}")
-        pipe.smembers(clusters_key)
+        for axis in _AXES:
+            axis_algo_ns = f"{algo_p}:{axis}" if axis != "overall" else algo_p
+            if pool_id:
+                pipe.smembers(f"pool:{pool_id}:file:{file_md5}:bin_clusters:{axis_algo_ns}")
+            else:
+                pipe.smembers(f"{collection}:file:{file_md5}:bin_clusters:{axis_algo_ns}")
         pipe.smembers(f"{sub_collection}:lineage:children:{file_md5}")
         results = pipe.execute()
 
         res = results[0]
         func_count = results[1]
-        cluster_res = results[2]
-        child_count = lineage_service.count_members(results[3])
+        axis_cluster_raws = results[2:6]
+        child_raw = results[6]
+        child_count = lineage_service.count_members(child_raw)
 
         if not res:
             return {"error": "File not found"}, 404
@@ -576,22 +588,28 @@ def get_file_details(collection, file_md5):
         data["child_count"] = child_count or 0
         data["file_id"] = f"{collection}:file:{file_md5}"
 
+        data["bin_clusters"] = {
+            axis: list(raw) if isinstance(raw, (list, set)) else []
+            for axis, raw in zip(_AXES, axis_cluster_raws)
+        }
+
         if pool_id:
             enrich_pool_data(data, pool_id)
-
-        cluster_ids = list(cluster_res) if isinstance(cluster_res, (list, set)) else []
 
         # 2. Fetch cluster metadata. The stored labels only mean something in
         # the namespace their node type was clustered in, so the client gets
         # the uuids back instead.
-        cluster_meta_map, (cluster_uuids,) = fetch_bin_cluster_meta(
+        cluster_meta_map, uuids_per_file_by_axis = fetch_bin_cluster_meta_all_axes(
             r,
             collection,
-            [(cluster_ids, data.get("is_container"))],
-            algo=request.args.get("algo", "unweighted_cosine"),
+            [(data["bin_clusters"], data.get("is_container"))],
+            algo=algo_p,
             pool_id=pool_id,
         )
-        data["bin_clusters"] = cluster_uuids
+        data["bin_clusters"] = {
+            axis: uuids
+            for axis, uuids in uuids_per_file_by_axis[0].items()
+        }
 
         # 3. Compute inferred metadata (server-side)
         from bsimvis.app.services.config_service import config_service

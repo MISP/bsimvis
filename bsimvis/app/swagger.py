@@ -32,6 +32,7 @@ ns_function = Namespace("function", description="Function-level analysis and sea
 ns_feature = Namespace("feature", description="Global feature search")
 ns_search = Namespace("search", description="Unified search and metadata utilities")
 ns_similarity = Namespace("similarity", description="Similarity engine and results")
+ns_maintenance = Namespace("maintenance", description="Generated data maintenance")
 ns_tags = Namespace("tags", description="Tag management")
 ns_cluster = Namespace("cluster", description="Hierarchical clustering and analysis")
 ns_bin_cluster = Namespace(
@@ -58,6 +59,7 @@ api.add_namespace(ns_function)
 api.add_namespace(ns_feature)
 api.add_namespace(ns_search)
 api.add_namespace(ns_similarity)
+api.add_namespace(ns_maintenance)
 api.add_namespace(ns_tags)
 api.add_namespace(ns_cluster)
 api.add_namespace(ns_bin_cluster)
@@ -3282,3 +3284,13 @@ class SearchAnalyzeSelection(Resource):
         from bsimvis.app.routes.searches import analyze_selection
 
         return analyze_selection(search_id)
+
+
+# --- Maintenance Namespace ---
+@ns_maintenance.route("")
+class Maintenance(Resource):
+    def post(self):
+        """Queues clear, build, or rebuild work for selected generated data."""
+        from bsimvis.app.routes.maintenance import maintenance
+
+        return maintenance()

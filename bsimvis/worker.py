@@ -581,6 +581,21 @@ class Worker:
                         pass
                 md5 = data.get("file_md5")
 
+            if payload.get("address"):
+                from bsimvis.app.services.maintenance_service import MaintenanceService
+
+                return MaintenanceService(self.r_data, self.similarity_service).build(
+                    collection,
+                    md5=md5,
+                    batch_uuid=batch_uuid,
+                    address=payload["address"],
+                    algo=algo,
+                    top_k=top_k,
+                    min_score=min_score,
+                    min_features=min_features,
+                    index_depth=index_depth,
+                    force=payload.get("force", False),
+                )
             return self.similarity_service.build_batch(
                 collection,
                 batch_uuid=batch_uuid,
@@ -622,6 +637,16 @@ class Worker:
             )
 
         elif jtype == JobType.CLEAR_SIM.value:
+            if payload.get("address"):
+                from bsimvis.app.services.maintenance_service import MaintenanceService
+
+                return MaintenanceService(self.r_data, self.similarity_service).clear(
+                    collection,
+                    md5=md5,
+                    batch_uuid=batch_uuid,
+                    address=payload["address"],
+                    algo=payload.get("algo"),
+                )
             if payload.get("all"):
                 return self.similarity_service.clear_all(
                     collection, algo=payload.get("algo")
@@ -726,7 +751,7 @@ class Worker:
 
         elif jtype == JobType.BUILD_BIN_SIM.value:
             algo = payload.get("algo", "unweighted_cosine")
-            md5_a = payload.get("md5_a")
+            md5_a = payload.get("md5_a") or payload.get("md5")
             md5_b = payload.get("md5_b")
             min_cohesion = payload.get("min_cohesion", 0.5)
 

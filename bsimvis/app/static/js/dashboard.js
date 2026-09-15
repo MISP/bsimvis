@@ -3416,12 +3416,14 @@ window.addEventListener('load', () => {
         icons.forEach(icon => icon.classList.add('fa-spin'));
 
         try {
-            const resp = await fetch('/api/cluster/rebuild_all', {
+            const resp = await fetch('/api/maintenance', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     collection: collection,
-                    algo: algo
+                    algo: algo,
+                    operation: 'rebuild',
+                    targets: ['function_cluster', 'binary_cluster']
                 })
             });
 

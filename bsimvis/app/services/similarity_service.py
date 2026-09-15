@@ -1253,6 +1253,7 @@ class SimilarityService:
         min_features=None,
         sleep_time=0,
         index_depth="none",
+        force=False,
     ):
         """
         Builds similarities for a single function against the collection.
@@ -1278,6 +1279,9 @@ class SimilarityService:
         md5, addr = parts[-2], parts[-1]
         vec_key = f"{base_id}:vec:tf"
         built_set_key = f"{collection}:built:functions:{algo}"
+
+        if force:
+            self.r.srem(built_set_key, base_id)
 
         # Incremental Skip: Check if already built
         if self.r.sismember(built_set_key, base_id):

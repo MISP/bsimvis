@@ -447,7 +447,13 @@ class BinSimService:
                     pairs = [(md5_b, md5_a)]
             else:
                 pairs = []
-                if batch_uuid:
+                if md5_a:
+                    pairs = [
+                        tuple(sorted((md5_a, other)))
+                        for other in binaries
+                        if other != md5_a
+                    ]
+                elif batch_uuid:
                     func_keys = r.smembers(f"{collection}:batch:{batch_uuid}:functions")
                     batch_binaries = set(
                         (k.decode() if isinstance(k, bytes) else k).split(":")[-2]

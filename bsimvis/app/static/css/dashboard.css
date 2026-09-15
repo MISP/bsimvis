@@ -2470,3 +2470,26 @@ a.home-card:hover,
     background: rgba(174, 129, 255, 0.08);
 }
 .analyze-preset small { color: var(--subtle); font-size: 0.72rem; }
+
+/* Collection maintenance window */
+.maintenance-launch { padding: 10px 16px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--accent) 10%, var(--card-bg)); color: var(--accent); font-weight: 700; cursor: pointer; }
+.maintenance-launch:hover { background: color-mix(in srgb, var(--accent) 18%, var(--card-bg)); transform: translateY(-1px); }
+.maintenance-overlay { position: fixed; inset: 0; z-index: 30000; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, var(--window-bg) 82%, transparent); backdrop-filter: blur(8px); }
+.maintenance-window { width: min(680px, 100%); overflow: hidden; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 16px; background: var(--card-bg); box-shadow: 0 24px 80px rgba(0,0,0,.45); }
+.maintenance-header { display: flex; justify-content: space-between; gap: 20px; padding: 24px 26px; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 17%, var(--card-bg)), var(--card-bg)); border-bottom: 1px solid var(--border); }
+.maintenance-kicker { color: var(--accent); font-size: .7rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.maintenance-header h2 { margin: 5px 0 3px; color: var(--text); font-size: 1.35rem; }
+.maintenance-header p { margin: 0; color: var(--dim); font-family: monospace; }
+.maintenance-close { border: 0; background: transparent; color: var(--dim); font-size: 1.8rem; cursor: pointer; }
+.maintenance-body { display: grid; gap: 16px; padding: 24px 26px; color: var(--text); }
+.maintenance-body label, .maintenance-grid label { display: grid; gap: 7px; color: var(--dim); font-size: .78rem; font-weight: 700; }
+.maintenance-body select, .maintenance-body input { box-sizing: border-box; width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }
+.maintenance-body select { min-height: 116px; }
+.maintenance-body select:focus, .maintenance-body input:focus { outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: 1px; }
+.maintenance-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.maintenance-help { margin: 0; color: var(--dim); font-size: .78rem; }
+.maintenance-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 18px 26px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 50%, var(--card-bg)); }
+.maintenance-btn { padding: 9px 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--hover); color: var(--text); font-weight: 700; cursor: pointer; }
+.maintenance-btn.primary { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: var(--accent); color: var(--bg); }
+.maintenance-btn.danger { border-color: color-mix(in srgb, #ef4444 50%, var(--border)); color: #f87171; }
+@media (max-width: 640px) { .maintenance-grid { grid-template-columns: 1fr; } .maintenance-header, .maintenance-body, .maintenance-footer { padding-left: 18px; padding-right: 18px; } }

@@ -213,6 +213,7 @@ window.CollectionDetailView = {
                 </div>
             </div>
 
+            <button class="maintenance-launch" onclick="window.openMaintenanceWindow(${escapeAttr(jsString(name))})"><i class="fa-solid fa-screwdriver-wrench"></i> Open maintenance</button>
             <!-- MAIN GRID -->
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start;">
 
@@ -366,13 +367,13 @@ window.CollectionDetailView = {
 };
 
 window.collectionDetailCluster = async function(collName, btn) {
-    if (!confirm(`Redo the whole analysis pipeline for "${collName}" (function clusters, binary similarities, binary clusters)? Function extraction and function similarity are not affected.`)) return;
+    if (!confirm(`Rebuild function clusters for "${collName}"? Binary similarities and binary clusters are not rebuilt.`)) return;
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
     try {
-        const res = await fetch(`/api/cluster/rebuild_all`, {
+        const res = await fetch(`/api/maintenance`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection: collName })
+            body: JSON.stringify({ collection: collName, operation: "rebuild", targets: ["function_cluster"] })
         });
         if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
         const data = await res.json();
@@ -466,4 +467,27 @@ window.collectionDetailDelete = async function(collName, btn) {
         alert(`Failed to delete collection: ${e.message}`);
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-trash-can"></i> Delete'; }
     }
+};
+
+window.openMaintenanceWindow = function(collection) {
+    document.getElementById('maintenance-window')?.remove();
+    const overlay = document.createElement('div'); overlay.id = 'maintenance-window'; overlay.className = 'maintenance-overlay';
+    overlay.innerHTML = `<section class="maintenance-window" role="dialog" aria-modal="true"><header class="maintenance-header"><div><div class="maintenance-kicker">Generated data</div><h2>Collection maintenance</h2><p>${escapeHtml(collection)}</p></div><button class="maintenance-close" onclick="document.getElementById('maintenance-window')?.remove()">&times;</button></header><div class="maintenance-body"><label>Targets<select id="maintenance-target" multiple><option value="function_similarity">Function similarities</option><option value="function_cluster" selected>Function clusters</option><option value="binary_similarity">Binary similarities</option><option value="binary_cluster" selected>Binary clusters</option></select></label><div class="maintenance-grid"><label>Batch UUID<input id="maintenance-batch"></label><label>MD5<input id="maintenance-md5"></label><label>Function address<input id="maintenance-address"></label></div><p class="maintenance-help">Select one or more targets with Ctrl or Cmd-click. Filters are combined; address applies only to function targets.</p></div><footer class="maintenance-footer"><button class="maintenance-btn danger" onclick="window.collectionMaintenance(${escapeAttr(jsString(collection))}, 'clear')">Clear</button><button class="maintenance-btn" onclick="window.collectionMaintenance(${escapeAttr(jsString(collection))}, 'build')">Build</button><button class="maintenance-btn primary" onclick="window.collectionMaintenance(${escapeAttr(jsString(collection))}, 'rebuild')">Rebuild</button></footer></section>`;
+    overlay.onclick = event => { if (event.target === overlay) overlay.remove(); }; document.body.appendChild(overlay);
+};
+window.collectionMaintenance = async function(collection, operation) {
+    const targets = [...document.getElementById('maintenance-target').selectedOptions].map(option => option.value);
+    const body = { collection, operation, targets };
+    for (const field of ['batch', 'md5', 'address']) {
+        const value = document.getElementById(`maintenance-${field}`)?.value.trim();
+        if (value) body[field] = value;
+    }
+    if (body.address && targets.some(target => target.startsWith('binary_'))) return alert('Address only applies to function targets.');
+    if (['clear', 'rebuild'].includes(operation) && !confirm(`${operation} selected generated data?`)) return;
+    try {
+        const res = await fetch('/api/maintenance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        alert(`Maintenance job enqueued: ${data.job_id}`);
+    } catch (error) { alert(`Failed to enqueue maintenance: ${error.message}`); }
 };

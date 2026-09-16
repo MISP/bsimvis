@@ -7,7 +7,11 @@ import uuid
 from collections import Counter, defaultdict
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.cluster_utils import default_bin_cluster_name
+from bsimvis.app.services.cluster_utils import (
+    build_freq,
+    collect_member_values,
+    default_bin_cluster_name,
+)
 from bsimvis.app.services import mem_util, sim_edges
 
 # Above this many nodes a dense size^2 float64 distance matrix stops being
@@ -2978,66 +2982,21 @@ class ClusterService:
             meta_key = f"global:pool:{pool_id}:bin_cluster:{c_uuid}:meta"
             members_key = f"global:pool:{pool_id}:bin_cluster:{c_uuid}:members"
 
-            names_list = []
-            md5s_list = []
-            yara_list = []
-            avtype_list = []
-            filetype_list = []
-            ccip_list = []
-
-            for file_id in members:
-                m = all_member_meta.get(file_id, {})
-                if m.get("file_names"):
-                    names_list.extend(m["file_names"])
-                elif m.get("file_name"):
-                    names_list.append(m["file_name"])
-
-                if m.get("file_md5"):
-                    md5s_list.append(m["file_md5"])
-
-                if m.get("yara"):
-                    yara_list.extend(
-                        m["yara"] if isinstance(m["yara"], list) else [m["yara"]]
-                    )
-                if m.get("avtype"):
-                    avtype_list.extend(
-                        m["avtype"] if isinstance(m["avtype"], list) else [m["avtype"]]
-                    )
-                if m.get("filetype"):
-                    filetype_list.extend(
-                        m["filetype"]
-                        if isinstance(m["filetype"], list)
-                        else [m["filetype"]]
-                    )
-                if m.get("cc_ip"):
-                    ccip_list.extend(
-                        m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]]
-                    )
+            member_metas = [all_member_meta.get(file_id, {}) for file_id in members]
+            names_list, md5s_list, yara_list, avtype_list, filetype_list, ccip_list = (
+                collect_member_values(member_metas)
+            )
 
             default_name = default_bin_cluster_name(
                 names_list, avtype_list, yara_list, f"Pool File Cluster {c_uuid}"
             )
 
-            def build_freq(items):
-                return (
-                    [
-                        {
-                            "value": k,
-                            "count": v,
-                            "percent": round((v / len(members)) * 100),
-                        }
-                        for k, v in Counter(items).most_common(5)
-                    ]
-                    if items
-                    else []
-                )
-
-            yara_freq = build_freq(yara_list)
-            avtype_freq = build_freq(avtype_list)
-            filetype_freq = build_freq(filetype_list)
-            ccip_freq = build_freq(ccip_list)
-            filename_freq = build_freq(names_list)
-            md5_freq = build_freq(md5s_list)
+            yara_freq = build_freq(yara_list, len(members))
+            avtype_freq = build_freq(avtype_list, len(members))
+            filetype_freq = build_freq(filetype_list, len(members))
+            ccip_freq = build_freq(ccip_list, len(members))
+            filename_freq = build_freq(names_list, len(members))
+            md5_freq = build_freq(md5s_list, len(members))
 
             n_members = len(members)
             if n_members > 1:

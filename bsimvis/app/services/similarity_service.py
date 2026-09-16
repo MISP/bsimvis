@@ -393,9 +393,10 @@ class SimilarityService:
         if not target_features:
             return []
 
-        min_shared_norm_sq = 0.0
+        min_shared_features = 0.0
+        target_len = len(target_features)
         if algo == "unweighted_cosine":
-            min_shared_norm_sq = (threshold * target_norm) ** 2
+            min_shared_features = (threshold ** 2) * target_len
 
         # 1. Size each feature's posting list, rarest-first (pipelined ZCARDs)
         feats = list(target_features.items())
@@ -431,7 +432,7 @@ class SimilarityService:
             remaining_total = target_total - processed_total
             can_add_new = True
             if algo == "unweighted_cosine":
-                if remaining_norm_sq < min_shared_norm_sq:
+                if (len(features_sorted) - i) < min_shared_features:
                     can_add_new = False
             elif algo == "jaccard":
                 if remaining_total < threshold * target_total:
@@ -449,14 +450,11 @@ class SimilarityService:
                 if is_existing or can_add_new:
                     if not is_existing:
                         intersection_counts[func_id] = 0.0
-                        if algo == "unweighted_cosine":
-                            shared_target_norm_sq[func_id] = 0.0
                         num_candidates += 1
                     if algo == "jaccard":
                         intersection_counts[func_id] += min(feat["tf"], cand_tf)
                     elif algo == "unweighted_cosine":
-                        intersection_counts[func_id] += feat["tf"] * cand_tf
-                        shared_target_norm_sq[func_id] += target_tf_sq
+                        intersection_counts[func_id] += 1
 
             processed_norm_sq += feat["tf"] * feat["tf"]
             processed_total += feat["tf"]
@@ -468,7 +466,7 @@ class SimilarityService:
                 if intersect < threshold * target_total:
                     continue
             elif algo == "unweighted_cosine":
-                if shared_target_norm_sq.get(cid, 0) < min_shared_norm_sq:
+                if intersect < min_shared_features:
                     continue
             kept.append(cid)
         if not kept:
@@ -488,26 +486,19 @@ class SimilarityService:
                 score = intersect / union if union > 0 else 0
                 if score >= threshold and score > 0:
                     candidate_list.append((cid, score, cand_total))
-        else:  # unweighted_cosine — norm only fetched for phase-2 survivors
-            need_norm = []
+        else:  # unweighted_cosine — we can compute exact binary cosine right here
             for cid, cand_total in zip(kept, totals):
                 if cand_total < min_features or cand_total <= 0:
                     continue
                 intersect = intersection_counts[cid]
-                denom = threshold * target_norm
-                max_cand_total = (intersect / denom) ** 2 if denom > 0 else 0
-                if cand_total <= max_cand_total:
-                    need_norm.append((cid, intersect, cand_total))
-            if need_norm:
-                norms = self._norms([cid for cid, _, _ in need_norm])
-                for (cid, intersect, cand_total), cand_norm in zip(need_norm, norms):
-                    score = (
-                        intersect / (target_norm * cand_norm)
-                        if (target_norm > 0 and cand_norm > 0)
-                        else 0
-                    )
-                    if score >= threshold and score > 0:
-                        candidate_list.append((cid, score, cand_total))
+                import math
+                score = (
+                    intersect / math.sqrt(target_len * cand_total)
+                    if (target_len > 0 and cand_total > 0)
+                    else 0
+                )
+                if score >= threshold and score > 0:
+                    candidate_list.append((cid, score, cand_total))
 
         candidate_list.sort(key=lambda x: x[1], reverse=True)
         result = []
@@ -1479,10 +1470,10 @@ class SimilarityService:
                 return float(sum_min / union) if union > 0 else 0.0
 
             elif algo == "unweighted_cosine":
-                # TF-weighted Cosine: sum(a*b) / (sqrt(sum(a^2)) * sqrt(sum(b^2)))
-                dot_product = sum(d1[h] * d2[h] for h in common)
-                norm1 = math.sqrt(sum(v**2 for v in d1.values()))
-                norm2 = math.sqrt(sum(v**2 for v in d2.values()))
+                # True Binary Unweighted Cosine
+                dot_product = len(common)
+                norm1 = math.sqrt(len(d1))
+                norm2 = math.sqrt(len(d2))
                 return (
                     float(dot_product / (norm1 * norm2))
                     if (norm1 > 0 and norm2 > 0)

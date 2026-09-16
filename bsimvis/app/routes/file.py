@@ -1,4 +1,4 @@
-from flask import request
+from flask import current_app, request
 import json
 import hashlib
 from bsimvis.app.services import archive_service, lineage_service, unpack_service
@@ -12,6 +12,7 @@ from bsimvis.app.services.config_service import config_service
 import logging
 import time
 import uuid
+import re
 
 job_service = JobService()
 
@@ -168,6 +169,257 @@ def upload_file_data():
         logging.error(f"Upload failed: {str(e)}")
         logging.error(traceback.format_exc())
         return {"error": str(e), "detail": traceback.format_exc()}, 500
+
+
+def _batch_file_md5s(r, collection, batch_uuid):
+    """Return a batch's files, including batches created before its file set."""
+    files = r.smembers(f"{collection}:batch:{batch_uuid}:files")
+    if files:
+        return {
+            value.decode() if isinstance(value, bytes) else value for value in files
+        }
+
+    # ponytail: legacy batches lack a file set; scan their collection registry
+    # once. New ingests populate the set, so this remains a compatibility path.
+    md5s = set()
+    for file_id in r.sscan_iter(f"{collection}:all_files"):
+        file_id = file_id.decode() if isinstance(file_id, bytes) else file_id
+        md5 = file_id.rsplit(":", 1)[-1]
+        raw = r.get(f"{collection}:file:{md5}:meta")
+        if raw and json.loads(raw).get("batch_uuid") == batch_uuid:
+            md5s.add(md5)
+    return md5s
+
+
+def _requested_md5s(value):
+    """Extract MD5s from pasted text, quotes, colons, or a JSON list."""
+    if isinstance(value, list):
+        value = " ".join(map(str, value))
+    return {
+        md5.lower()
+        for md5 in re.findall(
+            r"(?i)(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])", str(value or "")
+        )
+    }
+
+
+def _resolve_transfer_sources(r, source, md5s):
+    if source:
+        return [(source, md5) for md5 in sorted(md5s)]
+
+    # ponytail: check the small collection registry once per pasted MD5. A
+    # dedicated global MD5 index is unnecessary until this becomes a hotspot.
+    collections = sorted(
+        value.decode() if isinstance(value, bytes) else value
+        for value in r.smembers("global:collections")
+    )
+    resolved = []
+    for md5 in sorted(md5s):
+        for collection in collections:
+            if r.sismember(f"{collection}:all_files", f"{collection}:file:{md5}"):
+                resolved.append((collection, md5))
+                break
+    return resolved
+
+
+def _resolve_transfer_batch_sources(r, source, batch_uuid):
+    collections = (
+        [source]
+        if source
+        else sorted(
+            value.decode() if isinstance(value, bytes) else value
+            for value in r.smembers("global:collections")
+        )
+    )
+    resolved = []
+    for collection in collections:
+        resolved.extend(
+            (collection, md5) for md5 in _batch_file_md5s(r, collection, batch_uuid)
+        )
+    return resolved
+
+
+def _load_analyzed_data(r, collection, md5):
+    """Load the upload blob, or rebuild it from durable indexed records."""
+    raw = r.get(f"{collection}:file:{md5}:data")
+    if raw:
+        return raw
+    meta_raw = r.get(f"{collection}:file:{md5}:meta")
+    function_ids = r.smembers(f"{collection}:idx:file:functions:{md5}")
+    if not meta_raw:
+        return None
+
+    function_ids = [
+        value.decode() if isinstance(value, bytes) else value for value in function_ids
+    ]
+    pipe = r.pipeline(transaction=False)
+    for function_id in function_ids:
+        pipe.get(f"{function_id}:meta")
+        pipe.get(f"{function_id}:source")
+        pipe.get(f"{function_id}:vec:meta")
+        pipe.get(f"{function_id}:vec:raw")
+        pipe.zrange(f"{function_id}:vec:tf", 0, -1, withscores=True)
+    values = pipe.execute()
+    functions = []
+    for offset in range(0, len(values), 5):
+        function_meta_raw, source_raw, vec_meta_raw, vec_raw_raw, tf_values = values[
+            offset : offset + 5
+        ]
+        if not function_meta_raw:
+            continue
+        function_meta = json.loads(function_meta_raw)
+        functions.append(
+            {
+                "function_metadata": function_meta,
+                "function_source": json.loads(source_raw) if source_raw else {},
+                "function_features": {
+                    "bsim_features_meta": (
+                        json.loads(vec_meta_raw) if vec_meta_raw else []
+                    ),
+                    "bsim_features_raw": json.loads(vec_raw_raw) if vec_raw_raw else [],
+                    "bsim_features_tf": [
+                        {
+                            "hash": key.decode() if isinstance(key, bytes) else key,
+                            "tf": score,
+                        }
+                        for key, score in (tf_values or [])
+                    ],
+                },
+            }
+        )
+    return json.dumps(
+        {
+            "collection": collection,
+            "file_md5": md5,
+            "file_metadata": json.loads(meta_raw),
+            "functions": functions,
+        }
+    ).encode()
+
+
+def _transfer_candidates(r, destination, sources):
+    files = []
+    for source, md5 in sources:
+        raw = _load_analyzed_data(r, source, md5)
+        meta_raw = r.get(f"{source}:file:{md5}:meta")
+        meta = json.loads(meta_raw) if meta_raw else {}
+        status = "ready"
+        if not raw:
+            status = "unavailable"
+        elif r.sismember(f"{destination}:all_files", f"{destination}:file:{md5}"):
+            status = "already_exists"
+        files.append(
+            {
+                "collection": source,
+                "md5": md5,
+                "file_name": meta.get("file_name", md5),
+                "status": status,
+            }
+        )
+    return files
+
+
+def transfer_analyzed_files():
+    """Re-ingest completed analysis in another collection without Ghidra."""
+    data = request.json or {}
+    source = data.get("source_collection")
+    destination = data.get("collection")
+    source_batch = data.get("batch_uuid")
+    requested = data.get("md5s") or data.get("md5")
+    if not destination or (source and source == destination):
+        return {"error": "Choose different source and destination collections"}, 400
+    if not requested and not source_batch:
+        return {"error": "Provide one or more MD5s or a batch UUID"}, 400
+
+    r_data = get_redis()
+    md5s = _requested_md5s(requested)
+    sources = (
+        _resolve_transfer_batch_sources(r_data, source, source_batch)
+        if source_batch
+        else []
+    )
+    md5s.update(md5 for _, md5 in sources)
+    if not md5s:
+        return {
+            "error": (
+                "No MD5s found in pasted text"
+                if requested
+                else "No files found for the requested batch"
+            )
+        }, 404
+
+    sources.extend(_resolve_transfer_sources(r_data, source, md5s))
+    sources = list(dict.fromkeys(sources))
+    if not sources:
+        return {"error": "No analyzed files found for the requested MD5s"}, 404
+    candidates = _transfer_candidates(r_data, destination, sources)
+    if data.get("preview"):
+        return {
+            "files": candidates,
+            "ready": sum(f["status"] == "ready" for f in candidates),
+        }
+
+    batch_uuid = uuid.uuid4().hex
+    batch_name = (
+        data.get("batch_name") or f"Transfer from {source or 'existing collections'}"
+    )
+    pipelines, errors = [], []
+    for source, md5 in sources:
+        raw = _load_analyzed_data(r_data, source, md5)
+        if not raw:
+            errors.append({"md5": md5, "error": "Analyzed data is unavailable"})
+            continue
+        try:
+            analyzed = json.loads(raw)
+            meta = dict(analyzed.get("file_metadata") or {})
+            meta.update(
+                {"file_md5": md5, "batch_uuid": batch_uuid, "batch_name": batch_name}
+            )
+            analyzed.update(
+                {
+                    "collection": destination,
+                    "file_md5": md5,
+                    "batch_uuid": batch_uuid,
+                    "file_metadata": meta,
+                }
+            )
+            # Reuse upload_file_data so duplicate handling and every ingestion
+            # stage remain exactly the same as a normal analyzed upload.
+            with current_app.test_request_context(
+                "/api/file/upload_file_data?enqueue=false",
+                method="POST",
+                data=json.dumps(analyzed),
+                content_type="application/json",
+            ):
+                result = upload_file_data()
+            if isinstance(result, tuple):
+                errors.append(
+                    {"md5": md5, "error": result[0].get("error", "Transfer failed")}
+                )
+            else:
+                pipelines.append(result["pipeline_id"])
+        except (TypeError, ValueError) as exc:
+            errors.append({"md5": md5, "error": str(exc)})
+
+    if not pipelines:
+        return {"error": "No files could be transferred", "errors": errors}, 400
+    master_id = job_service.seal_wave(
+        destination,
+        extra_members=pipelines,
+        options={
+            "algo": data.get("algo", "unweighted_cosine"),
+            "batch_uuid": batch_uuid,
+            "enrich": True,
+        },
+    )
+    return {
+        "status": "queued",
+        "collection": destination,
+        "batch_uuid": batch_uuid,
+        "master_pipeline_id": master_id,
+        "transferred": len(pipelines),
+        "errors": errors,
+    }
 
 
 def upload_chunk():

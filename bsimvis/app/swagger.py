@@ -938,6 +938,30 @@ class BatchFinalize(Resource):
         return finalize_batch_upload()
 
 
+@ns_file.route("/transfer")
+class FileTransfer(Resource):
+    @ns_file.expect(
+        api.model(
+            "FileTransfer",
+            {
+                "source_collection": fields.String(description="Optional source collection"),
+                "collection": fields.String(
+                    required=True, description="Destination collection"
+                ),
+                "md5s": fields.Raw(description="MD5s in any pasted text or list"),
+                "batch_uuid": fields.String(description="Source batch UUID"),
+                "batch_name": fields.String(description="Destination batch name"),
+                "preview": fields.Boolean(description="List files without queuing them"),
+            },
+        )
+    )
+    def post(self):
+        """Transfers analyzed files and reruns indexing/similarity, not Ghidra."""
+        from bsimvis.app.routes.file import transfer_analyzed_files
+
+        return transfer_analyzed_files()
+
+
 @ns_file.route("/<string:file_md5>/lineage")
 class FileLineage(Resource):
     @ns_file.doc(

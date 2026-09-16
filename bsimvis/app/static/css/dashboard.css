@@ -936,6 +936,31 @@ body.resizing {
     background: var(--meta-header-bg);
 }
 
+/* Shared detail tabs (File View, Function View, Binary Similarity, Upload) */
+.bsim-tabbar {
+    display: flex;
+    gap: 4px;
+    margin: 0 0 16px 0;
+    border-bottom: 2px solid var(--border);
+}
+
+.bsim-tab {
+    background: none;
+    border: none;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    padding: 10px 20px;
+    cursor: pointer;
+    color: var(--subtle);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.bsim-tab:hover { color: var(--text); background: var(--hover); }
+.bsim-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
 /* View Toggle Switch */
 .view-toggle {
     display: flex;

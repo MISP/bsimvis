@@ -183,6 +183,11 @@ function renderUploadView(params) {
                 ${uploadProgressPanelMarkup()}
             </div>
 
+            <div class="bsim-tabbar" id="upload-tabs">
+                <button id="upload-binary-tab-btn" onclick="switchUploadTab('binary')" class="bsim-tab active">Upload Binaries</button>
+                <button id="upload-transfer-tab-btn" onclick="switchUploadTab('transfer')" class="bsim-tab">Transfer Analyzed Files</button>
+            </div>
+            <div id="upload-binary-tab">
             <div class="upload-grid" style="display: grid; grid-template-columns: 1fr 1.2fr; gap: 40px;">
                 <div class="upload-settings-panel" style="display: flex; flex-direction: column; gap: 10px;">
                     <details open style="background: var(--hover); border: 1px solid var(--border); border-radius: 8px;">
@@ -302,11 +307,28 @@ function renderUploadView(params) {
                     </div>
                 </div>
             </div>
+            </div>
+            <div id="upload-transfer-tab" style="display:none; max-width:760px; margin:auto; background:var(--hover); border:1px solid var(--border); border-radius:8px; padding:24px; color:var(--text);">
+                    <h3 style="margin:0 0 12px; color:var(--accent);">Transfer Analyzed Files</h3>
+                    <p style="margin:0 0 16px; color:var(--subtle); font-size:.85rem;">Choose a source, paste MD5s in any format, preview them, then select what to add. Ghidra is not rerun.</p>
+                    <div style="display:grid; gap:10px;">
+                        <label for="transfer-destination-collection" style="font-size:.75rem; color:var(--subtle);">Destination collection</label>
+                        <select id="transfer-destination-collection" onchange="toggleTransferNewCollection()" style="width:100%; background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px;"></select>
+                        <input id="transfer-new-collection" type="text" placeholder="New destination collection name" style="display:none; width:100%; background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; box-sizing:border-box;">
+                        <select id="transfer-source-collection" style="width:100%; background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px;"></select>
+                        <textarea id="transfer-md5s" rows="5" placeholder="Paste MD5s with any separators, quotes, or trailing colons" style="width:100%; background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; box-sizing:border-box;"></textarea>
+                        <input id="transfer-batch-uuid" type="text" placeholder="Or source batch UUID" style="width:100%; background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; box-sizing:border-box;">
+                        <button id="preview-transfer-btn" onclick="previewAnalyzedTransfer()" class="btn-primary" style="justify-content:center;"><i class="fa-solid fa-list-check"></i> Preview Files</button>
+                    </div>
+                    <div id="transfer-preview" style="display:none; margin-top:18px;"></div>
+                    <div id="transfer-confirm-row" style="display:none; justify-content:flex-end; gap:10px; margin-top:18px;"><button id="start-transfer-btn" onclick="queueAnalyzedTransfer()" class="btn-primary"><i class="fa-solid fa-right-left"></i> Transfer Selected</button></div>
+            </div>
         </div>
     `;
 
     setupUploadEvents();
     updateFileList();
+    switchUploadTab('binary');
     populateUploadCollectionDropdown(collection);
     populateUploadLanguageDropdowns();
     applyDefaultEnabledModules();
@@ -782,6 +804,96 @@ async function startBatchUpload() {
     showUploadSuccessScreen(collection, results.length, selectedFiles.length);
 }
 
+function transferDestination() {
+    const transferPanel = document.getElementById('upload-transfer-tab')?.style.display !== 'none';
+    let collection = document.getElementById(transferPanel ? 'transfer-destination-collection' : 'upload-collection')?.value || '';
+    if (collection === '__NEW__') collection = document.getElementById(transferPanel ? 'transfer-new-collection' : 'upload-new-collection').value.trim();
+    return collection;
+}
+
+function toggleTransferNewCollection() {
+    const select = document.getElementById('transfer-destination-collection');
+    const input = document.getElementById('transfer-new-collection');
+    if (select && input) input.style.display = select.value === '__NEW__' ? 'block' : 'none';
+}
+
+function switchUploadTab(tab) {
+    const transfer = tab === 'transfer';
+    document.getElementById('upload-binary-tab').style.display = transfer ? 'none' : 'block';
+    document.getElementById('upload-transfer-tab').style.display = transfer ? 'block' : 'none';
+    document.getElementById('upload-binary-tab-btn').classList.toggle('active', !transfer);
+    document.getElementById('upload-transfer-tab-btn').classList.toggle('active', transfer);
+}
+
+function renderTransferPreview(files) {
+    const ready = files.filter(file => file.status === 'ready');
+    const rows = files.map(file => {
+        const selectable = file.status === 'ready';
+        const label = selectable ? 'Ready' : file.status === 'already_exists' ? 'Already in destination' : 'Analysis unavailable';
+        return `<label style="display:flex; gap:10px; align-items:center; padding:8px; border-bottom:1px solid var(--border); opacity:${selectable ? 1 : .55};"><input class="transfer-file" type="checkbox" value="${file.md5}" ${selectable ? 'checked' : 'disabled'}><span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(file.file_name)} <small style="color:var(--subtle)">${file.md5} · ${escapeHtml(file.collection)}</small></span><small>${label}</small></label>`;
+    }).join('');
+    document.getElementById('transfer-preview').innerHTML = `<div style="display:flex; justify-content:space-between; margin-bottom:8px;"><b>${ready.length} ready to transfer</b><label><input type="checkbox" checked onchange="document.querySelectorAll('.transfer-file:not(:disabled)').forEach(box => box.checked = this.checked)"> Select all</label></div><div style="max-height:320px; overflow:auto; border:1px solid var(--border); border-radius:4px;">${rows || '<div style="padding:12px; color:var(--subtle)">No matching files.</div>'}</div>`;
+    document.getElementById('transfer-preview').style.display = 'block';
+    document.getElementById('transfer-confirm-row').style.display = ready.length ? 'flex' : 'none';
+}
+
+async function previewAnalyzedTransfer() {
+    const collection = transferDestination();
+    const source = document.getElementById('transfer-source-collection').value;
+    const md5s = document.getElementById('transfer-md5s').value.trim();
+    const batchUuid = document.getElementById('transfer-batch-uuid').value.trim();
+    if (!collection || source === collection || (!md5s && !batchUuid)) {
+        if (typeof showToast === 'function') showToast('Choose a destination and enter MD5s or a batch UUID.', 'warning');
+        return;
+    }
+
+    const button = document.getElementById('preview-transfer-btn');
+    button.disabled = true;
+    try {
+        const response = await fetch('/api/file/transfer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source_collection: source, collection, md5s, batch_uuid: batchUuid, preview: true })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Preview failed');
+        renderTransferPreview(result.files);
+    } catch (error) {
+        if (typeof showToast === 'function') showToast(error.message, 'error');
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function queueAnalyzedTransfer() {
+    const collection = transferDestination();
+    const source = document.getElementById('transfer-source-collection').value;
+    const md5s = [...document.querySelectorAll('.transfer-file:checked')].map(box => box.value);
+    if (!md5s.length) return;
+    const button = document.getElementById('start-transfer-btn');
+    button.disabled = true;
+    try {
+        const response = await fetch('/api/file/transfer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source_collection: source, collection, md5s, batch_name: document.getElementById('upload-batch-name').value.trim() })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Transfer failed');
+        if (typeof showToast === 'function') showToast(`${result.transferred} file(s) queued without Ghidra.`, 'success');
+        switchUploadTab('binary');
+        const progress = document.getElementById('upload-progress-container');
+        if (progress) {
+            progress.style.display = 'block';
+            progress.innerHTML = `<div style="text-align:center; padding:12px; color:var(--text);"><b>${result.transferred} file(s) transferred</b><div style="margin-top:8px; color:var(--subtle);">Indexing and similarity jobs are running for ${escapeHtml(collection)}.</div></div>`;
+        }
+    } catch (error) {
+        if (typeof showToast === 'function') showToast(error.message, 'error');
+    } finally {
+        button.disabled = false;
+    }
+}
+
 function showUploadSuccessScreen(collection, succeeded, total) {
     const collectionUrl = `/collections/${encodeURIComponent(collection)}`;
     const jobsUrl = `/collections/${encodeURIComponent(collection)}/jobs`;
@@ -826,6 +938,8 @@ async function populateUploadCollectionDropdown(currentCollection) {
         
         const select = document.getElementById('upload-collection');
         if (!select) return;
+        const transferSelect = document.getElementById('transfer-source-collection');
+        const transferDestinationSelect = document.getElementById('transfer-destination-collection');
         
         select.innerHTML = '';
         let foundCurrent = false;
@@ -853,6 +967,31 @@ async function populateUploadCollectionDropdown(currentCollection) {
         newOpt.value = '__NEW__';
         newOpt.textContent = '+ Create New Collection...';
         select.insertBefore(newOpt, select.firstChild);
+
+        if (transferDestinationSelect) {
+            transferDestinationSelect.innerHTML = '';
+            collections.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.name;
+                opt.textContent = c.name;
+                if (c.name === currentCollection) opt.selected = true;
+                transferDestinationSelect.appendChild(opt);
+            });
+            const transferNewOpt = document.createElement('option');
+            transferNewOpt.value = '__NEW__';
+            transferNewOpt.textContent = '+ Create New Collection...';
+            transferDestinationSelect.appendChild(transferNewOpt);
+        }
+
+        if (transferSelect) {
+            transferSelect.innerHTML = '<option value="">Search all collections (optional source)</option>';
+            collections.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.name;
+                opt.textContent = c.name;
+                transferSelect.appendChild(opt);
+            });
+        }
     } catch (e) {
         console.error("Failed to populate upload collection dropdown", e);
     }

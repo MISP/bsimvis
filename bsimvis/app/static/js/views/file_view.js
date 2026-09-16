@@ -44,16 +44,6 @@ window.FileView = {
         // Build HTML structure
         this.container.innerHTML = `
             <style>
-                .bsim-tabbar { display:flex; gap:4px; margin:0 0 16px 0; border-bottom:2px solid var(--border); }
-                .bsim-tab {
-                    background:none; border:none; border-bottom:3px solid transparent;
-                    margin-bottom:-2px; padding:10px 20px; cursor:pointer;
-                    color:var(--subtle); font-size:0.9rem; font-weight:600; letter-spacing:0.01em;
-                    transition:color 0.15s, border-color 0.15s, background 0.15s;
-                }
-                .bsim-tab:hover { color:var(--text); background: var(--hover); }
-                .bsim-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
-                
                 .file-func-table { width:100%; border-collapse:collapse; font-size:0.8rem; }
                 .file-func-table th { text-align:left; padding:10px; border-bottom:1px solid var(--border); color:var(--subtle); text-transform:uppercase; font-size:0.75rem; letter-spacing:0.05em; }
                 .file-func-table td { padding:10px; border-bottom: 1px solid var(--border); vertical-align:middle; }

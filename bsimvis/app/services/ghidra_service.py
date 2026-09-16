@@ -62,6 +62,28 @@ def fid_tags_from_plate_comment(comment, func_name):
     return [tag_taxonomy.origin_tag("lib", lib_name, lib_ver, func)]
 
 
+def fid_tags_from_records(fid_query_service, records):
+    """Build FunctionID tags from already-resolved database records."""
+    records = list(records)
+    multiple = len(records) > 5
+    libraries = {}
+    for record in records:
+        library = fid_query_service.getLibraryForFunction(record)
+        if not library or not library.getLibraryFamilyName():
+            continue
+        key = (library.getLibraryFamilyName(), library.getLibraryVersion())
+        libraries.setdefault(key, set()).add(record.getName())
+    return [
+        tag_taxonomy.origin_tag(
+            "lib",
+            name,
+            version,
+            "ambiguous" if multiple or len(names) > 1 else next(iter(names)),
+        )
+        for (name, version), names in libraries.items()
+    ]
+
+
 class GhidraService:
     def __init__(self, config=None):
         if config is None:

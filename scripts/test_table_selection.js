@@ -13,10 +13,17 @@ const assert = require('assert');
 const src = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/table_selection.js', 'utf8');
 const slice = (from, to) => src.slice(src.indexOf(from), src.indexOf(to));
 
-const M = new Function('window', `return ({
+const M = new Function('window', 'TableSelection', `return ({
+${slice('    isVisible() {', '    /**\n     * Which table the keyboard drives')},
+${slice('    isKeyboardOwner() {', '    /** True when the event happened inside')},
 ${slice('    activationTarget(', '    /**\n     * What identifies a row')},
 ${slice('    handleMouseUp(e) {', '    handleKeyDown(e) {')}
 });`);
+
+// The swallow flag is shared across instances rather than per-instance: several
+// tables on one page each hear the same mouseup, and a per-instance flag let one
+// eat the click another had armed. Stand in for the real static here.
+const Statics = { swallow: false, armSwallow() { Statics.swallow = true; } };
 
 // --- a DOM just big enough for the two methods under test -------------------
 
@@ -49,7 +56,7 @@ const cell = (links) => ({
     querySelectorAll() { return links; },
 });
 
-const inst = (rows) => Object.assign(Object.create(M({ getSelection: () => '' })), {
+const inst = (rows) => Object.assign(Object.create(M({ getSelection: () => '' }, Statics)), {
     tbody: { children: rows },
     cellAt(r, c) { return rows[r]._cells[c]; },
 });
@@ -87,15 +94,52 @@ assert.strictEqual(t3.activationTarget(0, 0, { clientY: 5 }), null,
 const t4 = inst([pairRow]);
 Object.assign(t4, {
     isDragging: true, cellModeActive: false, startedOnBlocking: false,
-    tempFocus: { r: 0, c: 0 }, startPos: { x: 10, y: 50 }, wasSelecting: false,
+    tempFocus: { r: 0, c: 0 }, startPos: { x: 10, y: 50 },
     clearSelection() {}, setSelection() {}, updateVisuals() {},
 });
 clicked = [];
+Statics.swallow = false;
 t4.handleMouseUp({ clientX: 10, clientY: 45, target: el({ tag: 'td' }) });
 
 assert.deepStrictEqual(clicked, ['file-b'],
     'the click lands on the link nearest the pointer');
-assert.strictEqual(t4.wasSelecting, true,
+assert.strictEqual(Statics.swallow, true,
     'the native click that follows is swallowed, so the row does not navigate too');
+
+// --- only one table may act on a keypress -----------------------------------
+//
+// The file view mounts four tables, each with its own window keydown listener.
+// Before this, one Enter activated a row in every one of them.
+
+// isKeyboardOwner compares instance identity, so the instances have to be the
+// same objects the registry holds -- build them once and only move `active`.
+const Env = { tableSelections: [] };
+const Kb = Object.assign(Object.create(Statics), { active: null });
+const kbProto = M(Env, Kb);
+const kb = (visible) => Object.assign(Object.create(kbProto), {
+    tbody: { isConnected: visible },
+    table: { offsetParent: visible ? {} : null },
+});
+
+const hidden = kb(false);
+const first = kb(true);
+const second = kb(true);
+Env.tableSelections.push(hidden, first, second);
+
+Kb.active = second;
+assert.strictEqual(first.isKeyboardOwner(), false,
+    'a table that is not the one last clicked ignores the keypress');
+assert.strictEqual(second.isKeyboardOwner(), true,
+    'the table last clicked handles the keypress');
+
+Kb.active = null;
+assert.strictEqual(first.isKeyboardOwner(), true,
+    'with nothing clicked yet, the first visible table still takes arrow keys');
+assert.strictEqual(second.isKeyboardOwner(), false,
+    'and only that one -- not every visible table');
+
+Kb.active = hidden;
+assert.strictEqual(first.isKeyboardOwner(), true,
+    'a hidden active table hands the keyboard back to the visible one');
 
 console.log('table_selection activation: OK');

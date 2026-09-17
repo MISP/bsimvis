@@ -3638,6 +3638,7 @@ window.addEventListener('load', () => {
             if (statusBadge) {
                 if (matchingJob) {
                     statusBadge.style.display = 'inline-flex';
+                    statusBadge.classList.toggle('running', matchingJob.status === 'running');
                     const iconClass = matchingJob.status === 'running' ? 'fa-circle-notch fa-spin' : 'fa-clock';
                     const progressText = matchingJob.status === 'running' ? ` (${matchingJob.progress}%)` : '';
                     statusBadge.innerHTML = `<i class="fa-solid ${iconClass}"></i> ${formatJobType(matchingJob.type)}${progressText}`;

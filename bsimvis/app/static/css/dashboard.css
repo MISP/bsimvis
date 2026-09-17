@@ -2613,6 +2613,13 @@ a.home-card:hover,
     font-size: 0.78rem !important;
     font-weight: 400 !important;
 }
+/* A running job is the only live thing in the footer, so it is the only pill
+   that gets colour; queued jobs stay neutral. */
+#view-job-status.running {
+    color: var(--accent) !important;
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border)) !important;
+    background: color-mix(in srgb, var(--accent) 10%, transparent) !important;
+}
 /* the close button is always last and inherits the badge's old dark-on-colour
    scheme, which is invisible once the fill is gone; the Compare button keeps
    its own styling. */

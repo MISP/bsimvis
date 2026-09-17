@@ -52,10 +52,11 @@ function setBinSimRuntimePanel(active, minScore) {
     panel.classList.toggle('is-active', active);
     panel.classList.toggle('is-dismissed', !active && localStorage.getItem(BINSIM_RUNTIME_HINT_KEY) === '1');
     action.innerHTML = binSimRuntimeControls(active, minScore);
-    const button = document.getElementById('bsim-runtime-button');
+    const button = document.getElementById('bsim-runtime-action');
     if (button) {
         button.classList.toggle('active', active);
-        button.onclick = () => setBinSimMatchMode(active ? 'saved' : 'runtime');
+        button.disabled = active;
+        button.querySelector('.bsim-action-state').textContent = active ? 'On' : 'Experimental';
     }
 }
 
@@ -122,11 +123,6 @@ function renderBinarySimilarityView(params) {
                 <span id="bin-sim-score-val" style="font-family: 'Consolas', monospace; font-weight: 800; font-size: 2.4rem; line-height: 1; color: var(--accent);">--%</span>
             </div>
 
-            <!-- Resplit pill: own row right under the hero, not inside it
-                 (hero's innerHTML is fully replaced on every pair load, which
-                 was silently wiping this out). Hidden unless stale. -->
-            <div id="bin-sim-resplit-banner" style="display:none; margin-bottom:12px; justify-content:flex-end;"></div>
-
             <!-- Slim per-binary strip: user tags + notes only -->
             <div style="display: flex; gap: 20px; margin-bottom: 12px;">
                 <div id="bin-sim-strip-a" class="bin-sim-strip" style="flex: 1; min-width: 0;"></div>
@@ -165,9 +161,6 @@ function renderBinarySimilarityView(params) {
                         <button class="bsim-tab" id="bin-sim-tab-btn-unique_a" onclick="switchBinSimTab('unique_a')">Unique to A</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-unique_b" onclick="switchBinSimTab('unique_b')">Unique to B</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-unmatched" onclick="switchBinSimTab('unmatched')">All Unique</button>
-                        <button id="bsim-runtime-button" class="view-btn bsim-runtime-button ${runtimeGreedy ? 'active' : ''}" onclick="setBinSimMatchMode('${runtimeGreedy ? 'saved' : 'runtime'}')" title="Re-match this view without changing the saved comparison">
-                            <i class="fa-solid fa-flask"></i> Runtime greedy <span>Experimental</span>
-                        </button>
                     </div>
 
                     <!-- Global scope chips: the tree selection, removable from here too -->
@@ -349,15 +342,28 @@ function renderBinarySimilarityView(params) {
             .bsim-experiment-start { flex:none; border:1px solid var(--border); }
             .bsim-experiment-dismiss { align-self:flex-start; border:0; background:none; color:var(--dim); cursor:pointer; padding:2px; font-size:.9rem; }
             .bsim-experiment-dismiss:hover { color:var(--text); }
-            .bsim-runtime-button { margin-left:auto; border:1px solid var(--border); display:inline-flex; align-items:center; gap:6px; }
-            .bsim-runtime-button span { color:var(--warning, #d97706); font-size:.58rem; letter-spacing:.04em; text-transform:uppercase; }
-            .bsim-runtime-button.active span { color:inherit; }
             .bsim-experiment-controls { display:grid; grid-template-columns:auto minmax(110px, 190px) auto; align-items:center; gap:4px 10px; flex:none; }
             .bsim-experiment-controls label { color:var(--text); font-size:0.72rem; font-weight:bold; white-space:nowrap; }
             .bsim-experiment-controls label span { color:var(--accent); font-family:'Consolas',monospace; }
             .bsim-experiment-controls input { width:100%; }
             .bsim-experiment-controls > span { grid-column:1 / 3; color:var(--dim); font-size:0.65rem; line-height:1.25; }
-            .bsim-experiment-exit { grid-row:1 / 3; grid-column:3; border:1px solid var(--border); white-space:nowrap; }
+            .bsim-experiment-exit { grid-row:1 / 3; grid-column:3; border:1px solid #ff4d8d; color:#ff4d8d; white-space:nowrap; }
+            .bsim-comparison-actions { position:relative; }
+            .bsim-comparison-actions summary { list-style:none; }
+            .bsim-comparison-actions summary::-webkit-details-marker { display:none; }
+            .bsim-actions-trigger { height:36px; padding:0 15px; font-size:.85rem; }
+            .bsim-comparison-actions[open] .bsim-actions-trigger { border-color:var(--accent); background:var(--window-header); }
+            .bsim-actions-menu { position:absolute; z-index:10; top:calc(100% + 6px); right:0; width:220px; padding:6px; border:1px solid var(--border); border-radius:6px; background:var(--card-bg); box-shadow:0 6px 20px rgba(0,0,0,.25); }
+            .bsim-actions-menu button { display:flex; width:100%; align-items:center; gap:7px; padding:7px 8px; border:0; border-radius:4px; background:none; color:var(--text); cursor:pointer; text-align:left; font-size:.78rem; }
+            .bsim-actions-menu button:hover { background:var(--hover); }
+            .bsim-actions-menu button:disabled { cursor:default; color:var(--subtle); }
+            .bsim-actions-menu button:disabled:hover { background:none; }
+            .bsim-actions-label { display:block; margin:5px 8px 3px; color:var(--dim); font-size:.62rem; font-weight:bold; letter-spacing:.05em; text-transform:uppercase; }
+            .bsim-action-state { margin-left:auto; color:var(--warning, #d97706); font-size:.6rem; font-weight:bold; letter-spacing:.04em; text-transform:uppercase; }
+            .bsim-actions-menu button.active .bsim-action-state { color:var(--success); }
+            .bsim-action-alert { width:7px; height:7px; border-radius:50%; background:#f0ad4e; }
+            #bin-sim-resplit-action { border-top:1px solid var(--border); margin-top:4px; padding-top:3px; }
+            #bin-sim-resplit-action button { color:#f0ad4e; }
             @media (max-width:850px) {
                 .bsim-experiment { align-items:stretch; flex-direction:column; }
                 .bsim-experiment-controls { grid-template-columns:auto 1fr; }
@@ -543,14 +549,23 @@ function initResizableCards() {
                 </div>
                 <div style="position:absolute; right:18px; display:flex; align-items:center; gap:10px;">
                     <span id="bin-sim-pair-note"></span>
-                    <button class="top-action-btn" onclick="openPairAnalysisModal()"
-                        style="display:flex; align-items:center; gap:7px; color:#ae81ff; border-color:#ae81ff;"
-                        title="Analyze this comparison with evidence-bound automatic function tagging">
-                        <i class="fa-solid fa-wand-magic-sparkles"></i> Analyze comparison</button>
-                    <button class="top-action-btn" onclick="openPairSearchModal()"
-                        style="display:flex; align-items:center; gap:7px; color:#60a5fa; border-color:#60a5fa;"
-                        title="Ask AI which functions of this comparison match a description">
-                        <i class="fa-solid fa-magnifying-glass"></i> AI search</button>
+                    <details class="bsim-comparison-actions">
+                        <summary class="top-action-btn bsim-actions-trigger" title="Actions for this comparison">
+                            <i class="fa-solid fa-ellipsis"></i> Actions
+                            <span id="bin-sim-resplit-status" class="bsim-action-alert" hidden title="Tags changed; refresh split is available"></span>
+                            <i class="fa-solid fa-chevron-down"></i>
+                        </summary>
+                        <div class="bsim-actions-menu">
+                            <span class="bsim-actions-label">AI</span>
+                            <button onclick="openPairAnalysisModal()"><i class="fa-solid fa-wand-magic-sparkles"></i> Analyze comparison</button>
+                            <button onclick="openPairSearchModal()"><i class="fa-solid fa-magnifying-glass"></i> AI search</button>
+                            <span class="bsim-actions-label">Matching</span>
+                            <button id="bsim-runtime-action" class="${runtimeGreedy ? 'active' : ''}" onclick="setBinSimMatchMode('runtime')" ${runtimeGreedy ? 'disabled' : ''} title="Re-match this view without changing the saved comparison">
+                                <i class="fa-solid fa-flask"></i> Runtime greedy <span class="bsim-action-state">${runtimeGreedy ? 'On' : 'Experimental'}</span>
+                            </button>
+                            <div id="bin-sim-resplit-action" hidden></div>
+                        </div>
+                    </details>
                 </div>
             `;
             // Pair notes -- including the report "Analyze comparison" writes --
@@ -1933,32 +1948,34 @@ let binSimResplitPoll = null;
 const BSIM_RESPLIT_AMBER = '#f0ad4e';
 
 function renderFileSimResplit(stale) {
-    const banner = document.getElementById('bin-sim-resplit-banner');
-    if (!banner) return;
+    const action = document.getElementById('bin-sim-resplit-action');
+    const status = document.getElementById('bin-sim-resplit-status');
+    if (!action || !status) return;
     // A poll already in flight is tracking this pair's job; don't stomp it
-    // with the stale-button markup on every re-render of the sankey.
+    // with the stale-action state on every re-render of the sankey.
     if (binSimResplitPoll) return;
-    banner.style.display = stale ? 'flex' : 'none';
-    banner.innerHTML = stale
-        ? `<button id="bin-sim-resplit-btn" onclick="resplitBinSimTags()"
-             style="display:flex; align-items:center; gap:6px; font-size:0.78rem; font-weight:600; padding:5px 10px; border-radius:999px; border:1px solid ${BSIM_RESPLIT_AMBER}; color:#3a2400; background:${BSIM_RESPLIT_AMBER}; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.3);"
+    action.hidden = !stale;
+    status.hidden = !stale;
+    action.innerHTML = stale
+        ? `<span class="bsim-actions-label">Maintenance</span><button id="bin-sim-resplit-btn" onclick="resplitBinSimTags()" style="color:${BSIM_RESPLIT_AMBER};"
              title="Tags changed since this pair was split. The score is unaffected; only its breakdown by tag is.">
-             <i class="fa-solid fa-arrows-rotate"></i> Tags changed &mdash; refresh split</button>`
+             <i class="fa-solid fa-arrows-rotate"></i> Refresh split</button>`
         : '';
 }
 
-function setBinSimResplitBanner(html) {
-    const banner = document.getElementById('bin-sim-resplit-banner');
-    if (!banner) return;
-    banner.style.display = 'flex';
-    banner.innerHTML = html;
+function setBinSimResplitAction(html) {
+    const action = document.getElementById('bin-sim-resplit-action');
+    const status = document.getElementById('bin-sim-resplit-status');
+    if (!action || !status) return;
+    action.hidden = false;
+    status.hidden = false;
+    action.innerHTML = `<span class="bsim-actions-label">Maintenance</span><span style="display:flex; align-items:center; gap:8px; padding:8px 9px; color:${BSIM_RESPLIT_AMBER}; font-size:.78rem;">${html}</span>`;
 }
 
 window.resplitBinSimTags = async function() {
     if (!binSimCtx) return;
     const ctx = binSimCtx; // snapshot: user may navigate to another pair mid-poll
-    setBinSimResplitBanner(`<span style="display:flex; align-items:center; gap:6px; font-size:0.78rem; font-weight:600; padding:5px 10px; border-radius:999px; border:1px solid ${BSIM_RESPLIT_AMBER}; color:#3a2400; background:${BSIM_RESPLIT_AMBER};">
-        <i class="fa-solid fa-spinner fa-spin"></i> Resplitting&hellip;</span>`);
+    setBinSimResplitAction('<i class="fa-solid fa-spinner fa-spin"></i> Refreshing split&hellip;');
     // This button refreshes the pair on screen, so it resplits that pair. The
     // md5 scope below is every pair naming either binary -- 773 of them for one
     // mirai sample, ~50s of reading function metadata for binaries nobody is

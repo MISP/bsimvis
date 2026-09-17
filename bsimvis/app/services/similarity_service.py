@@ -2770,12 +2770,13 @@ class SimilarityService:
         pool_id=None,
         md5=None,
         batch_uuid=None,
+        index_depth="minimal",
         job_service=None,
         job_id=None,
     ):
         """
-        Reads existing similarity JSON documents and builds/updates full secondary indexes.
-        Used to perform deferred indexing after running build_sim with index_depth='none' or 'minimal'.
+        Reads existing similarity JSON documents and builds/updates secondary indexes.
+        Defaults to the lightweight MD5/native indexes used during ingestion.
         Can run incrementally for a specific file md5 or batch_uuid.
         """
         r = self.r
@@ -2815,7 +2816,13 @@ class SimilarityService:
                 ]
 
             self._index_similarity_ids_batch(
-                r, similarity_ids, target_coll, pool_id, job_service, job_id
+                r,
+                similarity_ids,
+                target_coll,
+                pool_id,
+                job_service,
+                job_id,
+                index_depth,
             )
         elif batch_uuid:
             batch_func_set = f"{collection}:batch:{batch_uuid}:functions"
@@ -2846,7 +2853,13 @@ class SimilarityService:
 
             similarity_ids = list(similarity_ids_set)
             self._index_similarity_ids_batch(
-                r, similarity_ids, target_coll, pool_id, job_service, job_id
+                r,
+                similarity_ids,
+                target_coll,
+                pool_id,
+                job_service,
+                job_id,
+                index_depth,
             )
         else:
             similarity_ids = [
@@ -2854,7 +2867,13 @@ class SimilarityService:
                 for k in r.zrange(all_key, 0, -1)
             ]
             self._index_similarity_ids_batch(
-                r, similarity_ids, target_coll, pool_id, job_service, job_id
+                r,
+                similarity_ids,
+                target_coll,
+                pool_id,
+                job_service,
+                job_id,
+                index_depth,
             )
 
         return True
@@ -2867,6 +2886,7 @@ class SimilarityService:
         pool_id,
         job_service,
         job_id,
+        index_depth="full",
     ):
         total = len(similarity_ids)
         if total == 0:
@@ -2970,7 +2990,7 @@ class SimilarityService:
                     func_meta2=self._func_meta_cache.get(id_b),
                     file_meta1=self._file_meta_cache.get(f"{coll_a}:file:{md5_a}"),
                     file_meta2=self._file_meta_cache.get(f"{coll_b}:file:{md5_b}"),
-                    index_depth="full",
+                    index_depth=index_depth,
                     seen=getattr(self, "_sim_registry_seen", None),
                 )
             idx_pipe.execute()

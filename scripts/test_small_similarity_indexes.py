@@ -108,6 +108,14 @@ def check(r):
                 assert result["total"] == 1, result
                 assert result["pairs"][0]["score"] == 1
 
+    # Deferred indexing keeps the MD5 lookup without denormalizing metadata.
+    for key in list(r.scan_iter("test:idx:sim:*")):
+        r.delete(key)
+    assert service.index_similarities("test", md5="aaa")
+    sid = next(r.scan_iter("test:sim:unweighted_cosine:*::*"))
+    assert r.sismember("test:idx:sim:file_md5:aaa", sid)
+    assert not r.sismember("test:idx:sim:function_name:tiny_resolver", sid)
+
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="small-sim-test-") as directory:

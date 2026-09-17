@@ -311,12 +311,9 @@ function renderBinarySimilarityView(params) {
                 display:inline-block; width:8px; height:8px; border-radius:50%; flex-shrink:0;
                 vertical-align:middle;
             }
-            .bsim-node.bsim-drift .bsim-node-dot { display:none; }
             .bsim-node .bsim-node-label { flex:1; overflow:hidden; text-overflow:ellipsis; }
             .bsim-node .bsim-node-count { font-size:0.68rem; color:var(--dim); font-family:'Consolas',monospace; }
             .bsim-node .bsim-node-pct { font-size:0.72rem; color:var(--accent); font-family:'Consolas',monospace; width:40px; text-align:right; }
-            .bsim-node.bsim-drift { color:var(--token-instruction); font-size:0.74rem; cursor:default; }
-            .bsim-node.bsim-drift:hover { background:none; }
             .bsim-chips { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px 0; min-height:0; }
             .bsim-chip {
                 display:inline-flex; align-items:center; gap:6px; padding:3px 8px;
@@ -984,27 +981,7 @@ function fileSimNodeHtml(node, depth, out) {
             <span class="bsim-node-pct">${pct}</span>
         </div>`);
 
-    // Drift sits under the library it drifted from, where the version comparison
-    // is legible, rather than in one anonymous global mismatch bucket.
-    const drift = Object.entries(node.drift || {}).sort((x, y) => y[1] - x[1]);
-    if (open && drift.length) {
-        drift.forEach(([partner, w]) => {
-            out.push(`
-                <div class="bsim-node bsim-drift" style="padding-left:${8 + (depth + 1) * 14}px;"
-                     title="${Math.round(w)} weight matched against ${escapeHtml(partner)} instead">
-                    <span class="bsim-caret"></span>
-                    <span class="bsim-node-label">⚠ drift → ${escapeHtml(fileSimDriftLabel(partner))}</span>
-                </div>`);
-        });
-    }
     if (open) (node.children || []).forEach(c => fileSimNodeHtml(c, depth + 1, out));
-}
-
-function fileSimDriftLabel(tagId) {
-    const parts = String(tagId).split(':');
-    if (parts.length >= 3) return parts[1] + ' ' + parts[2];
-    if (parts.length === 2) return parts[1];
-    return tagId;
 }
 
 // Both axis pickers, offering only the axes this pair carries tags on. With one
@@ -1120,7 +1097,6 @@ function fileSimSummaryRows(nodes, depth, out) {
     nodes.forEach(node => {
         const hasKids = (node.children || []).length > 0;
         const open = fileSimTreeOpen.has(node.id);
-        const drift = Object.entries(node.drift || {}).sort((x, y) => y[1] - x[1]);
         const caret = hasKids
             ? `<span class="bsim-caret-btn">${open ? '▼' : '▶'}</span>`
             : '<span class="bsim-caret-btn"></span>';
@@ -1140,7 +1116,6 @@ function fileSimSummaryRows(nodes, depth, out) {
                     </div>
                 </td>
                 <td style="color:var(--token-instruction); font-size:0.75rem;">
-                    ${drift.length ? '⚠ ' + escapeHtml(fileSimDriftLabel(drift[0][0])) : ''}
                 </td>
             </tr>`);
         if (open && hasKids) fileSimSummaryRows(node.children, depth + 1, out);
@@ -1163,7 +1138,6 @@ function renderFileSimSummary() {
     if (head && head.id === 'root') {
         headEl.innerHTML = '';
     } else if (head) {
-        const drift = Object.entries(head.drift || {}).sort((x, y) => y[1] - x[1]);
         headEl.innerHTML = `
             <div style="border:1px solid var(--border); border-radius:8px; padding:14px 16px; background:var(--card-bg);">
                 <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px;">
@@ -1174,9 +1148,6 @@ function renderFileSimSummary() {
                     <div>${escapeHtml(nameA)} <b style="color:var(--text);">${Math.round(head.a)}</b> funcs</div>
                     <div>${escapeHtml(nameB)} <b style="color:var(--text);">${Math.round(head.b)}</b> funcs</div>
                 </div>
-                ${drift.length ? `<div style="margin-top:10px; font-size:0.78rem; color:var(--token-instruction);">
-                    ⚠ version drift: ${drift.map(([p, w]) => `${escapeHtml(fileSimDriftLabel(p))} (${Math.round(w)})`).join(', ')}
-                </div>` : ''}
             </div>`;
     } else {
         headEl.innerHTML = `<div style="font-size:0.82rem; color:var(--subtle); padding:4px 2px;">${fileSimSelection.size} tags selected</div>`;
@@ -1197,7 +1168,7 @@ function renderFileSimSummary() {
                         <th style="padding:8px 10px; text-align:right; max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(nameB)}">${escapeHtml(nameB)}</th>
                         <th style="padding:8px 10px; text-align:right;">Sim</th>
                         <th style="padding:8px 10px;"></th>
-                        <th style="padding:8px 10px;">Drift</th>
+                        <th style="padding:8px 10px;"></th>
                     </tr>
                 </thead>
                 <tbody>${body.join('')}</tbody>

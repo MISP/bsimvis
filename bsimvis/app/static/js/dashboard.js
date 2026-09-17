@@ -1700,7 +1700,6 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <button id="job-pause-toggle" class="view-btn" onclick="toggleJobPause()" title="Pause/resume all workers (fleet-wide)">…</button>`;
         } else {
             const viewMode = params.get('view') || 'table';
-            const poolLimit = params.get('pool_limit') || '1000000';
             const countLimit = params.get('limit') || (viewMode === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
 
             if (path === 'function-similarity') {
@@ -1728,17 +1727,6 @@ function updateUI(viewKey, collection, params, route, force = false) {
                             <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchBinClusterView('table')">Table</button>
                             <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchBinClusterView('hierarchy')">Graph</button>
                             <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchBinClusterView('packing')">Packing</button>
-                        </div>`;
-            }
-
-            if (path === 'function-similarity' || path === 'functions') {
-                settingsHtml += `
-                        <span class="dim" style="font-size:0.65rem; margin-left:15px;">Pool Limit:</span>
-                        <div style="position:relative; display:inline-flex; align-items:center;">
-                            <input type="number" id="sim-pool-limit" value="${escapeAttr(poolLimit)}" step="100000" min="1000" max="1000000" 
-                                title="Max candidates to score / filter" 
-                                style="width:70px; background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
-                                onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
                         </div>`;
             }
 
@@ -2087,7 +2075,6 @@ function updateUI(viewKey, collection, params, route, force = false) {
         syncInput('pool-search-input', 'q');
 
         // Sync view settings
-        syncInput('sim-pool-limit', 'pool_limit');
         const limitEl = document.getElementById('sim-limit');
         if (limitEl) limitEl.value = p.get('limit') || (p.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
  
@@ -2366,9 +2353,7 @@ function applyAdvancedFuncSearch() {
     if (langFlt) params.set('language_id', langFlt); else params.delete('language_id');
     if (minFeatFlt) params.set('min_features', minFeatFlt); else params.delete('min_features');
     if (noteOwnerFlt) params.set('note_owner', noteOwnerFlt); else params.delete('note_owner');
-    const poolLimit = document.getElementById('sim-pool-limit')?.value;
     const countLimit = document.getElementById('sim-limit')?.value;
-    params.set('pool_limit', poolLimit || '1000000');
     params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
 
     const tagCols = ['func', 'file'];
@@ -2440,7 +2425,6 @@ function applySimSearch() {
     const matchMode = document.getElementById('sim-match-mode')?.value;
     const globalQ = document.getElementById('sim-search-input')?.value;
     const lang = document.getElementById('flt-func-language')?.value;
-    const poolLimit = document.getElementById('sim-pool-limit')?.value;
     const countLimit = document.getElementById('sim-limit')?.value;
 
     params.set('q', globalQ || '');
@@ -2454,7 +2438,6 @@ function applySimSearch() {
     else params.delete('cross_binary');
     if (matchMode && matchMode !== 'any') params.set('match_mode', matchMode);
     else params.delete('match_mode');
-    params.set('pool_limit', poolLimit || '1000000');
     params.set('limit', countLimit || (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT));
 
     const nameFlt = document.getElementById('flt-func-name')?.value;

@@ -2477,6 +2477,14 @@ class BinSimSearch(Resource):
             "max_coverage_b": {"description": "Maximum coverage for binary B"},
             "min_shared": {"description": "Minimum shared clusters", "example": 5},
             "max_shared": {"description": "Maximum shared clusters"},
+            "bin_cluster_uuid": {
+                "description": (
+                    "Keep pairs where either binary belongs to this binary "
+                    "cluster (substring match on the uuid). Resolved through the "
+                    "file-level cluster index, so it reflects the current "
+                    "clustering rather than a build-time snapshot."
+                )
+            },
             "min_funcs": {
                 "description": "Minimum function count — both sides must reach it",
                 "example": 20,

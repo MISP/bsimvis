@@ -2586,7 +2586,8 @@ function applyBinSimSearch() {
         'max_funcs': 'bsim-max-funcs',
         'min_coverage': 'bsim-min-cov',
         'max_coverage': 'bsim-max-cov',
-        'min_shared': 'bsim-min-shared'
+        'min_shared': 'bsim-min-shared',
+        'bin_cluster_uuid': 'bsim-cluster'
     };
 
     for (const [paramKey, elemId] of Object.entries(inputs)) {

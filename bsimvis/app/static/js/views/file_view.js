@@ -280,7 +280,7 @@ window.FileView = {
                                             ${FunctionFilters.rangeCell('nbr-min-score', 'nbr-max-score', { onInput: 'FileView.debounceNeighborsSearch()', valueMin: '0.9' })}
                                         </th>
                                         <th><input type="text" id="nbr-file-name" placeholder="File Name..." style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()"></th>
-                                        <th></th>
+                                        <th><input type="text" id="nbr-cluster" placeholder="Cluster UUID..." style="font-size:0.6rem; width:100%; box-sizing:border-box; font-family:monospace;" oninput="FileView.debounceNeighborsSearch()"></th>
                                         <th><input type="text" id="nbr-arch" placeholder="Arch..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()"></th>
                                         <th>
                                             <div style="display:flex; align-items:center; gap:2px;">
@@ -968,6 +968,7 @@ window.FileView = {
         setIfVal('nbr-min-cov', 'min_coverage');
         setIfVal('nbr-max-cov', 'max_coverage');
         setIfVal('nbr-min-shared', 'min_shared');
+        setIfVal('nbr-cluster', 'bin_cluster_uuid');
         qs.set('limit', document.getElementById('nbr-limit')?.value || '50');
 
         const tagList = (id) => (document.getElementById(id)?.value || '').split(',').map(s => s.trim()).filter(Boolean);

@@ -723,6 +723,121 @@ def test_cluster_response_contract():
             )
 
 
+def test_cluster_expansion_and_bin_sim_cluster_filter():
+    """The cluster detail view and the bin-sim cluster filter, at the API level.
+
+    The view asks list_clusters for one cluster plus its ancestors, its subtree
+    and its members in a single call -- show_parents / show_children /
+    show_members were implemented but undocumented, so nothing guarded them.
+    The filter is the other half: bin_sim pair docs carry no cluster field, so
+    ?bin_cluster_uuid= resolves through the file-level cluster index and
+    bin_sim:involves instead. If either stops working the UI degrades quietly
+    -- an empty hierarchy, or a filter that silently returns everything.
+
+    The fixture may or may not form clusters, so these assert status and shape,
+    and only check filter semantics when there is a cluster to check with.
+    """
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" Cluster expansion + bin_sim cluster filter", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    expand = {
+        "collection": COLLECTION,
+        "show_parents": "true",
+        "show_children": "true",
+        "show_members": "true",
+        "limit": 50,
+    }
+
+    for path in ("/api/cluster/list", "/api/bin_cluster/list"):
+        body = test_endpoint("GET", path, params=expand)
+        rows = body.get("results") if isinstance(body, dict) else None
+        check(
+            f"{path} accepts the expansion flags",
+            isinstance(rows, list),
+            f"keys={sorted(body) if isinstance(body, dict) else body}",
+        )
+        if rows:
+            check(
+                f"{path} rows carry a parent link",
+                "parent" in rows[0],
+                f"keys={sorted(rows[0])}",
+            )
+            check(
+                f"{path} show_members returns direct_members",
+                isinstance(rows[0].get("direct_members"), list),
+                f"direct_members={type(rows[0].get('direct_members')).__name__}",
+            )
+
+    # --- bin_sim ?bin_cluster_uuid= -----------------------------------------
+
+    # An uuid that matches nothing must return nothing, not everything. This is
+    # the failure mode of an unrecognised filter param.
+    unfiltered = test_endpoint(
+        "GET", "/api/bin_sim/search", params={"collection": COLLECTION, "limit": 5}
+    )
+    bogus = test_endpoint(
+        "GET",
+        "/api/bin_sim/search",
+        params={
+            "collection": COLLECTION,
+            "limit": 5,
+            "bin_cluster_uuid": "no-such-cluster-uuid-0000",
+        },
+    )
+    bogus_rows = bogus.get("results") if isinstance(bogus, dict) else None
+    check(
+        "bin_sim rejects an unknown cluster uuid instead of ignoring it",
+        isinstance(bogus_rows, list) and not bogus_rows,
+        f"total={bogus.get('total') if isinstance(bogus, dict) else bogus}",
+    )
+
+    clusters = test_endpoint(
+        "GET",
+        "/api/bin_cluster/list",
+        params={"collection": COLLECTION, "limit": 5, "show_members": "true"},
+    )
+    cluster_rows = (clusters.get("results") or []) if isinstance(clusters, dict) else []
+    target = next(
+        (c for c in cluster_rows if c.get("cluster_uuid") and c.get("direct_members")),
+        None,
+    )
+    if not target:
+        print(f"  {DIM}no clustered binaries in the fixture; filter semantics skipped{RESET}")
+        return
+
+    member_md5s = {
+        m.get("file_md5") for m in target["direct_members"] if m.get("file_md5")
+    }
+    filtered = test_endpoint(
+        "GET",
+        "/api/bin_sim/search",
+        params={
+            "collection": COLLECTION,
+            "limit": 50,
+            "bin_cluster_uuid": target["cluster_uuid"],
+        },
+    )
+    rows = (filtered.get("results") or []) if isinstance(filtered, dict) else []
+    check(
+        "bin_sim cluster filter narrows the result set",
+        (filtered.get("total", 0) if isinstance(filtered, dict) else 0)
+        <= (unfiltered.get("total", 0) if isinstance(unfiltered, dict) else 0),
+        f"filtered={filtered.get('total')} unfiltered={unfiltered.get('total')}",
+    )
+    if rows and member_md5s:
+        offenders = [
+            r
+            for r in rows
+            if not ({r.get("md5_a"), r.get("md5_b")} & member_md5s)
+        ]
+        check(
+            "every returned pair has a side inside the cluster",
+            not offenders,
+            f"{len(offenders)}/{len(rows)} pairs had neither side in the cluster",
+        )
+
+
 def test_incremental_hierarchical_cluster_equivalence():
     """A real second-batch insertion must match a forced full rebuild."""
     from bsimvis.app.services.cluster_service import cluster_service
@@ -6011,6 +6126,7 @@ if __name__ == "__main__":
         test_cluster_response_contract,
         test_pool_annotation_propagation,
         test_search_filters_and_sorting,
+        test_cluster_expansion_and_bin_sim_cluster_filter,
         test_tag_vocabulary_and_llm_batch,
         test_llm_agentic_analysis,
         test_bin_sim_diff_cache,

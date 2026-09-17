@@ -31,6 +31,52 @@ let binSimCtx = null;        // {collection, md5a, md5b, collB, poolId}
 // its functions (notes, the AI focus line). Set by both the function-diff and
 // container-pair renders, since both are "this comparison".
 let binSimPairCtx = null;    // {sid, collection, collB, md5a, md5b, nameA, nameB, score}
+const BINSIM_RUNTIME_HINT_KEY = 'bsim-runtime-greedy-hint-dismissed';
+
+function binSimRuntimeControls(active, minScore) {
+    if (!active) {
+        return '<button class="view-btn bsim-experiment-start" onclick="setBinSimMatchMode(\'runtime\')">Try runtime matching</button>';
+    }
+    return `<div class="bsim-experiment-controls">
+        <label for="bsim-runtime-threshold">Minimum similarity <span id="bsim-runtime-threshold-value">${minScore}%</span></label>
+        <input id="bsim-runtime-threshold" type="range" min="0" max="100" value="${minScore}" oninput="previewBinSimRuntimeThreshold(this.value)" aria-describedby="bsim-runtime-threshold-help">
+        <span id="bsim-runtime-threshold-help">Only pairs at or above this score are considered before greedy matching.</span>
+        <button class="view-btn bsim-experiment-exit" onclick="setBinSimMatchMode('saved')">Disable runtime greedy matching</button>
+    </div>`;
+}
+
+function setBinSimRuntimePanel(active, minScore) {
+    const panel = document.getElementById('bsim-experiment');
+    const action = document.getElementById('bsim-experiment-action');
+    if (!panel || !action) return;
+    panel.classList.toggle('is-active', active);
+    panel.classList.toggle('is-dismissed', !active && localStorage.getItem(BINSIM_RUNTIME_HINT_KEY) === '1');
+    action.innerHTML = binSimRuntimeControls(active, minScore);
+    const button = document.getElementById('bsim-runtime-button');
+    if (button) {
+        button.classList.toggle('active', active);
+        button.onclick = () => setBinSimMatchMode(active ? 'saved' : 'runtime');
+    }
+}
+
+function setBinSimRuntimeToast(message = '') {
+    let toast = document.getElementById('bsim-runtime-toast');
+    if (!message) return toast?.remove();
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:10px;';
+        document.body.appendChild(container);
+    }
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'bsim-runtime-toast';
+        toast.className = 'toast toast-info';
+        container.appendChild(toast);
+    }
+    toast.innerHTML = `<div class="toast-message"><i class="fa-solid fa-spinner fa-spin"></i> <span>${escapeHtml(message)}</span></div>`;
+}
 
 function renderBinarySimilarityView(params) {
     const container = document.getElementById('binary-similarity-container');
@@ -42,6 +88,9 @@ function renderBinarySimilarityView(params) {
     let md5b = params.get('md5_b');
     let collB = params.get('coll_b');
     let poolId = params.get('pool_id');
+    const runtimeGreedy = params.get('runtime') === 'greedy';
+    const runtimeMinScore = Math.max(0, Math.min(100, Number(params.get('min_score') || 0.5) * 100));
+    const showRuntimeHint = runtimeGreedy || localStorage.getItem(BINSIM_RUNTIME_HINT_KEY) !== '1';
 
     // Parse new RESTful URL using routing state or fallback
     if (!md5a || !md5b || !collB || !poolId) {
@@ -116,10 +165,24 @@ function renderBinarySimilarityView(params) {
                         <button class="bsim-tab" id="bin-sim-tab-btn-unique_a" onclick="switchBinSimTab('unique_a')">Unique to A</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-unique_b" onclick="switchBinSimTab('unique_b')">Unique to B</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-unmatched" onclick="switchBinSimTab('unmatched')">All Unique</button>
+                        <button id="bsim-runtime-button" class="view-btn bsim-runtime-button ${runtimeGreedy ? 'active' : ''}" onclick="setBinSimMatchMode('${runtimeGreedy ? 'saved' : 'runtime'}')" title="Re-match this view without changing the saved comparison">
+                            <i class="fa-solid fa-flask"></i> Runtime greedy <span>Experimental</span>
+                        </button>
                     </div>
 
                     <!-- Global scope chips: the tree selection, removable from here too -->
                     <div id="bsim-chips" class="bsim-chips"></div>
+                    <section id="bsim-experiment" class="bsim-experiment ${runtimeGreedy ? 'is-active' : ''} ${showRuntimeHint ? '' : 'is-dismissed'}" aria-label="Experimental runtime matching">
+                        <div class="bsim-experiment-copy">
+                            <span class="bsim-experiment-badge"><i class="fa-solid fa-flask"></i> Experimental</span>
+                            <div>
+                                <strong>Runtime greedy matching</strong>
+                                <p>Re-matches raw function similarities for this view only. It never changes the saved comparison, but may be slower and produce different groups.</p>
+                            </div>
+                        </div>
+                        <div id="bsim-experiment-action">${binSimRuntimeControls(runtimeGreedy, runtimeMinScore)}</div>
+                        ${runtimeGreedy ? '' : '<button class="bsim-experiment-dismiss" onclick="dismissBinSimRuntimeHint()" title="Dismiss this hint" aria-label="Dismiss runtime matching hint"><i class="fa-solid fa-xmark"></i></button>'}
+                    </section>
 
                     <!-- Summary: stats for the selection, a rollup that folds with the
                          tree, and the same composition drawn as flow underneath. -->
@@ -271,6 +334,36 @@ function renderBinarySimilarityView(params) {
                 font-size:0.7rem; color:var(--subtle); margin-right:6px; font-weight:bold;
                 font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;
             }
+            .bsim-experiment {
+                display:flex; align-items:center; justify-content:space-between; gap:16px;
+                margin:0 0 14px; padding:10px 12px; border:1px dashed var(--border);
+                border-radius:7px; background:color-mix(in srgb, var(--bg-alt) 65%, transparent);
+                font-family:'Inter',sans-serif;
+            }
+            .bsim-experiment.is-active { border-style:solid; border-color:color-mix(in srgb, var(--accent) 50%, var(--border)); }
+            .bsim-experiment.is-dismissed { display:none; }
+            .bsim-experiment-copy { display:flex; align-items:flex-start; gap:10px; min-width:0; }
+            .bsim-experiment-copy strong { display:block; font-size:0.8rem; color:var(--text); }
+            .bsim-experiment-copy p { margin:3px 0 0; color:var(--subtle); font-size:0.72rem; line-height:1.35; max-width:590px; }
+            .bsim-experiment-badge { flex:none; padding:3px 6px; border-radius:4px; background:color-mix(in srgb, var(--warning, #d97706) 18%, transparent); color:var(--warning, #d97706); font-size:0.64rem; font-weight:bold; letter-spacing:.04em; text-transform:uppercase; }
+            .bsim-experiment-start { flex:none; border:1px solid var(--border); }
+            .bsim-experiment-dismiss { align-self:flex-start; border:0; background:none; color:var(--dim); cursor:pointer; padding:2px; font-size:.9rem; }
+            .bsim-experiment-dismiss:hover { color:var(--text); }
+            .bsim-runtime-button { margin-left:auto; border:1px solid var(--border); display:inline-flex; align-items:center; gap:6px; }
+            .bsim-runtime-button span { color:var(--warning, #d97706); font-size:.58rem; letter-spacing:.04em; text-transform:uppercase; }
+            .bsim-runtime-button.active span { color:inherit; }
+            .bsim-experiment-controls { display:grid; grid-template-columns:auto minmax(110px, 190px) auto; align-items:center; gap:4px 10px; flex:none; }
+            .bsim-experiment-controls label { color:var(--text); font-size:0.72rem; font-weight:bold; white-space:nowrap; }
+            .bsim-experiment-controls label span { color:var(--accent); font-family:'Consolas',monospace; }
+            .bsim-experiment-controls input { width:100%; }
+            .bsim-experiment-controls > span { grid-column:1 / 3; color:var(--dim); font-size:0.65rem; line-height:1.25; }
+            .bsim-experiment-exit { grid-row:1 / 3; grid-column:3; border:1px solid var(--border); white-space:nowrap; }
+            @media (max-width:850px) {
+                .bsim-experiment { align-items:stretch; flex-direction:column; }
+                .bsim-experiment-controls { grid-template-columns:auto 1fr; }
+                .bsim-experiment-controls > span { grid-column:1 / 3; }
+                .bsim-experiment-exit { grid-row:auto; grid-column:1 / 3; justify-self:start; }
+            }
             .bsim-grp-row td {
                 background:var(--bg-alt); border-top:1px solid var(--border);
                 border-bottom:1px solid var(--border); padding:7px 10px;
@@ -324,7 +417,7 @@ function renderBinarySimilarityView(params) {
         if (!poolId && window.getRoutingState) {
             poolId = window.getRoutingState().pool || null;
         }
-        fetchAndRenderBinaryDiff(collection, md5a, md5b, collB, poolId);
+        fetchAndRenderBinaryDiff(collection, md5a, md5b, collB, poolId, runtimeGreedy, runtimeMinScore);
     }
 }
 
@@ -371,7 +464,7 @@ function initResizableCards() {
             });
             }
 
-            async function fetchAndRenderBinaryDiff(collection, md5a, md5b, collB, poolId) {
+            async function fetchAndRenderBinaryDiff(collection, md5a, md5b, collB, poolId, runtimeGreedy = false, runtimeMinScore = 0.5, nonBlocking = false, signal = null) {
 
     const resultsEl = document.getElementById('bin-sim-results');
 
@@ -386,7 +479,8 @@ function initResizableCards() {
         let url = `/api/diff?view=sankey&collection_a=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`;
         if (collB) url += `&collection_b=${encodeURIComponent(collB)}`;
         if (poolId) url += `&pool=${encodeURIComponent(poolId)}`;
-        const res = await fetch(url);
+        if (runtimeGreedy) url += `&runtime=greedy&min_score=${runtimeMinScore / 100}`;
+        const res = await fetch(url, signal ? { signal } : undefined);
         if (!res.ok) {
             let errMsg = "Failed to fetch similarity comparison";
             try {
@@ -483,7 +577,7 @@ function initResizableCards() {
         // Counts ride along so the Analyze modal can say what each pass would
         // select -- a pair with no unique functions has no changed-code pass to
         // offer, and finding that out from a 400 is the worst way to learn it.
-        binSimCtx = { collection, md5a, md5b, collB: collB || collection, poolId, sid: data.sid, counts };
+        binSimCtx = { collection, md5a, md5b, collB: collB || collection, poolId, sid: data.sid, counts, runtimeGreedy, runtimeMinScore: runtimeMinScore / 100 };
         binSimDataCache = {
             score: data.score,
             file_metadata_a: data.file_metadata_a,
@@ -535,9 +629,11 @@ function initResizableCards() {
         // function graph page themselves once a tab that needs rows is shown.
         // Restore the tab from the URL hash (e.g. after a Back navigation).
         applyBinSimTabFromHash();
+        return true;
 
     } catch(err) {
         console.error(err);
+        if (nonBlocking) return false;
         if (resultsEl) {
             resultsEl.style.display = 'flex';
             resultsEl.innerHTML = `
@@ -1128,6 +1224,10 @@ function fileSimTableParams(prefixes, extra = {}) {
     if (prefixes && prefixes.length) params.set('tags', prefixes.join(','));
     if (binSimCtx.collB) params.set('collection_b', binSimCtx.collB);
     if (binSimCtx.poolId) params.set('pool', binSimCtx.poolId);
+    if (binSimCtx.runtimeGreedy) {
+        params.set('runtime', 'greedy');
+        params.set('min_score', binSimCtx.runtimeMinScore);
+    }
     return params;
 }
 
@@ -1791,7 +1891,7 @@ window.trackPairAnalysis = function(jobId, ctx) {
             status.textContent = `${job.status} · ${job.progress || 0}%`;
             if (job.status === 'completed') {
                 if (binSimCtx && binSimCtx.md5a === ctx.md5a && binSimCtx.md5b === ctx.md5b) {
-                    fetchAndRenderBinaryDiff(ctx.collection, ctx.md5a, ctx.md5b, ctx.collB, ctx.poolId);
+                    fetchAndRenderBinaryDiff(ctx.collection, ctx.md5a, ctx.md5b, ctx.collB, ctx.poolId, ctx.runtimeGreedy, ctx.runtimeMinScore);
                 }
                 // The orchestrator already saved the report as a pair note, so a
                 // modal was a second, throwaway copy of it -- one you lost by
@@ -1914,7 +2014,7 @@ function pollBinSimResplitJob(jobId, ctx) {
         // Only refresh if the user is still looking at the pair the resplit was for.
         if (binSimCtx && binSimCtx.md5a === ctx.md5a && binSimCtx.md5b === ctx.md5b
             && binSimCtx.collection === ctx.collection) {
-            fetchAndRenderBinaryDiff(ctx.collection, ctx.md5a, ctx.md5b, ctx.collB, ctx.poolId);
+            fetchAndRenderBinaryDiff(ctx.collection, ctx.md5a, ctx.md5b, ctx.collB, ctx.poolId, ctx.runtimeGreedy, ctx.runtimeMinScore);
         }
     }, 2000);
 }
@@ -3460,3 +3560,58 @@ function buildInferredMetaCards(da, db, colA, colB) {
 
 
 
+
+window.setBinSimMatchMode = function(mode) {
+    clearTimeout(window.binSimRuntimeThresholdTimer);
+    const minScore = Number(new URL(location.href).searchParams.get("min_score") || 0.5);
+    refreshBinSimRuntime(mode === "runtime", minScore);
+};
+window.dismissBinSimRuntimeHint = function() {
+    localStorage.setItem(BINSIM_RUNTIME_HINT_KEY, '1');
+    document.getElementById('bsim-experiment')?.classList.add('is-dismissed');
+};
+window.previewBinSimRuntimeThreshold = function(value) {
+    const label = document.getElementById("bsim-runtime-threshold-value");
+    if (label) label.textContent = `${value}%`;
+    clearTimeout(window.binSimRuntimeThresholdTimer);
+    window.binSimRuntimeThresholdTimer = setTimeout(() => setBinSimRuntimeThreshold(value), 300);
+};
+window.setBinSimRuntimeThreshold = function(value) {
+    refreshBinSimRuntime(true, Number(value) / 100);
+};
+
+async function refreshBinSimRuntime(runtimeGreedy, minScore) {
+    if (!binSimCtx) return;
+    const url = new URL(location.href);
+    if (runtimeGreedy) url.searchParams.set("runtime", "greedy");
+    else url.searchParams.delete("runtime");
+    if (runtimeGreedy) url.searchParams.set("min_score", minScore);
+    history.pushState(null, "", url.pathname + url.search + url.hash);
+
+    window.binSimRuntimeAbort?.abort();
+    const controller = new AbortController();
+    window.binSimRuntimeAbort = controller;
+    const requestId = (window.binSimRuntimeRequestId || 0) + 1;
+    window.binSimRuntimeRequestId = requestId;
+    setBinSimRuntimePanel(runtimeGreedy, Math.round(minScore * 100));
+    setBinSimRuntimeToast('Updating comparison…');
+    const ctx = binSimCtx;
+    const loaded = await fetchAndRenderBinaryDiff(
+        ctx.collection, ctx.md5a, ctx.md5b, ctx.collB, ctx.poolId,
+        runtimeGreedy, Math.round(minScore * 100), true, controller.signal
+    );
+    if (requestId !== window.binSimRuntimeRequestId) return;
+    if (loaded) {
+        setBinSimRuntimeToast();
+        showToast(runtimeGreedy ? 'Runtime greedy matching is ready.' : 'Saved comparison restored.', 'success');
+    } else if (!controller.signal.aborted) {
+        const fallbackUrl = new URL(location.href);
+        if (ctx.runtimeGreedy) fallbackUrl.searchParams.set("runtime", "greedy");
+        else fallbackUrl.searchParams.delete("runtime");
+        fallbackUrl.searchParams.set("min_score", ctx.runtimeMinScore);
+        history.replaceState(null, "", fallbackUrl.pathname + fallbackUrl.search + fallbackUrl.hash);
+        setBinSimRuntimePanel(ctx.runtimeGreedy, Math.round(ctx.runtimeMinScore * 100));
+        setBinSimRuntimeToast();
+        showToast('Could not update matching. Showing the previous comparison.', 'error');
+    }
+}

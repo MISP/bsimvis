@@ -580,11 +580,47 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     if not md5_a or not md5_b:
         abort(400, "Both md5_a and md5_b are required")
 
+    runtime_greedy = request.args.get("runtime") == "greedy"
+    try:
+        min_score = max(0.0, min(1.0, float(request.args.get("min_score", 0.5))))
+    except ValueError:
+        abort(400, "min_score must be a number between 0 and 1")
+
     r = get_redis()
     coll_a = collection
     # What the caller asked for. Lookup below may reorder these to reach the
     # stored doc; the response must still come back in the caller's order.
     req_coll_a, req_md5_a, req_coll_b, req_md5_b = coll_a, md5_a, coll_b, md5_b
+
+    if runtime_greedy:
+        runtime_sid = bin_sim_service.on_demand_pair_sid(
+            collection, md5_a, md5_b, algo, coll_b, pool_id
+        )
+        runtime_cache_key = f"{runtime_sid}:runtime:{min_score:.3f}:cache"
+        cached_raw = r.get(runtime_cache_key)
+        raw = json.loads(cached_raw) if cached_raw else None
+        if raw is None:
+            raw = bin_sim_service.cached_pair_from_stored_sims(
+                collection, md5_a, md5_b, algo, coll_b, pool_id, min_score
+            )
+            if raw:
+                r.setex(runtime_cache_key, 3600, json.dumps(raw))
+        if not raw:
+            return {
+                "status": "not_found",
+                "message": "No function similarity edges found",
+            }, 404
+        diff_data = _hydrate_diff(
+            r, raw, req_coll_a, req_md5_a, req_coll_b, req_md5_b, pool_id, algo
+        )
+        diff_data["sid"] = runtime_sid
+        diff_data["runtime_greedy"] = True
+        table = request.args.get("table")
+        if table in ("matched", "unique_to_a", "unique_to_b", "all"):
+            return _page_diff(diff_data, table, r, coll_a, algo, pool_id)
+        if request.args.get("view") == "sankey":
+            return _sankey_summary(diff_data)
+        return diff_data
 
     sid = bin_sim_service.find_pair_sid(collection, md5_a, md5_b, coll_b, pool_id, algo)
     if not sid and pool_id:

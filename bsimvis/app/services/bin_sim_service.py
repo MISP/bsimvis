@@ -286,7 +286,7 @@ class BinSimService:
         )
 
     def cached_pair_from_stored_sims(
-        self, collection, md5_a, md5_b, algo, coll_b=None, pool_id=None
+        self, collection, md5_a, md5_b, algo, coll_b=None, pool_id=None, min_score=0.0
     ):
         """Build one transient file diff from stored function-sim docs."""
         coll_a = _origin_coll(collection) if pool_id else collection
@@ -339,19 +339,68 @@ class BinSimService:
             return None
         file_meta_a, file_meta_b = map(decode, (raw_file_meta_a, raw_file_meta_b))
         edges = []
+        seen_pairs = set()
         for doc in sim_docs:
             fid1, fid2 = doc.get("id1"), doc.get("id2")
+            score = float(doc.get("score", 0.0))
             if pool_id:
                 endpoint_a = (doc.get("coll_1"), doc.get("md5_1"))
                 endpoint_b = (doc.get("coll_2"), doc.get("md5_2"))
                 if endpoint_a == (coll_a, md5_a) and endpoint_b == (coll_b, md5_b):
-                    edges.append((fid1, fid2, doc.get("score", 0.0)))
+                    edge = (fid1, fid2, score)
                 elif endpoint_b == (coll_a, md5_a) and endpoint_a == (coll_b, md5_b):
-                    edges.append((fid2, fid1, doc.get("score", 0.0)))
+                    edge = (fid2, fid1, score)
+                else:
+                    continue
             elif fid1 in fids_a and fid2 in fids_b:
-                edges.append((fid1, fid2, doc.get("score", 0.0)))
+                edge = (fid1, fid2, score)
             elif fid1 in fids_b and fid2 in fids_a:
-                edges.append((fid2, fid1, doc.get("score", 0.0)))
+                edge = (fid2, fid1, score)
+            else:
+                continue
+            seen_pairs.add(frozenset(edge[:2]))
+            if score >= min_score:
+                edges.append(edge)
+
+        # ponytail: O(A×B) discovery is intentional for this opt-in runtime view;
+        # move it to a worker/index only if real file pairs make it too slow.
+        vec_pipe = self.r.pipeline(transaction=False)
+        all_fids = sorted(fids_a | fids_b)
+        for fid in all_fids:
+            vec_pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+        vectors = {}
+        for fid, raw in zip(all_fids, vec_pipe.execute()):
+            if raw:
+                vectors[fid] = {
+                    h.decode() if isinstance(h, bytes) else h: float(value)
+                    for h, value in raw
+                }
+        norms = {
+            fid: sum(value * value for value in vector.values()) ** 0.5
+            for fid, vector in vectors.items()
+        }
+        for fid_a in fids_a:
+            vec_a, norm_a = vectors.get(fid_a), norms.get(fid_a, 0)
+            if not vec_a or not norm_a:
+                continue
+            for fid_b in fids_b:
+                if frozenset((fid_a, fid_b)) in seen_pairs:
+                    continue
+                vec_b, norm_b = vectors.get(fid_b), norms.get(fid_b, 0)
+                if not vec_b or not norm_b:
+                    continue
+                common = set(vec_a) & set(vec_b)
+                if algo == "jaccard":
+                    shared = sum(min(vec_a[key], vec_b[key]) for key in common)
+                    score = shared / (
+                        sum(vec_a.values()) + sum(vec_b.values()) - shared
+                    )
+                else:
+                    score = sum(vec_a[key] * vec_b[key] for key in common) / (
+                        norm_a * norm_b
+                    )
+                if score >= min_score and score > 0:
+                    edges.append((fid_a, fid_b, score))
 
         fid_tags = {
             fid: tags

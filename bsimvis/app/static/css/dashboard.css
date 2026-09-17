@@ -2563,13 +2563,23 @@ a.home-card:hover,
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 2px 8px;
+    padding: 4px 10px;
     border-top: 1px solid var(--border);
     background: rgba(255,255,255,0.015);
-    font-size: 0.7rem;
+    font-size: 0.78rem;
     color: var(--dim);
     gap: 12px;
-    min-height: 22px;
+    min-height: 28px;
+}
+/* Dashboard footer is not inside the table card: it floats in the gap between
+   the card and the page bottom padding, so centre it there instead of gluing
+   it to the card's bottom edge. margin-top mirrors main's padding-bottom. */
+#table-footer {
+    margin-top: 30px;
+    border-top: none;
+    background: none;
+    padding-left: 2px;
+    padding-right: 2px;
 }
 .table-footer-left { display: flex; align-items: center; gap: 10px; }
 .table-footer-right { display: flex; align-items: center; gap: 8px; }
@@ -2578,16 +2588,16 @@ a.home-card:hover,
     background: rgba(255,255,255,0.04);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 1px 8px;
-    font-size: 0.7rem;
+    padding: 3px 10px;
+    font-size: 0.78rem;
 }
 .table-footer-warn { color: #ffab2e; cursor: help; }
 .table-footer-info { color: #60a5fa; cursor: help; }
 .table-footer-sel {
     color: var(--subtle);
-    font-size: 0.7rem;
+    font-size: 0.78rem;
     background: rgba(255,255,255,0.04);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 1px 8px;
+    padding: 3px 10px;
 }

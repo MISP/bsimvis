@@ -466,6 +466,40 @@ tr:nth-child(even) {
     width: 300px;
 }
 
+.filter-clearable {
+    position: relative;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.filter-clearable > input,
+.filter-clearable > select {
+    padding-right: 20px !important;
+}
+
+.filter-clear {
+    position: absolute;
+    top: 50%;
+    right: 3px;
+    z-index: 1;
+    transform: translateY(-50%);
+    border: 0;
+    padding: 0;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: var(--border);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 13px;
+}
+
+.filter-clear:hover {
+    background: var(--accent);
+    color: var(--bg);
+}
+
 .search-input-wrapper {
     display: flex;
     align-items: center;

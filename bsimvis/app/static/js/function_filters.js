@@ -114,3 +114,46 @@ window.FunctionFilters = {
         return params.toString();
     },
 };
+
+// Filter controls are rendered by several views. Decorate them centrally so a
+// populated control can always be cleared without maintaining a button per view.
+window.enhanceFilterClears = function (root = document) {
+    const controls = root.querySelectorAll('.filter-row input:not([type="hidden"]):not(.tag-filter-add), .filter-row select, .filter-bar input:not([type="hidden"]), [data-param], input[id$="-raw"]');
+    controls.forEach(control => {
+        if (control.closest('.filter-clearable')) return;
+
+        const wrapper = document.createElement('span');
+        wrapper.className = 'filter-clearable';
+        if (control.style.width) {
+            wrapper.style.width = control.style.width;
+            control.style.width = '100%';
+        }
+        control.replaceWith(wrapper);
+        wrapper.append(control);
+
+        const clear = document.createElement('button');
+        clear.type = 'button';
+        clear.className = 'filter-clear';
+        clear.title = 'Clear filter';
+        clear.setAttribute('aria-label', 'Clear filter');
+        clear.textContent = '×';
+        const update = () => clear.hidden = !control.value;
+        clear.addEventListener('click', () => {
+            control.value = '';
+            control.dispatchEvent(new Event('input', { bubbles: true }));
+            control.dispatchEvent(new Event('change', { bubbles: true }));
+            control.focus();
+        });
+        control.addEventListener('input', update);
+        control.addEventListener('change', update);
+        wrapper.append(clear);
+        update();
+    });
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    window.enhanceFilterClears();
+    new MutationObserver(records => records.forEach(record => record.addedNodes.forEach(node => {
+        if (node.nodeType === Node.ELEMENT_NODE) window.enhanceFilterClears(node.parentElement || document);
+    }))).observe(document.body, { childList: true, subtree: true });
+});

@@ -443,7 +443,7 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
     // different from the same tag in the graphs.
     const analysisBadge = t => {
         const color = window.tagInk(window.getTagMetadata(t).color);
-        return `<span class="analysis-tag-badge" style="cursor:pointer; border-color:${tagAlpha(color, 40)}; color:${color}; background:${tagAlpha(color, 7)};" data-eid="${escapeAttr(eid)}" title="Analysis Tag: ${escapeAttr(t)} (click for source)">${escapeHtml(t)}</span>`;
+        return `<span class="analysis-tag-badge" style="cursor:pointer; border-color:${tagAlpha(color, 40)}; color:${color}; background:${tagAlpha(color, 7)};" data-eid="${escapeAttr(eid)}" data-filter-value="${escapeAttr(t)}" title="Analysis Tag: ${escapeAttr(t)} (click for source)">${escapeHtml(t)}</span>`;
     };
 
     const userBadge = t => {
@@ -455,6 +455,7 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
         return `
         <span class="sim-tag-card"
               style="border-color:${tagAlpha(color, 27)}; color:${color}; background:${tagAlpha(color, 7)}; cursor:pointer;"
+              data-filter-value="${escapeAttr(t)}"
               onmouseenter="showTooltip(event, ${escapeAttr(jsString(t))}, ${escapeAttr(jsString(coll))})"
               onmouseleave="hideTooltip()"
               oncontextmenu="handleTagContextMenu(event, ${escapeAttr(jsString(t))})">
@@ -678,6 +679,7 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null) => 
             const textOpacity = (0.35 + coh * 0.65).toFixed(2); // 0.35→1.0
             return `
             <span class="${cardClass}"
+                  data-filter-value="${escapeAttr(uuid)}"
                   onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))}, ${escapeAttr(jsString(c.axis))})"
                   onmouseleave="hideClusterCardTooltip(event)"
                   onmousemove="moveClusterCardTooltip(event)"
@@ -693,6 +695,7 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null) => 
 
         return `
         <span class="${cardClass}"
+              data-filter-value="${escapeAttr(uuid)}"
               onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))}, ${escapeAttr(jsString(c.axis))})"
               onmouseleave="hideClusterCardTooltip(event)"
               onmousemove="moveClusterCardTooltip(event)"

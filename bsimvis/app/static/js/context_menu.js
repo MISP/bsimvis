@@ -1157,4 +1157,78 @@
             }
         }
     });
+
+    // Table filters already live in each table's second header row. Reuse that
+    // wiring so a cell never needs a separate, slightly-different search path.
+    const closeCellMenu = () => document.getElementById('table-cell-context-menu')?.remove();
+
+    const cellValue = (cell, target) => {
+        const valueEl = target.closest?.('[data-filter-value]');
+        return (valueEl?.dataset.filterValue || cell.dataset.filterValue || cell.innerText || '').trim();
+    };
+
+    const cellFilter = (cell) => {
+        const table = cell.closest('table');
+        const headerTable = table?.id === 'data-table' ? document.getElementById('header-table') : table;
+        const filterRow = headerTable?.querySelector('thead .filter-row');
+        return filterRow?.cells[cell.cellIndex] || null;
+    };
+    const canApplyCellFilter = (filterCell) => !!filterCell && !!filterCell.querySelector(
+        '.tag-filter-container, input:not([type="number"]):not([type="date"]), select'
+    );
+
+
+    const applyCellFilter = (filterCell, value) => {
+        const tagContainer = filterCell.querySelector('.tag-filter-container');
+        if (tagContainer) {
+            const type = tagContainer.id.replace('tag-container-', '');
+            if (['func', 'file', 'sim'].includes(type) && typeof window.createTagCard === 'function') {
+                window.createTagCard(type, `${type}_tag`, value);
+                window.triggerTagSearch?.();
+                return true;
+            }
+        }
+
+        const input = filterCell.querySelector('input:not([type="number"]):not([type="date"]), select');
+        if (!input) return false;
+        input.value = value;
+        input.dispatchEvent(new Event(input.oninput ? 'input' : 'change', { bubbles: true }));
+        return true;
+    };
+
+    document.addEventListener('contextmenu', (event) => {
+        const cell = event.target.closest?.('tbody td');
+        if (!cell || event.target.closest('button, .btn-action')) return;
+        const value = cellValue(cell, event.target);
+        if (!value) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        closeCellMenu();
+
+        const filterCell = cellFilter(cell);
+        const table = cell.closest('table');
+        const header = (table?.id === 'data-table' ? document.getElementById('header-table') : table)?.querySelector('thead tr:not(.filter-row)')?.cells[cell.cellIndex]?.innerText.trim() || 'column';
+        const menu = document.createElement('div');
+        menu.id = 'table-cell-context-menu';
+        menu.className = 'context-menu';
+        menu.innerHTML = `<div class="context-menu-header">${escapeHtml(header)}</div>` +
+            (canApplyCellFilter(filterCell) ? `<div class="context-menu-item" data-action="filter"><i class="fa-solid fa-filter"></i><span>Filter by this value</span></div>` : '') +
+            `<div class="context-menu-item" data-action="copy"><i class="fa-regular fa-copy"></i><span>Copy value</span></div>`;
+        document.body.appendChild(menu);
+        menu.style.display = 'block';
+        menu.style.left = `${Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 8)}px`;
+        menu.style.top = `${Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 8)}px`;
+        menu.onclick = (e) => {
+            const action = e.target.closest('[data-action]')?.dataset.action;
+            if (action === 'filter') {
+                if (!applyCellFilter(filterCell, value)) return;
+            } else if (action === 'copy') {
+                window.copyMetadata(value, 'value');
+            }
+            closeCellMenu();
+        };
+    }, true);
+    document.addEventListener('click', closeCellMenu);
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeCellMenu(); });
 })();

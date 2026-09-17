@@ -236,7 +236,7 @@ window.TableRenderers = {
                         </button>
                     </div>
                 </td>
-                <td class="mono dim" style="font-size:0.7rem">${escapeHtml(b['batch_uuid'])}</td>
+                <td class="mono dim" style="font-size:0.7rem" data-filter-value="${escapeAttr(b['batch_uuid'])}">${escapeHtml(b['batch_uuid'])}</td>
                 <td class="mono"><a ${createNav('files', col, { batch_uuid: b['batch_uuid'] })} class="clickable-count">${b['total_files']}</a></td>
                 <td class="mono"><a ${createNav('functions', col, { batch_uuid: b['batch_uuid'] })} class="clickable-count">${b['total_functions']}</a></td>
                 <td class="dim">${formatDate(b['last_updated'] || b['created_at'])}</td>
@@ -464,7 +464,7 @@ window.TableRenderers = {
                         ${f['first_seen'] && f['first_seen'].length ? `<div class="dim">Seen: <span style="color:var(--accent)">${escapeHtml(Array.isArray(f['first_seen']) ? f['first_seen'].join(', ') : f['first_seen'])}</span></div>` : ''}
                     </div>
                 </td>
-                <td class="sim-cell mono dim" style="font-size:0.7rem" title="${escapeAttr(batchUuid)}">
+                <td class="sim-cell mono dim" style="font-size:0.7rem" title="${escapeAttr(batchUuid)}" data-filter-value="${escapeAttr(batchUuid)}">
                     ${escapeHtml(batchUuid.length > 8 ? batchUuid.substring(0, 8) + '...' : batchUuid)}
                 </td>
                 <td class="sim-cell">${fileStatusBadgeHtml(f)}</td>

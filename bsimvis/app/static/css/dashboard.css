@@ -222,11 +222,24 @@ main {
 }
 
 /* The header rides along inside the one table rather than living in a second
-   one, so it can never drift out of step with the cells below it. */
+   one, so it can never drift out of step with the cells below it.
+
+   thead holds two rows -- labels and filters -- and both have to stick, at
+   different offsets, or they pile up on each other at the top of the scroll
+   box. The filter row's offset is the label row's rendered height, which only
+   JS can know, so buildColgroup() measures it into --thead-labels-h. */
 #data-table thead th {
     position: sticky;
-    top: 0;
     z-index: 3;
+}
+
+#data-table thead tr:first-child th {
+    top: 0;
+}
+
+#data-table thead tr.filter-row th {
+    top: var(--thead-labels-h, 0px);
+    z-index: 2;
 }
 
 table {

@@ -2135,6 +2135,15 @@ function updateUI(viewKey, collection, params, route, force = false) {
             // auto layout just gave them.
             const table = document.getElementById('data-table');
             if (table) table.style.tableLayout = 'fixed';
+
+            // Both header rows are sticky, so the filter row needs to sit at
+            // the label row's height rather than on top of it. Only measurement
+            // can supply that number; the CSS reads it back as --thead-labels-h.
+            if (table) {
+                const h = headerRow.getBoundingClientRect().height;
+                table.style.setProperty('--thead-labels-h', `${Math.round(h)}px`);
+            }
+
             sizeTableToColumns();
         };
         buildColgroup();

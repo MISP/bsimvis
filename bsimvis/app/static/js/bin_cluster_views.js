@@ -568,7 +568,10 @@ class BinClusterHierarchy {
                     return;
                 }
                 if (d.data.uuid && d.data.uuid !== 'root') {
-                    const url = Nav.buildUIUrl(col, ['files', 'clusters', d.data.uuid]);
+                    let url = Nav.buildUIUrl(col, ['files', 'clusters', d.data.uuid]);
+                    if (self.params && self.params.axis && self.params.axis !== 'overall') {
+                        url += '?axis=' + encodeURIComponent(self.params.axis);
+                    }
                     Nav.openPath(url, e, { title: `Cluster`, type: 'cluster' });
                 }
             })

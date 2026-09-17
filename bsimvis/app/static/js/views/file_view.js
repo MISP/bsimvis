@@ -609,7 +609,10 @@ window.FileView = {
                         // The chip names the cluster, so it opens the cluster.
                         // openClusterFiles() below is still the way to the
                         // filtered file list.
-                        const clusterUrl = Nav.buildUIUrl(collection, ['files', 'clusters', cm.cluster_uuid]);
+                        let clusterUrl = Nav.buildUIUrl(collection, ['files', 'clusters', cm.cluster_uuid]);
+                        if (activeAxis && activeAxis !== 'overall') {
+                            clusterUrl += '?axis=' + encodeURIComponent(activeAxis);
+                        }
 
                         chipsHtml += `
                             <a href="${clusterUrl}" onclick="Nav.openPath('${clusterUrl}', event)" class="cluster-chip" 

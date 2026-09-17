@@ -393,15 +393,15 @@ const routes = {
         title: 'Binary Similarity',
         api: '/api/bin_sim/search',
         headers: [
-            { label: 'Score', width: '10%', sort: 'score' },
+            { label: 'Score', width: '12%', sort: 'score' },
             { label: 'Binary Pair', width: '20%' },
             { label: 'MD5', width: '15%' },
             { label: 'Arch', width: '8%', sort: 'architecture' },
             { label: 'Funcs', width: '8%', sort: 'functions_count' },
             { label: 'Coverage', width: '12%', sort: 'coverage' },
             { label: 'Shared Clusters', width: '7%', sort: 'shared_clusters' },
-            { label: 'Pair', width: '10%' },
-            { label: 'Tags', width: '20%' },
+            { label: 'Notes', width: '5%' },
+            { label: 'Tags', width: '18%' },
         ],
         renderer: renderBinSimPairs
     },
@@ -1946,6 +1946,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                         <div style="display:flex; align-items:center; gap:2px;">
                             <input type="number" id="bsim-min-score" placeholder="Min..." step="0.05" min="0" max="1" value="${escapeAttr(p.get('min_score') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-score" placeholder="Max..." step="0.05" min="0" max="1" value="${escapeAttr(p.get('max_score') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;">
                         </div>
+                        <div class="tag-filter-container" id="tag-container-sim"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('sim', 'sim_tag', val); this.value=''; triggerTagSearch(); })"></div>
                     </th>
                     <th>
                         <input type="text" id="bsim-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;">
@@ -1955,6 +1956,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="bsim-min-funcs" placeholder="Min..." min="0" value="${escapeAttr(p.get('min_funcs') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-funcs" placeholder="Max..." min="0" value="${escapeAttr(p.get('max_funcs') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"></div></th>
                     <th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="bsim-min-cov" placeholder="Min..." step="0.1" min="0" max="1" value="${escapeAttr(p.get('min_coverage') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-cov" placeholder="Max..." step="0.1" min="0" max="1" value="${escapeAttr(p.get('max_coverage') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"></div></th>
                     <th><input type="number" id="bsim-min-shared" placeholder="Min..." min="0" value="${escapeAttr(p.get('min_shared') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
+                    <th></th>
                     <th><div class="tag-filter-container" id="tag-container-bin-sim"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'bin-sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bin-sim', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
                 </tr>`;
                 thead.innerHTML = headHtml;

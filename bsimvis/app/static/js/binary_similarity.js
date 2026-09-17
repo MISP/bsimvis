@@ -2598,8 +2598,11 @@ function applyBinSimSearch(scoreType) {
     const countLimit = document.getElementById('sim-limit')?.value;
     if (countLimit) params.set('limit', countLimit);
 
-    const tagCols = ['bin-sim'];
-    const allTagKeys = ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'];
+    const tagCols = ['sim', 'bin-sim'];
+    const allTagKeys = [
+        'sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag',
+        'file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag',
+    ];
     allTagKeys.forEach(k => params.delete(k));
 
     tagCols.forEach(colId => {
@@ -2824,9 +2827,8 @@ function binSimScoreCards(item, activeScoreType) {
 
 /** @param depth 0 for a normal row; deeper rows are the children folded under a
  *  container row, hidden until its caret is opened. */
-/** Tags + notes for the PAIR itself (not either file) -- ignore/bookmark and
- * the AI insight report land here, keyed by the pair's own sid. */
-function renderBinSimPairCell(item) {
+/** Pair tags and notes are separate cells; both remain keyed by the pair SID. */
+function renderBinSimPairTags(item) {
     const sid = item.sid || item._id;
     if (!sid) return '';
     const pairTags = Array.isArray(item.tags) ? item.tags : [];
@@ -2845,9 +2847,13 @@ function renderBinSimPairCell(item) {
              data-entity-data='${escapeAttr(JSON.stringify(ctxData))}'
              oncontextmenu='EntityRenderer.handleContextMenu(event, "bin_sim", this)'>
             ${EntityRenderer.renderTag('bin_sim', sid, pairTags, pairUserTags, { maxTags: 3 })}
-            ${EntityRenderer.renderBinSimNoteButton(sid, item.note_owners || [], { raw_data: item })}
         </div>
     `;
+}
+
+function renderBinSimPairNotes(item) {
+    const sid = item.sid || item._id;
+    return sid ? EntityRenderer.renderBinSimNoteButton(sid, item.note_owners || [], { raw_data: item }) : '';
 }
 
 function renderBinSimPairs(items, depth = 0, anchorMd5 = null) {
@@ -2903,7 +2909,10 @@ function renderBinSimPairs(items, depth = 0, anchorMd5 = null) {
             html += `
                 <tr class="sim-row">
                     <td>
-                        <div style="cursor:pointer;" onclick="${escapeAttr(onClickHandler)}" title="Open Diff">${binSimScoreCards(item, activeScoreType)}</div>
+                        <div style="display:flex; flex-direction:column; gap:4px;">
+                            <div style="cursor:pointer;" onclick="${escapeAttr(onClickHandler)}" title="Open Diff">${binSimScoreCards(item, activeScoreType)}</div>
+                            ${renderBinSimPairTags(item)}
+                        </div>
                     </td>
                     <td class="sim-cell">${EntityRenderer.renderFileName(otherName, otherMd5, otherColl)}</td>
                     <td class="sim-cell">${EntityRenderer.renderMd5(otherMd5)}</td>
@@ -2922,7 +2931,10 @@ function renderBinSimPairs(items, depth = 0, anchorMd5 = null) {
                 <td>
                     <div style="display:flex; align-items:center; gap:8px; padding-left:${depth * 14}px;">
                         ${caret}
-                        <div style="cursor:pointer;" onclick="${escapeAttr(onClickHandler)}" title="Open Diff">${binSimScoreCards(item, activeScoreType)}</div>
+                        <div style="display:flex; flex-direction:column; gap:4px;">
+                            <div style="cursor:pointer;" onclick="${escapeAttr(onClickHandler)}" title="Open Diff">${binSimScoreCards(item, activeScoreType)}</div>
+                            ${renderBinSimPairTags(item)}
+                        </div>
                     </div>
                 </td>
                 <td class="sim-cell">
@@ -2965,7 +2977,7 @@ function renderBinSimPairs(items, depth = 0, anchorMd5 = null) {
                     <div style="display:flex; align-items:center; justify-content:center; height:100%; font-weight:bold;">${shared}</div>
                 </td>
                 <td class="sim-cell" style="vertical-align:middle;">
-                    ${renderBinSimPairCell(item)}
+                    ${renderBinSimPairNotes(item)}
                 </td>
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:8px;">

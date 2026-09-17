@@ -763,6 +763,9 @@ function attachTagAutocomplete(input, onSelect) {
     input._autocompleteDropdown = dropdown;
 
     const positionDropdown = () => {
+        if (!document.body.contains(dropdown)) {
+            document.body.appendChild(dropdown);
+        }
         const rect = input.getBoundingClientRect();
         dropdown.style.position = 'fixed';
         dropdown.style.left = rect.left + 'px';
@@ -809,6 +812,7 @@ function attachTagAutocomplete(input, onSelect) {
             item.onmousedown = (e) => {
                 e.preventDefault();
                 onSelect(t);
+                input.dispatchEvent(new Event('input', { bubbles: true }));
                 dropdown.style.display = 'none';
             };
             dropdown.appendChild(item);
@@ -829,11 +833,12 @@ function attachTagAutocomplete(input, onSelect) {
         }
     };
 
-    input.onfocus = () => showSuggestions(input.value);
-    input.onclick = () => showSuggestions(input.value);
+    let blurTimeout;
+    input.onfocus = () => { clearTimeout(blurTimeout); showSuggestions(input.value); };
+    input.onclick = () => { clearTimeout(blurTimeout); showSuggestions(input.value); };
     input.oninput = () => showSuggestions(input.value);
     input.onblur = () => {
-        setTimeout(() => {
+        blurTimeout = setTimeout(() => {
             dropdown.style.display = 'none';
             activeIndex = -1;
         }, 200);
@@ -860,6 +865,7 @@ function attachTagAutocomplete(input, onSelect) {
                     e.stopPropagation();
                     const selectedValue = currentSuggestions[activeIndex];
                     onSelect(selectedValue);
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
                     dropdown.style.display = 'none';
                     activeIndex = -1;
                     return;
@@ -890,6 +896,9 @@ function attachAutocomplete(input, level, field, onSelect) {
     input._autocompleteDropdown = dropdown;
 
     const positionDropdown = () => {
+        if (!document.body.contains(dropdown)) {
+            document.body.appendChild(dropdown);
+        }
         const rect = input.getBoundingClientRect();
         dropdown.style.position = 'fixed';
         dropdown.style.left = rect.left + 'px';
@@ -933,6 +942,7 @@ function attachAutocomplete(input, level, field, onSelect) {
             div.onmousedown = (e) => {
                 e.preventDefault();
                 onSelect(item.value);
+                input.dispatchEvent(new Event('input', { bubbles: true }));
                 dropdown.style.display = 'none';
             };
             dropdown.appendChild(div);
@@ -968,11 +978,12 @@ function attachAutocomplete(input, level, field, onSelect) {
         }
     };
 
-    input.onfocus = () => showSuggestions(input.value);
-    input.onclick = () => showSuggestions(input.value);
+    let blurTimeout;
+    input.onfocus = () => { clearTimeout(blurTimeout); showSuggestions(input.value); };
+    input.onclick = () => { clearTimeout(blurTimeout); showSuggestions(input.value); };
     input.oninput = () => showSuggestions(input.value);
     input.onblur = () => {
-        setTimeout(() => {
+        blurTimeout = setTimeout(() => {
             dropdown.style.display = 'none';
             activeIndex = -1;
         }, 200);
@@ -999,6 +1010,7 @@ function attachAutocomplete(input, level, field, onSelect) {
                     e.stopPropagation();
                     const selectedValue = currentSuggestions[activeIndex].value;
                     onSelect(selectedValue);
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
                     dropdown.style.display = 'none';
                     activeIndex = -1;
                     return;

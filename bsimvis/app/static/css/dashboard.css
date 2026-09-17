@@ -2571,11 +2571,16 @@ a.home-card:hover,
     gap: 12px;
     min-height: 28px;
 }
-/* Dashboard footer is not inside the table card: it floats in the gap between
-   the card and the page bottom padding, so centre it there instead of gluing
-   it to the card's bottom edge. margin-top mirrors main's padding-bottom. */
+/* Dashboard footer is not inside the table card: it floats between the card and
+   the page bottom, so drop the border that glued it to the card's bottom edge
+   and give it equal gaps on both sides. The view reaches into main's 30px
+   padding-bottom so those gaps are 8px, not 30px; the margin goes here rather
+   than on the footer because #grid-container clips at its own edge. */
+#dashboard-view-container {
+    margin-bottom: -22px;
+}
 #table-footer {
-    margin-top: 30px;
+    margin-top: 8px;
     border-top: none;
     background: none;
     padding-left: 2px;

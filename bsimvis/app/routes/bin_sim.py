@@ -487,6 +487,8 @@ def _hydrate_diff(r, data_raw, coll_a, md5_a, coll_b, md5_b, pool_id, algo):
                         "bsim_features_count": int(
                             meta.get("bsim_features_count") or 0
                         ),
+                        "caller_count": int(meta.get("caller_count") or 0),
+                        "callee_count": int(meta.get("callee_count") or 0),
                     }
                     continue
 
@@ -503,6 +505,8 @@ def _hydrate_diff(r, data_raw, coll_a, md5_a, coll_b, md5_b, pool_id, algo):
                 "note_owners": [],
                 "note_count": 0,
                 "bsim_features_count": 0,
+                "caller_count": 0,
+                "callee_count": 0,
             }
         diff_data["functions_metadata"] = funcs_metadata
     else:

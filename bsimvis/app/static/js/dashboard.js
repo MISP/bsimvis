@@ -319,15 +319,17 @@ const routes = {
         title: 'Functions',
         api: '/api/function/search',
         headers: [
-            { label: 'Function', width: '20%' },
+            { label: 'Function', width: '17%' },
             { label: 'Address', width: '8%', sort: 'entrypoint_address' },
             { label: 'Function Tags', width: '10%' },
             { label: 'Clusters', width: '10%' },
             { label: 'Feat', width: '5%', sort: 'bsim_features_count' },
+            { label: 'Callers', width: '4%', sort: 'caller_count' },
+            { label: 'Callees', width: '4%', sort: 'callee_count' },
             { label: 'Notes', width: '3%' },
-            { label: 'File Name', width: '10%', sort: 'file_name' },
+            { label: 'File Name', width: '8%', sort: 'file_name' },
             { label: 'MD5', width: '5%', sort: 'file_md5' },
-            { label: 'File Tags', width: '11%' },
+            { label: 'File Tags', width: '8%' },
             { label: 'Language', width: '5%', sort: 'language_id' },
             { label: 'Date', width: '8%', sort: 'entry_date' },
             { label: 'Actions', width: '5%' }
@@ -353,17 +355,22 @@ const routes = {
         api: '/api/similarity/search',
         headers: [
             { label: 'Similarity', sort: 'score', width: '8%' },
-            { label: 'Function Pair', width: '18%' },
+            { label: 'Function Pair', width: '15%' },
             { label: 'Address', width: '5%' },
             { label: 'Function Tags', width: '10%' },
             { label: 'Clusters', width: '10%' },
             { label: 'Feat', sort: 'feat_count', width: '5%' },
+            // Display-only: sim-level sorting would need its own ZSETs plus new
+            // branches in search_similarity.lua, which is hardcoded to
+            // score/feat_count/min_features. Deliberately not wired.
+            { label: 'Callers', width: '4%' },
+            { label: 'Callees', width: '4%' },
             { label: 'Notes', width: '3%' },
-            { label: 'File Name', width: '9%' },
+            { label: 'File Name', width: '8%' },
             { label: 'MD5', width: '5%' },
-            { label: 'File Tags', width: '10%' },
+            { label: 'File Tags', width: '8%' },
             { label: 'Language', width: '5%' },
-            { label: 'Date', sort: 'entry_date', width: '12%' }
+            { label: 'Date', sort: 'entry_date', width: '10%' }
         ],
         renderer: renderTopCorrelations
     },
@@ -2098,7 +2105,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
             }
             syncInput('flt-func-name', nameParam); syncInput('flt-func-namespace', 'namespace'); syncInput('flt-func-ret_type', 'return_type'); syncInput('flt-func-address', addrParam);
             syncInput('flt-func-cluster', 'cluster_uuid'); syncInput('flt-func-cluster-name', 'cluster_name'); syncInput('flt-func-min-cohesion', 'min_cohesion');
-            syncInput('flt-func-min-features', 'min_features'); syncInput('flt-func-note-owner', 'note_owner'); syncInput('flt-func-file_name', 'file_name');
+            syncInput('flt-func-min-features', 'min_features'); syncInput('flt-func-min-callers', 'min_callers'); syncInput('flt-func-min-callees', 'min_callees'); syncInput('flt-func-note-owner', 'note_owner'); syncInput('flt-func-file_name', 'file_name');
             const md5Val = p.get('md5') || p.get('file_md5');
             const md5El = document.getElementById('flt-func-md5'); if (md5El) md5El.value = md5Val || '';
         } else if (path === 'features-global') {
@@ -2340,6 +2347,8 @@ function applyAdvancedFuncSearch() {
     const clusterNameFlt = document.getElementById('flt-func-cluster-name')?.value;
     const minCohesionFlt = document.getElementById('flt-func-min-cohesion')?.value;
     const minFeatFlt = document.getElementById('flt-func-min-features')?.value;
+    const minCallersFlt = document.getElementById('flt-func-min-callers')?.value;
+    const minCalleesFlt = document.getElementById('flt-func-min-callees')?.value;
     const noteOwnerFlt = document.getElementById('flt-func-note-owner')?.value;
 
     if (clusterFlt) params.set('cluster_uuid', clusterFlt); else params.delete('cluster_uuid');
@@ -2354,6 +2363,8 @@ function applyAdvancedFuncSearch() {
     if (md5Flt) params.set('file_md5', md5Flt); else params.delete('file_md5');
     if (langFlt) params.set('language_id', langFlt); else params.delete('language_id');
     if (minFeatFlt) params.set('min_features', minFeatFlt); else params.delete('min_features');
+    if (minCallersFlt) params.set('min_callers', minCallersFlt); else params.delete('min_callers');
+    if (minCalleesFlt) params.set('min_callees', minCalleesFlt); else params.delete('min_callees');
     if (noteOwnerFlt) params.set('note_owner', noteOwnerFlt); else params.delete('note_owner');
     const countLimit = document.getElementById('sim-limit')?.value;
     params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
@@ -2883,6 +2894,8 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
                     <span class="mono" style="color:var(--accent);">${otherMeta?.bsim_features_count || 0}</span>
                     <button class="btn-icon" onclick="showFeaturePanel('${otherId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
                 </td>
+                <td class="sim-cell" style="text-align:center;">${EntityRenderer.renderCallCount(otherMeta?.caller_count)}</td>
+                <td class="sim-cell" style="text-align:center;">${EntityRenderer.renderCallCount(otherMeta?.callee_count)}</td>
                 <td class="sim-cell" style="text-align:center;">${EntityRenderer.renderNoteButton(otherId, otherMeta?.note_owners, { isTable: true, raw_data: otherMeta })}</td>
                 <td class="sim-cell" style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${otherMeta?.file_name}">${EntityRenderer.renderFileName(otherMeta?.file_name, otherMd5, col)}</td>
                 <td class="sim-cell">${EntityRenderer.renderMd5(otherMd5)}</td>
@@ -2940,6 +2953,18 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
                         <span class="mono" style="color:var(--accent);">${p.meta2?.bsim_features_count || 0}</span>
                         <button class="btn-icon" onclick="showFeaturePanel(${escapeAttr(jsString(p.id2))}, event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
                     </div>
+                </div>
+            </td>
+            <td class="sim-cell" style="text-align:center; vertical-align:middle;">
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">${EntityRenderer.renderCallCount(p.meta1?.caller_count)}</div>
+                    <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">${EntityRenderer.renderCallCount(p.meta2?.caller_count)}</div>
+                </div>
+            </td>
+            <td class="sim-cell" style="text-align:center; vertical-align:middle;">
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">${EntityRenderer.renderCallCount(p.meta1?.callee_count)}</div>
+                    <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">${EntityRenderer.renderCallCount(p.meta2?.callee_count)}</div>
                 </div>
             </td>
             <td class="sim-cell" style="text-align:center; vertical-align:middle;">

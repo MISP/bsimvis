@@ -1349,7 +1349,7 @@ function fileSimRowHtml(row, depth, groupId) {
     if (key && fileSimOpenFolds.has(key)) {
         const rows = fileSimFoldRows[key];
         if (!rows) {
-            out.push(`<tr><td colspan="7" style="padding:8px 0 8px ${28 + depth * 22}px; color:var(--dim); font-size:0.75rem;">Loading copies…</td></tr>`);
+            out.push(`<tr><td colspan="9" style="padding:8px 0 8px ${28 + depth * 22}px; color:var(--dim); font-size:0.75rem;">Loading copies…</td></tr>`);
         } else {
             rows.forEach(r => {
                 // The representative is already shown above it.
@@ -1361,9 +1361,9 @@ function fileSimRowHtml(row, depth, groupId) {
     return out.join('');
 }
 
-// mode: 'both' (All/Matched -- 7 cols, both sides) or 'a'/'b' (Unique to A/B --
+// mode: 'both' (All/Matched -- 9 cols, both sides) or 'a'/'b' (Unique to A/B --
 // rows are always one-sided there, so Similarity and the other side's two blank
-// columns are pointless; drop them to 4 cols).
+// columns are pointless; drop them to 6 cols).
 function fileSimColMode() {
     if (fileSimTab === 'unique_a') return 'a';
     if (fileSimTab === 'unique_b') return 'b';
@@ -1375,8 +1375,8 @@ function fileSimColMode() {
 // step; the <th> widths below are only what the colgroup is built from.
 function fileSimColgroupHtml(mode) {
     const widths = mode === 'both'
-        ? [null, '80px', '150px', null, '50px', null, '50px']
-        : [null, '80px', '150px', null, '50px'].slice(1);
+        ? [null, '80px', '60px', '60px', '150px', null, '50px', null, '50px']
+        : ['80px', '60px', '60px', '150px', null, '50px'];
     return widths.map(w => `<col${w ? ` style="width:${w};"` : ''}>`).join('');
 }
 
@@ -1408,13 +1408,15 @@ function fileSimTableHeadHtml(mode) {
     const featTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:80px;" class="sortable" onclick="setBinSimSort('matched','avg_features')" title="BSim feature count (A / B for a match)">Features <small>${icon('avg_features')}</small></th>`;
     const clusterTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:150px;" class="sortable" onclick="setBinSimSort('matched','cluster_name')">Cluster <small>${icon('cluster_name')}</small></th>`;
     const aTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" title="${escapeHtml(nameA)}">${escapeHtml(nameA)}</th>`;
+    const callersTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:60px;" title="Callers (A / B for a match)">Callers</th>`;
+    const calleesTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:60px;" title="Callees, including calls leaving the binary (A / B for a match)">Callees</th>`;
     const aNotesTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:50px;">Notes</th>`;
     const bTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" title="${escapeHtml(nameB)}">${escapeHtml(nameB)}</th>`;
     const bNotesTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:50px;">Notes</th>`;
 
-    const headCells = mode === 'a' ? [featTh, clusterTh, aTh, aNotesTh]
-        : mode === 'b' ? [featTh, clusterTh, bTh, bNotesTh]
-        : [simTh, featTh, clusterTh, aTh, aNotesTh, bTh, bNotesTh];
+    const headCells = mode === 'a' ? [featTh, callersTh, calleesTh, clusterTh, aTh, aNotesTh]
+        : mode === 'b' ? [featTh, callersTh, calleesTh, clusterTh, bTh, bNotesTh]
+        : [simTh, featTh, callersTh, calleesTh, clusterTh, aTh, aNotesTh, bTh, bNotesTh];
 
     const filterCells = [];
     if (mode === 'both') {
@@ -1429,6 +1431,8 @@ function fileSimTableHeadHtml(mode) {
         { html: `<div onclick="event.stopPropagation()">${FunctionFilters.rangeCell('bsim-flt-matched-feat-min', 'bsim-flt-matched-feat-max', {
             onInput: 'binSimFilterChange(false)', onKeydown: "if(event.key==='Enter') binSimFilterChange(true)", step: 'any', min: '', max: '',
         })}</div>` },
+        { html: '' },
+        { html: '' },
         { html: `<div onclick="event.stopPropagation()">${FunctionFilters.cell('bsim-flt-matched-cl-q', { placeholder: 'Cluster name...', onInput: 'binSimFilterChange(true)', onKeydown: "if(event.key==='Enter') binSimFilterChange(true)" })}</div>` },
         { html: `<div onclick="event.stopPropagation()">${FunctionFilters.cell('bsim-flt-matched-q', { placeholder: 'Search name / tag / addr...', onInput: 'binSimFilterChange(true)', onKeydown: "if(event.key==='Enter') binSimFilterChange(true)" })}</div>`, attrs: `colspan="${mode === 'both' ? 4 : 2}"` },
     );
@@ -1440,7 +1444,7 @@ function fileSimMoreRowHtml(key, st, indent) {
     // Keyed so Enter can be pressed on it again and again: the row comes back at a
     // new index after each page, and the focus has to follow it there.
     return `
-        <tr data-rowkey="more:${escapeAttr(key)}"><td colspan="7" style="padding:8px 10px 8px ${indent}px; background:var(--bg);">
+        <tr data-rowkey="more:${escapeAttr(key)}"><td colspan="9" style="padding:8px 10px 8px ${indent}px; background:var(--bg);">
             <button class="btn-primary" style="padding:6px 16px; font-size:0.78rem;" onclick="loadMoreFileSimRows(${escapeAttr(jsString(key))})">
                 Load More Results (${st.total - st.items.length} remaining)
             </button>
@@ -1456,7 +1460,7 @@ function fileSimGroupRows(nodes, depth, out, acc) {
         const hasKids = (node.children || []).length > 0;
         out.push(`
             <tr class="bsim-grp-row" data-rowkey="${escapeAttr(node.id)}" onclick="toggleFileSimNode(${escapeAttr(jsString(node.id))})">
-                <td colspan="7" style="padding-left:${10 + depth * 18}px;">
+                <td colspan="9" style="padding-left:${10 + depth * 18}px;">
                     <div style="display:flex; align-items:center; gap:10px;">
                         <span style="color:var(--subtle); width:12px;">${open ? '▼' : '▶'}</span>
                         ${fileSimDotHtml(node.id)}
@@ -1475,15 +1479,15 @@ function fileSimGroupRows(nodes, depth, out, acc) {
         if (!st || (!st.loaded && !st.loading)) {
             // Opened but never fetched: kick it off, render a placeholder now.
             loadFileSimRows(node.id, fileSimNodePrefixes(node));
-            out.push(`<tr><td colspan="7" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">Loading…</td></tr>`);
+            out.push(`<tr><td colspan="9" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">Loading…</td></tr>`);
             return;
         }
         if (st.loading && !st.items.length) {
-            out.push(`<tr><td colspan="7" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">Loading…</td></tr>`);
+            out.push(`<tr><td colspan="9" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">Loading…</td></tr>`);
             return;
         }
         if (!st.items.length) {
-            out.push(`<tr><td colspan="7" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">No functions match this scope.</td></tr>`);
+            out.push(`<tr><td colspan="9" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">No functions match this scope.</td></tr>`);
             return;
         }
         st.items.forEach(row => out.push(fileSimRowHtml(row, depth + 1, node.id)));
@@ -1512,9 +1516,9 @@ function renderFileSimTable() {
         const st = fileSimRowState('');
         if (!st.loaded && !st.loading) loadFileSimRows('', fileSimScopePrefixes());
         if (st.loading && !st.items.length) {
-            out.push('<tr><td colspan="7" style="padding:30px; text-align:center; color:var(--dim);">Loading…</td></tr>');
+            out.push('<tr><td colspan="9" style="padding:30px; text-align:center; color:var(--dim);">Loading…</td></tr>');
         } else if (!st.items.length) {
-            out.push('<tr><td colspan="7" style="padding:30px; text-align:center; color:var(--dim);">No functions match this scope.</td></tr>');
+            out.push('<tr><td colspan="9" style="padding:30px; text-align:center; color:var(--dim);">No functions match this scope.</td></tr>');
         } else {
             st.items.forEach(row => out.push(fileSimRowHtml(row, 0, null)));
             out.push(fileSimMoreRowHtml('', st, 20));
@@ -2338,6 +2342,8 @@ function buildFuncObj(fid) {
         namespace: (meta && meta.namespace) ? meta.namespace : '',
         entrypoint_address: (meta && meta.entrypoint_address) ? meta.entrypoint_address : entry,
         bsim_features_count: (meta && meta.bsim_features_count) ? meta.bsim_features_count : 0,
+        caller_count: (meta && meta.caller_count) || 0,
+        callee_count: (meta && meta.callee_count) || 0,
         file_md5: md5,
         collection: col,
         tags: (meta && meta.tags) || [],
@@ -2374,6 +2380,15 @@ function fileSimFeatCell(m, fA, fB) {
     if (fA && fB) text = `${one(fA)} / ${one(fB)}`;
     else if (fA || fB) text = String(one(fA || fB) || avg);
     return `<span class="mono dim" style="font-size:0.72rem;" title="avg ${avg} BSim features">${text}</span>`;
+}
+
+// Call-graph degree for the row's function(s), same "A / B" shape as the
+// features cell. Display-only: sorting these would need the counts on the row
+// itself, not just in the metadata map. See fileSimSortVal in bin_sim.py.
+function fileSimCallCell(fA, fB, field) {
+    const one = (f) => (f && f[field]) || 0;
+    const text = (fA && fB) ? `${one(fA)} / ${one(fB)}` : String(one(fA || fB));
+    return `<span class="mono dim" style="font-size:0.72rem;">${text}</span>`;
 }
 
 // The cluster the row's function(s) belong to, as the same card the cluster views
@@ -2478,6 +2493,8 @@ function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
         : '';
     const simTd = `<td style="padding:10px; padding-left:${12 + depth * 22}px;">${similarityHtml}</td>`;
     const featTd = `<td style="padding:8px; text-align:center; vertical-align:top;">${fileSimFeatCell(m, fA, fB)}</td>`;
+    const callersTd = `<td style="padding:8px; text-align:center; vertical-align:top;">${fileSimCallCell(fA, fB, 'caller_count')}</td>`;
+    const calleesTd = `<td style="padding:8px; text-align:center; vertical-align:top;">${fileSimCallCell(fA, fB, 'callee_count')}</td>`;
     const clusterTd = `<td style="padding:6px; text-align:center; vertical-align:top;">${fileSimClusterCell(m)}</td>`;
     const aTd = `<td style="padding:8px; text-align:left; vertical-align:top;">${col2}</td>`;
     const aNoteTd = `<td style="padding:4px; vertical-align:top;">${col3}</td>`;
@@ -2493,14 +2510,14 @@ function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
     const mode = fileSimColMode();
     let cells;
     if (mode === 'a') {
-        cells = [featTd, clusterTd, aTd, aNoteTd];
+        cells = [featTd, callersTd, calleesTd, clusterTd, aTd, aNoteTd];
         // Indent lives on the (now-first) Features cell for one-sided rows.
         cells[0] = `<td style="padding:8px; padding-left:${12 + depth * 22}px; text-align:center; vertical-align:top;">${fileSimFeatCell(m, fA, fB)}</td>`;
     } else if (mode === 'b') {
-        cells = [featTd, clusterTd, bTd, bNoteTd];
+        cells = [featTd, callersTd, calleesTd, clusterTd, bTd, bNoteTd];
         cells[0] = `<td style="padding:8px; padding-left:${12 + depth * 22}px; text-align:center; vertical-align:top;">${fileSimFeatCell(m, fA, fB)}</td>`;
     } else {
-        cells = [simTd, featTd, clusterTd, aTd, aNoteTd, bTd, bNoteTd];
+        cells = [simTd, featTd, callersTd, calleesTd, clusterTd, aTd, aNoteTd, bTd, bNoteTd];
     }
     return `
         <tr style="border-bottom: 1px solid var(--border); background: var(--bg);" data-id="${escapeAttr(rowId)}"${ctxAttr}>

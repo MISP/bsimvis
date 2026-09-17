@@ -20,6 +20,13 @@ DEFAULT_LIMIT = 100
 DEFAULT_POOL_LIMIT = 1000000
 MAX_POOL_LIMIT = 1000000
 
+# "at least N" filters: request arg -> the numeric field's ZSET at func level.
+MIN_FILTERS = {
+    "min_features": "bsim_features_count",
+    "min_callers": "caller_count",
+    "min_callees": "callee_count",
+}
+
 
 def _id_sorted_page(r, key, offset, limit):
     """Id-sorted page of an unordered set, matching the Lua tiebreak.
@@ -100,10 +107,14 @@ def search_functions():
         ex_file_static_tag_filters = request.args.getlist("exclude_file_static_tag")
         ex_file_user_tag_filters = request.args.getlist("exclude_file_user_tag")
 
-        try:
-            min_features = int(request.args.get("min_features", 0))
-        except (ValueError, TypeError):
-            min_features = 0
+        min_filters = {}
+        for _param, _field in MIN_FILTERS.items():
+            try:
+                _val = int(request.args.get(_param, 0))
+            except (ValueError, TypeError):
+                _val = 0
+            if _val > 0:
+                min_filters[_field] = _val
 
         sort_by = request.args.get("sort_by", "id")
         sort_order = request.args.get("sort_order", "desc").lower()
@@ -442,14 +453,14 @@ def search_functions():
                 add_group(all_matches, field_name=f"q({word})")
 
         # Numeric range filters
-        if min_features > 0:
-            feat_key = f"{col}:idx:func:bsim_features_count"
-            weight = r.zcount(feat_key, min_features, "+inf") or 1000
+        for field, min_val in min_filters.items():
+            num_key = f"{col}:idx:func:{field}"
+            weight = r.zcount(num_key, min_val, "+inf") or 1000
             groups_raw.append(
                 {
                     "type": "numeric_range",
-                    "key": feat_key,
-                    "min": min_features,
+                    "key": num_key,
+                    "min": min_val,
                     "weight": weight,
                 }
             )

@@ -522,6 +522,8 @@ window.TableRenderers = {
                         <button class="btn-icon" onclick="showFeaturePanel(${escapeAttr(jsString(funcId))}, event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
                     </div>
                 </td>
+                <td class="sim-cell" style="text-align:center;">${EntityRenderer.renderCallCount(f['caller_count'])}</td>
+                <td class="sim-cell" style="text-align:center;">${EntityRenderer.renderCallCount(f['callee_count'])}</td>
                 <td class="sim-cell" style="text-align:center;">
                     ${EntityRenderer.renderNoteButton(funcId, f.note_owners, { isTable: true, raw_data: f })}
                 </td>

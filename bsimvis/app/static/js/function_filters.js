@@ -12,6 +12,8 @@ window.FunctionFilters = {
         { param: 'cluster_uuid', label: 'Cluster UUID' },
         { param: 'min_cohesion', label: 'Min cohesion', type: 'number' },
         { param: 'min_features', label: 'Min features', type: 'number' },
+        { param: 'min_callers', label: 'Min callers', type: 'number' },
+        { param: 'min_callees', label: 'Min callees', type: 'number' },
         { param: 'note_owner', label: 'Note owner' },
         { param: 'file_name', label: 'File name' },
         { param: 'file_md5', label: 'File MD5' },
@@ -72,6 +74,8 @@ window.FunctionFilters = {
             { html: tagCell, attrs: '' },
             { html: `<div style="display:flex; flex-direction:column; gap:2px;">${input('flt-func-cluster', 'cluster_uuid', 'UUID...', { style: 'width:100%; box-sizing:border-box; font-size:0.6rem;' })}${input('flt-func-cluster-name', 'cluster_name', 'Cluster name...', { style: 'width:100%; box-sizing:border-box; font-size:0.6rem;' })}${input('flt-func-min-cohesion', 'min_cohesion', 'Min cohesion...', { type: 'number', attrs: 'step="0.05" min="0" max="1"', style: 'width:100%; box-sizing:border-box; font-size:0.6rem;' })}</div>` },
             { html: input('flt-func-min-features', 'min_features', 'Min', { type: 'number', attrs: 'min="0"' }) },
+            { html: input('flt-func-min-callers', 'min_callers', 'Min', { type: 'number', attrs: 'min="0"' }) },
+            { html: input('flt-func-min-callees', 'min_callees', 'Min', { type: 'number', attrs: 'min="0"' }) },
             { html: input('flt-func-note-owner', 'note_owner', 'Note owner...') },
             ...extraCells,
         ];

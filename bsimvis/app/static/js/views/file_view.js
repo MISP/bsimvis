@@ -201,6 +201,8 @@ window.FileView = {
                                         <th>Tags</th>
                                         <th>Clusters</th>
                                         <th class="sortable" onclick="FileView.toggleSort('bsim_features_count')">Features <span id="sort-icon-bsim_features_count">↕</span></th>
+                                        <th class="sortable" onclick="FileView.toggleSort('caller_count')">Callers <span id="sort-icon-caller_count">↕</span></th>
+                                        <th class="sortable" onclick="FileView.toggleSort('callee_count')">Callees <span id="sort-icon-callee_count">↕</span></th>
                                         <th>Notes</th>
                                     </tr>
                                     ${FunctionFilters.functionRow({
@@ -818,6 +820,8 @@ window.FileView = {
         'flt-func-cluster-name': 'cluster_name',
         'flt-func-min-cohesion': 'min_cohesion',
         'flt-func-min-features': 'min_features',
+        'flt-func-min-callers': 'min_callers',
+        'flt-func-min-callees': 'min_callees',
         'flt-func-note-owner': 'note_owner'
     },
 
@@ -1114,7 +1118,7 @@ window.FileView = {
             this.sortState.dir = 1;
         }
 
-        ['function_name', 'entrypoint_address', 'bsim_features_count'].forEach(c => {
+        ['function_name', 'entrypoint_address', 'bsim_features_count', 'caller_count', 'callee_count'].forEach(c => {
             const el = document.getElementById(`sort-icon-${c}`);
             if (el) {
                 el.innerText = this.sortState.col === c ? (this.sortState.dir === 1 ? '▲' : '▼') : '↕';
@@ -1207,6 +1211,8 @@ window.FileView = {
                             <button class="btn-icon" onclick="showFeaturePanel(${escapeAttr(jsString(funcId))}, event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
                         </div>
                     </td>
+                    <td style="text-align:center;">${window.EntityRenderer ? window.EntityRenderer.renderCallCount(f.caller_count) : (f.caller_count || 0)}</td>
+                    <td style="text-align:center;">${window.EntityRenderer ? window.EntityRenderer.renderCallCount(f.callee_count) : (f.callee_count || 0)}</td>
                     <td style="text-align:center;">${noteBtn}</td>
                 </tr>
             `;

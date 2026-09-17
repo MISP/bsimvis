@@ -52,6 +52,7 @@ const row = (cells, onclick = null) => ({
     tag: 'tr',
     _onclick: onclick,
     _cells: cells,
+    get children() { return this._cells; },
     getAttribute(n) { return n === 'onclick' ? this._onclick : null; },
     querySelector() { return cells.flatMap(c => c._links)[0] || null; },
     contains() { return false; },

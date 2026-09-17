@@ -199,7 +199,18 @@ class TableSelection {
             };
             return inCell.reduce((best, el) => (dist(el) < dist(best) ? el : best));
         }
-        // Only the row's own action stands in for an empty cell. Reaching into
+        
+        // If the cell itself has no primary action, fall back to the row's main entity
+        // which lives in the first column. This means clicking the blank Architecture
+        // cell in a file table will open the file, without accidentally reaching across
+        // the row to fire an unrelated button (like a Delete button) in another column.
+        const firstCell = tr.children[0];
+        if (firstCell && cell !== firstCell) {
+            const inFirstCell = Array.from(firstCell.querySelectorAll(selector));
+            if (inFirstCell.length) return inFirstCell[0];
+        }
+
+        // Only the row's own action stands in for an empty row. Reaching into
         // the row for any control at all would fire whatever it happens to hold
         // -- a Delete button, say -- from a click on unrelated whitespace.
         return tr.getAttribute('onclick') ? tr : null;

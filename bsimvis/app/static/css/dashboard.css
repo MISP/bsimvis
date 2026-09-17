@@ -2627,6 +2627,22 @@ a.home-card:hover,
     color: var(--subtle) !important;
     font-weight: 400 !important;
 }
+/* Secondary footer facts: present but never competing with the count. */
+.table-footer-meta {
+    color: var(--dim);
+    font-size: 0.74rem;
+    white-space: nowrap;
+}
+.table-footer-meta:empty { display: none; }
+/* "partial" is a caution, not a fact about the query, so it reads like the
+   truncation warnings next to it. */
+.table-footer-partial {
+    color: #ffab2e;
+    font-size: 0.74rem;
+    white-space: nowrap;
+    cursor: help;
+}
+.table-footer-partial:empty { display: none; }
 .table-footer-warn { color: #ffab2e; cursor: help; }
 .table-footer-info { color: #60a5fa; cursor: help; }
 .table-footer-sel {

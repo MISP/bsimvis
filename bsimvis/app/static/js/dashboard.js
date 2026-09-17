@@ -1026,6 +1026,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     }
 
     try {
+        const fetchStartedAt = performance.now();
         const response = await fetch(apiUrl);
         if (myGen !== _refreshGeneration) return;
         if (!response.ok) {
@@ -1109,6 +1110,8 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         const footerEl = document.getElementById('table-footer');
         if (footerEl) footerEl.style.display = 'flex';
 
+        updateFooterMeta(params, data, items, Math.round(performance.now() - fetchStartedAt));
+
         renderPagination(viewKey);
     } catch (err) {
         console.error(err);
@@ -1119,6 +1122,75 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         }
     }
 }
+
+// --- Table footer meta -------------------------------------------------------
+// Everything here answers a question the bare "shown / total" leaves open: why
+// the count is that number, how stale it is, what it cost, and what the rows
+// actually contain.
+
+// Params that shape the request without narrowing the result set.
+const FOOTER_META_SKIP = new Set([
+    'collection', 'pool', 'pool_id', 'limit', 'offset', 'page',
+    'view', 'group', 'sort', 'sort_by', 'order', 'dir', 'append',
+]);
+
+// ponytail: first numeric field wins. Views disagree on the name but never
+// carry two of these at once.
+const SCORE_KEYS = ['score', 'similarity', 'sim', 'distance'];
+
+function describeFilters(params) {
+    const active = [];
+    for (const [k, v] of params.entries()) {
+        if (FOOTER_META_SKIP.has(k) || v === '' || v === null) continue;
+        active.push(`${k}=${v}`);
+    }
+    if (!active.length) return '';
+    const shown = active.slice(0, 2).join(' · ');
+    return active.length > 2 ? `${shown} +${active.length - 2}` : shown;
+}
+
+function describeRowStats(items) {
+    if (!Array.isArray(items) || !items.length) return '';
+    const key = SCORE_KEYS.find(k => typeof items[0][k] === 'number');
+    if (!key) return '';
+    const vals = items.map(it => it[key]).filter(v => typeof v === 'number');
+    if (!vals.length) return '';
+    const min = Math.min(...vals), max = Math.max(...vals);
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const fmt = v => (max <= 1 ? v.toFixed(3) : Math.round(v).toLocaleString());
+    return `${key} ${fmt(min)}–${fmt(max)} · mean ${fmt(mean)}`;
+}
+
+function updateFooterMeta(params, data, items, elapsedMs) {
+    const set = (id, text, title) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.innerText = text || '';
+        el.title = title || '';
+    };
+
+    const filters = describeFilters(params);
+    set('view-filters', filters ? `· ${filters}` : '', filters ? 'Filters narrowing this count' : '');
+
+    const rowStats = describeRowStats(items);
+    set('view-rowstats', rowStats ? `· ${rowStats}` : '', rowStats ? 'Across the rows loaded so far' : '');
+
+    // data.source is only sent by the similarity endpoints ('cache' or 'pool').
+    const path = data && data.source ? ` · ${data.source}` : '';
+    set('view-latency', `${elapsedMs.toLocaleString()} ms${path}`, 'Time from request to response, measured in the browser');
+
+    window._lastFetchAt = Date.now();
+    updateFooterFreshness();
+}
+
+function updateFooterFreshness() {
+    const el = document.getElementById('view-freshness');
+    if (!el || !window._lastFetchAt) return;
+    const secs = Math.round((Date.now() - window._lastFetchAt) / 1000);
+    el.innerText = secs < 60 ? `updated ${secs}s ago` : `updated ${Math.round(secs / 60)}m ago`;
+    el.title = new Date(window._lastFetchAt).toLocaleTimeString();
+}
+setInterval(updateFooterFreshness, 5000);
 
 function updateNavbarLinks(col) {
     const pool = window.getRoutingState ? window.getRoutingState().pool : null;
@@ -3649,7 +3721,20 @@ window.addEventListener('load', () => {
                     };
                 } else {
                     statusBadge.style.display = 'none';
+                    statusBadge.classList.remove('running');
                 }
+            }
+
+            // A job that matched this view is still writing the data behind it,
+            // so whatever is on screen is a partial answer. Say so next to the
+            // count rather than leaving the job pill to imply it.
+            const partialEl = document.getElementById('view-partial');
+            if (partialEl) {
+                const building = matchingJob && matchingJob.status === 'running';
+                partialEl.innerText = building ? `· partial (${matchingJob.progress}% built)` : '';
+                partialEl.title = building
+                    ? `${formatJobType(matchingJob.type)} is still running; counts and scores here are incomplete.`
+                    : '';
             }
 
             window.jobsActive = isActive;

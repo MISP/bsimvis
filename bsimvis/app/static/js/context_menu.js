@@ -1183,7 +1183,10 @@
 
     const cellValue = (cell, target) => {
         const valueEl = target.closest?.('[data-filter-value]');
-        return (valueEl?.dataset.filterValue || cell.dataset.filterValue || cell.innerText || '').trim();
+        if (valueEl?.dataset.filterValue) return valueEl.dataset.filterValue.trim();
+        const firstChild = cell.querySelector('[data-filter-value]');
+        if (firstChild?.dataset.filterValue) return firstChild.dataset.filterValue.trim();
+        return (cell.dataset.filterValue || cell.innerText || '').trim();
     };
 
     const cellFilter = (cell) => {

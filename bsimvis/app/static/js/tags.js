@@ -294,6 +294,7 @@ window.hideTooltip = () => {
 
 window.handleTagContextMenu = (e, tag) => {
     e.preventDefault();
+    e.stopPropagation();
     const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : '';
     // The colour picker opens on what the tag actually draws as, so recolouring
     // starts from its derived colour rather than from a blue it never had.

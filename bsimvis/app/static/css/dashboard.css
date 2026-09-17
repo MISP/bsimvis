@@ -1177,6 +1177,8 @@ select {
     max-height: 75px;
     overflow-y: auto;
     align-items: center;
+    box-sizing: border-box;
+    width: 100%;
 }
 
 .tag-filter-container::-webkit-scrollbar {
@@ -1252,6 +1254,7 @@ select {
 .tag-filter-add {
     flex: 1;
     min-width: 40px;
+    width: auto !important;
     background: none !important;
     border: none !important;
     color: var(--text) !important;

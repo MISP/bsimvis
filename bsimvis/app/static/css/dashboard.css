@@ -2596,6 +2596,30 @@ a.home-card:hover,
     padding: 3px 10px;
     font-size: 0.78rem;
 }
+/* Job and diff-queue status live in the footer now. They ship loud inline
+   styles (solid orange/green fills, bold), so flatten them to the same pill as
+   the other footer badges; !important is what beats the inline styles. */
+.table-footer .badge,
+.table-footer .diff-queue-badge,
+#view-job-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255,255,255,0.04) !important;
+    color: var(--subtle) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 8px !important;
+    padding: 3px 10px !important;
+    font-size: 0.78rem !important;
+    font-weight: 400 !important;
+}
+/* the close button is always last and inherits the badge's old dark-on-colour
+   scheme, which is invisible once the fill is gone; the Compare button keeps
+   its own styling. */
+.table-footer .diff-queue-badge button:last-child {
+    color: var(--subtle) !important;
+    font-weight: 400 !important;
+}
 .table-footer-warn { color: #ffab2e; cursor: help; }
 .table-footer-info { color: #60a5fa; cursor: help; }
 .table-footer-sel {

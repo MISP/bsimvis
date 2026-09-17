@@ -73,6 +73,10 @@ INDEX_CONFIG = {
         "decompiler_id": ["func"],
         "instruction_count": ["func"],  # numeric
         "bsim_features_count": ["func"],  # numeric
+        # Call-graph degree. func-only: numeric fields are skipped by
+        # get_propagated_fields(), so listing "sim" here would be a silent no-op.
+        "caller_count": ["func"],  # numeric
+        "callee_count": ["func"],  # numeric
         "cluster_id": ["func"],
         "cluster_uuid": ["func"],
         "cluster_name": ["func"],
@@ -163,6 +167,8 @@ NUM_FIELDS = {
     "function_count",
     "instruction_count",
     "bsim_features_count",
+    "caller_count",
+    "callee_count",
     "cohesion_score",
     "cluster_stability",
     "frequency",

@@ -191,6 +191,8 @@ def _enrich_with_function_meta(rows):
         row["parameters"] = meta.get("parameters")
         row["return_type"] = meta.get("return_type")
         row["bsim_features_count"] = meta.get("bsim_features_count")
+        row["caller_count"] = meta.get("caller_count")
+        row["callee_count"] = meta.get("callee_count")
         row["tags"] = meta.get("tags") or []
         row["user_tags"] = meta.get("user_tags") or []
         row["note_owners"] = meta.get("note_owners") or []

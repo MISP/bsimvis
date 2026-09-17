@@ -1818,6 +1818,32 @@ def run_all_tests():
                 cg_body.get("node", {}).get("id") == func_id1,
                 f"node.id={cg_body.get('node', {}).get('id')} vs {func_id1}",
             )
+            # The indexed counts and the live call-graph totals are derived from
+            # the same SETs, so any drift means the index went stale.
+            _parts = func_id1.split(":")
+            _srch = test_endpoint(
+                "GET",
+                "/api/function/search",
+                params={
+                    "collection": COLLECTION,
+                    "file_md5": _parts[-2],
+                    "entrypoint_address": _parts[-1],
+                    "limit": 1,
+                },
+                label="GET /api/function/search (call-count cross-check)",
+            )
+            _fn = (_srch or {}).get("functions") or []
+            if _fn:
+                check(
+                    "function search: caller_count matches call_graph callers_total",
+                    _fn[0].get("caller_count") == cg_body.get("callers_total"),
+                    f"caller_count={_fn[0].get('caller_count')} vs callers_total={cg_body.get('callers_total')}",
+                )
+                check(
+                    "function search: callee_count matches call_graph callees_total",
+                    _fn[0].get("callee_count") == cg_body.get("callees_total"),
+                    f"callee_count={_fn[0].get('callee_count')} vs callees_total={cg_body.get('callees_total')}",
+                )
     if func_id1 and func_id2:
         test_endpoint(
             "GET", "/api/function/diff", params={"id1": func_id1, "id2": func_id2}
@@ -2461,6 +2487,32 @@ def _note_texts(body):
     return [n.get("text") for n in notes if isinstance(n, dict)]
 
 
+def test_call_edge_id_dedup():
+    """_call_edge_ids collapses duplicate targets -- the one bit of real logic
+    behind caller_count/callee_count. Pure Python, needs no running stack."""
+    from bsimvis.app.services.processing_service import _call_edge_ids
+
+    edges = [
+        # same name, no/!= entrypoint, both external -> one ext: id
+        {"name": "printf", "entrypoint": None, "is_external": True},
+        {"name": "printf", "entrypoint": "1000", "is_external": True},
+        # same internal target twice -> one id
+        {"name": "parse", "entrypoint": "2000", "is_external": False},
+        {"name": "parse", "entrypoint": "2000", "is_external": False},
+    ]
+    got = _call_edge_ids(edges, "c", "md5")
+    check(
+        "_call_edge_ids: duplicate targets collapse to one id each",
+        got == {"ext:printf", "c:func:md5:2000"},
+        f"got={sorted(got)}",
+    )
+    check(
+        "_call_edge_ids: empty and None are both empty sets",
+        _call_edge_ids([], "c", "m") == set()
+        and _call_edge_ids(None, "c", "m") == set(),
+    )
+
+
 def test_pool_annotation_propagation():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3b – Pool <-> collection tag/note propagation", BOLD))
@@ -2822,8 +2874,14 @@ SEARCH_SPECS = [
         "sorts": {
             "instruction_count": "instruction_count",
             "bsim_features_count": "bsim_features_count",
+            "caller_count": "caller_count",
+            "callee_count": "callee_count",
         },
-        "ranges": [("min_features", "bsim_features_count", "min")],
+        "ranges": [
+            ("min_features", "bsim_features_count", "min"),
+            ("min_callers", "caller_count", "min"),
+            ("min_callees", "callee_count", "min"),
+        ],
         "substr": [
             ("file_name", "file_name"),
             ("md5", "file_md5"),
@@ -5933,6 +5991,7 @@ if __name__ == "__main__":
 
     # run_all_tests() stays last: it deletes the collection on its way out.
     STEPS = [
+        test_call_edge_id_dedup,
         test_cluster_tags,
         test_incremental_hierarchical_cluster_equivalence,
         test_cluster_response_contract,

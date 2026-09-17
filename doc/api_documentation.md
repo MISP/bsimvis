@@ -176,8 +176,8 @@ Searches functions with rich filtering, sorting, and export. Accepts `pool` to t
 - **Cluster:** `cluster_id`, `cluster_uuid`, `cluster_name`, `cluster_stability`.
 - **Inherited file metadata:** `first_seen`, `last_seen`, `filetype`, `avtype`, `yara`, `cc_ip`, `file_names`, `type`, `entry_date`, `file_date` — indexed at function level and filterable here.
 - **Tags:** `tag`, `static_tag`, `user_tag`, and `func_`/`file_`-scoped variants, each with an `exclude_` counterpart. Repeatable.
-- **Filters:** `min_features`, `min_cohesion` (default 0.95 — clusters below the threshold are dropped from the response).
-- **Paging/sort:** `sort_by` (`id` (default) or a numeric function-level index: `bsim_features_count` | `instruction_count` | `entry_date` | `file_date` | `batch_order` | `cluster_stability`), `sort_order` (default `desc`), `offset`, `limit`, `pool_limit` (default 1000000), `format`.
+- **Filters:** `min_features`, `min_callers`, `min_callees`, `min_cohesion` (default 0.95 — clusters below the threshold are dropped from the response).
+- **Paging/sort:** `sort_by` (`id` (default) or a numeric function-level index: `bsim_features_count` | `instruction_count` | `caller_count` | `callee_count` | `entry_date` | `file_date` | `batch_order` | `cluster_stability`), `sort_order` (default `desc`), `offset`, `limit`, `pool_limit` (default 1000000), `format`.
 
 As on `file/search`, `file_md5`/`md5` and `file_name` also match the file's `parent_md5`/`related_md5` and `parent_file_name`/`related_file_name`.
 

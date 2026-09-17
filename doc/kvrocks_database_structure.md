@@ -112,7 +112,13 @@ Stores a set of document IDs (e.g. `{coll}:func:...`).
 ### Numeric & Sorting Indexes
 **Pattern:** `{coll}:idx:{level}:{field}` (**ZSet**)
 Stores `doc_id` as member and the numeric value as score.
-- **Fields:** `instruction_count`, `bsim_features_count`, `entry_date`, `frequency`, `tf_score`.
+- **Fields:** `instruction_count`, `bsim_features_count`, `caller_count`, `callee_count`, `entry_date`, `frequency`, `tf_score`.
+
+`caller_count` / `callee_count` are the call-graph degree, kept as the cardinality of
+`{fid}:callers` / `{fid}:callees`. Calls that leave the binary (`ext:{name}`) count toward
+`callee_count`; since edges are stamped with the calling function's md5, both counts are
+intra-binary, and an `ext:` target never has callers of its own. Populate on existing
+corpora with `scripts/backfill_call_counts.py`.
 
 ### Structural Relationships
 **Pattern:** `{coll}:idx:file:functions:{md5}` (**Set**)

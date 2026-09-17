@@ -121,6 +121,8 @@ window.FunctionView = {
                                             <th>Tags</th>
                                             <th>Clusters</th>
                                             <th>Feat</th>
+                                            <th>Callers</th>
+                                            <th>Callees</th>
                                             <th>Notes</th>
                                             <th>File</th>
                                             <th>MD5</th>
@@ -151,13 +153,15 @@ window.FunctionView = {
                                                 </div>
                                             </th>
                                             <th><input type="number" id="fn-nbr-min-features" placeholder="Min..." min="0" style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()"></th>
+                                            <th></th>
+                                            <th></th>
                                             <th><input type="text" id="fn-nbr-note-owner" placeholder="Owner..." style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()"></th>
                                             <th><input type="text" id="fn-nbr-file-name" placeholder="File Name..." style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FunctionView.debounceNeighborsSearch()"></th>
                                             <th></th>
                                         </tr>
                                     </thead>
                                     <tbody id="fn-nbr-results-tbody">
-                                        <tr><td colspan="9" style="text-align: center; color: var(--dim); padding: 20px;">Loading similar functions...</td></tr>
+                                        <tr><td colspan="11" style="text-align: center; color: var(--dim); padding: 20px;">Loading similar functions...</td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -572,7 +576,7 @@ window.FunctionView = {
     async searchNeighbors() {
         const tbody = document.getElementById('fn-nbr-results-tbody');
         if (!tbody) return;
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--dim); padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading similar functions...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: var(--dim); padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading similar functions...</td></tr>';
 
         const collection = this.params.collection || '';
         const file_md5 = this.params.md5 || this.params.file_md5;
@@ -618,7 +622,7 @@ window.FunctionView = {
             const data = await res.json();
             const items = data.pairs || data.items || data.results || [];
             const html = window.renderTopCorrelations ? window.renderTopCorrelations(items, {}, file_md5, address) : '';
-            tbody.innerHTML = html || '<tr><td colspan="9" style="text-align: center; color: var(--dim); padding: 20px;">No similar functions found.</td></tr>';
+            tbody.innerHTML = html || '<tr><td colspan="11" style="text-align: center; color: var(--dim); padding: 20px;">No similar functions found.</td></tr>';
             const countEl = document.getElementById('fn-nbr-count');
             if (countEl) countEl.innerText = data.total ?? items.length;
             const countWrap = document.getElementById('fn-nbr-count-wrap');
@@ -626,7 +630,7 @@ window.FunctionView = {
             if (window.TableSelection) new window.TableSelection('fn-nbr-results-table');
         } catch (e) {
             console.error(e);
-            tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading similar functions: ${e.message}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="11" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading similar functions: ${e.message}</td></tr>`;
         }
     },
 

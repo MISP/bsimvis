@@ -937,6 +937,8 @@ def get_cluster_functions():
                 "namespace": m.get("namespace", ""),
                 "entrypoint_address": m.get("entrypoint_address", "0x0"),
                 "bsim_features_count": m.get("bsim_features_count", 0),
+                "caller_count": m.get("caller_count", 0),
+                "callee_count": m.get("callee_count", 0),
             }
         )
 

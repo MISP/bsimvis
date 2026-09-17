@@ -10,6 +10,18 @@ window.EntityRenderer = {
      * @param {Object} options - Rendering options (showActions, inline, etc.)
      * @returns {string} HTML string
      */
+    /**
+     * Call-graph degree cell (caller_count / callee_count).
+     * Zero is dimmed rather than hidden, so "no callers" reads as a real
+     * answer and not as missing data on un-backfilled collections.
+     */
+    renderCallCount: function(n) {
+        const v = Number(n) || 0;
+        return v
+            ? `<span class="mono" style="color:var(--accent); font-weight:bold;">${v}</span>`
+            : `<span class="mono dim">0</span>`;
+    },
+
     renderFunction: function(f, options = {}) {
         const name = f['function_name'] || 'Unknown';
         const namespace = f['namespace'] || '';

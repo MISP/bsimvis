@@ -23,6 +23,23 @@ def lib_parents(tags):
     return {p for p in (lib_parent(t) for t in tags) if p}
 
 
+def _call_edge_ids(edges, collection, file_md5):
+    """Redis ids for one side of a function's call graph, deduplicated.
+
+    Targets that leave the binary (imports, unresolved destinations) have no
+    entrypoint and become `ext:{name}`. Everything else is stamped with the
+    *calling* function's md5, so edges are intra-binary by construction.
+    """
+    ids = set()
+    for edge in edges or []:
+        entry = edge.get("entrypoint")
+        if edge.get("is_external", False) or not entry:
+            ids.add(f"ext:{edge.get('name')}")
+        else:
+            ids.add(f"{collection}:func:{file_md5}:{entry}")
+    return ids
+
+
 class ProcessingService:
     def __init__(self, r=None):
         self.r = r or get_redis()
@@ -285,6 +302,19 @@ class ProcessingService:
             base_func_key = f"{collection}:func:{file_md5}:{addr}"
             func_meta["function_id"] = base_func_key
 
+            # Call-graph ids are derived before the meta write so the degree counts
+            # can ride along in the blob. Counts are set cardinalities, not list
+            # lengths: several unresolved targets sharing a name collapse to one
+            # ext: id, and the UI's call-graph panel counts the sets too.
+            callee_ids = _call_edge_ids(
+                func_meta.get("callees", []), collection, file_md5
+            )
+            caller_ids = _call_edge_ids(
+                func_meta.get("callers", []), collection, file_md5
+            )
+            func_meta["callee_count"] = len(callee_ids)
+            func_meta["caller_count"] = len(caller_ids)
+
             # --- Store exploded data ---
             pipe.set(f"{base_func_key}:meta", json.dumps(func_meta))
             pipe.set(f"{base_func_key}:source", json.dumps(func_source))
@@ -309,27 +339,10 @@ class ProcessingService:
             pipe.delete(callees_key)
             pipe.delete(callers_key)
 
-            callees = func_meta.get("callees", [])
-            for callee in callees:
-                callee_entry = callee.get("entrypoint")
-                callee_name = callee.get("name")
-                is_ext = callee.get("is_external", False)
-                if is_ext or not callee_entry:
-                    callee_id = f"ext:{callee_name}"
-                else:
-                    callee_id = f"{collection}:func:{file_md5}:{callee_entry}"
-                pipe.sadd(callees_key, callee_id)
-
-            callers = func_meta.get("callers", [])
-            for caller in callers:
-                caller_entry = caller.get("entrypoint")
-                caller_name = caller.get("name")
-                is_ext = caller.get("is_external", False)
-                if is_ext or not caller_entry:
-                    caller_id = f"ext:{caller_name}"
-                else:
-                    caller_id = f"{collection}:func:{file_md5}:{caller_entry}"
-                pipe.sadd(callers_key, caller_id)
+            if callee_ids:
+                pipe.sadd(callees_key, *callee_ids)
+            if caller_ids:
+                pipe.sadd(callers_key, *caller_ids)
 
             # Add to batch-to-functions mapping SET (using base key)
             if batch_uuid:

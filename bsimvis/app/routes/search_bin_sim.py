@@ -130,6 +130,33 @@ def _file_tag_union(r, collection, val, fields=("tags", "user_tags"), is_pool=Fa
     return out
 
 
+def _file_tag_intersection(
+    r, collection, val, algo_marker, fields=("tags", "user_tags"), is_pool=False
+):
+    tagged = _tagged_files(r, collection, val, fields=fields)
+    if not tagged:
+        return set()
+
+    pipe = r.pipeline(transaction=False)
+    for f_coll, md5 in tagged:
+        pipe.smembers(
+            f"{collection}:bin_sim:involves:{f_coll}:{md5}"
+            if is_pool
+            else f"{collection}:bin_sim:involves:{md5}"
+        )
+    out = set()
+    for res in pipe.execute():
+        if res:
+            for sid_b in res:
+                sid = _dec(sid_b)
+                parsed = _split_sid(sid, algo_marker, collection, is_pool)
+                if parsed:
+                    coll_a, m_a, coll_b, m_b = parsed
+                    if (coll_a, m_a) in tagged and (coll_b, m_b) in tagged:
+                        out.add(sid)
+    return out
+
+
 def _split_sid(sid, algo_marker, collection, is_pool=False):
     """Parse a pair SID into (coll_a, m_a, coll_b, m_b), or None if it isn't one.
     Collection: {coll}:bin_sim:{algo}:{m_a}::{m_b}
@@ -257,10 +284,11 @@ def _collection_page(r, collection, algo, f, is_pool=False):
         # size), same shape as the tag filters below. Denormalize onto the pair
         # doc if a cluster ever gets big enough for that to hurt.
         restrict(
-            _file_tag_union(
+            _file_tag_intersection(
                 r,
                 collection,
                 f["bin_cluster_uuid"],
+                algo_marker,
                 fields=("bin_cluster_uuid",),
                 is_pool=is_pool,
             )
@@ -637,7 +665,7 @@ def _pool_page(r, pool_id, algo, f):
         if f["md5"] and f["md5"] not in m_a.lower() and f["md5"] not in m_b.lower():
             continue
         if cluster_members is not None and not (
-            (coll_a, m_a) in cluster_members or (coll_b, m_b) in cluster_members
+            (coll_a, m_a) in cluster_members and (coll_b, m_b) in cluster_members
         ):
             continue
         if f["q"]:
@@ -775,7 +803,9 @@ def search_bin_sims():
             "arch": request.args.get("arch", "").strip().lower(),
             "md5": request.args.get("md5", "").strip().lower(),
             "file_name": request.args.get("file_name", "").strip().lower(),
-            "bin_cluster_uuid": request.args.get("bin_cluster_uuid", "").strip().lower(),
+            "bin_cluster_uuid": request.args.get("bin_cluster_uuid", "")
+            .strip()
+            .lower(),
             "q": request.args.get("q", "").strip().lower(),
             "file_tag": tags("file_tag"),
             "exclude_file_tag": tags("exclude_file_tag"),

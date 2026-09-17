@@ -721,6 +721,7 @@ function injectNotesStyles() {
         }
 
         .panel-handle {
+            position: relative;
             background: var(--meta-bg);
             border: 1px solid var(--border);
             border-right: none;
@@ -804,7 +805,7 @@ function injectNotesStyles() {
         #notes-panel-handle .note-count-badge {
             writing-mode: horizontal-tb;
             text-orientation: initial;
-            transform: rotate(-90deg);
+            transform: rotate(90deg);
         }
     `;
     document.head.appendChild(style);

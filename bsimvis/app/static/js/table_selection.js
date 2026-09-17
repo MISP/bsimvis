@@ -158,7 +158,17 @@ class TableSelection {
     activationTarget(r, c, e) {
         const tr = this.tbody.children[r];
         if (!tr) return null;
-        const selector = 'a[href]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn), [onclick]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn)';
+        // Controls that act on a row rather than open it. Clicking a cell's dead
+        // space should never reach one: the tag editor puts its bookmark button
+        // first in the DOM, so before this list a click on the blank part of a
+        // Tags cell -- or Enter on it -- silently bookmarked the row.
+        const SECONDARY = [
+            'remove-tag-btn', 'btn-action', 'btn-copy', 'btn',
+            'bookmark-btn', 'ignore-btn', 'add-tag-btn', 'tag-overflow-chip',
+            'lineage-toggle', 'btn-note-action', 'btn-icon',
+        ];
+        const not = SECONDARY.map(cls => `:not(.${cls})`).join('');
+        const selector = `a[href]${not}, [onclick]${not}`;
         const cell = this.cellAt(r, c);
         const inCell = cell ? Array.from(cell.querySelectorAll(selector)) : [];
         if (inCell.length) {
@@ -166,9 +176,15 @@ class TableSelection {
             // DOM is only right half the time. Activate the one the click landed
             // next to. Keyboard activation has no pointer, so it takes the first.
             if (!e || inCell.length === 1) return inCell[0];
+            // Distance from the pointer to the element's box, zero when inside
+            // it. Measuring clientY alone made every control on one flex line
+            // tie, and the tie went to DOM order -- horizontal position, the
+            // only thing separating them, was ignored.
             const dist = el => {
                 const b = el.getBoundingClientRect();
-                return Math.abs(e.clientY - (b.top + b.height / 2));
+                const dx = Math.max(b.left - e.clientX, 0, e.clientX - b.right);
+                const dy = Math.max(b.top - e.clientY, 0, e.clientY - b.bottom);
+                return Math.hypot(dx, dy);
             };
             return inCell.reduce((best, el) => (dist(el) < dist(best) ? el : best));
         }

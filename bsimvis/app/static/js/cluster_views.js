@@ -632,7 +632,7 @@ class ClusterHierarchy extends D3BaseLayout {
                 }
                 const uuid = d.data.uuid;
                 if (uuid && uuid !== 'root') {
-                    const url = Nav.buildUIUrl(col, ['functions']) + '?cluster_uuid=' + encodeURIComponent(uuid);
+                    const url = Nav.buildUIUrl(col, ['functions', 'clusters', uuid]);
                     Nav.openPath(url, event);
                 }
             })
@@ -1116,8 +1116,8 @@ class ClusterHierarchy extends D3BaseLayout {
         btn.onclick = (event) => {
             const col = getCurrentCollection();
             const uuid = d.data.uuid;
-            const url = Nav.buildUIUrl(col, ['functions']) + '?cluster_uuid=' + encodeURIComponent(uuid);
-            Nav.openPath(url, event, { title: 'Cluster Functions', type: 'functions' });
+            const url = Nav.buildUIUrl(col, ['functions', 'clusters', uuid]);
+            Nav.openPath(url, event, { title: 'Cluster', type: 'cluster' });
         };
     }
 
@@ -2142,8 +2142,8 @@ class ClusterPacking {
         btn.onclick = (event) => {
             const col = getCurrentCollection();
             const uuid = d.data.uuid;
-            const url = Nav.buildUIUrl(col, ['functions']) + '?cluster_uuid=' + encodeURIComponent(uuid);
-            Nav.openPath(url, event, { title: 'Cluster Functions', type: 'functions' });
+            const url = Nav.buildUIUrl(col, ['functions', 'clusters', uuid]);
+            Nav.openPath(url, event, { title: 'Cluster', type: 'cluster' });
         };
     }
 

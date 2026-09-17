@@ -3648,7 +3648,7 @@ function renderClusters(items) {
         }))}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'cluster', this)">
             <td class="mono cluster-uuid-id-cell" data-uuid="${escapeAttr(c.cluster_uuid)}" data-id="${escapeAttr(c.cluster_id)}">
-                <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('functions', new URLSearchParams('cluster_uuid=' + ${escapeAttr(jsString(c.cluster_uuid))}), ${collection ? escapeAttr(jsString(collection)) : 'null'})" style="color:var(--accent); text-decoration:none;">
+                <a href="javascript:void(0)" onclick="event.preventDefault(); openCluster(${escapeAttr(jsString(c.cluster_uuid))}, false, event)" style="color:var(--accent); text-decoration:none;">
                     ${(c.cluster_uuid || '').substring(0, 8)}
                 </a>
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
@@ -3830,7 +3830,7 @@ function renderBinClusters(items) {
         }))}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
             <td class="mono cluster-uuid-id-cell" data-uuid="${escapeAttr(c.cluster_uuid)}" data-id="${escapeAttr(c.cluster_id)}">
-                <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('files', new URLSearchParams('bin_cluster_uuid=' + ${escapeAttr(jsString(c.cluster_uuid))}), ${collection ? escapeAttr(jsString(collection)) : 'null'})" style="color:var(--accent); text-decoration:none;">
+                <a href="javascript:void(0)" onclick="event.preventDefault(); openCluster(${escapeAttr(jsString(c.cluster_uuid))}, true, event)" style="color:var(--accent); text-decoration:none;">
                     ${(c.cluster_uuid || '').substring(0, 8)}
                 </a>
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>

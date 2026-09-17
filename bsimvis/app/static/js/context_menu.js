@@ -446,7 +446,12 @@
             </div>`;
         } else if (resolvedType === 'cluster') {
             const funcClusterUrl = Nav.buildUIUrl(col, ['functions']) + '?cluster_uuid=' + encodeURIComponent(norm.uuid);
+            const clusterUrl = Nav.buildUIUrl(col, ['functions', 'clusters', norm.uuid || '']);
             actionsSubmenuHtml += `
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(clusterUrl))}, event, { title: 'Cluster', type: 'cluster' })">
+                <i class="fa-solid fa-bullseye" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Open Cluster</span>
+            </div>
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
@@ -457,7 +462,12 @@
             </div>`;
         } else if (resolvedType === 'bin_cluster') {
             const fileClusterUrl = Nav.buildUIUrl(col, ['files']) + '?bin_cluster_uuid=' + encodeURIComponent(norm.uuid);
+            const clusterUrl = Nav.buildUIUrl(col, ['files', 'clusters', norm.uuid || '']);
             actionsSubmenuHtml += `
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(clusterUrl))}, event, { title: 'Cluster', type: 'cluster' })">
+                <i class="fa-solid fa-bullseye" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Open Cluster</span>
+            </div>
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>

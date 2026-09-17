@@ -58,6 +58,17 @@ class TableSelection {
         TableSelection._swallowTimer = setTimeout(() => { TableSelection.swallow = false; }, 50);
     }
 
+    /**
+     * The table a "copy selection" should read from: the one the user is
+     * actually working in. Picking the first instance with a selection could
+     * copy from a table on a hidden panel instead of the one under the cursor.
+     */
+    static selectionSource() {
+        const has = ts => !!(ts && ts.selectedCells && ts.selectedCells.size > 0);
+        if (has(TableSelection.active)) return TableSelection.active;
+        return (window.tableSelections || []).find(has) || null;
+    }
+
     /** Retire instances whose table is no longer in the document. */
     static reapDetached() {
         (window.tableSelections || []).slice().forEach(ts => {

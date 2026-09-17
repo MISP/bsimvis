@@ -151,6 +151,38 @@ window.EntityRenderer = {
     /**
      * Handles context menu by parsing data attribute.
      */
+    /**
+     * The column the pointer was actually over: its header label and the text
+     * in the cell.
+     *
+     * The menu is built entirely from the row object, which has no idea which
+     * column was right-clicked -- so "Copy Name" on the File Name cell of a
+     * function row copied the *function's* name, and there was no way at all to
+     * copy a column the row object happens not to carry.
+     */
+    clickedCell: function(e) {
+        const target = e && e.target;
+        const el = (target && target.nodeType === 3) ? target.parentElement : target;
+        if (!el || typeof el.closest !== 'function') return null;
+
+        const td = el.closest('td');
+        if (!td) return null;
+
+        const table = td.closest('table');
+        const headRow = table ? table.querySelector('thead tr') : null;
+        const th = headRow ? headRow.children[td.cellIndex] : null;
+        // data-label is set by the dashboard's header builder; fall back to the
+        // header text with the sort arrow stripped off.
+        const label = th
+            ? (th.dataset.label || th.textContent.replace(/[↑↓↕]/g, '').trim())
+            : '';
+
+        const value = (td.innerText || '').trim();
+        if (!value) return null;
+
+        return { label: label || 'Cell', value: value };
+    },
+
     handleContextMenu: function(e, type, el) {
         if (e) {
             e.preventDefault();
@@ -183,7 +215,9 @@ window.EntityRenderer = {
                 const dataStr = el.getAttribute('data-entity-data');
                 if (dataStr) {
                     const data = JSON.parse(dataStr);
-                    
+                    const cell = EntityRenderer.clickedCell(e);
+                    if (cell) data.__cell = cell;
+
                     if (targetWindow !== window) {
                         // Adjust coordinates for iframe
                         let rect = { left: 0, top: 0 };
@@ -225,8 +259,11 @@ window.EntityRenderer = {
         const displayMd5 = options.full ? actualMd5 : actualMd5.substring(0, 8);
         // A caller that knows the row's own collection should say so; guessing it
         // from the URL mislabels rows that came from another collection.
-        const collection = options.collection
-            || (typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main');
+        // stripPoolPrefix unwraps a pooled collection id the same way
+        // renderFunction does, so the file id names the owning collection.
+        const collection = stripPoolPrefix(options.collection || '')
+            || stripPoolPrefix(typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main')
+            || 'main';
         const fileId = `${collection}:file:${actualMd5}`;
         const fileData = { md5: actualMd5, fileId: fileId, name: actualMd5 };
         // ponytail: enable direct file context menu from any rendered md5

@@ -2633,10 +2633,7 @@ function renderPagination(path) {
 
 function copyToClipboard(text, btn) {
     let success = false;
-    let tableSel = null;
-    if (window.tableSelections) {
-        tableSel = window.tableSelections.find(ts => ts.selectedCells && ts.selectedCells.size > 0);
-    }
+    const tableSel = window.TableSelection ? window.TableSelection.selectionSource() : null;
     if (tableSel) {
         tableSel.copySelection();
         if (btn) {

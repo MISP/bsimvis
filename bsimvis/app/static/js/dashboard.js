@@ -1225,10 +1225,12 @@ function setBinSimScoreType(v) {
     const { viewKey } = getRoutingState();
     if (viewKey === 'bin-clusters') {
         if (window.applyBinClusterSearch) window.applyBinClusterSearch();
-    } else if (viewKey === 'file' || window.location.pathname.includes('/files/')) {
+    } else if (viewKey === 'file') {
         if (window.renderFileClustersTab) window.renderFileClustersTab();
-    } else {
-        if (window.applyBinSimSearch) window.applyBinSimSearch();
+    } else if (viewKey === 'binary-similarity') {
+        if (window.applyBinSimSearch) window.applyBinSimSearch(v);
+    } else if (window.applyBinSimSearch) {
+        window.applyBinSimSearch();
     }
 }
 window.setBinSimScoreType = setBinSimScoreType;

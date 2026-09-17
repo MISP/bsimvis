@@ -292,10 +292,15 @@ def rebuild_bin_sim():
         (JobType.CLEAR_BIN_SIM.value, clear_payload),
     ]
     for ax in ["overall", "code", "library", "content"]:
-        tasks.append((JobType.CLEAR_BIN_CLUSTER.value, {"collection": collection, "algo": algo, "axis": ax}))
-    
+        tasks.append(
+            (
+                JobType.CLEAR_BIN_CLUSTER.value,
+                {"collection": collection, "algo": algo, "axis": ax},
+            )
+        )
+
     tasks.append((JobType.BUILD_BIN_SIM.value, build_payload))
-    
+
     for ax in ["overall", "code", "library", "content"]:
         tasks.append(
             (

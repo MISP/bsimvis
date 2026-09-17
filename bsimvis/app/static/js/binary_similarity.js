@@ -383,15 +383,6 @@ function renderBinarySimilarityView(params) {
                 font-family:'Inter',sans-serif;
             }
             .bsim-fold-pill:hover { border-color:var(--accent); color:var(--text); }
-            .bsim-tabbar { display:flex; gap:4px; margin:0 0 16px 0; border-bottom:2px solid var(--border); }
-            .bsim-tab {
-                background:none; border:none; border-bottom:3px solid transparent;
-                margin-bottom:-2px; padding:10px 20px; cursor:pointer;
-                color:var(--subtle); font-size:0.9rem; font-weight:600; letter-spacing:0.01em;
-                transition:color 0.15s, border-color 0.15s, background 0.15s;
-            }
-            .bsim-tab:hover { color:var(--text); background: var(--hover); }
-            .bsim-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
             .bin-sim-strip { border:1px solid var(--border); border-radius:6px; padding:10px 12px; background:var(--card-bg); display:flex; align-items:center; gap:10px; min-height:24px; }
             .bin-sim-mc-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
             .bin-sim-mc-table th { text-align:left; padding:6px 12px; color:var(--subtle); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid var(--border); }
@@ -2685,7 +2676,7 @@ function binSimFilterParams(prefix) {
     return p;
 }
 
-function applyBinSimSearch() {
+function applyBinSimSearch(scoreType) {
     if (window.filterDebounceTimer) clearTimeout(window.filterDebounceTimer);
     const { viewKey, params } = getRoutingState();
 
@@ -2710,6 +2701,12 @@ function applyBinSimSearch() {
         const val = document.getElementById(elemId)?.value;
         if (val) params.set(paramKey, val);
         else params.delete(paramKey);
+    }
+
+    if (scoreType) {
+        params.set('sort', scoreType);
+        params.set('sort_by', scoreType);
+        params.set('sort_order', 'desc');
     }
 
     const countLimit = document.getElementById('sim-limit')?.value;

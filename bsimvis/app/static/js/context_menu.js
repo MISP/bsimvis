@@ -429,6 +429,20 @@
                 <span>Similar Files (by container)</span>
             </div>
             `;
+            if (window.getSelectedTableIds && window.getSelectedTableIds('file').length === 2) {
+                const selFiles = window.getSelectedTableIds('file');
+                const md5a = selFiles[0].split(':').pop();
+                const md5b = selFiles[1].split(':').pop();
+                const collA = selFiles[0].split(':')[0] || col;
+                const collB = selFiles[1].split(':')[0] || col;
+                const diffUrl = (window.buildFileDiffUrl || buildFileDiffUrl)(collA, md5a, collB, md5b);
+                const diffTitle = `Binary Diff: ${selFiles[0].split(':').pop()} vs ${selFiles[1].split(':').pop()}`;
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(diffUrl))}, event, { title: ${escapeAttr(jsString(diffTitle))}, type: 'bin_sim' })">
+                    <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8; color: #fd971f;"></i>
+                    <span>Compare Selected (Binary Diff)</span>
+                </div>`;
+            }
             actionsSubmenuHtml += renderFileAnalysisSubmenu(norm.md5);
         } else if (resolvedType === 'similarity') {
             actionsSubmenuHtml += `

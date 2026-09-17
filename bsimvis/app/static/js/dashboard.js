@@ -1043,9 +1043,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
         const totalEl = document.getElementById('view-total');
         const poolIcon = document.getElementById('pool-warn-icon');
-        const limitIcon = document.getElementById('limit-warn-icon');
         const poolInput = document.getElementById('sim-pool-limit');
-        const limitInput = document.getElementById('sim-limit');
 
         if (totalEl) {
             totalEl.style.display = 'inline-block';
@@ -1061,17 +1059,6 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                 }
             }
 
-            if (limitIcon) {
-                const currentLimit = parseInt(params.get('limit')) || DEFAULT_PAGE_LIMIT;
-                if (total >= currentLimit && (viewKey === 'function-similarity' || viewKey === 'functions')) {
-                    limitIcon.style.display = 'inline-block';
-                    limitIcon.title = `ℹ️ Result Limit Reached (${currentLimit.toLocaleString()}). Not all pairs are shown.`;
-                    if (limitInput) limitInput.style.borderColor = '#60a5fa';
-                } else {
-                    limitIcon.style.display = 'none';
-                    if (limitInput) limitInput.style.borderColor = 'var(--accent)';
-                }
-            }
         }
 
         const tbody = document.getElementById('table-body');
@@ -1110,7 +1097,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         const footerEl = document.getElementById('table-footer');
         if (footerEl) footerEl.style.display = 'flex';
 
-        updateFooterMeta(params, data, items, Math.round(performance.now() - fetchStartedAt));
+        updateFooterMeta(params, data, Math.round(performance.now() - fetchStartedAt));
 
         renderPagination(viewKey);
     } catch (err) {
@@ -1134,10 +1121,6 @@ const FOOTER_META_SKIP = new Set([
     'view', 'group', 'sort', 'sort_by', 'order', 'dir', 'append',
 ]);
 
-// ponytail: first numeric field wins. Views disagree on the name but never
-// carry two of these at once.
-const SCORE_KEYS = ['score', 'similarity', 'sim', 'distance'];
-
 function listFilters(params) {
     const active = [];
     for (const [k, v] of params.entries()) {
@@ -1147,19 +1130,7 @@ function listFilters(params) {
     return active;
 }
 
-function describeRowStats(items) {
-    if (!Array.isArray(items) || !items.length) return '';
-    const key = SCORE_KEYS.find(k => typeof items[0][k] === 'number');
-    if (!key) return '';
-    const vals = items.map(it => it[key]).filter(v => typeof v === 'number');
-    if (!vals.length) return '';
-    const min = Math.min(...vals), max = Math.max(...vals);
-    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
-    const fmt = v => (max <= 1 ? v.toFixed(3) : Math.round(v).toLocaleString());
-    return `${key} ${fmt(min)}–${fmt(max)} · mean ${fmt(mean)}`;
-}
-
-function updateFooterMeta(params, data, items, elapsedMs) {
+function updateFooterMeta(params, data, elapsedMs) {
     const show = (id, text, title) => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -1174,9 +1145,6 @@ function updateFooterMeta(params, data, items, elapsedMs) {
     show('view-filters',
         filters.length ? `${filters.length} filter${filters.length > 1 ? 's' : ''}` : '',
         filters.length ? `Narrowing this count:\n${filters.join('\n')}` : '');
-
-    const rowStats = describeRowStats(items);
-    show('view-rowstats', rowStats, rowStats ? 'Across the rows loaded so far' : '');
 
     // data.source is only sent by the similarity endpoints ('cache' or 'pool').
     window._lastFetch = { at: Date.now(), ms: elapsedMs, source: (data && data.source) || '' };
@@ -3733,19 +3701,6 @@ window.addEventListener('load', () => {
                     statusBadge.style.display = 'none';
                     statusBadge.classList.remove('running');
                 }
-            }
-
-            // A job that matched this view is still writing the data behind it,
-            // so whatever is on screen is a partial answer. Say so next to the
-            // count rather than leaving the job pill to imply it.
-            const partialEl = document.getElementById('view-partial');
-            if (partialEl) {
-                const building = matchingJob && matchingJob.status === 'running';
-                partialEl.innerText = building ? `partial · ${matchingJob.progress}% built` : '';
-                partialEl.title = building
-                    ? `${formatJobType(matchingJob.type)} is still running; counts and scores here are incomplete.`
-                    : '';
-                partialEl.style.display = building ? 'inline-flex' : 'none';
             }
 
             window.jobsActive = isActive;

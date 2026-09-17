@@ -67,6 +67,34 @@ function saveColumnWidth(path, label, width) {
     } catch (e) { }
 }
 
+/**
+ * Give the table an explicit width equal to the sum of its columns.
+ *
+ * Under `table-layout: fixed; width: 100%` the table can never be wider than
+ * its container, so widening one column silently narrows all the others -- and
+ * columns narrower than their content are what makes cells overlap. With a real
+ * width the container scrolls sideways instead. min-width keeps it filling the
+ * container when the columns do not add up to that much.
+ */
+function sizeTableToColumns() {
+    const table = document.getElementById('data-table');
+    const colgroup = document.getElementById('table-colgroup');
+    if (!table || !colgroup || !colgroup.children.length) return;
+
+    let total = 0;
+    for (const col of colgroup.children) {
+        const w = parseFloat(col.style.width);
+        if (!w) {
+            // Not every column is sized yet; leave the layout to the browser.
+            table.style.width = '';
+            return;
+        }
+        total += w;
+    }
+    table.style.width = total + 'px';
+    table.style.minWidth = '100%';
+}
+
 function resetColumnWidths() {
     const { viewKey } = getRoutingState();
     try {
@@ -80,13 +108,17 @@ function resetColumnWidths() {
 function initColumnResize(th, path, label) {
     const resizer = th.querySelector('.resizer');
     if (!resizer) return;
+    if (resizer.dataset.resizeBound === '1') return;
+    resizer.dataset.resizeBound = '1';
 
-    // Find matching <col> in both header and body colgroups by th index
-    const colgroupHeader = document.getElementById('table-colgroup-header');
-    const colgroupBody = document.getElementById('table-colgroup');
-    const thIndex = Array.from(th.parentElement.children).indexOf(th);
-    const colHeader = colgroupHeader ? colgroupHeader.children[thIndex] : null;
-    const colBody = colgroupBody ? colgroupBody.children[thIndex] : null;
+    // Looked up when the drag starts, not now: a render between binding and
+    // dragging replaces the <col> elements, and the stale reference is what made
+    // a drag move the header while the body stayed put.
+    const currentCol = () => {
+        const colgroup = document.getElementById('table-colgroup');
+        const thIndex = Array.from(th.parentElement.children).indexOf(th);
+        return colgroup ? colgroup.children[thIndex] : null;
+    };
 
     let startX, startWidth;
 
@@ -96,6 +128,7 @@ function initColumnResize(th, path, label) {
 
         startX = e.clientX;
         startWidth = th.getBoundingClientRect().width;
+        const col = currentCol();
 
         document.body.classList.add('resizing');
 
@@ -107,11 +140,11 @@ function initColumnResize(th, path, label) {
         const onMouseMove = (e) => {
             const width = startWidth + (e.clientX - startX);
             if (width > 30) {
-                // Sync width to both tables via colgroup
-                if (colHeader) colHeader.style.width = width + 'px';
-                if (colBody) colBody.style.width = width + 'px';
+                // One table, one colgroup: the <col> sizes header and cells alike.
+                if (col) col.style.width = width + 'px';
                 th.style.width = width + 'px';
                 th.style.minWidth = width + 'px';
+                sizeTableToColumns();
             }
         };
 
@@ -1464,7 +1497,6 @@ function updateUI(viewKey, collection, params, route, force = false) {
     // Table Head
     const thead = document.getElementById('table-head');
     const dataTable = document.getElementById('data-table');
-    const dataTableHeader = document.getElementById('data-table-header');
 
     if (pathChanged) {
         let headHtml = '<tr>';
@@ -1481,7 +1513,6 @@ function updateUI(viewKey, collection, params, route, force = false) {
 
         const tableLayout = hasWidths ? 'fixed' : 'auto';
         if (dataTable) dataTable.style.tableLayout = tableLayout;
-        if (dataTableHeader) dataTableHeader.style.tableLayout = tableLayout;
         routeHeaders.forEach(h => {
             const label = typeof h === 'string' ? h : h.label;
             const sortKey = typeof h === 'object' ? h.sort : null;
@@ -1778,7 +1809,6 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 }
             } else if (path === 'clusters') {
                 if (dataTable) dataTable.style.tableLayout = 'fixed';
-                if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
                 headHtml += `<tr class="filter-row">
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-cluster-uuid" placeholder="UUID..." value="${escapeAttr(p.get('cluster_uuid') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-id" placeholder="ID..." value="${escapeAttr(p.get('cluster_id') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                     <th><input type="text" id="flt-cluster-name" placeholder="Name..." value="${escapeAttr(p.get('cluster_name') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
@@ -1793,7 +1823,6 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 thead.innerHTML = headHtml;
             } else if (path === 'jobs') {
                 if (dataTable) dataTable.style.tableLayout = 'fixed';
-                if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
                 const statuses = ['', 'pending', 'running', 'completed', 'failed', 'cancelled'];
                 const statusOptions = statuses.map(s => { const label = s ? s.toUpperCase() : 'All Statuses'; return `<option value="${escapeAttr(s)}" ${p.get('status') === s ? 'selected' : ''}>${label}</option>`; }).join('');
                 const types = ['', 'pipeline', 'group', 'file_data_ingest', 'ghidra_analyze', 'idx_meta', 'idx_functions', 'idx_features', 'build_sim', 'cluster_functions', 'cluster_binaries', 'enrich_features'];
@@ -1828,7 +1857,6 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 const nameType = p.get('cluster_name_type') || 'file';
                 const nodeType = p.get('node_type') || 'file';
                 if (dataTable) dataTable.style.tableLayout = 'fixed';
-                if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
                 headHtml += `<tr class="filter-row">
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-uuid" placeholder="UUID..." value="${escapeAttr(p.get('cluster_uuid') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-id" placeholder="ID..." value="${escapeAttr(p.get('cluster_id') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${escapeAttr(p.get('cluster_name') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><select id="bin-cluster-name-type" style="background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.6rem; border-radius:4px; padding:2px; width:100%; box-sizing:border-box;" onchange="changeBinClusterNameType(this.value)"><option value="file" ${nameType === 'file' ? 'selected' : ''}>Most Common File Name</option><option value="yara" ${nameType === 'yara' ? 'selected' : ''}>Most Common Yara</option></select></div></th>
@@ -2063,40 +2091,38 @@ function updateUI(viewKey, collection, params, route, force = false) {
         });
     }, 0);
 
-    // Sync body colgroup from the header row's actual rendered widths.
-    // We use requestAnimationFrame so the header table has laid out first.
-    if (true) {
-        const syncColgroups = () => {
-            const headerTable = document.getElementById('data-table-header');
-            const bodyColgroup = document.getElementById('table-colgroup');
-            if (!headerTable || !bodyColgroup) return;
-
+    // One colgroup for the one table, built from the header cells. There is no
+    // second table to copy widths into any more, so no requestAnimationFrame
+    // round-trip and nothing that can be measured on the wrong box.
+    {
+        const buildColgroup = () => {
+            const colgroup = document.getElementById('table-colgroup');
             const headerRow = thead.querySelector('tr:first-child');
-            if (!headerRow) return;
+            if (!colgroup || !headerRow) return;
+
             const ths = headerRow.querySelectorAll('th');
-
-            // Also rebuild the header colgroup
-            const headerColgroup = document.getElementById('table-colgroup-header');
-            if (headerColgroup) {
-                headerColgroup.innerHTML = '';
-                ths.forEach(th => {
-                    const col = document.createElement('col');
-                    if (th.style.width) col.style.width = th.style.width;
-                    headerColgroup.appendChild(col);
-                });
-            }
-
-            // Read actual rendered widths after layout and apply to body colgroup
-            requestAnimationFrame(() => {
-                bodyColgroup.innerHTML = '';
-                ths.forEach(th => {
-                    const col = document.createElement('col');
-                    col.style.width = th.getBoundingClientRect().width + 'px';
-                    bodyColgroup.appendChild(col);
-                });
+            colgroup.innerHTML = '';
+            ths.forEach(th => {
+                const col = document.createElement('col');
+                // Percent widths resolve to px once, so a route never ends up
+                // mixing units -- a dragged column used to be px while its
+                // neighbours stayed %, and the declared widths stopped summing
+                // to 100%.
+                col.style.width = th.style.width && th.style.width.endsWith('px')
+                    ? th.style.width
+                    : th.getBoundingClientRect().width + 'px';
+                th.style.width = col.style.width;
+                colgroup.appendChild(col);
             });
+            // Measured under whatever layout the route asked for, then pinned:
+            // fixed layout is what makes a <col> width binding, and so what
+            // makes a drag hold. Routes with no declared widths keep the widths
+            // auto layout just gave them.
+            const table = document.getElementById('data-table');
+            if (table) table.style.tableLayout = 'fixed';
+            sizeTableToColumns();
         };
-        syncColgroups();
+        buildColgroup();
 
         // Initialize resizers - MUST BE DONE AFTER ALL thead.innerHTML UPDATES
         thead.querySelectorAll('.resizable-th').forEach(th => {

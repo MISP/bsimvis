@@ -2634,6 +2634,25 @@ a.home-card:hover,
     white-space: nowrap;
 }
 .table-footer-badge[title]:not([title=""]) { cursor: help; }
+/* A number input inside a footer pill: the pill is the chrome, the input is
+   bare. Spinners are dropped because they double the pill's height. */
+.table-footer-badge .footer-num {
+    width: 42px;
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--accent);
+    font: inherit;
+    font-size: 0.78rem;
+    text-align: right;
+    -moz-appearance: textfield;
+}
+.table-footer-badge .footer-num:focus { outline: none; }
+.table-footer-badge .footer-num::-webkit-inner-spin-button,
+.table-footer-badge .footer-num::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
 .table-footer-clear {
     background: none;
     border: none;

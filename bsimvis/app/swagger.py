@@ -2036,6 +2036,8 @@ class ClusterList(Resource):
             "cluster_tag": "Require a cluster user tag; repeat for AND filtering",
             "exclude_cluster_tag": "Exclude clusters carrying this user tag",
             "show_members": "Whether to return direct member IDs/names (true/false)",
+            "show_parents": "Also return the matched clusters' ancestors, up to the root (true/false)",
+            "show_children": "Also return the matched clusters' whole descendant subtree (true/false)",
         }
     )
     def get(self):
@@ -2185,6 +2187,8 @@ class BinClusterList(Resource):
             "cluster_tag": "Require a cluster user tag; repeat for AND filtering",
             "exclude_cluster_tag": "Exclude clusters carrying this user tag",
             "show_members": "Whether to return direct member IDs/names (true/false)",
+            "show_parents": "Also return the matched clusters' ancestors, up to the root (true/false)",
+            "show_children": "Also return the matched clusters' whole descendant subtree (true/false)",
         }
     )
     def get(self):

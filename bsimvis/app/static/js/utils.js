@@ -238,7 +238,13 @@ function parseRestfulPath() {
         } else if (parts[pIdx] === 'similarities') {
             params.view = 'binary-similarity';
         } else if (parts[pIdx] === 'clusters') {
-            params.view = 'bin-clusters';
+            pIdx++;
+            if (parts.length === pIdx) {
+                params.view = 'bin-clusters';
+            } else {
+                params.view = 'bin-cluster-detail';
+                params.cluster_uuid = decodeURIComponent(parts[pIdx]);
+            }
         } else {
             params.md5 = parts[pIdx];
             pIdx++;
@@ -277,7 +283,13 @@ function parseRestfulPath() {
         } else if (parts[pIdx] === 'similarities') {
             params.view = 'function-similarity';
         } else if (parts[pIdx] === 'clusters') {
-            params.view = 'clusters';
+            pIdx++;
+            if (parts.length === pIdx) {
+                params.view = 'clusters';
+            } else {
+                params.view = 'cluster-detail';
+                params.cluster_uuid = decodeURIComponent(parts[pIdx]);
+            }
         } else {
             params.md5 = parts[pIdx];
             pIdx++;
@@ -429,6 +441,7 @@ function getRoutingState() {
     if (restful.id2 && !params.has('id2')) params.set('id2', restful.id2);
     if (restful.pool && !params.has('pool')) params.set('pool', restful.pool);
     if (restful.search_id && !params.has('search_id')) params.set('search_id', restful.search_id);
+    if (restful.cluster_uuid && !params.has('cluster_uuid')) params.set('cluster_uuid', restful.cluster_uuid);
 
     return { viewKey, collection, pool, params, ...restful };
 }

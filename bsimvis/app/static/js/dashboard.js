@@ -472,6 +472,8 @@ window.ModuleLoader = {
             'home': window.HomeView,
             'pool-detail': window.PoolDetailView,
             'collection-detail': window.CollectionDetailView,
+            'cluster-detail': window.ClusterDetailView,
+            'bin-cluster-detail': window.ClusterDetailView,
             'search': window.SearchView,
             'search-detail': window.SearchView,
             'bin_sim': {
@@ -595,7 +597,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
 
     // Check if we should load a module view
-    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail', 'search', 'search-detail'].includes(viewKey)) {
+    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail', 'search', 'search-detail', 'cluster-detail', 'bin-cluster-detail'].includes(viewKey)) {
         const stateParams = Object.fromEntries(params);
         stateParams.collection = collection;
         stateParams.pool = pool;

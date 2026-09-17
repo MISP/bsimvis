@@ -521,7 +521,7 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
  * cluster now goes to the cluster. Filtering a list by a cluster is still on
  * the context menu, where it says what it does.
  */
-window.openCluster = (uuid, isBinary = false, event = null) => {
+window.openCluster = (uuid, isBinary = false, event = null, axis = null) => {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
     const { collection, pool } = targetWindow.getRoutingState
         ? targetWindow.getRoutingState()
@@ -529,8 +529,13 @@ window.openCluster = (uuid, isBinary = false, event = null) => {
 
     const segs = (isBinary ? ['files', 'clusters'] : ['functions', 'clusters']).concat([uuid]);
     const nav = targetWindow.Nav || window.Nav;
+    
     if (nav) {
-        nav.openPath(nav.buildUIUrl(collection || '', segs), event);
+        let url = nav.buildUIUrl(collection || '', segs);
+        if (isBinary && axis && axis !== 'overall') {
+            url += '?axis=' + encodeURIComponent(axis);
+        }
+        nav.openPath(url, event);
         return;
     }
 
@@ -538,7 +543,11 @@ window.openCluster = (uuid, isBinary = false, event = null) => {
     const base = pool
         ? `/pools/${encodeURIComponent(pool)}`
         : `/collections/${encodeURIComponent(collection || '')}`;
-    targetWindow.location.href = `${base}/${segs.map(encodeURIComponent).join('/')}`;
+    let href = `${base}/${segs.map(encodeURIComponent).join('/')}`;
+    if (isBinary && axis && axis !== 'overall') {
+        href += '?axis=' + encodeURIComponent(axis);
+    }
+    targetWindow.location.href = href;
 };
 
 window.showClusterCardTooltip = function(event, uuid, name, size, stability, cohesion, avg_features, clusterType = 'function', axis = null) {
@@ -672,7 +681,7 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null) => 
                   onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))}, ${escapeAttr(jsString(c.axis))})"
                   onmouseleave="hideClusterCardTooltip(event)"
                   onmousemove="moveClusterCardTooltip(event)"
-                  onclick="openCluster(${escapeAttr(jsString(uuid))}, ${isBinary}, event)"
+                  onclick="openCluster(${escapeAttr(jsString(uuid))}, ${isBinary}, event, ${isBinary ? escapeAttr(jsString(c.axis)) : 'null'})"
                   style="border-color:${tagAlpha(axisColor, borderAlpha)}; color:${axisColor}; background:${tagAlpha(axisColor, bgAlpha)}; opacity:${textOpacity}; align-items:center; gap:4px; padding:2px 6px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;" title="${escapeAttr(name)} (cohesion: ${coh.toFixed(2)})">
                 <i class="${escapeHtml(axisIcon)}" style="font-size:0.6rem;"></i>
                 <span style="font-family:monospace; font-size:0.65rem;">${Number(c.member_count || 0)}</span>
@@ -687,7 +696,7 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null) => 
               onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))}, ${escapeAttr(jsString(c.axis))})"
               onmouseleave="hideClusterCardTooltip(event)"
               onmousemove="moveClusterCardTooltip(event)"
-              onclick="openCluster(${escapeAttr(jsString(uuid))}, ${isBinary}, event)"
+              onclick="openCluster(${escapeAttr(jsString(uuid))}, ${isBinary}, event, ${isBinary ? escapeAttr(jsString(c.axis)) : 'null'})"
               style="border-color:${tagAlpha(color, 27)}; color:${color}; background:${tagAlpha(color, 7)}; align-items:center; gap:4px; padding:2px 6px 2px 8px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                  stroke-linecap="round" stroke-linejoin="round">

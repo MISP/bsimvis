@@ -380,7 +380,7 @@ window.ClusterDetailView = {
             <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                 <i class="fa-solid fa-bullseye" style="color:var(--accent);"></i>
                 <span style="font-size:1.2rem; font-weight:bold;">${escapeHtml(self.cluster_name || `Cluster #${self.cluster_id}`)}</span>
-                <span class="badge">${this.isBinary ? 'binary' : 'function'}</span>
+                <span class="badge">${this.isBinary ? (this.axis === 'overall' ? 'binary' : `binary (${this.axis})`) : 'function'}</span>
                 ${EntityRenderer.renderTag(this.isBinary ? 'bin_cluster' : 'cluster', self.tag_id || self.cluster_id, [], self.user_tags || [])}
             </div>
             <div class="mono dim" style="font-size:0.72rem; margin-top:6px;">
@@ -430,13 +430,65 @@ window.ClusterDetailView = {
         if (!this.selectedClusterUuid) return;
         
         if (this.groupBy === 'none') {
-            const members = this.memberCache[this.selectedClusterUuid] || [];
-            this.renderMembersList(tbody, members, 0);
-            if (members.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="3" class="dim" style="padding:20px; text-align:center;">No direct members in this cluster. Members may be inside sub-clusters.</td></tr>`;
-            }
+            this.renderFlatMembers(tbody);
         } else {
             this.renderHierarchicalGroups(tbody, this.selectedClusterUuid, 0);
+        }
+    },
+
+    async renderFlatMembers(tbody) {
+        tbody.innerHTML = `<tr><td colspan="3" class="dim" style="padding:20px; text-align:center;"><i class="fa-solid fa-spinner fa-spin"></i> Loading full membership...</td></tr>`;
+        try {
+            const qs = new URLSearchParams();
+            if (this.params.pool) qs.set('pool', this.params.pool);
+            if (this.collection) qs.set('collection', this.collection);
+            qs.set(this.isBinary ? 'bin_cluster_uuid' : 'cluster_uuid', this.selectedClusterUuid);
+            qs.set('limit', '1000');
+            
+            const endpoint = this.isBinary ? '/api/file/search' : '/api/function/search';
+            const res = await fetch(`${endpoint}?${qs.toString()}`);
+            if (!res.ok) throw new Error('Search API failed');
+            const data = await res.json();
+            
+            tbody.innerHTML = '';
+            const items = this.isBinary ? data.files : data.functions;
+            if (!items || items.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="3" class="dim" style="padding:20px; text-align:center;">No members found in search index.</td></tr>`;
+                return;
+            }
+            
+            const members = items.map(m => {
+                if (this.isBinary) {
+                    return {
+                        id: m.id || m.md5 || m.file_md5,
+                        name: m.file_name || m.name,
+                        file_md5: m.md5 || m.file_md5,
+                        language_id: m.language_id,
+                        bin: m.file_name || m.name
+                    };
+                } else {
+                    return {
+                        id: m.function_id || m.id,
+                        name: m.function_name || m.name,
+                        addr: m.entrypoint_address || m.addr,
+                        file_md5: m.file_md5 || m.md5,
+                        bin: m.file_name || m.bin,
+                        v_size: m.bsim_features_count || m.v_size
+                    };
+                }
+            });
+            
+            this.renderMembersList(tbody, members, 0);
+            
+            if (data.total > 1000) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td colspan="3" class="dim" style="padding:15px; text-align:center; font-style:italic;">Showing first 1000 members out of ${data.total}. ${this.renderMemberListLink(this.clusterMapByUuid[this.selectedClusterUuid])}</td>`;
+                tbody.appendChild(tr);
+            }
+            
+        } catch (e) {
+            console.error(e);
+            tbody.innerHTML = `<tr><td colspan="3" style="padding:20px; text-align:center; color:var(--error);"><i class="fa-solid fa-circle-exclamation"></i> Error loading members: ${e.message}</td></tr>`;
         }
     },
 

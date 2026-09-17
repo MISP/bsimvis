@@ -3854,7 +3854,7 @@ function renderBinClusters(items) {
         }))}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
             <td class="mono cluster-uuid-id-cell" data-uuid="${escapeAttr(c.cluster_uuid)}" data-id="${escapeAttr(c.cluster_id)}">
-                <a href="javascript:void(0)" onclick="event.preventDefault(); openCluster(${escapeAttr(jsString(c.cluster_uuid))}, true, event)" style="color:var(--accent); text-decoration:none;">
+                <a href="javascript:void(0)" onclick="event.preventDefault(); openCluster(${escapeAttr(jsString(c.cluster_uuid))}, true, event, document.getElementById(\'bin-cluster-metric\') ? document.getElementById(\'bin-cluster-metric\').value : null)" style="color:var(--accent); text-decoration:none;">
                     ${(c.cluster_uuid || '').substring(0, 8)}
                 </a>
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>

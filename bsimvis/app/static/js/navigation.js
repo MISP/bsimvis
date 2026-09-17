@@ -142,6 +142,11 @@ window.addEventListener('popstate', () => {
 
 // Global keyboard shortcuts for navbar navigation (uses capture phase to beat local handlers)
 window.addEventListener('keydown', (e) => {
+    // These run in the capture phase with stopImmediatePropagation, so nothing
+    // downstream can defend itself against them -- the palette included. Stand
+    // down while it is open rather than navigating the page out from under it.
+    if (window.SearchPalette && window.SearchPalette.isOpen()) return;
+
     // Cycle with Alt+Up and Alt+Down (works everywhere, even in inputs)
     if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
         const navLinks = Array.from(document.querySelectorAll('nav.sidebar-nav a[id^="nav-"]'));

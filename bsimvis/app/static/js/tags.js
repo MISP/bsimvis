@@ -852,11 +852,13 @@ function attachTagAutocomplete(input, onSelect) {
         if (dropdown.style.display === 'block' && currentSuggestions.length > 0) {
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
+                e.stopPropagation();
                 activeIndex = (activeIndex + 1) % currentSuggestions.length;
                 updateActiveStyle();
                 return;
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault();
+                e.stopPropagation();
                 activeIndex = (activeIndex - 1 + currentSuggestions.length) % currentSuggestions.length;
                 updateActiveStyle();
                 return;
@@ -989,11 +991,13 @@ function attachAutocomplete(input, level, field, onSelect) {
         if (dropdown.style.display === 'block' && currentSuggestions.length > 0) {
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
+                e.stopPropagation();
                 activeIndex = (activeIndex + 1) % currentSuggestions.length;
                 updateActiveStyle();
                 return;
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault();
+                e.stopPropagation();
                 activeIndex = (activeIndex - 1 + currentSuggestions.length) % currentSuggestions.length;
                 updateActiveStyle();
                 return;

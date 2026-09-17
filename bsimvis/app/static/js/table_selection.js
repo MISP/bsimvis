@@ -44,6 +44,9 @@ class TableSelection {
         this.init();
     }
 
+    /** Pointer travel, in px, still counted as a click rather than a drag. */
+    static get CLICK_SLOP() { return 3; }
+
     /** Shared "swallow the next click" flag -- see the class comment. */
     static get swallow() { return TableSelection._swallow === true; }
     static set swallow(v) { TableSelection._swallow = v === true; }
@@ -330,14 +333,21 @@ class TableSelection {
             const dist = Math.hypot(e.clientX - this.startPos.x, e.clientY - this.startPos.y);
             const selection = window.getSelection().toString();
 
-            if (this.cellModeActive || dist > 3) {
+            // One threshold decides both questions. They used to disagree --
+            // the swallow armed above 3px while activation ran below 3px -- so a
+            // 4px shaky click armed the swallow, then activated, and had its own
+            // synthetic click eaten: a click that did nothing at all.
+            const isClick = dist <= TableSelection.CLICK_SLOP;
+
+            if (this.cellModeActive || !isClick) {
                 TableSelection.armSwallow();
             }
 
             if (!this.cellModeActive && this.tempFocus && !this.startedOnBlocking) {
-                // If it was just a click or a very small movement with no text selection,
-                // we treat it as focusing the cell and triggering a redirect if a link exists.
-                if (!selection || dist < 3) {
+                // A click with nothing selected focuses the cell and follows its
+                // link. Text selected inside the cell means the user was
+                // selecting, not navigating -- leave it alone.
+                if (isClick && !selection) {
                     this.clearSelection();
                     this.anchorCell = { r: this.tempFocus.r, c: this.tempFocus.c };
                     this.focusCell = { r: this.tempFocus.r, c: this.tempFocus.c };

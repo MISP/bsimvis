@@ -23,7 +23,7 @@ ${slice('    handleMouseUp(e) {', '    handleKeyDown(e) {')}
 // The swallow flag is shared across instances rather than per-instance: several
 // tables on one page each hear the same mouseup, and a per-instance flag let one
 // eat the click another had armed. Stand in for the real static here.
-const Statics = { swallow: false, armSwallow() { Statics.swallow = true; } };
+const Statics = { CLICK_SLOP: 3, swallow: false, armSwallow() { Statics.swallow = true; } };
 
 // --- a DOM just big enough for the two methods under test -------------------
 
@@ -94,7 +94,7 @@ assert.strictEqual(t3.activationTarget(0, 0, { clientY: 5 }), null,
 const t4 = inst([pairRow]);
 Object.assign(t4, {
     isDragging: true, cellModeActive: false, startedOnBlocking: false,
-    tempFocus: { r: 0, c: 0 }, startPos: { x: 10, y: 50 },
+    tempFocus: { r: 0, c: 0 }, startPos: { x: 10, y: 45 },
     clearSelection() {}, setSelection() {}, updateVisuals() {},
 });
 clicked = [];
@@ -105,6 +105,24 @@ assert.deepStrictEqual(clicked, ['file-b'],
     'the click lands on the link nearest the pointer');
 assert.strictEqual(Statics.swallow, true,
     'the native click that follows is swallowed, so the row does not navigate too');
+
+// A slightly shaky click -- past the drag threshold, but with nothing selected.
+// The swallow and the activation used to disagree about where that threshold
+// was, so this armed the swallow, activated, and ate its own synthetic click.
+const shaky = inst([pairRow]);
+Object.assign(shaky, {
+    isDragging: true, cellModeActive: false, startedOnBlocking: false,
+    tempFocus: { r: 0, c: 0 }, startPos: { x: 10, y: 50 },
+    clearSelection() {}, setSelection() {}, updateVisuals() {},
+});
+clicked = [];
+Statics.swallow = false;
+shaky.handleMouseUp({ clientX: 14, clientY: 50, target: el({ tag: 'td' }) });
+
+assert.deepStrictEqual(clicked, [],
+    'a 4px drag selects rather than activating -- it does not half-do both');
+assert.strictEqual(Statics.swallow, true,
+    'and the click it produced is swallowed');
 
 // --- only one table may act on a keypress -----------------------------------
 //

@@ -204,28 +204,20 @@ function renderBinarySimilarityView(params) {
                     </div>
 
                     <!-- The one function table. All / Matched / Unmatched differ only
-                         by the state filter they send, and each of them reads either
-                         as rows or as the same rows drawn as flow. -->
+                         by the state filter they send. Shown / total and the live
+                         cell selection sit in the card's own footer. -->
                     <div class="bsim-subtab-panel" id="bsim-panel-table" style="flex:1; min-height:0; display:none; flex-direction:column;">
                         <div style="display:flex; align-items:center; gap:10px; padding:0 0 8px 0; flex-shrink:0; flex-wrap:wrap;">
                             <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
-                                <span class="bsim-ctl-label">View:</span>
-                                <button class="view-btn active" id="bsim-view-btn-table" onclick="setFileSimView('table')" title="Function rows">Table</button>
-                                <button class="view-btn" id="bsim-view-btn-graph" onclick="setFileSimView('graph')" title="The same rows drawn as flow, function to function">Graph</button>
+                                <span class="bsim-ctl-label">Group by:</span>
+                                <button class="view-btn active" id="bsim-group-btn-auto" onclick="setFileSimGroupBy('auto')" title="Group by tag when the selection spans more than one">Auto</button>
+                                <button class="view-btn" id="bsim-group-btn-tag" onclick="setFileSimGroupBy('tag')" title="Always group by tag">Tag</button>
+                                <button class="view-btn" id="bsim-group-btn-none" onclick="setFileSimGroupBy('none')" title="One flat list">None</button>
                             </div>
-                            <div id="bsim-table-controls" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                                <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
-                                    <span class="bsim-ctl-label">Group by:</span>
-                                    <button class="view-btn active" id="bsim-group-btn-auto" onclick="setFileSimGroupBy('auto')" title="Group by tag when the selection spans more than one">Auto</button>
-                                    <button class="view-btn" id="bsim-group-btn-tag" onclick="setFileSimGroupBy('tag')" title="Always group by tag">Tag</button>
-                                    <button class="view-btn" id="bsim-group-btn-none" onclick="setFileSimGroupBy('none')" title="One flat list">None</button>
-                                </div>
-                                <button class="view-btn" onclick="expandAllFileSimNodes()" title="Expand every tag group (also expands the tree)">Expand all</button>
-                                <button class="view-btn" onclick="collapseAllFileSimNodes()" title="Collapse every tag group (also collapses the tree)">Collapse all</button>
-                            </div>
-                            <span id="bsim-table-count" style="font-size:0.72rem; color:var(--dim); font-family:sans-serif;"></span>
+                            <button class="view-btn" onclick="expandAllFileSimNodes()" title="Expand every tag group (also expands the tree)">Expand all</button>
+                            <button class="view-btn" onclick="collapseAllFileSimNodes()" title="Collapse every tag group (also collapses the tree)">Collapse all</button>
                         </div>
-                        <div class="resizable-card" id="bsim-table-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; flex:1; min-height:200px; overflow:hidden;">
+                        <div class="resizable-card table-scope" id="bsim-table-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; flex:1; min-height:200px; overflow:hidden;">
                             <div class="bin-sim-header-scroll" style="flex-shrink:0; overflow:hidden; scrollbar-gutter:stable;">
                                 <table id="bin-sim-header-table" style="width:100%; border-collapse:collapse; font-size:0.8rem; table-layout:fixed;">
                                     <colgroup id="bin-sim-header-colgroup"></colgroup>
@@ -238,9 +230,14 @@ function renderBinarySimilarityView(params) {
                                     <tbody id="bin-sim-table-matched"></tbody>
                                 </table>
                             </div>
-                        </div>
-                        <div class="resizable-card" id="bsim-fngraph-card" style="border:1px solid var(--border); border-radius:8px; background:var(--bg); display:none; flex-direction:column; flex:1; min-height:200px; overflow:hidden;">
-                            <div id="bsim-fngraph" style="flex:1; width:100%; min-height:0; overflow:auto; position:relative;"></div>
+                            <div class="table-footer">
+                                <div class="table-footer-left">
+                                    <span id="bsim-table-total" class="table-footer-badge" style="display:none;"></span>
+                                </div>
+                                <div class="table-footer-right">
+                                    <span class="table-footer-sel selection-stats" style="display:none;"></span>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -470,9 +467,6 @@ function initResizableCards() {
                 const deltaY = moveEvent.clientY - startY;
                 card.style.height = `${Math.max(200, Math.min(1000, startHeight + deltaY))}px`;
                 
-                if (card.id === 'bsim-fngraph-card' && binSimDataCache) {
-                    renderFileSimGraph();
-                }
             };
             
             const onMouseUp = () => {
@@ -711,8 +705,6 @@ let fileSimSelection = new Set();
 let fileSimTreeOpen = new Set(['root']);
 // 'summary' | 'all' | 'matched' | 'unique_a' | 'unique_b' -- the right pane's tabs.
 let fileSimTab = 'summary';
-// How All / Matched / Unmatched draw the same rows: as a table or as flow.
-let fileSimView = 'table';     // 'table' | 'graph'
 let fileSimGroupBy = 'auto';   // 'auto' | 'tag' | 'none'
 // Expanded duplicate folds, by key.
 let fileSimOpenFolds = new Set();
@@ -961,7 +953,7 @@ window.collapseAllFileSimNodes = function() {
 function onFileSimFoldChange() {
     renderFileSimTree();
     if (fileSimTab === 'summary') renderFileSimSummary();
-    else renderFileSimRows();
+    else renderFileSimTable();
 }
 
 // ---- Tree rendering ------------------------------------------------------
@@ -1280,7 +1272,7 @@ async function loadFileSimRows(key, prefixes, { reset = false } = {}) {
     if (reset) { st.items = []; st.offset = 0; st.total = 0; st.loaded = false; }
     if (st.loaded && st.items.length >= st.total && st.total > 0) return;
     st.loading = true;
-    renderFileSimRows();
+    renderFileSimTable();
     try {
         const data = await fileSimFetchRows(prefixes, { offset: st.offset });
         st.items = st.items.concat(data.items || []);
@@ -1293,7 +1285,7 @@ async function loadFileSimRows(key, prefixes, { reset = false } = {}) {
     } finally {
         st.loading = false;
     }
-    renderFileSimRows();
+    renderFileSimTable();
 }
 
 window.loadMoreFileSimRows = function(key) {
@@ -1458,7 +1450,7 @@ function fileSimMoreRowHtml(key, st, indent) {
 
 // Groups recurse with the tree: opening a node with children shows its child
 // groups, opening a leaf loads that leaf's functions.
-function fileSimGroupRows(nodes, depth, out) {
+function fileSimGroupRows(nodes, depth, out, acc) {
     nodes.forEach(node => {
         const open = fileSimTreeOpen.has(node.id);
         const hasKids = (node.children || []).length > 0;
@@ -1477,7 +1469,7 @@ function fileSimGroupRows(nodes, depth, out) {
                 </td>
             </tr>`);
         if (!open) return;
-        if (hasKids) { fileSimGroupRows(node.children, depth + 1, out); return; }
+        if (hasKids) { fileSimGroupRows(node.children, depth + 1, out, acc); return; }
 
         const st = fileSimRows[node.id];
         if (!st || (!st.loaded && !st.loading)) {
@@ -1496,6 +1488,7 @@ function fileSimGroupRows(nodes, depth, out) {
         }
         st.items.forEach(row => out.push(fileSimRowHtml(row, depth + 1, node.id)));
         out.push(fileSimMoreRowHtml(node.id, st, 30 + depth * 18));
+        if (acc) { acc.shown += st.items.length; acc.total += st.total || st.items.length; }
     });
 }
 
@@ -1508,12 +1501,12 @@ function renderFileSimTable() {
         renderFileSimHead(colMode);
         thead.dataset.built = colMode;
     }
-    const countEl = document.getElementById('bsim-table-count');
     const scope = fileSimScopeNodes();
     // Auto: a single tag needs no header of its own; several do.
     const grouped = fileSimGroupBy === 'tag'
         || (fileSimGroupBy === 'auto' && scope.length > 1);
     const out = [];
+    const acc = { shown: 0, total: 0 };
 
     if (!grouped) {
         const st = fileSimRowState('');
@@ -1526,180 +1519,21 @@ function renderFileSimTable() {
             st.items.forEach(row => out.push(fileSimRowHtml(row, 0, null)));
             out.push(fileSimMoreRowHtml('', st, 20));
         }
-        if (countEl) countEl.textContent = st.total ? `${st.items.length} of ${st.total} names` : '';
+        acc.shown = st.items.length;
+        acc.total = st.total || st.items.length;
     } else {
-        fileSimGroupRows(scope, 0, out);
-        if (countEl) countEl.textContent = `${scope.length} tag groups`;
+        fileSimGroupRows(scope, 0, out, acc);
+    }
+    const totalEl = document.getElementById('bsim-table-total');
+    if (totalEl) {
+        totalEl.style.display = acc.total ? 'inline-block' : 'none';
+        totalEl.textContent = `${acc.shown.toLocaleString()} / ${acc.total.toLocaleString()}`;
     }
     tbody.innerHTML = out.join('');
     // Same cell selection, arrow/shift navigation and copy as every other table.
     // The constructor is idempotent per table element.
     if (window.TableSelection) new window.TableSelection('bin-sim-table-matched-table');
 }
-
-// ---- The same rows as a graph -------------------------------------------
-// Function to function, no cluster in between: a match is a pair, and routing it
-// through a cluster node said nothing the pair did not already say. The rows are
-// the table's rows, so the tab's state filter and the tree's scope carry over.
-
-function fileSimFuncLabel(fid) {
-    const meta = (binSimDataCache && binSimDataCache.functions_metadata) || {};
-    const m = meta[fid];
-    return (m && m.name) ? m.name : ('@' + String(fid).split(':').pop());
-}
-
-function renderFileSimGraph() {
-    const host = document.getElementById('bsim-fngraph');
-    if (!host) return;
-    const st = fileSimRowState('');
-    if (!st.loaded && !st.loading) loadFileSimRows('', fileSimScopePrefixes());
-    const countEl = document.getElementById('bsim-table-count');
-    if (countEl) countEl.textContent = st.total ? `${st.items.length} of ${st.total} names` : '';
-
-    const msg = (text) => {
-        host.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">${text}</div>`;
-    };
-    if (st.loading && !st.items.length) return msg('Loading…');
-    if (!st.items.length) return msg('No functions match this scope.');
-
-    const data = binSimDataCache || {};
-    const nameA = data.file_metadata_a?.file_name || 'A';
-    const nameB = data.file_metadata_b?.file_name || 'B';
-
-    const nodes = [];
-    const index = new Map();
-    const addNode = (id, name, color, side) => {
-        if (!index.has(id)) {
-            index.set(id, nodes.length);
-            nodes.push({ id, name, color, side });
-        }
-        return index.get(id);
-    };
-    const links = [];
-
-    st.items.forEach(r => {
-        // A folded row stands for every copy of that name, so it flows that thick.
-        const value = r.n_copies || 1;
-        if (r.state === 'matched' && r.func_a && r.func_b) {
-            const sim = r.similarity || 0;
-            const color = `hsl(${sim * 120}, var(--color-s-med), var(--color-l-dim))`;
-            links.push({
-                source: addNode('a_' + r.func_a, fileSimFuncLabel(r.func_a), color, 0),
-                target: addNode('b_' + r.func_b, fileSimFuncLabel(r.func_b), color, 1),
-                value, tip: `${fileSimFuncLabel(r.func_a)} → ${fileSimFuncLabel(r.func_b)}\nSimilarity: ${(sim * 100).toFixed(1)}%${value > 1 ? `\n${value} copies` : ''}`,
-            });
-        } else if (r.state === 'uniq_a' && r.func_id) {
-            links.push({
-                source: addNode('a_' + r.func_id, fileSimFuncLabel(r.func_id), '#f92672', 0),
-                target: addNode('none_b', `No match in ${nameB}`, '#f92672', 1),
-                value, tip: `${fileSimFuncLabel(r.func_id)}\nOnly in ${nameA}`,
-            });
-        } else if (r.state === 'uniq_b' && r.func_id) {
-            links.push({
-                source: addNode('none_a', `No match in ${nameA}`, '#66d9ef', 0),
-                target: addNode('b_' + r.func_id, fileSimFuncLabel(r.func_id), '#66d9ef', 1),
-                value, tip: `${fileSimFuncLabel(r.func_id)}\nOnly in ${nameB}`,
-            });
-        }
-    });
-
-    if (!links.length) return msg('Not enough data for graph');
-
-    host.innerHTML = '';
-    const perSide = [0, 1].map(s => nodes.filter(n => n.side === s).length);
-    const maxNodes = Math.max(...perSide, 6);
-    const width = host.clientWidth || 800;
-    const padding = maxNodes > 40 ? 2 : 8;
-    const height = Math.max(host.clientHeight || 400, maxNodes * (padding + 10) + 40);
-
-    const svg = d3.select(host).append('svg').attr('width', width).attr('height', height);
-    const g = svg.append('g');
-
-    const sankey = d3.sankey()
-        .nodeWidth(14)
-        .nodePadding(padding)
-        .nodeAlign(n => n.side)
-        .extent([[25, 10], [width - 25, height - 10]]);
-
-    let graph;
-    try {
-        graph = sankey({
-            nodes: nodes.map(d => Object.assign({}, d)),
-            links: links.map(d => Object.assign({}, d)),
-        });
-    } catch (e) {
-        console.error('file sim function graph layout failed', e);
-        return msg('Graph layout error');
-    }
-
-    g.append('g').selectAll('path')
-        .data(graph.links)
-        .enter().append('path')
-        .attr('d', d => {
-            const x0 = d.source.x1, x1 = d.target.x0;
-            const x2 = x0 + (x1 - x0) * 0.4, x3 = x0 + (x1 - x0) * 0.6;
-            return `M ${x0},${d.source.y0}
-                    C ${x2},${d.source.y0} ${x3},${d.target.y0} ${x1},${d.target.y0}
-                    L ${x1},${d.target.y1}
-                    C ${x3},${d.target.y1} ${x2},${d.source.y1} ${x0},${d.source.y1}
-                    Z`;
-        })
-        .attr('fill', d => d.target.color || 'var(--text)')
-        .style('fill-opacity', 0.4)
-        .on('mouseenter', function () { d3.select(this).style('fill-opacity', 0.75); })
-        .on('mouseleave', function () { d3.select(this).style('fill-opacity', 0.4); })
-        .append('title')
-        .text(d => d.tip || `${d.source.name}\n  ↓\n${d.target.name}`);
-
-    const node = g.append('g').selectAll('.node')
-        .data(graph.nodes)
-        .enter().append('g')
-        .attr('class', 'node')
-        .attr('transform', d => `translate(${d.x0},${d.y0})`);
-
-    node.append('rect')
-        .attr('height', d => Math.max(1, d.y1 - d.y0))
-        .attr('width', sankey.nodeWidth())
-        .attr('fill', d => d.color)
-        .attr('stroke', 'var(--border)')
-        .attr('stroke-width', '0.5px')
-        .attr('opacity', 0.6)
-        .append('title')
-        .text(d => d.name);
-
-    node.append('text')
-        .attr('x', d => (d.side === 1 ? -6 : 6 + sankey.nodeWidth()))
-        .attr('y', d => (d.y1 - d.y0) / 2)
-        .attr('dy', '0.35em')
-        .attr('text-anchor', d => (d.side === 1 ? 'end' : 'start'))
-        .text(d => d.name)
-        .attr('fill', 'var(--text)')
-        .attr('font-size', '9px')
-        .attr('opacity', 0.75)
-        .attr('font-family', 'sans-serif');
-}
-
-// Table or graph: same rows, so anything that changes them renders through here
-// instead of each caller knowing which of the two is on screen.
-function renderFileSimRows() {
-    if (fileSimView === 'graph') renderFileSimGraph();
-    else renderFileSimTable();
-}
-
-// The graph draws the flat scope, so grouping controls have nothing to say in it.
-// ponytail: graph pages with the table (100 names); Load more is the table's.
-window.setFileSimView = function(view) {
-    fileSimView = view;
-    ['table', 'graph'].forEach(v => {
-        const btn = document.getElementById(`bsim-view-btn-${v}`);
-        if (btn) btn.classList.toggle('active', v === view);
-        const card = document.getElementById(v === 'table' ? 'bsim-table-card' : 'bsim-fngraph-card');
-        if (card) card.style.display = (v === view) ? 'flex' : 'none';
-    });
-    const ctl = document.getElementById('bsim-table-controls');
-    if (ctl) ctl.style.display = view === 'graph' ? 'none' : 'flex';
-    renderFileSimRows();
-};
 
 // ---- Entry point ---------------------------------------------------------
 
@@ -1712,7 +1546,7 @@ function renderFileSim(data) {
     renderFileSimTree();
     renderFileSimChips();
     if (fileSimTab === 'summary') renderFileSimSummary();
-    else renderFileSimRows();
+    else renderFileSimTable();
 }
 
 // ---- File sim tab: sankey view ------------------------------------------
@@ -2482,7 +2316,7 @@ function dropFileSimRowCache() {
 // that were in a group may no longer belong there.
 function reloadFileSimRows() {
     dropFileSimRowCache();
-    renderFileSimRows();
+    renderFileSimTable();
 }
 
 function buildFuncObj(fid) {
@@ -3199,7 +3033,7 @@ window.refreshFunctionRow = async function(funcId) {
                 note_owners: f.note_owners || [],
                 note_count: f.note_count || 0
             };
-            renderFileSimRows();
+            renderFileSimTable();
         }
     } catch (e) {
         console.error("Failed to refresh function note badge in comparison view:", e);

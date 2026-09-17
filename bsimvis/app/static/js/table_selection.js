@@ -595,6 +595,17 @@ class TableSelection {
         this.updateVisuals();
     }
 
+    /**
+     * Where this table's live selection stats go. A view that mounts its own
+     * table with its own footer marks the two as one `.table-scope`; tables
+     * that have no footer of their own fall back to the dashboard's.
+     */
+    selStatsEl() {
+        const scope = this.table.closest('.table-scope');
+        return (scope && scope.querySelector('.selection-stats'))
+            || document.getElementById('selection-stats');
+    }
+
     updateVisuals() {
         // Clear old classes
         this.tbody.querySelectorAll('.selected-cell, .focused-cell, .selected-row, .sel-t, .sel-b, .sel-l, .sel-r').forEach(el => {
@@ -602,7 +613,7 @@ class TableSelection {
         });
 
         if (this.selectedCells.size === 0) {
-            const selStats = document.getElementById('selection-stats');
+            const selStats = this.selStatsEl();
             if (selStats) selStats.style.display = 'none';
             return;
         }
@@ -648,18 +659,12 @@ class TableSelection {
         // replaces it. See refreshAfterRender.
         this.focusKey = this.rowKey(focusRow);
 
-        // Update the footer selection stats
-        const selStats = document.getElementById('selection-stats');
+        // Update the footer selection stats. The bounding box is the one this
+        // method already measured above.
+        const selStats = this.selStatsEl();
         if (selStats) {
-            // Compute the bounding box of the selection
-            let minRs = Infinity, maxRs = -Infinity, minCs = Infinity, maxCs = -Infinity;
-            this.selectedCells.forEach(coord => {
-                const [r, c] = coord.split(':').map(Number);
-                if (r < minRs) minRs = r; if (r > maxRs) maxRs = r;
-                if (c < minCs) minCs = c; if (c > maxCs) maxCs = c;
-            });
-            const rows = maxRs - minRs + 1;
-            const cols = maxCs - minCs + 1;
+            const rows = maxR - minR + 1;
+            const cols = maxC - minC + 1;
             const cells = this.selectedCells.size;
             selStats.style.display = 'inline-block';
             selStats.textContent = `${rows} row${rows !== 1 ? 's' : ''} × ${cols} col${cols !== 1 ? 's' : ''} — ${cells.toLocaleString()} cell${cells !== 1 ? 's' : ''}`;

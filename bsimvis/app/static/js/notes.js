@@ -1432,12 +1432,15 @@ window.showNoteTooltip = async function(id, modeArg, e) {
             display: 'none',
             zIndex: '20000',
             pointerEvents: 'none',
-            minWidth: '320px',
-            maxWidth: '480px',
-            maxHeight: '450px',
+            minWidth: '350px',
+            maxWidth: '550px',
+            maxHeight: '500px',
             overflow: 'hidden',
             flexDirection: 'column',
-            gap: '10px'
+            gap: '0',
+            borderRadius: '10px',
+            boxShadow: '0 10px 40px rgba(0,0,0,0.5), 0 0 0 1px var(--border)',
+            background: 'var(--card-bg)'
         });
         document.body.appendChild(tooltip);
     }
@@ -1447,9 +1450,11 @@ window.showNoteTooltip = async function(id, modeArg, e) {
     if (window.moveCodePreview) window.moveCodePreview(e);
 
     tooltip.innerHTML = `
-        <div class="preview-card" style="max-height:450px; display:flex; flex-direction:column;">
-            <div class="preview-header">Notes: ${escapeHtml(previewNoteLabel(id, mode))}</div>
-            <div class="note-preview-scroll" style="flex:1; overflow-y:auto; padding: 10px;">
+        <div class="preview-card" style="max-height:500px; display:flex; flex-direction:column; border:none; background:transparent;">
+            <div class="preview-header" style="background: var(--hover); padding: 12px 16px; border-bottom: 1px solid var(--border); font-weight: 600;">
+                <i class="fa-solid fa-comments" style="color: var(--note-accent); margin-right: 8px;"></i> Notes: ${escapeHtml(previewNoteLabel(id, mode))}
+            </div>
+            <div class="note-preview-scroll" style="flex:1; overflow:auto; padding: 16px;">
                 <div style="text-align: center; color: var(--subtle); font-style: italic; font-size: 0.8rem;">Loading notes...</div>
             </div>
         </div>
@@ -1472,13 +1477,14 @@ window.showNoteTooltip = async function(id, modeArg, e) {
                 scrollContainer.innerHTML = notes.map(note => {
                     const isAI = note.owner === 'llm' || note.owner === 'AI';
                     const renderedText = renderNoteMarkdown(note.text);
+                    const noteAccent = isAI ? 'var(--info)' : 'var(--note-accent)';
                     return `
-                        <div style="background: var(--meta-bg); border-radius: 6px; padding: 12px; margin-bottom: 8px; border-left: 4px solid ${isAI ? 'var(--info)' : 'var(--note-accent)'}; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                                <span style="font-size: 0.65rem; font-weight: bold; color: ${isAI ? 'var(--info)' : 'var(--note-accent)'}; text-transform: uppercase;">${escapeHtml(note.owner)}</span>
+                        <div style="background: var(--meta-bg); border-radius: 6px; padding: 12px; margin-bottom: 12px; border-left: 4px solid ${noteAccent}; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <span style="font-size: 0.65rem; font-weight: bold; color: ${noteAccent}; text-transform: uppercase;">${escapeHtml(note.owner)}</span>
                                 <span style="font-size: 0.55rem; color: var(--subtle);">${escapeHtml(new Date(note.timestamp).toLocaleString())}</span>
                             </div>
-                            <div class="note-markdown-body" style="font-size: 0.75rem;">${renderedText}</div>
+                            <div class="note-markdown-body" style="font-size: 0.8rem; overflow-wrap: anywhere; word-wrap: break-word;">${renderedText}</div>
                         </div>
                     `;
                 }).join('');

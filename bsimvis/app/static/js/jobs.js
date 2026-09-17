@@ -48,8 +48,6 @@ function getJobTargetLink(job) {
         } catch(e) {}
     }
     
-    const displayTarget = rawTarget.length > 20 ? rawTarget.slice(0, 8) + '...' + rawTarget.slice(-8) : rawTarget;
-    
     if (isMd5) {
         const ctx = parseCollectionContext(collectionStr);
         const activePool = ctx.pool || (window.getRoutingState ? window.getRoutingState().pool : null);
@@ -57,14 +55,14 @@ function getJobTargetLink(job) {
         if (activePool) {
             const prefix = window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools';
             const url = `/${prefix}/${encodeURIComponent(activePool)}/collections/${encodeURIComponent(ctx.collection)}/files/${encodeURIComponent(rawTarget)}`;
-            return `<a onclick="window.Nav && window.Nav.openPath(${escapeAttr(jsString(url))});" class="job-target-link" title="View File in Pool ${escapeAttr(activePool)}"><i class="fa-solid fa-file-code"></i> <code class="job-target-text">${escapeHtml(displayTarget)}</code></a>`;
+            return `<a onclick="window.Nav && window.Nav.openPath(${escapeAttr(jsString(url))});" class="job-target-link" title="View File in Pool ${escapeAttr(activePool)}"><i class="fa-solid fa-file-code"></i> <code class="job-target-text" style="max-width: 150px; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;">${escapeHtml(rawTarget)}</code></a>`;
         } else if (ctx.collection) {
             const url = `/collections/${encodeURIComponent(ctx.collection)}/files/${encodeURIComponent(rawTarget)}`;
-            return `<a onclick="window.Nav && window.Nav.openPath(${escapeAttr(jsString(url))});" class="job-target-link" title="View File Details"><i class="fa-solid fa-file-code"></i> <code class="job-target-text">${escapeHtml(displayTarget)}</code></a>`;
+            return `<a onclick="window.Nav && window.Nav.openPath(${escapeAttr(jsString(url))});" class="job-target-link" title="View File Details"><i class="fa-solid fa-file-code"></i> <code class="job-target-text" style="max-width: 150px; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;">${escapeHtml(rawTarget)}</code></a>`;
         }
     }
     
-    return `<code class="job-target-text" title="${escapeAttr(rawTarget)}">${escapeHtml(displayTarget)}</code>`;
+    return `<code class="job-target-text" title="${escapeAttr(rawTarget)}" style="max-width: 150px; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;">${escapeHtml(rawTarget)}</code>`;
 }
 
 // Job Type to FontAwesome Icon mapping

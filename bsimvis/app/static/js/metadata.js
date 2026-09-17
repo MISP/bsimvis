@@ -222,7 +222,14 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
             </div>
             
             <div class="meta-header-file-row" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; padding-top: 6px; border-top: 1px solid var(--border); color: #ddd; margin-top: 6px;">
-                <div style="display: flex; gap: 12px; align-items: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 80%;">
+                <div style="display: flex; gap: 12px; align-items: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 80%;"
+                     data-entity-data='${escapeAttr(JSON.stringify({
+                        type: "file",
+                        file_md5: fileMd5,
+                        file_name: m["file_name"] || "N/A",
+                        collection: collection
+                     }))}'
+                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
                     <span class="mono" style="color: var(--accent); font-size: 1rem; font-family: 'JetBrains Mono', 'Consolas', monospace;"># ${escapeHtml(fileMd5)}</span>
                     <span><b style="font-size: 1rem; color: var(--accent); font-family: 'Inter', sans-serif; cursor: pointer;" onclick="openFileDetails(${escapeAttr(jsString(collection))}, ${escapeAttr(jsString(fileMd5))}, ${escapeAttr(jsString(m['file_name'] || ''))}, event)">${escapeHtml(m['file_name'] || 'N/A')}</b></span>
                     <div style="display: flex; align-items: center; overflow: hidden; margin-left: 5px;">

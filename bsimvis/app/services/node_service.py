@@ -62,6 +62,11 @@ def get_enriched_nodes(collection, md5, addr, limit=None):
                         "namespace": meta.get("namespace"),
                         "return_type": meta.get("return_type"),
                         "parameters": meta.get("parameters"),
+                        "tags": meta.get("tags", []),
+                        "user_tags": meta.get("user_tags", []),
+                        "note_owners": meta.get("note_owners", []),
+                        "note_count": meta.get("note_count", 0),
+                        "bsim_features_count": meta.get("bsim_features_count", 0),
                         "is_external": False,
                     }
 

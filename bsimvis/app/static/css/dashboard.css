@@ -961,6 +961,22 @@ body.resizing {
 .bsim-tab:hover { color: var(--text); background: var(--hover); }
 .bsim-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
+.call-sim-threshold {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    background: var(--card-bg);
+}
+.call-sim-threshold strong { display: block; font-size: 0.8rem; color: var(--text); }
+.call-sim-threshold strong span { color: var(--accent); font-family: 'Consolas', monospace; }
+.call-sim-threshold p { margin: 3px 0 0; color: var(--dim); font-size: 0.72rem; }
+.call-sim-threshold input { width: min(190px, 40%); }
+
 /* View Toggle Switch */
 .view-toggle {
     display: flex;

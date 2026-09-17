@@ -65,7 +65,7 @@ window.DiffView = {
             <div style="display:flex; flex-direction:column; flex:1; overflow:hidden; height:100%; width:100%;">
                 <div id="meta-container" style="display:flex; flex-direction:row; gap:10px; margin-bottom:5px; flex-shrink:0;"></div>
                 
-                <div id="similarity-bar" style="display:none; padding:10px; border-bottom:1px solid var(--border); font-size:0.9rem; align-items:center;">
+                <div id="similarity-bar" style="display:none; padding:10px 10px 0; font-size:0.9rem; flex-direction:column; align-items:stretch;">
                     <div class="sim-info" style="display:flex; width:100%; justify-content:space-between; align-items:center;">
                         <div style="display:flex; align-items:center; gap:10px;">
                             <span class="sim-label" style="font-weight:bold;">Similarity:</span>
@@ -75,19 +75,16 @@ window.DiffView = {
                                 <option value="jaccard">Jaccard</option>
                                 <option value="milvus_sparse">Milvus Sparse</option>
                             </select>
-                            <div style="display:flex; align-items:center; gap:5px; margin-left:15px; border-left:1px solid var(--border); padding-left:15px;">
-                                <button id="btn-diff-mode-code" class="top-action-btn active" onclick="switchDiffMode('code')" style="font-size:0.8rem; padding:3px 8px;">
-                                    <i class="fa-solid fa-code"></i> Code Diff
-                                </button>
-                                <button id="btn-diff-mode-graph" class="top-action-btn" onclick="switchDiffMode('graph')" style="font-size:0.8rem; padding:3px 8px;">
-                                    <i class="fa-solid fa-diagram-project"></i> Call Graph Diff
-                                </button>
-                            </div>
                         </div>
                         <div style="display:flex; align-items:center; gap:15px;">
                             <div id="diff-queue-status" style="display:flex; align-items:center; gap:10px;"></div>
                             <div id="similarity-tags-container" style="display:flex; align-items:center;"></div>
                         </div>
+                    </div>
+                    <div class="bsim-tabbar" id="diff-view-tabs" style="margin:10px 0 0;">
+                        <button id="btn-diff-mode-code" class="bsim-tab active" onclick="switchDiffMode('code')"><i class="fa-solid fa-code"></i> Code Diff</button>
+                        <button id="btn-diff-mode-graph" class="bsim-tab" onclick="switchDiffMode('graph')"><i class="fa-solid fa-diagram-project"></i> Call Graph Diff</button>
+                        <button id="btn-diff-mode-similarity" class="bsim-tab" onclick="switchDiffMode('similarity')"><i class="fa-solid fa-link"></i> Call Graph Similarity</button>
                     </div>
                 </div>
 
@@ -199,6 +196,8 @@ window.DiffView = {
                         </div>
                     </div>
                 </div>
+
+                <div id="bsim-call-sim-wrap" style="display:none; flex:1; overflow:auto; padding:16px;"></div>
 
                 <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:var(--window-bg); padding:10px; border-radius:4px; border:1px solid var(--accent); color:var(--text); font-size:0.8rem; pointer-events:none;"></div>
             </div>
@@ -1290,21 +1289,123 @@ window.DiffView = {
     switchDiffMode(mode) {
         const codeBtn = document.getElementById('btn-diff-mode-code');
         const graphBtn = document.getElementById('btn-diff-mode-graph');
+        const simBtn = document.getElementById('btn-diff-mode-similarity');
         const scrollEl = document.getElementById('bsim-scroll');
         const graphWrap = document.getElementById('bsim-graph-diff-wrap');
+        const simWrap = document.getElementById('bsim-call-sim-wrap');
+        [codeBtn, graphBtn, simBtn].forEach(btn => btn && btn.classList.remove('active'));
+        if (scrollEl) scrollEl.style.display = mode === 'code' ? 'flex' : 'none';
+        if (graphWrap) graphWrap.style.display = mode === 'graph' ? 'flex' : 'none';
+        if (simWrap) simWrap.style.display = mode === 'similarity' ? 'block' : 'none';
+        const active = mode === 'graph' ? graphBtn : mode === 'similarity' ? simBtn : codeBtn;
+        if (active) active.classList.add('active');
+        if (mode === 'graph') this.loadDiffCallGraphs();
+        if (mode === 'similarity') this.loadCallGraphSimilarity();
+    },
 
-        if (mode === 'graph') {
-            if (codeBtn) codeBtn.classList.remove('active');
-            if (graphBtn) graphBtn.classList.add('active');
-            if (scrollEl) scrollEl.style.display = 'none';
-            if (graphWrap) graphWrap.style.display = 'flex';
-            this.loadDiffCallGraphs();
-        } else {
-            if (graphBtn) graphBtn.classList.remove('active');
-            if (codeBtn) codeBtn.classList.add('active');
-            if (graphWrap) graphWrap.style.display = 'none';
-            if (scrollEl) scrollEl.style.display = 'flex';
+    async loadCallGraphSimilarity(minScore = 0.5) {
+        const wrap = document.getElementById('bsim-call-sim-wrap');
+        const p = this._getCurrentP() || this._parsePathUrl();
+        if (!wrap || !p || !p.addr_a || !p.addr_b) return;
+        wrap.innerHTML = '<div class="dim"><i class="fa-solid fa-spinner fa-spin"></i> Matching direct callers and callees…</div>';
+        const q = new URLSearchParams({ collection_a: p.collection_a, collection_b: p.collection_b, md5_a: p.md5_a, md5_b: p.md5_b, addr_a: p.addr_a, addr_b: p.addr_b, min_score: minScore });
+        if (p.pool) q.set('pool', p.pool);
+        try {
+            const res = await fetch(`/api/function/call_graph_similarity?${q}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Could not match call graph');
+            this._callSimData = data;
+            this._callSimFilter = this._callSimFilter || 'all';
+            this.renderCallGraphSimilarity();
+        } catch (err) {
+            wrap.innerHTML = `<div style="color:#f92672;">${escapeHtml(err.message)}</div>`;
         }
+    },
+
+    renderCallGraphSimilarity() {
+        const wrap = document.getElementById('bsim-call-sim-wrap');
+        const data = this._callSimData;
+        if (!wrap || !data) return;
+        const filter = this._callSimFilter || 'all';
+        const rows = [];
+        for (const role of ['callers', 'callees']) {
+            const label = role === 'callers' ? 'Caller' : 'Callee';
+            for (const row of data[role].matched) rows.push({ role: label, state: 'matched', ...row });
+            for (const node of data[role].unique_to_a) rows.push({ role: label, state: 'unique_a', func_a: node });
+            for (const node of data[role].unique_to_b) rows.push({ role: label, state: 'unique_b', func_b: node });
+        }
+        const visible = rows.filter(row => filter === 'all' || (filter === 'unmatched' ? row.state !== 'matched' : row.state === filter));
+        const button = (id, label, count) => `<button class="bsim-tab ${filter === id ? 'active' : ''}" onclick="DiffView.setCallSimFilter('${id}')">${label} (${count})</button>`;
+        const funcCell = item => {
+            if (!item) return '';
+            if (item.is_external || !window.EntityRenderer) {
+                return `<div class="bsim-func-cell"><span>${escapeHtml(item.name || item.id)}</span><span class="mono dim" style="font-size:0.65rem;">@ ${escapeHtml(item.entrypoint || item.id)}</span></div>`;
+            }
+            const entity = {
+                function_id: item.id,
+                function_name: item.name,
+                collection: item.id.split(':func:')[0],
+                file_md5: item.file_md5,
+                entrypoint_address: item.entrypoint,
+                namespace: item.namespace,
+                return_type: item.return_type,
+                parameters: item.parameters || [],
+                bsim_features_count: item.bsim_features_count || 0,
+                tags: item.tags || [],
+                user_tags: item.user_tags || [],
+                note_owners: item.note_owners || [],
+                note_count: item.note_count || 0,
+            };
+            return `<div class="bsim-func-cell" style="display:flex; flex-direction:column; gap:2px; min-width:0; text-align:left; width:100%;">
+                ${EntityRenderer.renderFunction(entity, { isTable: true })}
+                <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                    <span class="mono dim" style="font-size:0.65rem;">@ ${escapeHtml(item.entrypoint || '')}</span>
+                    ${EntityRenderer.renderTag('function', item.id, entity.tags, entity.user_tags, { maxTags: 4 })}
+                </div>
+            </div>`;
+        };
+        const rowHtml = row => {
+            const simCell = row.similarity == null ? '' : (() => {
+                const a = row.func_a;
+                const b = row.func_b;
+                const score = (row.similarity * 100).toFixed(1) + '%';
+                if (!a || !b || a.is_external || b.is_external || !window.buildDiffUrl) {
+                    return `<span style="font-size:1.05rem; font-weight:bold; color:var(--success);">${score}</span>`;
+                }
+                const url = buildDiffUrl(a.id, b.id);
+                return `<span style="font-size:1.05rem; font-weight:bold; color:var(--success); cursor:pointer;"
+                    onmouseenter="showDiffPreview(${escapeAttr(jsString(a.id))}, ${escapeAttr(jsString(a.name || ''))}, ${escapeAttr(jsString(b.id))}, ${escapeAttr(jsString(b.name || ''))}, ${Number(row.similarity) || 0}, event)"
+                    onmousemove="moveCodePreview(event)" onmouseleave="hideDiffPreview(event)"
+                    onclick="Nav.openPath(${escapeAttr(jsString(url))}, event, { title: ${escapeAttr(jsString(`Diff: ${a.name || a.id} vs ${b.name || b.id}`))}, type: 'diff' })">${score}</span>`;
+            })();
+            return `<tr style="background:var(--bg);">
+                <td style="width:88px;"><span class="dim" style="font-family:sans-serif; font-size:0.72rem; text-transform:uppercase;">${row.role}</span></td>
+                <td>${simCell}</td><td>${funcCell(row.func_a)}</td><td>${funcCell(row.func_b)}</td>
+            </tr>`;
+        };
+        const threshold = Math.round((this._callSimMin ?? 0.5) * 100);
+        wrap.innerHTML = `<section class="call-sim-threshold" aria-label="Call graph similarity threshold">
+                <div>
+                    <strong>Minimum similarity <span id="call-sim-threshold-value">${threshold}%</span></strong>
+                    <p id="call-sim-threshold-help">Only direct callers and callees at or above this score are shown.</p>
+                </div>
+                <input id="call-sim-threshold" type="range" min="0" max="100" value="${threshold}" oninput="DiffView.setCallSimThreshold(this.value)" aria-describedby="call-sim-threshold-help">
+            </section>
+            <div class="bsim-tabbar">${button('all', 'All', rows.length)}${button('matched', 'Shared', data.counts.matched)}${button('unique_a', 'Unique to A', data.counts.unique_to_a)}${button('unique_b', 'Unique to B', data.counts.unique_to_b)}${button('unmatched', 'All Unique', data.counts.unique_to_a + data.counts.unique_to_b)}</div>
+            <div class="resizable-card" style="border:1px solid var(--border); border-radius:8px; overflow:auto; min-height:200px;">
+                <table class="bin-sim-mc-table"><thead><tr><th>Role</th><th>Similarity</th><th>Function A</th><th>Function B</th></tr></thead>
+                <tbody>${visible.map(rowHtml).join('') || '<tr><td colspan="4" class="dim">No neighbors at this threshold.</td></tr>'}</tbody></table>
+            </div>`;
+    },
+
+    setCallSimFilter(filter) { this._callSimFilter = filter; this.renderCallGraphSimilarity(); },
+
+    setCallSimThreshold(value) {
+        this._callSimMin = Number(value) / 100;
+        clearTimeout(this._callSimTimer);
+        this._callSimTimer = setTimeout(() => this.loadCallGraphSimilarity(this._callSimMin), 300);
+        const label = document.getElementById('call-sim-threshold-value');
+        if (label) label.textContent = `${value}%`;
     },
 
     async loadDiffCallGraphs() {
@@ -1380,5 +1481,6 @@ window.DiffView = {
         delete window.startComparison;
         delete window.toggleBothDetail;
         delete window.navigateToFunction;
+        clearTimeout(this._callSimTimer);
     }
 };

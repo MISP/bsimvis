@@ -1,4 +1,4 @@
-from flask import request
+from flask import current_app, request
 
 import difflib
 import json
@@ -564,3 +564,98 @@ def render_aligned_diff(
                 )
 
     return rows, left_tips, right_tips
+
+
+def _greedy_call_role(left, right, collection, pool_id, min_score):
+    """Greedily match one direct-neighbor role without changing stored sims."""
+    from bsimvis.app.routes.function_code import get_function_relations
+
+    left_ids = [node["id"] for node in left if not node["id"].startswith("ext:")]
+    right_ids = [node["id"] for node in right if not node["id"].startswith("ext:")]
+    edges = []
+    if left_ids and right_ids:
+        query = {
+            "ids": ",".join(left_ids + right_ids),
+            "collection": collection,
+            "min_score": "0",
+        }
+        if pool_id:
+            query["pool"] = pool_id
+        with current_app.test_request_context(
+            "/api/function/relations", query_string=query
+        ):
+            result = get_function_relations()
+        if isinstance(result, tuple):
+            result = result[0]
+        left_set, right_set = set(left_ids), set(right_ids)
+        for edge in result.get("sim_edges", []):
+            a, b = edge["id1"], edge["id2"]
+            if a in left_set and b in right_set:
+                edges.append((a, b, float(edge["score"])))
+            elif b in left_set and a in right_set:
+                edges.append((b, a, float(edge["score"])))
+
+    # Imported symbols have no feature vector. Exact names are useful evidence.
+    for a in left:
+        if not a["id"].startswith("ext:"):
+            continue
+        for b in right:
+            if b["id"] == a["id"]:
+                edges.append((a["id"], b["id"], 1.0))
+
+    used_left, used_right, matched = set(), set(), []
+    left_by_id = {node["id"]: node for node in left}
+    right_by_id = {node["id"]: node for node in right}
+    for a, b, score in sorted(edges, key=lambda row: (-row[2], row[0], row[1])):
+        if score < min_score or score <= 0 or a in used_left or b in used_right:
+            continue
+        used_left.add(a)
+        used_right.add(b)
+        matched.append(
+            {"func_a": left_by_id[a], "func_b": right_by_id[b], "similarity": score}
+        )
+    return {
+        "matched": matched,
+        "unique_to_a": [node for node in left if node["id"] not in used_left],
+        "unique_to_b": [node for node in right if node["id"] not in used_right],
+    }
+
+
+def call_graph_similarity_api():
+    """Runtime direct caller/callee matching for a function diff."""
+    params, err = parse_diff_params()
+    if err:
+        return {"detail": err}, 400
+    if not params["addr_a"] or not params["addr_b"]:
+        return {"detail": "Both function addresses are required"}, 400
+    try:
+        min_score = max(0.0, min(1.0, float(request.args.get("min_score", 0.5))))
+    except ValueError:
+        return {"detail": "min_score must be a number between 0 and 1"}, 400
+    left = get_enriched_nodes(params["collection_a"], params["md5_a"], params["addr_a"])
+    right = get_enriched_nodes(
+        params["collection_b"], params["md5_b"], params["addr_b"]
+    )
+    callers = _greedy_call_role(
+        left["callers"],
+        right["callers"],
+        params["collection_a"],
+        params["pool"],
+        min_score,
+    )
+    callees = _greedy_call_role(
+        left["callees"],
+        right["callees"],
+        params["collection_a"],
+        params["pool"],
+        min_score,
+    )
+    return {
+        "callers": callers,
+        "callees": callees,
+        "counts": {
+            "matched": len(callers["matched"]) + len(callees["matched"]),
+            "unique_to_a": len(callers["unique_to_a"]) + len(callees["unique_to_a"]),
+            "unique_to_b": len(callers["unique_to_b"]) + len(callees["unique_to_b"]),
+        },
+    }

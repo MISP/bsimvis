@@ -944,14 +944,18 @@ class FileTransfer(Resource):
         api.model(
             "FileTransfer",
             {
-                "source_collection": fields.String(description="Optional source collection"),
+                "source_collection": fields.String(
+                    description="Optional source collection"
+                ),
                 "collection": fields.String(
                     required=True, description="Destination collection"
                 ),
                 "md5s": fields.Raw(description="MD5s in any pasted text or list"),
                 "batch_uuid": fields.String(description="Source batch UUID"),
                 "batch_name": fields.String(description="Destination batch name"),
-                "preview": fields.Boolean(description="List files without queuing them"),
+                "preview": fields.Boolean(
+                    description="List files without queuing them"
+                ),
             },
         )
     )
@@ -1166,6 +1170,27 @@ class FunctionCallGraph(Resource):
         from bsimvis.app.routes.function_code import get_function_call_graph
 
         return get_function_call_graph()
+
+
+@ns_function.route("/call_graph_similarity")
+class FunctionCallGraphSimilarity(Resource):
+    @ns_function.doc(
+        params={
+            "collection_a": "Collection name for side A",
+            "collection_b": "Collection name for side B",
+            "md5_a": "First binary MD5 hash",
+            "md5_b": "Second binary MD5 hash",
+            "addr_a": "Function address on side A",
+            "addr_b": "Function address on side B",
+            "pool": "Pool ID for cross-collection similarity",
+            "min_score": "Runtime minimum similarity (0-1)",
+        }
+    )
+    def get(self):
+        """Greedily matches direct callers and callees at request time."""
+        from bsimvis.app.routes.function_diff import call_graph_similarity_api
+
+        return call_graph_similarity_api()
 
 
 @ns_function.route("/relations")
@@ -2120,7 +2145,9 @@ class BinClusterBuild(Resource):
             {
                 "collection": fields.String(default="main"),
                 "algo": fields.String(default="unweighted_cosine"),
-                "axis": fields.String(default="overall", description="overall, code, library, content"),
+                "axis": fields.String(
+                    default="overall", description="overall, code, library, content"
+                ),
                 "min_cluster_size": fields.Integer(default=2),
                 "min_samples": fields.Integer(default=1),
                 "epsilon": fields.Float(default=0.1),
@@ -2154,7 +2181,9 @@ class BinClusterClear(Resource):
             {
                 "collection": fields.String(default="main"),
                 "algo": fields.String(default="unweighted_cosine"),
-                "axis": fields.String(default="overall", description="overall, code, library, content"),
+                "axis": fields.String(
+                    default="overall", description="overall, code, library, content"
+                ),
             },
         )
     )
@@ -2196,7 +2225,13 @@ class BinClusterList(Resource):
 
 @ns_bin_cluster.route("/tree")
 class BinClusterTree(Resource):
-    @ns_bin_cluster.doc(params={"collection": "Collection name", "algo": "Algorithm", "axis": "Similarity axis"})
+    @ns_bin_cluster.doc(
+        params={
+            "collection": "Collection name",
+            "algo": "Algorithm",
+            "axis": "Similarity axis",
+        }
+    )
     def get(self):
         """Returns the condensed tree for binary clustering."""
         from bsimvis.app.routes.bin_cluster import get_bin_cluster_tree

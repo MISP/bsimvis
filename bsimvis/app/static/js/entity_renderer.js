@@ -182,7 +182,18 @@ window.EntityRenderer = {
             ? (th.dataset.label || th.textContent.replace(/[↑↓↕]/g, '').trim())
             : '';
 
-        const value = (td.innerText || '').trim();
+        let value = '';
+        const valueEl = el.closest('[data-filter-value]');
+        if (valueEl?.dataset?.filterValue) {
+            value = valueEl.dataset.filterValue.trim();
+        } else {
+            const firstChild = td.querySelector('[data-filter-value]');
+            if (firstChild?.dataset?.filterValue) {
+                value = firstChild.dataset.filterValue.trim();
+            } else {
+                value = (td.dataset?.filterValue || td.innerText || '').trim();
+            }
+        }
         if (!value) return null;
 
         const headerTable = table && table.id === 'data-table'

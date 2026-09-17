@@ -91,6 +91,7 @@ function saveColumnWidth(path, label, width) {
  */
 function sizeTableToColumns() {
     const table = document.getElementById('data-table');
+    const headerTable = document.getElementById('header-table');
     const colgroup = document.getElementById('table-colgroup');
     if (!table || !colgroup || !colgroup.children.length) return;
 
@@ -100,12 +101,17 @@ function sizeTableToColumns() {
         if (!w) {
             // Not every column is sized yet; leave the layout to the browser.
             table.style.width = '';
+            if (headerTable) headerTable.style.width = '';
             return;
         }
         total += w;
     }
     table.style.width = total + 'px';
     table.style.minWidth = '100%';
+    if (headerTable) {
+        headerTable.style.width = total + 'px';
+        headerTable.style.minWidth = '100%';
+    }
 }
 
 function resetColumnWidths() {
@@ -127,10 +133,14 @@ function initColumnResize(th, path, label) {
     // Looked up when the drag starts, not now: a render between binding and
     // dragging replaces the <col> elements, and the stale reference is what made
     // a drag move the header while the body stayed put.
-    const currentCol = () => {
+    const getCols = () => {
         const colgroup = document.getElementById('table-colgroup');
+        const headerColgroup = document.getElementById('header-colgroup');
         const thIndex = Array.from(th.parentElement.children).indexOf(th);
-        return colgroup ? colgroup.children[thIndex] : null;
+        return {
+            bodyCol: colgroup ? colgroup.children[thIndex] : null,
+            headerCol: headerColgroup ? headerColgroup.children[thIndex] : null
+        };
     };
 
     let startX, startWidth;
@@ -141,7 +151,7 @@ function initColumnResize(th, path, label) {
 
         startX = e.clientX;
         startWidth = th.getBoundingClientRect().width;
-        const col = currentCol();
+        const { bodyCol, headerCol } = getCols();
 
         document.body.classList.add('resizing');
 
@@ -153,8 +163,8 @@ function initColumnResize(th, path, label) {
         const onMouseMove = (e) => {
             const width = startWidth + (e.clientX - startX);
             if (width > 30) {
-                // One table, one colgroup: the <col> sizes header and cells alike.
-                if (col) col.style.width = width + 'px';
+                if (bodyCol) bodyCol.style.width = width + 'px';
+                if (headerCol) headerCol.style.width = width + 'px';
                 th.style.width = width + 'px';
                 th.style.minWidth = width + 'px';
                 sizeTableToColumns();
@@ -2143,37 +2153,32 @@ function updateUI(viewKey, collection, params, route, force = false) {
     {
         const buildColgroup = () => {
             const colgroup = document.getElementById('table-colgroup');
+            const headerColgroup = document.getElementById('header-colgroup');
             const headerRow = thead.querySelector('tr:first-child');
-            if (!colgroup || !headerRow) return;
+            if (!colgroup || !headerColgroup || !headerRow) return;
 
             const ths = headerRow.querySelectorAll('th');
             colgroup.innerHTML = '';
+            headerColgroup.innerHTML = '';
             ths.forEach(th => {
                 const col = document.createElement('col');
-                // Percent widths resolve to px once, so a route never ends up
-                // mixing units -- a dragged column used to be px while its
-                // neighbours stayed %, and the declared widths stopped summing
-                // to 100%.
-                col.style.width = th.style.width && th.style.width.endsWith('px')
+                const headerCol = document.createElement('col');
+                const w = th.style.width && th.style.width.endsWith('px')
                     ? th.style.width
                     : th.getBoundingClientRect().width + 'px';
-                th.style.width = col.style.width;
+                
+                col.style.width = w;
+                headerCol.style.width = w;
+                th.style.width = w;
+                
                 colgroup.appendChild(col);
+                headerColgroup.appendChild(headerCol);
             });
-            // Measured under whatever layout the route asked for, then pinned:
-            // fixed layout is what makes a <col> width binding, and so what
-            // makes a drag hold. Routes with no declared widths keep the widths
-            // auto layout just gave them.
+            
             const table = document.getElementById('data-table');
+            const headerTable = document.getElementById('header-table');
             if (table) table.style.tableLayout = 'fixed';
-
-            // Both header rows are sticky, so the filter row needs to sit at
-            // the label row's height rather than on top of it. Only measurement
-            // can supply that number; the CSS reads it back as --thead-labels-h.
-            if (table) {
-                const h = headerRow.getBoundingClientRect().height;
-                table.style.setProperty('--thead-labels-h', `${Math.round(h)}px`);
-            }
+            if (headerTable) headerTable.style.tableLayout = 'fixed';
 
             sizeTableToColumns();
         };
@@ -4188,6 +4193,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (window.self !== window.top) {
         document.body.classList.add('in-iframe');
+    }
+
+    const bodyWrap = document.getElementById('table-body-wrap');
+    const headerWrap = document.getElementById('table-header-wrap');
+    if (bodyWrap && headerWrap) {
+        bodyWrap.addEventListener('scroll', () => {
+            headerWrap.scrollLeft = bodyWrap.scrollLeft;
+        });
     }
 
     // Intercept wheel events for scrolling code/diff preview tooltips while hovering trigger elements

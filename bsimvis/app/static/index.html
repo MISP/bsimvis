@@ -191,15 +191,18 @@
                 <div id="grid-header" style="flex-shrink:0;"></div>
                 <div id="grid-body" style="flex:1; overflow:hidden; display:flex; flex-direction:column; position:relative;">
                     
-                    <!-- One table with a sticky header. Header and body used to
-                         be two tables whose column widths were copied across by
-                         hand every render, which is why a drag moved the header
-                         and left the body behind. -->
+                    <!-- Two tables synced by colgroups. This allows the vertical scrollbar
+                         to stay strictly on the body, without breaking sticky layout. -->
                     <div id="table-wrap" class="table-container">
+                        <div id="table-header-wrap" class="table-header-wrap" style="overflow: hidden; flex-shrink: 0; background: var(--bg);">
+                            <table id="header-table">
+                                <colgroup id="header-colgroup"></colgroup>
+                                <thead id="table-head"></thead>
+                            </table>
+                        </div>
                         <div id="table-body-wrap" class="table-body-wrap">
                             <table id="data-table">
                                 <colgroup id="table-colgroup"></colgroup>
-                                <thead id="table-head"></thead>
                                 <tbody id="table-body"></tbody>
                             </table>
                             <div id="pagination-container"></div>

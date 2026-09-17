@@ -805,11 +805,20 @@ def test_cluster_expansion_and_bin_sim_cluster_filter():
             "bin_cluster_uuid": "no-such-cluster-uuid-0000",
         },
     )
+    unfiltered_total = unfiltered.get("total", 0) if isinstance(unfiltered, dict) else 0
+    # Without this the check below passes on an endpoint that returns nothing at
+    # all, which is exactly the bug it is supposed to catch the other half of.
+    check(
+        "there are pairs to filter in the first place",
+        unfiltered_total > 0,
+        f"unfiltered total={unfiltered_total}",
+    )
     bogus_rows = bogus.get("results") if isinstance(bogus, dict) else None
     check(
         "bin_sim rejects an unknown cluster uuid instead of ignoring it",
-        isinstance(bogus_rows, list) and not bogus_rows,
-        f"total={bogus.get('total') if isinstance(bogus, dict) else bogus}",
+        isinstance(bogus_rows, list) and not bogus_rows and unfiltered_total > 0,
+        f"bogus total={bogus.get('total') if isinstance(bogus, dict) else bogus}, "
+        f"unfiltered total={unfiltered_total}",
     )
 
     clusters = test_endpoint(
@@ -823,6 +832,10 @@ def test_cluster_expansion_and_bin_sim_cluster_filter():
         None,
     )
     if not target:
+        # Two binaries rarely cluster, so this is the normal outcome here. The
+        # positive direction of the filter -- that it returns the *right* pairs,
+        # not merely fewer -- is therefore unproven by this fixture; it only
+        # runs against data with clustered binaries.
         print(f"  {DIM}no clustered binaries in the fixture; filter semantics skipped{RESET}")
         return
 

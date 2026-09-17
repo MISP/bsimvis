@@ -226,9 +226,15 @@ function renderBinarySimilarityView(params) {
                             <span id="bsim-table-count" style="font-size:0.72rem; color:var(--dim); font-family:sans-serif;"></span>
                         </div>
                         <div class="resizable-card" id="bsim-table-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; flex:1; min-height:200px; overflow:hidden;">
-                            <div class="bin-sim-table-scroll" style="flex:1; overflow:auto;">
-                                <table id="bin-sim-table-matched-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-                                    <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;"></thead>
+                            <div class="bin-sim-header-scroll" style="flex-shrink:0; overflow:hidden; scrollbar-gutter:stable;">
+                                <table id="bin-sim-header-table" style="width:100%; border-collapse:collapse; font-size:0.8rem; table-layout:fixed;">
+                                    <colgroup id="bin-sim-header-colgroup"></colgroup>
+                                    <thead style="background:var(--card-bg); z-index:10;"></thead>
+                                </table>
+                            </div>
+                            <div class="bin-sim-table-scroll" style="flex:1; overflow:auto; scrollbar-gutter:stable;">
+                                <table id="bin-sim-table-matched-table" style="width:100%; border-collapse:collapse; font-size:0.8rem; table-layout:fixed;">
+                                    <colgroup id="bin-sim-body-colgroup"></colgroup>
                                     <tbody id="bin-sim-table-matched"></tbody>
                                 </table>
                             </div>
@@ -397,9 +403,29 @@ function renderBinarySimilarityView(params) {
             .drag-handle-v:hover div {
                 background: var(--accent) !important;
             }
+            #bin-sim-header-table th {
+                overflow: hidden;
+            }
+            #bin-sim-header-table tr:first-child th {
+                white-space: nowrap;
+                text-overflow: ellipsis;
+            }
+            #bin-sim-header-table .tag-filter-container {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 3px;
+                max-width: 100%;
+            }
+            #bin-sim-header-table .tag-filter-add {
+                width: 100%;
+                min-width: 0;
+                box-sizing: border-box;
+            }
             #bin-sim-table-matched-table td {
                 position: relative;
                 user-select: text !important;
+                overflow: hidden;
+                word-break: break-word;
             }
         </style>
     `;
@@ -1352,6 +1378,34 @@ function fileSimColMode() {
     return 'both';
 }
 
+// Header and rows are two tables so the vertical scrollbar stays on the body
+// alone. Fixed layout plus one shared colgroup is what keeps their columns in
+// step; the <th> widths below are only what the colgroup is built from.
+function fileSimColgroupHtml(mode) {
+    const widths = mode === 'both'
+        ? [null, '80px', '150px', null, '50px', null, '50px']
+        : [null, '80px', '150px', null, '50px'].slice(1);
+    return widths.map(w => `<col${w ? ` style="width:${w};"` : ''}>`).join('');
+}
+
+function fileSimHeadEl() {
+    return document.querySelector('#bin-sim-header-table thead');
+}
+
+// One place that redraws the header, so the colgroups can never be rebuilt for
+// one column mode and the cells for another.
+function renderFileSimHead(mode) {
+    const thead = fileSimHeadEl();
+    if (!thead) return;
+    thead.innerHTML = fileSimTableHeadHtml(mode);
+    const cols = fileSimColgroupHtml(mode);
+    ['bin-sim-header-colgroup', 'bin-sim-body-colgroup'].forEach(id => {
+        const cg = document.getElementById(id);
+        if (cg) cg.innerHTML = cols;
+    });
+    restoreFileSimFilters();
+}
+
 function fileSimTableHeadHtml(mode) {
     const data = binSimDataCache || {};
     const nameA = data.file_metadata_a?.file_name || 'Binary A';
@@ -1361,9 +1415,9 @@ function fileSimTableHeadHtml(mode) {
     const simTh = `<th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable" onclick="setBinSimSort('matched','similarity')">Similarity <small>${icon('similarity')}</small></th>`;
     const featTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:80px;" class="sortable" onclick="setBinSimSort('matched','avg_features')" title="BSim feature count (A / B for a match)">Features <small>${icon('avg_features')}</small></th>`;
     const clusterTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:150px;" class="sortable" onclick="setBinSimSort('matched','cluster_name')">Cluster <small>${icon('cluster_name')}</small></th>`;
-    const aTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">${escapeHtml(nameA)}</th>`;
+    const aTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" title="${escapeHtml(nameA)}">${escapeHtml(nameA)}</th>`;
     const aNotesTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:50px;">Notes</th>`;
-    const bTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">${escapeHtml(nameB)}</th>`;
+    const bTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" title="${escapeHtml(nameB)}">${escapeHtml(nameB)}</th>`;
     const bNotesTh = `<th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:50px;">Notes</th>`;
 
     const headCells = mode === 'a' ? [featTh, clusterTh, aTh, aNotesTh]
@@ -1448,12 +1502,11 @@ function fileSimGroupRows(nodes, depth, out) {
 function renderFileSimTable() {
     const tbody = document.getElementById('bin-sim-table-matched');
     if (!tbody) return;
-    const thead = tbody.previousElementSibling;
+    const thead = fileSimHeadEl();
     const colMode = fileSimColMode();
     if (thead && thead.dataset.built !== colMode) {
-        thead.innerHTML = fileSimTableHeadHtml(colMode);
+        renderFileSimHead(colMode);
         thead.dataset.built = colMode;
-        restoreFileSimFilters();
     }
     const countEl = document.getElementById('bsim-table-count');
     const scope = fileSimScopeNodes();
@@ -2392,9 +2445,7 @@ function setBinSimSort(table, col) {
     const st = binSimSortState.matched;
     if (st.col === col) st.dir *= -1;
     else { st.col = col; st.dir = -1; }
-    const tbody = document.getElementById('bin-sim-table-matched');
-    const thead = tbody && tbody.previousElementSibling;
-    if (thead) { thead.innerHTML = fileSimTableHeadHtml(); restoreFileSimFilters(); }
+    renderFileSimHead(fileSimColMode());
     reloadFileSimRows();
 }
 
@@ -2594,9 +2645,9 @@ function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
     const simTd = `<td style="padding:10px; padding-left:${12 + depth * 22}px;">${similarityHtml}</td>`;
     const featTd = `<td style="padding:8px; text-align:center; vertical-align:top;">${fileSimFeatCell(m, fA, fB)}</td>`;
     const clusterTd = `<td style="padding:6px; text-align:center; vertical-align:top;">${fileSimClusterCell(m)}</td>`;
-    const aTd = `<td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">${col2}</td>`;
+    const aTd = `<td style="padding:8px; text-align:left; vertical-align:top;">${col2}</td>`;
     const aNoteTd = `<td style="padding:4px; vertical-align:top;">${col3}</td>`;
-    const bTd = `<td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">${col4}</td>`;
+    const bTd = `<td style="padding:8px; text-align:left; vertical-align:top;">${col4}</td>`;
     const bNoteTd = `<td style="padding:4px; vertical-align:top;">${col5}</td>`;
 
     // Column count follows the TABLE's mode, not this row's type: the

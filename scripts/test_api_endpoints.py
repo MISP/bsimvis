@@ -769,6 +769,26 @@ def test_cluster_expansion_and_bin_sim_cluster_filter():
                 f"direct_members={type(rows[0].get('direct_members')).__name__}",
             )
 
+    # --- the file-similarity threshold the UI inherits -----------------------
+
+    cfg = test_endpoint("GET", "/api/index/config")
+    sim_cfg = cfg.get("similarity") if isinstance(cfg, dict) else None
+    check(
+        "config exposes similarity.file_min_score",
+        isinstance(sim_cfg, dict) and "file_min_score" in sim_cfg,
+        f"similarity keys={sorted(sim_cfg) if isinstance(sim_cfg, dict) else sim_cfg}",
+    )
+    # It is a separate number from min_score on purpose: min_score is the gate
+    # function edges are built at, and file pairs have no score gate at build
+    # time. The file views hardcoded 0.9 and hid most of what had been computed.
+    if isinstance(sim_cfg, dict) and "file_min_score" in sim_cfg:
+        check(
+            "file_min_score is a usable threshold",
+            isinstance(sim_cfg["file_min_score"], (int, float))
+            and 0 <= float(sim_cfg["file_min_score"]) <= 1,
+            f"file_min_score={sim_cfg['file_min_score']!r}",
+        )
+
     # --- bin_sim ?bin_cluster_uuid= -----------------------------------------
 
     # An uuid that matches nothing must return nothing, not everything. This is

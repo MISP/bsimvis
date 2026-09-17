@@ -127,7 +127,7 @@ window.FunctionView = {
                                         </tr>
                                         <tr class="filter-row">
                                             <th>
-                                                ${FunctionFilters.rangeCell('fn-nbr-min-score', 'fn-nbr-max-score', { onInput: 'FunctionView.debounceNeighborsSearch()', valueMin: '0.9' })}
+                                                ${FunctionFilters.rangeCell('fn-nbr-min-score', 'fn-nbr-max-score', { onInput: 'FunctionView.debounceNeighborsSearch()', valueMin: (window.defaultMinScore ? window.defaultMinScore() : '0.9') })}
                                             </th>
                                             <th>
                                                 <div style="display:flex; flex-direction:column; gap:2px;">
@@ -323,6 +323,9 @@ window.FunctionView = {
             if (typeof window.showNotes === 'function') {
                 window.showNotes(window.currentFuncId, false);
             }
+
+            // Similar count, so the tab says how much is behind it up front.
+            this.loadNeighborCount();
 
         } catch (err) {
             console.error(err);
@@ -569,6 +572,42 @@ window.FunctionView = {
         this.neighborsDebounceTimer = setTimeout(() => this.searchNeighbors(), 400);
     },
 
+    /**
+     * Fill the Similar tab's count without loading the panel -- limit=0 returns
+     * an empty page and a correct total. The count used to appear only once the
+     * tab had been opened, so the number that tells you whether it is worth
+     * opening was behind opening it.
+     */
+    async loadNeighborCount() {
+        try {
+            const collection = this.params.collection || '';
+            const file_md5 = this.params.md5 || this.params.file_md5;
+            const address = this.params.address;
+            if (!file_md5 || !address) return;
+
+            const qs = new URLSearchParams();
+            qs.set('md5', file_md5);
+            qs.set('address', address);
+            const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+            if (poolId) qs.set('pool', poolId); else qs.set('collection', collection);
+            qs.set('min_score', window.defaultMinScore ? window.defaultMinScore() : '0.9');
+            qs.set('limit', '0');
+            // /api/similarity/search runs a Lua script, and kvrocks serialises
+            // every EVAL behind one global lock, so this must not be a fresh
+            // search on every function view. A count badge can be an hour stale.
+            qs.set('use_cache', 'true');
+
+            const res = await fetch(`/api/similarity/search?${qs.toString()}`);
+            if (!res.ok) return;
+            const data = await res.json();
+
+            const countEl = document.getElementById('fn-nbr-count');
+            const countWrap = document.getElementById('fn-nbr-count-wrap');
+            if (countEl && data.total !== undefined) countEl.innerText = data.total.toLocaleString();
+            if (countWrap) countWrap.style.display = 'inline';
+        } catch (e) { /* the tab still works without its count */ }
+    },
+
     async searchNeighbors() {
         const tbody = document.getElementById('fn-nbr-results-tbody');
         if (!tbody) return;
@@ -587,7 +626,10 @@ window.FunctionView = {
         else qs.set('collection', collection);
 
         qs.set('algo', document.getElementById('fn-nbr-algo')?.value || 'unweighted_cosine');
-        qs.set('min_score', document.getElementById('fn-nbr-min-score')?.value || '0.9');
+        // Function edges really are built at similarity.min_score, so inheriting
+        // it here shows exactly what was computed.
+        qs.set('min_score', document.getElementById('fn-nbr-min-score')?.value
+            || (window.defaultMinScore ? window.defaultMinScore() : '0.9'));
         qs.set('min_cohesion', document.getElementById('fn-nbr-min-cohesion')?.value || '0.5');
         qs.set('min_features', document.getElementById('fn-nbr-min-features')?.value || '0');
 

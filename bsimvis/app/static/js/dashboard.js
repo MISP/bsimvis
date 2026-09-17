@@ -20,6 +20,19 @@ function defaultMinScore() {
     return (v !== undefined && v !== null) ? String(v) : '0.9';
 }
 
+/**
+ * The floor for FILE similarity, which is a different number from the one
+ * above: similarity.min_score is the threshold function edges are built with,
+ * and file pairs are not built with a score gate at all. The file views used
+ * to hardcode 0.9 anyway, hiding most of what had actually been computed.
+ */
+function defaultFileMinScore() {
+    const v = window.APP_CONFIG?.similarity?.file_min_score;
+    return (v !== undefined && v !== null) ? String(v) : '0';
+}
+window.defaultFileMinScore = defaultFileMinScore;
+window.defaultMinScore = defaultMinScore;
+
 let filterDebounceTimer = null;
 function debouncedSearch(searchFn) {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);

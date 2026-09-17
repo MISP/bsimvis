@@ -1138,15 +1138,13 @@ const FOOTER_META_SKIP = new Set([
 // carry two of these at once.
 const SCORE_KEYS = ['score', 'similarity', 'sim', 'distance'];
 
-function describeFilters(params) {
+function listFilters(params) {
     const active = [];
     for (const [k, v] of params.entries()) {
         if (FOOTER_META_SKIP.has(k) || v === '' || v === null) continue;
-        active.push(`${k}=${v}`);
+        active.push(`${k} = ${v}`);
     }
-    if (!active.length) return '';
-    const shown = active.slice(0, 2).join(' · ');
-    return active.length > 2 ? `${shown} +${active.length - 2}` : shown;
+    return active;
 }
 
 function describeRowStats(items) {
@@ -1162,33 +1160,45 @@ function describeRowStats(items) {
 }
 
 function updateFooterMeta(params, data, items, elapsedMs) {
-    const set = (id, text, title) => {
+    const show = (id, text, title) => {
         const el = document.getElementById(id);
         if (!el) return;
-        el.innerText = text || '';
+        const target = document.getElementById(id + '-text') || el;
+        target.innerText = text || '';
         el.title = title || '';
+        el.style.display = text ? 'inline-flex' : 'none';
     };
 
-    const filters = describeFilters(params);
-    set('view-filters', filters ? `· ${filters}` : '', filters ? 'Filters narrowing this count' : '');
+    // Summary in the pill, the actual filters on hover.
+    const filters = listFilters(params);
+    show('view-filters',
+        filters.length ? `${filters.length} filter${filters.length > 1 ? 's' : ''}` : '',
+        filters.length ? `Narrowing this count:\n${filters.join('\n')}` : '');
 
     const rowStats = describeRowStats(items);
-    set('view-rowstats', rowStats ? `· ${rowStats}` : '', rowStats ? 'Across the rows loaded so far' : '');
+    show('view-rowstats', rowStats, rowStats ? 'Across the rows loaded so far' : '');
 
     // data.source is only sent by the similarity endpoints ('cache' or 'pool').
-    const path = data && data.source ? ` · ${data.source}` : '';
-    set('view-latency', `${elapsedMs.toLocaleString()} ms${path}`, 'Time from request to response, measured in the browser');
-
-    window._lastFetchAt = Date.now();
+    window._lastFetch = { at: Date.now(), ms: elapsedMs, source: (data && data.source) || '' };
     updateFooterFreshness();
 }
 
+// One clock pill: what the query cost and how stale it is, detail on hover.
 function updateFooterFreshness() {
-    const el = document.getElementById('view-freshness');
-    if (!el || !window._lastFetchAt) return;
-    const secs = Math.round((Date.now() - window._lastFetchAt) / 1000);
-    el.innerText = secs < 60 ? `updated ${secs}s ago` : `updated ${Math.round(secs / 60)}m ago`;
-    el.title = new Date(window._lastFetchAt).toLocaleTimeString();
+    const pill = document.getElementById('view-perf');
+    const text = document.getElementById('view-perf-text');
+    const f = window._lastFetch;
+    if (!pill || !text || !f) return;
+    const secs = Math.round((Date.now() - f.at) / 1000);
+    const ago = secs < 60 ? `${secs}s` : `${Math.round(secs / 60)}m`;
+    const took = f.ms >= 1000 ? `${(f.ms / 1000).toFixed(1)} s` : `${f.ms} ms`;
+    text.innerText = `${took} · ${ago} ago`;
+    pill.title = [
+        `Query took ${f.ms.toLocaleString()} ms (measured in the browser)`,
+        f.source ? `Served from: ${f.source}` : null,
+        `Loaded at ${new Date(f.at).toLocaleTimeString()}`,
+    ].filter(Boolean).join('\n');
+    pill.style.display = 'inline-flex';
 }
 setInterval(updateFooterFreshness, 5000);
 
@@ -3731,10 +3741,11 @@ window.addEventListener('load', () => {
             const partialEl = document.getElementById('view-partial');
             if (partialEl) {
                 const building = matchingJob && matchingJob.status === 'running';
-                partialEl.innerText = building ? `· partial (${matchingJob.progress}% built)` : '';
+                partialEl.innerText = building ? `partial · ${matchingJob.progress}% built` : '';
                 partialEl.title = building
                     ? `${formatJobType(matchingJob.type)} is still running; counts and scores here are incomplete.`
                     : '';
+                partialEl.style.display = building ? 'inline-flex' : 'none';
             }
 
             window.jobsActive = isActive;

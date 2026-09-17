@@ -238,13 +238,17 @@
                         <span id="view-total" class="table-footer-badge" style="display:none;"></span>
                         <i id="pool-warn-icon" class="fa-solid fa-triangle-exclamation table-footer-warn" style="display:none;" title="Pool Truncated"></i>
                         <i id="limit-warn-icon" class="fa-solid fa-circle-info table-footer-info" style="display:none;" title="Result Limit Reached"></i>
-                        <span id="view-partial" class="table-footer-partial"></span>
-                        <span id="view-filters" class="table-footer-meta"></span>
-                        <span id="view-rowstats" class="table-footer-meta"></span>
+                        <span id="view-partial" class="table-footer-badge is-warn" style="display:none;"></span>
+                        <span id="view-filters" class="table-footer-badge" style="display:none;">
+                            <span id="view-filters-text"></span>
+                            <button type="button" class="table-footer-clear" onclick="clearFilters()" title="Clear all filters">&times;</button>
+                        </span>
+                        <span id="view-rowstats" class="table-footer-badge" style="display:none;"></span>
                     </div>
                     <div class="table-footer-right">
-                        <span id="view-freshness" class="table-footer-meta"></span>
-                        <span id="view-latency" class="table-footer-meta"></span>
+                        <span id="view-perf" class="table-footer-badge" style="display:none;">
+                            <i class="fa-regular fa-clock"></i> <span id="view-perf-text"></span>
+                        </span>
                         <span id="view-job-status" style="display:none; align-items:center; gap:6px;"></span>
                         <div id="diff-queue-status" class="diff-queue-status"></div>
                         <div id="file-diff-queue-status" class="file-diff-queue-status"></div>

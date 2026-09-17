@@ -2627,22 +2627,31 @@ a.home-card:hover,
     color: var(--subtle) !important;
     font-weight: 400 !important;
 }
-/* Secondary footer facts: present but never competing with the count. */
-.table-footer-meta {
-    color: var(--dim);
-    font-size: 0.74rem;
+/* Every footer fact is the same pill; hover carries the detail. */
+.table-footer-badge {
+    align-items: center;
+    gap: 6px;
     white-space: nowrap;
 }
-.table-footer-meta:empty { display: none; }
+.table-footer-badge[title]:not([title=""]) { cursor: help; }
 /* "partial" is a caution, not a fact about the query, so it reads like the
    truncation warnings next to it. */
-.table-footer-partial {
+.table-footer-badge.is-warn {
     color: #ffab2e;
-    font-size: 0.74rem;
-    white-space: nowrap;
-    cursor: help;
+    border-color: color-mix(in srgb, #ffab2e 45%, var(--border));
+    background: color-mix(in srgb, #ffab2e 10%, transparent);
 }
-.table-footer-partial:empty { display: none; }
+.table-footer-clear {
+    background: none;
+    border: none;
+    padding: 0;
+    margin-left: 2px;
+    line-height: 1;
+    font-size: 1rem;
+    color: var(--dim);
+    cursor: pointer;
+}
+.table-footer-clear:hover { color: var(--text); }
 .table-footer-warn { color: #ffab2e; cursor: help; }
 .table-footer-info { color: #60a5fa; cursor: help; }
 .table-footer-sel {

@@ -2694,7 +2694,8 @@ function applyBinSimSearch(scoreType) {
         'max_funcs': 'bsim-max-funcs',
         'min_coverage': 'bsim-min-cov',
         'max_coverage': 'bsim-max-cov',
-        'min_shared': 'bsim-min-shared'
+        'min_shared': 'bsim-min-shared',
+        'bin_cluster_uuid': 'bsim-cluster'
     };
 
     for (const [paramKey, elemId] of Object.entries(inputs)) {
@@ -3108,7 +3109,7 @@ if (typeof window.showFunctionCodeById === 'undefined') {
         if (window.parent && window.parent !== window && window.parent.showFunctionCodeById) {
             window.parent.showFunctionCodeById(id, name, lineHash, e);
         } else {
-            if (window.getSelection && window.getSelection().toString().trim()) {
+            if (window.selectionBlocksClick && window.selectionBlocksClick(e)) {
                 return;
             }
             const parts = id.split(':');

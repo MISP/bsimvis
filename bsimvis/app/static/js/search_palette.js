@@ -166,10 +166,20 @@ window.SearchPalette = (function () {
     }
 
     function onKey(e) {
-        if (e.key === 'Escape') { close(); return; }
-        if (e.key === 'ArrowDown') { e.preventDefault(); if (flat.length) { cursor = (cursor + 1) % flat.length; highlight(); } }
-        else if (e.key === 'ArrowUp') { e.preventDefault(); if (flat.length) { cursor = (cursor - 1 + flat.length) % flat.length; highlight(); } }
-        else if (e.key === 'Enter') { e.preventDefault(); open(cursor, e); }
+        // Keys the palette handles must not reach the page behind it. The table
+        // selection layer listens on window and, seeing an INPUT focused, blurs
+        // it and takes the arrow key for itself -- which left the palette input
+        // blurred after the first ArrowDown, so every key after that (Enter
+        // included) drove the table instead of the palette.
+        //
+        // Only the handled keys are stopped: stopping everything would take
+        // Ctrl+K too, and the palette is closed with the same shortcut.
+        const handled = () => { e.preventDefault(); e.stopPropagation(); };
+
+        if (e.key === 'Escape') { handled(); close(); return; }
+        if (e.key === 'ArrowDown') { handled(); if (flat.length) { cursor = (cursor + 1) % flat.length; highlight(); } }
+        else if (e.key === 'ArrowUp') { handled(); if (flat.length) { cursor = (cursor - 1 + flat.length) % flat.length; highlight(); } }
+        else if (e.key === 'Enter') { handled(); open(cursor, e); }
     }
 
     function open(idx, event) {

@@ -247,6 +247,24 @@ def _collection_page(r, collection, algo, f, is_pool=False):
                 f["md5"],
             )
         )
+    if f["bin_cluster_uuid"]:
+        # Pair docs carry no cluster field -- INDEX_CONFIG["bin_sim"] has none,
+        # and adding one would mean a schema change plus a full reindex, for a
+        # value that is per-axis and per-node-type (up to four uuids a side).
+        # The file index already has bin_cluster_uuid and bin_sim:involves
+        # already maps a file to its pairs, so resolve through those.
+        # ponytail: one SMEMBERS per member file, pipelined -- cost is O(cluster
+        # size), same shape as the tag filters below. Denormalize onto the pair
+        # doc if a cluster ever gets big enough for that to hurt.
+        restrict(
+            _file_tag_union(
+                r,
+                collection,
+                f["bin_cluster_uuid"],
+                fields=("bin_cluster_uuid",),
+                is_pool=is_pool,
+            )
+        )
     for tf in f["file_tag"]:
         restrict(_file_tag_union(r, collection, tf, is_pool=is_pool))
     for word in f["q"].split():
@@ -503,6 +521,18 @@ def _pool_page(r, pool_id, algo, f):
         r, f"global:pool:{pool_id}", algo_marker, f["containers"], is_pool=True
     )
 
+    # Cluster membership resolves once, then the loop below is a set lookup.
+    # None means "no cluster filter", which is not the same as "a cluster with
+    # no members" -- that has to return nothing rather than everything.
+    cluster_members = None
+    if f["bin_cluster_uuid"]:
+        cluster_members = _tagged_files(
+            r,
+            f"global:pool:{pool_id}",
+            f["bin_cluster_uuid"],
+            fields=("bin_cluster_uuid",),
+        )
+
     light_docs = []
     unique_md5s = set()
     for sid in candidates:
@@ -605,6 +635,10 @@ def _pool_page(r, pool_id, algo, f):
         ):
             continue
         if f["md5"] and f["md5"] not in m_a.lower() and f["md5"] not in m_b.lower():
+            continue
+        if cluster_members is not None and not (
+            (coll_a, m_a) in cluster_members or (coll_b, m_b) in cluster_members
+        ):
             continue
         if f["q"]:
             hay = " ".join([name_a, name_b, m_a, m_b] + tags_a + tags_b).lower()
@@ -741,6 +775,7 @@ def search_bin_sims():
             "arch": request.args.get("arch", "").strip().lower(),
             "md5": request.args.get("md5", "").strip().lower(),
             "file_name": request.args.get("file_name", "").strip().lower(),
+            "bin_cluster_uuid": request.args.get("bin_cluster_uuid", "").strip().lower(),
             "q": request.args.get("q", "").strip().lower(),
             "file_tag": tags("file_tag"),
             "exclude_file_tag": tags("exclude_file_tag"),

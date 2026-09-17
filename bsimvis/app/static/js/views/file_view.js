@@ -277,10 +277,10 @@ window.FileView = {
                                     </tr>
                                     <tr class="filter-row">
                                         <th>
-                                            ${FunctionFilters.rangeCell('nbr-min-score', 'nbr-max-score', { onInput: 'FileView.debounceNeighborsSearch()', valueMin: '0.9' })}
+                                            ${FunctionFilters.rangeCell('nbr-min-score', 'nbr-max-score', { onInput: 'FileView.debounceNeighborsSearch()', valueMin: (window.defaultFileMinScore ? window.defaultFileMinScore() : '0') })}
                                         </th>
                                         <th><input type="text" id="nbr-file-name" placeholder="File Name..." style="font-size:0.65rem; width:100%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()"></th>
-                                        <th></th>
+                                        <th><input type="text" id="nbr-cluster" placeholder="Cluster UUID..." style="font-size:0.6rem; width:100%; box-sizing:border-box; font-family:monospace;" oninput="FileView.debounceNeighborsSearch()"></th>
                                         <th><input type="text" id="nbr-arch" placeholder="Arch..." style="font-size:0.6rem; width:100%; box-sizing:border-box;" oninput="FileView.debounceNeighborsSearch()"></th>
                                         <th>
                                             <div style="display:flex; align-items:center; gap:2px;">
@@ -606,7 +606,10 @@ window.FileView = {
                         const stability = cm.avg_stability || 0;
                         const features = cm.avg_features || 0;
                         
-                        const clusterUrl = Nav.buildUIUrl(collection, ['files']) + '?bin_cluster_uuid=' + encodeURIComponent(cm.cluster_uuid);
+                        // The chip names the cluster, so it opens the cluster.
+                        // openClusterFiles() below is still the way to the
+                        // filtered file list.
+                        const clusterUrl = Nav.buildUIUrl(collection, ['files', 'clusters', cm.cluster_uuid]);
 
                         chipsHtml += `
                             <a href="${clusterUrl}" onclick="Nav.openPath('${clusterUrl}', event)" class="cluster-chip" 
@@ -678,6 +681,10 @@ window.FileView = {
 
             // Silently fetch functions so they're ready when switching tabs
             this.loadFunctionsTable();
+
+            // And the Similar count, so the tab says how much is behind it
+            // before you click it.
+            this.loadNeighborCount(collection, file_md5);
 
             // Apply tab from URL hash
             this.applyTabFromHash();
@@ -915,6 +922,36 @@ window.FileView = {
         });
     },
 
+    /**
+     * Fill the Similar tab's count without loading the panel.
+     *
+     * limit=0 returns an empty page and a correct total -- /api/bin_sim/search
+     * computes it independently of the page (a ZCARD on the unfiltered path) --
+     * which is the same trick refreshNeighborPillCounts already uses. The count
+     * used to appear only after the tab had been opened once, so the one number
+     * that tells you whether opening it is worth it was behind opening it.
+     */
+    async loadNeighborCount(collection, file_md5) {
+        try {
+            const qs = new URLSearchParams();
+            qs.set('md5', file_md5);
+            const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+            if (poolId) qs.set('pool', poolId); else qs.set('collection', collection);
+            qs.set('min_score', window.defaultFileMinScore ? window.defaultFileMinScore() : '0');
+            qs.set('limit', '0');
+
+            const res = await fetch(`/api/bin_sim/search?${qs.toString()}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            if (!this.container) return;   // view was destroyed mid-flight
+
+            const countEl = document.getElementById('nbr-count');
+            const countWrap = document.getElementById('nbr-count-wrap');
+            if (countEl && data.total !== undefined) countEl.innerText = data.total.toLocaleString();
+            if (countWrap) countWrap.style.display = 'inline';
+        } catch (e) { /* the tab still works without its count */ }
+    },
+
     async loadNeighborsPanel() {
         if (this.neighborsLoaded) return;
         this.neighborsLoaded = true;
@@ -950,7 +987,8 @@ window.FileView = {
         else qs.set('collection', collection);
 
         qs.set('sort', document.getElementById('nbr-score-type')?.value || 'score');
-        qs.set('min_score', document.getElementById('nbr-min-score')?.value || '0.9');
+        qs.set('min_score', document.getElementById('nbr-min-score')?.value
+            || (window.defaultFileMinScore ? window.defaultFileMinScore() : '0'));
 
         const setIfVal = (id, key) => {
             const v = document.getElementById(id)?.value;
@@ -965,6 +1003,7 @@ window.FileView = {
         setIfVal('nbr-min-cov', 'min_coverage');
         setIfVal('nbr-max-cov', 'max_coverage');
         setIfVal('nbr-min-shared', 'min_shared');
+        setIfVal('nbr-cluster', 'bin_cluster_uuid');
         qs.set('limit', document.getElementById('nbr-limit')?.value || '50');
 
         const tagList = (id) => (document.getElementById(id)?.value || '').split(',').map(s => s.trim()).filter(Boolean);

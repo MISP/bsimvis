@@ -280,7 +280,9 @@ window.SearchView = {
                 data-entity-data='${escapeAttr(JSON.stringify(f))}'
                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                 <td style="padding:8px 15px; min-width:260px; max-width:420px;">${window.EntityRenderer ? window.EntityRenderer.renderFunction(f) : `<code>${escapeHtml(r.func_id)}</code>`}</td>
-                <td style="padding:8px 15px; white-space:nowrap; font-family:monospace; font-size:0.75rem; color:var(--dim);" title="${escapeAttr(r.file_md5 || '')}">${escapeHtml((r.file_md5 || '').slice(0, 12))}${r.file_md5 ? `<button class="btn-copy" title="Copy MD5" onclick="copyToClipboard(${escapeAttr(jsString(r.file_md5))}, this)"><i class="fa-regular fa-copy"></i></button>` : ''}</td>
+                <td style="padding:8px 15px; white-space:nowrap; font-family:monospace; font-size:0.75rem; color:var(--dim);" title="${escapeAttr(r.file_md5 || '')}">${r.file_md5 && window.EntityRenderer
+                    ? window.EntityRenderer.renderMd5(r.file_md5, { collection: String(r.func_id || '').split(':')[0] }) + `<button class="btn-copy" title="Copy MD5" onclick="copyToClipboard(${escapeAttr(jsString(r.file_md5))}, this)"><i class="fa-regular fa-copy"></i></button>`
+                    : escapeHtml((r.file_md5 || '').slice(0, 12))}</td>
                 <td style="padding:8px 15px; min-width:140px; max-width:220px; overflow:hidden;">${tagsHtml}</td>
                 <td style="padding:8px 15px; white-space:nowrap;">${verdictBadge(r.verdict)}</td>
                 <td style="padding:8px 15px; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--dim); font-size:0.82rem;" title="${escapeAttr(r.evidence || '')}">${escapeHtml(r.evidence || '')}</td>

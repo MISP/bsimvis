@@ -2061,6 +2061,8 @@ class ClusterList(Resource):
             "cluster_tag": "Require a cluster user tag; repeat for AND filtering",
             "exclude_cluster_tag": "Exclude clusters carrying this user tag",
             "show_members": "Whether to return direct member IDs/names (true/false)",
+            "show_parents": "Also return the matched clusters' ancestors, up to the root (true/false)",
+            "show_children": "Also return the matched clusters' whole descendant subtree (true/false)",
         }
     )
     def get(self):
@@ -2214,6 +2216,8 @@ class BinClusterList(Resource):
             "cluster_tag": "Require a cluster user tag; repeat for AND filtering",
             "exclude_cluster_tag": "Exclude clusters carrying this user tag",
             "show_members": "Whether to return direct member IDs/names (true/false)",
+            "show_parents": "Also return the matched clusters' ancestors, up to the root (true/false)",
+            "show_children": "Also return the matched clusters' whole descendant subtree (true/false)",
         }
     )
     def get(self):
@@ -2508,6 +2512,14 @@ class BinSimSearch(Resource):
             "max_coverage_b": {"description": "Maximum coverage for binary B"},
             "min_shared": {"description": "Minimum shared clusters", "example": 5},
             "max_shared": {"description": "Maximum shared clusters"},
+            "bin_cluster_uuid": {
+                "description": (
+                    "Keep pairs where either binary belongs to this binary "
+                    "cluster (substring match on the uuid). Resolved through the "
+                    "file-level cluster index, so it reflects the current "
+                    "clustering rather than a build-time snapshot."
+                )
+            },
             "min_funcs": {
                 "description": "Minimum function count — both sides must reach it",
                 "example": 20,

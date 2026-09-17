@@ -213,16 +213,33 @@ main {
     flex-direction: column;
 }
 
-.table-header-wrap {
-    flex-shrink: 0;
-    overflow: hidden;
-}
-
+/* Scrolls both ways: widening a column past the container now scrolls instead
+   of stealing width from its neighbours. */
 .table-body-wrap {
     flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: auto;
     min-height: 0;
+}
+
+/* The header rides along inside the one table rather than living in a second
+   one, so it can never drift out of step with the cells below it.
+
+   thead holds two rows -- labels and filters -- and both have to stick, at
+   different offsets, or they pile up on each other at the top of the scroll
+   box. The filter row's offset is the label row's rendered height, which only
+   JS can know, so buildColgroup() measures it into --thead-labels-h. */
+#data-table thead th {
+    position: sticky;
+    z-index: 3;
+}
+
+#data-table thead tr:first-child th {
+    top: 0;
+}
+
+#data-table thead tr.filter-row th {
+    top: var(--thead-labels-h, 0px);
+    z-index: 2;
 }
 
 table {
@@ -1543,6 +1560,18 @@ html.light-theme path.chord { mix-blend-mode: multiply; }
 #data-table td {
     position: relative;
     user-select: text !important;
+    /* Keep a narrowed column's content inside its own column instead of
+       painting over the next one. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ...except where a cell hosts a popover anchored to it, which clipping would
+   cut off. The tag editor's overflow dropdown is the only one. */
+#data-table td:has(.entity-tags-editor),
+#data-table td:has(.sim-tags-editor),
+#data-table td.cluster-cards-cell {
+    overflow: visible;
 }
 
 /* --- Search History Dropdowns --- */

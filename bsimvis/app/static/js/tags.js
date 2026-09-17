@@ -510,55 +510,35 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
     `;
 };
 
-window.applyClusterFilter = (uuid, isBinary = false) => {
+/**
+ * Open a cluster's own page.
+ *
+ * A cluster badge used to apply a filter instead: on a function-similarity or
+ * diff route it navigated to the *similarity* list and looked for an input
+ * named flt-sim-cluster, which does not exist anywhere in the codebase -- so it
+ * fell through to a bare navigate() whose cluster_uuid was dropped again by the
+ * next re-serialisation, landing the user on an apparently unfiltered list. A
+ * cluster now goes to the cluster. Filtering a list by a cluster is still on
+ * the context menu, where it says what it does.
+ */
+window.openCluster = (uuid, isBinary = false, event = null) => {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
-    const { collection, pool } = targetWindow.getRoutingState ? targetWindow.getRoutingState() : { collection: '', pool: null };
-    const col = collection || '';
-    // Cluster uuids are scoped to the namespace that computed them, so a pool
-    // context must stay on the pool route rather than fall back to /collections.
-    const basePath = pool ? `/pools/${encodeURIComponent(pool)}` : `/collections/${encodeURIComponent(col)}`;
+    const { collection, pool } = targetWindow.getRoutingState
+        ? targetWindow.getRoutingState()
+        : { collection: '', pool: null };
 
-    if (isBinary) {
-        const inputId = 'flt-file-cluster';
-        let input = targetWindow.document.getElementById(inputId);
-        if (input) {
-            input.value = uuid;
-            if (targetWindow.applyAdvancedFileSearch) {
-                targetWindow.applyAdvancedFileSearch();
-            }
-        } else {
-            const params = new URLSearchParams();
-            params.set('bin_cluster_uuid', uuid);
-            if (typeof targetWindow.navigate === 'function') {
-                targetWindow.navigate('files', params, col);
-            } else {
-                targetWindow.location.href = `${basePath}/files?${params.toString()}`;
-            }
-        }
-    } else {
-        const isSim = targetWindow.location.pathname.includes('/similarity') || targetWindow.location.pathname.includes('/vs/');
-        const viewKey = isSim ? 'function-similarity' : 'functions';
-        const inputId = isSim ? 'flt-sim-cluster' : 'flt-func-cluster';
-        
-        let input = targetWindow.document.getElementById(inputId);
-        if (input) {
-            input.value = uuid;
-            if (isSim) {
-                if (targetWindow.applySimSearch) targetWindow.applySimSearch();
-            } else {
-                if (targetWindow.applyAdvancedFuncSearch) targetWindow.applyAdvancedFuncSearch();
-            }
-        } else {
-            const params = new URLSearchParams();
-            params.set('cluster_uuid', uuid);
-            if (typeof targetWindow.navigate === 'function') {
-                targetWindow.navigate(viewKey, params, col);
-            } else {
-                const searchPath = isSim ? 'functions/similarities' : 'functions';
-                targetWindow.location.href = `${basePath}/${searchPath}?${params.toString()}`;
-            }
-        }
+    const segs = (isBinary ? ['files', 'clusters'] : ['functions', 'clusters']).concat([uuid]);
+    const nav = targetWindow.Nav || window.Nav;
+    if (nav) {
+        nav.openPath(nav.buildUIUrl(collection || '', segs), event);
+        return;
     }
+
+    // No Nav (standalone iframe): fall back to the plain path.
+    const base = pool
+        ? `/pools/${encodeURIComponent(pool)}`
+        : `/collections/${encodeURIComponent(collection || '')}`;
+    targetWindow.location.href = `${base}/${segs.map(encodeURIComponent).join('/')}`;
 };
 
 window.showClusterCardTooltip = function(event, uuid, name, size, stability, cohesion, avg_features, clusterType = 'function', axis = null) {
@@ -692,7 +672,7 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null) => 
                   onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))}, ${escapeAttr(jsString(c.axis))})"
                   onmouseleave="hideClusterCardTooltip(event)"
                   onmousemove="moveClusterCardTooltip(event)"
-                  onclick="applyClusterFilter(${escapeAttr(jsString(uuid))}, ${isBinary})"
+                  onclick="openCluster(${escapeAttr(jsString(uuid))}, ${isBinary}, event)"
                   style="border-color:${tagAlpha(axisColor, borderAlpha)}; color:${axisColor}; background:${tagAlpha(axisColor, bgAlpha)}; opacity:${textOpacity}; align-items:center; gap:4px; padding:2px 6px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;" title="${escapeAttr(name)} (cohesion: ${coh.toFixed(2)})">
                 <i class="${escapeHtml(axisIcon)}" style="font-size:0.6rem;"></i>
                 <span style="font-family:monospace; font-size:0.65rem;">${Number(c.member_count || 0)}</span>
@@ -707,7 +687,7 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null) => 
               onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))}, ${escapeAttr(jsString(c.axis))})"
               onmouseleave="hideClusterCardTooltip(event)"
               onmousemove="moveClusterCardTooltip(event)"
-              onclick="applyClusterFilter(${escapeAttr(jsString(uuid))}, ${isBinary})"
+              onclick="openCluster(${escapeAttr(jsString(uuid))}, ${isBinary}, event)"
               style="border-color:${tagAlpha(color, 27)}; color:${color}; background:${tagAlpha(color, 7)}; align-items:center; gap:4px; padding:2px 6px 2px 8px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                  stroke-linecap="round" stroke-linejoin="round">
@@ -852,11 +832,13 @@ function attachTagAutocomplete(input, onSelect) {
         if (dropdown.style.display === 'block' && currentSuggestions.length > 0) {
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
+                e.stopPropagation();
                 activeIndex = (activeIndex + 1) % currentSuggestions.length;
                 updateActiveStyle();
                 return;
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault();
+                e.stopPropagation();
                 activeIndex = (activeIndex - 1 + currentSuggestions.length) % currentSuggestions.length;
                 updateActiveStyle();
                 return;
@@ -989,11 +971,13 @@ function attachAutocomplete(input, level, field, onSelect) {
         if (dropdown.style.display === 'block' && currentSuggestions.length > 0) {
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
+                e.stopPropagation();
                 activeIndex = (activeIndex + 1) % currentSuggestions.length;
                 updateActiveStyle();
                 return;
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault();
+                e.stopPropagation();
                 activeIndex = (activeIndex - 1 + currentSuggestions.length) % currentSuggestions.length;
                 updateActiveStyle();
                 return;

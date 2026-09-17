@@ -20,6 +20,19 @@ function defaultMinScore() {
     return (v !== undefined && v !== null) ? String(v) : '0.9';
 }
 
+/**
+ * The floor for FILE similarity, which is a different number from the one
+ * above: similarity.min_score is the threshold function edges are built with,
+ * and file pairs are not built with a score gate at all. The file views used
+ * to hardcode 0.9 anyway, hiding most of what had actually been computed.
+ */
+function defaultFileMinScore() {
+    const v = window.APP_CONFIG?.similarity?.file_min_score;
+    return (v !== undefined && v !== null) ? String(v) : '0';
+}
+window.defaultFileMinScore = defaultFileMinScore;
+window.defaultMinScore = defaultMinScore;
+
 let filterDebounceTimer = null;
 function debouncedSearch(searchFn) {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
@@ -67,6 +80,34 @@ function saveColumnWidth(path, label, width) {
     } catch (e) { }
 }
 
+/**
+ * Give the table an explicit width equal to the sum of its columns.
+ *
+ * Under `table-layout: fixed; width: 100%` the table can never be wider than
+ * its container, so widening one column silently narrows all the others -- and
+ * columns narrower than their content are what makes cells overlap. With a real
+ * width the container scrolls sideways instead. min-width keeps it filling the
+ * container when the columns do not add up to that much.
+ */
+function sizeTableToColumns() {
+    const table = document.getElementById('data-table');
+    const colgroup = document.getElementById('table-colgroup');
+    if (!table || !colgroup || !colgroup.children.length) return;
+
+    let total = 0;
+    for (const col of colgroup.children) {
+        const w = parseFloat(col.style.width);
+        if (!w) {
+            // Not every column is sized yet; leave the layout to the browser.
+            table.style.width = '';
+            return;
+        }
+        total += w;
+    }
+    table.style.width = total + 'px';
+    table.style.minWidth = '100%';
+}
+
 function resetColumnWidths() {
     const { viewKey } = getRoutingState();
     try {
@@ -80,13 +121,17 @@ function resetColumnWidths() {
 function initColumnResize(th, path, label) {
     const resizer = th.querySelector('.resizer');
     if (!resizer) return;
+    if (resizer.dataset.resizeBound === '1') return;
+    resizer.dataset.resizeBound = '1';
 
-    // Find matching <col> in both header and body colgroups by th index
-    const colgroupHeader = document.getElementById('table-colgroup-header');
-    const colgroupBody = document.getElementById('table-colgroup');
-    const thIndex = Array.from(th.parentElement.children).indexOf(th);
-    const colHeader = colgroupHeader ? colgroupHeader.children[thIndex] : null;
-    const colBody = colgroupBody ? colgroupBody.children[thIndex] : null;
+    // Looked up when the drag starts, not now: a render between binding and
+    // dragging replaces the <col> elements, and the stale reference is what made
+    // a drag move the header while the body stayed put.
+    const currentCol = () => {
+        const colgroup = document.getElementById('table-colgroup');
+        const thIndex = Array.from(th.parentElement.children).indexOf(th);
+        return colgroup ? colgroup.children[thIndex] : null;
+    };
 
     let startX, startWidth;
 
@@ -96,6 +141,7 @@ function initColumnResize(th, path, label) {
 
         startX = e.clientX;
         startWidth = th.getBoundingClientRect().width;
+        const col = currentCol();
 
         document.body.classList.add('resizing');
 
@@ -107,11 +153,11 @@ function initColumnResize(th, path, label) {
         const onMouseMove = (e) => {
             const width = startWidth + (e.clientX - startX);
             if (width > 30) {
-                // Sync width to both tables via colgroup
-                if (colHeader) colHeader.style.width = width + 'px';
-                if (colBody) colBody.style.width = width + 'px';
+                // One table, one colgroup: the <col> sizes header and cells alike.
+                if (col) col.style.width = width + 'px';
                 th.style.width = width + 'px';
                 th.style.minWidth = width + 'px';
+                sizeTableToColumns();
             }
         };
 
@@ -439,6 +485,8 @@ window.ModuleLoader = {
             'home': window.HomeView,
             'pool-detail': window.PoolDetailView,
             'collection-detail': window.CollectionDetailView,
+            'cluster-detail': window.ClusterDetailView,
+            'bin-cluster-detail': window.ClusterDetailView,
             'search': window.SearchView,
             'search-detail': window.SearchView,
             'bin_sim': {
@@ -562,7 +610,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
 
     // Check if we should load a module view
-    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail', 'search', 'search-detail'].includes(viewKey)) {
+    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail', 'search', 'search-detail', 'cluster-detail', 'bin-cluster-detail'].includes(viewKey)) {
         const stateParams = Object.fromEntries(params);
         stateParams.collection = collection;
         stateParams.pool = pool;
@@ -1466,7 +1514,6 @@ function updateUI(viewKey, collection, params, route, force = false) {
     // Table Head
     const thead = document.getElementById('table-head');
     const dataTable = document.getElementById('data-table');
-    const dataTableHeader = document.getElementById('data-table-header');
 
     if (pathChanged) {
         let headHtml = '<tr>';
@@ -1483,7 +1530,6 @@ function updateUI(viewKey, collection, params, route, force = false) {
 
         const tableLayout = hasWidths ? 'fixed' : 'auto';
         if (dataTable) dataTable.style.tableLayout = tableLayout;
-        if (dataTableHeader) dataTableHeader.style.tableLayout = tableLayout;
         routeHeaders.forEach(h => {
             const label = typeof h === 'string' ? h : h.label;
             const sortKey = typeof h === 'object' ? h.sort : null;
@@ -1780,7 +1826,6 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 }
             } else if (path === 'clusters') {
                 if (dataTable) dataTable.style.tableLayout = 'fixed';
-                if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
                 headHtml += `<tr class="filter-row">
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-cluster-uuid" placeholder="UUID..." value="${escapeAttr(p.get('cluster_uuid') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-id" placeholder="ID..." value="${escapeAttr(p.get('cluster_id') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                     <th><input type="text" id="flt-cluster-name" placeholder="Name..." value="${escapeAttr(p.get('cluster_name') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
@@ -1795,7 +1840,6 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 thead.innerHTML = headHtml;
             } else if (path === 'jobs') {
                 if (dataTable) dataTable.style.tableLayout = 'fixed';
-                if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
                 const statuses = ['', 'pending', 'running', 'completed', 'failed', 'cancelled'];
                 const statusOptions = statuses.map(s => { const label = s ? s.toUpperCase() : 'All Statuses'; return `<option value="${escapeAttr(s)}" ${p.get('status') === s ? 'selected' : ''}>${label}</option>`; }).join('');
                 const types = ['', 'pipeline', 'group', 'file_data_ingest', 'ghidra_analyze', 'idx_meta', 'idx_functions', 'idx_features', 'build_sim', 'cluster_functions', 'cluster_binaries', 'enrich_features'];
@@ -1818,7 +1862,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <th>
                         <input type="text" id="bsim-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;">
                     </th>
-                    <th><input type="text" id="bsim-md5" placeholder="MD5..." value="${escapeAttr(p.get('md5') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box; font-family:monospace;"></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="bsim-md5" placeholder="MD5..." value="${escapeAttr(p.get('md5') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box; font-family:monospace;"><input type="text" id="bsim-cluster" placeholder="Cluster UUID..." value="${escapeAttr(p.get('bin_cluster_uuid') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box; font-family:monospace;"></div></th>
                     <th><input type="text" id="bsim-arch" placeholder="Arch..." value="${escapeAttr(p.get('arch') || '')}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box;"></th>
                     <th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="bsim-min-funcs" placeholder="Min..." min="0" value="${escapeAttr(p.get('min_funcs') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-funcs" placeholder="Max..." min="0" value="${escapeAttr(p.get('max_funcs') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"></div></th>
                     <th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="bsim-min-cov" placeholder="Min..." step="0.1" min="0" max="1" value="${escapeAttr(p.get('min_coverage') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-cov" placeholder="Max..." step="0.1" min="0" max="1" value="${escapeAttr(p.get('max_coverage') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"></div></th>
@@ -1830,7 +1874,6 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 const nameType = p.get('cluster_name_type') || 'file';
                 const nodeType = p.get('node_type') || 'file';
                 if (dataTable) dataTable.style.tableLayout = 'fixed';
-                if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
                 headHtml += `<tr class="filter-row">
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-uuid" placeholder="UUID..." value="${escapeAttr(p.get('cluster_uuid') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-id" placeholder="ID..." value="${escapeAttr(p.get('cluster_id') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${escapeAttr(p.get('cluster_name') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><select id="bin-cluster-name-type" style="background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.6rem; border-radius:4px; padding:2px; width:100%; box-sizing:border-box;" onchange="changeBinClusterNameType(this.value)"><option value="file" ${nameType === 'file' ? 'selected' : ''}>Most Common File Name</option><option value="yara" ${nameType === 'yara' ? 'selected' : ''}>Most Common Yara</option></select></div></th>
@@ -1991,7 +2034,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
             syncDate('flt-pool-min-date', 'min_created_at'); syncDate('flt-pool-max-date', 'max_created_at');
         } else if (path === 'binary-similarity') {
             syncBinSimTags(p); syncInput('bsim-min-score', 'min_score'); syncInput('bsim-max-score', 'max_score'); syncInput('bsim-file-name', 'file_name'); syncInput('bsim-md5', 'md5'); syncInput('bsim-arch', 'arch');
-            syncInput('bsim-min-funcs', 'min_funcs'); syncInput('bsim-max-funcs', 'max_funcs'); syncInput('bsim-min-cov', 'min_coverage'); syncInput('bsim-max-cov', 'max_coverage'); syncInput('bsim-min-shared', 'min_shared');
+            syncInput('bsim-min-funcs', 'min_funcs'); syncInput('bsim-max-funcs', 'max_funcs'); syncInput('bsim-min-cov', 'min_coverage'); syncInput('bsim-max-cov', 'max_coverage'); syncInput('bsim-min-shared', 'min_shared'); syncInput('bsim-cluster', 'bin_cluster_uuid');
         } else if (path === 'jobs') {
             syncSelect('job-type-filter', 'type'); syncSelect('job-collection-filter', 'collection'); syncSelect('job-status-filter', 'status');
         }
@@ -2065,40 +2108,47 @@ function updateUI(viewKey, collection, params, route, force = false) {
         });
     }, 0);
 
-    // Sync body colgroup from the header row's actual rendered widths.
-    // We use requestAnimationFrame so the header table has laid out first.
-    if (true) {
-        const syncColgroups = () => {
-            const headerTable = document.getElementById('data-table-header');
-            const bodyColgroup = document.getElementById('table-colgroup');
-            if (!headerTable || !bodyColgroup) return;
-
+    // One colgroup for the one table, built from the header cells. There is no
+    // second table to copy widths into any more, so no requestAnimationFrame
+    // round-trip and nothing that can be measured on the wrong box.
+    {
+        const buildColgroup = () => {
+            const colgroup = document.getElementById('table-colgroup');
             const headerRow = thead.querySelector('tr:first-child');
-            if (!headerRow) return;
-            const ths = headerRow.querySelectorAll('th');
+            if (!colgroup || !headerRow) return;
 
-            // Also rebuild the header colgroup
-            const headerColgroup = document.getElementById('table-colgroup-header');
-            if (headerColgroup) {
-                headerColgroup.innerHTML = '';
-                ths.forEach(th => {
-                    const col = document.createElement('col');
-                    if (th.style.width) col.style.width = th.style.width;
-                    headerColgroup.appendChild(col);
-                });
+            const ths = headerRow.querySelectorAll('th');
+            colgroup.innerHTML = '';
+            ths.forEach(th => {
+                const col = document.createElement('col');
+                // Percent widths resolve to px once, so a route never ends up
+                // mixing units -- a dragged column used to be px while its
+                // neighbours stayed %, and the declared widths stopped summing
+                // to 100%.
+                col.style.width = th.style.width && th.style.width.endsWith('px')
+                    ? th.style.width
+                    : th.getBoundingClientRect().width + 'px';
+                th.style.width = col.style.width;
+                colgroup.appendChild(col);
+            });
+            // Measured under whatever layout the route asked for, then pinned:
+            // fixed layout is what makes a <col> width binding, and so what
+            // makes a drag hold. Routes with no declared widths keep the widths
+            // auto layout just gave them.
+            const table = document.getElementById('data-table');
+            if (table) table.style.tableLayout = 'fixed';
+
+            // Both header rows are sticky, so the filter row needs to sit at
+            // the label row's height rather than on top of it. Only measurement
+            // can supply that number; the CSS reads it back as --thead-labels-h.
+            if (table) {
+                const h = headerRow.getBoundingClientRect().height;
+                table.style.setProperty('--thead-labels-h', `${Math.round(h)}px`);
             }
 
-            // Read actual rendered widths after layout and apply to body colgroup
-            requestAnimationFrame(() => {
-                bodyColgroup.innerHTML = '';
-                ths.forEach(th => {
-                    const col = document.createElement('col');
-                    col.style.width = th.getBoundingClientRect().width + 'px';
-                    bodyColgroup.appendChild(col);
-                });
-            });
+            sizeTableToColumns();
         };
-        syncColgroups();
+        buildColgroup();
 
         // Initialize resizers - MUST BE DONE AFTER ALL thead.innerHTML UPDATES
         thead.querySelectorAll('.resizable-th').forEach(th => {
@@ -2609,10 +2659,7 @@ function renderPagination(path) {
 
 function copyToClipboard(text, btn) {
     let success = false;
-    let tableSel = null;
-    if (window.tableSelections) {
-        tableSel = window.tableSelections.find(ts => ts.selectedCells && ts.selectedCells.size > 0);
-    }
+    const tableSel = window.TableSelection ? window.TableSelection.selectionSource() : null;
     if (tableSel) {
         tableSel.copySelection();
         if (btn) {
@@ -2930,7 +2977,7 @@ function showDiffView() {
 }
 
 function showFunctionCodeById(id, name, lineHash = '', e) {
-    if (window.getSelection && window.getSelection().toString().trim()) {
+    if (window.selectionBlocksClick && window.selectionBlocksClick(e)) {
         return;
     }
     const f = window.parseFuncId(id);
@@ -3625,7 +3672,7 @@ function renderClusters(items) {
         }))}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'cluster', this)">
             <td class="mono cluster-uuid-id-cell" data-uuid="${escapeAttr(c.cluster_uuid)}" data-id="${escapeAttr(c.cluster_id)}">
-                <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('functions', new URLSearchParams('cluster_uuid=' + ${escapeAttr(jsString(c.cluster_uuid))}), ${collection ? escapeAttr(jsString(collection)) : 'null'})" style="color:var(--accent); text-decoration:none;">
+                <a href="javascript:void(0)" onclick="event.preventDefault(); openCluster(${escapeAttr(jsString(c.cluster_uuid))}, false, event)" style="color:var(--accent); text-decoration:none;">
                     ${(c.cluster_uuid || '').substring(0, 8)}
                 </a>
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
@@ -3807,7 +3854,7 @@ function renderBinClusters(items) {
         }))}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
             <td class="mono cluster-uuid-id-cell" data-uuid="${escapeAttr(c.cluster_uuid)}" data-id="${escapeAttr(c.cluster_id)}">
-                <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('files', new URLSearchParams('bin_cluster_uuid=' + ${escapeAttr(jsString(c.cluster_uuid))}), ${collection ? escapeAttr(jsString(collection)) : 'null'})" style="color:var(--accent); text-decoration:none;">
+                <a href="javascript:void(0)" onclick="event.preventDefault(); openCluster(${escapeAttr(jsString(c.cluster_uuid))}, true, event)" style="color:var(--accent); text-decoration:none;">
                     ${(c.cluster_uuid || '').substring(0, 8)}
                 </a>
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>

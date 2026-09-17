@@ -162,7 +162,11 @@
         } else if (type === 'file') {
             resolvedType = 'file';
             norm.md5 = data.md5 || data.id;
-            norm.name = data.file_name || data.name || norm.md5;
+            // The real filename, when the caller actually knows it. A rendered
+            // md5 cell does not, and the fallback below made "Copy Name" hand
+            // back the hash as if it were the file's name.
+            norm.fileName = data.file_name || (data.name && data.name !== norm.md5 ? data.name : '');
+            norm.name = norm.fileName || norm.md5;
             norm.id = data.fileId || data.id || `${getCollectionFromHash()}:file:${norm.md5}`;
         } else if (type === 'link' || type === 'similarity') {
             resolvedType = 'similarity';
@@ -288,13 +292,19 @@
 
         // -- Copy Dropdown Submenu --
         let copySubmenuHtml = '';
+        // The column under the pointer comes first, because it is the one the
+        // user pointed at. Everything below it is the row object's fields, which
+        // are the same wherever in the row you click.
+        if (data && data.__cell) {
+            copySubmenuHtml += renderCopyItem(data.__cell.label, data.__cell.value, 'fa-i-cursor');
+        }
         if (resolvedType === 'function') {
             copySubmenuHtml += renderCopyItem('Name', norm.name, 'fa-signature');
             copySubmenuHtml += renderCopyItem('Address', norm.addr, 'fa-location-crosshairs');
             copySubmenuHtml += renderCopyItem('Function ID', norm.id, 'fa-id-badge');
             copySubmenuHtml += renderCopyItem('File MD5', norm.md5, 'fa-fingerprint');
         } else if (resolvedType === 'file') {
-            copySubmenuHtml += renderCopyItem('Name', norm.name, 'fa-signature');
+            copySubmenuHtml += renderCopyItem('Name', norm.fileName, 'fa-signature');
             copySubmenuHtml += renderCopyItem('MD5', norm.md5, 'fa-fingerprint');
             copySubmenuHtml += renderCopyItem('File ID', norm.id, 'fa-id-badge');
         } else if (resolvedType === 'similarity') {
@@ -312,13 +322,10 @@
             copySubmenuHtml += renderCopyItem('Cluster ID', norm.id, 'fa-id-badge');
         }
 
-        let hasTableSelection = false;
-        if (window.tableSelections) {
-            hasTableSelection = window.tableSelections.some(ts => ts.selectedCells && ts.selectedCells.size > 0);
-        }
+        const hasTableSelection = !!(window.TableSelection && window.TableSelection.selectionSource());
         if (hasTableSelection) {
             copySubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); if (window.tableSelections) { const ts = window.tableSelections.find(t => t.selectedCells && t.selectedCells.size > 0); if (ts) ts.copySelection(); }">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); { const ts = window.TableSelection && window.TableSelection.selectionSource(); if (ts) ts.copySelection(); }">
                 <i class="fa-solid fa-copy" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Copy Selection</span>
             </div>`;
@@ -439,7 +446,12 @@
             </div>`;
         } else if (resolvedType === 'cluster') {
             const funcClusterUrl = Nav.buildUIUrl(col, ['functions']) + '?cluster_uuid=' + encodeURIComponent(norm.uuid);
+            const clusterUrl = Nav.buildUIUrl(col, ['functions', 'clusters', norm.uuid || '']);
             actionsSubmenuHtml += `
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(clusterUrl))}, event, { title: 'Cluster', type: 'cluster' })">
+                <i class="fa-solid fa-bullseye" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Open Cluster</span>
+            </div>
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
@@ -450,7 +462,12 @@
             </div>`;
         } else if (resolvedType === 'bin_cluster') {
             const fileClusterUrl = Nav.buildUIUrl(col, ['files']) + '?bin_cluster_uuid=' + encodeURIComponent(norm.uuid);
+            const clusterUrl = Nav.buildUIUrl(col, ['files', 'clusters', norm.uuid || '']);
             actionsSubmenuHtml += `
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(clusterUrl))}, event, { title: 'Cluster', type: 'cluster' })">
+                <i class="fa-solid fa-bullseye" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Open Cluster</span>
+            </div>
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>

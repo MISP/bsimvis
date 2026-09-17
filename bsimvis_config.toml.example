@@ -83,6 +83,10 @@
     # instead (BSim is false-positive-prone on tiny funcs). 10 = canonical default.
     min_features = 10
     algo = "unweighted_cosine"
+    # min_score above governs FUNCTION edges only. File-level similarity has no
+    # build-time score gate -- build_bin_sim filters on cohesion, not score --
+    # so every stored pair is a real result and the UI's floor is 0 by default.
+    file_min_score = 0.0
 
 
 [llm]

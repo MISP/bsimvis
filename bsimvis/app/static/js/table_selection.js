@@ -1,5 +1,16 @@
 /**
  * TableSelection - Excel-like selection for HTML tables
+ *
+ * Every instance listens on document/window, so a view that mounts several
+ * tables (the file view mounts four) has several instances hearing the same
+ * event. Two pieces of state are therefore shared rather than per-instance:
+ *
+ *   TableSelection.active  - the table the user last interacted with. Keyboard
+ *                            handling belongs to it alone, otherwise one Enter
+ *                            activates a row in every visible table at once.
+ *   TableSelection.swallow - the "a synthetic click already handled this
+ *                            mouseup" flag. Per-instance it was a race: one
+ *                            instance could eat the click another had armed.
  */
 class TableSelection {
     constructor(tableId) {
@@ -8,6 +19,9 @@ class TableSelection {
         if (this.table.tableSelectionInstance) {
             return this.table.tableSelectionInstance;
         }
+        // A re-render that replaces the table element leaves the old instance
+        // listening forever; retire any instance that lost its element.
+        TableSelection.reapDetached();
         this.table.tableSelectionInstance = this;
 
         this.tbody = this.table.querySelector('tbody');
@@ -23,7 +37,6 @@ class TableSelection {
         this.startPos = { x: 0, y: 0 };
         this.startedOnBlocking = false;
         this.tempFocus = null;
-        this.wasSelecting = false;
 
         if (!window.tableSelections) window.tableSelections = [];
         window.tableSelections.push(this);
@@ -31,29 +44,102 @@ class TableSelection {
         this.init();
     }
 
-    init() {
-        document.addEventListener('mousedown', (e) => this.handleMouseDown(e));
-        document.addEventListener('dragstart', (e) => {
-            if (this.isDragging) {
-                e.preventDefault();
-            }
+    /** Pointer travel, in px, still counted as a click rather than a drag. */
+    static get CLICK_SLOP() { return 3; }
+
+    /** Shared "swallow the next click" flag -- see the class comment. */
+    static get swallow() { return TableSelection._swallow === true; }
+    static set swallow(v) { TableSelection._swallow = v === true; }
+
+    /** Arm the swallow, then disarm it once the click that follows has passed. */
+    static armSwallow() {
+        TableSelection.swallow = true;
+        clearTimeout(TableSelection._swallowTimer);
+        TableSelection._swallowTimer = setTimeout(() => { TableSelection.swallow = false; }, 50);
+    }
+
+    /**
+     * The table a "copy selection" should read from: the one the user is
+     * actually working in. Picking the first instance with a selection could
+     * copy from a table on a hidden panel instead of the one under the cursor.
+     */
+    static selectionSource() {
+        const has = ts => !!(ts && ts.selectedCells && ts.selectedCells.size > 0);
+        if (has(TableSelection.active)) return TableSelection.active;
+        return (window.tableSelections || []).find(has) || null;
+    }
+
+    /** Retire instances whose table is no longer in the document. */
+    static reapDetached() {
+        (window.tableSelections || []).slice().forEach(ts => {
+            if (ts.table && !ts.table.isConnected) ts.destroy();
         });
-        document.addEventListener('click', (e) => {
-            if (this.wasSelecting) {
+    }
+
+    init() {
+        // Kept as fields so destroy() can remove exactly these listeners.
+        this._onMouseDown = (e) => this.handleMouseDown(e);
+        this._onDragStart = (e) => { if (this.isDragging) e.preventDefault(); };
+        this._onClickCapture = (e) => {
+            if (TableSelection.swallow) {
                 e.preventDefault();
                 e.stopPropagation();
-                this.wasSelecting = false;
+                TableSelection.swallow = false;
             }
-        }, true);
-        window.addEventListener('mousemove', (e) => this.handleMouseMove(e));
-        window.addEventListener('mouseup', (e) => this.handleMouseUp(e));
-        window.addEventListener('keydown', (e) => this.handleKeyDown(e));
+        };
+        this._onMouseMove = (e) => this.handleMouseMove(e);
+        this._onMouseUp = (e) => this.handleMouseUp(e);
+        this._onKeyDown = (e) => this.handleKeyDown(e);
+
+        document.addEventListener('mousedown', this._onMouseDown);
+        document.addEventListener('dragstart', this._onDragStart);
+        document.addEventListener('click', this._onClickCapture, true);
+        window.addEventListener('mousemove', this._onMouseMove);
+        window.addEventListener('mouseup', this._onMouseUp);
+        window.addEventListener('keydown', this._onKeyDown);
 
         // Observer to handle dynamic content
         this.observer = new MutationObserver(() => {
             this.refreshAfterRender();
         });
         this.observer.observe(this.tbody, { childList: true });
+    }
+
+    destroy() {
+        document.removeEventListener('mousedown', this._onMouseDown);
+        document.removeEventListener('dragstart', this._onDragStart);
+        document.removeEventListener('click', this._onClickCapture, true);
+        window.removeEventListener('mousemove', this._onMouseMove);
+        window.removeEventListener('mouseup', this._onMouseUp);
+        window.removeEventListener('keydown', this._onKeyDown);
+        if (this.observer) this.observer.disconnect();
+        if (this.table) this.table.tableSelectionInstance = null;
+        if (TableSelection.active === this) TableSelection.active = null;
+        const list = window.tableSelections || [];
+        const i = list.indexOf(this);
+        if (i !== -1) list.splice(i, 1);
+    }
+
+    /** Is this table live and on screen? */
+    isVisible() {
+        return !!(this.tbody && this.tbody.isConnected && this.table.offsetParent);
+    }
+
+    /**
+     * Which table the keyboard drives: the one last clicked, or -- so arrows
+     * still work on a freshly loaded page without clicking first -- the first
+     * visible one when nothing has been clicked yet.
+     */
+    isKeyboardOwner() {
+        const active = TableSelection.active;
+        if (active && active.isVisible()) return active === this;
+        return (window.tableSelections || []).find(ts => ts.isVisible()) === this;
+    }
+
+    /** True when the event happened inside this instance's own table. */
+    owns(e) {
+        const el = (e.target && e.target.nodeType === 3) ? e.target.parentElement : e.target;
+        return !!(this.table && el && this.table.contains(el));
     }
 
     /** Rows that span the grid hold one wide cell; the widest row sets the width. */
@@ -83,7 +169,17 @@ class TableSelection {
     activationTarget(r, c, e) {
         const tr = this.tbody.children[r];
         if (!tr) return null;
-        const selector = 'a[href]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn), [onclick]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn)';
+        // Controls that act on a row rather than open it. Clicking a cell's dead
+        // space should never reach one: the tag editor puts its bookmark button
+        // first in the DOM, so before this list a click on the blank part of a
+        // Tags cell -- or Enter on it -- silently bookmarked the row.
+        const SECONDARY = [
+            'remove-tag-btn', 'btn-action', 'btn-copy', 'btn',
+            'bookmark-btn', 'ignore-btn', 'add-tag-btn', 'tag-overflow-chip',
+            'lineage-toggle', 'btn-note-action', 'btn-icon',
+        ];
+        const not = SECONDARY.map(cls => `:not(.${cls})`).join('');
+        const selector = `a[href]${not}, [onclick]${not}`;
         const cell = this.cellAt(r, c);
         const inCell = cell ? Array.from(cell.querySelectorAll(selector)) : [];
         if (inCell.length) {
@@ -91,9 +187,15 @@ class TableSelection {
             // DOM is only right half the time. Activate the one the click landed
             // next to. Keyboard activation has no pointer, so it takes the first.
             if (!e || inCell.length === 1) return inCell[0];
+            // Distance from the pointer to the element's box, zero when inside
+            // it. Measuring clientY alone made every control on one flex line
+            // tie, and the tie went to DOM order -- horizontal position, the
+            // only thing separating them, was ignored.
             const dist = el => {
                 const b = el.getBoundingClientRect();
-                return Math.abs(e.clientY - (b.top + b.height / 2));
+                const dx = Math.max(b.left - e.clientX, 0, e.clientX - b.right);
+                const dy = Math.max(b.top - e.clientY, 0, e.clientY - b.bottom);
+                return Math.hypot(dx, dy);
             };
             return inCell.reduce((best, el) => (dist(el) < dist(best) ? el : best));
         }
@@ -192,6 +294,12 @@ class TableSelection {
             return;
         }
 
+        // Only the table under the pointer starts a drag. Without this every
+        // instance on the page armed its own drag/swallow state from one
+        // mousedown, so a click in one table could be eaten by another.
+        if (!this.owns(e)) return;
+        TableSelection.active = this;
+
         const info = this.getCellInfo(e.target);
 
         this.isDragging = true;
@@ -252,17 +360,21 @@ class TableSelection {
             const dist = Math.hypot(e.clientX - this.startPos.x, e.clientY - this.startPos.y);
             const selection = window.getSelection().toString();
 
-            if (this.cellModeActive || dist > 3) {
-                this.wasSelecting = true;
-                setTimeout(() => {
-                    this.wasSelecting = false;
-                }, 50);
+            // One threshold decides both questions. They used to disagree --
+            // the swallow armed above 3px while activation ran below 3px -- so a
+            // 4px shaky click armed the swallow, then activated, and had its own
+            // synthetic click eaten: a click that did nothing at all.
+            const isClick = dist <= TableSelection.CLICK_SLOP;
+
+            if (this.cellModeActive || !isClick) {
+                TableSelection.armSwallow();
             }
 
             if (!this.cellModeActive && this.tempFocus && !this.startedOnBlocking) {
-                // If it was just a click or a very small movement with no text selection,
-                // we treat it as focusing the cell and triggering a redirect if a link exists.
-                if (!selection || dist < 3) {
+                // A click with nothing selected focuses the cell and follows its
+                // link. Text selected inside the cell means the user was
+                // selecting, not navigating -- leave it alone.
+                if (isClick && !selection) {
                     this.clearSelection();
                     this.anchorCell = { r: this.tempFocus.r, c: this.tempFocus.c };
                     this.focusCell = { r: this.tempFocus.r, c: this.tempFocus.c };
@@ -275,10 +387,7 @@ class TableSelection {
                         // The native click still follows this mouseup and would
                         // reach the row's own onclick -- one click, two
                         // navigations. Swallow it the same way a drag does.
-                        this.wasSelecting = true;
-                        setTimeout(() => {
-                            this.wasSelecting = false;
-                        }, 50);
+                        TableSelection.armSwallow();
                     }
                 }
             }
@@ -296,8 +405,15 @@ class TableSelection {
             return;
         }
 
+        // Escape clears every table, focused or not.
         if (e.key === 'Escape') {
             this.clearSelection();
+            return;
+        }
+
+        // Everything below moves or activates a cell, so only one table may act.
+        // Without this, Enter on a view with four tables fired four navigations.
+        if (!this.isKeyboardOwner()) {
             return;
         }
 

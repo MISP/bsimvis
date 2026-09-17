@@ -60,6 +60,7 @@
     <script src="/js/views/home_view.js?v=2"></script>
     <script src="/js/views/collection_detail_view.js?v=6"></script>
     <script src="/js/views/pool_detail_view.js?v=9"></script>
+    <script src="/js/views/cluster_detail_view.js?v=1"></script>
     <script src="/js/views/search_view.js?v=5"></script>
 </head>
 
@@ -194,16 +195,15 @@
                 <div id="grid-header" style="flex-shrink:0;"></div>
                 <div id="grid-body" style="flex:1; overflow:hidden; display:flex; flex-direction:column; position:relative;">
                     
+                    <!-- One table with a sticky header. Header and body used to
+                         be two tables whose column widths were copied across by
+                         hand every render, which is why a drag moved the header
+                         and left the body behind. -->
                     <div id="table-wrap" class="table-container">
-                        <div class="table-header-wrap">
-                            <table id="data-table-header">
-                                <colgroup id="table-colgroup-header"></colgroup>
-                                <thead id="table-head"></thead>
-                            </table>
-                        </div>
                         <div id="table-body-wrap" class="table-body-wrap">
                             <table id="data-table">
                                 <colgroup id="table-colgroup"></colgroup>
+                                <thead id="table-head"></thead>
                                 <tbody id="table-body"></tbody>
                             </table>
                             <div id="pagination-container"></div>

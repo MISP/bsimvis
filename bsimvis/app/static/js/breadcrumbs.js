@@ -6,9 +6,19 @@ window.Breadcrumbs = {
 
     poolNameCache: { __loading: {} },
     funcNameCache: {},
+    clusterNameCache: {},
 
     setPoolName: function(id, name) {
         this.poolNameCache[id] = name;
+    },
+    setClusterName: function(uuid, name) {
+        if (uuid) this.clusterNameCache[uuid] = name;
+    },
+    getClusterLabel: function(uuid) {
+        if (!uuid) return 'Cluster';
+        // The view fills the cache once it has loaded; until then show a short
+        // uuid rather than the bare word "Cluster".
+        return this.clusterNameCache[uuid] || String(uuid).slice(0, 8);
     },
     setFilename: function(md5, name) {
         window.filenameCache = window.filenameCache || {};
@@ -166,6 +176,28 @@ window.Breadcrumbs = {
                     icon: 'fa-solid fa-bullseye'
                 });
                 break;
+            case 'cluster-detail':
+            case 'bin-cluster-detail': {
+                const isBin = viewKey === 'bin-cluster-detail';
+                const parentSegs = isBin ? ['files'] : ['functions'];
+                const nav = (window.Nav || window.parent.Nav);
+                segments.push({
+                    label: isBin ? 'Files' : 'Functions',
+                    url: nav.buildUIUrl(collection, parentSegs),
+                    icon: isBin ? 'fa-solid fa-file-code' : 'fa-solid fa-code'
+                });
+                segments.push({
+                    label: 'Clusters',
+                    url: nav.buildUIUrl(collection, parentSegs.concat(['clusters'])),
+                    icon: 'fa-solid fa-bullseye'
+                });
+                segments.push({
+                    label: this.getClusterLabel(params.get('cluster_uuid') || restful.cluster_uuid),
+                    url: window.location.pathname + window.location.search,
+                    icon: 'fa-solid fa-bullseye'
+                });
+                break;
+            }
             case 'pools':
                 segments.push({
                     label: 'Pools',

@@ -3,6 +3,11 @@
  * Standardizes rendering of functions, hashes, tags, and clusters.
  */
 
+/** Notes written by the agent, whichever name the API gave the author. */
+function isAINoteOwner(owner) {
+    return ['llm', 'ai'].includes(String(owner).toLowerCase());
+}
+
 window.EntityRenderer = {
     /**
      * Renders a function signature with interactions.
@@ -70,82 +75,70 @@ window.EntityRenderer = {
     },
 
     /**
-     * Extra class from note ownership: 'ai' (purple), 'both' (stacked yellow+purple), '' (yellow).
+     * Extra class from note ownership: 'notes-ai' (purple pill), 'notes-both'
+     * (yellow pill with a purple trailing edge), '' (yellow).
      */
     noteOwnerClass: function(noteOwners = []) {
-        const isAI = o => ['llm', 'ai'].includes(String(o).toLowerCase());
-        const hasAI = noteOwners.some(isAI);
-        const hasUser = noteOwners.some(o => !isAI(o));
+        const hasAI = noteOwners.some(isAINoteOwner);
+        const hasUser = noteOwners.some(o => !isAINoteOwner(o));
         if (hasAI && hasUser) return 'notes-both';
         if (hasAI) return 'notes-ai';
         return '';
     },
 
     /**
-     * Renders a note button with consistent styling.
+     * One dot per author class -- gold for a human, purple for the agent --
+     * so a glance at the pill says who wrote what without opening the panel.
      */
+    noteOwnerDots: function(noteOwners = []) {
+        const dots = [];
+        if (noteOwners.some(o => !isAINoteOwner(o))) dots.push('<i class="note-dot"></i>');
+        if (noteOwners.some(isAINoteOwner)) dots.push('<i class="note-dot ai"></i>');
+        return dots.length ? `<span class="note-dots">${dots.join('')}</span>` : '';
+    },
+
+    /**
+     * The three note buttons differ only in which panel they open and what the
+     * tooltip calls the entity; everything else is shared.
+     */
+    noteButtonModes: {
+        func: { open: 'showNotePanel', has: 'Notes by', add: 'Add note' },
+        file: { open: 'showFileNotePanel', has: 'File notes by', add: 'Add file note' },
+        bin_sim: { open: 'showBinSimNotePanel', has: 'Pair notes by', add: 'Add pair note' }
+    },
+
+    renderNoteButtonFor: function(mode, id, noteOwners = [], options = {}) {
+        const m = this.noteButtonModes[mode];
+        const owners = noteOwners || [];
+        const hasNotes = owners.length > 0;
+
+        // An empty button in a table is noise: the column exists for the rows
+        // that do carry a note.
+        if (options.isTable === true && !hasNotes) return '';
+
+        const noteCount = (options.raw_data || {}).note_count || owners.length || 0;
+        const count = noteCount > 1 ? `<span class="note-count">${Number(noteCount)}</span>` : '';
+
+        return UI.Button.render({
+            className: `btn-note-action ${hasNotes ? 'has-notes ' + this.noteOwnerClass(owners) : ''}`,
+            icon: hasNotes ? 'fa-solid fa-comment' : 'fa-regular fa-comment',
+            tooltip: hasNotes ? `${m.has}: ${owners.join(', ')}` : m.add,
+            onClick: `event.stopPropagation(); ${m.open}(${jsString(id)}, event)`,
+            extraHtml: hasNotes ? this.noteOwnerDots(owners) + count : '',
+            attr: hasNotes ? this.notePreviewAttrs(id, mode) : {}
+        });
+    },
+
     renderNoteButton: function(id, noteOwners = [], options = {}) {
-        const hasNotes = noteOwners && noteOwners.length > 0;
-        const isTable = options.isTable === true;
-        
-        // We look for note_count in the parent data if available
-        const f = options.raw_data || {};
-        const noteCount = f.note_count || noteOwners.length || 0;
-        
-        if (isTable && !hasNotes) return '';
-        
-        return UI.Button.render({
-            className: `btn-note-action ${hasNotes ? 'has-notes ' + this.noteOwnerClass(noteOwners) : ''}`,
-            icon: hasNotes ? 'fa-solid fa-note-sticky' : 'fa-regular fa-note-sticky',
-            tooltip: hasNotes ? `Notes by: ${noteOwners.join(', ')}` : 'Add Note',
-            onClick: `event.stopPropagation(); showNotePanel(${jsString(id)}, event)`,
-            badge: noteCount > 1 ? `+${noteCount}` : null,
-            attr: hasNotes ? this.notePreviewAttrs(id, 'func') : {}
-        });
+        return this.renderNoteButtonFor('func', id, noteOwners, options);
     },
 
-    /**
-     * Renders a note button for file entities (calls showFileNotePanel).
-     */
     renderFileNoteButton: function(id, noteOwners = [], options = {}) {
-        const hasNotes = noteOwners && noteOwners.length > 0;
-        const isTable = options.isTable === true;
-
-        const f = options.raw_data || {};
-        const noteCount = f.note_count || noteOwners.length || 0;
-
-        if (isTable && !hasNotes) return '';
-
-        return UI.Button.render({
-            className: `btn-note-action ${hasNotes ? 'has-notes ' + this.noteOwnerClass(noteOwners) : ''}`,
-            icon: hasNotes ? 'fa-solid fa-note-sticky' : 'fa-regular fa-note-sticky',
-            tooltip: hasNotes ? `File Notes by: ${noteOwners.join(', ')}` : 'Add File Note',
-            onClick: `event.stopPropagation(); showFileNotePanel(${jsString(id)}, event)`,
-            badge: noteCount > 1 ? `+${noteCount}` : null,
-            attr: hasNotes ? this.notePreviewAttrs(id, 'file') : {}
-        });
+        return this.renderNoteButtonFor('file', id, noteOwners, options);
     },
 
-    /**
-     * Renders a note button for bin_sim pair entities (calls showBinSimNotePanel).
-     */
     renderBinSimNoteButton: function(sid, noteOwners = [], options = {}) {
-        const hasNotes = noteOwners && noteOwners.length > 0;
-        const isTable = options.isTable === true;
-
-        const f = options.raw_data || {};
-        const noteCount = f.note_count || noteOwners.length || 0;
-
-        if (isTable && !hasNotes) return '';
-
-        return UI.Button.render({
-            className: `btn-note-action ${hasNotes ? 'has-notes ' + this.noteOwnerClass(noteOwners) : ''}`,
-            icon: hasNotes ? 'fa-solid fa-note-sticky' : 'fa-regular fa-note-sticky',
-            tooltip: hasNotes ? `Pair notes by: ${noteOwners.join(', ')}` : 'Add Pair Note',
-            onClick: `event.stopPropagation(); showBinSimNotePanel(${jsString(sid)}, event)`,
-            badge: noteCount > 1 ? `+${noteCount}` : null,
-            attr: hasNotes ? this.notePreviewAttrs(sid, 'bin_sim') : {}
-        });
+        return this.renderNoteButtonFor('bin_sim', sid, noteOwners, options);
     },
 
     /**

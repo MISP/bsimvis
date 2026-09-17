@@ -167,7 +167,7 @@ function createPanelsIfMissing() {
     const notesHandle = document.createElement('div');
     notesHandle.id = 'notes-panel-handle';
     notesHandle.className = 'panel-handle user';
-    notesHandle.innerHTML = '<i class="fa-solid fa-note-sticky"></i><span>NOTES</span><div class="note-count-badge" id="notes-handle-badge" style="display:none"></div>';
+    notesHandle.innerHTML = '<i class="fa-solid fa-comment"></i><span>NOTES</span><div class="note-count-badge" id="notes-handle-badge" style="display:none"></div>';
     notesHandle.onclick = toggleNotesPanel;
     handleContainer.appendChild(notesHandle);
 

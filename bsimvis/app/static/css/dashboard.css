@@ -544,32 +544,98 @@ tr:nth-child(even) {
     filter: brightness(1.2);
 }
 
+/* Note button. A ghost pill that only takes chrome once it has something to
+   say, so an unannotated row shows no card at all. Ownership rides on dots --
+   one per author class -- reusing the tag-dot vocabulary the tables already
+   use, which keeps the count out of a notification badge. */
 .btn-note-action {
+    --note-hue: var(--note-accent);
     position: relative;
-    background: rgba(255, 215, 0, 0.1);
-    border: 1px solid rgba(255, 215, 0, 0.3);
-    color: #ffd700;
-    cursor: pointer;
-    padding: 0;
-    width: 22px;
-    height: 22px;
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    border-radius: 3px;
-    font-size: 0.8rem;
-    transition: all 0.2s;
+    gap: 4px;
+    height: 22px;
+    min-width: 22px;
+    padding: 0 5px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: transparent;
+    color: color-mix(in srgb, var(--text) 45%, transparent);
+    font-size: 0.7rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    cursor: pointer;
     flex-shrink: 0;
     box-sizing: border-box;
     text-decoration: none;
+    transition: background .15s ease, border-color .15s ease, color .15s ease, opacity .15s ease;
 }
 
+/* Empty: it keeps its place in the layout so nothing shifts, but only takes
+   colour when the pointer is on the row or a keyboard lands on it. */
+.btn-note-action:not(.has-notes) {
+    opacity: 0.3;
+}
+
+tr:hover .btn-note-action:not(.has-notes),
+.entity-function:hover .btn-note-action:not(.has-notes),
+.btn-note-action:not(.has-notes):hover,
+.btn-note-action:not(.has-notes):focus-visible {
+    opacity: 1;
+    color: color-mix(in srgb, var(--text) 70%, transparent);
+    background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+.btn-note-action.has-notes {
+    color: var(--note-hue);
+    background: color-mix(in srgb, var(--note-hue) 12%, transparent);
+    border-color: color-mix(in srgb, var(--note-hue) 30%, transparent);
+}
+
+.btn-note-action.has-notes:hover {
+    background: color-mix(in srgb, var(--note-hue) 24%, transparent);
+    border-color: var(--note-hue);
+}
+
+/* AI-only notes tint the pill purple. Mixed ownership keeps the yellow fill
+   and marks the agent's share on the trailing edge; the dots say the rest. */
+.btn-note-action.has-notes.notes-ai {
+    --note-hue: var(--info);
+}
+
+.btn-note-action.has-notes.notes-both {
+    border-right-color: color-mix(in srgb, var(--info) 55%, transparent);
+}
+
+.note-dots {
+    display: inline-flex;
+    gap: 2px;
+}
+
+.note-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--note-accent);
+}
+
+.note-dot.ai {
+    background: var(--info);
+}
+
+.note-count {
+    opacity: 0.85;
+}
+
+/* The rail handle still carries a badge; a count of notes is not an error, so
+   it takes the note colour rather than the red every alert uses. */
 .note-count-badge {
     position: absolute;
     top: -5px;
     right: -5px;
-    background: #ff4444;
-    color: white;
+    background: var(--note-accent);
+    color: var(--bg);
     font-size: 0.65rem;
     font-weight: bold;
     padding: 2px 5px;
@@ -580,98 +646,6 @@ tr:nth-child(even) {
     line-height: 1;
     writing-mode: horizontal-tb;
     text-orientation: initial;
-}
-
-.btn-note-action .note-count-badge {
-    top: -8px;
-    right: -8px;
-}
-
-.btn-note-action:hover {
-    background: rgba(255, 215, 0, 0.25);
-    border-color: #ffd700;
-}
-
-.btn-note-action:not(.has-notes) {
-    background: color-mix(in srgb, var(--token-register) 5%, transparent);
-    border-color: color-mix(in srgb, var(--token-register) 20%, transparent);
-    color: var(--accent);
-}
-
-.btn-note-action:not(.has-notes):hover {
-    background: color-mix(in srgb, var(--token-register) 15%, transparent);
-    border-color: var(--accent);
-}
-
-.btn-note-action.has-notes {
-    background: rgba(255, 215, 0, 0.15);
-    border-color: rgba(255, 215, 0, 0.4);
-    color: #ffd700;
-}
-
-.btn-note-action.has-notes:hover {
-    background: rgba(255, 215, 0, 0.25);
-    border-color: #ffd700;
-}
-
-/* AI-only notes: purple, matching AI insight styling */
-.btn-note-action.has-notes.notes-ai {
-    background: color-mix(in srgb, var(--info) 15%, transparent);
-    border-color: color-mix(in srgb, var(--info) 40%, transparent);
-    color: var(--info);
-}
-
-.btn-note-action.has-notes.notes-ai:hover {
-    background: color-mix(in srgb, var(--info) 25%, transparent);
-    border-color: var(--info);
-}
-
-/* Mixed user + AI notes: yellow card with a purple card stacked behind it */
-.btn-note-action.has-notes.notes-both {
-    background: color-mix(in srgb, #ffd700 15%, var(--bg)) !important;
-    box-shadow: 4px -4px 0 0 color-mix(in srgb, var(--info) 25%, var(--bg)),
-                4px -4px 0 1px var(--info);
-}
-
-.btn-note-action.has-notes.notes-both:hover {
-    background: color-mix(in srgb, #ffd700 25%, var(--bg)) !important;
-    box-shadow: 5px -5px 0 0 color-mix(in srgb, var(--info) 25%, var(--bg)),
-                5px -5px 0 1px var(--info);
-}
-
-/* Light theme: same yellow hue, darkened + stronger fill so the note button stays visible on white */
-html.light-theme .btn-note-action.has-notes {
-    background: rgba(255, 215, 0, 0.55);
-    border-color: #b8860b;
-    color: #6b4e00;
-}
-
-html.light-theme .btn-note-action.has-notes:hover {
-    background: rgba(255, 215, 0, 0.85);
-    border-color: #8a6508;
-}
-
-html.light-theme .btn-note-action.has-notes.notes-ai {
-    background: color-mix(in srgb, var(--info) 20%, transparent);
-    border-color: color-mix(in srgb, var(--info) 60%, transparent);
-    color: var(--info);
-}
-
-html.light-theme .btn-note-action.has-notes.notes-ai:hover {
-    background: color-mix(in srgb, var(--info) 35%, transparent);
-    border-color: var(--info);
-}
-
-html.light-theme .btn-note-action.has-notes.notes-both {
-    background: color-mix(in srgb, rgba(255, 215, 0, 0.8), var(--bg)) !important;
-    box-shadow: 4px -4px 0 0 color-mix(in srgb, var(--info) 20%, var(--bg)),
-                4px -4px 0 1px var(--info);
-}
-
-html.light-theme .btn-note-action.has-notes.notes-both:hover {
-    background: color-mix(in srgb, rgba(255, 215, 0, 1), var(--bg)) !important;
-    box-shadow: 5px -5px 0 0 color-mix(in srgb, var(--info) 20%, var(--bg)),
-                5px -5px 0 1px var(--info);
 }
 
 #loader {

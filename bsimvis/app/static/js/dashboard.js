@@ -1130,6 +1130,15 @@ function listFilters(params) {
     return active;
 }
 
+// The Limit input is built per view (its onchange targets that view's apply
+// function), so the footer only owns the pill around it.
+function setFooterLimit(html) {
+    const el = document.getElementById('view-limit');
+    if (!el) return;
+    el.innerHTML = html;
+    el.style.display = html ? 'inline-flex' : 'none';
+}
+
 function updateFooterMeta(params, data, elapsedMs) {
     const show = (id, text, title) => {
         const el = document.getElementById(id);
@@ -1680,7 +1689,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
         const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : (path === 'collections' ? 'applyCollectionSearch' : (path === 'pools' ? 'applyPoolSearch' : 'applyJobSearch'))))))));
 
         let settingsHtml = '';
-        settingsEl.style.display = 'flex';
+        let limitHtml = '';
 
         if (path === 'jobs') {
             settingsHtml += `
@@ -1733,18 +1742,20 @@ function updateUI(viewKey, collection, params, route, force = false) {
                         </div>`;
             }
 
-            settingsHtml += `
-                    <span class="dim" style="font-size:0.65rem; margin-left:15px;">Limit:</span>
-                    <div style="position:relative; display:inline-flex; align-items:center;">
-                        <input type="number" id="sim-limit" value="${escapeAttr(countLimit)}" step="10" min="1" max="50000" 
-                            title="Max results to display (Output Limit)" 
-                            style="width:60px; background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
-                            onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
-                    </div>
-                `;
+            // The limit reads as a fact about the result set, so it lives in the
+            // footer next to "shown / total" rather than in the header bar.
+            limitHtml = `
+                    <span class="dim">Limit</span>
+                    <input type="number" id="sim-limit" class="footer-num" value="${escapeAttr(countLimit)}" step="10" min="1" max="50000"
+                        title="Max results to display (Output Limit)"
+                        onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">`;
         }
         settingsEl.innerHTML = settingsHtml;
+        settingsEl.style.display = settingsHtml ? 'flex' : 'none';
+        setFooterLimit(limitHtml);
         if (path === 'jobs' && window.refreshPauseButton) window.refreshPauseButton();
+    } else {
+        setFooterLimit('');
     }
 
     if (pathChanged) {
@@ -2077,7 +2088,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
 
         // Sync view settings
         syncInput('sim-pool-limit', 'pool_limit');
-        syncInput('sim-limit', 'limit');
+        const limitEl = document.getElementById('sim-limit');
+        if (limitEl) limitEl.value = p.get('limit') || (p.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
  
         // Sync filter inputs
         if (path === 'files') {

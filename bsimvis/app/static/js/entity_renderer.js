@@ -185,7 +185,12 @@ window.EntityRenderer = {
         const value = (td.innerText || '').trim();
         if (!value) return null;
 
-        return { label: label || 'Cell', value: value };
+        const headerTable = table && table.id === 'data-table'
+            ? document.getElementById('header-table')
+            : table;
+        const filterCell = headerTable?.querySelector('thead .filter-row')?.cells[td.cellIndex];
+
+        return { label: label || 'Cell', value: value, filterCell: filterCell || null };
     },
 
     handleContextMenu: function(e, type, el) {

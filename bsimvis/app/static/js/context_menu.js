@@ -290,14 +290,33 @@
             }
         }
 
+        // -- Column Dropdown Submenu --
+        // Column operations belong beside entity actions; they must not replace
+        // the entity menu when a table cell is right-clicked.
+        if (data && data.__cell) {
+            let columnSubmenuHtml = '';
+            if (canApplyCellFilter(data.__cell.filterCell)) {
+                columnSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.applyContextCellFilter()">
+                    <i class="fa-solid fa-filter" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>Filter by this value</span>
+                </div>`;
+            }
+            columnSubmenuHtml += renderCopyItem('Value', data.__cell.value, 'fa-i-cursor');
+            html += `
+            <div class="context-menu-item submenu-trigger" style="position: relative;">
+                <i class="fa-solid fa-table-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>${escapeHtml(data.__cell.label)}</span>
+                <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
+
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; background: var(--card-bg); border: 1px solid var(--border); z-index: 20005;">
+                    ${columnSubmenuHtml}
+                </div>
+            </div>`;
+        }
+
         // -- Copy Dropdown Submenu --
         let copySubmenuHtml = '';
-        // The column under the pointer comes first, because it is the one the
-        // user pointed at. Everything below it is the row object's fields, which
-        // are the same wherever in the row you click.
-        if (data && data.__cell) {
-            copySubmenuHtml += renderCopyItem(data.__cell.label, data.__cell.value, 'fa-i-cursor');
-        }
         if (resolvedType === 'function') {
             copySubmenuHtml += renderCopyItem('Name', norm.name, 'fa-signature');
             copySubmenuHtml += renderCopyItem('Address', norm.addr, 'fa-location-crosshairs');
@@ -1196,9 +1215,19 @@
         return true;
     };
 
+    window.applyContextCellFilter = () => {
+        const cell = window.currentContextMenu?.data?.__cell;
+        if (cell && applyCellFilter(cell.filterCell, cell.value)) {
+            window.closeGraphContextMenu();
+        }
+    };
+
     document.addEventListener('contextmenu', (event) => {
         const cell = event.target.closest?.('tbody td');
         if (!cell || event.target.closest('button, .btn-action')) return;
+        // EntityRenderer owns its rows. Let its bubble handler open the unified
+        // menu, which now includes this cell's filter/copy operations.
+        if (event.target.closest('[data-entity-data]')) return;
         const value = cellValue(cell, event.target);
         if (!value) return;
 

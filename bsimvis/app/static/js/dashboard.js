@@ -2928,7 +2928,7 @@ function showDiffView() {
 }
 
 function showFunctionCodeById(id, name, lineHash = '', e) {
-    if (window.getSelection && window.getSelection().toString().trim()) {
+    if (window.selectionBlocksClick && window.selectionBlocksClick(e)) {
         return;
     }
     const f = window.parseFuncId(id);

@@ -2994,7 +2994,7 @@ if (typeof window.showFunctionCodeById === 'undefined') {
         if (window.parent && window.parent !== window && window.parent.showFunctionCodeById) {
             window.parent.showFunctionCodeById(id, name, lineHash, e);
         } else {
-            if (window.getSelection && window.getSelection().toString().trim()) {
+            if (window.selectionBlocksClick && window.selectionBlocksClick(e)) {
                 return;
             }
             const parts = id.split(':');

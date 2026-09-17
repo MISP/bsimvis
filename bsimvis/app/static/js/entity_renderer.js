@@ -223,13 +223,17 @@ window.EntityRenderer = {
         if (!md5) return '<span class="mono dim">---</span>';
         const actualMd5 = md5.includes(':') ? md5.split(':').pop() : md5;
         const displayMd5 = options.full ? actualMd5 : actualMd5.substring(0, 8);
-        const collection = typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main';
+        // A caller that knows the row's own collection should say so; guessing it
+        // from the URL mislabels rows that came from another collection.
+        const collection = options.collection
+            || (typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main');
         const fileId = `${collection}:file:${actualMd5}`;
         const fileData = { md5: actualMd5, fileId: fileId, name: actualMd5 };
         // ponytail: enable direct file context menu from any rendered md5
         return `
             <span class="entity-md5 mono" style="color:var(--accent); cursor:pointer;" title="${escapeAttr(actualMd5)}"
                   data-entity-data='${escapeAttr(JSON.stringify(fileData))}'
+                  onclick="event.stopPropagation(); openFileDetails(${escapeAttr(jsString(collection))}, ${escapeAttr(jsString(actualMd5))}, ${escapeAttr(jsString(actualMd5))}, event)"
                   oncontextmenu='event.stopPropagation(); typeof EntityRenderer !== "undefined" && EntityRenderer.handleContextMenu(event, "file", this)'># ${escapeHtml(displayMd5)}</span>
         `;
     },

@@ -664,3 +664,29 @@ document.addEventListener('DOMContentLoaded', () => {
         document.body.appendChild(btn);
     }
 });
+
+/**
+ * Should a text selection stop this click from navigating?
+ *
+ * Only when the selection is inside the thing that was clicked -- i.e. the user
+ * was selecting that text, not following the link. A bare getSelection() check
+ * blocks on a selection made anywhere else on the page, which silently killed
+ * every function link until the user clicked somewhere to clear it.
+ *
+ * With no event to compare against (keyboard or synthetic activation) nothing
+ * is blocked; suppressing drag-selection clicks is TableSelection's job.
+ */
+window.selectionBlocksClick = function (e) {
+    const sel = window.getSelection && window.getSelection();
+    if (!sel || sel.isCollapsed || !String(sel).trim()) return false;
+
+    const target = e && e.target;
+    const el = (target && target.nodeType === 3) ? target.parentElement : target;
+    if (!el || el.nodeType !== 1) return false;
+
+    try {
+        return el.contains(sel.anchorNode) || sel.containsNode(el, true);
+    } catch (err) {
+        return false;
+    }
+};

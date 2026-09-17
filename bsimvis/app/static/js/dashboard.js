@@ -456,11 +456,18 @@ function clearFilters() {
     }
 }
 
+let _refreshGeneration = 0;
+
 window.ModuleLoader = {
     currentModule: null,
+    abortController: null,
 
     async loadView(viewName, params) {
-
+        if (this.abortController) {
+            this.abortController.abort();
+        }
+        this.abortController = new AbortController();
+        const signal = this.abortController.signal;
 
         const dashboardContainer = document.getElementById('dashboard-view-container');
         const moduleContainer = document.getElementById('module-view-container');
@@ -505,8 +512,9 @@ window.ModuleLoader = {
         if (module && typeof module.init === 'function') {
             this.currentModule = module;
             try {
-                await module.init(params, 'module-view-container');
+                await module.init(params, 'module-view-container', signal);
             } catch (err) {
+                if (err.name === 'AbortError' || signal.aborted) return;
                 console.error(`Failed to init module ${viewName}:`, err);
                 if (moduleContainer) moduleContainer.innerHTML = `<div style="padding:20px; color:#f92672;"><i class="fa-solid fa-triangle-exclamation"></i> Error loading view: ${err.message}</div>`;
             }
@@ -517,6 +525,10 @@ window.ModuleLoader = {
     },
 
     showDashboard() {
+        if (this.abortController) {
+            this.abortController.abort();
+            this.abortController = null;
+        }
         if (this.currentModule && typeof this.currentModule.destroy === 'function') {
             this.currentModule.destroy();
         }
@@ -537,7 +549,8 @@ function hideDashboardActions() {
     const toHide = [
         document.getElementById('search-settings-container'),
         document.getElementById('header-clear-btn'), // filter-actions-container
-        document.getElementById('collapse-header-btn')
+        document.getElementById('collapse-header-btn'),
+        document.getElementById('table-footer'),
     ];
     toHide.forEach(el => {
         if (el) el.style.display = 'none';
@@ -604,6 +617,7 @@ function addNotIgnoreFilters() {
 }
 
 async function refreshData(appendArg = false, force = false, skipHeader = false) {
+    const myGen = ++_refreshGeneration;
     if (window.updateJobStatusIcon) window.updateJobStatusIcon();
     const append = (appendArg === true);
     const { viewKey, collection, pool, params } = getRoutingState();
@@ -768,8 +782,10 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
             
             // Asynchronously fetch counts for the pills
             setTimeout(async () => {
+                if (myGen !== _refreshGeneration) return;
                 const fetchCount = async (paramKey, paramVal, elId) => {
                     try {
+                        if (myGen !== _refreshGeneration) return;
                         const u = new URLSearchParams(params);
                         u.set('limit', 0); // Only return total count
                         if (paramKey) u.set(paramKey, paramVal);
@@ -780,9 +796,9 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                         if (pool) u.set('pool', pool); else u.delete('pool');
 
                         const res = await fetch('/api/bin_sim/search?' + u.toString());
-                        if (!res.ok) return;
+                        if (!res.ok || myGen !== _refreshGeneration) return;
                         const data = await res.json();
-                        if (data && data.total !== undefined) {
+                        if (data && data.total !== undefined && myGen === _refreshGeneration) {
                             const el = document.getElementById(elId);
                             if (el) el.innerText = '(' + data.total.toLocaleString() + ')';
                         }
@@ -805,15 +821,16 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                 // fetchCount a param it can't forward to the backend.
                 (async () => {
                     try {
+                        if (myGen !== _refreshGeneration) return;
                         const u = new URLSearchParams(params);
                         u.set('limit', 0);
                         if (collection) u.set('collection', collection); else u.delete('collection');
                         if (pool) u.set('pool', pool); else u.delete('pool');
                         u.append('exclude_file_tag', 'packer:upx');
                         const res = await fetch('/api/bin_sim/search?' + u.toString());
-                        if (!res.ok) return;
+                        if (!res.ok || myGen !== _refreshGeneration) return;
                         const data = await res.json();
-                        if (data && data.total !== undefined) {
+                        if (data && data.total !== undefined && myGen === _refreshGeneration) {
                             const el = document.getElementById('bsim-count-hide-packed');
                             if (el) el.innerText = '(' + data.total.toLocaleString() + ')';
                         }
@@ -916,6 +933,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     // Ensure tag metadata is loaded for views that use it (functions, similarities, and files)
     if (['functions', 'function-similarity', 'binary-similarity', 'files'].includes(viewKey)) {
         await fetchTagMetadata(collection);
+        if (myGen !== _refreshGeneration) return;
     }
 
     if (viewKey === 'function-similarity') {
@@ -999,12 +1017,14 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
     try {
         const response = await fetch(apiUrl);
+        if (myGen !== _refreshGeneration) return;
         if (!response.ok) {
             const text = await response.text();
             console.error(`API Error for ${apiUrl}: ${response.status} ${response.statusText}\n${text.substring(0, 500)}`);
             throw new Error(`API Error ${response.status}: ${response.statusText}`);
         }
         const data = await response.json();
+        if (myGen !== _refreshGeneration) return;
 
         // Extract the list of items based on the API response structure
         const items = data.pools || data.items || data.results || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || (Array.isArray(data) ? data : []);
@@ -1076,13 +1096,17 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
             totalEl.style.display = 'inline-block';
             totalEl.innerText = `${currentOffset.toLocaleString()} / ${total.toLocaleString()}`;
         }
+        const footerEl = document.getElementById('table-footer');
+        if (footerEl) footerEl.style.display = 'flex';
 
         renderPagination(viewKey);
     } catch (err) {
         console.error(err);
     } finally {
-        document.getElementById('loader').style.display = 'none';
-        document.getElementById('table-body').style.opacity = '1';
+        if (myGen === _refreshGeneration) {
+            document.getElementById('loader').style.display = 'none';
+            document.getElementById('table-body').style.opacity = '1';
+        }
     }
 }
 
@@ -1590,78 +1614,83 @@ function updateUI(viewKey, collection, params, route, force = false) {
         });
     }
 
-    if (pathChanged) {
-        if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'binary-similarity' || path === 'jobs' || path === 'collections' || path === 'pools') {
-            const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : (path === 'collections' ? 'applyCollectionSearch' : (path === 'pools' ? 'applyPoolSearch' : 'applyJobSearch'))))))));
+    // Always re-render the settings container (view selector pills + limit inputs)
+    // so the active pill is correct even when navigating back to the same path.
+    if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'binary-similarity' || path === 'jobs' || path === 'collections' || path === 'pools') {
+        const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : (path === 'collections' ? 'applyCollectionSearch' : (path === 'pools' ? 'applyPoolSearch' : 'applyJobSearch'))))))));
 
-            let settingsHtml = '';
-            settingsEl.style.display = 'flex';
+        let settingsHtml = '';
+        settingsEl.style.display = 'flex';
 
-            if (path === 'jobs') {
-                settingsHtml += `
+        if (path === 'jobs') {
+            settingsHtml += `
                     <div style="display:flex; align-items:center; gap:8px;">
                         <input type="checkbox" id="job-auto-refresh" ${localStorage.getItem('jobAutoRefresh') !== 'false' ? 'checked' : ''} onchange="localStorage.setItem('jobAutoRefresh', this.checked)" style="cursor:pointer; vertical-align:middle;">
                         <label for="job-auto-refresh" style="font-size:0.75rem; color:var(--text); cursor:pointer; font-weight:bold;">Auto-Refresh</label>
                     </div>
                     <button id="job-pause-toggle" class="view-btn" onclick="toggleJobPause()" title="Pause/resume all workers (fleet-wide)">…</button>`;
-            } else {
-                const viewMode = params.get('view') || 'table';
-                const poolLimit = params.get('pool_limit') || '1000000';
-                const countLimit = params.get('limit') || (viewMode === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
+        } else {
+            const viewMode = params.get('view') || 'table';
+            const poolLimit = params.get('pool_limit') || '1000000';
+            const countLimit = params.get('limit') || (viewMode === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
 
-                if (path === 'function-similarity') {
-                    settingsHtml += `
+            if (path === 'function-similarity') {
+                settingsHtml += `
                         <div class="view-toggle">
                             <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchSimView('table')">Table</button>
                             <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchSimView('graph')">Graph</button>
                         </div>`;
-                } else if (path === 'binary-similarity') {
-                    settingsHtml += `
+            } else if (path === 'binary-similarity') {
+                settingsHtml += `
                         <div class="view-toggle">
                             <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchBinSimView('table')">Table</button>
                             <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchBinSimView('graph')">Graph</button>
                         </div>`;
-                } else if (path === 'clusters') {
-                    settingsHtml += `
+            } else if (path === 'clusters') {
+                settingsHtml += `
                         <div class="view-toggle">
                             <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchClusterView('table')">Table</button>
                             <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchClusterView('hierarchy')">Graph</button>
                             <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchClusterView('packing')">Packing</button>
                         </div>`;
-                } else if (path === 'bin-clusters') {
-                    settingsHtml += `
+            } else if (path === 'bin-clusters') {
+                settingsHtml += `
                         <div class="view-toggle">
                             <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchBinClusterView('table')">Table</button>
                             <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchBinClusterView('hierarchy')">Graph</button>
                             <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchBinClusterView('packing')">Packing</button>
                         </div>`;
-                }
+            }
 
-                if (path === 'function-similarity' || path === 'functions') {
-                    settingsHtml += `
+            if (path === 'function-similarity' || path === 'functions') {
+                settingsHtml += `
                         <span class="dim" style="font-size:0.65rem; margin-left:15px;">Pool Limit:</span>
                         <div style="position:relative; display:inline-flex; align-items:center;">
                             <input type="number" id="sim-pool-limit" value="${escapeAttr(poolLimit)}" step="100000" min="1000" max="1000000" 
                                 title="Max candidates to score / filter" 
                                 style="width:70px; background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
                                 onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
-                            <span id="pool-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Pool Truncated: Not all candidates were scored.">⚠️</span>
                         </div>`;
-                }
+            }
 
-                settingsHtml += `
+            settingsHtml += `
                     <span class="dim" style="font-size:0.65rem; margin-left:15px;">Limit:</span>
                     <div style="position:relative; display:inline-flex; align-items:center;">
                         <input type="number" id="sim-limit" value="${escapeAttr(countLimit)}" step="10" min="1" max="50000" 
                             title="Max results to display (Output Limit)" 
                             style="width:60px; background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
                             onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
-                        <span id="limit-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Output Limit Reached: Results are capped.">ℹ️</span>
                     </div>
                 `;
-            }
-            settingsEl.innerHTML = settingsHtml;
-            if (path === 'jobs' && window.refreshPauseButton) window.refreshPauseButton();
+        }
+        settingsEl.innerHTML = settingsHtml;
+        if (path === 'jobs' && window.refreshPauseButton) window.refreshPauseButton();
+    }
+
+    if (pathChanged) {
+        if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'binary-similarity' || path === 'jobs' || path === 'collections' || path === 'pools') {
+            const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : (path === 'collections' ? 'applyCollectionSearch' : (path === 'pools' ? 'applyPoolSearch' : 'applyJobSearch'))))))));
+
 
             const p = new URLSearchParams(params);
             let headHtml = thead.innerHTML; // Start with the <tr> built above

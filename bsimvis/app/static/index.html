@@ -44,10 +44,10 @@
     <script src="/js/window_manager.js?v=3"></script>
     <script src="/js/upload.js?v=4"></script>
     <script src="/js/context_menu.js?v=12"></script>
-    <script src="/js/dashboard.js?v=14"></script>
+    <script src="/js/dashboard.js?v=15"></script>
     <script src="/js/breadcrumbs.js?v=3"></script>
     <script src="/js/jobs.js?v=5"></script>
-    <script src="/js/table_selection.js?v=4"></script>
+    <script src="/js/table_selection.js?v=5"></script>
     
     <!-- View Modules -->
     <script src="/js/views/function_view.js?v=8"></script>
@@ -72,10 +72,6 @@
         <div id="breadcrumbs-container" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; background: rgba(255,255,255,0.02); border-bottom: 1px solid var(--border); margin-bottom: 15px; border-radius: 6px; gap: 15px; flex-wrap: wrap;">
             <div id="breadcrumbs-list"></div>
             <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
-                <span id="view-total" class="badge"
-                    style="background:rgba(255,171,46,0.1); color:var(--accent); font-size:0.75rem; display:none; border:1px solid rgba(255,171,46,0.3)"></span>
-                <i id="pool-warn-icon" class="fa-solid fa-triangle-exclamation" style="color:#ffab2e; display:none; cursor:help; font-size: 0.9rem;" title="Pool Truncated"></i>
-                <i id="limit-warn-icon" class="fa-solid fa-circle-info" style="color:#60a5fa; display:none; cursor:help; font-size: 0.9rem;" title="Result Limit Reached"></i>
                 <div id="search-settings-container" style="display:none; align-items:center; gap:8px;"></div>
                 <div id="header-top-actions" style="display:flex; gap:10px; align-items:center;">
 
@@ -232,6 +228,17 @@
                     <div id="upload-view-container" style="display: none; flex: 1; flex-direction: column; overflow-y: auto; overflow-x: hidden;"></div>
                     <div id="binary-density-view-container" style="display: none;"></div>
 
+                </div>
+                <!-- Table footer: results count + selection stats -->
+                <div id="table-footer" class="table-footer" style="display:none;">
+                    <div class="table-footer-left">
+                        <span id="view-total" class="table-footer-badge" style="display:none;"></span>
+                        <i id="pool-warn-icon" class="fa-solid fa-triangle-exclamation table-footer-warn" style="display:none;" title="Pool Truncated"></i>
+                        <i id="limit-warn-icon" class="fa-solid fa-circle-info table-footer-info" style="display:none;" title="Result Limit Reached"></i>
+                    </div>
+                    <div class="table-footer-right">
+                        <span id="selection-stats" class="table-footer-sel" style="display:none;"></span>
+                    </div>
                 </div>
             </div>
         </div>

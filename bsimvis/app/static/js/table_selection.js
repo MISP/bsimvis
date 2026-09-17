@@ -602,6 +602,8 @@ class TableSelection {
         });
 
         if (this.selectedCells.size === 0) {
+            const selStats = document.getElementById('selection-stats');
+            if (selStats) selStats.style.display = 'none';
             return;
         }
 
@@ -645,6 +647,23 @@ class TableSelection {
         // change, and it is the last chance to read the row before a re-render
         // replaces it. See refreshAfterRender.
         this.focusKey = this.rowKey(focusRow);
+
+        // Update the footer selection stats
+        const selStats = document.getElementById('selection-stats');
+        if (selStats) {
+            // Compute the bounding box of the selection
+            let minRs = Infinity, maxRs = -Infinity, minCs = Infinity, maxCs = -Infinity;
+            this.selectedCells.forEach(coord => {
+                const [r, c] = coord.split(':').map(Number);
+                if (r < minRs) minRs = r; if (r > maxRs) maxRs = r;
+                if (c < minCs) minCs = c; if (c > maxCs) maxCs = c;
+            });
+            const rows = maxRs - minRs + 1;
+            const cols = maxCs - minCs + 1;
+            const cells = this.selectedCells.size;
+            selStats.style.display = 'inline-block';
+            selStats.textContent = `${rows} row${rows !== 1 ? 's' : ''} × ${cols} col${cols !== 1 ? 's' : ''} — ${cells.toLocaleString()} cell${cells !== 1 ? 's' : ''}`;
+        }
     }
 
     scrollIntoView() {

@@ -1377,7 +1377,7 @@ function fileSimTableHeadHtml(mode) {
                 onInput: 'binSimFilterChange(false)', onKeydown: "if(event.key==='Enter') binSimFilterChange(true)", step: 'any', min: '', max: '',
             })}
             <div class="tag-filter-container" id="tag-container-bsim-sim"><input type="text" class="tag-filter-add" placeholder="+ Sim tag" onkeydown="binSimSimTagAdd(event)" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bsim-sim', 'sim_tag', val, false, false); this.value=''; binSimFilterChange(true); })"></div>
-        </div>`, attrs: 'style="position:relative"' });
+        </div>`});
     }
     filterCells.push(
         { html: `<div onclick="event.stopPropagation()">${FunctionFilters.rangeCell('bsim-flt-matched-feat-min', 'bsim-flt-matched-feat-max', {

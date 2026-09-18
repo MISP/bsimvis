@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""Self-check for collect_member_values / build_freq (cluster_utils.py).
+
+The block that turns member file metadata into a cluster's distributions was
+copied into cluster_service, bin_cluster_service (twice) and metadata_service,
+and the copies drifted: the recalc path divided each count by len(items) -- the
+flattened value list -- while the three clustering paths divided by the member
+count, so the same `{collection}:bin_cluster:{algo}:{cid}:meta` key reported
+different percents depending on which writer ran last. This pins the
+member-count denominator and the scalar-or-list coercion.
+
+No redis, no fixtures: pure functions over a list of meta dicts.
+Run: uv run python scripts/test_cluster_meta_freq.py
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from bsimvis.app.services.cluster_utils import (  # noqa: E402
+    build_freq,
+    collect_member_values,
+)
+
+# Two members, three yara hits between them: "rule_a" is carried by both files,
+# so it describes 100% of the cluster. The old len(items) denominator divided by
+# 3 and reported 67%.
+MEMBERS = [
+    {
+        "file_names": ["dropper.exe", "dropper.exe"],
+        "file_md5": "aaaa",
+        "yara": ["rule_a", "rule_b"],
+        "avtype": "Emotet",
+        "filetype": "PE32",
+        "cc_ip": ["10.0.0.1"],
+    },
+    {
+        "file_name": "payload.bin",
+        "file_md5": "bbbb",
+        "yara": "rule_a",
+        "avtype": ["Emotet"],
+        "filetype": ["PE32"],
+    },
+]
+
+
+def test_percent_is_a_share_of_members():
+    _, _, yara_list, _, _, _ = collect_member_values(MEMBERS)
+    freq = build_freq(yara_list, len(MEMBERS))
+    assert freq[0] == {"value": "rule_a", "count": 2, "percent": 100}, freq
+    assert freq[1] == {"value": "rule_b", "count": 1, "percent": 50}, freq
+
+
+def test_flattened_lists_are_collected_once_per_value():
+    names, md5s, yara, avtype, filetype, ccip = collect_member_values(MEMBERS)
+    assert names == ["dropper.exe", "dropper.exe", "payload.bin"], names
+    assert md5s == ["aaaa", "bbbb"], md5s
+    assert yara == ["rule_a", "rule_b", "rule_a"], yara
+    assert avtype == ["Emotet", "Emotet"], avtype
+    assert filetype == ["PE32", "PE32"], filetype
+    assert ccip == ["10.0.0.1"], ccip
+
+
+def test_file_names_wins_over_file_name():
+    meta = {"file_names": ["a.exe"], "file_name": "b.exe"}
+    names = collect_member_values([meta])[0]
+    assert names == ["a.exe"], names
+
+
+def test_only_the_top_five_values_are_kept():
+    freq = build_freq([f"v{i}" for i in range(6)], 6)
+    assert len(freq) == 5, freq
+
+
+def test_nothing_collected_gives_an_empty_distribution():
+    assert build_freq([], 3) == []
+
+
+if __name__ == "__main__":
+    test_percent_is_a_share_of_members()
+    test_flattened_lists_are_collected_once_per_value()
+    test_file_names_wins_over_file_name()
+    test_only_the_top_five_values_are_kept()
+    test_nothing_collected_gives_an_empty_distribution()
+    print("OK")

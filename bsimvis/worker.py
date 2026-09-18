@@ -29,6 +29,7 @@ from bsimvis.app.services.cluster_service import cluster_service
 from bsimvis.app.services.bin_cluster_service import bin_cluster_service
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.metadata_service import MetadataService
+from bsimvis.similarity import registry
 
 # Setup Logging
 logging.basicConfig(
@@ -85,6 +86,16 @@ def _reset_peak_rss():
         return True
     except OSError:
         return False
+
+
+def _clear_algorithms(payload):
+    """Return algorithm namespaces a clear job must remove."""
+    algos = payload.get("algos")
+    if payload.get("all_algorithms"):
+        algos = registry.names(buildable=True)
+    elif isinstance(algos, str):
+        algos = [algos]
+    return algos or [payload.get("algo") or registry.DEFAULT_ALGO]
 
 
 class Worker:
@@ -647,16 +658,16 @@ class Worker:
                     address=payload["address"],
                     algo=payload.get("algo"),
                 )
-            if payload.get("all"):
-                return self.similarity_service.clear_all(
-                    collection, algo=payload.get("algo")
-                )
-            else:
-                field = "batch_uuid" if batch_uuid else "md5"
-                value = batch_uuid or md5
-                return self.similarity_service.clear_filtered(
-                    collection, field, value, algo=payload.get("algo")
-                )
+            for algo in _clear_algorithms(payload):
+                if payload.get("all"):
+                    result = self.similarity_service.clear_all(collection, algo=algo)
+                else:
+                    field = "batch_uuid" if batch_uuid else "md5"
+                    value = batch_uuid or md5
+                    result = self.similarity_service.clear_filtered(
+                        collection, field, value, algo=algo
+                    )
+            return result
 
         elif jtype == JobType.CLEAR_FEATURES.value:
             return self.feature_service.clear_features(
@@ -700,10 +711,11 @@ class Worker:
             )
 
         elif jtype == JobType.CLEAR_CLUSTER.value:
-            algo = payload.get("algo", "unweighted_cosine")
-            return cluster_service.clear_clustering(
-                collection, algo=algo, job_service=self.job_service, job_id=job_id
-            )
+            for algo in _clear_algorithms(payload):
+                result = cluster_service.clear_clustering(
+                    collection, algo=algo, job_service=self.job_service, job_id=job_id
+                )
+            return result
 
         elif jtype == JobType.CLUSTER_BINARIES.value:
             algo = payload.get("algo", "unweighted_cosine")
@@ -743,11 +755,16 @@ class Worker:
             )
 
         elif jtype == JobType.CLEAR_BIN_CLUSTER.value:
-            algo = payload.get("algo", "unweighted_cosine")
             axis = payload.get("axis", "overall")
-            return bin_cluster_service.clear_clusters(
-                collection, algo=algo, job_service=self.job_service, job_id=job_id, axis=axis
-            )
+            for algo in _clear_algorithms(payload):
+                result = bin_cluster_service.clear_clusters(
+                    collection,
+                    algo=algo,
+                    job_service=self.job_service,
+                    job_id=job_id,
+                    axis=axis,
+                )
+            return result
 
         elif jtype == JobType.BUILD_BIN_SIM.value:
             algo = payload.get("algo", "unweighted_cosine")
@@ -767,15 +784,16 @@ class Worker:
             )
 
         elif jtype == JobType.CLEAR_BIN_SIM.value:
-            algo = payload.get("algo", "unweighted_cosine")
             md5 = payload.get("md5")
-            return bin_sim_service.clear_bin_sim(
-                collection,
-                algo=algo,
-                md5=md5,
-                job_service=self.job_service,
-                job_id=job_id,
-            )
+            for algo in _clear_algorithms(payload):
+                result = bin_sim_service.clear_bin_sim(
+                    collection,
+                    algo=algo,
+                    md5=md5,
+                    job_service=self.job_service,
+                    job_id=job_id,
+                )
+            return result
 
         elif jtype == JobType.RESPLIT_BIN_SIM.value:
             return bin_sim_service.resplit_bin_sim(

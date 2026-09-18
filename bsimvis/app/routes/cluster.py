@@ -76,11 +76,31 @@ def build_rebuild_all_tasks(collection, algo, skip_sim=False, data=None):
 
     tasks = []
     if not incremental:
-        tasks.append((JobType.CLEAR_CLUSTER, {"collection": collection, "algo": algo}))
+        tasks.append(
+            (
+                JobType.CLEAR_CLUSTER,
+                {"collection": collection, "algo": algo, "all_algorithms": True},
+            )
+        )
     if not skip_sim and not incremental:
-        tasks.append((JobType.CLEAR_BIN_SIM, {"collection": collection, "algo": algo}))
+        tasks.append(
+            (
+                JobType.CLEAR_BIN_SIM,
+                {"collection": collection, "algo": algo, "all_algorithms": True},
+            )
+        )
         for ax in ["overall", "code", "library", "content"]:
-            tasks.append((JobType.CLEAR_BIN_CLUSTER, {"collection": collection, "algo": algo, "axis": ax}))
+            tasks.append(
+                (
+                    JobType.CLEAR_BIN_CLUSTER,
+                    {
+                        "collection": collection,
+                        "algo": algo,
+                        "all_algorithms": True,
+                        "axis": ax,
+                    },
+                )
+            )
 
     if not skip_sim:
         tasks.append(
@@ -106,7 +126,8 @@ def build_rebuild_all_tasks(collection, algo, skip_sim=False, data=None):
                             config_service.get("clustering.min_cluster_size", 2),
                         ),
                         "min_samples": data.get(
-                            "min_samples", config_service.get("clustering.min_samples", 1)
+                            "min_samples",
+                            config_service.get("clustering.min_samples", 1),
                         ),
                         "epsilon": data.get(
                             "epsilon", config_service.get("clustering.epsilon", 0.1)

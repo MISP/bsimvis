@@ -76,7 +76,9 @@ def maintenance():
 
     if "function_similarity" in targets:
         if operation in {"clear", "rebuild"}:
-            tasks.append((JobType.CLEAR_SIM, dict(function_scope)))
+            clear_scope = dict(function_scope)
+            clear_scope["all_algorithms"] = scope["all"]
+            tasks.append((JobType.CLEAR_SIM, clear_scope))
         if operation in {"build", "rebuild"}:
             tasks.append((JobType.BUILD_SIM, dict(function_scope)))
             tasks.append((JobType.INDEX_SIM, dict(function_scope)))
@@ -86,7 +88,14 @@ def maintenance():
     if "function_cluster" in targets:
         if operation in {"clear", "rebuild"}:
             tasks.append(
-                (JobType.CLEAR_CLUSTER, {"collection": collection, "algo": algo})
+                (
+                    JobType.CLEAR_CLUSTER,
+                    {
+                        "collection": collection,
+                        "algo": algo,
+                        "all_algorithms": scope["all"],
+                    },
+                )
             )
         if operation in {"build", "rebuild"}:
             tasks.append(
@@ -134,7 +143,12 @@ def maintenance():
                 tasks.append(
                     (
                         JobType.CLEAR_BIN_SIM,
-                        {"collection": collection, "algo": algo, "md5": file_md5},
+                        {
+                            "collection": collection,
+                            "algo": algo,
+                            "md5": file_md5,
+                            "all_algorithms": scope["all"],
+                        },
                     )
                 )
         if operation in {"build", "rebuild"}:
@@ -150,7 +164,12 @@ def maintenance():
             tasks.extend(
                 (
                     JobType.CLEAR_BIN_CLUSTER,
-                    {"collection": collection, "algo": algo, "axis": axis},
+                    {
+                        "collection": collection,
+                        "algo": algo,
+                        "all_algorithms": scope["all"],
+                        "axis": axis,
+                    },
                 )
                 for axis in _AXES
             )

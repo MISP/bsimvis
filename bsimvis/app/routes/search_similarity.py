@@ -168,6 +168,13 @@ def similarity_search():
         pool_id = request.args.get("pool")
         col = request.args.get("collection")
         algo = request.args.get("algo", "unweighted_cosine")
+        if pool_id:
+            from bsimvis.app.services.pool_service import pool_service
+
+            pool = pool_service.get_pool(pool_id)
+            if not pool:
+                return {"error": "Pool not found"}, 404
+            algo = pool_service.similarity_algo(pool)
 
         metrics = {
             "cache_lookup": 0,

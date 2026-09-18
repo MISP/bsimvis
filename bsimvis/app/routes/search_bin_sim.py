@@ -749,8 +749,16 @@ def search_bin_sims():
         if not collection and not pool_id:
             return {"error": "No collection or pool specified"}, 400
 
-        algo = request.args.get("algo", "unweighted_cosine")
         is_pool = pool_id is not None
+        if is_pool:
+            from bsimvis.app.services.pool_service import pool_service
+
+            pool = pool_service.get_pool(pool_id)
+            if not pool:
+                return {"error": "Pool not found"}, 404
+            algo = pool_service.similarity_algo(pool)
+        else:
+            algo = request.args.get("algo", "unweighted_cosine")
 
         try:
             offset = int(request.args.get("offset", 0))

@@ -2169,6 +2169,39 @@ def run_all_tests():
                 f"errors={bad.get('errors')}",
             )
 
+    # The algorithm registry the CLI, the API and the dashboard pickers all read.
+    algos = test_endpoint("GET", "/api/similarity/algorithms")
+    if algos:
+        entries = algos.get("algorithms") or []
+        by_name = {a.get("name"): a for a in entries}
+        check(
+            "algorithms lists every similarity algorithm",
+            {"jaccard", "unweighted_cosine", "binary_cosine", "weighted_cosine"}
+            <= set(by_name),
+            f"names={sorted(by_name)}",
+        )
+        check(
+            "default algorithm is listed",
+            algos.get("default") in by_name,
+            f"default={algos.get('default')}",
+        )
+        check(
+            "weighted_cosine is marked unbuildable",
+            by_name.get("weighted_cosine", {}).get("buildable") is False,
+            f"weighted_cosine={by_name.get('weighted_cosine')}",
+        )
+        check(
+            "weighted_cosine is the only one reporting significance",
+            [n for n, a in by_name.items() if a.get("significance")]
+            == ["weighted_cosine"],
+            f"significance={[n for n, a in by_name.items() if a.get('significance')]}",
+        )
+        check(
+            "every algorithm carries a label and an icon for the UI",
+            all(a.get("label") and a.get("icon") for a in entries),
+            f"entries={entries}",
+        )
+
     # The build path cannot compute weighted_cosine; it must refuse rather than
     # emit unfiltered pairs.
     test_endpoint(

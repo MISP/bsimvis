@@ -2,6 +2,13 @@ from flask import Blueprint, request, jsonify
 from flask_restx import Api, Resource, fields, Namespace
 import json
 from redis.exceptions import BusyLoadingError
+from bsimvis.similarity import registry
+
+# Both upload paths take a build --algo, so they list what the build path can
+# compute. GET /api/similarity/algorithms carries the full set with capabilities.
+_BUILD_ALGO_DESC = "Similarity algorithm (%s)" % ", ".join(
+    registry.names(buildable=True)
+)
 
 # Create a blueprint for the Swagger UI and API
 api_bp = Blueprint("api", __name__, url_prefix="/api")
@@ -140,8 +147,8 @@ file_upload_data_model = api.model(
         "min_score": fields.Float(description="Minimum similarity score threshold"),
         "min_features": fields.Integer(description="Minimum feature count required"),
         "algo": fields.String(
-            default="unweighted_cosine",
-            description="Similarity algorithm (jaccard, unweighted_cosine, milvus_sparse)",
+            default=registry.DEFAULT_ALGO,
+            description=_BUILD_ALGO_DESC,
         ),
         "skip_sim": fields.Boolean(default=False, description="Skip similarity build"),
     },
@@ -896,7 +903,7 @@ class RawFileUpload(Resource):
             "top_k": "Top K matches per function",
             "min_score": "Minimum similarity score threshold",
             "min_features": "Minimum feature count required",
-            "algo": "Similarity algorithm (jaccard, unweighted_cosine, milvus_sparse)",
+            "algo": _BUILD_ALGO_DESC,
             "skip_sim": "Set to true to skip building similarities",
             "enqueue": "Set to false to require batch_finalize (default: true)",
             "debounce": "Set to true to batch uploads before building (default: false)",
@@ -1625,6 +1632,15 @@ class SimilarityBatches(Resource):
         from bsimvis.app.routes.similarity import list_batches
 
         return list_batches()
+
+
+@ns_similarity.route("/algorithms")
+class SimilarityAlgorithms(Resource):
+    def get(self):
+        """Lists the similarity algorithms this server offers, with their capabilities."""
+        from bsimvis.app.routes.similarity import list_algorithms
+
+        return list_algorithms()
 
 
 @ns_similarity.route("/list")

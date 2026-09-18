@@ -5,6 +5,7 @@ import time
 import tomllib
 import os
 from dotenv import load_dotenv
+from bsimvis.similarity import registry
 from bsimvis.cli import (
     bsimvis_index,
     bsimvis_sim,
@@ -120,7 +121,7 @@ def main():
         )
         dp.add_argument(
             "--algo",
-            choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
+            choices=registry.BUILD_CHOICES,
             help="Algorithm to target",
         )
 
@@ -179,8 +180,8 @@ def main():
     c_build.add_argument("-c", "--collection", required=True, help="Collection name")
     c_build.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
-        default="unweighted_cosine",
+        choices=registry.BUILD_CHOICES,
+        default=registry.DEFAULT_ALGO,
         help="Algorithm to cluster",
     )
     c_build.add_argument(
@@ -223,8 +224,8 @@ def main():
     c_rebuild.add_argument("-c", "--collection", required=True, help="Collection name")
     c_rebuild.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
-        default="unweighted_cosine",
+        choices=registry.BUILD_CHOICES,
+        default=registry.DEFAULT_ALGO,
         help="Algorithm to cluster",
     )
     c_rebuild.add_argument(
@@ -263,8 +264,8 @@ def main():
     c_clear.add_argument("-c", "--collection", required=True, help="Collection name")
     c_clear.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
-        default="unweighted_cosine",
+        choices=registry.BUILD_CHOICES,
+        default=registry.DEFAULT_ALGO,
         help="Algorithm to target",
     )
 
@@ -276,8 +277,8 @@ def main():
     c_list.add_argument("--cluster-id", help="See members of a specific cluster")
     c_list.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
-        default="unweighted_cosine",
+        choices=registry.BUILD_CHOICES,
+        default=registry.DEFAULT_ALGO,
     )
     c_list.add_argument("--limit", type=int, default=100)
     c_list.add_argument("--offset", type=int, default=0)
@@ -291,7 +292,12 @@ def main():
     # binsim build
     bs_build = binsim_actions.add_parser("build", help="Build binary similarities")
     bs_build.add_argument("-c", "--collection", required=True, help="Collection name")
-    bs_build.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_build.add_argument(
+        "--algo",
+        default=registry.DEFAULT_ALGO,
+        choices=registry.BUILD_CHOICES,
+        help="Algorithm",
+    )
     bs_build.add_argument("--md5-a", help="First binary MD5 (optional)")
     bs_build.add_argument("--md5-b", help="Second binary MD5 (optional)")
     bs_build.add_argument(
@@ -303,7 +309,12 @@ def main():
         "rebuild", help="Clear and build binary similarities"
     )
     bs_rebuild.add_argument("-c", "--collection", required=True, help="Collection name")
-    bs_rebuild.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_rebuild.add_argument(
+        "--algo",
+        default=registry.DEFAULT_ALGO,
+        choices=registry.BUILD_CHOICES,
+        help="Algorithm",
+    )
     bs_rebuild.add_argument("--md5-a", help="First binary MD5 (optional)")
     bs_rebuild.add_argument("--md5-b", help="Second binary MD5 (optional)")
     bs_rebuild.add_argument(
@@ -313,13 +324,23 @@ def main():
     # binsim clear
     bs_clear = binsim_actions.add_parser("clear", help="Clear binary similarities")
     bs_clear.add_argument("-c", "--collection", required=True, help="Collection name")
-    bs_clear.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_clear.add_argument(
+        "--algo",
+        default=registry.DEFAULT_ALGO,
+        choices=registry.BUILD_CHOICES,
+        help="Algorithm",
+    )
     bs_clear.add_argument("--md5", help="Target specific MD5")
 
     # binsim list
     bs_list = binsim_actions.add_parser("list", help="List similar binaries")
     bs_list.add_argument("-c", "--collection", required=True, help="Collection name")
-    bs_list.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_list.add_argument(
+        "--algo",
+        default=registry.DEFAULT_ALGO,
+        choices=registry.BUILD_CHOICES,
+        help="Algorithm",
+    )
     bs_list.add_argument("--md5", required=True, help="Target specific MD5")
     bs_list.add_argument("--limit", type=int, default=20)
     bs_list.add_argument("--offset", type=int, default=0)
@@ -327,7 +348,12 @@ def main():
     # binsim diff
     bs_diff = binsim_actions.add_parser("diff", help="Get binary similarity diff")
     bs_diff.add_argument("-c", "--collection", required=True, help="Collection name")
-    bs_diff.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_diff.add_argument(
+        "--algo",
+        default=registry.DEFAULT_ALGO,
+        choices=registry.BUILD_CHOICES,
+        help="Algorithm",
+    )
     bs_diff.add_argument("--md5-a", required=True, help="First binary MD5")
     bs_diff.add_argument("--md5-b", required=True, help="Second binary MD5")
 
@@ -356,7 +382,7 @@ def main():
     )
     sim_list.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
+        choices=registry.BUILD_CHOICES,
         help="Algorithm to filter",
     )
     # --- JOB ---
@@ -594,7 +620,7 @@ def main():
     )
     sim_options.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
+        choices=registry.BUILD_CHOICES,
         help="Similarity algorithm to use (default: unweighted_cosine)",
     )
     sim_options.add_argument(

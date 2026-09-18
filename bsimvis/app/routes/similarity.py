@@ -9,9 +9,23 @@ from bsimvis.app.services.similarity_service import (
 from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import normalize_tags
+from bsimvis.similarity import registry
 
 job_service = JobService()
 similarity_service = SimilarityService()
+
+
+def list_algorithms():
+    """The similarity algorithms this server offers, for UI pickers and clients.
+
+    Availability is decided here rather than in the browser: only the server
+    knows whether Milvus is up. Unavailable algorithms stay in the list, marked,
+    so a picker can grey them out instead of silently losing an entry.
+    """
+    return {
+        "algorithms": registry.describe(milvus_enabled=milvus_service.enabled),
+        "default": registry.DEFAULT_ALGO,
+    }
 
 
 def _all_file_build_group(collection, payload):

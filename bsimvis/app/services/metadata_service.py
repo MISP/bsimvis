@@ -3,6 +3,7 @@ import logging
 from collections import Counter
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_config import INDEX_CONFIG, NUM_FIELDS
+from bsimvis.similarity import registry
 from bsimvis.app.services.index_service import (
     _index_tag,
     _unindex_tag,
@@ -157,12 +158,12 @@ class MetadataService:
 
         # Check active algorithms directly using exists (O(1) operations) to avoid scanning millions of keys
         algos = set()
-        for candidate_algo in ["unweighted_cosine", "binary_cosine", "jaccard", "milvus_sparse"]:
+        for candidate_algo in registry.names(buildable=True):
             if r.exists(f"{collection}:bin_cluster:list:{candidate_algo}"):
                 algos.add(candidate_algo)
 
         if not algos:
-            algos.add("unweighted_cosine")
+            algos.add(registry.DEFAULT_ALGO)
 
         affected_clusters_to_recalculate = set()
 

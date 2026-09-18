@@ -1,6 +1,7 @@
 import json
 from flask import request
 from bsimvis.app.services import bsim_profiles
+from bsimvis.similarity import registry
 from bsimvis.app.services.similarity_service import SimilarityService
 
 
@@ -51,9 +52,12 @@ def similarity_api():
         if requested:
             algorithms = [a.strip() for a in requested.split(",") if a.strip()]
         else:
-            algorithms = ["jaccard", "unweighted_cosine", "binary_cosine"]
-            if milvus_service.enabled:
-                algorithms.append("milvus_sparse")
+            # Everything the build path can compute: those are the ones that may
+            # already be cached. weighted_cosine is opt-in via ?algo= because it
+            # is never cached and would be scored on demand on every request.
+            algorithms = registry.names(
+                buildable=True, milvus_enabled=milvus_service.enabled
+            )
 
         scores = {}
         significance = {}

@@ -706,3 +706,79 @@ window.selectionBlocksClick = function (e) {
         return false;
     }
 };
+
+/**
+ * The similarity algorithms the server offers, fetched once from
+ * /api/similarity/algorithms.
+ *
+ * The list used to be spelled out in three JS files and several <select>s, so a
+ * new algorithm reached the UI only where someone remembered to add it, and
+ * Milvus-backed entries were offered whether or not Milvus was up. Only the
+ * server knows both, so it decides and this caches the answer.
+ *
+ * `list` starts with the default algorithm alone so a picker rendered before
+ * the fetch lands is never empty; `sim-algos-loaded` fires when the real list
+ * arrives, and views re-render their pickers on it.
+ */
+window.SimAlgos = {
+    default: 'unweighted_cosine',
+    list: [{
+        name: 'unweighted_cosine', label: 'Cosine',
+        icon: 'fa-solid fa-arrows-left-right', description: '',
+        buildable: true, exact: true, significance: false,
+        requires_milvus: false, profiled: false, available: true,
+    }],
+    loaded: false,
+    _promise: null,
+
+    load() {
+        if (this._promise) return this._promise;
+        this._promise = fetch('/api/similarity/algorithms')
+            .then(r => r.ok ? r.json() : Promise.reject(r.status))
+            .then(data => {
+                if (data && Array.isArray(data.algorithms) && data.algorithms.length) {
+                    this.list = data.algorithms;
+                    this.default = data.default || this.default;
+                    this.loaded = true;
+                    window.dispatchEvent(new CustomEvent('sim-algos-loaded'));
+                }
+                return this.list;
+            })
+            .catch(() => this.list);  // keep the fallback; the picker still works
+        return this._promise;
+    },
+
+    /**
+     * Algorithms matching `opts`, as pill/option descriptors.
+     * `buildable: true` keeps only what a stored build can have been made with:
+     * anything a picker feeds to a build, a cluster run or a cached-score lookup.
+     */
+    options(opts) {
+        const o = opts || {};
+        return this.list
+            .filter(a => o.buildable === undefined || a.buildable === o.buildable)
+            .filter(a => o.includeUnavailable ? true : a.available !== false)
+            .map(a => ({ v: a.name, label: a.label, icon: a.icon, title: a.description }));
+    },
+
+    /** `<option>` markup for a plain <select>, with `selected` marked. */
+    optionsHtml(selected, opts) {
+        return this.options(opts).map(o =>
+            `<option value="${escapeAttr(o.v)}" title="${escapeAttr(o.title || '')}"${o.v === selected ? ' selected' : ''}>${escapeHtml(o.label)}</option>`
+        ).join('');
+    },
+};
+
+// Pickers built before the fetch landed hold only the fallback entry. Each
+// owner exposes its own re-render; a picker that is not on screen is a no-op.
+window.addEventListener('sim-algos-loaded', () => {
+    if (window.refreshSimAlgoPills) window.refreshSimAlgoPills();
+    if (window.FunctionView && document.getElementById('fn-nbr-algo-pills')) {
+        window.FunctionView.renderAllNeighborPills();
+    }
+    if (window.DiffView && document.getElementById('sim-algo-select')) {
+        window.DiffView.updateSimDisplay();
+    }
+});
+
+window.SimAlgos.load();

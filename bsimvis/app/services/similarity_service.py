@@ -5,6 +5,7 @@ import time
 import logging
 import hashlib
 from bsimvis.app.services import bsim_profiles, bsim_weights
+from bsimvis.similarity import registry
 from bsimvis.app.services.collection_config import assert_signature_settings_match
 from bsimvis.app.services.index_service import save_similarity
 from bsimvis.app.services.milvus_service import milvus_service
@@ -15,9 +16,9 @@ from bsimvis.app.services.index_config import get_propagated_fields
 # Algorithms the build path can actually compute. The candidate walk in
 # _select_candidates branches only on these; anything else falls through every
 # branch and yields unfiltered, meaningless results instead of an error.
-# `weighted_cosine` is deliberately absent: it is implemented on the exact-score
-# path only (calculate_exact_score) until the weighted pruning bounds land.
-BUILDABLE_ALGOS = ("jaccard", "unweighted_cosine", "milvus_sparse")
+# `weighted_cosine` is absent: it is implemented on the exact-score path only
+# (calculate_exact_score) until the weighted pruning bounds land.
+BUILDABLE_ALGOS = tuple(registry.names(buildable=True))
 
 
 def assert_buildable_algo(algo):
@@ -1445,7 +1446,7 @@ class SimilarityService:
         for name in (
             [algo]
             if algo
-            else ["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"]
+            else list(BUILDABLE_ALGOS)
         ):
             clear_hier_state(self.r, f"{collection}:cluster:hier:{name}")
         return result
@@ -1456,7 +1457,7 @@ class SimilarityService:
         algos = (
             [algo]
             if algo
-            else ["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"]
+            else list(BUILDABLE_ALGOS)
         )
 
         logging.info(f"[*] Clearing ALL similarities for collection: {collection}")

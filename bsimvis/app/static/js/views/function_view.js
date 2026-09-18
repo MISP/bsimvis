@@ -696,10 +696,11 @@ window.FunctionView = {
         this.searchNeighbors();
     },
 
-    ALGO_OPTIONS: [
-        { v: 'unweighted_cosine', label: 'Cosine', icon: 'fa-solid fa-arrows-left-right' },
-        { v: 'jaccard', label: 'Jaccard', icon: 'fa-solid fa-object-group' },
-    ],
+    // Neighbours come from stored scores, so only buildable algorithms (SimAlgos
+    // in utils.js — server-driven, so Milvus appears only when it is up).
+    get ALGO_OPTIONS() {
+        return window.SimAlgos.options({ buildable: true });
+    },
     CROSS_BINARY_OPTIONS: [
         { v: '', label: 'All Binaries', icon: 'fa-solid fa-globe' },
         { v: 'false', label: 'Same Binary', icon: 'fa-solid fa-file' },

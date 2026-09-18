@@ -9,6 +9,8 @@ import concurrent.futures, threading
 from tqdm import tqdm
 import requests
 
+from bsimvis.similarity import registry
+
 from bsimvis.app.services.ghidra_service import ghidra_service
 from bsimvis.app.services.index_service import parse_timestamp
 
@@ -1024,7 +1026,7 @@ def cli_main():
     )
     sim_options.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
+        choices=registry.BUILD_CHOICES,
         help="Similarity algorithm to use (default: unweighted_cosine)",
     )
     sim_options.add_argument(

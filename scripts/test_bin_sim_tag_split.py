@@ -860,6 +860,77 @@ def test_resplit_replays_the_split_from_the_stored_diff():
     assert crossed["severity:high"]["category:network"][0] == 10.0
 
 
+def test_resplit_follows_the_doc_own_weighting():
+    """A doc built with `similarity.unweighted_match` keeps counting 1.0 per
+    match when it is resplit, whatever the config says at resplit time.
+
+    The resplit replays the stored rows, which carry their real similarity. Read
+    at face value they would reweight the split back to a similarity mean while
+    `score` next to it still means coverage -- the two would disagree, and the
+    Code/Library cards would stop adding up to the pair score.
+    """
+    from bsimvis.app.services.bin_sim_service import bin_sim_service
+
+    sid = "main:bin_sim:uc:aaa::bbb"
+    stored = {
+        "md5_a": "aaa",
+        "md5_b": "bbb",
+        # 10 matched of 15 total feature mass, every match counted whole.
+        "score": 10.0 / 15.0,
+        "unweighted_match": True,
+        "tags_summary": [],
+        "diff": {
+            "matched": [
+                {
+                    "func_a": "fa1",
+                    "func_b": "fb1",
+                    "similarity": 0.5,
+                    "avg_features": 10.0,
+                }
+            ],
+            "unique_to_a": [{"func_id": "fa2", "avg_features": 5.0}],
+            "unique_to_b": [],
+        },
+    }
+    lib = ["origin:lib:libc:2.31"]
+    values = {
+        sid: json.dumps(stored),
+        "main:tags_rev": "7",
+        "fa1:meta": json.dumps({"bsim_features_count": 10, "tags": lib}),
+        "fb1:meta": json.dumps({"bsim_features_count": 10, "tags": lib}),
+        "fa2:meta": json.dumps({"bsim_features_count": 5}),
+    }
+
+    fake = FakeRedis(values, members=[sid])
+    old_r = bin_sim_service.r
+    bin_sim_service.r = fake
+    try:
+        assert bin_sim_service.resplit_bin_sim("main", algo="uc") is True
+    finally:
+        bin_sim_service.r = old_r
+
+    out = json.loads(fake.values[sid])
+    # The one library match covers its own mass entirely -- 1.0, not its 0.5
+    # similarity -- and the untagged leftover drags the code side to 0.
+    assert abs(out["score_library"] - 1.0) < 1e-9, out["score_library"]
+    assert out["score_code"] == 0.0, out["score_code"]
+    libc = by_id(out["tags_summary"])["origin:lib:libc:2.31"]
+    assert abs(libc["score"] - 1.0) < 1e-9, libc["score"]
+
+    # The same doc without the flag is the similarity-weighted reading.
+    weighted = dict(stored)
+    weighted.pop("unweighted_match")
+    values[sid] = json.dumps(weighted)
+    fake = FakeRedis(values, members=[sid])
+    bin_sim_service.r = fake
+    try:
+        assert bin_sim_service.resplit_bin_sim("main", algo="uc") is True
+    finally:
+        bin_sim_service.r = old_r
+    out = json.loads(fake.values[sid])
+    assert abs(out["score_library"] - 0.5) < 1e-9, out["score_library"]
+
+
 def test_resplit_skips_a_doc_that_is_already_current():
     """Resplitting the same pair twice must not pay for it twice.
 

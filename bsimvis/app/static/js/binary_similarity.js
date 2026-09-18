@@ -514,6 +514,15 @@ function initResizableCards() {
         }
         const data = await res.json();
 
+        // The server may pick the weighting itself (config default), so take the
+        // answer from the doc rather than from what this page asked for.
+        if (runtimeGreedy && typeof data.unweighted_match === 'boolean'
+            && data.unweighted_match !== binSimUnweightedMatch) {
+            binSimUnweightedMatch = data.unweighted_match;
+            const box = document.getElementById('bsim-runtime-unweighted');
+            if (box) box.checked = binSimUnweightedMatch;
+        }
+
         if (data.is_container_pair) {
             // Neither side has functions of its own, so none of the machinery
             // below (tag tree, sankey, function tables) has anything to draw.

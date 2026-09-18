@@ -31,6 +31,7 @@ from bsimvis.app.services.bin_sim_service import (
     BinSimService,
     bin_sim_service,
     read_bin_sim_rev,
+    stored_unweighted_match,
 )
 from bsimvis.app.routes._list_query import fnum, in_bounds
 import json
@@ -591,8 +592,16 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
 
     runtime_greedy = request.args.get("runtime") == "greedy"
     # Count every accepted match as 1.0 instead of its similarity: the score
-    # then answers "how much of both binaries matched", not "how well".
-    unweighted_match = request.args.get("unweighted") in ("1", "true", "yes")
+    # then answers "how much of both binaries matched", not "how well". Absent,
+    # the runtime view follows `similarity.unweighted_match` -- otherwise
+    # re-matching a collection built as coverage would silently switch the
+    # score back to a similarity mean and look like the matching changed.
+    raw_unweighted = request.args.get("unweighted")
+    unweighted_match = (
+        stored_unweighted_match()
+        if raw_unweighted is None
+        else raw_unweighted in ("1", "true", "yes")
+    )
     try:
         min_score = max(0.0, min(1.0, float(request.args.get("min_score", 0.5))))
     except ValueError:

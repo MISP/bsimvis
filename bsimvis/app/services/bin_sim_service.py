@@ -13,6 +13,22 @@ from bsimvis.app.services.bin_sim_tags import (
     split_is_current,
 )
 
+def stored_unweighted_match():
+    """Weighting the build writes into stored pair scores.
+
+    `similarity.unweighted_match = true` makes a stored file score read as
+    feature-weighted match coverage (every accepted match counts 1.0) instead
+    of a similarity mean -- the same switch the runtime greedy view offers per
+    request, applied to what the builders persist. Scores computed under the
+    two settings are not comparable, so every doc records the one that produced
+    it and every later reader (the resplit, the UI) follows the doc, not the
+    config as it stands today.
+    """
+    from bsimvis.app.services.config_service import config_service
+
+    return bool(config_service.get("similarity.unweighted_match", False))
+
+
 BIN_SIM_TAG_FIELDS = (
     "md5_a",
     "md5_b",
@@ -294,9 +310,11 @@ class BinSimService:
         coll_b=None,
         pool_id=None,
         min_score=0.0,
-        unweighted=False,
+        unweighted=None,
     ):
         """Build one transient file diff from stored function-sim docs."""
+        if unweighted is None:
+            unweighted = stored_unweighted_match()
         coll_a = _origin_coll(collection) if pool_id else collection
         coll_b = _origin_coll(coll_b or collection) if pool_id else collection
         if not pool_id and md5_a > md5_b:
@@ -465,6 +483,7 @@ class BinSimService:
         """
         r = self.r
         start_time = time.time()
+        unweighted = stored_unweighted_match()
 
         if job_service and job_id:
             job_service.add_log(
@@ -759,6 +778,7 @@ class BinSimService:
                 _feat,
                 fid_tags,
                 tag_meta_cache,
+                unweighted=unweighted,
             )
 
             sid = f"{collection}:bin_sim:{algo}:{m_a}::{m_b}"
@@ -776,6 +796,10 @@ class BinSimService:
                 # Bumped by every tag write, so a stored split can be told apart
                 # from the tag state it was computed against without rebuilding.
                 "tags_rev": tags_rev,
+                # Which weighting produced `score`. Stored per doc, not read
+                # from the config at read time: flipping the config must not
+                # relabel pairs that were built under the other setting.
+                "unweighted_match": unweighted,
                 # score / score_code / score_library / coverage / cluster counts /
                 # tag summaries / diff -- shared with the pool builder.
                 **common,
@@ -1154,12 +1178,14 @@ class BinSimService:
             pipe = r.pipeline(transaction=False)
             for sid, doc in docs:
                 diff = doc.get("diff") or {}
+                doc_unweighted = bool(doc.get("unweighted_match"))
                 split = AxisSplit(fid_tags, tag_meta)
                 total_a = total_b = 0.0
                 for m in diff.get("matched") or []:
                     fa, fb = m.get("func_a"), m.get("func_b")
                     wa, wb = feat.get(fa, 1.0), feat.get(fb, 1.0)
-                    split.add_match(fa, fb, m.get("similarity", 0.0), wa, wb)
+                    sim = 1.0 if doc_unweighted else m.get("similarity", 0.0)
+                    split.add_match(fa, fb, sim, wa, wb)
                     total_a += wa
                     total_b += wb
                 for side, rows in (
@@ -1179,7 +1205,7 @@ class BinSimService:
                 u_a = diff.get("unique_to_a") or []
                 u_b = diff.get("unique_to_b") or []
                 score_library, score_code = code_library_split(
-                    matched, u_a, u_b, fid_tags
+                    matched, u_a, u_b, fid_tags, unweighted=doc_unweighted
                 )
                 doc["score_library"] = score_library
                 doc["score_code"] = score_code

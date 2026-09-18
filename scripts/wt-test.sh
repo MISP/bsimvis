@@ -27,6 +27,14 @@ APP_PORT=${APP_PORT:-5100}
 # test_pools.py was absorbed into test_api_endpoints.py (step 3d).
 export API_URL="http://localhost:$APP_PORT"   # test_api_endpoints reads this
 rc=0
+
+# Pure-function checks: stdlib + cluster_utils only, no redis, no fixtures.
+# They live here because the API fixture never forms clusters, so the suite
+# below cannot reach the cluster-metadata summary at all.
+echo "=== cluster_utils unit checks ==="
+uv run python scripts/test_default_bin_cluster_name.py || rc=1
+uv run python scripts/test_cluster_meta_freq.py || rc=1
+
 echo "=== test_api_endpoints.py ==="; uv run python scripts/test_api_endpoints.py "$@" || rc=1
 
 "$WT_ROOT/scripts/wt-teardown.sh"

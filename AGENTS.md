@@ -131,6 +131,7 @@ it prints `RESULT: FAIL` or the run was skipped. Show the output.
 
 - **Do NOT run the whole suite every time.** Use the `--only <substring>` filter to run only the specific test steps related to your changes (e.g., `./scripts/wt-test.sh --only pool`).
 - **For UI changes only:** Do not run `wt-test.sh` (as there are no UI tests). Instead, simply run `node --check <file>` on the modified JavaScript files to verify they compile.
+- **For UI changes only:** also run `node scripts/test_xss_escaping.js`. It fails if a value that came off an uploaded sample reaches `innerHTML` without `escapeHtml` / `escapeAttr`.
 
 Three scripts, all refusing to run outside a linked worktree so they can never touch
 the main stack's `.env`, ports or confidential DB:

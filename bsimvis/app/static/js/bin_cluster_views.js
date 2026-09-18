@@ -805,8 +805,8 @@ class BinClusterHierarchy {
                                 <div class="hier-function-list-scroll" style="transition: transform 0.1s cubic-bezier(0.17, 0.67, 0.83, 0.67);">
                                     ${members.map((m, i) => `
                                         <div class="hier-binary-item" data-index="${i}" style="padding:4px 8px; border-radius:4px; background: var(--hover); display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
-                                            <span class="file-name-span" style="color:var(--meta-text); font-weight:bold; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.file_name}</span>
-                                            <span style="color:var(--subtle); font-size:0.65rem; font-family:monospace;">${(m.file_md5 || '').substring(0, 8)}</span>
+                                            <span class="file-name-span" style="color:var(--meta-text); font-weight:bold; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(m.file_name)}</span>
+                                            <span style="color:var(--subtle); font-size:0.65rem; font-family:monospace;">${escapeHtml((m.file_md5 || '').substring(0, 8))}</span>
                                         </div>
                                     `).join('')}
                                 </div>
@@ -831,8 +831,8 @@ class BinClusterHierarchy {
             if (listScroll && listScroll.children.length === 0 && members.length > 0) {
                 listScroll.innerHTML = members.map((m, i) => `
                     <div class="hier-binary-item" data-index="${i}" style="padding:4px 8px; border-radius:4px; background: var(--hover); display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
-                        <span class="file-name-span" style="color:var(--meta-text); font-weight:bold; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.file_name}</span>
-                        <span style="color:var(--subtle); font-size:0.65rem; font-family:monospace;">${(m.file_md5 || '').substring(0, 8)}</span>
+                        <span class="file-name-span" style="color:var(--meta-text); font-weight:bold; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(m.file_name)}</span>
+                        <span style="color:var(--subtle); font-size:0.65rem; font-family:monospace;">${escapeHtml((m.file_md5 || '').substring(0, 8))}</span>
                     </div>
                 `).join('');
             }
@@ -867,7 +867,7 @@ class BinClusterHierarchy {
                 <div style="margin-top: 8px;">
                     <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">Yara Matches</div>
                     <div style="display: flex; flex-direction: column; gap: 2px;">
-                        ${file.yara_matches.map(y => `<div class="mono" style="font-size: 0.65rem; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${y}">${y}</div>`).join('')}
+                        ${file.yara_matches.map(y => `<div class="mono" style="font-size: 0.65rem; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeAttr(y)}">${escapeHtml(y)}</div>`).join('')}
                     </div>
                 </div>
             `;
@@ -875,7 +875,7 @@ class BinClusterHierarchy {
              yaraHtml = `
                 <div style="margin-top: 8px;">
                     <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">Yara Match</div>
-                    <div class="mono" style="font-size: 0.65rem; color: var(--accent);">${file.yara}</div>
+                    <div class="mono" style="font-size: 0.65rem; color: var(--accent);">${escapeHtml(file.yara)}</div>
                 </div>
             `;
         }
@@ -886,7 +886,7 @@ class BinClusterHierarchy {
                 <div style="margin-top: 8px;">
                     <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">CC IPs</div>
                     <div style="display: flex; flex-direction: column; gap: 2px;">
-                        ${file.ips.map(ip => `<div class="mono" style="font-size: 0.65rem; color: var(--info);">${ip}</div>`).join('')}
+                        ${file.ips.map(ip => `<div class="mono" style="font-size: 0.65rem; color: var(--info);">${escapeHtml(ip)}</div>`).join('')}
                     </div>
                 </div>
             `;
@@ -907,14 +907,14 @@ class BinClusterHierarchy {
                             else if (isIgnore) color = '#f92672';
                             else if (window.getTagMetadata) color = window.getTagMetadata(tag).color;
                             
-                            return `<span class="tag-card" style="border-color:${tagAlpha(color, 27)}; color:${color}; background:${tagAlpha(color, 7)}; font-size: 0.6rem; padding: 2px 6px; border-radius: 12px; display: inline-flex; align-items: center;">${tag}</span>`;
+                            return `<span class="tag-card" style="border-color:${tagAlpha(color, 27)}; color:${color}; background:${tagAlpha(color, 7)}; font-size: 0.6rem; padding: 2px 6px; border-radius: 12px; display: inline-flex; align-items: center;">${escapeHtml(tag)}</span>`;
                         }).join('')}
                     </div>
                 </div>
             `;
         }
         
-        const formatArray = (arr) => (arr && arr.length > 0) ? arr.join(', ') : 'N/A';
+        const formatArray = (arr) => (arr && arr.length > 0) ? escapeHtml(arr.join(', ')) : 'N/A';
         
         container.innerHTML = `
             <div style="font-size:0.6rem; color:var(--subtle); text-transform:uppercase; margin-bottom:5px;">File Metadata</div>
@@ -934,11 +934,11 @@ class BinClusterHierarchy {
                 </div>
                 <div>
                     <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">MD5</div>
-                    <div class="mono" style="font-size: 0.65rem; color: var(--meta-text-muted); word-break: break-all;">${file.file_md5 || file.md5 || 'N/A'}</div>
+                    <div class="mono" style="font-size: 0.65rem; color: var(--meta-text-muted); word-break: break-all;">${escapeHtml(file.file_md5 || file.md5 || 'N/A')}</div>
                 </div>
                 <div>
                     <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">Language</div>
-                    <div class="mono" style="font-size: 0.7rem; color: var(--meta-text);">${file.language_id || 'N/A'}</div>
+                    <div class="mono" style="font-size: 0.7rem; color: var(--meta-text);">${escapeHtml(file.language_id || 'N/A')}</div>
                 </div>
                 <div>
                     <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">Functions</div>

@@ -32,6 +32,11 @@ let binSimCtx = null;        // {collection, md5a, md5b, collB, poolId}
 // container-pair renders, since both are "this comparison".
 let binSimPairCtx = null;    // {sid, collection, collB, md5a, md5b, nameA, nameB, score}
 const BINSIM_RUNTIME_HINT_KEY = 'bsim-runtime-greedy-hint-dismissed';
+// Runtime-greedy only: count each accepted match as 1.0 instead of its
+// similarity, so the score reads as feature-weighted coverage. Kept beside the
+// other runtime knobs rather than in binSimCtx because every reader of it also
+// reads the URL, which is the real source of truth.
+let binSimUnweightedMatch = false;
 
 function binSimRuntimeControls(active, minScore) {
     if (!active) {
@@ -41,6 +46,8 @@ function binSimRuntimeControls(active, minScore) {
         <label for="bsim-runtime-threshold">Minimum similarity <span id="bsim-runtime-threshold-value">${minScore}%</span></label>
         <input id="bsim-runtime-threshold" type="range" min="0" max="100" value="${minScore}" oninput="previewBinSimRuntimeThreshold(this.value)" aria-describedby="bsim-runtime-threshold-help">
         <span id="bsim-runtime-threshold-help">Only pairs at or above this score are considered before greedy matching.</span>
+        <label for="bsim-runtime-unweighted"><input id="bsim-runtime-unweighted" type="checkbox" ${binSimUnweightedMatch ? 'checked' : ''} onchange="setBinSimUnweighted(this.checked)" aria-describedby="bsim-runtime-unweighted-help"> Unweighted matches</label>
+        <span id="bsim-runtime-unweighted-help">Every match counts as 1.0 regardless of its similarity, so the score measures how much matched, not how well.</span>
         <button class="view-btn bsim-experiment-exit" onclick="setBinSimMatchMode('saved')">Disable runtime greedy matching</button>
     </div>`;
 }
@@ -92,6 +99,7 @@ function renderBinarySimilarityView(params) {
     const runtimeGreedy = params.get('runtime') === 'greedy';
     const runtimeMinScore = Math.max(0, Math.min(100, Number(params.get('min_score') || 0.5) * 100));
     const showRuntimeHint = runtimeGreedy || localStorage.getItem(BINSIM_RUNTIME_HINT_KEY) !== '1';
+    binSimUnweightedMatch = runtimeGreedy && params.get('unweighted') === '1';
 
     // Parse new RESTful URL using routing state or fallback
     if (!md5a || !md5b || !collB || !poolId) {
@@ -494,6 +502,7 @@ function initResizableCards() {
         if (collB) url += `&collection_b=${encodeURIComponent(collB)}`;
         if (poolId) url += `&pool=${encodeURIComponent(poolId)}`;
         if (runtimeGreedy) url += `&runtime=greedy&min_score=${runtimeMinScore / 100}`;
+        if (runtimeGreedy && binSimUnweightedMatch) url += '&unweighted=1';
         const res = await fetch(url, signal ? { signal } : undefined);
         if (!res.ok) {
             let errMsg = "Failed to fetch similarity comparison";
@@ -1222,6 +1231,7 @@ function fileSimTableParams(prefixes, extra = {}) {
     if (binSimCtx.runtimeGreedy) {
         params.set('runtime', 'greedy');
         params.set('min_score', binSimCtx.runtimeMinScore);
+        if (binSimUnweightedMatch) params.set('unweighted', '1');
     }
     return params;
 }
@@ -3479,13 +3489,26 @@ window.previewBinSimRuntimeThreshold = function(value) {
 window.setBinSimRuntimeThreshold = function(value) {
     refreshBinSimRuntime(true, Number(value) / 100);
 };
+window.setBinSimUnweighted = function(checked) {
+    const slider = document.getElementById("bsim-runtime-threshold");
+    const minScore = slider
+        ? Number(slider.value) / 100
+        : Number(new URL(location.href).searchParams.get("min_score") || 0.5);
+    refreshBinSimRuntime(true, minScore, !!checked);
+};
 
-async function refreshBinSimRuntime(runtimeGreedy, minScore) {
+async function refreshBinSimRuntime(runtimeGreedy, minScore, unweighted = binSimUnweightedMatch) {
     if (!binSimCtx) return;
+    // Only committed once the new doc renders; the failure path below puts the
+    // previous weighting back so the checkbox never disagrees with the rows.
+    const prevUnweighted = binSimUnweightedMatch;
+    binSimUnweightedMatch = runtimeGreedy && unweighted;
     const url = new URL(location.href);
     if (runtimeGreedy) url.searchParams.set("runtime", "greedy");
     else url.searchParams.delete("runtime");
     if (runtimeGreedy) url.searchParams.set("min_score", minScore);
+    if (binSimUnweightedMatch) url.searchParams.set("unweighted", "1");
+    else url.searchParams.delete("unweighted");
     history.pushState(null, "", url.pathname + url.search + url.hash);
 
     window.binSimRuntimeAbort?.abort();
@@ -3505,10 +3528,13 @@ async function refreshBinSimRuntime(runtimeGreedy, minScore) {
         setBinSimRuntimeToast();
         showToast(runtimeGreedy ? 'Runtime greedy matching is ready.' : 'Saved comparison restored.', 'success');
     } else if (!controller.signal.aborted) {
+        binSimUnweightedMatch = prevUnweighted;
         const fallbackUrl = new URL(location.href);
         if (ctx.runtimeGreedy) fallbackUrl.searchParams.set("runtime", "greedy");
         else fallbackUrl.searchParams.delete("runtime");
         fallbackUrl.searchParams.set("min_score", ctx.runtimeMinScore);
+        if (binSimUnweightedMatch) fallbackUrl.searchParams.set("unweighted", "1");
+        else fallbackUrl.searchParams.delete("unweighted");
         history.replaceState(null, "", fallbackUrl.pathname + fallbackUrl.search + fallbackUrl.hash);
         setBinSimRuntimePanel(ctx.runtimeGreedy, Math.round(ctx.runtimeMinScore * 100));
         setBinSimRuntimeToast();

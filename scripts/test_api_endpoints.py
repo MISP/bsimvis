@@ -3894,6 +3894,70 @@ def test_bin_sim_diff_cache():
     )
 
     _check_diff_cache_expiry()
+    _check_runtime_unweighted_matching()
+
+
+def _runtime_doc(unweighted):
+    """The runtime-greedy summary for the uploaded pair, or None."""
+    params = {
+        "collection": COLLECTION,
+        "md5_a": file_md5,
+        "md5_b": file_md5_2,
+        "runtime": "greedy",
+        "min_score": 0.0,
+        "view": "sankey",
+    }
+    if unweighted:
+        params["unweighted"] = "1"
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/api/bin_sim/diff", params=params, timeout=120
+        )
+    except Exception as exc:
+        vprint(f"     runtime greedy error: {exc}")
+        return None
+    if resp.status_code != 200:
+        vprint(f"     runtime greedy -> HTTP {resp.status_code}")
+        return None
+    return resp.json()
+
+
+def _check_runtime_unweighted_matching():
+    """`unweighted=1` scores every accepted match as 1.0.
+
+    Same greedy assignment, same matched count -- only the aggregation changes,
+    so the unweighted score can never come out below the weighted one.
+    """
+    weighted = _runtime_doc(False)
+    unweighted = _runtime_doc(True)
+    if not check(
+        "runtime greedy: both weightings are served",
+        isinstance(weighted, dict) and isinstance(unweighted, dict),
+        f"weighted={type(weighted).__name__}, unweighted={type(unweighted).__name__}",
+    ):
+        return
+
+    check(
+        "runtime greedy: unweighted mode is reported back",
+        unweighted.get("unweighted_match") is True
+        and not weighted.get("unweighted_match"),
+        f"weighted={weighted.get('unweighted_match')!r}, "
+        f"unweighted={unweighted.get('unweighted_match')!r}",
+    )
+    counts_w = weighted.get("counts") or {}
+    counts_u = unweighted.get("counts") or {}
+    check(
+        "runtime greedy: unweighted keeps the same matching",
+        counts_w == counts_u,
+        f"{counts_w} vs {counts_u}",
+    )
+    score_w = float(weighted.get("score") or 0.0)
+    score_u = float(unweighted.get("score") or 0.0)
+    check(
+        "runtime greedy: unweighted score is at least the weighted one",
+        score_u >= score_w - 1e-9,
+        f"weighted={score_w}, unweighted={score_u}",
+    )
 
 
 def test_llm_pair_analysis_job():

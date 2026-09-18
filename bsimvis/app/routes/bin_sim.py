@@ -590,6 +590,9 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
         abort(400, "Both md5_a and md5_b are required")
 
     runtime_greedy = request.args.get("runtime") == "greedy"
+    # Count every accepted match as 1.0 instead of its similarity: the score
+    # then answers "how much of both binaries matched", not "how well".
+    unweighted_match = request.args.get("unweighted") in ("1", "true", "yes")
     try:
         min_score = max(0.0, min(1.0, float(request.args.get("min_score", 0.5))))
     except ValueError:
@@ -605,12 +608,22 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
         runtime_sid = bin_sim_service.on_demand_pair_sid(
             collection, md5_a, md5_b, algo, coll_b, pool_id
         )
-        runtime_cache_key = f"{runtime_sid}:runtime:{min_score:.3f}:cache"
+        runtime_cache_key = (
+            f"{runtime_sid}:runtime:{min_score:.3f}"
+            f"{':unweighted' if unweighted_match else ''}:cache"
+        )
         cached_raw = r.get(runtime_cache_key)
         raw = json.loads(cached_raw) if cached_raw else None
         if raw is None:
             raw = bin_sim_service.cached_pair_from_stored_sims(
-                collection, md5_a, md5_b, algo, coll_b, pool_id, min_score
+                collection,
+                md5_a,
+                md5_b,
+                algo,
+                coll_b,
+                pool_id,
+                min_score,
+                unweighted_match,
             )
             if raw:
                 r.setex(runtime_cache_key, 3600, json.dumps(raw))
@@ -624,6 +637,7 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
         )
         diff_data["sid"] = runtime_sid
         diff_data["runtime_greedy"] = True
+        diff_data["unweighted_match"] = unweighted_match
         table = request.args.get("table")
         if table in ("matched", "unique_to_a", "unique_to_b", "all"):
             return _page_diff(diff_data, table, r, coll_a, algo, pool_id)
@@ -753,6 +767,7 @@ def _sankey_summary(diff_data):
                 "sid",
                 "note_owners",
                 "note_count",
+                "unweighted_match",
             )
         }
         out["counts"] = {
@@ -816,6 +831,9 @@ def _sankey_summary(diff_data):
             "sid",
             "note_owners",
             "note_count",
+            # Which weighting produced `score`, so a client that did not set the
+            # flag itself (or a saved response) still knows what it is reading.
+            "unweighted_match",
         )
     }
     out["counts"] = {

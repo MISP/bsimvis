@@ -854,7 +854,12 @@ EMPTY_SUMMARIES = {
 
 
 def code_library_split(
-    matched, unique_to_a, unique_to_b, fid_tags, namespaces=LIBRARY_ORIGIN_PREFIXES
+    matched,
+    unique_to_a,
+    unique_to_b,
+    fid_tags,
+    namespaces=LIBRARY_ORIGIN_PREFIXES,
+    unweighted=False,
 ):
     """(score_library, score_code) computed by the *same formula* as the pair's
     overall `score` (weighted-cosine mean, unmatched functions dragging the
@@ -883,7 +888,7 @@ def code_library_split(
     lib_num = lib_w = code_num = code_w = 0.0
     for m in matched or []:
         w = float(m.get("avg_features") or 0.0)
-        s = float(m.get("similarity") or 0.0)
+        s = 1.0 if unweighted else float(m.get("similarity") or 0.0)
         if is_lib(m.get("func_a")) or is_lib(m.get("func_b")):
             lib_num += s * w
             lib_w += w
@@ -904,7 +909,15 @@ def code_library_split(
     return score_library, score_code
 
 
-def score_pair(edges, funcs_a, funcs_b, feat, fid_tags=None, tag_meta_cache=None):
+def score_pair(
+    edges,
+    funcs_a,
+    funcs_b,
+    feat,
+    fid_tags=None,
+    tag_meta_cache=None,
+    unweighted=False,
+):
     """Greedy-match one binary pair and return every doc field the collection
     and pool bin_sim builders share.
 
@@ -919,6 +932,11 @@ def score_pair(edges, funcs_a, funcs_b, feat, fid_tags=None, tag_meta_cache=None
     oriented a->b. `feat(fid)` returns a function's raw `bsim_features_count`,
     clamped to 1.0 only for unmatched functions -- what both builders did
     before, kept so stored scores don't shift under an upgrade.
+
+    `unweighted=True` makes every accepted match count as a full 1.0 instead of
+    its similarity: the pair score then measures how much of both binaries got
+    matched at all (feature-weighted coverage), not how well. Matched rows keep
+    their real `similarity` for display -- only the aggregation changes.
     """
     assigned_a, assigned_b = set(), set()
     diff_matched = []
@@ -949,9 +967,10 @@ def score_pair(edges, funcs_a, funcs_b, feat, fid_tags=None, tag_meta_cache=None
                 "func_b": fid_b,
             }
         )
-        sum_weighted_cohesion += score * f_features
+        weight_score = 1.0 if unweighted else score
+        sum_weighted_cohesion += weight_score * f_features
         sum_weights += f_features
-        tag_split.add_match(fid_a, fid_b, score, f_a, f_b)
+        tag_split.add_match(fid_a, fid_b, weight_score, f_a, f_b)
 
     def leftovers(all_funcs, assigned, side):
         nonlocal sum_weights
@@ -984,7 +1003,7 @@ def score_pair(edges, funcs_a, funcs_b, feat, fid_tags=None, tag_meta_cache=None
     # Code/Library is the same weighted-cosine formula as `score`, restricted
     # per category -- not a re-average of `tags_summary`.
     score_library, score_code = code_library_split(
-        diff_matched, unique_to_a, unique_to_b, fid_tags
+        diff_matched, unique_to_a, unique_to_b, fid_tags, unweighted=unweighted
     )
 
     return {

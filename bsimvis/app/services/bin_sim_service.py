@@ -286,7 +286,15 @@ class BinSimService:
         )
 
     def cached_pair_from_stored_sims(
-        self, collection, md5_a, md5_b, algo, coll_b=None, pool_id=None, min_score=0.0
+        self,
+        collection,
+        md5_a,
+        md5_b,
+        algo,
+        coll_b=None,
+        pool_id=None,
+        min_score=0.0,
+        unweighted=False,
     ):
         """Build one transient file diff from stored function-sim docs."""
         coll_a = _origin_coll(collection) if pool_id else collection
@@ -421,6 +429,7 @@ class BinSimService:
             lambda fid: float(meta.get(fid, {}).get("bsim_features_count", 1.0)),
             fid_tags,
             load_tag_meta(self.r, tag_scope) if fid_tags else {},
+            unweighted=unweighted,
         )
         return {
             "md5_a": md5_a,
@@ -432,6 +441,7 @@ class BinSimService:
             "functions_count_b": len(fids_b),
             "computed_at": int(time.time() * 1000),
             "tags_rev": read_tags_rev(self.r, tag_scope),
+            "unweighted_match": unweighted,
             **({"coll_a": coll_a, "coll_b": coll_b} if pool_id else {}),
             **common,
         }

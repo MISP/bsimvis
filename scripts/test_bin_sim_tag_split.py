@@ -1036,6 +1036,21 @@ def test_score_pair_is_order_independent_and_clamps_weightless_leftovers():
     assert abs(out["score"] - 10.0 / 11.0) < 1e-9, out["score"]
 
 
+def test_score_pair_unweighted_counts_each_match_as_one():
+    edges, funcs_a, funcs_b, feat, fid_tags = _score_pair_fixture()
+    out = score_pair(edges, funcs_a, funcs_b, feat, fid_tags, {}, unweighted=True)
+
+    # Same greedy assignment, same rows, same displayed similarities.
+    weighted = score_pair(edges, funcs_a, funcs_b, feat, fid_tags, {})
+    assert out["diff"] == weighted["diff"]
+    assert out["coverage_a"] == weighted["coverage_a"]
+
+    # (1*100 + 1*100) / (100 + 100 + 50 + 50): matched mass over total mass.
+    assert abs(out["score"] - 200.0 / 300.0) < 1e-9, out["score"]
+    assert abs(out["score_library"] - 1.0) < 1e-9, out["score_library"]
+    assert abs(out["score_code"] - 100.0 / 200.0) < 1e-9, out["score_code"]
+
+
 def test_score_pair_carries_every_field_both_builders_store():
     edges, funcs_a, funcs_b, feat, fid_tags = _score_pair_fixture()
     out = score_pair(edges, funcs_a, funcs_b, feat, fid_tags, {})

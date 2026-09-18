@@ -15,7 +15,6 @@ def run_binsim(host, port, args):
             "algo": args.algo or "unweighted_cosine",
             "md5_a": args.md5_a,
             "md5_b": args.md5_b,
-            "min_cohesion": args.min_cohesion,
         }
         try:
             print(f"[*] Enqueuing Binary Similarity build job for {coll}...")

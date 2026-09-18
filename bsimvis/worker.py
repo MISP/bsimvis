@@ -753,14 +753,12 @@ class Worker:
             algo = payload.get("algo", "unweighted_cosine")
             md5_a = payload.get("md5_a") or payload.get("md5")
             md5_b = payload.get("md5_b")
-            min_cohesion = payload.get("min_cohesion", 0.5)
 
             return bin_sim_service.build_bin_sim(
                 collection,
                 algo=algo,
                 md5_a=md5_a,
                 md5_b=md5_b,
-                min_cohesion=min_cohesion,
                 batch_uuid=payload.get("batch_uuid"),
                 pairs_key=payload.get("pairs_key"),
                 offset=payload.get("offset", 0),

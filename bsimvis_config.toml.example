@@ -114,9 +114,11 @@
     # instead (BSim is false-positive-prone on tiny funcs). 10 = canonical default.
     min_features = 10
     algo = "unweighted_cosine"
-    # min_score above governs FUNCTION edges only. File-level similarity has no
-    # build-time score gate -- build_bin_sim filters on cohesion, not score --
-    # so every stored pair is a real result and the UI's floor is 0 by default.
+    # min_score above governs FUNCTION edges only. build_bin_sim has no
+    # build-time gate of any kind: it writes a doc for every pair it sweeps, so
+    # the floor on what you SEE is this one, applied at read time in the UI.
+    # (It once took a `min_cohesion` argument that read like such a gate but
+    # was never consulted; that argument is gone.)
     file_min_score = 0.0
     # How a matched function pair counts toward the FILE score. false (default):
     # by its own similarity, so the score is a feature-weighted similarity mean.

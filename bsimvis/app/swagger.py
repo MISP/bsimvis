@@ -216,6 +216,9 @@ bin_sim_build_model = api.model(
         "algo": fields.String(default="unweighted_cosine"),
         "md5_a": fields.String(),
         "md5_b": fields.String(),
+        # /rebuild only, and only for the clustering stages it chains after the
+        # build. The bin_sim build itself has no score or cohesion gate: it
+        # writes a doc for every pair it sweeps.
         "min_cohesion": fields.Float(default=0.5),
     },
 )

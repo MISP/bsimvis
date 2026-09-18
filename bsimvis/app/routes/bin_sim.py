@@ -197,7 +197,6 @@ def build_bin_sim():
     algo = data.get("algo", "unweighted_cosine")
     md5_a = data.get("md5_a")
     md5_b = data.get("md5_b")
-    min_cohesion = data.get("min_cohesion", 0.5)
 
     job_id = job_service.create_job(
         JobType.BUILD_BIN_SIM.value,
@@ -206,7 +205,6 @@ def build_bin_sim():
             "algo": algo,
             "md5_a": md5_a,
             "md5_b": md5_b,
-            "min_cohesion": min_cohesion,
         },
     )
     job_service.enqueue_job(job_id)
@@ -286,7 +284,6 @@ def rebuild_bin_sim():
         "algo": algo,
         "md5_a": md5_a,
         "md5_b": md5_b,
-        "min_cohesion": min_cohesion,
     }
 
     tasks = [

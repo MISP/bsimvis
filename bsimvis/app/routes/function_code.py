@@ -483,6 +483,10 @@ def get_function_relations():
                     sum_min = sum(min(d1[h], d2[h]) for h in common)
                     union = sum(d1.values()) + sum(d2.values()) - sum_min
                     score = (sum_min / union) if union > 0 else 0.0
+                elif algo == "binary_cosine":
+                    score = len(common) / ((len(d1) * len(d2)) ** 0.5)
+                elif algo == "weighted_cosine" or algo.startswith("weighted_cosine:"):
+                    score = svc.calculate_exact_score(a, b, algo=algo)
                 else:
                     dot = sum(d1[h] * d2[h] for h in common)
                     norm1 = sum(v**2 for v in d1.values()) ** 0.5
@@ -490,7 +494,7 @@ def get_function_relations():
                     score = (
                         (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
                     )
-                if score >= min_score:
+                if score is not None and score >= min_score:
                     sim_edges.append({"id1": a, "id2": b, "score": score})
 
         return {"call_edges": call_edges, "sim_edges": sim_edges}

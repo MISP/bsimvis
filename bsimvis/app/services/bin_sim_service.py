@@ -29,8 +29,6 @@ def stored_unweighted_match():
 
     return bool(config_service.get("similarity.unweighted_match", False))
 
-
-
 def stored_discovery():
     """Discovery settings the builders apply on top of stored function edges.
 
@@ -97,9 +95,20 @@ def discover_edges(
 
     is_jaccard = algo == "jaccard"
     is_binary = algo == "binary_cosine"
+    is_weighted = algo == "weighted_cosine" or algo.startswith("weighted_cosine:")
+    if is_weighted:
+        from bsimvis.app.services import bsim_profiles, bsim_weights
+
+        _, profile_name = bsim_profiles.parse_algo(algo)
+        weighted_table = bsim_weights.load(
+            bsim_profiles.get_profile(profile_name).weights_path
+        )
+        weighted_stats = {
+            fid: weighted_table.stats(vectors[fid]) for fid in fids_a + fids_b
+        }
     if is_jaccard:
         totals = {fid: sum(vectors[fid].values()) for fid in fids_a + fids_b}
-    elif not is_binary:
+    elif not is_binary and not is_weighted:
         norms = {
             fid: sum(value * value for value in vectors[fid].values()) ** 0.5
             for fid in fids_a + fids_b
@@ -127,6 +136,13 @@ def discover_edges(
                 denominator = totals[fid_a] + totals[fid_b] - shared
             elif is_binary:
                 denominator = (len(vec_a) * len(vectors[fid_b])) ** 0.5
+            elif is_weighted:
+                score = weighted_table.compare(
+                    vec_a, vectors[fid_b], weighted_stats[fid_a], weighted_stats[fid_b]
+                )[0]
+                if score >= min_score and score > 0:
+                    edges.append((fid_a, fid_b, score))
+                continue
             else:
                 denominator = norms[fid_a] * norms[fid_b]
             if denominator <= 0:
@@ -477,6 +493,8 @@ class BinSimService:
         for doc in sim_docs:
             fid1, fid2 = doc.get("id1"), doc.get("id2")
             score = float(doc.get("score", 0.0))
+            if doc.get("algo", "unweighted_cosine") != algo:
+                continue
             if pool_id:
                 endpoint_a = (doc.get("coll_1"), doc.get("md5_1"))
                 endpoint_b = (doc.get("coll_2"), doc.get("md5_2"))

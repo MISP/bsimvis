@@ -1306,12 +1306,14 @@ window.DiffView = {
         if (mode === 'similarity') this.loadCallGraphSimilarity();
     },
 
-    async loadCallGraphSimilarity(minScore = 0.5) {
+    async loadCallGraphSimilarity(minScore = 0.5, algo = this._callSimAlgo || 'unweighted_cosine') {
         const wrap = document.getElementById('bsim-call-sim-wrap');
         const p = this._getCurrentP() || this._parsePathUrl();
         if (!wrap || !p || !p.addr_a || !p.addr_b) return;
+        this._callSimMin = minScore;
+        this._callSimAlgo = algo;
         wrap.innerHTML = '<div class="dim"><i class="fa-solid fa-spinner fa-spin"></i> Matching direct callers and callees…</div>';
-        const q = new URLSearchParams({ collection_a: p.collection_a, collection_b: p.collection_b, md5_a: p.md5_a, md5_b: p.md5_b, addr_a: p.addr_a, addr_b: p.addr_b, min_score: minScore });
+        const q = new URLSearchParams({ collection_a: p.collection_a, collection_b: p.collection_b, md5_a: p.md5_a, md5_b: p.md5_b, addr_a: p.addr_a, addr_b: p.addr_b, min_score: minScore, algo });
         if (p.pool) q.set('pool', p.pool);
         try {
             const res = await fetch(`/api/function/call_graph_similarity?${q}`);
@@ -1389,7 +1391,11 @@ window.DiffView = {
         const threshold = Math.round((this._callSimMin ?? 0.5) * 100);
         wrap.innerHTML = `<section class="call-sim-threshold" aria-label="Call graph similarity threshold">
                 <div>
-                    <strong>Minimum similarity <span id="call-sim-threshold-value">${threshold}%</span></strong>
+                    <strong>Algorithm</strong>
+                    <select onchange="DiffView.setCallSimAlgorithm(this.value)" style="margin-left:8px; background:var(--card-bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 6px;">
+                        ${window.SimAlgos.optionsHtml(this._callSimAlgo || window.SimAlgos.default, { exact: true })}
+                    </select>
+                    <strong style="margin-left:16px;">Minimum similarity <span id="call-sim-threshold-value">${threshold}%</span></strong>
                     <p id="call-sim-threshold-help">Only direct callers and callees at or above this score are shown.</p>
                 </div>
                 <input id="call-sim-threshold" type="range" min="0" max="100" value="${threshold}" oninput="DiffView.setCallSimThreshold(this.value)" aria-describedby="call-sim-threshold-help">
@@ -1402,6 +1408,11 @@ window.DiffView = {
     },
 
     setCallSimFilter(filter) { this._callSimFilter = filter; this.renderCallGraphSimilarity(); },
+
+    setCallSimAlgorithm(algo) {
+        this._callSimAlgo = algo;
+        this.loadCallGraphSimilarity(this._callSimMin ?? 0.5, algo);
+    },
 
     setCallSimThreshold(value) {
         this._callSimMin = Number(value) / 100;

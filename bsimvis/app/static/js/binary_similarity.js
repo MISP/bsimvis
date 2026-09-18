@@ -37,12 +37,14 @@ const BINSIM_RUNTIME_HINT_KEY = 'bsim-runtime-greedy-hint-dismissed';
 // other runtime knobs rather than in binSimCtx because every reader of it also
 // reads the URL, which is the real source of truth.
 let binSimUnweightedMatch = false;
+let binSimRuntimeAlgo = 'unweighted_cosine';
 
 function binSimRuntimeControls(active, minScore) {
     if (!active) {
         return '<button class="view-btn bsim-experiment-start" onclick="setBinSimMatchMode(\'runtime\')">Try runtime matching</button>';
     }
     return `<div class="bsim-experiment-controls">
+        <label for="bsim-runtime-algo">Algorithm <select id="bsim-runtime-algo" onchange="setBinSimRuntimeAlgo(this.value)" style="margin-left:6px; background:var(--card-bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 5px;">${window.SimAlgos.optionsHtml(binSimRuntimeAlgo, { exact: true })}</select></label>
         <label for="bsim-runtime-threshold">Minimum similarity <span id="bsim-runtime-threshold-value">${minScore}%</span></label>
         <input id="bsim-runtime-threshold" type="range" min="0" max="100" value="${minScore}" oninput="previewBinSimRuntimeThreshold(this.value)" aria-describedby="bsim-runtime-threshold-help">
         <span id="bsim-runtime-threshold-help">Only pairs at or above this score are considered before greedy matching.</span>
@@ -97,6 +99,7 @@ function renderBinarySimilarityView(params) {
     let collB = params.get('coll_b');
     let poolId = params.get('pool_id');
     const runtimeGreedy = params.get('runtime') === 'greedy';
+    binSimRuntimeAlgo = params.get('algo') || window.SimAlgos.default;
     const runtimeMinScore = Math.max(0, Math.min(100, Number(params.get('min_score') || 0.5) * 100));
     const showRuntimeHint = runtimeGreedy || localStorage.getItem(BINSIM_RUNTIME_HINT_KEY) !== '1';
     binSimUnweightedMatch = runtimeGreedy && params.get('unweighted') === '1';
@@ -433,6 +436,7 @@ function renderBinarySimilarityView(params) {
     `;
     
     container.innerHTML = html;
+    setBinSimRuntimePanel(runtimeGreedy, runtimeMinScore);
     initResizableCards();
     
     if (md5a && md5b) {
@@ -501,7 +505,7 @@ function initResizableCards() {
         let url = `/api/diff?view=sankey&collection_a=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`;
         if (collB) url += `&collection_b=${encodeURIComponent(collB)}`;
         if (poolId) url += `&pool=${encodeURIComponent(poolId)}`;
-        if (runtimeGreedy) url += `&runtime=greedy&min_score=${runtimeMinScore / 100}`;
+        if (runtimeGreedy) url += `&runtime=greedy&algo=${encodeURIComponent(binSimRuntimeAlgo)}&min_score=${runtimeMinScore / 100}`;
         if (runtimeGreedy && binSimUnweightedMatch) url += '&unweighted=1';
         const res = await fetch(url, signal ? { signal } : undefined);
         if (!res.ok) {
@@ -618,7 +622,7 @@ function initResizableCards() {
         // Counts ride along so the Analyze modal can say what each pass would
         // select -- a pair with no unique functions has no changed-code pass to
         // offer, and finding that out from a 400 is the worst way to learn it.
-        binSimCtx = { collection, md5a, md5b, collB: collB || collection, poolId, sid: data.sid, counts, runtimeGreedy, runtimeMinScore: runtimeMinScore / 100 };
+        binSimCtx = { collection, md5a, md5b, collB: collB || collection, poolId, sid: data.sid, counts, runtimeGreedy, runtimeAlgo: binSimRuntimeAlgo, runtimeMinScore: runtimeMinScore / 100 };
         binSimDataCache = {
             score: data.score,
             file_metadata_a: data.file_metadata_a,
@@ -1239,6 +1243,7 @@ function fileSimTableParams(prefixes, extra = {}) {
     if (binSimCtx.poolId) params.set('pool', binSimCtx.poolId);
     if (binSimCtx.runtimeGreedy) {
         params.set('runtime', 'greedy');
+        params.set('algo', binSimCtx.runtimeAlgo);
         params.set('min_score', binSimCtx.runtimeMinScore);
         if (binSimUnweightedMatch) params.set('unweighted', '1');
     }
@@ -3495,6 +3500,11 @@ window.previewBinSimRuntimeThreshold = function(value) {
     clearTimeout(window.binSimRuntimeThresholdTimer);
     window.binSimRuntimeThresholdTimer = setTimeout(() => setBinSimRuntimeThreshold(value), 300);
 };
+window.setBinSimRuntimeAlgo = function(algo) {
+    binSimRuntimeAlgo = algo;
+    const minScore = Number(new URL(location.href).searchParams.get('min_score') || 0.5);
+    refreshBinSimRuntime(true, minScore);
+};
 window.setBinSimRuntimeThreshold = function(value) {
     refreshBinSimRuntime(true, Number(value) / 100);
 };
@@ -3513,8 +3523,13 @@ async function refreshBinSimRuntime(runtimeGreedy, minScore, unweighted = binSim
     const prevUnweighted = binSimUnweightedMatch;
     binSimUnweightedMatch = runtimeGreedy && unweighted;
     const url = new URL(location.href);
-    if (runtimeGreedy) url.searchParams.set("runtime", "greedy");
-    else url.searchParams.delete("runtime");
+    if (runtimeGreedy) {
+        url.searchParams.set("runtime", "greedy");
+        url.searchParams.set("algo", binSimRuntimeAlgo);
+    } else {
+        url.searchParams.delete("runtime");
+        url.searchParams.delete("algo");
+    }
     if (runtimeGreedy) url.searchParams.set("min_score", minScore);
     if (binSimUnweightedMatch) url.searchParams.set("unweighted", "1");
     else url.searchParams.delete("unweighted");
@@ -3539,8 +3554,13 @@ async function refreshBinSimRuntime(runtimeGreedy, minScore, unweighted = binSim
     } else if (!controller.signal.aborted) {
         binSimUnweightedMatch = prevUnweighted;
         const fallbackUrl = new URL(location.href);
-        if (ctx.runtimeGreedy) fallbackUrl.searchParams.set("runtime", "greedy");
-        else fallbackUrl.searchParams.delete("runtime");
+        if (ctx.runtimeGreedy) {
+            fallbackUrl.searchParams.set("runtime", "greedy");
+            fallbackUrl.searchParams.set("algo", ctx.runtimeAlgo);
+        } else {
+            fallbackUrl.searchParams.delete("runtime");
+            fallbackUrl.searchParams.delete("algo");
+        }
         fallbackUrl.searchParams.set("min_score", ctx.runtimeMinScore);
         if (binSimUnweightedMatch) fallbackUrl.searchParams.set("unweighted", "1");
         else fallbackUrl.searchParams.delete("unweighted");

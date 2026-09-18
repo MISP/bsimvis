@@ -11,6 +11,7 @@ from bsimvis.app.services.index_service import (
 )
 from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
 from bsimvis.app.services.node_service import get_enriched_nodes
+from bsimvis.similarity import registry
 
 
 def parse_diff_params():
@@ -566,7 +567,7 @@ def render_aligned_diff(
     return rows, left_tips, right_tips
 
 
-def _greedy_call_role(left, right, collection, pool_id, min_score):
+def _greedy_call_role(left, right, collection, pool_id, min_score, algo):
     """Greedily match one direct-neighbor role without changing stored sims."""
     from bsimvis.app.routes.function_code import get_function_relations
 
@@ -577,6 +578,7 @@ def _greedy_call_role(left, right, collection, pool_id, min_score):
         query = {
             "ids": ",".join(left_ids + right_ids),
             "collection": collection,
+            "algo": algo,
             "min_score": "0",
         }
         if pool_id:
@@ -632,6 +634,9 @@ def call_graph_similarity_api():
         min_score = max(0.0, min(1.0, float(request.args.get("min_score", 0.5))))
     except ValueError:
         return {"detail": "min_score must be a number between 0 and 1"}, 400
+    algo = request.args.get("algo", "unweighted_cosine")
+    if not registry.get(algo):
+        return {"detail": f"Unknown similarity algorithm: {algo}"}, 400
     left = get_enriched_nodes(params["collection_a"], params["md5_a"], params["addr_a"])
     right = get_enriched_nodes(
         params["collection_b"], params["md5_b"], params["addr_b"]
@@ -642,6 +647,7 @@ def call_graph_similarity_api():
         params["collection_a"],
         params["pool"],
         min_score,
+        algo,
     )
     callees = _greedy_call_role(
         left["callees"],
@@ -649,6 +655,7 @@ def call_graph_similarity_api():
         params["collection_a"],
         params["pool"],
         min_score,
+        algo,
     )
     return {
         "callers": callers,

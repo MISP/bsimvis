@@ -34,6 +34,7 @@ from bsimvis.app.services.bin_sim_service import (
     stored_unweighted_match,
 )
 from bsimvis.app.routes._list_query import fnum, in_bounds
+from bsimvis.similarity import registry
 import json
 
 job_service = JobService()
@@ -575,6 +576,8 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     if collection is None:
         collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
+    if not registry.get(algo):
+        abort(400, "Unknown similarity algorithm")
     if md5_a is None:
         md5_a = request.args.get("md5_a")
     if md5_b is None:

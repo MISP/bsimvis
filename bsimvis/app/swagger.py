@@ -1201,6 +1201,7 @@ class FunctionCallGraphSimilarity(Resource):
             "addr_a": "Function address on side A",
             "addr_b": "Function address on side B",
             "pool": "Pool ID for cross-collection similarity",
+            "algo": "Function similarity algorithm (default: unweighted_cosine)",
             "min_score": "Runtime minimum similarity (0-1)",
         }
     )
@@ -2402,6 +2403,9 @@ class DiffView(Resource):
             "md5_b": "Second binary MD5 hash",
             "addr_a": "Function address on side A (omit for file-level bin_sim diff)",
             "addr_b": "Function address on side B (omit for file-level bin_sim diff)",
+            "algo": "Similarity algorithm (default: unweighted_cosine)",
+            "runtime": "Use runtime greedy file matching when set to greedy",
+            "min_score": "Runtime minimum similarity (0-1)",
             "pool": "Pool ID for cross-collection pool-based lookups",
         }
     )

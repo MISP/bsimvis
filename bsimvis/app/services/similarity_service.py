@@ -2681,6 +2681,8 @@ class SimilarityService:
                             )
                         except Exception:
                             continue
+                        if doc.get("algo", "unweighted_cosine") != algo:
+                            continue
                         f1, f2 = doc.get("id1"), doc.get("id2")
                         if not f1 or not f2:
                             continue

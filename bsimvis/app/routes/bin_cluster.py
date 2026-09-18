@@ -15,7 +15,9 @@ def build_bin_cluster():
     """Enqueues a binary clustering job."""
     data = request.json or {}
     collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
+    algo = data.get("algo") or config_service.get(
+        "similarity.algo", "unweighted_cosine"
+    )
     axis = data.get("axis", "overall")
     min_cluster_size = data.get(
         "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
@@ -47,7 +49,9 @@ def rebuild_bin_cluster():
     """Enqueues a clear + cluster pipeline for binaries."""
     data = request.json or {}
     collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
+    algo = data.get("algo") or config_service.get(
+        "similarity.algo", "unweighted_cosine"
+    )
     axis = data.get("axis", "overall")
     min_cluster_size = data.get(
         "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
@@ -97,7 +101,9 @@ def clear_bin_cluster():
     """Enqueues a binary cluster clear job."""
     data = request.json or {}
     collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
+    algo = data.get("algo") or config_service.get(
+        "similarity.algo", "unweighted_cosine"
+    )
     axis = data.get("axis", "overall")
 
     job_id = job_service.create_job(
@@ -155,7 +161,9 @@ def list_bin_clusters():
     """Lists discovered binary clusters with metadata, filtering, and sorting."""
     t_start = time.perf_counter()
     collection = request.args.get("collection", "main")
-    algo = request.args.get("algo", "unweighted_cosine")
+    algo = request.args.get("algo") or config_service.get(
+        "similarity.algo", "unweighted_cosine"
+    )
     axis = request.args.get("axis", "overall").strip().lower()
 
     # Containers and files cluster in two separate graphs (a container holds
@@ -629,7 +637,9 @@ def list_bin_clusters():
 def get_bin_cluster_tree():
     """Returns the condensed tree for binary clustering."""
     collection = request.args.get("collection", "main")
-    algo = request.args.get("algo", "unweighted_cosine")
+    algo = request.args.get("algo") or config_service.get(
+        "similarity.algo", "unweighted_cosine"
+    )
     axis = request.args.get("axis", "overall").strip().lower()
     node_type = request.args.get("node_type", "file").strip().lower()
     algo = f"{algo}:{axis}" if axis != "overall" else algo
@@ -660,7 +670,9 @@ def update_bin_cluster_meta():
     """Updates metadata for a binary cluster (e.g. rename)."""
     data = request.json or {}
     collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
+    algo = data.get("algo") or config_service.get(
+        "similarity.algo", "unweighted_cosine"
+    )
     axis = data.get("axis", "overall").strip().lower()
     node_type = (data.get("node_type") or "file").strip().lower()
     algo = f"{algo}:{axis}" if axis != "overall" else algo
@@ -736,7 +748,9 @@ def update_bin_cluster_meta():
 def list_bin_cluster_members():
     """Lists all file IDs in a specific binary cluster."""
     collection = request.args.get("collection", "main")
-    algo = request.args.get("algo", "unweighted_cosine")
+    algo = request.args.get("algo") or config_service.get(
+        "similarity.algo", "unweighted_cosine"
+    )
     axis = request.args.get("axis", "overall").strip().lower()
     node_type = request.args.get("node_type", "file").strip().lower()
     algo = f"{algo}:{axis}" if axis != "overall" else algo
@@ -799,7 +813,9 @@ def get_bin_cluster_files():
     """Returns a quick sample of file metadata for a given binary cluster_uuid."""
     collection = request.args.get("collection")
     cluster_uuid = request.args.get("cluster_uuid")
-    algo = request.args.get("algo", "unweighted_cosine")
+    algo = request.args.get("algo") or config_service.get(
+        "similarity.algo", "unweighted_cosine"
+    )
     axis = request.args.get("axis", "overall").strip().lower()
     # The primary lookup below (idx:file:bin_cluster_uuid:*) needs no
     # node_type at all -- uuids are random and never collide between the

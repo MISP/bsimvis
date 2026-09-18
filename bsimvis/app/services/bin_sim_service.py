@@ -196,6 +196,14 @@ def _zadd_score_split(pipe, base, algo, sid, scores):
         pipe.zadd(f"{base}:score_library:{algo}", {sid: scores["score_library"]})
     else:
         pipe.zrem(f"{base}:score_library:{algo}", sid)
+    if scores.get("score_content") is not None:
+        pipe.zadd(f"{base}:score_content:{algo}", {sid: scores["score_content"]})
+    else:
+        pipe.zrem(f"{base}:score_content:{algo}", sid)
+
+
+def _matches_algo(doc, algo):
+    return doc.get("algo", "unweighted_cosine") == algo
 
 
 def bin_sim_rev_key(collection):
@@ -493,7 +501,7 @@ class BinSimService:
         for doc in sim_docs:
             fid1, fid2 = doc.get("id1"), doc.get("id2")
             score = float(doc.get("score", 0.0))
-            if doc.get("algo", "unweighted_cosine") != algo:
+            if not _matches_algo(doc, algo):
                 continue
             if pool_id:
                 endpoint_a = (doc.get("coll_1"), doc.get("md5_1"))
@@ -848,6 +856,8 @@ class BinSimService:
             # Filter/extract edges
             edges = []
             for doc in sim_docs:
+                if not _matches_algo(doc, algo):
+                    continue
                 fid1 = doc.get("id1")
                 fid2 = doc.get("id2")
                 score = doc.get("score", 0.0)

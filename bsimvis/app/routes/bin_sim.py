@@ -8,6 +8,7 @@ from flask import request
 from flask_restx import abort
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.index_service import normalize_tags
 from bsimvis.app.services.bin_sim_tags import (
     AXIS_ORIGIN,
@@ -195,7 +196,9 @@ def build_bin_sim():
     """Trigger background job to build binary similarities."""
     data = request.json or {}
     collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
+    algo = data.get("algo") or config_service.get(
+        "similarity.algo", "unweighted_cosine"
+    )
     md5_a = data.get("md5_a")
     md5_b = data.get("md5_b")
 
@@ -230,7 +233,8 @@ def resplit_bin_sim():
         {
             "collection": data.get("collection", "main"),
             "sid": data.get("sid"),
-            "algo": data.get("algo", "unweighted_cosine"),
+            "algo": data.get("algo")
+            or config_service.get("similarity.algo", "unweighted_cosine"),
             "md5": data.get("md5"),
         },
     )
@@ -246,7 +250,9 @@ def clear_bin_sim():
     """Trigger background job to clear binary similarities."""
     data = request.json or {}
     collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
+    algo = data.get("algo") or config_service.get(
+        "similarity.algo", "unweighted_cosine"
+    )
     md5 = data.get("md5")
 
     job_id = job_service.create_job(
@@ -269,7 +275,9 @@ def rebuild_bin_sim():
     """Trigger background pipeline to clear then build binary similarities."""
     data = request.json or {}
     collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
+    algo = data.get("algo") or config_service.get(
+        "similarity.algo", "unweighted_cosine"
+    )
     md5_a = data.get("md5_a")
     md5_b = data.get("md5_b")
     min_cohesion = data.get("min_cohesion", 0.5)
@@ -575,7 +583,9 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     """Retrieve binary similarity diff for a pair."""
     if collection is None:
         collection = request.args.get("collection", "main")
-    algo = request.args.get("algo", "unweighted_cosine")
+    algo = request.args.get("algo") or config_service.get(
+        "similarity.algo", "unweighted_cosine"
+    )
     if not registry.get(algo):
         abort(400, "Unknown similarity algorithm")
     if md5_a is None:
@@ -1295,7 +1305,9 @@ def _group_by_container(collection, algo, md5, scored_sids, r):
 def list_bin_sims():
     """List similar binaries to a given binary."""
     collection = request.args.get("collection", "main")
-    algo = request.args.get("algo", "unweighted_cosine")
+    algo = request.args.get("algo") or config_service.get(
+        "similarity.algo", "unweighted_cosine"
+    )
     md5 = request.args.get("md5")
     limit = int(request.args.get("limit", 20))
     offset = int(request.args.get("offset", 0))
@@ -1426,7 +1438,9 @@ def reindex_bin_sim():
     """
     data = request.json or {}
     collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
+    algo = data.get("algo") or config_service.get(
+        "similarity.algo", "unweighted_cosine"
+    )
     pool_id = data.get("pool_id") or data.get("pool")
 
     payload = {"collection": collection, "algo": algo}

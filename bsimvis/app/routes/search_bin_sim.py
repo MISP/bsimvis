@@ -5,6 +5,7 @@ import time
 from flask import request
 from bsimvis.app.services import lineage_service
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.index_service import normalize_tags, enrich_pool_data
 from bsimvis.app.services.bin_sim_tags import SUMMARY_FIELDS
 
@@ -749,7 +750,9 @@ def search_bin_sims():
         if not collection and not pool_id:
             return {"error": "No collection or pool specified"}, 400
 
-        algo = request.args.get("algo", "unweighted_cosine")
+        algo = request.args.get("algo") or config_service.get(
+            "similarity.algo", "unweighted_cosine"
+        )
         is_pool = pool_id is not None
 
         try:

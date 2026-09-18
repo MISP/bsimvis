@@ -398,8 +398,8 @@ window.FileView = {
             // Render Metadata Table (Reusing comparison table layout and styles)
             const fmt = (v) => {
                 if (v === undefined || v === null || v === '') return '<span style="color:var(--subtle); opacity:0.5;">—</span>';
-                if (Array.isArray(v)) return v.length ? v.join(', ') : '<span style="color:var(--subtle); opacity:0.5;">—</span>';
-                return String(v);
+                if (Array.isArray(v)) return v.length ? escapeHtml(v.join(', ')) : '<span style="color:var(--subtle); opacity:0.5;">—</span>';
+                return escapeHtml(String(v));
             };
             const fmtDate = (timestamp) => {
                 if (!timestamp) return '';
@@ -490,7 +490,7 @@ window.FileView = {
                     legendHtml += `
                         <div style="display: flex; align-items: center; gap: 6px; font-size: 0.75rem; margin-bottom: 4px;">
                             <div style="width: 10px; height: 10px; background-color: ${color}; border-radius: 2px;"></div>
-                            <span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px;" title="${d.value}">${d.value}</span>
+                            <span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px;" title="${escapeAttr(d.value)}">${escapeHtml(d.value)}</span>
                             <span style="color: var(--dim); margin-left: auto;">${d.percent || 0}%</span>
                         </div>
                     `;

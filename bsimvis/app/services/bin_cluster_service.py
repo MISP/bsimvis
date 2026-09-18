@@ -3,11 +3,14 @@ import json
 import time
 import uuid
 import heapq
-from collections import Counter
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services import sim_edges
-from bsimvis.app.services.cluster_utils import default_bin_cluster_name
+from bsimvis.app.services.cluster_utils import (
+    build_freq,
+    collect_member_values,
+    default_bin_cluster_name,
+)
 
 _EMPTY_I = np.empty(0, dtype=np.int32)
 _EMPTY_F = np.empty(0, dtype=np.float32)
@@ -457,7 +460,6 @@ class BinClusterService:
         import uuid
         import time
         import json
-        from collections import Counter
 
         if algo is None:
             algo = algo_ns.split(":")[0]  # rough fallback
@@ -517,66 +519,21 @@ class BinClusterService:
                 c_uuid = c_uuid.decode() if isinstance(c_uuid, bytes) else c_uuid
 
             # Build Metadata
-            names_list = []
-            md5s_list = []
-            yara_list = []
-            avtype_list = []
-            filetype_list = []
-            ccip_list = []
-
-            for file_id in members:
-                m = all_member_meta.get(file_id, {})
-                if m.get("file_names"):
-                    names_list.extend(m["file_names"])
-                elif m.get("file_name"):
-                    names_list.append(m["file_name"])
-
-                if m.get("file_md5"):
-                    md5s_list.append(m["file_md5"])
-
-                if m.get("yara"):
-                    yara_list.extend(
-                        m["yara"] if isinstance(m["yara"], list) else [m["yara"]]
-                    )
-                if m.get("avtype"):
-                    avtype_list.extend(
-                        m["avtype"] if isinstance(m["avtype"], list) else [m["avtype"]]
-                    )
-                if m.get("filetype"):
-                    filetype_list.extend(
-                        m["filetype"]
-                        if isinstance(m["filetype"], list)
-                        else [m["filetype"]]
-                    )
-                if m.get("cc_ip"):
-                    ccip_list.extend(
-                        m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]]
-                    )
+            member_metas = [all_member_meta.get(file_id, {}) for file_id in members]
+            names_list, md5s_list, yara_list, avtype_list, filetype_list, ccip_list = (
+                collect_member_values(member_metas)
+            )
 
             default_name = default_bin_cluster_name(
                 names_list, avtype_list, yara_list, f"Binary Cluster {label}"
             )
 
-            def build_freq(items):
-                return (
-                    [
-                        {
-                            "value": k,
-                            "count": v,
-                            "percent": round((v / len(members)) * 100),
-                        }
-                        for k, v in Counter(items).most_common(5)
-                    ]
-                    if items
-                    else []
-                )
-
-            yara_freq = build_freq(yara_list)
-            avtype_freq = build_freq(avtype_list)
-            filetype_freq = build_freq(filetype_list)
-            ccip_freq = build_freq(ccip_list)
-            filename_freq = build_freq(names_list)
-            md5_freq = build_freq(md5s_list)
+            yara_freq = build_freq(yara_list, len(members))
+            avtype_freq = build_freq(avtype_list, len(members))
+            filetype_freq = build_freq(filetype_list, len(members))
+            ccip_freq = build_freq(ccip_list, len(members))
+            filename_freq = build_freq(names_list, len(members))
+            md5_freq = build_freq(md5s_list, len(members))
 
             # A threshold-UF cut guarantees every member is TRANSITIVELY
             # linked above the threshold, not that the average pair is -- the
@@ -1852,66 +1809,21 @@ class BinClusterService:
 
         for idx, label in enumerate(write_nodes):
             members = cluster_members[label]
-            names_list = []
-            md5s_list = []
-            yara_list = []
-            avtype_list = []
-            filetype_list = []
-            ccip_list = []
-
-            for file_id in members:
-                m = all_member_meta.get(file_id, {})
-                if m.get("file_names"):
-                    names_list.extend(m["file_names"])
-                elif m.get("file_name"):
-                    names_list.append(m["file_name"])
-
-                if m.get("file_md5"):
-                    md5s_list.append(m["file_md5"])
-
-                if m.get("yara"):
-                    yara_list.extend(
-                        m["yara"] if isinstance(m["yara"], list) else [m["yara"]]
-                    )
-                if m.get("avtype"):
-                    avtype_list.extend(
-                        m["avtype"] if isinstance(m["avtype"], list) else [m["avtype"]]
-                    )
-                if m.get("filetype"):
-                    filetype_list.extend(
-                        m["filetype"]
-                        if isinstance(m["filetype"], list)
-                        else [m["filetype"]]
-                    )
-                if m.get("cc_ip"):
-                    ccip_list.extend(
-                        m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]]
-                    )
+            member_metas = [all_member_meta.get(file_id, {}) for file_id in members]
+            names_list, md5s_list, yara_list, avtype_list, filetype_list, ccip_list = (
+                collect_member_values(member_metas)
+            )
 
             default_name = default_bin_cluster_name(
                 names_list, avtype_list, yara_list, f"Binary Cluster {label}"
             )
 
-            def build_freq(items):
-                return (
-                    [
-                        {
-                            "value": k,
-                            "count": v,
-                            "percent": round((v / len(members)) * 100),
-                        }
-                        for k, v in Counter(items).most_common(5)
-                    ]
-                    if items
-                    else []
-                )
-
-            yara_freq = build_freq(yara_list)
-            avtype_freq = build_freq(avtype_list)
-            filetype_freq = build_freq(filetype_list)
-            ccip_freq = build_freq(ccip_list)
-            filename_freq = build_freq(names_list)
-            md5_freq = build_freq(md5s_list)
+            yara_freq = build_freq(yara_list, len(members))
+            avtype_freq = build_freq(avtype_list, len(members))
+            filetype_freq = build_freq(filetype_list, len(members))
+            ccip_freq = build_freq(ccip_list, len(members))
+            filename_freq = build_freq(names_list, len(members))
+            md5_freq = build_freq(md5s_list, len(members))
 
             # Incremental rebuilds carry or recompute cohesion before clearing;
             # full rebuilds use the complete edge-set adjacency, which is

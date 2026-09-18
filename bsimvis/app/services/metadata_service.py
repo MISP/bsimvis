@@ -16,7 +16,11 @@ from bsimvis.app.services.bin_sim_service import (
     _unindex_bin_sim_pair,
 )
 from bsimvis.app.services.config_service import config_service
-from bsimvis.app.services.cluster_utils import bin_cluster_ns
+from bsimvis.app.services.cluster_utils import (
+    bin_cluster_ns,
+    build_freq,
+    collect_member_values,
+)
 
 # `upload --metadata` matches CSV rows by md5, but unpacking only happens on the
 # server: the md5 of an archive member or a UPX-unpacked payload does not exist
@@ -307,10 +311,7 @@ class MetadataService:
                 c_meta_results = c_meta_pipe.execute()
 
                 names = []
-                yara_list = []
-                avtype_list = []
-                filetype_list = []
-                ccip_list = []
+                decoded_metas = []
                 member_metas = {}
 
                 for mid, res in zip(members, c_meta_results):
@@ -320,47 +321,18 @@ class MetadataService:
                     member_metas[mid] = m
                     if isinstance(m, str):
                         m = json.loads(m)
+                    decoded_metas.append(m)
                     if m.get("file_name"):
                         names.append(m["file_name"])
-                    if m.get("yara"):
-                        yara_list.extend(
-                            m["yara"] if isinstance(m["yara"], list) else [m["yara"]]
-                        )
-                    if m.get("avtype"):
-                        avtype_list.extend(
-                            m["avtype"]
-                            if isinstance(m["avtype"], list)
-                            else [m["avtype"]]
-                        )
-                    if m.get("filetype"):
-                        filetype_list.extend(
-                            m["filetype"]
-                            if isinstance(m["filetype"], list)
-                            else [m["filetype"]]
-                        )
-                    if m.get("cc_ip"):
-                        ccip_list.extend(
-                            m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]]
-                        )
 
-                def build_freq(items):
-                    return (
-                        [
-                            {
-                                "value": k,
-                                "count": v,
-                                "percent": round((v / len(items)) * 100),
-                            }
-                            for k, v in Counter(items).most_common(5)
-                        ]
-                        if items
-                        else []
-                    )
+                _, _, yara_list, avtype_list, filetype_list, ccip_list = (
+                    collect_member_values(decoded_metas)
+                )
 
-                yara_freq = build_freq(yara_list)
-                avtype_freq = build_freq(avtype_list)
-                filetype_freq = build_freq(filetype_list)
-                ccip_freq = build_freq(ccip_list)
+                yara_freq = build_freq(yara_list, len(members))
+                avtype_freq = build_freq(avtype_list, len(members))
+                filetype_freq = build_freq(filetype_list, len(members))
+                ccip_freq = build_freq(ccip_list, len(members))
 
                 min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
                 cohesion_score = old_cm.get("cohesion_score", 1.0)

@@ -106,6 +106,10 @@ def search_files():
             ("max_cohesion", "cohesion_score"),
             ("min_entry_date", "entry_date"),
             ("max_entry_date", "entry_date"),
+            ("min_first_seen", "first_seen"),
+            ("max_first_seen", "first_seen"),
+            ("min_last_seen", "last_seen"),
+            ("max_last_seen", "last_seen"),
         ]:
             val = request.args.get(arg)
             if val:
@@ -400,6 +404,10 @@ RANGE_FIELD_MAP = {
     "max_bsim_features": "bsim_features_count",
     "min_entry_date": "entry_date",
     "max_entry_date": "entry_date",
+    "min_first_seen": "first_seen",
+    "max_first_seen": "first_seen",
+    "min_last_seen": "last_seen",
+    "max_last_seen": "last_seen",
 }
 
 

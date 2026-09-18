@@ -1,4 +1,5 @@
 import logging
+from bsimvis.app.services.index_service import now_ms
 import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import save_file, save_function
@@ -65,7 +66,6 @@ class ProcessingService:
             batch_name = file_meta.get("batch_name") or "unknown_batch_name"
             num_functions = num_functions or 0
             total_features = total_features or 0
-            timestamp = file_meta.get("entry_date") or 0
         else:
             # Since we use SET instead of JSON.SET for the monolith, we load the whole string.
             raw_data = self.r.get(file_id)
@@ -93,12 +93,13 @@ class ProcessingService:
                 or "unknown_batch_name"
             )
             num_functions = len(data.get("functions", []))
-            timestamp = file_meta.get("entry_date") or data.get("entry_date") or 0
             total_features = 0
             for f in data.get("functions", []):
                 total_features += f.get("function_metadata", {}).get(
                     "bsim_features_count", 0
                 )
+
+        timestamp = now_ms()
 
         # Create the standalone file metadata key (exploded from the main blob)
         file_base_id = f"{collection}:file:{file_md5}"
@@ -280,8 +281,6 @@ class ProcessingService:
 
             # Copy file-level metadata to function metadata
             fields_to_copy = [
-                "first_seen",
-                "last_seen",
                 "filetype",
                 "avtype",
                 "yara",

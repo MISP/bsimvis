@@ -2,7 +2,7 @@ from flask import current_app, request
 import json
 import hashlib
 from bsimvis.app.services import archive_service, lineage_service, unpack_service
-from bsimvis.app.services.index_service import normalize_tags, save_file
+from bsimvis.app.services.index_service import normalize_tags, now_ms, save_file
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.milvus_service import milvus_service
@@ -10,7 +10,6 @@ from bsimvis.app.services.metadata_service import stage_metadata, staged_metadat
 from bsimvis.app.services.processing_service import ProcessingService
 from bsimvis.app.services.config_service import config_service
 import logging
-import time
 import uuid
 import re
 
@@ -652,11 +651,12 @@ def _ingest_raw_binary(
             "status": "pending",
             "function_count": 0,
             "bsim_features_count": 0,
-            "entry_date": int(time.time()),
+            "entry_date": now_ms(),
         }
         stub_pipe = r_data.pipeline(transaction=False)
         stub_pipe.set(f"{file_base_id}:meta", json.dumps(stub_meta))
         save_file(stub_pipe, collection, file_md5, stub_meta)
+        stub_pipe.hset(f"global:collection:{collection}:meta", "last_updated", now_ms())
         stub_pipe.execute()
 
         # Same idea for the batch: register it (if new) so it shows up in
@@ -665,7 +665,7 @@ def _ingest_raw_binary(
         # this batch".
         global_batch_key = f"global:batch:{batch_uuid}"
         if not r_data.exists(global_batch_key):
-            now_ms = int(time.time() * 1000)
+            timestamp = now_ms()
             r_data.sadd("global:batches", batch_uuid)
             r_data.set(
                 global_batch_key,
@@ -674,15 +674,15 @@ def _ingest_raw_binary(
                         "name": batch_name,
                         "batch_uuid": batch_uuid,
                         "batch_id": global_batch_key,
-                        "created_at": now_ms,
-                        "last_updated": now_ms,
+                        "created_at": timestamp,
+                        "last_updated": timestamp,
                         "collections": {collection: True},
                     }
                 ),
             )
         batch_key = f"{collection}:batch:{batch_uuid}"
         if not r_data.exists(batch_key):
-            now_ms = int(time.time() * 1000)
+            timestamp = now_ms()
             r_data.sadd(f"{collection}:all_batches", batch_uuid)
             r_data.set(
                 batch_key,
@@ -691,8 +691,8 @@ def _ingest_raw_binary(
                         "name": batch_name,
                         "batch_uuid": batch_uuid,
                         "batch_id": batch_key,
-                        "created_at": now_ms,
-                        "last_updated": now_ms,
+                        "created_at": timestamp,
+                        "last_updated": timestamp,
                         "total_files": 0,
                         "total_functions": 0,
                         "collection": collection,
@@ -854,7 +854,7 @@ def _ingest_container(
         lineage_service.mark_container(collection, file_md5, r_data)
         return  # re-uploaded container: the edges below are refreshed regardless
 
-    now_unix = int(time.time() * 1000)
+    now_unix = now_ms()
     file_meta = {
         "entry_date": now_unix,
         "file_date": now_unix,

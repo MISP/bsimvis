@@ -10,9 +10,17 @@ from tqdm import tqdm
 import requests
 
 from bsimvis.app.services.ghidra_service import ghidra_service
+from bsimvis.app.services.index_service import parse_timestamp
 
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
 DEFAULT_BATCH_NAME = "Ghidra Batch"
+
+
+def parse_seen(val, reducer):
+    values = [parse_timestamp(v.strip()) for v in (val or "").split(",")]
+    values = [v for v in values if v]
+    return reducer(values) if values else None
+
 
 # Per-target outcomes. "Already present by MD5" is a third state, not a failure:
 # folding it into failure made a fully-deduplicated group report 0/19 and look
@@ -724,14 +732,18 @@ def main(args):
 
                     names = parse_list(row.get("names", ""))
                     extra = {
-                        "first_seen": parse_list(row.get("first_seen", "")),
-                        "last_seen": parse_list(row.get("last_seen", "")),
                         "filetype": parse_list(row.get("filetype", "")),
                         "avtype": parse_list(row.get("avtype", "")),
                         "yara": parse_list(row.get("yara", "")),
                         "file_names": names,
                         "cc_ip": parse_list(row.get("CC ip", "")),
                     }
+                    first_seen = parse_seen(row.get("first_seen", ""), min)
+                    last_seen = parse_seen(row.get("last_seen", ""), max)
+                    if first_seen:
+                        extra["first_seen"] = first_seen
+                    if last_seen:
+                        extra["last_seen"] = last_seen
                     if names:
                         extra["file_name"] = names[0]
                     args.metadata_dict[hash_val] = extra

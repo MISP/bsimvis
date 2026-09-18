@@ -12,6 +12,7 @@ To change which fields are indexed and at which levels, edit index_config.py.
 
 import json
 import datetime
+import time
 
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_config import tag_ancestors
@@ -140,6 +141,10 @@ def enrich_pool_data(data, pool_id):
     return data
 
 
+def now_ms():
+    return int(time.time() * 1000)
+
+
 def parse_timestamp(val):
     """Normalize mixed UTC ISO strings and Unix integers to Unix Milliseconds."""
     if not val:
@@ -163,10 +168,10 @@ def parse_timestamp(val):
 
         try:
             # Handle ISO 8601: 2026-03-26T11:48:07.851317Z or 2026-03-26T10:48:02.623Z
-            return int(
-                datetime.datetime.fromisoformat(val.replace("Z", "+00:00")).timestamp()
-                * 1000
-            )
+            dt = datetime.datetime.fromisoformat(val.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            return int(dt.timestamp() * 1000)
         except (ValueError, TypeError):
             return 0
     return 0

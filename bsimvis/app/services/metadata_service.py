@@ -118,8 +118,6 @@ class MetadataService:
             list_fields = [
                 "tags",
                 "user_tags",
-                "first_seen",
-                "last_seen",
                 "filetype",
                 "avtype",
                 "yara",

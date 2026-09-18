@@ -2,6 +2,13 @@ import csv
 import logging
 import requests
 import sys
+from bsimvis.app.services.index_service import parse_timestamp
+
+
+def parse_seen(val, reducer):
+    values = [parse_timestamp(v.strip()) for v in (val or "").split(",")]
+    values = [v for v in values if v]
+    return reducer(values) if values else None
 
 
 def parse_metadata_file(filepath):
@@ -25,14 +32,18 @@ def parse_metadata_file(filepath):
 
                 names = parse_list(row.get("names", ""))
                 extra = {
-                    "first_seen": parse_list(row.get("first_seen", "")),
-                    "last_seen": parse_list(row.get("last_seen", "")),
                     "filetype": parse_list(row.get("filetype", "")),
                     "avtype": parse_list(row.get("avtype", "")),
                     "yara": parse_list(row.get("yara", "")),
                     "file_names": names,
                     "cc_ip": parse_list(row.get("CC ip", "")),
                 }
+                first_seen = parse_seen(row.get("first_seen", ""), min)
+                last_seen = parse_seen(row.get("last_seen", ""), max)
+                if first_seen:
+                    extra["first_seen"] = first_seen
+                if last_seen:
+                    extra["last_seen"] = last_seen
                 if names:
                     extra["file_name"] = names[0]
                 updates[hash_val] = extra

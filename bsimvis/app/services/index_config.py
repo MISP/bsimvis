@@ -46,8 +46,8 @@ INDEX_CONFIG = {
         "bin_cluster_uuid": ["file"],
         "bin_cluster_name": ["file"],
         "bin_cluster_stability": ["file"],
-        "first_seen": ["file", "func"],
-        "last_seen": ["file", "func"],
+        "first_seen": ["file"],  # numeric
+        "last_seen": ["file"],  # numeric
         "filetype": ["file", "func"],
         "avtype": ["file", "func"],
         "yara": ["file", "func"],
@@ -164,6 +164,8 @@ NUM_FIELDS = {
     "batch_order",
     "entry_date",
     "file_date",
+    "first_seen",
+    "last_seen",
     "function_count",
     "instruction_count",
     "bsim_features_count",

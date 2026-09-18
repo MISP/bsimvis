@@ -96,6 +96,18 @@
     # `unweighted=1`) without rebuilding anything. Scores built under the two
     # settings are not comparable, so rebuild bin_sim after flipping it.
     unweighted_match = false
+    # Stored function edges only exist for pairs BSim proposed above min_score
+    # above, so a rewritten function leaves no edge and the file score never
+    # counts it. true: build_bin_sim re-matches whatever the stored edges could
+    # not place, straight from the tf vectors, at discovery_min_score. Costs one
+    # extra sparse sweep per pair over the unmatched functions only; rebuild
+    # bin_sim after flipping it.
+    discovery = false
+    discovery_min_score = 0.5
+    # Drop features carried by more than this share of the partner binary's
+    # functions. 1.0 (default) drops nothing and the sweep is exact; lower it
+    # only if a boilerplate-heavy collection makes discovery too slow.
+    discovery_max_df = 1.0
 
 
 [llm]

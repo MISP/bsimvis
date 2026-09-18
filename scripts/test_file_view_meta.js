@@ -12,16 +12,34 @@ const read = (...p) => fs.readFileSync(
     'utf8'
 );
 const src = read('views', 'file_view.js');
-const slice = (text, from, to) => text.slice(text.indexOf(from), text.indexOf(to));
+const utils = read('utils.js');
+
+// Lifts one declaration out of a source file, from its opening brace to the
+// matching close. This used to slice up to whatever came next in the file,
+// which tied the test to an unrelated comment: `renderDist` is followed by
+// `// Render Clusters` on main and by something else on dev, so the slice ran
+// off the end and the file no longer parsed. Brace matching has nothing to do
+// with the neighbours.
+function block(text, from) {
+    const start = text.indexOf(from);
+    assert.notStrictEqual(start, -1, `cannot find ${from}`);
+    let depth = 0;
+    for (let i = text.indexOf('{', start); i < text.length; i++) {
+        if (text[i] === '{') depth++;
+        else if (text[i] === '}' && --depth === 0) return text.slice(start, i + 1);
+    }
+    throw new Error(`unterminated block: ${from}`);
+}
 
 // The real escapers, not stubs: the escaping is what is under test.
 const esc = new Function(
-    `${slice(read('utils.js'), 'function escapeHtml(value) {', '// Filter values:')}
+    `${block(utils, 'function escapeHtml(value) {')}
+    ${block(utils, 'function escapeAttr(value) {')}
     return { escapeHtml, escapeAttr };`
 )();
 
 // Both sinks live inside init(); lift them out rather than standing up the view.
-const fmt = new Function('escapeHtml', `${slice(src, 'const fmt = (v) => {', 'const fmtDate =')}
+const fmt = new Function('escapeHtml', `${block(src, 'const fmt = (v) => {')}
     return fmt;`)(esc.escapeHtml);
 
 const PAYLOAD = '"><img src=x onerror=alert(1)>';
@@ -60,7 +78,7 @@ const d3 = {
 };
 
 const renderDist = new Function('d3', 'escapeHtml', 'escapeAttr',
-    `${slice(src, 'function renderDist(title, icon, dist) {', '// Render Clusters')}
+    `${block(src, 'function renderDist(title, icon, dist) {')}
     return renderDist;`
 )(d3, esc.escapeHtml, esc.escapeAttr);
 

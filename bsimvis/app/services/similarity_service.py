@@ -43,6 +43,7 @@ class SimilarityService:
         self._pl_budget = 5_000_000
         self._norm_cache = {}  # func_id -> vector norm (float)
         self._count_cache = {}  # (count_idx_key, func_id) -> feature count (float)
+        self._unique_count_cache = {}  # func_id -> unique feature count (float)
 
     def _reset_read_caches(self):
         """Drop per-build read caches (call at each top-level build entry so a
@@ -51,6 +52,7 @@ class SimilarityService:
         self._pl_pairs = 0
         self._norm_cache.clear()
         self._count_cache.clear()
+        self._unique_count_cache.clear()
 
     def _pl_warm(self, keys):
         """Pipeline-fetch any uncached feature posting lists in `keys` in one RTT
@@ -360,6 +362,23 @@ class SimilarityService:
             buckets.append((band, bucket_hash))
         return buckets
 
+    def _unique_counts(self, ids):
+        """Cached unique feature counts (ZCARD {id}:vec:tf) for ids.
+
+        The candidate's binary-cosine norm is sqrt(unique features). The
+        bsim_features_count index holds the *raw* count (repeats included), so
+        it cannot stand in for this.
+        """
+        cache = self._unique_count_cache
+        miss = [i for i in ids if i not in cache]
+        if miss:
+            pipe = self.r.pipeline(transaction=False)
+            for i in miss:
+                pipe.zcard(f"{i}:vec:tf")
+            for i, v in zip(miss, pipe.execute()):
+                cache[i] = float(v or 0)
+        return [cache[i] for i in ids]
+
     def _discover(self, args):
         """Python reimplementation of the find_candidates.lua / minhash_lsh.lua
         discovery step. Takes the same flat ARGV list the Lua scripts took and
@@ -383,7 +402,8 @@ class SimilarityService:
         algo = args[2]
         threshold = float(args[3])
         target_total = float(args[4])
-        target_norm = float(args[5])
+        # args[5] is the target's TF norm — unused: binary cosine norms are
+        # sqrt(unique feature count) on both sides.
         limit = int(args[6])
         min_features = float(args[7] or 0)
 
@@ -396,7 +416,7 @@ class SimilarityService:
         min_shared_features = 0.0
         target_len = len(target_features)
         if algo == "unweighted_cosine":
-            min_shared_features = (threshold ** 2) * target_len
+            min_shared_features = (threshold**2) * target_len
 
         # 1. Size each feature's posting list, rarest-first (pipelined ZCARDs)
         feats = list(target_features.items())
@@ -419,16 +439,12 @@ class SimilarityService:
 
         # 2. Accumulate intersection (dot product / sum-min) with pruning bounds
         intersection_counts = {}
-        shared_target_norm_sq = {}
-        target_norm_sq = target_norm * target_norm
-        processed_norm_sq = 0.0
         processed_total = 0.0
         num_candidates = 0
 
         for i, feat in enumerate(features_sorted):
             if i % 16 == 0:
                 self._pl_warm([item["key"] for item in features_sorted[i : i + 16]])
-            remaining_norm_sq = target_norm_sq - processed_norm_sq
             remaining_total = target_total - processed_total
             can_add_new = True
             if algo == "unweighted_cosine":
@@ -440,7 +456,6 @@ class SimilarityService:
             if not can_add_new and num_candidates == 0:
                 break
 
-            target_tf_sq = feat["tf"] * feat["tf"] if algo == "unweighted_cosine" else 0
             # Cached across targets in this build (feature posting lists are static
             # during a build). Order is irrelevant — we sum over the whole list.
             for func_id, cand_tf in self._pl(feat["key"]):
@@ -456,7 +471,6 @@ class SimilarityService:
                     elif algo == "unweighted_cosine":
                         intersection_counts[func_id] += 1
 
-            processed_norm_sq += feat["tf"] * feat["tf"]
             processed_total += feat["tf"]
 
         # 3. Phase-1 bound filter
@@ -487,14 +501,14 @@ class SimilarityService:
                 if score >= threshold and score > 0:
                     candidate_list.append((cid, score, cand_total))
         else:  # unweighted_cosine — we can compute exact binary cosine right here
-            for cid, cand_total in zip(kept, totals):
+            unique_totals = self._unique_counts(kept)
+            for cid, cand_total, cand_unique in zip(kept, totals, unique_totals):
                 if cand_total < min_features or cand_total <= 0:
                     continue
                 intersect = intersection_counts[cid]
-                import math
                 score = (
-                    intersect / math.sqrt(target_len * cand_total)
-                    if (target_len > 0 and cand_total > 0)
+                    intersect / math.sqrt(target_len * cand_unique)
+                    if (target_len > 0 and cand_unique > 0)
                     else 0
                 )
                 if score >= threshold and score > 0:

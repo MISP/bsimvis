@@ -420,6 +420,9 @@ window.FileView = {
                 'Functions': 'fa-solid fa-list-ol',
                 'BSim Features': 'fa-solid fa-dna',
                 'First Seen': 'fa-solid fa-clock',
+                'Last Seen': 'fa-solid fa-clock',
+                'Uploaded': 'fa-solid fa-upload',
+                'File Date': 'fa-solid fa-calendar',
                 'Related MD5s': 'fa-solid fa-link'
             };
 
@@ -431,6 +434,9 @@ window.FileView = {
                     ['Related MD5s', file.related_md5],
                     ['Batch UUID', file.batch_uuid],
                     ['First Seen', file.first_seen ? fmtDate(file.first_seen) : ''],
+                    ['Last Seen', file.last_seen ? fmtDate(file.last_seen) : ''],
+                    ['Uploaded', file.entry_date ? fmtDate(file.entry_date) : ''],
+                    ['File Date', file.file_date ? fmtDate(file.file_date) : ''],
                 ]],
                 ['Classification', [
                     ['Language', file.language_id || file.language],

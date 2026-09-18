@@ -44,20 +44,12 @@ def similarity_api():
         from bsimvis.app.services.milvus_service import milvus_service
 
         service = SimilarityService()
-        # `algo` opts in to extra algorithms (comma-separated). weighted_cosine is
-        # not returned by default: it is unbuilt, so every request would score it
-        # on demand, and it raises on a collection whose features were extracted
-        # under different signature settings.
+        # `algo` opts in to a subset of algorithms (comma-separated).
         requested = request.args.get("algo") or request.args.get("algos")
         if requested:
             algorithms = [a.strip() for a in requested.split(",") if a.strip()]
         else:
-            # Everything the build path can compute: those are the ones that may
-            # already be cached. weighted_cosine is opt-in via ?algo= because it
-            # is never cached and would be scored on demand on every request.
-            algorithms = registry.names(
-                buildable=True, milvus_enabled=milvus_service.enabled
-            )
+            algorithms = registry.names(milvus_enabled=milvus_service.enabled)
 
         scores = {}
         significance = {}
@@ -87,8 +79,7 @@ def similarity_api():
         for algo in algorithms:
             base_algo, _ = bsim_profiles.parse_algo(algo)
             if base_algo == "weighted_cosine":
-                # Never cached (weighted builds do not exist yet), so compute the
-                # pair directly and report significance alongside the score.
+                # Report significance alongside weighted score.
                 try:
                     sim, sig = service.calculate_exact_score(
                         id1, id2, algo=algo, with_significance=True

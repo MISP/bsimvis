@@ -16,8 +16,6 @@ from bsimvis.app.services.index_config import get_propagated_fields
 # Algorithms the build path can actually compute. The candidate walk in
 # _select_candidates branches only on these; anything else falls through every
 # branch and yields unfiltered, meaningless results instead of an error.
-# `weighted_cosine` is absent: it is implemented on the exact-score path only
-# (calculate_exact_score) until the weighted pruning bounds land.
 BUILDABLE_ALGOS = tuple(registry.names(buildable=True))
 
 
@@ -28,13 +26,9 @@ def assert_buildable_algo(algo):
     base, _ = bsim_profiles.parse_algo(algo)
     if base in BUILDABLE_ALGOS:
         return
-    if base == "weighted_cosine":
-        raise ValueError(
-            "weighted_cosine is not supported by the similarity build path yet "
-            "(only per-pair scoring via calculate_exact_score). Building with it "
-            "would silently produce unfiltered results. See doc/bsim_signature_settings.md."
-        )
-    raise ValueError(f"Unknown similarity algorithm {algo!r}; expected one of {BUILDABLE_ALGOS}")
+    raise ValueError(
+        f"Unknown similarity algorithm {algo!r}; expected one of {BUILDABLE_ALGOS}"
+    )
 
 
 class SimilarityService:
@@ -444,6 +438,14 @@ class SimilarityService:
         if not target_features:
             return []
 
+        weighted_table = None
+        if algo == "weighted_cosine" or algo.startswith("weighted_cosine:"):
+            _, profile_name = bsim_profiles.parse_algo(algo)
+            weighted_table = bsim_weights.load(
+                bsim_profiles.get_profile(profile_name).weights_path
+            )
+            target_norm = weighted_table.stats(target_features)[0]
+
         target_len = len(target_features)
         # Pruning bounds, one per algo. TF cosine bounds the shared norm mass;
         # binary cosine bounds the shared feature count: intersect <= cand_unique
@@ -520,6 +522,10 @@ class SimilarityService:
                         shared_target_norm_sq[func_id] += target_tf_sq
                     elif algo == "binary_cosine":
                         intersection_counts[func_id] += 1
+                    elif weighted_table is not None:
+                        shared_tf = min(feat["tf"], cand_tf)
+                        weight = weighted_table.coeff(feat["hash"], shared_tf)
+                        intersection_counts[func_id] += weight * weight
 
             processed_norm_sq += feat["tf"] * feat["tf"]
             processed_total += feat["tf"]
@@ -545,7 +551,31 @@ class SimilarityService:
         totals = self._counts(count_idx, kept)
 
         candidate_list = []
-        if algo == "jaccard":
+        if weighted_table is not None:
+            # ponytail: scan shared-feature candidates; exact pruning needs
+            # persisted weighted norms, absent from legacy vectors.
+            candidate_vectors = self.r.pipeline(transaction=False)
+            weighted_ids = []
+            for cid, cand_total in zip(kept, totals):
+                if cand_total >= min_features and cand_total > 0:
+                    weighted_ids.append((cid, cand_total))
+                    candidate_vectors.zrange(f"{cid}:vec:tf", 0, -1, withscores=True)
+            for (cid, cand_total), raw_vec in zip(
+                weighted_ids, candidate_vectors.execute()
+            ):
+                vector = {
+                    h.decode() if isinstance(h, bytes) else h: float(tf)
+                    for h, tf in raw_vec
+                }
+                cand_norm = weighted_table.stats(vector)[0]
+                score = (
+                    intersection_counts[cid] / (target_norm * cand_norm)
+                    if target_norm > 0 and cand_norm > 0
+                    else 0
+                )
+                if score >= threshold and score > 0:
+                    candidate_list.append((cid, score, cand_total))
+        elif algo == "jaccard":
             for cid, cand_total in zip(kept, totals):
                 if cand_total < min_features or cand_total <= 0:
                     continue
@@ -1443,22 +1473,14 @@ class SimilarityService:
         result = self._clear_script(args=[collection, field, value, algo or ""])
         from bsimvis.app.services.cluster_common import clear_hier_state
 
-        for name in (
-            [algo]
-            if algo
-            else list(BUILDABLE_ALGOS)
-        ):
+        for name in ([algo] if algo else list(BUILDABLE_ALGOS)):
             clear_hier_state(self.r, f"{collection}:cluster:hier:{name}")
         return result
 
     def clear_all(self, collection, algo=None):
         """Clears ALL similarities in the collection safely using SCAN."""
         r = self.r
-        algos = (
-            [algo]
-            if algo
-            else list(BUILDABLE_ALGOS)
-        )
+        algos = [algo] if algo else list(BUILDABLE_ALGOS)
 
         logging.info(f"[*] Clearing ALL similarities for collection: {collection}")
 
@@ -1543,14 +1565,16 @@ class SimilarityService:
             logging.error(f"SimilarityService: Error getting pair score: {e}")
             return None
 
-    def calculate_exact_score(self, id1, id2, algo="unweighted_cosine",
-                              with_significance=False):
+    def calculate_exact_score(
+        self, id1, id2, algo="unweighted_cosine", with_significance=False
+    ):
         """Fetches feature vectors and calculates similarity directly in Python.
 
         With `with_significance`, returns `(similarity, significance)` instead of a
         bare score. Only `weighted_cosine` defines a significance; the other algos
         return `None` for it.
         """
+
         def _out(sim, sig=None):
             return (sim, sig) if with_significance else sim
 
@@ -1573,9 +1597,7 @@ class SimilarityService:
                 profile = bsim_profiles.get_profile(profile_name)
                 # Vectors extracted under different masks are not comparable.
                 for fid in (id1, id2):
-                    assert_signature_settings_match(
-                        fid.split(":")[0], profile.settings
-                    )
+                    assert_signature_settings_match(fid.split(":")[0], profile.settings)
                 table = bsim_weights.load(profile.weights_path)
                 sim, sig = table.compare(d1, d2)
                 return _out(float(sim), float(sig))

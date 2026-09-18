@@ -100,9 +100,9 @@ ALGORITHMS = (
         "BSim Weighted",
         "fa-solid fa-scale-balanced",
         "Ghidra's own BSim scoring: features weighted by an IDF curve, so shared "
-        "boilerplate counts for less than a shared rare routine. Per-pair only -- "
-        "the build path has no pruning bound for it yet. Also reports significance.",
-        buildable=False,
+        "boilerplate counts for less than a shared rare routine. Also reports "
+        "significance.",
+        buildable=True,
         significance=True,
         profiled=True,
     ),
@@ -177,8 +177,9 @@ def demo():
         "unweighted_cosine",
         "binary_cosine",
         "milvus_sparse",
+        "weighted_cosine",
     }, names(buildable=True)
-    assert names(buildable=False) == ["weighted_cosine"]
+    assert names(buildable=False) == []
 
     # Profile qualifiers resolve, and only on a profiled algorithm.
     assert base_name("weighted_cosine:nosize") == "weighted_cosine"

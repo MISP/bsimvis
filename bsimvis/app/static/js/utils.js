@@ -757,6 +757,7 @@ window.SimAlgos = {
         const o = opts || {};
         return this.list
             .filter(a => o.buildable === undefined || a.buildable === o.buildable)
+            .filter(a => o.exact === undefined || a.exact === o.exact)
             .filter(a => o.includeUnavailable ? true : a.available !== false)
             .map(a => ({ v: a.name, label: a.label, icon: a.icon, title: a.description }));
     },

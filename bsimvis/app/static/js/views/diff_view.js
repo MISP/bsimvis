@@ -71,7 +71,7 @@ window.DiffView = {
                             <span class="sim-label" style="font-weight:bold;">Similarity:</span>
                             <span id="sim-score-val" class="sim-score" style="font-weight:bold; font-size:1.1rem; color:var(--success);">---</span>
                             <select id="sim-algo-select" class="sim-select" onchange="updateSimDisplay()" style="background:var(--card-bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 5px; font-size:0.8rem;">
-                                ${window.SimAlgos.optionsHtml(window.SimAlgos.default, { buildable: true })}
+                                ${window.SimAlgos.optionsHtml(window.SimAlgos.default, { exact: true })}
                             </select>
                         </div>
                         <div style="display:flex; align-items:center; gap:15px;">
@@ -1138,8 +1138,8 @@ window.DiffView = {
         if (!algoSelect) return;
         // The list comes from the server (SimAlgos); the markup above may have
         // been built from the fallback before that fetch landed.
-        if (algoSelect.options.length !== window.SimAlgos.options({ buildable: true }).length) {
-            algoSelect.innerHTML = window.SimAlgos.optionsHtml(algoSelect.value, { buildable: true });
+        if (algoSelect.options.length !== window.SimAlgos.options({ exact: true }).length) {
+            algoSelect.innerHTML = window.SimAlgos.optionsHtml(algoSelect.value, { exact: true });
         }
         const algo = algoSelect.value;
         const scoreVal = document.getElementById('sim-score-val');

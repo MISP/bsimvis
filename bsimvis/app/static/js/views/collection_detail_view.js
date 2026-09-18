@@ -146,7 +146,7 @@ window.CollectionDetailView = {
         const files = coll.total_files !== undefined ? coll.total_files : 0;
         const funcs = coll.total_functions !== undefined ? coll.total_functions : 0;
         const batches = coll.total_batches !== undefined ? coll.total_batches : 0;
-        const updated = coll.last_updated ? (typeof window.formatDate === 'function' ? formatDate(coll.last_updated * 1000) : new Date(coll.last_updated * 1000).toLocaleString()) : '—';
+        const updated = coll.last_updated ? (typeof window.formatDate === 'function' ? formatDate(toEpochMs(coll.last_updated)) : new Date(toEpochMs(coll.last_updated)).toLocaleString()) : '—';
 
         const filesUrl = `/collections/${encodeURIComponent(name)}/files`;
         const funcsUrl = `/collections/${encodeURIComponent(name)}/functions`;

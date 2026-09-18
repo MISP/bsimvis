@@ -403,7 +403,7 @@ window.FileView = {
             };
             const fmtDate = (timestamp) => {
                 if (!timestamp) return '';
-                const d = new Date(Number(timestamp) * 1000);
+                const d = new Date(window.toEpochMs ? window.toEpochMs(timestamp) : Number(timestamp));
                 return d.toLocaleString();
             };
 

@@ -627,6 +627,13 @@ def main():
         "-c", "--collection", required=True, help="Target collection name"
     )
 
+    metadata_normalize_time = metadata_actions.add_parser(
+        "normalize-time", help="Rewrite legacy timestamps as UTC epoch milliseconds"
+    )
+    metadata_normalize_time.add_argument(
+        "-c", "--collection", required=True, help="Target collection name"
+    )
+
     rulezet_parser = subparsers.add_parser(
         "rulezet", help="Mirror YARA rules from rulezet.org"
     )

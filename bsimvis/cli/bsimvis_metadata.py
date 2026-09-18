@@ -3,6 +3,7 @@ import logging
 import requests
 import sys
 from bsimvis.app.services.index_service import parse_timestamp
+from bsimvis.app.services.metadata_service import normalize_collection_timestamps
 
 
 def parse_seen(val, reducer):
@@ -53,10 +54,20 @@ def parse_metadata_file(filepath):
         return None
 
 
+def run_normalize_time(args):
+    result = normalize_collection_timestamps(args.collection)
+    print(
+        f"[+] Normalized {result['files']} files, {result['functions']} functions, {result['batches']} batches."
+    )
+
+
 def run_metadata(host, port, args):
     """
     Submits metadata updates via API for propagation.
     """
+    if args.action == "normalize-time":
+        return run_normalize_time(args)
+
     updates = parse_metadata_file(args.metadata)
     if updates is None:
         sys.exit(1)

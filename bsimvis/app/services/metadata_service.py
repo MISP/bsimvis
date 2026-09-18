@@ -8,6 +8,10 @@ from bsimvis.app.services.index_service import (
     _unindex_tag,
     _index_num,
     _unindex_num,
+    normalize_timestamp,
+    normalize_timestamp_fields,
+    save_file,
+    save_function,
     save_similarity,
     delete_similarity,
 )
@@ -60,6 +64,80 @@ def staged_metadata(batch_uuid, file_md5, r=None):
         return json.loads(raw.decode() if isinstance(raw, bytes) else raw)
     except ValueError:
         return None
+
+
+def normalize_collection_timestamps(collection, r=None):
+    """Rewrite one collection from legacy time values to UTC epoch milliseconds."""
+    r = r or get_redis()
+    changed = {"files": 0, "functions": 0, "batches": 0}
+    for raw_file_id in r.sscan_iter(f"{collection}:all_files", count=500):
+        file_id = (
+            raw_file_id.decode() if isinstance(raw_file_id, bytes) else raw_file_id
+        )
+        md5 = file_id.rsplit(":", 1)[-1]
+        raw_meta = r.get(f"{file_id}:meta")
+        if not raw_meta:
+            continue
+        file_meta = json.loads(raw_meta)
+        before = dict(file_meta)
+        normalize_timestamp_fields(file_meta)
+        pipe = r.pipeline(transaction=False)
+        if file_meta != before:
+            for field in ("first_seen", "last_seen"):
+                if field in before:
+                    _unindex_tag(
+                        pipe, collection, "file", field, before[field], file_id
+                    )
+            pipe.set(f"{file_id}:meta", json.dumps(file_meta))
+            save_file(pipe, collection, md5, file_meta)
+            changed["files"] += 1
+        for raw_func_id in r.sscan_iter(
+            f"{collection}:idx:file:functions:{md5}", count=500
+        ):
+            func_id = (
+                raw_func_id.decode() if isinstance(raw_func_id, bytes) else raw_func_id
+            )
+            raw_func_meta = r.get(f"{func_id}:meta")
+            if not raw_func_meta:
+                continue
+            func_meta = json.loads(raw_func_meta)
+            func_before = dict(func_meta)
+            normalize_timestamp_fields(func_meta)
+            for field in ("first_seen", "last_seen"):
+                if field in func_meta:
+                    _unindex_tag(
+                        pipe, collection, "func", field, func_meta.pop(field), func_id
+                    )
+            if func_meta != func_before:
+                addr = func_id.rsplit(":", 1)[-1]
+                pipe.set(f"{func_id}:meta", json.dumps(func_meta))
+                save_function(pipe, collection, md5, addr, func_meta)
+                changed["functions"] += 1
+        pipe.execute()
+    collection_meta_key = f"global:collection:{collection}:meta"
+    last_updated = r.hget(collection_meta_key, "last_updated")
+    normalized = normalize_timestamp(last_updated)
+    if normalized and str(normalized) != str(
+        last_updated.decode() if isinstance(last_updated, bytes) else last_updated
+    ):
+        r.hset(collection_meta_key, "last_updated", normalized)
+    for raw_batch_uuid in r.sscan_iter(f"{collection}:all_batches", count=500):
+        batch_uuid = (
+            raw_batch_uuid.decode()
+            if isinstance(raw_batch_uuid, bytes)
+            else raw_batch_uuid
+        )
+        key = f"{collection}:batch:{batch_uuid}"
+        raw_batch = r.get(key)
+        if not raw_batch:
+            continue
+        batch = json.loads(raw_batch)
+        before = dict(batch)
+        normalize_timestamp_fields(batch)
+        if batch != before:
+            r.set(key, json.dumps(batch))
+            changed["batches"] += 1
+    return changed
 
 
 class MetadataService:
@@ -143,6 +221,11 @@ class MetadataService:
                         cleaned_val = [str(val).strip()]
                 else:
                     cleaned_val = val
+
+                if field in ("first_seen", "last_seen"):
+                    cleaned_val = normalize_timestamp(
+                        cleaned_val, min if field == "first_seen" else max
+                    )
 
                 old_val = old_meta.get(field)
                 if old_val != cleaned_val:

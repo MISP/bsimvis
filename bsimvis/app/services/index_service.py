@@ -145,6 +145,19 @@ def now_ms():
     return int(time.time() * 1000)
 
 
+TIMESTAMP_FIELDS = {
+    "entry_date",
+    "file_date",
+    "first_seen",
+    "last_seen",
+    "created_at",
+    "updated_at",
+    "last_updated",
+    "last_built_at",
+    "computed_at",
+}
+
+
 def parse_timestamp(val):
     """Normalize mixed UTC ISO strings and Unix integers to Unix Milliseconds."""
     if not val:
@@ -175,6 +188,26 @@ def parse_timestamp(val):
         except (ValueError, TypeError):
             return 0
     return 0
+
+
+def normalize_timestamp(value, reducer=None):
+    values = value if isinstance(value, list) else [value]
+    values = [parse_timestamp(item) for item in values]
+    values = [item for item in values if item]
+    if not values:
+        return 0
+    return (reducer or (lambda items: items[0]))(values)
+
+
+def normalize_timestamp_fields(data):
+    for field in TIMESTAMP_FIELDS & data.keys():
+        value = normalize_timestamp(
+            data[field],
+            min if field == "first_seen" else max if field == "last_seen" else None,
+        )
+        if value:
+            data[field] = value
+    return data
 
 
 # ---------------------------------------------------------------------------

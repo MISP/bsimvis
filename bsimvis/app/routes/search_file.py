@@ -270,7 +270,7 @@ def search_files():
             if pool_id:
                 enrich_pool_data(data, pool_id)
             # Ensure dates are Unix timestamps
-            for date_field in ["entry_date", "file_date"]:
+            for date_field in ["entry_date", "file_date", "first_seen", "last_seen"]:
                 if date_field in data:
                     data[date_field] = parse_timestamp(data[date_field])
 
@@ -707,7 +707,7 @@ def get_file_details(collection, file_md5):
                             }
 
         normalize_tags(data)
-        for date_field in ["entry_date", "file_date"]:
+        for date_field in ["entry_date", "file_date", "first_seen", "last_seen"]:
             if date_field in data:
                 data[date_field] = parse_timestamp(data[date_field])
 

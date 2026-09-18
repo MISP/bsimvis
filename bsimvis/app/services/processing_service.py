@@ -1,5 +1,5 @@
 import logging
-from bsimvis.app.services.index_service import now_ms
+from bsimvis.app.services.index_service import now_ms, normalize_timestamp_fields
 import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import save_file, save_function
@@ -104,7 +104,7 @@ class ProcessingService:
         # Create the standalone file metadata key (exploded from the main blob)
         file_base_id = f"{collection}:file:{file_md5}"
         file_meta_key = f"{file_base_id}:meta"
-        coll_file_meta = dict(file_meta)
+        coll_file_meta = normalize_timestamp_fields(dict(file_meta))
         coll_file_meta["collection"] = collection
         coll_file_meta["type"] = "file"
         coll_file_meta["file_id"] = file_base_id

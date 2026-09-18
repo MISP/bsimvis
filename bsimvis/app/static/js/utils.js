@@ -66,12 +66,15 @@ function middleTruncate(value, max = 40) {
 }
 window.middleTruncate = middleTruncate;
 
+function toEpochMs(value) {
+    const timestamp = Number(value);
+    return Number.isFinite(timestamp) && timestamp > 0 && timestamp < 1e12 ? timestamp * 1000 : timestamp;
+}
+window.toEpochMs = toEpochMs;
+
 function formatDate(iso) {
     if (!iso || iso === 'N/A') return '---';
-    if (typeof iso === 'string' && /^\d+$/.test(iso)) {
-        iso = parseInt(iso, 10);
-    }
-    const d = new Date(iso);
+    const d = new Date(toEpochMs(iso));
     return d.toLocaleString();
 }
 window.formatDate = formatDate;

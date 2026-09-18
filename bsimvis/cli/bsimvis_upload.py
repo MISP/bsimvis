@@ -1024,7 +1024,7 @@ def cli_main():
     )
     sim_options.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
         help="Similarity algorithm to use (default: unweighted_cosine)",
     )
     sim_options.add_argument(

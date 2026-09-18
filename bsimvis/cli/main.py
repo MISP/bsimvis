@@ -120,7 +120,7 @@ def main():
         )
         dp.add_argument(
             "--algo",
-            choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+            choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
             help="Algorithm to target",
         )
 
@@ -179,7 +179,7 @@ def main():
     c_build.add_argument("-c", "--collection", required=True, help="Collection name")
     c_build.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
         default="unweighted_cosine",
         help="Algorithm to cluster",
     )
@@ -223,7 +223,7 @@ def main():
     c_rebuild.add_argument("-c", "--collection", required=True, help="Collection name")
     c_rebuild.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
         default="unweighted_cosine",
         help="Algorithm to cluster",
     )
@@ -263,7 +263,7 @@ def main():
     c_clear.add_argument("-c", "--collection", required=True, help="Collection name")
     c_clear.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
         default="unweighted_cosine",
         help="Algorithm to target",
     )
@@ -276,7 +276,7 @@ def main():
     c_list.add_argument("--cluster-id", help="See members of a specific cluster")
     c_list.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
         default="unweighted_cosine",
     )
     c_list.add_argument("--limit", type=int, default=100)
@@ -340,7 +340,7 @@ def main():
     )
     sim_list.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
         help="Algorithm to filter",
     )
     # --- JOB ---
@@ -578,7 +578,7 @@ def main():
     )
     sim_options.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        choices=["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"],
         help="Similarity algorithm to use (default: unweighted_cosine)",
     )
     sim_options.add_argument(

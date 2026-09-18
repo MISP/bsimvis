@@ -403,7 +403,7 @@ class BinSimService:
                     score = shared / (
                         sum(vec_a.values()) + sum(vec_b.values()) - shared
                     )
-                elif algo == "unweighted_cosine":
+                elif algo == "binary_cosine":
                     score = (
                         len(common) / (len(vec_a) * len(vec_b)) ** 0.5
                         if vec_a and vec_b

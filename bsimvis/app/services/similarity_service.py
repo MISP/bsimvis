@@ -395,15 +395,19 @@ class SimilarityService:
         return self._discover_find(args)
 
     def _discover_find(self, args):
-        """jaccard / unweighted_cosine discovery (mirrors find_candidates.lua)."""
+        """jaccard / unweighted_cosine / binary_cosine discovery.
+
+        `unweighted_cosine` is cosine over the raw TF vectors (no IDF weighting)
+        — the historical BSimVis score. `binary_cosine` is cosine over the
+        feature *sets*, so a feature repeated 10 times counts once.
+        """
         r = self.r
         target_id = args[0]
         collection = args[1]
         algo = args[2]
         threshold = float(args[3])
         target_total = float(args[4])
-        # args[5] is the target's TF norm — unused: binary cosine norms are
-        # sqrt(unique feature count) on both sides.
+        target_norm = float(args[5])
         limit = int(args[6])
         min_features = float(args[7] or 0)
 
@@ -413,9 +417,15 @@ class SimilarityService:
         if not target_features:
             return []
 
-        min_shared_features = 0.0
         target_len = len(target_features)
+        # Pruning bounds, one per algo. TF cosine bounds the shared norm mass;
+        # binary cosine bounds the shared feature count: intersect <= cand_unique
+        # and score >= threshold together force intersect >= threshold^2 * |T|.
+        min_shared_norm_sq = 0.0
+        min_shared_features = 0.0
         if algo == "unweighted_cosine":
+            min_shared_norm_sq = (threshold * target_norm) ** 2
+        elif algo == "binary_cosine":
             min_shared_features = (threshold**2) * target_len
 
         # 1. Size each feature's posting list, rarest-first (pipelined ZCARDs)
@@ -439,15 +449,22 @@ class SimilarityService:
 
         # 2. Accumulate intersection (dot product / sum-min) with pruning bounds
         intersection_counts = {}
+        shared_target_norm_sq = {}
+        target_norm_sq = target_norm * target_norm
+        processed_norm_sq = 0.0
         processed_total = 0.0
         num_candidates = 0
 
         for i, feat in enumerate(features_sorted):
             if i % 16 == 0:
                 self._pl_warm([item["key"] for item in features_sorted[i : i + 16]])
+            remaining_norm_sq = target_norm_sq - processed_norm_sq
             remaining_total = target_total - processed_total
             can_add_new = True
             if algo == "unweighted_cosine":
+                if remaining_norm_sq < min_shared_norm_sq:
+                    can_add_new = False
+            elif algo == "binary_cosine":
                 if (len(features_sorted) - i) < min_shared_features:
                     can_add_new = False
             elif algo == "jaccard":
@@ -456,6 +473,7 @@ class SimilarityService:
             if not can_add_new and num_candidates == 0:
                 break
 
+            target_tf_sq = feat["tf"] * feat["tf"] if algo == "unweighted_cosine" else 0
             # Cached across targets in this build (feature posting lists are static
             # during a build). Order is irrelevant — we sum over the whole list.
             for func_id, cand_tf in self._pl(feat["key"]):
@@ -465,12 +483,18 @@ class SimilarityService:
                 if is_existing or can_add_new:
                     if not is_existing:
                         intersection_counts[func_id] = 0.0
+                        if algo == "unweighted_cosine":
+                            shared_target_norm_sq[func_id] = 0.0
                         num_candidates += 1
                     if algo == "jaccard":
                         intersection_counts[func_id] += min(feat["tf"], cand_tf)
                     elif algo == "unweighted_cosine":
+                        intersection_counts[func_id] += feat["tf"] * cand_tf
+                        shared_target_norm_sq[func_id] += target_tf_sq
+                    elif algo == "binary_cosine":
                         intersection_counts[func_id] += 1
 
+            processed_norm_sq += feat["tf"] * feat["tf"]
             processed_total += feat["tf"]
 
         # 3. Phase-1 bound filter
@@ -480,6 +504,9 @@ class SimilarityService:
                 if intersect < threshold * target_total:
                     continue
             elif algo == "unweighted_cosine":
+                if shared_target_norm_sq.get(cid, 0) < min_shared_norm_sq:
+                    continue
+            elif algo == "binary_cosine":
                 if intersect < min_shared_features:
                     continue
             kept.append(cid)
@@ -500,7 +527,10 @@ class SimilarityService:
                 score = intersect / union if union > 0 else 0
                 if score >= threshold and score > 0:
                     candidate_list.append((cid, score, cand_total))
-        else:  # unweighted_cosine — we can compute exact binary cosine right here
+        elif algo == "binary_cosine":
+            # Exact here: both norms are sqrt(unique feature count). The candidate's
+            # comes from ZCARD {id}:vec:tf — bsim_features_count is the raw count
+            # (repeats included) and would deflate the score.
             unique_totals = self._unique_counts(kept)
             for cid, cand_total, cand_unique in zip(kept, totals, unique_totals):
                 if cand_total < min_features or cand_total <= 0:
@@ -513,6 +543,26 @@ class SimilarityService:
                 )
                 if score >= threshold and score > 0:
                     candidate_list.append((cid, score, cand_total))
+        else:  # unweighted_cosine — norm only fetched for phase-2 survivors
+            need_norm = []
+            for cid, cand_total in zip(kept, totals):
+                if cand_total < min_features or cand_total <= 0:
+                    continue
+                intersect = intersection_counts[cid]
+                denom = threshold * target_norm
+                max_cand_total = (intersect / denom) ** 2 if denom > 0 else 0
+                if cand_total <= max_cand_total:
+                    need_norm.append((cid, intersect, cand_total))
+            if need_norm:
+                norms = self._norms([cid for cid, _, _ in need_norm])
+                for (cid, intersect, cand_total), cand_norm in zip(need_norm, norms):
+                    score = (
+                        intersect / (target_norm * cand_norm)
+                        if (target_norm > 0 and cand_norm > 0)
+                        else 0
+                    )
+                    if score >= threshold and score > 0:
+                        candidate_list.append((cid, score, cand_total))
 
         candidate_list.sort(key=lambda x: x[1], reverse=True)
         result = []
@@ -1367,7 +1417,9 @@ class SimilarityService:
         from bsimvis.app.services.cluster_common import clear_hier_state
 
         for name in (
-            [algo] if algo else ["jaccard", "unweighted_cosine", "milvus_sparse"]
+            [algo]
+            if algo
+            else ["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"]
         ):
             clear_hier_state(self.r, f"{collection}:cluster:hier:{name}")
         return result
@@ -1375,7 +1427,11 @@ class SimilarityService:
     def clear_all(self, collection, algo=None):
         """Clears ALL similarities in the collection safely using SCAN."""
         r = self.r
-        algos = [algo] if algo else ["jaccard", "unweighted_cosine", "milvus_sparse"]
+        algos = (
+            [algo]
+            if algo
+            else ["jaccard", "unweighted_cosine", "binary_cosine", "milvus_sparse"]
+        )
 
         logging.info(f"[*] Clearing ALL similarities for collection: {collection}")
 
@@ -1483,8 +1539,8 @@ class SimilarityService:
                 union = sum_a + sum_b - sum_min
                 return float(sum_min / union) if union > 0 else 0.0
 
-            elif algo == "unweighted_cosine":
-                # True Binary Unweighted Cosine
+            elif algo == "binary_cosine":
+                # Binary cosine: features count once, however often they repeat.
                 dot_product = len(common)
                 norm1 = math.sqrt(len(d1))
                 norm2 = math.sqrt(len(d2))
@@ -1494,8 +1550,9 @@ class SimilarityService:
                     else 0.0
                 )
 
-            elif algo in ["milvus_sparse"]:
-                # Cosine Similarity: sum(a*b) / (norm1 * norm2)
+            elif algo in ["unweighted_cosine", "milvus_sparse"]:
+                # Cosine over the raw TF vectors — "unweighted" means no IDF
+                # weighting, not binary. Same formula milvus_sparse indexes.
                 dot_product = sum(d1[h] * d2[h] for h in common)
                 norm1 = math.sqrt(sum(v**2 for v in d1.values()))
                 norm2 = math.sqrt(sum(v**2 for v in d2.values()))

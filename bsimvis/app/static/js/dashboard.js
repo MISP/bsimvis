@@ -1435,6 +1435,7 @@ function syncBinSimTags(p) {
 // "Date" column header.
 const SimAlgoOptions = [
     { v: 'unweighted_cosine', label: 'Cosine', icon: 'fa-solid fa-arrows-left-right' },
+    { v: 'binary_cosine', label: 'Binary Cosine', icon: 'fa-solid fa-toggle-on' },
     { v: 'jaccard', label: 'Jaccard', icon: 'fa-solid fa-object-group' },
     { v: 'milvus_sparse', label: 'Milvus Sparse', icon: 'fa-solid fa-braille' },
 ];
@@ -5150,6 +5151,7 @@ async function renderPoolCreationForm() {
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
                                                 <select id="pool-func-algo" onchange="const d=document.getElementById('pool-file-algo-display'); if(d) d.textContent=this.value;" style="width:100%; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                     <option value="unweighted_cosine" ${funcAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
+                                                    <option value="binary_cosine" ${funcAlgo === 'binary_cosine' ? 'selected' : ''}>Binary Cosine</option>
                                                     <option value="jaccard" ${funcAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                                                 </select>
                                             </div>

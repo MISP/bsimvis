@@ -157,7 +157,7 @@ class MetadataService:
 
         # Check active algorithms directly using exists (O(1) operations) to avoid scanning millions of keys
         algos = set()
-        for candidate_algo in ["unweighted_cosine", "jaccard", "milvus_sparse"]:
+        for candidate_algo in ["unweighted_cosine", "binary_cosine", "jaccard", "milvus_sparse"]:
             if r.exists(f"{collection}:bin_cluster:list:{candidate_algo}"):
                 algos.add(candidate_algo)
 

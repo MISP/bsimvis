@@ -42,7 +42,7 @@ def similarity_api():
         from bsimvis.app.services.milvus_service import milvus_service
 
         service = SimilarityService()
-        algorithms = ["jaccard", "unweighted_cosine"]
+        algorithms = ["jaccard", "unweighted_cosine", "binary_cosine"]
         if milvus_service.enabled:
             algorithms.append("milvus_sparse")
 

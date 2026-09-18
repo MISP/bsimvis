@@ -4,6 +4,7 @@ import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import save_file, save_function
 from bsimvis.app.services import lineage_service, tag_taxonomy
+from bsimvis.app.services.collection_config import lock_signature_settings
 
 
 def lib_parent(tag):
@@ -314,6 +315,17 @@ class ProcessingService:
             )
             func_meta["callee_count"] = len(callee_ids)
             func_meta["caller_count"] = len(caller_ids)
+
+            # Lock the mask the features were extracted with, once per batch.
+            # ponytail: bookkeeping only — an unparsable decompiler_id is skipped.
+            if i == 0:
+                try:
+                    lock_signature_settings(
+                        collection,
+                        int(func_meta["decompiler_id"].rsplit(":", 1)[-1], 16),
+                    )
+                except (KeyError, AttributeError, ValueError):
+                    pass
 
             # --- Store exploded data ---
             pipe.set(f"{base_func_key}:meta", json.dumps(func_meta))

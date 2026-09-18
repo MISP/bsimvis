@@ -17,6 +17,7 @@ from bsimvis.app.services import tag_taxonomy
 from bsimvis.app.services.boilerplate_tag_service import (
     boilerplate_tag_for_function_name,
 )
+from bsimvis.app.services.bsim_profiles import get_signature_settings
 
 GHIDRA_DECOMP_MAX_TIMEOUT = 10
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
@@ -588,7 +589,11 @@ class GhidraService:
         decomp_opts = DecompileOptions()
         decomp_interface = DecompInterface()
         decomp_interface.setOptions(decomp_opts)
-        decomp_interface.setSignatureSettings(0x4D)
+        # This mask changes the feature hashes themselves: changing it makes
+        # existing feature vectors incomparable and requires re-decompilation.
+        # See doc/bsim_signature_settings.md.
+        signature_settings = get_signature_settings()
+        decomp_interface.setSignatureSettings(signature_settings)
 
         if not decomp_interface.openProgram(program):
             logging.error(f"[-] Decompiler failed to initialize for {file_name}")

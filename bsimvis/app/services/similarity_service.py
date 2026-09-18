@@ -2438,7 +2438,7 @@ class SimilarityService:
             return True
 
         collections = pool.get("collections", [])
-        algo = pool.get("algo", "unweighted_cosine")
+        algo = pool_service.similarity_algo(pool)
         cluster_params = pool.get("cluster_params", {})
 
         from bsimvis.app.services.config_service import config_service

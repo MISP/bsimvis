@@ -171,7 +171,15 @@ def search_files():
         # 4. Fetch full JSON, function counts, and cluster assignments for the page
         # We fetch all 4 axes at once so the UI can show per-axis badges.
         _AXES = ["overall", "code", "library", "content"]
-        algo_p = request.args.get("algo", "unweighted_cosine")
+        if pool_id:
+            from bsimvis.app.services.pool_service import pool_service
+
+            pool = pool_service.get_pool(pool_id)
+            if not pool:
+                return {"error": "Pool not found"}, 404
+            algo_p = pool_service.similarity_algo(pool)
+        else:
+            algo_p = request.args.get("algo", "unweighted_cosine")
         pipe = r.pipeline(transaction=False)
         for doc_id in paged_ids:
             pipe.get(f"{doc_id}:meta")
@@ -572,7 +580,15 @@ def get_file_details(collection, file_md5):
         r = get_redis()
         file_id = f"{sub_collection}:file:{file_md5}"
 
-        algo_p = request.args.get("algo", "unweighted_cosine")
+        if pool_id:
+            from bsimvis.app.services.pool_service import pool_service
+
+            pool = pool_service.get_pool(pool_id)
+            if not pool:
+                return {"error": "Pool not found"}, 404
+            algo_p = pool_service.similarity_algo(pool)
+        else:
+            algo_p = request.args.get("algo", "unweighted_cosine")
         _AXES = ["overall", "code", "library", "content"]
 
         # 1. Fetch full JSON, function counts, and cluster assignments

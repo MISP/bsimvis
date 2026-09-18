@@ -39,7 +39,9 @@ def create_pool():
             parts = k.split(":")
             if len(parts) >= 3:
                 md5 = parts[2]
-                skip_write = config.get("skip_write", False)
+                skip_write = config.get("func_sim_params", {}).get(
+                    "skip_write", config.get("skip_write", False)
+                )
                 file_tasks.append(
                     (
                         JobType.BUILD_POOL_SIM,
@@ -229,7 +231,7 @@ def cluster_pool(pool_id):
     pipe.delete(f"global:pool:{pool_id}:cluster:list")
 
     # 2. Clear binary similarities and scores
-    algo = pool.get("algo", "unweighted_cosine")
+    algo = pool_service.similarity_algo(pool)
     pipe.delete(f"global:pool:{pool_id}:bin_sim:score:{algo}")
     pipe.delete(f"global:pool:{pool_id}:bin_sim:built:{algo}")
 
@@ -290,7 +292,16 @@ def rebuild_pool(pool_id):
             if len(parts) >= 3:
                 md5 = parts[2]
                 file_tasks.append(
-                    (JobType.BUILD_POOL_SIM, {"pool_id": pool_id, "file_md5": md5})
+                    (
+                        JobType.BUILD_POOL_SIM,
+                        {
+                            "pool_id": pool_id,
+                            "file_md5": md5,
+                            "skip_write": pool.get("func_sim_params", {}).get(
+                                "skip_write", False
+                            ),
+                        },
+                    )
                 )
 
     tasks = [(JobType.INIT_POOL_BUILD, {"pool_id": pool_id})]

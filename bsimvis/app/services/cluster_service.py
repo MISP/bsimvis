@@ -2626,7 +2626,7 @@ class ClusterService:
                 min_features = config_service.get("clustering.min_features", 0)
             min_features = int(min_features)
 
-        algo = pool.get("algo", "unweighted_cosine")
+        algo = pool_service.similarity_algo(pool)
         pool_coll = f"global:pool:{pool_id}"
 
         # Delegate to the robust run_clustering
@@ -2659,6 +2659,7 @@ class ClusterService:
         min_cohesion=None,
         job_service=None,
         job_id=None,
+        axis="overall",
     ):
         """
         Runs HDBSCAN clustering on pool-namespaced binary similarity pairs.
@@ -2670,6 +2671,24 @@ class ClusterService:
         if not pool:
             logging.error(f"Pool {pool_id} not found")
             return False
+
+        # Build every score split from the same function algorithm.
+        if axis == "overall":
+            for split in ("overall", "code", "library", "content"):
+                if not self.run_pool_bin_clustering(
+                    pool_id,
+                    min_cluster_size=min_cluster_size,
+                    min_samples=min_samples,
+                    cluster_selection_epsilon=cluster_selection_epsilon,
+                    selection_method=selection_method,
+                    min_sim=min_sim,
+                    min_cohesion=min_cohesion,
+                    job_service=job_service,
+                    job_id=job_id,
+                    axis=split,
+                ):
+                    return False
+            return True
 
         # New structured config handling
         file_sim_params = pool.get("file_sim_params", {})
@@ -2738,8 +2757,13 @@ class ClusterService:
         import pandas as pd
 
         r = self.r
-        algo = pool.get("algo", "unweighted_cosine")
-        sim_score_key = f"global:pool:{pool_id}:bin_sim:score:{algo}"
+        algo = pool_service.similarity_algo(pool)
+        algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
+        sim_score_key = (
+            f"global:pool:{pool_id}:bin_sim:score_{axis}:{algo}"
+            if axis != "overall"
+            else f"global:pool:{pool_id}:bin_sim:score:{algo}"
+        )
         prefix = f"global:pool:{pool_id}:bin_sim:{algo}:"
 
         if job_service and job_id:
@@ -2907,7 +2931,7 @@ class ClusterService:
 
         # Extract Condensed Tree for UI and Hierarchical Storage
         tree_json = tree_df.to_json(orient="records")
-        tree_key = f"global:pool:{pool_id}:bin_cluster:tree:{algo}"
+        tree_key = f"global:pool:{pool_id}:bin_cluster:tree:{algo_ns}"
         r.set(tree_key, tree_json)
 
         tree_links = []
@@ -2922,7 +2946,7 @@ class ClusterService:
                     }
                 )
         r.set(
-            f"global:pool:{pool_id}:bin_cluster:tree_links:{algo}",
+            f"global:pool:{pool_id}:bin_cluster:tree_links:{algo_ns}",
             json.dumps(tree_links),
         )
         # Extract cluster members (shed noise excluded, synthetic root and
@@ -2997,7 +3021,7 @@ class ClusterService:
                         m = {}
                 all_member_meta[fid] = m
 
-        cluster_list_key = f"global:pool:{pool_id}:bin_cluster:list"
+        cluster_list_key = f"global:pool:{pool_id}:bin_cluster:list:{algo_ns}"
         pipe = r.pipeline(transaction=False)
         pipe.delete(cluster_list_key)
 
@@ -3138,7 +3162,7 @@ class ClusterService:
             parts = file_id.split(":")
             if len(parts) >= 3:
                 md5 = parts[2]
-                clusters_key = f"pool:{pool_id}:file:{md5}:bin_clusters:{algo}"
+                clusters_key = f"pool:{pool_id}:file:{md5}:bin_clusters:{algo_ns}"
                 if clusters:
                     cluster_uuids = [
                         label_to_uuid[c] for c in clusters if c in label_to_uuid

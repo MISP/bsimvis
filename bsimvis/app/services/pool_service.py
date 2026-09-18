@@ -8,6 +8,12 @@ class PoolService:
     def __init__(self, r=None):
         self.r = r or get_redis()
 
+    @staticmethod
+    def similarity_algo(pool):
+        """Return the algorithm selected for every pool similarity stage."""
+        params = pool.get("func_sim_params") or {}
+        return params.get("algo") or pool.get("algo") or "unweighted_cosine"
+
     def create_pool(self, pool_id, name, collections, config):
         """
         Creates a new pool definition.
@@ -29,6 +35,10 @@ class PoolService:
         func_cluster_params = config.get("func_cluster_params", {})
         file_sim_params = config.get("file_sim_params", {})
         file_cluster_params = config.get("file_cluster_params", {})
+        # Pool function algorithm is canonical for all pool stages.
+        algo = self.similarity_algo(
+            {"func_sim_params": func_sim_params, "algo": config.get("algo")}
+        )
 
         meta = {
             "name": name,
@@ -42,7 +52,7 @@ class PoolService:
             "file_sim_params": json.dumps(file_sim_params),
             "file_cluster_params": json.dumps(file_cluster_params),
             # Keep old fields as fallback for backward compatibility
-            "algo": config.get("algo", "unweighted_cosine"),
+            "algo": algo,
             "top_k": config.get("top_k", 1000),
             "min_score": config.get("min_score", 0.9),
             "cluster_algo": config.get("cluster_algo", "hdbscan"),
@@ -107,6 +117,9 @@ class PoolService:
                 except Exception:
                     meta[field] = {}
 
+        # Nested function config is canonical for all pool stages, including legacy pools.
+        meta["algo"] = self.similarity_algo(meta)
+
         # Get sync state snapshots
         sync_snapshots = r.hgetall(f"global:pool:{pool_id}:collections")
         meta["sync_snapshots"] = {
@@ -136,7 +149,7 @@ class PoolService:
         # File similarities
         # File bin_sim lives in the namespace of the function algo its clusters came
         # from; there is no separate file algo.
-        file_algo = meta.get("algo", "unweighted_cosine")
+        file_algo = self.similarity_algo(meta)
         if "total_file_similarities" not in meta:
             total_file_sim = r.zcard(f"global:pool:{pool_id}:bin_sim:score:{file_algo}")
             meta["total_file_similarities"] = total_file_sim
@@ -146,7 +159,9 @@ class PoolService:
 
         # File clusters (if any list exists, otherwise default 0 or check algorithm clusters)
         if "total_file_clusters" not in meta:
-            total_file_clust = r.scard(f"global:pool:{pool_id}:bin_cluster:list")
+            total_file_clust = r.scard(
+                f"global:pool:{pool_id}:bin_cluster:list:{file_algo}"
+            )
             meta["total_file_clusters"] = total_file_clust
             updated_meta["total_file_clusters"] = total_file_clust
         else:

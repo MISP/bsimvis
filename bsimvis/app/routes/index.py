@@ -53,6 +53,11 @@ def get_config():
             "file_min_score": config_service.get("similarity.file_min_score", 0.0),
             "min_features": config_service.get("similarity.min_features", 0),
             "algo": config_service.get("similarity.algo", "unweighted_cosine"),
+            # Whether stored file scores were built as match coverage rather
+            # than a similarity mean, so the UI can say which number it shows.
+            "unweighted_match": bool(
+                config_service.get("similarity.unweighted_match", False)
+            ),
         },
         "analysis_modules": {
             "enabled": config_service.get("analysis_modules.enabled", []),

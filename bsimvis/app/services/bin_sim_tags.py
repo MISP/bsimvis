@@ -909,6 +909,30 @@ def code_library_split(
     return score_library, score_code
 
 
+def greedy_match(edges):
+    """Run the bipartite greedy assignment and return what it accepted.
+
+    `edges` is an unsorted iterable of `(fid_a, fid_b, similarity)` already
+    oriented a->b. Best matches go first so the assignment is stable; function
+    ids break ties deterministically. Returns the accepted edges in that order
+    plus the two sets of consumed function ids.
+
+    Split out of `score_pair` because callers that only need the leftovers --
+    the discovery pass in build_bin_sim, which re-matches only the functions
+    the stored edges could not place -- must use the same assignment the score
+    will be built from, not a second copy of it.
+    """
+    assigned_a, assigned_b = set(), set()
+    accepted = []
+    for fid_a, fid_b, score in sorted(edges, key=lambda x: (-x[2], x[0], x[1])):
+        if fid_a in assigned_a or fid_b in assigned_b:
+            continue
+        assigned_a.add(fid_a)
+        assigned_b.add(fid_b)
+        accepted.append((fid_a, fid_b, score))
+    return accepted, assigned_a, assigned_b
+
+
 def score_pair(
     edges,
     funcs_a,
@@ -938,20 +962,13 @@ def score_pair(
     matched at all (feature-weighted coverage), not how well. Matched rows keep
     their real `similarity` for display -- only the aggregation changes.
     """
-    assigned_a, assigned_b = set(), set()
     diff_matched = []
     sum_weighted_cohesion = 0.0
     sum_weights = 0.0
     tag_split = AxisSplit(fid_tags, tag_meta_cache)
 
-    # Best matches first so the greedy assignment is stable; function ids break
-    # ties deterministically.
-    for fid_a, fid_b, score in sorted(edges, key=lambda x: (-x[2], x[0], x[1])):
-        if fid_a in assigned_a or fid_b in assigned_b:
-            continue
-        assigned_a.add(fid_a)
-        assigned_b.add(fid_b)
-
+    accepted, assigned_a, assigned_b = greedy_match(edges)
+    for fid_a, fid_b, score in accepted:
         f_a = feat(fid_a)
         f_b = feat(fid_b)
         f_features = max(f_a, f_b)

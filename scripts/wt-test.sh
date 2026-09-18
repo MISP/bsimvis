@@ -35,6 +35,7 @@ echo "=== cluster_utils unit checks ==="
 uv run python scripts/test_default_bin_cluster_name.py || rc=1
 uv run python scripts/test_cluster_meta_freq.py || rc=1
 uv run python scripts/test_bsim_weights.py || rc=1
+uv run python scripts/test_bin_sim_discovery.py || rc=1
 
 echo "=== test_api_endpoints.py ==="; uv run python scripts/test_api_endpoints.py "$@" || rc=1
 

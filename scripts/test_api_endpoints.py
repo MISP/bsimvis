@@ -789,6 +789,16 @@ def test_cluster_expansion_and_bin_sim_cluster_filter():
             f"file_min_score={sim_cfg['file_min_score']!r}",
         )
 
+    # The weighting stored file scores were built with. The UI has to read it
+    # rather than assume, since a score built as match coverage is not
+    # comparable with a similarity mean.
+    check(
+        "config exposes similarity.unweighted_match as a boolean",
+        isinstance(sim_cfg, dict)
+        and isinstance(sim_cfg.get("unweighted_match"), bool),
+        f"unweighted_match={(sim_cfg or {}).get('unweighted_match')!r}",
+    )
+
     # --- bin_sim ?bin_cluster_uuid= -----------------------------------------
 
     # An uuid that matches nothing must return nothing, not everything. This is
@@ -4035,6 +4045,25 @@ def _runtime_doc(unweighted):
     return resp.json()
 
 
+def _stored_pair_doc():
+    """The stored bin_sim doc for the uploaded pair, or None."""
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/api/bin_sim/diff",
+            params={
+                "collection": COLLECTION,
+                "md5_a": file_md5,
+                "md5_b": file_md5_2,
+                "view": "sankey",
+            },
+            timeout=60,
+        )
+    except Exception as exc:
+        vprint(f"     stored pair doc error: {exc}")
+        return None
+    return resp.json() if resp.status_code == 200 else None
+
+
 def _check_runtime_unweighted_matching():
     """`unweighted=1` scores every accepted match as 1.0.
 
@@ -4063,6 +4092,12 @@ def _check_runtime_unweighted_matching():
         "runtime greedy: unweighted keeps the same matching",
         counts_w == counts_u,
         f"{counts_w} vs {counts_u}",
+    )
+    stored = _stored_pair_doc()
+    check(
+        "stored pair doc records the weighting it was built with",
+        isinstance((stored or {}).get("unweighted_match"), bool),
+        f"unweighted_match={(stored or {}).get('unweighted_match')!r}",
     )
     score_w = float(weighted.get("score") or 0.0)
     score_u = float(unweighted.get("score") or 0.0)

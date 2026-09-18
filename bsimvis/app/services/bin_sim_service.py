@@ -4,6 +4,7 @@ import logging
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services import lineage_service
 from bsimvis.app.services.bin_sim_tags import (
+    greedy_match,
     AxisSplit,
     code_library_split,
     score_pair,
@@ -12,6 +13,129 @@ from bsimvis.app.services.bin_sim_tags import (
     read_tags_rev,
     split_is_current,
 )
+
+def stored_unweighted_match():
+    """Weighting the build writes into stored pair scores.
+
+    `similarity.unweighted_match = true` makes a stored file score read as
+    feature-weighted match coverage (every accepted match counts 1.0) instead
+    of a similarity mean -- the same switch the runtime greedy view offers per
+    request, applied to what the builders persist. Scores computed under the
+    two settings are not comparable, so every doc records the one that produced
+    it and every later reader (the resplit, the UI) follows the doc, not the
+    config as it stands today.
+    """
+    from bsimvis.app.services.config_service import config_service
+
+    return bool(config_service.get("similarity.unweighted_match", False))
+
+
+
+def stored_discovery():
+    """Discovery settings the builders apply on top of stored function edges.
+
+    Stored function-sim docs only carry the pairs BSim proposed above
+    `similarity.min_score` (0.9 by default), so two related-but-rewritten
+    functions leave no edge and the file score never sees them. With
+    `similarity.discovery = true` the builders re-match whatever the stored edges
+    could not place, straight from the tf vectors the collection already holds.
+
+    Returns `(min_score, max_df)` when enabled and None when off, so the caller
+    reads one value and the config is parsed in one place.
+    """
+    from bsimvis.app.services.config_service import config_service
+
+    if not bool(config_service.get("similarity.discovery", False)):
+        return None
+    min_score = float(config_service.get("similarity.discovery_min_score", 0.5))
+    max_df = float(config_service.get("similarity.discovery_max_df", 1.0))
+    return max(0.0, min(1.0, min_score)), max(0.0, min(1.0, max_df))
+
+
+def load_vectors(r, fids):
+    """Fetch `{fid}:vec:tf` for many functions in one round-trip."""
+    fids = sorted(fids)
+    pipe = r.pipeline(transaction=False)
+    for fid in fids:
+        pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+    vectors = {}
+    for fid, raw in zip(fids, pipe.execute()):
+        if raw:
+            vectors[fid] = {
+                (h.decode() if isinstance(h, bytes) else h): float(value)
+                for h, value in raw
+            }
+    return vectors
+
+
+def discover_edges(
+    vectors, fids_a, fids_b, algo, min_score, skip_pairs=(), max_df=1.0
+):
+    """Score every A/B function pair that shares a feature, from tf vectors.
+
+    Same three formulas the comparison view uses, so a discovered score means
+    what a stored one means and the two can be greedy-matched in one pass.
+
+    Driven off a posting list over B's feature hashes rather than the dense
+    |A|x|B| sweep the runtime view used: the work then scales with the features
+    two functions actually share. A pair sharing no feature is never visited
+    and would have scored 0 in the dense sweep, so the result is unchanged.
+
+    `max_df` drops features carried by more than that share of B's functions.
+    At 1.0 -- the default -- nothing is dropped and the output is exact.
+    """
+    fids_a = [fid for fid in sorted(fids_a) if vectors.get(fid)]
+    fids_b = [fid for fid in sorted(fids_b) if vectors.get(fid)]
+    if not fids_a or not fids_b:
+        return []
+
+    postings = {}
+    for fid in fids_b:
+        for h in vectors[fid]:
+            postings.setdefault(h, []).append(fid)
+    cap = len(fids_b) if max_df >= 1.0 else max(1, int(len(fids_b) * max_df))
+
+    is_jaccard = algo == "jaccard"
+    is_binary = algo == "binary_cosine"
+    if is_jaccard:
+        totals = {fid: sum(vectors[fid].values()) for fid in fids_a + fids_b}
+    elif not is_binary:
+        norms = {
+            fid: sum(value * value for value in vectors[fid].values()) ** 0.5
+            for fid in fids_a + fids_b
+        }
+
+    edges = []
+    for fid_a in fids_a:
+        vec_a = vectors[fid_a]
+        shared_by_b = {}
+        for h, value_a in vec_a.items():
+            plist = postings.get(h)
+            if not plist or len(plist) > cap:
+                continue
+            for fid_b in plist:
+                if is_binary:
+                    add = 1.0
+                else:
+                    value_b = vectors[fid_b][h]
+                    add = min(value_a, value_b) if is_jaccard else value_a * value_b
+                shared_by_b[fid_b] = shared_by_b.get(fid_b, 0.0) + add
+        for fid_b, shared in shared_by_b.items():
+            if skip_pairs and frozenset((fid_a, fid_b)) in skip_pairs:
+                continue
+            if is_jaccard:
+                denominator = totals[fid_a] + totals[fid_b] - shared
+            elif is_binary:
+                denominator = (len(vec_a) * len(vectors[fid_b])) ** 0.5
+            else:
+                denominator = norms[fid_a] * norms[fid_b]
+            if denominator <= 0:
+                continue
+            score = shared / denominator
+            if score >= min_score and score > 0:
+                edges.append((fid_a, fid_b, score))
+    return edges
+
 
 BIN_SIM_TAG_FIELDS = (
     "md5_a",
@@ -294,9 +418,11 @@ class BinSimService:
         coll_b=None,
         pool_id=None,
         min_score=0.0,
-        unweighted=False,
+        unweighted=None,
     ):
         """Build one transient file diff from stored function-sim docs."""
+        if unweighted is None:
+            unweighted = stored_unweighted_match()
         coll_a = _origin_coll(collection) if pool_id else collection
         coll_b = _origin_coll(coll_b or collection) if pool_id else collection
         if not pool_id and md5_a > md5_b:
@@ -370,51 +496,19 @@ class BinSimService:
             if score >= min_score:
                 edges.append(edge)
 
-        # ponytail: O(A×B) discovery is intentional for this opt-in runtime view;
-        # move it to a worker/index only if real file pairs make it too slow.
-        vec_pipe = self.r.pipeline(transaction=False)
-        all_fids = sorted(fids_a | fids_b)
-        for fid in all_fids:
-            vec_pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
-        vectors = {}
-        for fid, raw in zip(all_fids, vec_pipe.execute()):
-            if raw:
-                vectors[fid] = {
-                    h.decode() if isinstance(h, bytes) else h: float(value)
-                    for h, value in raw
-                }
-        norms = {
-            fid: sum(value * value for value in vector.values()) ** 0.5
-            for fid, vector in vectors.items()
-        }
-        for fid_a in fids_a:
-            vec_a, norm_a = vectors.get(fid_a), norms.get(fid_a, 0)
-            if not vec_a or not norm_a:
-                continue
-            for fid_b in fids_b:
-                if frozenset((fid_a, fid_b)) in seen_pairs:
-                    continue
-                vec_b, norm_b = vectors.get(fid_b), norms.get(fid_b, 0)
-                if not vec_b or not norm_b:
-                    continue
-                common = set(vec_a) & set(vec_b)
-                if algo == "jaccard":
-                    shared = sum(min(vec_a[key], vec_b[key]) for key in common)
-                    score = shared / (
-                        sum(vec_a.values()) + sum(vec_b.values()) - shared
-                    )
-                elif algo == "binary_cosine":
-                    score = (
-                        len(common) / (len(vec_a) * len(vec_b)) ** 0.5
-                        if vec_a and vec_b
-                        else 0
-                    )
-                else:
-                    score = sum(vec_a[key] * vec_b[key] for key in common) / (
-                        norm_a * norm_b
-                    )
-                if score >= min_score and score > 0:
-                    edges.append((fid_a, fid_b, score))
+        # Discovery over everything the stored docs did not already cover, so
+        # the runtime view still answers "what else looks alike" and not only
+        # "what did BSim propose above similarity.min_score".
+        edges.extend(
+            discover_edges(
+                load_vectors(self.r, fids_a | fids_b),
+                fids_a,
+                fids_b,
+                algo,
+                min_score,
+                skip_pairs=seen_pairs,
+            )
+        )
 
         fid_tags = {
             fid: tags
@@ -465,6 +559,8 @@ class BinSimService:
         """
         r = self.r
         start_time = time.time()
+        unweighted = stored_unweighted_match()
+        discovery = stored_discovery()
 
         if job_service and job_id:
             job_service.add_log(
@@ -636,6 +732,15 @@ class BinSimService:
         for fids_set in binary_fids.values():
             all_unique_fids.update(fids_set)
 
+        # One fetch per function for the whole chunk: discovery is per pair, but
+        # a binary appears in many pairs of a chunk and its vectors do not change
+        # between them.
+        # ponytail: whole-chunk vectors sit in memory next to func_meta_cache; if a
+        # chunk ever outgrows RAM, shrink CHUNK_SIZE before sharding this.
+        vectors = (
+            load_vectors(r, all_unique_fids) if discovery and all_unique_fids else {}
+        )
+
         if all_unique_fids:
             if job_service and job_id:
                 job_service.add_log(
@@ -747,6 +852,24 @@ class BinSimService:
             all_funcs_a_total = binary_fids[m_a]
             all_funcs_b_total = binary_fids[m_b]
 
+            if discovery:
+                # Stored edges first, exactly as they score below; only what that
+                # greedy pass could not place goes to discovery. A function BSim
+                # already matched needs no second candidate, and skipping it is
+                # what keeps the sweep off the full |A|x|B|.
+                discovery_min_score, discovery_max_df = discovery
+                _, matched_a, matched_b = greedy_match(edges)
+                edges.extend(
+                    discover_edges(
+                        vectors,
+                        all_funcs_a_total - matched_a,
+                        all_funcs_b_total - matched_b,
+                        algo,
+                        discovery_min_score,
+                        max_df=discovery_max_df,
+                    )
+                )
+
             def _feat(fid):
                 return float(
                     func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
@@ -759,6 +882,7 @@ class BinSimService:
                 _feat,
                 fid_tags,
                 tag_meta_cache,
+                unweighted=unweighted,
             )
 
             sid = f"{collection}:bin_sim:{algo}:{m_a}::{m_b}"
@@ -776,6 +900,14 @@ class BinSimService:
                 # Bumped by every tag write, so a stored split can be told apart
                 # from the tag state it was computed against without rebuilding.
                 "tags_rev": tags_rev,
+                # Which weighting produced `score`. Stored per doc, not read
+                # from the config at read time: flipping the config must not
+                # relabel pairs that were built under the other setting.
+                "unweighted_match": unweighted,
+                # Whether the unmatched-function discovery pass ran. Stored per
+                # doc for the same reason as `unweighted_match`: a doc built
+                # without it is not comparable to one built with it.
+                "discovery": bool(discovery),
                 # score / score_code / score_library / coverage / cluster counts /
                 # tag summaries / diff -- shared with the pool builder.
                 **common,
@@ -1154,12 +1286,14 @@ class BinSimService:
             pipe = r.pipeline(transaction=False)
             for sid, doc in docs:
                 diff = doc.get("diff") or {}
+                doc_unweighted = bool(doc.get("unweighted_match"))
                 split = AxisSplit(fid_tags, tag_meta)
                 total_a = total_b = 0.0
                 for m in diff.get("matched") or []:
                     fa, fb = m.get("func_a"), m.get("func_b")
                     wa, wb = feat.get(fa, 1.0), feat.get(fb, 1.0)
-                    split.add_match(fa, fb, m.get("similarity", 0.0), wa, wb)
+                    sim = 1.0 if doc_unweighted else m.get("similarity", 0.0)
+                    split.add_match(fa, fb, sim, wa, wb)
                     total_a += wa
                     total_b += wb
                 for side, rows in (
@@ -1179,7 +1313,7 @@ class BinSimService:
                 u_a = diff.get("unique_to_a") or []
                 u_b = diff.get("unique_to_b") or []
                 score_library, score_code = code_library_split(
-                    matched, u_a, u_b, fid_tags
+                    matched, u_a, u_b, fid_tags, unweighted=doc_unweighted
                 )
                 doc["score_library"] = score_library
                 doc["score_code"] = score_code

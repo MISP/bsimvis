@@ -2394,8 +2394,12 @@ class SimilarityService:
             load_tag_meta,
             read_tags_rev,
         )
-        from bsimvis.app.services.bin_sim_service import _zadd_score_split
+        from bsimvis.app.services.bin_sim_service import (
+            _zadd_score_split,
+            stored_unweighted_match,
+        )
 
+        unweighted = stored_unweighted_match()
         pool = pool_service.get_pool(pool_id)
         if not pool:
             logging.error(f"Pool {pool_id} not found")
@@ -2722,6 +2726,7 @@ class SimilarityService:
                 _feat,
                 fid_tags,
                 tag_meta_cache,
+                unweighted=unweighted,
             )
 
             # Persist pool bin_sim
@@ -2740,6 +2745,8 @@ class SimilarityService:
                 "functions_count_b": len(all_funcs_b_total),
                 "computed_at": now,
                 "tags_rev": tags_rev,
+                # Which weighting produced `score`, same as the collection doc.
+                "unweighted_match": unweighted,
                 # score / score_code / score_library / coverage / cluster counts /
                 # tag summaries / diff -- shared with the collection builder.
                 **common,

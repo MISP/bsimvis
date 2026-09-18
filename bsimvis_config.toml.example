@@ -118,6 +118,27 @@
     # build-time score gate -- build_bin_sim filters on cohesion, not score --
     # so every stored pair is a real result and the UI's floor is 0 by default.
     file_min_score = 0.0
+    # How a matched function pair counts toward the FILE score. false (default):
+    # by its own similarity, so the score is a feature-weighted similarity mean.
+    # true: every accepted match counts as a full 1.0, so the score becomes
+    # feature-weighted match coverage -- how much of the two binaries matched at
+    # all, not how well. Affects what the collection and pool builders store;
+    # the comparison view can also try it per request (runtime greedy matching,
+    # `unweighted=1`) without rebuilding anything. Scores built under the two
+    # settings are not comparable, so rebuild bin_sim after flipping it.
+    unweighted_match = false
+    # Stored function edges only exist for pairs BSim proposed above min_score
+    # above, so a rewritten function leaves no edge and the file score never
+    # counts it. true: build_bin_sim re-matches whatever the stored edges could
+    # not place, straight from the tf vectors, at discovery_min_score. Costs one
+    # extra sparse sweep per pair over the unmatched functions only; rebuild
+    # bin_sim after flipping it.
+    discovery = false
+    discovery_min_score = 0.5
+    # Drop features carried by more than this share of the partner binary's
+    # functions. 1.0 (default) drops nothing and the sweep is exact; lower it
+    # only if a boilerplate-heavy collection makes discovery too slow.
+    discovery_max_df = 1.0
 
 
 [llm]

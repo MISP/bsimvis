@@ -1232,7 +1232,7 @@ class ClusterHierarchy extends D3BaseLayout {
                                                  oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                                                 <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                                                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
-                                                    ${sig.ret ? `<span style="color:#ae81ff">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white">${sig.ns}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${m.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                                                    ${sig.ret ? `<span style="color:#ae81ff">${escapeHtml(sig.ret)}</span> ` : ''}${sig.ns ? `<span style="color:white">${escapeHtml(sig.ns)}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${escapeHtml(m.function_name)}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${escapeHtml(t)}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                                                 </span>
                                             </div>
                                         `;
@@ -1265,7 +1265,7 @@ class ClusterHierarchy extends D3BaseLayout {
                              oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                             <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                             <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
-                                ${sig.ret ? `<span style="color:#ae81ff">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white">${sig.ns}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${m.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                                ${sig.ret ? `<span style="color:#ae81ff">${escapeHtml(sig.ret)}</span> ` : ''}${sig.ns ? `<span style="color:white">${escapeHtml(sig.ns)}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${escapeHtml(m.function_name)}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${escapeHtml(t)}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                             </span>
                         </div>
                     `;
@@ -2273,7 +2273,7 @@ class ClusterPacking {
                                                  oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                                                 <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                                                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
-                                                    ${sig.ret ? `<span style="color:#ae81ff">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white">${sig.ns}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${m.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                                                    ${sig.ret ? `<span style="color:#ae81ff">${escapeHtml(sig.ret)}</span> ` : ''}${sig.ns ? `<span style="color:white">${escapeHtml(sig.ns)}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${escapeHtml(m.function_name)}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${escapeHtml(t)}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                                                 </span>
                                             </div>
                                         `;
@@ -2306,7 +2306,7 @@ class ClusterPacking {
                              oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                             <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                             <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
-                                ${sig.ret ? `<span style="color:#ae81ff">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white">${sig.ns}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${m.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                                ${sig.ret ? `<span style="color:#ae81ff">${escapeHtml(sig.ret)}</span> ` : ''}${sig.ns ? `<span style="color:white">${escapeHtml(sig.ns)}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${escapeHtml(m.function_name)}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${escapeHtml(t)}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                             </span>
                         </div>
                     `;

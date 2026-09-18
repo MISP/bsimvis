@@ -2838,9 +2838,6 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
         const addr1 = s1[3 + offset1] || '---';
         const addr2 = s2[3 + offset2] || '---';
 
-        const name1 = (p.name1 || '---').replace(/'/g, "\\'");
-        const name2 = (p.name2 || '---').replace(/'/g, "\\'");
-
         const f1 = formatSigComponent(p.meta1?.namespace || '', p.meta1?.return_type || '', p.name1 || '---', p.meta1?.parameters || []);
         const f2 = formatSigComponent(p.meta2?.namespace || '', p.meta2?.return_type || '', p.name2 || '---', p.meta2?.parameters || []);
 
@@ -2877,27 +2874,27 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
             const otherMd5 = isFunc1Anchor ? m2 : m1;
 
             return `
-            <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${pairId}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}"
-                data-entity-data='${JSON.stringify(p).replace(/'/g, "&apos;")}'
+            <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(pairId)}" data-id1="${escapeAttr(p.id1)}" data-id2="${escapeAttr(p.id2)}" data-algo="${escapeAttr(p.algo)}" data-sid="${escapeAttr(p.sid || '')}"
+                data-entity-data='${escapeAttr(JSON.stringify(p))}'
                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'similarity', this)">
                 <td>
                     <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
-                        onclick="openDiffDirectly('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', event)"
+                        onclick="openDiffDirectly(${escapeAttr(jsString(p.id1))}, ${escapeAttr(jsString(p.name1 || ''))}, ${escapeAttr(jsString(p.id2))}, ${escapeAttr(jsString(p.name2 || ''))}, event)"
                         title="Run Aligned Diff">${(p.score * 100).toFixed(1)}%</div>
                     ${EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
                 </td>
                 <td style="min-width: 300px;">${EntityRenderer.renderFunction(otherData, { hideNote: true })}</td>
-                <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${otherAddr}</span></td>
+                <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${escapeHtml(otherAddr)}</span></td>
                 <td>${EntityRenderer.renderTag('function', otherId, otherMeta?.tags || [], otherMeta?.user_tags || [], { maxTags: 4 })}</td>
-                <td><div class="cluster-cards-cell" data-clusters='${JSON.stringify(sharedClusters).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(sharedClusters)}</div></td>
+                <td><div class="cluster-cards-cell" data-clusters='${escapeAttr(JSON.stringify(sharedClusters))}'>${EntityRenderer.renderClusterCard(sharedClusters)}</div></td>
                 <td class="sim-cell" style="text-align:center;">
                     <span class="mono" style="color:var(--accent);">${otherMeta?.bsim_features_count || 0}</span>
-                    <button class="btn-icon" onclick="showFeaturePanel('${otherId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
+                    <button class="btn-icon" onclick="showFeaturePanel(${escapeAttr(jsString(otherId))}, event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
                 </td>
                 <td class="sim-cell" style="text-align:center;">${EntityRenderer.renderCallCount(otherMeta?.caller_count)}</td>
                 <td class="sim-cell" style="text-align:center;">${EntityRenderer.renderCallCount(otherMeta?.callee_count)}</td>
                 <td class="sim-cell" style="text-align:center;">${EntityRenderer.renderNoteButton(otherId, otherMeta?.note_owners, { isTable: true, raw_data: otherMeta })}</td>
-                <td class="sim-cell" style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${otherMeta?.file_name}">${EntityRenderer.renderFileName(otherMeta?.file_name, otherMd5, col)}</td>
+                <td class="sim-cell" style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeAttr(otherMeta?.file_name)}">${EntityRenderer.renderFileName(otherMeta?.file_name, otherMd5, col)}</td>
                 <td class="sim-cell">${EntityRenderer.renderMd5(otherMd5)}</td>
             </tr>
             `;
@@ -2997,8 +2994,8 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent)">${p.meta1?.language_id || '---'}</span></div>
-                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent)">${p.meta2?.language_id || '---'}</span></div>
+                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent)">${escapeHtml(p.meta1?.language_id || '---')}</span></div>
+                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent)">${escapeHtml(p.meta2?.language_id || '---')}</span></div>
                 </div>
             </td>
             <td class="sim-cell">

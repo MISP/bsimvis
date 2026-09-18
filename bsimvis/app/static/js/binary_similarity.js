@@ -2927,11 +2927,11 @@ function renderBinSimPairs(items, depth = 0, anchorMd5 = null) {
                 </td>
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:8px;">
-                        <div style="display:flex; align-items:center; gap:6px; overflow:hidden; min-height:24px;" title="${item.file_name_a || ''}">
+                        <div style="display:flex; align-items:center; gap:6px; overflow:hidden; min-height:24px;" title="${escapeAttr(item.file_name_a || '')}">
                             ${item.is_container_pair ? '<i class="fa-solid fa-box-archive" style="color:var(--subtle); font-size:0.75rem;" title="Container pair: rolled up from the files inside"></i>' : ''}
                             ${EntityRenderer.renderFileName(item.file_name_a, item.md5_a, collA)}
                         </div>
-                        <div style="display:flex; align-items:center; gap:6px; overflow:hidden; min-height:24px;" title="${item.file_name_b || ''}">
+                        <div style="display:flex; align-items:center; gap:6px; overflow:hidden; min-height:24px;" title="${escapeAttr(item.file_name_b || '')}">
                             ${item.is_container_pair ? '<i class="fa-solid fa-box-archive" style="color:var(--subtle); font-size:0.75rem;" title="Container pair: rolled up from the files inside"></i>' : ''}
                             ${EntityRenderer.renderFileName(item.file_name_b, item.md5_b, collB)}
                         </div>

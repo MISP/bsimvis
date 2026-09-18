@@ -604,7 +604,7 @@
                 <span class="tag-card" style="border-color:${tagAlpha(color, 27)}; color:${color}; background:${tagAlpha(color, 7)}; font-size: 0.65rem; padding: 2px 6px; border-radius: 12px; margin: 2px 4px 2px 0; display: inline-flex; align-items: center; gap: 4px;">
                     ${isBookmark ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>' : ''}
                     ${isIgnore ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>' : ''}
-                    ${tag}
+                    ${escapeHtml(tag)}
                 </span>`;
             }).join('');
             
@@ -633,19 +633,19 @@
         if (avtype) {
             extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                 <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-shield" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>AV Type</span>
-                <span class="mono" style="color: var(--meta-text); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${avtype}">${avtype}</span>
+                <span class="mono" style="color: var(--meta-text); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeAttr(avtype)}">${escapeHtml(avtype)}</span>
             </div>`;
         }
         if (filetype) {
             extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                 <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-file-code" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>File Type</span>
-                <span class="mono" style="color: var(--meta-text); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${filetype}">${filetype}</span>
+                <span class="mono" style="color: var(--meta-text); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeAttr(filetype)}">${escapeHtml(filetype)}</span>
             </div>`;
         }
         if (yara) {
             extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                 <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-biohazard" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>Yara</span>
-                <span class="mono" style="color: var(--accent); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${yara}">${yara}</span>
+                <span class="mono" style="color: var(--accent); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeAttr(yara)}">${escapeHtml(yara)}</span>
             </div>`;
         }
         if (cc_ip) {

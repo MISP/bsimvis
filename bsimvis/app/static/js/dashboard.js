@@ -5056,6 +5056,21 @@ async function refreshFunctionRow(funcId) {
 
 window.refreshFunctionRow = refreshFunctionRow;
 
+window.updatePoolClusterParams = function(prefix, algo, suffix = "") {
+    const control = name => {
+        const el = document.getElementById(prefix + "-" + name + suffix);
+        return { el, label: el?.closest("label") || el?.previousElementSibling };
+    };
+    const setVisible = (name, visible) => {
+        const { el, label } = control(name);
+        if (el) el.style.display = visible ? "" : "none";
+        if (label?.tagName === "LABEL") label.style.display = visible ? "" : "none";
+    };
+    const hdbscan = algo === "hdbscan";
+    const threshold = algo === "threshold_uf";
+    ["epsilon", "method", "min-samples"].forEach(name => setVisible(name, hdbscan));
+    setVisible("min-size", !threshold);
+};
 async function renderPoolCreationForm() {
     const gridHeader = document.getElementById('grid-header');
     if (!gridHeader) return;
@@ -5091,6 +5106,7 @@ async function renderPoolCreationForm() {
     const funcMinScore = similarity.min_score !== undefined ? similarity.min_score : 0.9;
     const funcMinFeatures = similarity.min_features !== undefined ? similarity.min_features : 0;
     const funcClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
+    const funcClusterAlgo = clustering.engine || 'hierarchical_uf';
     const funcClusterMinSamples = clustering.min_samples !== undefined ? clustering.min_samples : 1;
     const funcClusterMinSim = clustering.min_sim !== undefined ? clustering.min_sim : 0;
     const funcClusterMinFeatures = clustering.min_features !== undefined ? clustering.min_features : 0;
@@ -5102,6 +5118,7 @@ async function renderPoolCreationForm() {
     const discoveryMinScore = similarity.discovery_min_score !== undefined ? similarity.discovery_min_score : 0.5;
     const discoveryMaxDf = similarity.discovery_max_df !== undefined ? similarity.discovery_max_df : 1.0;
     const fileClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
+    const fileClusterAlgo = clustering.bin_engine || 'hierarchical_snn';
     const fileClusterMinSamples = clustering.min_samples !== undefined ? clustering.min_samples : 1;
     const fileClusterMinSim = clustering.min_sim !== undefined ? clustering.min_sim : 0;
 
@@ -5124,14 +5141,14 @@ async function renderPoolCreationForm() {
                 </div>
             </div>
 
-            <div id="pool-creation-content" style="padding:0 25px 25px 25px; display: none;">
+            <div id="pool-creation-content" style="padding:0 25px 25px 25px; display: none; max-height:calc(100vh - 170px); overflow-y:auto;">
                 <div id="pool-creation-form-container" style="border-top: 1px solid var(--border); padding-top:20px;">
                     <div style="margin-bottom: 25px;">
                         <label style="display:block; font-size:0.75rem; color:var(--dim); margin-bottom:6px; font-weight:600; text-transform:uppercase;">Pool Name</label>
-                        <input type="text" id="new-pool-name" placeholder="e.g. Shared Analysis Pool" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:0.85rem;">
+                        <input type="text" id="new-pool-name" placeholder="e.g. Shared Analysis Pool" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:0.85rem;">
                     </div>
 
-                    <div style="display:grid; grid-template-columns: 320px 1fr; gap:30px;">
+                    <div style="display:grid; grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.8fr); gap:20px;">
                         <!-- LEFT COLUMN: COLLECTIONS -->
                         <div style="display:flex; flex-direction:column; gap:12px;">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -5143,17 +5160,17 @@ async function renderPoolCreationForm() {
                             </div>
                             <div style="position:relative;">
                                 <i class="fa-solid fa-magnifying-glass" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:0.8rem; color:var(--dim);"></i>
-                                <input type="text" placeholder="Filter collections..." oninput="filterPoolCollections(this.value)" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:8px 10px 8px 35px; border-radius:6px; font-size:0.8rem;">
+                                <input type="text" placeholder="Filter collections..." oninput="filterPoolCollections(this.value)" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:8px 10px 8px 35px; border-radius:6px; font-size:0.8rem;">
                             </div>
-                            <div id="pool-collections-list" style="background:var(--border); border:1px solid var(--border); border-radius:6px; max-height:430px; overflow-y:auto; scrollbar-width: thin;">
+                            <div id="pool-collections-list" style="background:var(--hover); border:1px solid var(--border); border-radius:6px; max-height:430px; overflow-y:auto; scrollbar-width: thin;">
                                 ${colCheckboxes.length ? colCheckboxes : '<div style="padding:20px; font-size:0.85rem; color:var(--dim); text-align:center;">No collections found.</div>'}
                             </div>
                         </div>
                         
                         <!-- RIGHT COLUMN: CONFIGURATION -->
-                        <div style="display:flex; flex-direction:column; gap:15px;">
+                        <div style="display:flex; flex-direction:column; gap:12px;">
                             <div style="display:flex; align-items:center; gap:25px; background:rgba(255,171,46,0.03); border:1px solid rgba(255,171,46,0.15); border-radius:8px; padding:12px 15px;">
-                                <div style="display:flex; align-items:center; gap:8px; background:var(--border); padding:6px 12px; border-radius:20px; border:1px solid var(--border); flex-shrink:0;">
+                                <div style="display:flex; align-items:center; gap:8px; background:var(--hover); padding:6px 12px; border-radius:20px; border:1px solid var(--border); flex-shrink:0;">
                                     <input type="checkbox" id="pool-cross-only" style="cursor:pointer; width:14px; height:14px; accent-color:var(--accent);">
                                     <label for="pool-cross-only" style="font-size:0.75rem; cursor:pointer; font-weight:700; color:var(--accent); display:flex; align-items:center; gap:4px;">
                                         <i class="fa-solid fa-arrow-right-arrow-left"></i> CROSS-ONLY
@@ -5167,52 +5184,55 @@ async function renderPoolCreationForm() {
                                 </div>
                             </div>
 
-                            <div style="display:flex; flex-direction:column; gap:12px; background:var(--border); border:1px solid var(--border); border-radius:8px; padding:15px;">
+                            <div style="display:flex; flex-direction:column; gap:12px; background:var(--card-bg); border:1px solid var(--border); border-radius:9px; padding:14px;">
                                 <div style="display:flex; align-items:center; gap:8px; color:var(--accent); font-weight:600; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.03em;">
                                     <i class="fa-solid fa-microchip"></i> Function-Level
                                 </div>
                                 
-                                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
+                                <div style="display:flex; flex-direction:column; gap:14px;">
                                     <div>
                                         <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
-                                                <select id="pool-func-algo" onchange="const d=document.getElementById('pool-file-algo-display'); if(d) d.textContent=this.value;" style="width:100%; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                <select id="pool-func-algo" onchange="const d=document.getElementById('pool-file-algo-display'); if(d) d.textContent=this.value;" style="width:100%; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                     ${window.SimAlgos.optionsHtml(funcAlgo, { buildable: true })}
                                                 </select>
                                             </div>
                                             <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
-                                                    <input type="number" id="pool-func-topk" value="${escapeAttr(funcTopK)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-func-topk" value="${escapeAttr(funcTopK)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
-                                                    <input type="number" id="pool-func-minscore" step="0.05" value="${escapeAttr(funcMinScore)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-func-minscore" step="0.05" value="${escapeAttr(funcMinScore)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Features</label>
-                                                    <input type="number" id="pool-func-minfeatures" value="${escapeAttr(funcMinFeatures)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-func-minfeatures" value="${escapeAttr(funcMinFeatures)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
+                                    <div style="width:100%;"><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Clustering Algorithm</label><select id="pool-cluster-algo" onchange="updatePoolClusterParams('pool-cluster', this.value)" style="width:100%; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:7px 8px; border-radius:5px; font-size:0.75rem;"><option value="hierarchical_uf">Hierarchical UF</option><option value="threshold_uf">Threshold UF</option><option value="hdbscan">HDBSCAN</option></select></div>
                                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
-                                            <input type="number" id="pool-cluster-min-size" value="${escapeAttr(funcClusterMinSize)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-cluster-min-size" value="${escapeAttr(funcClusterMinSize)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
-                                            <input type="number" id="pool-cluster-min-samples" value="${escapeAttr(funcClusterMinSamples)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-cluster-min-samples" value="${escapeAttr(funcClusterMinSamples)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
-                                        <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Similarity</label><input type="number" id="pool-cluster-min-sim" step="0.05" value="${escapeAttr(funcClusterMinSim)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
-                                        <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Features</label><input type="number" id="pool-cluster-min-features" value="${escapeAttr(funcClusterMinFeatures)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                        <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Similarity</label><input type="number" id="pool-cluster-min-sim" step="0.05" value="${escapeAttr(funcClusterMinSim)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                        <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label><input type="number" id="pool-cluster-epsilon" step="0.01" value="0.1" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                        <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label><select id="pool-cluster-method" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"><option value="eom">EOM</option><option value="leaf">Leaf</option></select></div>
+                                        <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Features</label><input type="number" id="pool-cluster-min-features" value="${escapeAttr(funcClusterMinFeatures)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
                                     </div>
                                 </div>
                             </div>
 
-                            <div style="display:flex; flex-direction:column; gap:12px; background:var(--border); border:1px solid var(--border); border-radius:8px; padding:15px;">
+                            <div style="display:flex; flex-direction:column; gap:12px; background:var(--card-bg); border:1px solid var(--border); border-radius:9px; padding:14px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center;">
                                     <div style="display:flex; align-items:center; gap:8px; color:var(--accent); font-weight:600; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.03em;">
                                         <i class="fa-solid fa-file-code"></i> File-Level
@@ -5223,34 +5243,37 @@ async function renderPoolCreationForm() {
                                     </div>
                                 </div>
                                 
-                                <div id="file-params-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; transition: opacity 0.2s;">
+                                <div id="file-params-grid" style="display:flex; flex-direction:column; gap:14px; transition: opacity 0.2s;">
                                     <div>
                                         <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
-                                                <div id="pool-file-algo-display" title="Inherited from function similarity: file scores live in the namespace of the function clusters they are built from." style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--dim); padding:6px; border-radius:4px; font-size:0.75rem;">${funcAlgo}</div>
+                                                <div id="pool-file-algo-display" title="Inherited from function similarity: file scores live in the namespace of the function clusters they are built from." style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--dim); padding:6px; border-radius:4px; font-size:0.75rem;">${funcAlgo}</div>
                                             </div>
                                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
-                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label><input type="number" id="pool-file-topk" value="${escapeAttr(fileTopK)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
-                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label><input type="number" id="pool-file-minscore" step="0.05" value="${escapeAttr(fileMinScore)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
-                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cohesion</label><input type="number" id="pool-file-min-cohesion" step="0.05" value="${escapeAttr(fileMinCohesion)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
-                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Discovery min score</label><input type="number" id="pool-discovery-score" step="0.05" value="${escapeAttr(discoveryMinScore)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
-                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Discovery max DF</label><input type="number" id="pool-discovery-df" step="0.05" value="${escapeAttr(discoveryMaxDf)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label><input type="number" id="pool-file-topk" value="${escapeAttr(fileTopK)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label><input type="number" id="pool-file-minscore" step="0.05" value="${escapeAttr(fileMinScore)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cohesion</label><input type="number" id="pool-file-min-cohesion" step="0.05" value="${escapeAttr(fileMinCohesion)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Discovery min score</label><input type="number" id="pool-discovery-score" step="0.05" value="${escapeAttr(discoveryMinScore)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Discovery max DF</label><input type="number" id="pool-discovery-df" step="0.05" value="${escapeAttr(discoveryMaxDf)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
                                                 <label style="display:flex; align-items:center; gap:6px; font-size:0.7rem; color:var(--dim);"><input type="checkbox" id="pool-discovery-enabled" ${discovery ? 'checked' : ''}> Enable discovery</label>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
+                                    <div style="width:100%;"><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Clustering Algorithm</label><select id="pool-file-cluster-algo" onchange="updatePoolClusterParams('pool-file-cluster', this.value)" style="width:100%; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:7px 8px; border-radius:5px; font-size:0.75rem;"><option value="hierarchical_snn">Hierarchical SNN</option><option value="hierarchical_uf">Hierarchical UF</option><option value="threshold_uf">Threshold UF</option><option value="hdbscan">HDBSCAN</option></select></div>
                                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
-                                            <input type="number" id="pool-file-cluster-min-size" value="${escapeAttr(fileClusterMinSize)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-file-cluster-min-size" value="${escapeAttr(fileClusterMinSize)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
-                                            <input type="number" id="pool-file-cluster-min-samples" value="${escapeAttr(fileClusterMinSamples)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-file-cluster-min-samples" value="${escapeAttr(fileClusterMinSamples)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
-                                        <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Similarity</label><input type="number" id="pool-file-cluster-min-sim" step="0.05" value="${escapeAttr(fileClusterMinSim)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                        <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label><input type="number" id="pool-file-cluster-epsilon" step="0.01" value="0.1" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                        <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label><select id="pool-file-cluster-method" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"><option value="eom">EOM</option><option value="leaf">Leaf</option></select></div>
+                                        <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Similarity</label><input type="number" id="pool-file-cluster-min-sim" step="0.05" value="${escapeAttr(fileClusterMinSim)}" style="width:100%; box-sizing:border-box; background:var(--hover); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
                                     </div>
                                 </div>
                             </div>
@@ -5269,6 +5292,7 @@ async function renderPoolCreationForm() {
         </div>
     `;
 
+    setTimeout(() => { updatePoolClusterParams("pool-cluster", document.getElementById("pool-cluster-algo")?.value); updatePoolClusterParams("pool-file-cluster", document.getElementById("pool-file-cluster-algo")?.value); }, 0);
     window.isPoolNameManuallyEdited = false;
     const nameInput = document.getElementById('new-pool-name');
     if (nameInput) {
@@ -5383,6 +5407,9 @@ async function submitCreatePool(btn) {
                         min_features: funcMinFeatures
                     },
                     func_cluster_params: {
+                        cluster_algo: document.getElementById('pool-cluster-algo')?.value,
+                        epsilon: parseFloat(document.getElementById('pool-cluster-epsilon')?.value || '0.1'),
+                        selection_method: document.getElementById('pool-cluster-method')?.value,
                         min_cluster_size: funcClusterMinSize,
                         min_samples: funcClusterMinSamples,
                         min_sim: funcClusterMinSim,
@@ -5398,6 +5425,9 @@ async function submitCreatePool(btn) {
                         discovery_max_df: discoveryMaxDf
                     },
                     file_cluster_params: { 
+                        cluster_algo: document.getElementById('pool-file-cluster-algo')?.value,
+                        epsilon: parseFloat(document.getElementById('pool-file-cluster-epsilon')?.value || '0.1'),
+                        selection_method: document.getElementById('pool-file-cluster-method')?.value,
                         min_cluster_size: fileClusterMinSize,
                         min_samples: fileClusterMinSamples,
                         min_sim: fileClusterMinSim

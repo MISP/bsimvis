@@ -35,6 +35,10 @@ def get_config():
 
     return {
         "clustering": {
+            "engine": config_service.get("clustering.engine", "hierarchical_uf"),
+            "bin_engine": config_service.get(
+                "clustering.bin_engine", "hierarchical_snn"
+            ),
             "epsilon": config_service.get("clustering.epsilon", 0.001),
             "min_cluster_size": config_service.get("clustering.min_cluster_size", 2),
             "min_samples": config_service.get("clustering.min_samples", 1),

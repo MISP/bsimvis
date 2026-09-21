@@ -95,10 +95,11 @@ class BinClusterService:
         job_id=None,
         min_cohesion=None,
         axis="overall",
+        engine=None,
     ):
         from bsimvis.app.services.config_service import config_service
 
-        engine = config_service.get("clustering.bin_engine", "threshold_uf")
+        engine = engine or config_service.get("clustering.bin_engine", "threshold_uf")
 
         if engine in ("hierarchical_uf", "hierarchical_snn"):
             use_snn = engine == "hierarchical_snn"

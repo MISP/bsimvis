@@ -171,6 +171,7 @@ class ClusterService:
         batch_uuid=None,
         job_service=None,
         job_id=None,
+        engine=None,
     ):
         """
         Runs clustering on similarity pairs stored in Kvrocks.
@@ -203,7 +204,7 @@ class ClusterService:
         if min_features is None:
             min_features = config_service.get("clustering.min_features", 0)
 
-        engine = config_service.get("clustering.engine", "threshold_uf")
+        engine = engine or config_service.get("clustering.engine", "threshold_uf")
         if engine == "hierarchical_uf":
             cohesion_cut = config_service.get("clustering.cohesion_cut", 0.9)
             if batch_uuid and not collection.startswith("global:pool:"):
@@ -268,6 +269,7 @@ class ClusterService:
                 threshold=threshold,
                 min_sim=min_sim,
                 min_features=min_features,
+                engine=engine,
                 job_service=job_service,
                 job_id=job_id,
             )
@@ -2563,7 +2565,7 @@ class ClusterService:
         job_id=None,
     ):
         """
-        Runs HDBSCAN clustering on pool-namespaced similarity pairs by delegating to run_clustering.
+        Runs pool clustering by delegating to run_clustering.
         """
         from bsimvis.app.services.pool_service import pool_service
         from bsimvis.app.services.config_service import config_service
@@ -2574,6 +2576,9 @@ class ClusterService:
             return False
 
         func_cluster_params = pool.get("func_cluster_params", {})
+        engine = func_cluster_params.get("cluster_algo") or config_service.get(
+            "clustering.engine", "threshold_uf"
+        )
         cluster_params = pool.get("cluster_params", {})
 
         if min_cluster_size is None:
@@ -2640,6 +2645,7 @@ class ClusterService:
             selection_method=selection_method,
             min_sim=min_sim,
             min_features=min_features,
+            engine=engine,
             job_service=job_service,
             job_id=job_id,
         )
@@ -2673,10 +2679,28 @@ class ClusterService:
             logging.error(f"Pool {pool_id} not found")
             return False
 
-        # Build every score split from the same function algorithm. "overall"
-        # is this call's own axis, so it is NOT in the fan-out list: recursing
-        # on it re-entered this same branch and only stopped at the recursion
-        # limit, failing every pool bin-clustering job.
+        file_cluster_params = pool.get("file_cluster_params", {})
+        engine = file_cluster_params.get("cluster_algo") or config_service.get(
+            "clustering.bin_engine", "hierarchical_snn"
+        )
+        file_sim_params = pool.get("file_sim_params", {})
+        if not file_sim_params.get("enabled", True):
+            return True
+        if engine != "hdbscan":
+            from bsimvis.app.services.bin_cluster_service import bin_cluster_service
+
+            return bin_cluster_service.run_clustering(
+                collection=f"global:pool:{pool_id}",
+                algo=pool_service.similarity_algo(pool),
+                min_cluster_size=min_cluster_size,
+                min_samples=min_samples,
+                min_sim=min_sim,
+                min_cohesion=min_cohesion,
+                job_service=job_service,
+                job_id=job_id,
+                axis=axis,
+                engine=engine,
+            )
         if axis == "overall":
             for split in ("code", "library", "content"):
                 if not self.run_pool_bin_clustering(

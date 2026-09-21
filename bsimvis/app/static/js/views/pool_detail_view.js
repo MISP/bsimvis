@@ -67,6 +67,8 @@ window.PoolDetailView = {
             }
 
             container.innerHTML = this._renderPage(pool, poolId, collMap, poolActiveJobs);
+            updatePoolClusterParams("pool-func-cluster", document.getElementById("pool-func-cluster-algo-edit")?.value, "-edit");
+            updatePoolClusterParams("pool-file-cluster", document.getElementById("pool-file-cluster-algo-edit")?.value, "-edit");
 
             if (this.refreshInterval) clearInterval(this.refreshInterval);
             this.refreshInterval = setInterval(async () => {
@@ -309,10 +311,13 @@ window.PoolDetailView = {
                         ${this._configInput('pool-func-top-k-edit', 'Top K', fs.top_k)}
                         ${this._configInput('pool-func-min-score-edit', 'Min Score', fs.min_score, '0.01')}
                         ${this._configInput('pool-func-min-features-edit', 'Min Features', fs.min_features)}
+                        ${this._configSelect("pool-func-cluster-algo-edit", "Clustering Algorithm", fc.cluster_algo || "hierarchical_uf", `<option value="hierarchical_uf">Hierarchical UF</option><option value="threshold_uf">Threshold UF</option><option value="hdbscan">HDBSCAN</option>`)}
                         ${this._configInput('pool-func-cluster-size-edit', 'Min Cluster Size', fc.min_cluster_size)}
                         ${this._configInput('pool-func-cluster-samples-edit', 'Min Samples', fc.min_samples)}
-                        ${this._configInput('pool-func-cluster-epsilon-edit', 'Epsilon', fc.epsilon, '0.01')}
-                        ${this._configSelect('pool-func-cluster-method-edit', 'Method', fc.selection_method, `<option value="eom" ${fc.selection_method === 'eom' ? 'selected' : ''}>EOM</option><option value="leaf" ${fc.selection_method === 'leaf' ? 'selected' : ''}>Leaf</option>`)}
+                        ${this._configInput('pool-func-cluster-min-sim-edit', 'Min Similarity', fc.min_sim, '0.01')}
+                        ${this._configInput("pool-func-cluster-epsilon-edit", "Epsilon", fc.epsilon, "0.01")}
+                        ${this._configSelect("pool-func-cluster-method-edit", "Method", fc.selection_method || "eom", `<option value="eom">EOM</option><option value="leaf">Leaf</option>`)}
+                        ${this._configInput('pool-func-cluster-min-features-edit', 'Min Features', fc.min_features)}
                     </div>
 
                     <!-- File Sim -->
@@ -327,10 +332,12 @@ window.PoolDetailView = {
                         ${this._configInput('pool-discovery-score-edit', 'Discovery Min Score', fis.discovery_min_score ?? 0.5, '0.01')}
                         ${this._configInput('pool-discovery-df-edit', 'Discovery Max DF', fis.discovery_max_df ?? 1, '0.01')}
                         <label style="display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--border); font-size:0.8rem; color:var(--dim);"><input id="pool-discovery-enabled-edit" type="checkbox" ${fis.discovery ? 'checked' : ''}> Discovery Enabled</label>
+                        ${this._configSelect("pool-file-cluster-algo-edit", "Clustering Algorithm", fic.cluster_algo || "hierarchical_snn", `<option value="hierarchical_snn">Hierarchical SNN</option><option value="hierarchical_uf">Hierarchical UF</option><option value="threshold_uf">Threshold UF</option><option value="hdbscan">HDBSCAN</option>`)}
                         ${this._configInput('pool-file-cluster-size-edit', 'Min Cluster Size', fic.min_cluster_size)}
                         ${this._configInput('pool-file-cluster-samples-edit', 'Min Samples', fic.min_samples)}
-                        ${this._configInput('pool-file-cluster-epsilon-edit', 'Epsilon', fic.epsilon, '0.01')}
-                        ${this._configSelect('pool-file-cluster-method-edit', 'Method', fic.selection_method, `<option value="eom" ${fic.selection_method === 'eom' ? 'selected' : ''}>EOM</option><option value="leaf" ${fic.selection_method === 'leaf' ? 'selected' : ''}>Leaf</option>`)}
+                        ${this._configInput("pool-file-cluster-epsilon-edit", "Epsilon", fic.epsilon, "0.01")}
+                        ${this._configSelect("pool-file-cluster-method-edit", "Method", fic.selection_method || "eom", `<option value="eom">EOM</option><option value="leaf">Leaf</option>`)}
+                        ${this._configInput('pool-file-cluster-min-sim-edit', 'Min Similarity', fic.min_sim, '0.01')}
                         <button onclick="window.poolDetailSaveConfig(${escapeAttr(jsString(poolId))}, this)" style="margin-top:14px; padding:8px 14px; border:1px solid rgba(16,185,129,.4); border-radius:6px; background:rgba(16,185,129,.12); color:#10b981; cursor:pointer; display:inline-flex; align-items:center; gap:7px; font-size:.78rem; font-weight:700;"><i class="fa-solid fa-floppy-disk"></i> Save parameters</button>
                     </div>
                 </div>
@@ -526,7 +533,7 @@ window.poolDetailAddCollection = async function(poolId, btn) {
 
 window.poolDetailSaveConfig = async function(poolId, btn) {
     const n = id => Number(document.getElementById(id)?.value);
-    const body = {config:{func_sim_params:{algo:document.getElementById('pool-func-algo-edit')?.value, top_k:n('pool-func-top-k-edit'), min_score:n('pool-func-min-score-edit'), min_features:n('pool-func-min-features-edit')}, func_cluster_params:{min_cluster_size:n('pool-func-cluster-size-edit'), min_samples:n('pool-func-cluster-samples-edit'), epsilon:n('pool-func-cluster-epsilon-edit'), selection_method:document.getElementById('pool-func-cluster-method-edit')?.value}, file_sim_params:{enabled:document.getElementById('pool-file-enabled-edit')?.checked, top_k:n('pool-file-top-k-edit'), min_score:n('pool-file-min-score-edit'), min_cohesion:n('pool-file-min-cohesion-edit'), discovery:document.getElementById('pool-discovery-enabled-edit')?.checked, discovery_min_score:n('pool-discovery-score-edit'), discovery_max_df:n('pool-discovery-df-edit')}, file_cluster_params:{min_cluster_size:n('pool-file-cluster-size-edit'), min_samples:n('pool-file-cluster-samples-edit'), epsilon:n('pool-file-cluster-epsilon-edit'), selection_method:document.getElementById('pool-file-cluster-method-edit')?.value}}};
+    const body = {config:{func_sim_params:{algo:document.getElementById('pool-func-algo-edit')?.value, top_k:n('pool-func-top-k-edit'), min_score:n('pool-func-min-score-edit'), min_features:n('pool-func-min-features-edit')}, func_cluster_params:{cluster_algo:document.getElementById('pool-func-cluster-algo-edit')?.value, min_cluster_size:n('pool-func-cluster-size-edit'), min_samples:n('pool-func-cluster-samples-edit'), min_sim:n('pool-func-cluster-min-sim-edit'), min_features:n('pool-func-cluster-min-features-edit'), epsilon:n('pool-func-cluster-epsilon-edit'), selection_method:document.getElementById('pool-func-cluster-method-edit')?.value}, file_sim_params:{enabled:document.getElementById('pool-file-enabled-edit')?.checked, top_k:n('pool-file-top-k-edit'), min_score:n('pool-file-min-score-edit'), min_cohesion:n('pool-file-min-cohesion-edit'), discovery:document.getElementById('pool-discovery-enabled-edit')?.checked, discovery_min_score:n('pool-discovery-score-edit'), discovery_max_df:n('pool-discovery-df-edit')}, file_cluster_params:{cluster_algo:document.getElementById('pool-file-cluster-algo-edit')?.value, min_cluster_size:n('pool-file-cluster-size-edit'), min_samples:n('pool-file-cluster-samples-edit'), min_sim:n('pool-file-cluster-min-sim-edit'), epsilon:n('pool-file-cluster-epsilon-edit'), selection_method:document.getElementById('pool-file-cluster-method-edit')?.value}}};
     if (btn) btn.disabled = true;
     try { const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}); const data = await res.json(); if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`); alert(data.message); }
     catch (e) { alert(`Failed to save pool parameters: ${e.message}`); } finally { if (btn) btn.disabled = false; }

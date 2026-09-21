@@ -3073,6 +3073,7 @@ pool_func_sim_params_model = api.model(
 pool_func_cluster_params_model = api.model(
     "PoolFuncClusterParams",
     {
+        "cluster_algo": fields.String(default="hierarchical_uf"),
         "min_cluster_size": fields.Integer(default=2),
         "min_samples": fields.Integer(default=1),
         "min_sim": fields.Float(default=0.0),
@@ -3096,6 +3097,7 @@ pool_file_sim_params_model = api.model(
 pool_file_cluster_params_model = api.model(
     "PoolFileClusterParams",
     {
+        "cluster_algo": fields.String(default="hierarchical_snn"),
         "min_cluster_size": fields.Integer(default=2),
         "min_samples": fields.Integer(default=1),
         "min_sim": fields.Float(default=0.0),

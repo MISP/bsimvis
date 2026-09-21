@@ -102,12 +102,12 @@ window.PoolDetailView = {
         return `<span style="background:rgba(156,163,175,0.15); border:1px solid rgba(156,163,175,0.3); color:#9ca3af; padding:4px 12px; border-radius:20px; font-size:0.8rem; font-weight:700; display:inline-flex; align-items:center; gap:6px;"><i class="fa-solid fa-circle"></i> ${status || 'created'}</span>`;
     },
 
-    _configRow(label, value) {
-        if (value === undefined || value === null || value === '') return '';
-        return `<div style="display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom: 1px solid var(--border); font-size:0.8rem;">
-            <span style="color:var(--dim);">${label}</span>
-            <span style="color:var(--accent); font-weight:600; font-family:monospace;">${value}</span>
-        </div>`;
+    _configInput(id, label, value, step = '1') {
+        return `<label style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid var(--border); font-size:0.8rem; color:var(--dim);">${label}<input id="${id}" type="number" step="${step}" value="${escapeAttr(String(value ?? ''))}" style="width:105px; box-sizing:border-box; padding:5px 7px; background:var(--hover); border:1px solid var(--border); border-radius:5px; color:var(--accent); font-family:monospace; text-align:right;"></label>`;
+    },
+
+    _configSelect(id, label, value, options) {
+        return `<label style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid var(--border); font-size:0.8rem; color:var(--dim);">${label}<select id="${id}" style="width:150px; padding:5px 7px; background:var(--hover); border:1px solid var(--border); border-radius:5px; color:var(--accent);">${options}</select></label>`;
     },
 
     _renderPage(pool, poolId, collMap, poolActiveJobs = []) {
@@ -143,7 +143,7 @@ window.PoolDetailView = {
             <select id="pool-add-collection" style="flex:1; background:var(--card-bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:7px;">
                 <option value="">Add collection…</option>${collectionOptions}
             </select>
-            <button onclick="window.poolDetailAddCollection(${escapeAttr(jsString(poolId))}, this)" class="btn-action" style="padding:7px 12px;"><i class="fa-solid fa-plus"></i> Add</button>
+            <button onclick="window.poolDetailAddCollection(${escapeAttr(jsString(poolId))}, this)" class="btn-action" style="flex:0 0 auto; max-width:100%; box-sizing:border-box; white-space:nowrap; padding:7px 10px;"><i class="fa-solid fa-plus"></i> Add</button>
         </div>
         <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--card-bg);">
             <table style="width:100%; border-collapse:collapse; text-align:left; font-size:0.85rem;">
@@ -305,14 +305,14 @@ window.PoolDetailView = {
                         <div style="font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--accent); margin-bottom:12px; display:flex; align-items:center; gap:7px; border-bottom: 1px solid var(--border); padding-bottom:10px;">
                             <i class="fa-solid fa-microchip"></i> Function Similarity
                         </div>
-                        ${this._configRow('Algorithm', fs.algo)}
-                        ${this._configRow('Top K', fs.top_k)}
-                        ${this._configRow('Min Score', fs.min_score)}
-                        ${this._configRow('Min Features', fs.min_features)}
-                        ${this._configRow('Min Cluster Size', fc.min_cluster_size)}
-                        ${this._configRow('Min Samples', fc.min_samples)}
-                        ${this._configRow('Epsilon', fc.epsilon)}
-                        ${this._configRow('Method', fc.selection_method)}
+                        ${this._configSelect('pool-func-algo-edit', 'Algorithm', fs.algo, window.SimAlgos ? window.SimAlgos.optionsHtml(fs.algo, { buildable: true }) : `<option>${escapeHtml(fs.algo || '')}</option>`)}
+                        ${this._configInput('pool-func-top-k-edit', 'Top K', fs.top_k)}
+                        ${this._configInput('pool-func-min-score-edit', 'Min Score', fs.min_score, '0.01')}
+                        ${this._configInput('pool-func-min-features-edit', 'Min Features', fs.min_features)}
+                        ${this._configInput('pool-func-cluster-size-edit', 'Min Cluster Size', fc.min_cluster_size)}
+                        ${this._configInput('pool-func-cluster-samples-edit', 'Min Samples', fc.min_samples)}
+                        ${this._configInput('pool-func-cluster-epsilon-edit', 'Epsilon', fc.epsilon, '0.01')}
+                        ${this._configSelect('pool-func-cluster-method-edit', 'Method', fc.selection_method, `<option value="eom" ${fc.selection_method === 'eom' ? 'selected' : ''}>EOM</option><option value="leaf" ${fc.selection_method === 'leaf' ? 'selected' : ''}>Leaf</option>`)}
                     </div>
 
                     <!-- File Sim -->
@@ -320,31 +320,22 @@ window.PoolDetailView = {
                         <div style="font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:${fileSimEnabled ? '#60a5fa' : 'var(--dim)'}; margin-bottom:12px; display:flex; align-items:center; gap:7px; border-bottom: 1px solid var(--border); padding-bottom:10px;">
                             <i class="fa-solid fa-file-code"></i> File Similarity ${fileSimEnabled ? '' : '<span style="font-size:0.65rem; margin-left:4px; color:var(--dim);">(disabled)</span>'}
                         </div>
-                        ${this._configRow('Algorithm', pool.algo)}
-                        ${this._configRow('Top K', fis.top_k)}
-                        ${this._configRow('Min Score', fis.min_score)}
-                        ${this._configRow('Min Cluster Size', fic.min_cluster_size)}
-                        ${this._configRow('Min Samples', fic.min_samples)}
-                        ${this._configRow('Epsilon', fic.epsilon)}
-                        ${this._configRow('Method', fic.selection_method)}
+                        <label style="display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--border); font-size:0.8rem; color:var(--dim);"><input id="pool-file-enabled-edit" type="checkbox" ${fileSimEnabled ? 'checked' : ''}> Enabled</label>
+                        ${this._configInput('pool-file-min-cohesion-edit', 'Min Cohesion', fis.min_cohesion, '0.01')}
+                        ${this._configInput('pool-file-top-k-edit', 'Top K', fis.top_k)}
+                        ${this._configInput('pool-file-min-score-edit', 'Min Score', fis.min_score, '0.01')}
+                        ${this._configInput('pool-discovery-score-edit', 'Discovery Min Score', fis.discovery_min_score ?? 0.5, '0.01')}
+                        ${this._configInput('pool-discovery-df-edit', 'Discovery Max DF', fis.discovery_max_df ?? 1, '0.01')}
+                        <label style="display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--border); font-size:0.8rem; color:var(--dim);"><input id="pool-discovery-enabled-edit" type="checkbox" ${fis.discovery ? 'checked' : ''}> Discovery Enabled</label>
+                        ${this._configInput('pool-file-cluster-size-edit', 'Min Cluster Size', fic.min_cluster_size)}
+                        ${this._configInput('pool-file-cluster-samples-edit', 'Min Samples', fic.min_samples)}
+                        ${this._configInput('pool-file-cluster-epsilon-edit', 'Epsilon', fic.epsilon, '0.01')}
+                        ${this._configSelect('pool-file-cluster-method-edit', 'Method', fic.selection_method, `<option value="eom" ${fic.selection_method === 'eom' ? 'selected' : ''}>EOM</option><option value="leaf" ${fic.selection_method === 'leaf' ? 'selected' : ''}>Leaf</option>`)}
+                        <button onclick="window.poolDetailSaveConfig(${escapeAttr(jsString(poolId))}, this)" style="margin-top:12px; padding:7px 16px;">Save parameters</button>
                     </div>
                 </div>
             </div>
 
-            <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:18px;">
-                <div style="font-size:0.72rem; font-weight:700; text-transform:uppercase; color:var(--dim); margin-bottom:12px;"><i class="fa-solid fa-sliders"></i> Pool Parameters</div>
-                <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px;">
-                    <label style="font-size:.7rem; color:var(--dim);">Function min score<input id="pool-edit-func-min-score" type="number" step=".01" value="${escapeAttr(String(fs.min_score ?? ''))}" style="width:100%; box-sizing:border-box;"></label>
-                    <label style="font-size:.7rem; color:var(--dim);">Function min features<input id="pool-edit-func-min-features" type="number" value="${escapeAttr(String(fs.min_features ?? ''))}" style="width:100%; box-sizing:border-box;"></label>
-                    <label style="font-size:.7rem; color:var(--dim);">Function top K<input id="pool-edit-func-top-k" type="number" value="${escapeAttr(String(fs.top_k ?? ''))}" style="width:100%; box-sizing:border-box;"></label>
-                    <label style="font-size:.7rem; color:var(--dim);">Bin min cohesion<input id="pool-edit-bin-min-cohesion" type="number" step=".01" value="${escapeAttr(String(fis.min_cohesion ?? ''))}" style="width:100%; box-sizing:border-box;"></label>
-                    <label style="font-size:.7rem; color:var(--dim);">Discovery min score<input id="pool-edit-discovery-score" type="number" step=".01" value="${escapeAttr(String(fis.discovery_min_score ?? '.5'))}" style="width:100%; box-sizing:border-box;"></label>
-                    <label style="font-size:.7rem; color:var(--dim);">Discovery max DF<input id="pool-edit-discovery-df" type="number" step=".01" value="${escapeAttr(String(fis.discovery_max_df ?? '1'))}" style="width:100%; box-sizing:border-box;"></label>
-                </div>
-                <label style="display:block; margin-top:10px; font-size:.75rem;"><input id="pool-edit-discovery" type="checkbox" ${fis.discovery ? 'checked' : ''}> Enable Bin Sim discovery</label>
-                <button onclick="window.poolDetailSaveConfig(${escapeAttr(jsString(poolId))}, this)" style="margin-top:12px; padding:7px 16px;">Save parameters</button>
-                <span style="font-size:.7rem; color:var(--dim); margin-left:8px;">Rebuild affected pool data after changing.</span>
-            </div>
 
             <!-- ACTIVE / RUNNING JOBS -->
             <div id="active-jobs-container">
@@ -535,7 +526,7 @@ window.poolDetailAddCollection = async function(poolId, btn) {
 
 window.poolDetailSaveConfig = async function(poolId, btn) {
     const n = id => Number(document.getElementById(id)?.value);
-    const body = {config:{func_sim_params:{min_score:n('pool-edit-func-min-score'), min_features:n('pool-edit-func-min-features'), top_k:n('pool-edit-func-top-k')}, file_sim_params:{enabled:true, min_cohesion:n('pool-edit-bin-min-cohesion'), discovery:document.getElementById('pool-edit-discovery')?.checked, discovery_min_score:n('pool-edit-discovery-score'), discovery_max_df:n('pool-edit-discovery-df')}}};
+    const body = {config:{func_sim_params:{algo:document.getElementById('pool-func-algo-edit')?.value, top_k:n('pool-func-top-k-edit'), min_score:n('pool-func-min-score-edit'), min_features:n('pool-func-min-features-edit')}, func_cluster_params:{min_cluster_size:n('pool-func-cluster-size-edit'), min_samples:n('pool-func-cluster-samples-edit'), epsilon:n('pool-func-cluster-epsilon-edit'), selection_method:document.getElementById('pool-func-cluster-method-edit')?.value}, file_sim_params:{enabled:document.getElementById('pool-file-enabled-edit')?.checked, top_k:n('pool-file-top-k-edit'), min_score:n('pool-file-min-score-edit'), min_cohesion:n('pool-file-min-cohesion-edit'), discovery:document.getElementById('pool-discovery-enabled-edit')?.checked, discovery_min_score:n('pool-discovery-score-edit'), discovery_max_df:n('pool-discovery-df-edit')}, file_cluster_params:{min_cluster_size:n('pool-file-cluster-size-edit'), min_samples:n('pool-file-cluster-samples-edit'), epsilon:n('pool-file-cluster-epsilon-edit'), selection_method:document.getElementById('pool-file-cluster-method-edit')?.value}}};
     if (btn) btn.disabled = true;
     try { const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}); const data = await res.json(); if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`); alert(data.message); }
     catch (e) { alert(`Failed to save pool parameters: ${e.message}`); } finally { if (btn) btn.disabled = false; }

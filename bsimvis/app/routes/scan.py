@@ -133,17 +133,32 @@ def list_scans():
     """List all scans from Redis, resolving their current job statuses."""
     service = get_scan_service()
     docs = service.list_scans()
-    
-    # Enrich with job statuses
-    for doc in docs:
-        if doc.get("job_id"):
-            job = job_service.get_job_status(doc["job_id"])
-            if job:
-                doc["job_status"] = job.get("status")
-                doc["progress"] = job.get("progress")
-                if job.get("error"):
-                    doc["error"] = job["error"]
+
+    # Enrich with job statuses using pipeline
+    job_ids = [doc["job_id"] for doc in docs if doc.get("job_id")]
+    if job_ids:
+        pipe = job_service.r.pipeline()
+        for jid in job_ids:
+            pipe.hmget(f"job:{jid}", "status", "progress", "error")
+        results = pipe.execute()
+
+        job_info = {}
+        for jid, res in zip(job_ids, results):
+            status, progress, error = res
+            job_info[jid] = {"status": status, "progress": progress, "error": error}
+
+        for doc in docs:
+            jid = doc.get("job_id")
+            if jid and jid in job_info:
+                info = job_info[jid]
+                if info["status"] is not None:
+                    doc["job_status"] = info["status"]
+                    doc["progress"] = info["progress"]
+                    if info["error"] is not None:
+                        doc["error"] = info["error"]
+
     return {"scans": docs}
+
 
 def get_scan(scan_id):
     """The scan document: status, warnings and the per-scope summary."""

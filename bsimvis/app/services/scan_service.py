@@ -125,6 +125,7 @@ class ScanService:
         }
         self.q_raw.setex(self.key(scan_id, "raw"), ttl, raw_bytes)
         self.q.setex(self.key(scan_id, "doc"), ttl, json.dumps(doc))
+        self.q.zadd("scans:recent", {scan_id: doc["created_at"]})
         return scan_id
 
     def get(self, scan_id):
@@ -143,13 +144,20 @@ class ScanService:
 
     def list_scans(self):
         """Returns a list of all active scan documents from Redis."""
-        keys = self.q.keys("scan:*:doc")
-        if not keys:
+        # Get up to 1000 recent scans
+        scan_ids = self.q.zrevrange("scans:recent", 0, 999)
+        if not scan_ids:
             return []
 
+        pipe = self.q.pipeline()
+        for sid in scan_ids:
+            pipe.get(self.key(sid if isinstance(sid, str) else sid.decode(), "doc"))
+
         docs = []
-        for key in keys:
-            doc = self.q.get(key)
+        dead_ids = []
+
+        for sid, doc in zip(scan_ids, pipe.execute()):
+            sid_str = sid if isinstance(sid, str) else sid.decode()
             if doc:
                 try:
                     parsed = _decode(doc)
@@ -157,9 +165,12 @@ class ScanService:
                         docs.append(parsed)
                 except Exception:
                     pass
+            else:
+                dead_ids.append(sid_str)
 
-        # Sort newest first
-        docs.sort(key=lambda d: d.get("created_at", 0), reverse=True)
+        if dead_ids:
+            self.q.zrem("scans:recent", *dead_ids)
+
         return docs
 
     def delete(self, scan_id):
@@ -182,6 +193,7 @@ class ScanService:
                 )
         if keys:
             self.q.delete(*keys)
+        self.q.zrem("scans:recent", scan_id)
         return bool(doc)
 
     def store_meta(self, scan_id, file_meta, modules):

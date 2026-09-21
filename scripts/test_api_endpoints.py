@@ -6506,6 +6506,36 @@ def test_scan_mode():
         str(doc.get("already_present")),
     )
 
+    # A scan is not allowed a second scoring path: its file score must be the
+    # number build_bin_sim persists for the same pair. This is the regression
+    # guard for the scan/bin_sim divergence -- a scan that drops
+    # `similarity.unweighted_match`, skips the discovery pass, or is analysed
+    # with a different module set than the upload path scores visibly below the
+    # stored doc.
+    other = next((f for f in files if f["file_md5"] != file_md5), None)
+    if other is None:
+        check("scan scored a second file to compare with bin_sim", False, "self only")
+    else:
+        stored = requests.get(
+            f"{BASE_URL}/api/bin_sim/search",
+            params={"collection": COLLECTION, "md5": file_md5, "limit": 100},
+            timeout=30,
+        ).json()
+        pair = next(
+            (
+                row
+                for row in (stored.get("results") or [])
+                if other["file_md5"] in (row.get("md5_a"), row.get("md5_b"))
+            ),
+            None,
+        )
+        check(
+            "the scan's file score equals the stored bin_sim pair's",
+            pair is not None
+            and abs(float(pair["score"]) - float(other["score"])) <= 0.01,
+            f"scan {other.get('score')} vs stored {(pair or {}).get('score')}",
+        )
+
     page = test_endpoint(
         "GET",
         f"/api/scan/{scan_id}/diff",

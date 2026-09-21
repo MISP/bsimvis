@@ -417,13 +417,14 @@ const routes = {
         api: '/api/bin_cluster/list',
         headers: [
             { label: 'UUID', sort: 'cluster_uuid', width: '10%' },
-            { label: 'Name', sort: 'cluster_name', width: '20%' },
+            { label: 'Name', sort: 'cluster_name', width: '16%' },
             { label: 'Binaries', sort: 'count', width: '12%' },
+            { label: 'Avg Funcs', sort: 'functions', width: '8%' },
             { label: 'Stability', sort: 'stability', width: '8%' },
             { label: 'Cohesion', sort: 'cohesion', width: '8%' },
             { label: 'Created', width: '11%' },
-            { label: 'Tags', width: '16%' },
-            { label: 'Sample Binaries', width: '15%' }
+            { label: 'Tags', width: '14%' },
+            { label: 'Sample Binaries', width: '13%' }
         ],
         renderer: renderBinClusters
     },
@@ -1982,6 +1983,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-uuid" placeholder="UUID..." value="${escapeAttr(p.get('cluster_uuid') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-id" placeholder="ID..." value="${escapeAttr(p.get('cluster_id') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${escapeAttr(p.get('cluster_name') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><select id="bin-cluster-name-type" style="background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.6rem; border-radius:4px; padding:2px; width:100%; box-sizing:border-box;" onchange="changeBinClusterNameType(this.value)"><option value="file" ${nameType === 'file' ? 'selected' : ''}>Most Common File Name</option><option value="yara" ${nameType === 'yara' ? 'selected' : ''}>Most Common Yara</option></select></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-count" value="${escapeAttr(p.get('min_count') || '0')}" min="0" placeholder="Min" title="Min Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-count" value="${escapeAttr(p.get('max_count') || '')}" min="0" placeholder="Max" title="Max Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
+                    <th></th>
                     <th><input type="number" id="flt-bin-cluster-min-stability" value="${escapeAttr(p.get('min_stability') || '0')}" step="0.1" min="0" title="Min Stability" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-cohesion" value="${escapeAttr(p.get('min_cohesion') || '0')}" step="0.1" min="0" max="1" placeholder="Min" title="Min Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-cohesion" value="${escapeAttr(p.get('max_cohesion') || '')}" step="0.1" min="0" max="1" placeholder="Max" title="Max Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
                     <th></th>
@@ -3759,6 +3761,9 @@ function updateNavVisibility(collection) {
 function renderClusters(items) {
     const { collection } = getRoutingState();
     return items.map(c => {
+        // Clusters built before function_count_stats was stored have none: show a dash.
+        const fnStats = c.function_count_stats || {};
+
         const showDots = (c.sample_members && c.sample_members.length > 0) && (c.count > 3 || c.sample_members.length > 3);
         const remaining = showDots ? Math.max(c.count - 3, c.sample_members.length - 3) : 0;
 
@@ -3990,6 +3995,9 @@ function renderBinClusters(items) {
                         <i class="fa-solid fa-file-code"></i>
                     </a>
                 </div>
+            </td>
+            <td class="mono" style="font-size:0.7rem;"${fnStats.avg !== undefined ? ` title="min ${fnStats.min} / max ${fnStats.max} over ${fnStats.files} binaries"` : ''}>
+                ${fnStats.avg !== undefined ? fnStats.avg.toLocaleString() : '<span class="dim">&mdash;</span>'}
             </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">

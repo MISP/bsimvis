@@ -722,6 +722,34 @@ def test_cluster_response_contract():
                 f"keys={sorted(rows[0])}",
             )
 
+    # The Avg Funcs column sorts through sort_by=functions. An unknown sort key
+    # falls back to cluster_id order, so the column would look sortable and do
+    # nothing.
+    body = test_endpoint(
+        "GET",
+        "/api/bin_cluster/list",
+        params={
+            "collection": COLLECTION,
+            "limit": 20,
+            "sort_by": "functions",
+            "sort_order": "desc",
+        },
+    )
+    rows = body.get("results") if isinstance(body, dict) else None
+    check(
+        "/api/bin_cluster/list accepts sort_by=functions",
+        isinstance(rows, list),
+        f"keys={sorted(body) if isinstance(body, dict) else body}",
+    )
+    avgs = [
+        (r.get("function_count_stats") or {}).get("avg") or 0 for r in (rows or [])
+    ]
+    check(
+        "/api/bin_cluster/list sort_by=functions orders by average function count",
+        avgs == sorted(avgs, reverse=True),
+        f"avgs={avgs}",
+    )
+
 
 def test_cluster_expansion_and_bin_sim_cluster_filter():
     """The cluster detail view and the bin-sim cluster filter, at the API level.

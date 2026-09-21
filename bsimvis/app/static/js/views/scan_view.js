@@ -377,6 +377,9 @@ window.ScanView = {
                 ];
                 const cards = dists.map(([title, icon, dist]) => window.renderDist(title, icon, dist)).join('');
                 const ax = axisMeta[axis] || { label: axis, icon: 'fa-solid fa-layer-group', color: 'var(--text)' };
+                
+                const maxSim = Math.max(...(c.via || []).map(v => Number(v.score || 0)));
+                const coh = Number(c.cohesion_score || 0);
 
                 return `
                 <tr style="border-bottom:1px solid var(--border);">
@@ -386,6 +389,12 @@ window.ScanView = {
                     <td style="padding:12px; vertical-align:top;">
                         <a href="${escapeAttr(url)}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); text-decoration:none; font-weight:600; display:inline-block; word-break:break-word; max-width:250px;">${escapeHtml(c.cluster_name || c.cluster_id || c.cluster_uuid)}</a>
                         <div style="font-size:0.72rem; color:var(--dim); margin-top:4px;">${Number(c.member_count || 0)} members · via ${Number((c.via || []).length)}</div>
+                    </td>
+                    <td style="padding:12px; vertical-align:top; text-align:right;">
+                        ${scanScoreCell(maxSim)}
+                    </td>
+                    <td style="padding:12px; vertical-align:top; text-align:right;">
+                        <span style="color:var(--success); font-weight:bold;">${(coh * 100).toFixed(1)}%</span>
                     </td>
                     <td style="padding:12px; vertical-align:top;">
                         ${cards ? `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">${cards}</div>` : '<span class="dim">No metadata distributions</span>'}
@@ -402,7 +411,9 @@ window.ScanView = {
                         <thead>
                             <tr style="border-bottom:1px solid var(--border); background:var(--hover); color:var(--dim);">
                                 <th style="padding:8px 12px; width:100px;">Axis</th>
-                                <th style="padding:8px 12px; width:200px;">Cluster</th>
+                                <th style="padding:8px 12px; width:220px;">Cluster</th>
+                                <th style="padding:8px 12px; width:80px; text-align:right;" title="Maximum similarity among matched cluster members">Sim</th>
+                                <th style="padding:8px 12px; width:80px; text-align:right;" title="Cluster cohesion score">Coh</th>
                                 <th style="padding:8px 12px;">Metadata</th>
                             </tr>
                         </thead>

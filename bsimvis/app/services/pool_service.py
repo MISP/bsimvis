@@ -79,6 +79,67 @@ class PoolService:
         r.hset(pool_meta_key, "name", name)
         return True, "Pool name updated successfully"
 
+    def update_pool_config(self, pool_id, config):
+        """Update stored pool parameters without touching generated data."""
+        if not self.r.exists(f"global:pool:{pool_id}:meta"):
+            return False, "Pool not found"
+        current = self.get_pool(pool_id) or {}
+        fields = {}
+        if "only_cross_collection" in config:
+            fields["only_cross_collection"] = (
+                "1" if config["only_cross_collection"] else "0"
+            )
+        for name in (
+            "func_sim_params",
+            "func_cluster_params",
+            "file_sim_params",
+            "file_cluster_params",
+        ):
+            if name in config:
+                merged = dict(current.get(name) or {})
+                merged.update(config[name] or {})
+                fields[name] = json.dumps(merged)
+        if fields:
+            self.r.hset(f"global:pool:{pool_id}:meta", mapping=fields)
+        return True, "Pool parameters updated successfully"
+
+    def add_collection(self, pool_id, collection):
+        if not self.r.exists(f"global:pool:{pool_id}:meta"):
+            return False, "Pool not found"
+        if not self.r.sismember("global:collections", collection):
+            return False, "Collection not found"
+        pipe = self.r.pipeline()
+        pipe.sadd(f"global:pool:{pool_id}:collections_list", collection)
+        pipe.sadd(f"{collection}:pools", pool_id)
+        pipe.hset(
+            f"global:pool:{pool_id}:meta",
+            mapping={"sync_status": "outdated", "last_built_at": 0},
+        )
+        pipe.execute()
+        return True, "Collection added to pool"
+
+    def clear_pool_targets(self, pool_id, targets):
+        """Clear generated pool keys for selected maintenance targets."""
+        suffixes = {
+            "function_similarity": ":sim:",
+            "function_cluster": ":cluster:",
+            "binary_similarity": ":bin_sim:",
+            "binary_cluster": ":bin_cluster:",
+        }
+        pipe = self.r.pipeline()
+        for target in targets:
+            cursor = 0
+            while True:
+                cursor, keys = self.r.scan(
+                    cursor, match=f"global:pool:{pool_id}{suffixes[target]}*"
+                )
+                if keys:
+                    pipe.delete(*keys)
+                if cursor == 0:
+                    break
+        pipe.hset(f"global:pool:{pool_id}:meta", "sync_status", "outdated")
+        pipe.execute()
+
     def get_pool(self, pool_id):
         r = self.r
         meta = r.hgetall(f"global:pool:{pool_id}:meta")

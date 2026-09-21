@@ -156,12 +156,64 @@ def delete_pool(pool_id):
 def edit_pool(pool_id):
     data = request.json
     name = data.get("name") if data else None
-    if not name:
-        return {"error": "Missing name parameter"}, 400
-    success, message = pool_service.edit_pool_name(pool_id, name)
-    if not success:
-        return {"error": message}, 404
-    return {"message": message}
+    if not data or (not name and "config" not in data):
+        return {"error": "name or config is required"}, 400
+    if name:
+        success, message = pool_service.edit_pool_name(pool_id, name)
+        if not success:
+            return {"error": message}, 404
+    if "config" in data:
+        success, message = pool_service.update_pool_config(
+            pool_id, data["config"] or {}
+        )
+        if not success:
+            return {"error": message}, 404
+    return {"message": "Pool updated successfully"}
+
+
+def add_pool_collection(pool_id):
+    collection = (request.json or {}).get("collection")
+    if not collection:
+        return {"error": "collection is required"}, 400
+    success, message = pool_service.add_collection(pool_id, collection)
+    return ({"message": message}, 200) if success else ({"error": message}, 404)
+
+
+def pool_maintenance(pool_id):
+    data = request.json or {}
+    targets = set(data.get("targets") or [])
+    allowed = {
+        "function_similarity",
+        "function_cluster",
+        "binary_similarity",
+        "binary_cluster",
+    }
+    if not targets or not targets <= allowed:
+        return {"error": "targets must contain supported maintenance targets"}, 400
+    if not pool_service.get_pool(pool_id):
+        return {"error": "Pool not found"}, 404
+    operation = data.get("operation")
+    if operation not in {"clear", "build", "rebuild"}:
+        return {"error": "operation must be clear, build, or rebuild"}, 400
+    if operation in {"clear", "rebuild"}:
+        pool_service.clear_pool_targets(pool_id, targets)
+    if operation == "clear":
+        return {"message": "Pool maintenance clear completed"}
+    tasks = []
+    if "function_similarity" in targets:
+        tasks += [
+            (JobType.INIT_POOL_BUILD, {"pool_id": pool_id}),
+            (JobType.BUILD_POOL_SIM, {"pool_id": pool_id}),
+            (JobType.FINALIZE_POOL_BUILD, {"pool_id": pool_id}),
+        ]
+    if "function_cluster" in targets:
+        tasks.append((JobType.CLUSTER_POOL, {"pool_id": pool_id}))
+    if "binary_similarity" in targets:
+        tasks.append((JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}))
+    if "binary_cluster" in targets:
+        tasks.append((JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}))
+    job_id = job_service.create_pipeline(tasks)
+    return {"message": "Pool maintenance enqueued", "job_id": job_id}
 
 
 def build_pool(pool_id):

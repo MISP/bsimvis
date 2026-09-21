@@ -137,7 +137,14 @@ window.PoolDetailView = {
             if (typeof stats.total_functions === 'number') totalPoolFunctions += stats.total_functions;
         });
 
+        const collectionOptions = Object.keys(collMap).filter(c => !(pool.collections || []).includes(c)).map(c => `<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('');
         const collectionsHtml = `
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+            <select id="pool-add-collection" style="flex:1; background:var(--card-bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:7px;">
+                <option value="">Add collection…</option>${collectionOptions}
+            </select>
+            <button onclick="window.poolDetailAddCollection(${escapeAttr(jsString(poolId))}, this)" class="btn-action" style="padding:7px 12px;"><i class="fa-solid fa-plus"></i> Add</button>
+        </div>
         <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--card-bg);">
             <table style="width:100%; border-collapse:collapse; text-align:left; font-size:0.85rem;">
                 <thead>
@@ -199,6 +206,7 @@ window.PoolDetailView = {
                     </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <button onclick="window.openPoolMaintenanceWindow(${escapeAttr(jsString(poolId))})" style="background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); color:#f59e0b; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-screwdriver-wrench"></i> Maintenance</button>
                     <button onclick="Nav.openPath('/pools/${encodeURIComponent(poolId)}/jobs')" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-server"></i> View Jobs</button>
                     ${buildBtnHtml}
                     <button onclick="window.poolDetailCluster(${escapeAttr(jsString(poolId))}, this)" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-circle-nodes"></i> Cluster</button>
@@ -321,6 +329,21 @@ window.PoolDetailView = {
                         ${this._configRow('Method', fic.selection_method)}
                     </div>
                 </div>
+            </div>
+
+            <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:18px;">
+                <div style="font-size:0.72rem; font-weight:700; text-transform:uppercase; color:var(--dim); margin-bottom:12px;"><i class="fa-solid fa-sliders"></i> Pool Parameters</div>
+                <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px;">
+                    <label style="font-size:.7rem; color:var(--dim);">Function min score<input id="pool-edit-func-min-score" type="number" step=".01" value="${escapeAttr(String(fs.min_score ?? ''))}" style="width:100%; box-sizing:border-box;"></label>
+                    <label style="font-size:.7rem; color:var(--dim);">Function min features<input id="pool-edit-func-min-features" type="number" value="${escapeAttr(String(fs.min_features ?? ''))}" style="width:100%; box-sizing:border-box;"></label>
+                    <label style="font-size:.7rem; color:var(--dim);">Function top K<input id="pool-edit-func-top-k" type="number" value="${escapeAttr(String(fs.top_k ?? ''))}" style="width:100%; box-sizing:border-box;"></label>
+                    <label style="font-size:.7rem; color:var(--dim);">Bin min cohesion<input id="pool-edit-bin-min-cohesion" type="number" step=".01" value="${escapeAttr(String(fis.min_cohesion ?? ''))}" style="width:100%; box-sizing:border-box;"></label>
+                    <label style="font-size:.7rem; color:var(--dim);">Discovery min score<input id="pool-edit-discovery-score" type="number" step=".01" value="${escapeAttr(String(fis.discovery_min_score ?? '.5'))}" style="width:100%; box-sizing:border-box;"></label>
+                    <label style="font-size:.7rem; color:var(--dim);">Discovery max DF<input id="pool-edit-discovery-df" type="number" step=".01" value="${escapeAttr(String(fis.discovery_max_df ?? '1'))}" style="width:100%; box-sizing:border-box;"></label>
+                </div>
+                <label style="display:block; margin-top:10px; font-size:.75rem;"><input id="pool-edit-discovery" type="checkbox" ${fis.discovery ? 'checked' : ''}> Enable Bin Sim discovery</label>
+                <button onclick="window.poolDetailSaveConfig(${escapeAttr(jsString(poolId))}, this)" style="margin-top:12px; padding:7px 16px;">Save parameters</button>
+                <span style="font-size:.7rem; color:var(--dim); margin-left:8px;">Rebuild affected pool data after changing.</span>
             </div>
 
             <!-- ACTIVE / RUNNING JOBS -->
@@ -497,4 +520,36 @@ window.poolDetailRename = async function(poolId) {
     } catch (e) {
         alert(`Failed to rename pool: ${e.message}`);
     }
+};
+
+window.poolDetailAddCollection = async function(poolId, btn) {
+    const collection = document.getElementById('pool-add-collection')?.value;
+    if (!collection) return;
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}/collections`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({collection})});
+        const data = await res.json(); if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        Nav.openPath(window.location.pathname);
+    } catch (e) { alert(`Failed to add collection: ${e.message}`); if (btn) btn.disabled = false; }
+};
+
+window.poolDetailSaveConfig = async function(poolId, btn) {
+    const n = id => Number(document.getElementById(id)?.value);
+    const body = {config:{func_sim_params:{min_score:n('pool-edit-func-min-score'), min_features:n('pool-edit-func-min-features'), top_k:n('pool-edit-func-top-k')}, file_sim_params:{enabled:true, min_cohesion:n('pool-edit-bin-min-cohesion'), discovery:document.getElementById('pool-edit-discovery')?.checked, discovery_min_score:n('pool-edit-discovery-score'), discovery_max_df:n('pool-edit-discovery-df')}}};
+    if (btn) btn.disabled = true;
+    try { const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}); const data = await res.json(); if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`); alert(data.message); }
+    catch (e) { alert(`Failed to save pool parameters: ${e.message}`); } finally { if (btn) btn.disabled = false; }
+};
+
+window.openPoolMaintenanceWindow = function(poolId) {
+    document.getElementById('pool-maintenance-window')?.remove();
+    const overlay=document.createElement('div'); overlay.id='pool-maintenance-window'; overlay.className='maintenance-overlay';
+    overlay.innerHTML=`<section class="maintenance-window" role="dialog" aria-modal="true"><header class="maintenance-header"><div><div class="maintenance-kicker">Generated data</div><h2>Pool maintenance</h2><p>${escapeHtml(poolId)}</p></div><button class="maintenance-close" onclick="this.closest('.maintenance-overlay').remove()">&times;</button></header><div class="maintenance-body"><label>Targets<select id="pool-maintenance-target" multiple><option value="function_similarity">Function similarities</option><option value="function_cluster" selected>Function clusters</option><option value="binary_similarity">Binary similarities</option><option value="binary_cluster" selected>Binary clusters</option></select></label></div><footer class="maintenance-footer"><button class="maintenance-btn danger" onclick="window.poolMaintenance(${escapeAttr(jsString(poolId))},'clear')">Clear</button><button class="maintenance-btn" onclick="window.poolMaintenance(${escapeAttr(jsString(poolId))},'build')">Build</button><button class="maintenance-btn primary" onclick="window.poolMaintenance(${escapeAttr(jsString(poolId))},'rebuild')">Rebuild</button></footer></section>`;
+    overlay.onclick=e=>{if(e.target===overlay)overlay.remove()}; document.body.appendChild(overlay);
+};
+window.poolMaintenance = async function(poolId, operation) {
+    const targets=[...document.getElementById('pool-maintenance-target').selectedOptions].map(o=>o.value);
+    if ((operation !== 'build') && !confirm(`${operation} selected pool data?`)) return;
+    const res=await fetch(`/api/pool/${encodeURIComponent(poolId)}/maintenance`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operation,targets})});
+    const data=await res.json(); if(!res.ok) return alert(data.error || 'Maintenance failed'); alert(data.job_id ? `Maintenance enqueued: ${data.job_id}` : data.message);
 };

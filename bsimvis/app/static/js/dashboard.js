@@ -5097,6 +5097,9 @@ async function renderPoolCreationForm() {
 
     const fileTopK = 100; // default for file-level similarity
     const fileMinScore = 0.5; // default for file-level similarity
+    const discovery = Boolean(similarity.discovery);
+    const discoveryMinScore = similarity.discovery_min_score !== undefined ? similarity.discovery_min_score : 0.5;
+    const discoveryMaxDf = similarity.discovery_max_df !== undefined ? similarity.discovery_max_df : 1.0;
     const fileClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
     const fileClusterMinSamples = clustering.min_samples !== undefined ? clustering.min_samples : 1;
     const fileClusterEpsilon = clustering.epsilon !== undefined ? clustering.epsilon : 0.001;
@@ -5245,6 +5248,10 @@ async function renderPoolCreationForm() {
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
                                                     <input type="number" id="pool-file-minscore" step="0.05" value="${escapeAttr(fileMinScore)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
+                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Discovery min score</label><input type="number" id="pool-discovery-score" step="0.05" value="${escapeAttr(discoveryMinScore)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Discovery max DF</label><input type="number" id="pool-discovery-df" step="0.05" value="${escapeAttr(discoveryMaxDf)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                                <label style="display:flex; align-items:center; gap:6px; font-size:0.7rem; color:var(--dim);"><input type="checkbox" id="pool-discovery-enabled" ${discovery ? 'checked' : ''}> Enable discovery</label>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -5356,6 +5363,9 @@ async function submitCreatePool(btn) {
     const enableFiles = document.getElementById('pool-enable-files')?.checked ?? false;
     const fileTopK = parseInt(document.getElementById('pool-file-topk')?.value || '100');
     const fileMinScore = parseFloat(document.getElementById('pool-file-minscore')?.value || '0.5');
+    const discoveryEnabled = document.getElementById('pool-discovery-enabled')?.checked ?? false;
+    const discoveryMinScore = parseFloat(document.getElementById('pool-discovery-score')?.value || '0.5');
+    const discoveryMaxDf = parseFloat(document.getElementById('pool-discovery-df')?.value || '1');
     const fileClusterMinSize = parseInt(document.getElementById('pool-file-cluster-min-size')?.value || '2');
     const fileClusterMinSamples = parseInt(document.getElementById('pool-file-cluster-min-samples')?.value || '1');
     const fileClusterEpsilon = parseFloat(document.getElementById('pool-file-cluster-epsilon')?.value || '0.1');
@@ -5405,7 +5415,10 @@ async function submitCreatePool(btn) {
                     file_sim_params: {
                         enabled: enableFiles,
                         top_k: fileTopK,
-                        min_score: fileMinScore
+                        min_score: fileMinScore,
+                        discovery: discoveryEnabled,
+                        discovery_min_score: discoveryMinScore,
+                        discovery_max_df: discoveryMaxDf
                     },
                     file_cluster_params: { 
                         enabled: enableFiles,

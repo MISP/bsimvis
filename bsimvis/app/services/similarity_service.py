@@ -2427,12 +2427,15 @@ class SimilarityService:
         from collections import defaultdict
         from bsimvis.app.services.bin_sim_tags import (
             score_pair,
+            greedy_match,
             merge_tag_fields,
             load_tag_meta,
             read_tags_rev,
         )
         from bsimvis.app.services.bin_sim_service import (
             _zadd_score_split,
+            discover_edges,
+            load_vectors,
             stored_unweighted_match,
         )
 
@@ -2464,6 +2467,9 @@ class SimilarityService:
         if min_cohesion is None:
             min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
         min_cohesion = float(min_cohesion)
+        discovery = bool(file_sim_params.get("discovery", False))
+        discovery_min_score = float(file_sim_params.get("discovery_min_score", 0.5))
+        discovery_max_df = float(file_sim_params.get("discovery_max_df", 1.0))
 
         r = self.r
         start_time = time.time()
@@ -2560,6 +2566,12 @@ class SimilarityService:
             binary_cluster_maps[(coll, md5)] = b_cluster_map
             for cid in b_cluster_map.keys():
                 cluster_binary_count_job[cid] += 1
+
+        vectors = (
+            load_vectors(r, set().union(*binary_fids.values()))
+            if discovery and binary_fids
+            else {}
+        )
 
         def get_col_rarity(cid):
             global_count = cluster_meta.get(cid, {}).get(
@@ -2757,6 +2769,19 @@ class SimilarityService:
             # holds (generator only emits partners above the source).
             all_funcs_a_total = binary_fids[b1]
             all_funcs_b_total = binary_fids[b2]
+
+            if discovery:
+                _, matched_a, matched_b = greedy_match(edges)
+                edges.extend(
+                    discover_edges(
+                        vectors,
+                        all_funcs_a_total - matched_a,
+                        all_funcs_b_total - matched_b,
+                        algo,
+                        discovery_min_score,
+                        max_df=discovery_max_df,
+                    )
+                )
 
             common = score_pair(
                 edges,

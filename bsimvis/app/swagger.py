@@ -3086,6 +3086,9 @@ pool_file_sim_params_model = api.model(
     {
         "enabled": fields.Boolean(default=True),
         "min_cohesion": fields.Float(default=0.5),
+        "discovery": fields.Boolean(default=False),
+        "discovery_min_score": fields.Float(default=0.5),
+        "discovery_max_df": fields.Float(default=1.0),
     },
 )
 
@@ -3183,14 +3186,37 @@ class PoolDetail(Resource):
 
     @ns_pool.expect(
         api.model(
-            "PoolUpdate", {"name": fields.String(required=True, example="New Name")}
+            "PoolUpdate",
+            {
+                "name": fields.String(required=False, example="New Name"),
+                "config": fields.Nested(pool_config_model),
+            },
         )
     )
     def put(self, pool_id):
-        """Updates the pool's name."""
+        """Updates pool name and/or parameters."""
         from bsimvis.app.routes.pools import edit_pool
 
         return edit_pool(pool_id)
+
+
+@ns_pool.route("/<string:pool_id>/collections")
+class PoolCollectionAdd(Resource):
+    @ns_pool.expect(
+        api.model("PoolCollectionAdd", {"collection": fields.String(required=True)})
+    )
+    def post(self, pool_id):
+        from bsimvis.app.routes.pools import add_pool_collection
+
+        return add_pool_collection(pool_id)
+
+
+@ns_pool.route("/<string:pool_id>/maintenance")
+class PoolMaintenance(Resource):
+    def post(self, pool_id):
+        from bsimvis.app.routes.pools import pool_maintenance
+
+        return pool_maintenance(pool_id)
 
 
 @ns_pool.route("/<string:pool_id>/build")

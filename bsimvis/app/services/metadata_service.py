@@ -25,6 +25,7 @@ from bsimvis.app.services.cluster_utils import (
     bin_cluster_ns,
     build_freq,
     collect_member_values,
+    function_count_stats,
 )
 
 # `upload --metadata` matches CSV rows by md5, but unpacking only happens on the
@@ -437,6 +438,12 @@ class MetadataService:
                 new_cm["avtype_distribution"] = avtype_freq
                 new_cm["filetype_distribution"] = filetype_freq
                 new_cm["ccip_distribution"] = ccip_freq
+                # An empty result means this collection's file metas carry no
+                # function_count yet, not that the cluster has no functions --
+                # keep whatever the build wrote rather than blanking it.
+                fc_stats = function_count_stats(decoded_metas)
+                if fc_stats:
+                    new_cm["function_count_stats"] = fc_stats
 
                 is_custom = old_cm.get("is_custom_name", False)
                 old_name = old_cm.get("cluster_name")

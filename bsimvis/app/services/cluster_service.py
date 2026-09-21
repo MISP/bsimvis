@@ -11,6 +11,7 @@ from bsimvis.app.services.cluster_utils import (
     build_freq,
     collect_member_values,
     default_bin_cluster_name,
+    function_count_stats,
 )
 from bsimvis.app.services import mem_util, sim_edges
 
@@ -3099,6 +3100,7 @@ class ClusterService:
                 "ccip_distribution": ccip_freq,
                 "filename_distribution": filename_freq,
                 "md5_distribution": md5_freq,
+                "function_count_stats": function_count_stats(member_metas),
             }
 
             for k, v in meta.items():

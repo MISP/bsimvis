@@ -7,6 +7,7 @@ from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.index_service import get_pool_id
 from bsimvis.app.services.query_syntax import parse_filter_value
+from bsimvis.app.services.cluster_utils import function_count_stats
 
 job_service = JobService()
 
@@ -198,6 +199,10 @@ def list_bin_clusters():
     cluster_id_q = request.args.get("cluster_id", "").lower()
     cluster_uuid_q = request.args.get("cluster_uuid", "").lower()
     cluster_name_q = request.args.get("cluster_name", "").lower()
+    # Direct children of one cluster: what the detail view expands a tree node
+    # with, instead of pulling every cluster in the collection to find them.
+    parent_q = request.args.get("parent", "").strip()
+    with_stats = request.args.get("with_stats", "false").lower() == "true"
 
     limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
@@ -365,6 +370,8 @@ def list_bin_clusters():
 
             if cluster_id_q and cluster_id_q not in cid.lower():
                 continue
+            if parent_q and child_to_parent.get(cid) != parent_q:
+                continue
             if cluster_uuid_q and cluster_uuid_q not in cuuid.lower():
                 continue
             if cluster_name_q:
@@ -530,6 +537,10 @@ def list_bin_clusters():
                 "avtype_distribution": m.get("avtype_distribution", []),
                 "filetype_distribution": m.get("filetype_distribution", []),
                 "ccip_distribution": m.get("ccip_distribution", []),
+                "filename_distribution": m.get("filename_distribution", []),
+                "md5_distribution": m.get("md5_distribution", []),
+                "function_count_stats": m.get("function_count_stats", {}),
+                "has_children": bool(parent_to_children.get(str(m.get("cluster_id")))),
             }
             results.append(cluster_result)
 
@@ -617,6 +628,42 @@ def list_bin_clusters():
                 }
                 for mid in mids
             ]
+
+    # Function-count spread for clusters built before it was stored. Only the
+    # cluster detail view asks (with_stats=true, one cluster), so the members
+    # walk this costs stays off the listing and tooltip paths.
+    if with_stats:
+        for c in page:
+            if c.get("function_count_stats"):
+                continue
+            # show_parents pulls a cluster's whole ancestor chain into the page,
+            # and a root's members set is the collection. Only the cluster that
+            # was asked for gets walked.
+            if cluster_uuid_q and not str(c.get("cluster_uuid", "")).lower().startswith(
+                cluster_uuid_q
+            ):
+                continue
+            if is_pool:
+                members_key = (
+                    f"global:pool:{pool_id}:bin_cluster:{c['cluster_uuid']}:members"
+                )
+            else:
+                members_key = (
+                    f"{collection}:bin_cluster:{algo}:{c['cluster_id']}:members"
+                )
+            member_ids = [
+                x.decode() if isinstance(x, bytes) else x
+                for x in (r.smembers(members_key) or [])
+            ]
+            if not member_ids:
+                continue
+            s_pipe = r.pipeline(transaction=False)
+            for mid in member_ids:
+                parts = mid.split(":")
+                s_pipe.scard(f"{parts[0]}:idx:file:functions:{parts[-1]}")
+            c["function_count_stats"] = function_count_stats(
+                [{"function_count": n} for n in s_pipe.execute()]
+            )
 
     logging.info(
         f"BIN_CLUSTERS | total={total} | TOTAL: {time.perf_counter()-t_start:.3f}s"

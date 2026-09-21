@@ -769,6 +769,99 @@ def test_cluster_expansion_and_bin_sim_cluster_filter():
                 f"direct_members={type(rows[0].get('direct_members')).__name__}",
             )
 
+    # --- ?parent=, the detail view's one-level tree fetch --------------------
+
+    # The detail view stopped asking for every cluster in the collection to
+    # draw its sidebar; it walks the tree one level at a time through this
+    # filter. An unrecognised param would be ignored and hand the view the
+    # whole listing back, which is the regression this guards.
+    for path in ("/api/cluster/list", "/api/bin_cluster/list"):
+        all_rows = test_endpoint(
+            "GET", path, params={"collection": COLLECTION, "limit": 50}
+        )
+        rows = (all_rows.get("results") or []) if isinstance(all_rows, dict) else []
+        check(
+            f"{path} rows say whether they have children",
+            not rows or "has_children" in rows[0],
+            f"keys={sorted(rows[0]) if rows else 'no rows'}",
+        )
+        orphan = test_endpoint(
+            "GET",
+            path,
+            params={"collection": COLLECTION, "limit": 50, "parent": "no-such-parent"},
+        )
+        orphan_rows = (orphan.get("results") or []) if isinstance(orphan, dict) else []
+        check(
+            f"{path} ?parent= of an unknown cluster returns nothing",
+            isinstance(orphan_rows, list) and not orphan_rows,
+            f"rows={len(orphan_rows)} (unfiltered={len(rows)})",
+        )
+        parented = next((r for r in rows if r.get("parent")), None)
+        if parented:
+            kids = test_endpoint(
+                "GET",
+                path,
+                params={
+                    "collection": COLLECTION,
+                    "limit": 50,
+                    "parent": str(parented["parent"]),
+                },
+            )
+            kid_rows = (kids.get("results") or []) if isinstance(kids, dict) else []
+            check(
+                f"{path} ?parent= returns that cluster's direct children only",
+                kid_rows
+                and all(
+                    str(k.get("parent")) == str(parented["parent"]) for k in kid_rows
+                ),
+                f"parents={sorted({str(k.get('parent')) for k in kid_rows})}",
+            )
+
+    # --- the Metadata tab's inputs ------------------------------------------
+
+    # The cluster detail view's Metadata tab draws one pie per distribution and
+    # a min/average/max of functions per member. Every one of them is read off
+    # this listing, so a renamed key blanks the tab rather than erroring.
+    meta_rows = test_endpoint(
+        "GET",
+        "/api/bin_cluster/list",
+        params={"collection": COLLECTION, "limit": 5, "with_stats": "true"},
+    )
+    meta_rows = (meta_rows.get("results") or []) if isinstance(meta_rows, dict) else []
+    if meta_rows:
+        row = meta_rows[0]
+        missing = [
+            k
+            for k in (
+                "yara_distribution",
+                "avtype_distribution",
+                "filetype_distribution",
+                "ccip_distribution",
+                "filename_distribution",
+                "md5_distribution",
+                "function_count_stats",
+            )
+            if k not in row
+        ]
+        check(
+            "bin cluster rows carry every distribution the Metadata tab draws",
+            not missing,
+            f"missing={missing}",
+        )
+        stats = row.get("function_count_stats")
+        check(
+            "with_stats fills in the function-count spread",
+            isinstance(stats, dict)
+            and (not stats or {"min", "avg", "max", "files"} <= set(stats)),
+            f"function_count_stats={stats!r}",
+        )
+        if isinstance(stats, dict) and stats:
+            check(
+                "the function-count spread is ordered min <= avg <= max",
+                stats["min"] <= stats["avg"] <= stats["max"],
+                f"function_count_stats={stats!r}",
+            )
+
     # --- the file-similarity threshold the UI inherits -----------------------
 
     cfg = test_endpoint("GET", "/api/index/config")

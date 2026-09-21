@@ -1,5 +1,6 @@
-// Self-check for the file detail view's two metadata sinks (views/file_view.js):
-// the metadata table and the cluster distribution legend. Both go through
+// Self-check for the two metadata sinks the file detail view feeds: its metadata
+// table (views/file_view.js) and the shared cluster distribution legend
+// (metadata.js, also used by the cluster detail view's Metadata tab). Both go through
 // innerHTML with values that came off an upload -- `file_name` is a query
 // parameter -- so both must escape.
 // Run: node scripts/test_file_view_meta.js
@@ -13,6 +14,8 @@ const read = (...p) => fs.readFileSync(
 );
 const src = read('views', 'file_view.js');
 const utils = read('utils.js');
+// renderDist moved to metadata.js when the cluster detail view started sharing it.
+const meta = read('metadata.js');
 
 // Lifts one declaration out of a source file, from its opening brace to the
 // matching close. This used to slice up to whatever came next in the file,
@@ -78,7 +81,7 @@ const d3 = {
 };
 
 const renderDist = new Function('d3', 'escapeHtml', 'escapeAttr',
-    `${block(src, 'function renderDist(title, icon, dist) {')}
+    `${block(meta, 'function renderDist(title, icon, dist) {')}
     return renderDist;`
 )(d3, esc.escapeHtml, esc.escapeAttr);
 

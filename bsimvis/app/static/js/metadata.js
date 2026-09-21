@@ -514,3 +514,73 @@ function renderFileMetadata(container, m, fullId, options = {}) {
 window.seeSimilar = seeSimilar;
 window.navigateToFeatures = navigateToFeatures;
 
+// One metadata distribution -- a cluster summary's top values with their share
+// of its members -- as a pie plus a legend. Shared by the file view and the
+// cluster detail view's Metadata tab, which show the same six distributions off
+// the same cluster meta; two copies of this drifted apart once already.
+function renderDist(title, icon, dist) {
+    if (!dist || dist.length === 0) return '';
+    
+    const colors = ['#66d9ef', '#a6e22e', '#f92672', '#fd971f', '#ae81ff', '#e6db74', '#75715e'];
+    
+    let legendHtml = '';
+    let totalPercent = 0;
+    dist.forEach(d => totalPercent += (d.percent || 0));
+    
+    let pieData = dist.map((d, i) => {
+        const color = colors[i % colors.length];
+        legendHtml += `
+            <div style="display: flex; align-items: center; gap: 6px; font-size: 0.75rem; margin-bottom: 4px;">
+                <div style="width: 10px; height: 10px; background-color: ${color}; border-radius: 2px;"></div>
+                <span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px;" title="${escapeAttr(d.value)}">${escapeHtml(d.value)}</span>
+                <span style="color: var(--dim); margin-left: auto;">${d.percent || 0}%</span>
+            </div>
+        `;
+        return {...d, color: color, value: d.percent || 0};
+    });
+    
+    if (totalPercent < 100) {
+        pieData.push({value: 100 - totalPercent, color: 'var(--border)', isDummy: true});
+    }
+    
+    const width = 50;
+    const height = 50;
+    const radius = Math.min(width, height) / 2;
+    
+    const pie = d3.pie().value(d => d.value).sort(null);
+    const arc = d3.arc().innerRadius(0).outerRadius(radius);
+    
+    const svg = d3.create("svg")
+        .attr("width", width)
+        .attr("height", height)
+        .attr("viewBox", `0 0 ${width} ${height}`)
+        .style("border-radius", "50%");
+        
+    svg.append("g")
+        .attr("transform", `translate(${width/2},${height/2})`)
+        .selectAll("path")
+        .data(pie(pieData))
+        .join("path")
+        .attr("fill", d => d.data.color)
+        .attr("d", arc)
+        .append("title")
+        .text(d => d.data.isDummy ? "" : `${d.data.value}: ${d.value}%`);
+        
+    const svgHtml = svg.node().outerHTML;
+    
+    return `
+        <div style="margin-top: 15px; padding: 10px; background: var(--border); border: 1px solid var(--border); border-radius: 6px;">
+            <div style="font-size: 0.75rem; color: var(--dim); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
+                <i class="${icon}"></i> ${title}
+            </div>
+            <div style="display: flex; gap: 15px; align-items: center;">
+                <div style="flex-shrink: 0;">${svgHtml}</div>
+                <div style="display: flex; flex-direction: column; flex: 1; min-width: 0;">
+                      ${legendHtml}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+window.renderDist = renderDist;

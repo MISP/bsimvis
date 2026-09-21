@@ -297,6 +297,9 @@ def list_clusters():
     cluster_id_q = request.args.get("cluster_id", "").lower()
     cluster_uuid_q = request.args.get("cluster_uuid", "").lower()
     cluster_name_q = request.args.get("cluster_name", "").lower()
+    # Direct children of one cluster: what the detail view expands a tree node
+    # with, instead of pulling every cluster in the collection to find them.
+    parent_q = request.args.get("parent", "").strip()
 
     limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
@@ -448,6 +451,8 @@ def list_clusters():
                 continue
 
             if cluster_id_q and cluster_id_q not in cid.lower():
+                continue
+            if parent_q and child_to_parent.get(cid) != parent_q:
                 continue
             if cluster_uuid_q and cluster_uuid_q not in cuuid.lower():
                 continue
@@ -628,6 +633,7 @@ def list_clusters():
                 "parent": child_to_parent.get(str(m.get("cluster_id"))),
                 "sample_members": sample_members,
                 "direct_members": direct_members,
+                "has_children": bool(parent_to_children.get(str(m.get("cluster_id")))),
             }
             results.append(cluster_result)
 

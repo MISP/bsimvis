@@ -95,6 +95,32 @@ def build_freq(items, member_count):
     )
 
 
+def function_count_stats(metas):
+    """Min / average / max function count over a cluster's member files.
+
+    A cluster's member count says how many binaries it holds, never how big
+    they are: a 50-file cluster of 200-function droppers and one of 40k-function
+    statically linked binaries read the same in the listing. Files whose meta
+    carries no `function_count` are skipped rather than counted as zero, so a
+    partially enriched collection does not report a min of 0 for every cluster.
+    Returns {} when no member reports one.
+    """
+    counts = []
+    for m in metas:
+        value = (m or {}).get("function_count")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        counts.append(int(value))
+    if not counts:
+        return {}
+    return {
+        "min": min(counts),
+        "avg": round(sum(counts) / len(counts), 1),
+        "max": max(counts),
+        "files": len(counts),
+    }
+
+
 def pick_best_shared_cluster(cids_a, cids_b, cluster_meta):
     """Highest-cohesion cluster shared by two functions, or None.
 

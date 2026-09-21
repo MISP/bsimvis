@@ -10,6 +10,7 @@ from bsimvis.app.services.cluster_utils import (
     build_freq,
     collect_member_values,
     default_bin_cluster_name,
+    function_count_stats,
 )
 
 _EMPTY_I = np.empty(0, dtype=np.int32)
@@ -577,6 +578,7 @@ class BinClusterService:
                 "ccip_distribution": ccip_freq,
                 "filename_distribution": filename_freq,
                 "md5_distribution": md5_freq,
+                "function_count_stats": function_count_stats(member_metas),
                 "created_at": int(time.time() * 1000),
             }
 
@@ -1889,6 +1891,7 @@ class BinClusterService:
                 "ccip_distribution": ccip_freq,
                 "filename_distribution": filename_freq,
                 "md5_distribution": md5_freq,
+                "function_count_stats": function_count_stats(member_metas),
                 "created_at": int(time.time() * 1000),
             }
 

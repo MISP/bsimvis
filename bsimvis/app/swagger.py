@@ -2091,6 +2091,7 @@ class ClusterList(Resource):
             "show_members": "Whether to return direct member IDs/names (true/false)",
             "show_parents": "Also return the matched clusters' ancestors, up to the root (true/false)",
             "show_children": "Also return the matched clusters' whole descendant subtree (true/false)",
+            "parent": "Return only the direct children of this cluster ID",
         }
     )
     def get(self):
@@ -2246,6 +2247,8 @@ class BinClusterList(Resource):
             "show_members": "Whether to return direct member IDs/names (true/false)",
             "show_parents": "Also return the matched clusters' ancestors, up to the root (true/false)",
             "show_children": "Also return the matched clusters' whole descendant subtree (true/false)",
+            "parent": "Return only the direct children of this cluster ID",
+            "with_stats": "Compute the member function-count spread when the cluster was built without it (true/false)",
         }
     )
     def get(self):

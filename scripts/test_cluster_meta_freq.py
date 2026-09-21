@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bsimvis.app.services.cluster_utils import (  # noqa: E402
     build_freq,
     collect_member_values,
+    function_count_stats,
 )
 
 # Two members, three yara hits between them: "rule_a" is carried by both files,
@@ -77,10 +78,32 @@ def test_nothing_collected_gives_an_empty_distribution():
     assert build_freq([], 3) == []
 
 
+def test_function_count_spread_over_members():
+    stats = function_count_stats(
+        [{"function_count": 10}, {"function_count": 200}, {"function_count": 90}]
+    )
+    assert stats == {"min": 10, "avg": 100.0, "max": 200, "files": 3}, stats
+
+
+def test_members_without_a_function_count_do_not_become_zeroes():
+    # A file whose meta predates function_count would otherwise drag every
+    # cluster's minimum to 0 and halve its average.
+    stats = function_count_stats([{"function_count": 40}, {"file_name": "x.elf"}, {}])
+    assert stats == {"min": 40, "avg": 40.0, "max": 40, "files": 1}, stats
+
+
+def test_no_member_reports_a_function_count():
+    assert function_count_stats([{"file_name": "x.elf"}]) == {}
+    assert function_count_stats([]) == {}
+
+
 if __name__ == "__main__":
     test_percent_is_a_share_of_members()
     test_flattened_lists_are_collected_once_per_value()
     test_file_names_wins_over_file_name()
     test_only_the_top_five_values_are_kept()
     test_nothing_collected_gives_an_empty_distribution()
+    test_function_count_spread_over_members()
+    test_members_without_a_function_count_do_not_become_zeroes()
+    test_no_member_reports_a_function_count()
     print("OK")

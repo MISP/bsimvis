@@ -383,6 +383,98 @@ def get_cluster_info(
     return meta
 
 
+def scan_file(path, collections=None, pools=None, scan_all=False, limit=5, timeout=900):
+    """Analyse a local file and compare it to existing collections, ingesting
+    nothing. Blocks until the scan worker finishes or `timeout` runs out.
+
+    The report is trimmed for a model to read: the top `limit` scored files per
+    scope plus the cluster verdicts. The full function-level rows stay in the
+    scan cache, reachable at /api/scan/{id}/diff.
+    """
+    import os
+    import time
+
+    from bsimvis.app.routes.scan import start_scan
+    from bsimvis.app.services.scan_service import get_scan_service
+
+    if not os.path.isfile(path):
+        return {"error": f"Not a file: {path}"}
+    with open(path, "rb") as f:
+        raw = f.read()
+
+    query = {"file_name": [os.path.basename(path)]}
+    if collections:
+        query["collection"] = list(collections)
+    if pools:
+        query["pool"] = list(pools)
+    if scan_all:
+        query["all"] = ["true"]
+    if not (collections or pools or scan_all):
+        return {"error": "Give at least one of collections, pools, or scan_all"}
+
+    with _context_app().test_request_context(
+        "/api/scan", method="POST", data=raw, query_string=query
+    ):
+        started = start_scan()
+    if isinstance(started, tuple):
+        return {"error": (started[0] or {}).get("error", "scan rejected")}
+
+    scan_id = started["scan_id"]
+    service = get_scan_service()
+    deadline = time.time() + timeout
+    doc = {}
+    while time.time() < deadline:
+        time.sleep(2)
+        doc = service.get(scan_id) or {}
+        if doc.get("status") in ("completed", "failed"):
+            break
+    if doc.get("status") != "completed":
+        return {
+            "scan_id": scan_id,
+            "status": doc.get("status", "unknown"),
+            "error": "Scan did not finish in time; poll /api/scan/" + scan_id,
+        }
+
+    return {
+        "scan_id": scan_id,
+        "file_md5": doc.get("file_md5"),
+        "file_name": doc.get("file_name"),
+        "function_count": doc.get("function_count", 0),
+        "warnings": doc.get("warnings") or [],
+        "already_present": doc.get("already_present") or [],
+        "scopes": [
+            {
+                "collection": scope["collection"],
+                "files_touched": scope.get("files_touched", 0),
+                "matches": [
+                    {
+                        "file_md5": row["file_md5"],
+                        "file_name": row.get("file_name", ""),
+                        "score": row.get("score"),
+                        "score_code": row.get("score_code"),
+                        "score_library": row.get("score_library"),
+                        "matched_functions": row.get("matched_functions", 0),
+                    }
+                    for row in (scope.get("files") or [])[:limit]
+                ],
+                "would_join_bin_clusters": {
+                    axis: [
+                        {
+                            "cluster_id": c.get("cluster_id"),
+                            "cluster_name": c.get("cluster_name"),
+                            "member_count": c.get("member_count", 0),
+                        }
+                        for c in clusters
+                    ]
+                    for axis, clusters in (scope.get("bin_clusters") or {}).items()
+                    if clusters
+                },
+            }
+            for scope in doc.get("scanned") or []
+        ],
+    }
+
+
 # --- tool schemas (Ollama / OpenAI function-calling format) ----------------
 
 TOOLS = [
@@ -560,6 +652,51 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "scan_file",
+            "description": (
+                "Analyse a binary on disk with Ghidra and compare it against "
+                "existing collections WITHOUT ingesting it. Use to answer "
+                "'does this sample look like anything we already have?' for a "
+                "file that is not in any collection yet. Returns the canonical "
+                "BSimVis file similarity score per matched file and the "
+                "clusters the sample would join. Slow: it waits for a full "
+                "Ghidra analysis."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute path of the binary to scan",
+                    },
+                    "collections": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Collections to compare against",
+                    },
+                    "pools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Pools to compare against (expanded to members)",
+                    },
+                    "scan_all": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Compare against every collection",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Matched files to report per collection",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
 ]
 
 DISPATCH = {
@@ -582,6 +719,13 @@ DISPATCH = {
         a["cluster_id"],
         a.get("algo", "unweighted_cosine"),
         a.get("node_type", "file"),
+    ),
+    "scan_file": lambda a: scan_file(
+        a["path"],
+        collections=a.get("collections"),
+        pools=a.get("pools"),
+        scan_all=a.get("scan_all", False),
+        limit=a.get("limit", 5),
     ),
 }
 
@@ -647,6 +791,16 @@ def describe_api_call(name, args):
             "method": "GET",
             "path": f"/api/file/details/{args.get('file_md5')}",
             "query": {"collection": args.get("collection")},
+        }
+    if name == "scan_file":
+        return {
+            "method": "POST",
+            "path": "/api/scan",
+            "query": {
+                "collection": args.get("collections"),
+                "pool": args.get("pools"),
+                "all": args.get("scan_all", False),
+            },
         }
     if name == "get_cluster_info":
         return {

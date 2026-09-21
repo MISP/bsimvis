@@ -73,6 +73,17 @@ Per-collection `min_features` / `min_score` locks are honoured by default so a s
 number matches that collection's own UI; a caller-supplied param overrides everywhere.
 A signature-mask mismatch is a warning on the report, never a silent zero.
 
+`POST /api/scan/{id}/commit` promotes a scan into a real collection. It copies the
+cached chunks into `{coll}:file:{md5}:chunk_data:{n}` and submits the same
+INDEX_META -> INDEX_FUNCTIONS -> INDEX_FEATURES -> BUILD_SIM pipeline `upload_chunk`
+builds, so **Ghidra never re-runs for the analysis itself**. Keep it that way. The one
+exception is the tag top-up: a lean scan skipped modules whose output needs the live
+program (YARA offset mapping, capa's `getFunctionContaining`), so commit queues a plain
+`GHIDRA_ANALYZE` with `skip_sim` behind it. `topup=false` opts out.
+
+Surfaces: `bsimvis scan --commit`, the `/scans` UI view (`static/js/views/scan_view.js`)
+and the `scan_file` tool in `llm_tools.py`, which the MCP server re-exports for free.
+
 ## Pools
 
 A pool (`pool_service.py`, `routes/pools.py`) is a named union of collections with its

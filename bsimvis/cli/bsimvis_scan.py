@@ -50,6 +50,25 @@ def _print_report(doc):
                 )
 
 
+def _commit(api_url, scan_id, args):
+    """Promote the finished scan into a collection. No Ghidra re-run."""
+    params = {"collection": args.commit, "topup": str(not args.no_topup).lower()}
+    if args.batch_name:
+        params["batch_name"] = args.batch_name
+    resp = requests.post(f"{api_url}/{scan_id}/commit", params=params)
+    body = resp.json()
+    if resp.status_code >= 400 or body.get("error"):
+        print(f"\n[!] Commit rejected: {body.get('error', resp.text)}")
+        return 1
+    print(
+        f"\n[+] Committed to {body['collection']} as batch {body['batch_name']} "
+        f"({body['function_count']} functions, pipeline {body['pipeline_id']})"
+    )
+    if body.get("topup_job"):
+        print(f"[*] Tag top-up queued for {', '.join(body['topup_modules'])}")
+    return 0
+
+
 def run_scan(host, port, args):
     api_url = f"http://{host}:{port}/api/scan"
 
@@ -94,6 +113,8 @@ def run_scan(host, port, args):
         status = doc.get("status")
         if status == "completed":
             _print_report(doc)
+            if args.commit:
+                return _commit(api_url, scan_id, args)
             return 0
         if status == "failed" or doc.get("job_status") == "failed":
             print(f"[!] Scan failed: {doc.get('error', 'unknown error')}")

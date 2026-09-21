@@ -800,6 +800,20 @@ def main():
         default=1800,
         help="Seconds to wait for the scan (default: 1800)",
     )
+    scan_parser.add_argument(
+        "--commit",
+        metavar="COLLECTION",
+        help="Ingest the scanned file into this collection once the scan is done",
+    )
+    scan_parser.add_argument(
+        "--batch-name", dest="batch_name", help="Batch name for a committed scan"
+    )
+    scan_parser.add_argument(
+        "--no-topup",
+        dest="no_topup",
+        action="store_true",
+        help="Do not re-run Ghidra for the tagging modules the scan skipped",
+    )
 
     # Parse and Resolve Host
     args = parser.parse_args()

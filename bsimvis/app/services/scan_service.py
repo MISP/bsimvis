@@ -48,6 +48,7 @@ from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.redis_client import (
     get_queue_redis,
     get_raw_queue_redis,
+    get_raw_redis,
     get_redis,
 )
 from bsimvis.app.services.similarity_service import SimilarityService
@@ -143,7 +144,11 @@ class ScanService:
         """Drop one scan's cache. Every key carries the scan id, so this is a
         bounded DEL list built from the doc, never a scan of the keyspace."""
         doc = self.get(scan_id)
-        keys = [self.key(scan_id, "raw"), self.key(scan_id, "doc")]
+        keys = [
+            self.key(scan_id, "raw"),
+            self.key(scan_id, "doc"),
+            self.key(scan_id, "meta"),
+        ]
         keys += [
             self.key(scan_id, "chunk", str(i))
             for i in range(int((doc or {}).get("chunk_count", 0)))
@@ -176,6 +181,184 @@ class ScanService:
         for i in range(int(doc.get("chunk_count", 0))):
             out.extend(_decode(self.q.get(self.key(scan_id, "chunk", str(i)))) or [])
         return out
+
+    # ----------------------------------------------------------------- commit
+
+    def commit(self, scan_id, collection, batch_name=None, skip_sim=False, topup=True):
+        """Promote a cached scan into a real collection without re-running Ghidra.
+
+        A cached chunk is byte-identical to what `upload_chunk` writes, so this
+        copies the chunks into Kvrocks and hands them to the same
+        INDEX_META -> INDEX_FUNCTIONS -> INDEX_FEATURES -> BUILD_SIM pipeline the
+        upload path builds. The analysis itself is never repeated.
+
+        Ghidra does run once more when the scan ran lean and modules the
+        instance normally enables are missing: a JVM-free tag pass is not
+        possible (YARA offset mapping needs the live program). That top-up is a
+        plain GHIDRA_ANALYZE with `skip_sim`, queued behind the commit on the
+        same lane, so the file is queryable long before it lands.
+
+        A collection that does not exist yet is created by the ingest, exactly
+        as an upload into a new collection creates it.
+        """
+        from bsimvis.app.routes.cluster import build_rebuild_all_tasks
+        from bsimvis.app.services.job_service import JobService, JobType
+
+        doc = self.get(scan_id)
+        if not doc:
+            return {"error": "Scan not found or expired"}, 404
+        if not doc.get("chunk_count"):
+            return {"error": f"Scan {scan_id} has no cached analysis to commit"}, 409
+        md5 = doc.get("file_md5")
+        if self.r.sismember(f"{collection}:all_files", f"{collection}:file:{md5}"):
+            return {"error": f"File {md5} is already in '{collection}'"}, 409
+
+        raw = self.raw(scan_id)
+        if raw is None:
+            return {"error": "The scanned bytes expired from the cache"}, 410
+
+        cached = _decode(self.q.get(self.key(scan_id, "meta")))
+        file_meta = dict(cached.get("file_meta") or {})
+        batch_uuid = str(uuid.uuid4())
+        file_meta.update(
+            {
+                "file_md5": md5,
+                "file_name": doc.get("file_name") or file_meta.get("file_name", ""),
+                "batch_uuid": batch_uuid,
+                "batch_name": batch_name or f"scan {scan_id}",
+                "collection": collection,
+            }
+        )
+
+        get_raw_redis().set(f"{collection}:file:{md5}:raw", raw)
+
+        job_service = JobService()
+        chunk_jobs, num_functions, total_features = [], 0, 0
+        for index in range(int(doc["chunk_count"])):
+            functions = _decode(self.q.get(self.key(scan_id, "chunk", str(index))))
+            if not functions:
+                continue
+            chunk_id = f"{collection}:file:{md5}:chunk_data:{index}"
+            self.r.set(chunk_id, json.dumps(functions))
+            job_id = job_service.create_job(
+                JobType.INDEX_FUNCTIONS,
+                {
+                    "collection": collection,
+                    "chunk_id": chunk_id,
+                    "file_meta": file_meta,
+                    "file_md5": md5,
+                    "batch_uuid": batch_uuid,
+                },
+                enqueue=False,
+            )
+            # Same continuation push upload_chunk uses: batches from different
+            # jobs interleave instead of one commit starving the fleet.
+            job_service.enqueue_job(job_id, is_continuation=True)
+            chunk_jobs.append(job_id)
+            num_functions += len(functions)
+            total_features += sum(
+                f.get("function_metadata", {}).get("bsim_features_count", 0)
+                for f in functions
+            )
+
+        params = self._params_for(collection, doc.get("params") or {})
+        tasks = [
+            (
+                JobType.INDEX_META,
+                {
+                    "collection": collection,
+                    "file_id": None,
+                    "file_meta": file_meta,
+                    "num_functions": num_functions,
+                    "total_features": total_features,
+                },
+            )
+        ]
+        if chunk_jobs:
+            tasks.append(job_service.create_group(chunk_jobs, enqueue=False))
+        tasks.append((JobType.INDEX_FEATURES, {"collection": collection, "md5": md5}))
+        if not skip_sim:
+            tasks.append(
+                (
+                    JobType.BUILD_SIM,
+                    {
+                        "collection": collection,
+                        "file_id": None,
+                        "md5": md5,
+                        "algo": params["algo"],
+                        "top_k": params["top_k"],
+                        "min_score": params["min_score"],
+                        "min_features": params["min_features"],
+                    },
+                )
+            )
+            tasks.append(
+                (
+                    JobType.INDEX_SIM,
+                    {"collection": collection, "md5": md5, "algo": params["algo"]},
+                )
+            )
+        tasks += build_rebuild_all_tasks(
+            collection,
+            params["algo"],
+            skip_sim=skip_sim,
+            data={"batch_uuid": batch_uuid},
+        )
+        pipeline_id = job_service.submit_to_lane(collection, tasks)
+
+        topup_job = None
+        missing = sorted(
+            set(config_service.get("analysis_modules.enabled", []))
+            - set(cached.get("modules") or [])
+        )
+        if topup and missing:
+            topup_job = job_service.submit_to_lane(
+                collection,
+                job_service.create_job(
+                    JobType.GHIDRA_ANALYZE,
+                    {
+                        "collection": collection,
+                        "raw_file_id": f"{collection}:file:{md5}:raw",
+                        "file_md5": md5,
+                        "file_name": file_meta["file_name"],
+                        "batch_uuid": batch_uuid,
+                        "batch_name": file_meta["batch_name"],
+                        "profile": (doc.get("params") or {}).get("profile", "fast"),
+                        "skip_sim": True,
+                        "skip_function_id": "FunctionID" not in missing,
+                        "skip_capa": "capa" not in missing,
+                        "skip_yara": "yara" not in missing,
+                        "skip_rulezet": "rulezet" not in missing,
+                        "skip_boilerplate": "boilerplate" not in missing,
+                    },
+                    enqueue=False,
+                ),
+            )
+
+        self.update(
+            scan_id,
+            committed={
+                "collection": collection,
+                "batch_uuid": batch_uuid,
+                "pipeline_id": pipeline_id,
+                "topup_job": topup_job,
+                "topup_modules": missing if topup_job else [],
+                "at": int(time.time() * 1000),
+            },
+        )
+        return {
+            "status": "committed",
+            "scan_id": scan_id,
+            "collection": collection,
+            "file_md5": md5,
+            "batch_uuid": batch_uuid,
+            "batch_name": file_meta["batch_name"],
+            "pipeline_id": pipeline_id,
+            "chunks": len(chunk_jobs),
+            "function_count": num_functions,
+            "topup_job": topup_job,
+            "topup_modules": missing if topup_job else [],
+        }
 
     # ----------------------------------------------------------------- scopes
 
@@ -419,7 +602,13 @@ class ScanService:
             load_tag_meta(self.r, collection) if fid_tags else {},
             unweighted=unweighted,
         )
-        self._enrich_clusters(collection, common["diff"], meta_b, params)
+        self._enrich_clusters(
+            collection,
+            common["diff"],
+            meta_b,
+            params,
+            {t["fid"]: t["name"] for t in targets},
+        )
         return {
             "collection": collection,
             "file_md5": md5,
@@ -451,7 +640,7 @@ class ScanService:
         vectors.update(load_vectors(self.r, left_b))
         return discover_edges(vectors, left_a, left_b, algo, min_score, max_df=max_df)
 
-    def _enrich_clusters(self, collection, diff, meta_b, params):
+    def _enrich_clusters(self, collection, diff, meta_b, params, names_a):
         """Attach, per matched row, the cluster the scan function would land in.
 
         The nearest cluster is the collection-side partner's best cluster; a
@@ -499,6 +688,7 @@ class ScanService:
             # Nearest is not membership: a real build unions the two only above
             # the same threshold clustering itself uses.
             row["would_join"] = bool(best) and row["similarity"] >= threshold
+            row["function_name_a"] = names_a.get(row["func_a"], "")
             row["function_name_b"] = meta_b.get(row["func_b"], {}).get(
                 "function_name", ""
             )

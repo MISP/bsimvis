@@ -170,6 +170,22 @@ def get_scan_diff(scan_id):
     return {"scan_id": scan_id, "collection": collection, "md5": md5, **page}
 
 
+def commit_scan(scan_id):
+    """Promote a finished scan into a real collection, without re-analysing."""
+    collection = request.args.get("collection")
+    if not collection:
+        return {"error": "collection is required"}, 400
+
+    result = get_scan_service().commit(
+        scan_id,
+        collection,
+        batch_name=request.args.get("batch_name"),
+        skip_sim=_flag("skip_sim"),
+        topup=_flag("topup", True),
+    )
+    return result
+
+
 def delete_scan(scan_id):
     """Drop a scan's cache before its TTL runs out."""
     if not get_scan_service().delete(scan_id):

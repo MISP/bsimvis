@@ -6535,9 +6535,104 @@ def test_scan_mode():
         str(sorted(matched["rows"][0].keys()) if matched.get("rows") else "no rows"),
     )
 
+    _check_scan_commit(scan_id, doc)
+
     test_endpoint("DELETE", f"/api/scan/{scan_id}", label="DELETE /api/scan/{id}")
     gone = requests.get(f"{BASE_URL}/api/scan/{scan_id}", timeout=10)
     check("a deleted scan is gone", gone.status_code == 404, str(gone.status_code))
+
+
+def _check_scan_commit(scan_id, doc):
+    """Promoting a scan must ingest it without ever re-running Ghidra.
+
+    The commit goes into a throwaway collection: the scanned md5 is already in
+    COLLECTION, and committing a duplicate is refused on purpose. `topup=false`
+    keeps the check honest -- the only reason a GHIDRA_ANALYZE could appear for
+    this md5 is the analysis being repeated, which is exactly what the cached
+    chunks exist to avoid.
+    """
+    coll = f"{COLLECTION}_commit"
+    try:
+        refused = test_endpoint(
+            "POST",
+            f"/api/scan/{scan_id}/commit",
+            params={"collection": COLLECTION},
+            expected_ok=False,
+            label="POST /api/scan/{id}/commit (duplicate, expect 409)",
+        )
+        check(
+            "committing a file the collection already holds is refused",
+            isinstance(refused, dict) and "error" in refused,
+            str(refused)[:200],
+        )
+
+        result = test_endpoint(
+            "POST",
+            f"/api/scan/{scan_id}/commit",
+            params={
+                "collection": coll,
+                "batch_name": "scan commit",
+                "topup": "false",
+            },
+            label="POST /api/scan/{id}/commit",
+        )
+        if not isinstance(result, dict) or not result.get("pipeline_id"):
+            check("scan commit accepted", False, str(result)[:300])
+            return
+        check(
+            "commit replays the cached chunks, not a new analysis",
+            result.get("chunks", 0) > 0
+            and result.get("function_count", 0) == doc.get("function_count"),
+            f"{result.get('chunks')} chunks, "
+            f"{result.get('function_count')} vs {doc.get('function_count')} functions",
+        )
+        check(
+            "topup=false queues no second Ghidra run",
+            result.get("topup_job") is None,
+            str(result.get("topup_job")),
+        )
+
+        ok = wait_for_pipeline(
+            result["pipeline_id"], banner=" STEP 4e2 - Wait for the scan commit"
+        )
+        check("the commit pipeline completes", ok, str(ok))
+
+        details = test_endpoint(
+            "GET",
+            f"/api/file/details/{doc['file_md5']}",
+            params={"collection": coll},
+            label="GET /api/file/details (committed scan)",
+        )
+        check(
+            "the committed file carries the scan's own function count",
+            isinstance(details, dict)
+            and int((details.get("file") or details).get("function_count", 0)) == doc.get("function_count"),
+            str(details)[:300],
+        )
+
+        jobs = (
+            test_endpoint(
+                "GET",
+                "/api/jobs",
+                params={
+                    "collection": coll,
+                    "type": "ghidra_analyze",
+                    "limit": 50,
+                    "offset": 0,
+                },
+                label="GET /api/jobs?type=ghidra_analyze (committed collection)",
+            )
+            or {}
+        )
+        check(
+            "no Ghidra analysis ran for the committed file",
+            not (jobs.get("items") or []),
+            str([j.get("id") for j in (jobs.get("items") or [])]),
+        )
+    finally:
+        requests.post(
+            f"{BASE_URL}/api/collection/delete", json={"collection": coll}, timeout=120
+        )
 
 
 def test_skip_modules_payload():

@@ -260,6 +260,25 @@ window.Breadcrumbs = {
                     icon: 'fa-solid fa-list-check'
                 });
                 break;
+            case 'scan':
+                segments.push({
+                    label: 'Scan',
+                    url: '/scans',
+                    icon: 'fa-solid fa-radar'
+                });
+                break;
+            case 'scan-detail':
+                segments.push({
+                    label: 'Scan',
+                    url: '/scans',
+                    icon: 'fa-solid fa-radar'
+                });
+                segments.push({
+                    label: (restful.scan_id || '').slice(0, 8) || 'Scan',
+                    url: window.location.pathname,
+                    icon: 'fa-solid fa-radar'
+                });
+                break;
             case 'upload':
                 segments.push({
                     label: route ? route.title : 'Upload',

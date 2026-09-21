@@ -3495,6 +3495,29 @@ class ScanResult(Resource):
         return delete_scan(scan_id)
 
 
+@ns_scan.route("/<string:scan_id>/commit")
+class ScanCommit(Resource):
+    @ns_scan.doc(
+        params={
+            "collection": "Collection to ingest the scanned file into (required)",
+            "batch_name": "Batch name for the promoted file (default: 'scan {id}')",
+            "skip_sim": "Set to true to index without building similarities",
+            "topup": "Re-run Ghidra for the tagging modules the scan skipped (default: true)",
+        }
+    )
+    def post(self, scan_id):
+        """Ingests a cached scan into a collection without re-running Ghidra.
+
+        The cached chunks are copied into Kvrocks and handed to the same
+        indexing pipeline an upload builds, so the analysis is never repeated.
+        When the scan ran lean, a `skip_sim` GHIDRA_ANALYZE is queued behind it
+        to fill in the tagging modules it skipped.
+        """
+        from bsimvis.app.routes.scan import commit_scan
+
+        return commit_scan(scan_id)
+
+
 @ns_scan.route("/<string:scan_id>/diff")
 class ScanDiff(Resource):
     @ns_scan.doc(

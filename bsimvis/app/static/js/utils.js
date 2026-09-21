@@ -180,7 +180,8 @@ function parseRestfulPath() {
         addr_b: null,
         id1: null,
         id2: null,
-        search_id: null
+        search_id: null,
+        scan_id: null
     };
 
     if (parts.length === 0) {
@@ -211,6 +212,14 @@ function parseRestfulPath() {
             params.search_id = decodeURIComponent(parts[pIdx + 1]);
         } else {
             params.view = 'search';
+        }
+        return params;
+    } else if (parts[pIdx] === 'scans' || parts[pIdx] === 'scan') {
+        if (parts[pIdx + 1]) {
+            params.view = 'scan-detail';
+            params.scan_id = decodeURIComponent(parts[pIdx + 1]);
+        } else {
+            params.view = 'scan';
         }
         return params;
     } else if (parts[pIdx] === 'upload') {

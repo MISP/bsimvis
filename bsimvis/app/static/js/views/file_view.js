@@ -251,7 +251,7 @@ window.FileView = {
                             </div>
                             <div class="home-card" style="padding:16px; min-width:300px;">
                                 <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Scoring Metric</h3>
-                                <input type="hidden" id="nbr-score-type" value="score">
+                                <input type="hidden" id="nbr-score-type" value="${window.BINSIM_DEFAULT_SORT || 'score'}">
                                 <div id="nbr-score-type-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
                             </div>
                             <div class="home-card" style="padding:16px; min-width:100px;">
@@ -932,7 +932,7 @@ window.FileView = {
         if (scope === 'pool' && poolId) qs.set('pool', poolId);
         else qs.set('collection', collection);
 
-        qs.set('sort', document.getElementById('nbr-score-type')?.value || 'score');
+        qs.set('sort', document.getElementById('nbr-score-type')?.value || window.BINSIM_DEFAULT_SORT);
         qs.set('min_score', document.getElementById('nbr-min-score')?.value
             || (window.defaultFileMinScore ? window.defaultFileMinScore() : '0'));
 
@@ -967,7 +967,7 @@ window.FileView = {
             if (!res.ok) throw new Error("Neighbors search failed");
             const data = await res.json();
             const items = data.items || data.results || [];
-            const html = window.renderBinSimPairs ? window.renderBinSimPairs(items, 0, file_md5) : '';
+            const html = window.renderBinSimPairs ? window.renderBinSimPairs(items, 0, file_md5, qs.get('sort')) : '';
             tbody.innerHTML = html || '<tr><td colspan="8" style="text-align: center; color: var(--dim); padding: 20px;">No similar files found.</td></tr>';
             const countEl = document.getElementById('nbr-count');
             if (countEl) countEl.innerText = data.total ?? items.length;
@@ -1004,7 +1004,7 @@ window.FileView = {
         const el = document.getElementById('nbr-score-type-pills');
         if (!el || !window.binSimPillStyle) return;
         const types = window.BinSimScoreTypes || { score: { label: 'Overall', icon: 'fa-solid fa-layer-group', color: 'var(--success)' } };
-        const active = document.getElementById('nbr-score-type')?.value || 'score';
+        const active = document.getElementById('nbr-score-type')?.value || window.BINSIM_DEFAULT_SORT;
         el.innerHTML = Object.entries(types).map(([v, meta]) => `<span class="bsim-tag-pill" style="${window.binSimPillStyle(v === active, meta.color)}" title="${escapeAttr(meta.label)}" onclick="FileView.setNeighborScoreType('${v}')"><i class="${meta.icon}"></i>${meta.label} <span id="nbr-count-score-${v}" style="font-size:0.75rem; opacity:0.8; font-weight:normal;"></span></span>`).join('');
     },
 

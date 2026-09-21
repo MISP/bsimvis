@@ -675,6 +675,14 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         if (!params.has('min_cohesion')) {
             params.set('min_cohesion', '0.5');
         }
+    } else if (viewKey === 'binary-similarity') {
+        if (!params.has('sort')) {
+            params.set('sort', window.BINSIM_DEFAULT_SORT);
+        }
+    } else if (viewKey === 'bin-clusters') {
+        if (!params.has('axis')) {
+            params.set('axis', window.BINSIM_DEFAULT_AXIS);
+        }
     } else if (viewKey === 'function-similarity') {
         if (!params.has('min_score')) {
             params.set('min_score', defaultMinScore());
@@ -1328,7 +1336,7 @@ function binSimPillStyle(active, color) {
 function binSimScoreTypeTagsHtml(p) {
     const state = window.getRoutingState && window.getRoutingState();
     const isBinCluster = state && state.viewKey === 'bin-clusters';
-    const active = isBinCluster ? (p.get('axis') ? (p.get('axis') === 'overall' ? 'score' : `score_${p.get('axis')}`) : 'score') : (p.get('sort') || 'score');
+    const active = isBinCluster ? (p.get('axis') ? (p.get('axis') === 'overall' ? 'score' : `score_${p.get('axis')}`) : `score_${window.BINSIM_DEFAULT_AXIS}`) : (p.get('sort') || window.BINSIM_DEFAULT_SORT);
     const types = window.BinSimScoreTypes || { score: { label: 'Overall', icon: 'fa-solid fa-layer-group', color: 'var(--success)' } };
     const pills = Object.entries(types).map(([v, meta]) => {
         const on = v === active;
@@ -1404,7 +1412,7 @@ window.toggleBinSimNodeType = toggleBinSimNodeType;
 function syncBinSimTags(p) {
     const state = window.getRoutingState && window.getRoutingState();
     const isBinCluster = state && state.viewKey === 'bin-clusters';
-    const active = isBinCluster ? (p.get('axis') ? (p.get('axis') === 'overall' ? 'score' : `score_${p.get('axis')}`) : 'score') : (p.get('sort') || 'score');
+    const active = isBinCluster ? (p.get('axis') ? (p.get('axis') === 'overall' ? 'score' : `score_${p.get('axis')}`) : `score_${window.BINSIM_DEFAULT_AXIS}`) : (p.get('sort') || window.BINSIM_DEFAULT_SORT);
     const hidden = document.getElementById('bsim-score-type');
     if (hidden) hidden.value = active;
     document.querySelectorAll('#bsim-score-type-tags .bsim-tag-pill').forEach(el => {

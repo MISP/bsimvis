@@ -223,7 +223,61 @@ class GhidraAnalyzer:
                 funcs.append(func)
         return funcs
 
+    def _cache_streamed_program(self, program, payload, job_id):
+        """Scan mode's consumer: park the analysis in Redis, index nothing.
+
+        Same generator, same chunk size and the same tag fan-out as the ingest
+        consumer below -- only the destination differs. Nothing here touches
+        Kvrocks, which is the whole point: a scan answers a question about the
+        sample without the sample becoming part of a collection.
+        """
+        from bsimvis.app.services.scan_service import get_scan_service
+
+        scan_service = get_scan_service()
+        scan_id = payload["scan_id"]
+
+        generator = ghidra_service.stream_bsim_data(
+            program,
+            payload,
+            chunk_size=100,
+            job_service=self.job_service,
+            job_id=job_id,
+        )
+        file_meta = next(generator)
+        try:
+            file_meta["image_base"] = hex(program.getImageBase().getOffset())
+        except Exception:
+            pass
+        scan_service.store_meta(scan_id, file_meta, payload.get("modules") or [])
+
+        chunk_count = 0
+        num_functions = 0
+        for chunk in generator:
+            if self.job_service.is_cancelled(job_id):
+                raise RuntimeError(f"Job {job_id} cancelled during streaming")
+            if not chunk:
+                continue
+            scan_service.store_chunk(scan_id, chunk_count, chunk)
+            chunk_count += 1
+            num_functions += len(chunk)
+            self.job_service.update_progress(
+                job_id, 60, f"Analyzed {num_functions} functions for scan {scan_id}"
+            )
+
+        scan_service.update(
+            scan_id,
+            chunk_count=chunk_count,
+            function_count=num_functions,
+            file_md5=file_meta.get("file_md5") or payload.get("file_md5"),
+            file_name=file_meta.get("file_name") or payload.get("file_name"),
+            language_id=file_meta.get("language_id", ""),
+        )
+        return True
+
     def _index_streamed_program(self, program, payload, job_id):
+        if payload.get("scan_id"):
+            return self._cache_streamed_program(program, payload, job_id)
+
         collection = payload.get("collection", "main")
         skip_sim = payload.get("skip_sim", False)
         batch_uuid = payload.get("batch_uuid")
@@ -372,11 +426,18 @@ class GhidraAnalyzer:
         raw_file_id = payload.get("raw_file_id")
         file_md5 = payload.get("file_md5")
 
-        # 1. Fetch raw binary from Kvrocks
-        raw_bytes = self.r_raw.get(raw_file_id)
+        # 1. Fetch raw binary. A scan's bytes never reach Kvrocks, so they come
+        # from the scan cache in Redis instead.
+        if payload.get("scan_id"):
+            from bsimvis.app.services.scan_service import get_scan_service
+
+            raw_bytes = get_scan_service().raw(payload["scan_id"])
+        else:
+            raw_bytes = self.r_raw.get(raw_file_id)
         if not raw_bytes:
             self.job_service.add_log(
-                job_id, f"Error: Raw file {raw_file_id} not found."
+                job_id,
+                f"Error: Raw file {payload.get('scan_id') or raw_file_id} not found.",
             )
             return False
 

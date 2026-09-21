@@ -28,7 +28,7 @@ echo "=== teardown $PROJECT_NAME ==="
 # a loop costs the sum of every worker's shutdown instead of the slowest one.
 # Stopped before the datastores so they exit on their own SIGTERM rather than
 # spinning on connection errors first.
-UNITS=$(systemctl --user list-units --plain --no-legend "bsimvis-${PROJECT_NAME}-worker-*.scope" 2>/dev/null | awk '{print $1}')
+UNITS=$(systemctl --user list-units --plain --no-legend "bsimvis-${PROJECT_NAME}-*worker-*.scope" 2>/dev/null | awk '{print $1}')
 if [ -n "$UNITS" ]; then
   echo "  stopping $(echo $UNITS | tr '\n' ' ')"
   systemctl --user stop $UNITS 2>/dev/null || true

@@ -56,6 +56,9 @@ ns_pool = Namespace("pool", description="Cross-collection pool management")
 # Not `ns_search` -- that's already mounted at /api/search for unified query/
 # autocomplete. This is a distinct, persisted entity: /api/searches.
 ns_searches = Namespace("searches", description="Persisted fast-relevance searches")
+ns_scan = Namespace(
+    "scan", description="Fast scan: compare a file without ingesting it"
+)
 
 api.add_namespace(ns_index)
 api.add_namespace(ns_jobs)
@@ -77,6 +80,7 @@ api.add_namespace(ns_notes)
 api.add_namespace(ns_llm)
 api.add_namespace(ns_pool)
 api.add_namespace(ns_searches)
+api.add_namespace(ns_scan)
 
 # --- Models & Examples ---
 
@@ -3429,3 +3433,83 @@ class Maintenance(Resource):
         from bsimvis.app.routes.maintenance import maintenance
 
         return maintenance()
+
+
+# --- Scan Namespace ---
+@ns_scan.route("")
+class ScanStart(Resource):
+    @ns_scan.doc(
+        params={
+            "collection": "Collection to scan against (repeatable)",
+            "pool": "Pool to scan against, expanded to its member collections (repeatable)",
+            "all": "Set to true to scan against every collection",
+            "file_name": "Original name of the file",
+            "algo": _BUILD_ALGO_DESC,
+            "min_score": "Minimum similarity score (default: the collection's locked value)",
+            "min_features": "Minimum feature count (default: the collection's locked value)",
+            "top_k": "Top K matches per function",
+            "top_files": "How many candidate files get the exact file score (default: scan.top_files)",
+            "profile": "Ghidra analysis profile: fast or full (default: fast)",
+            "min_func_len": "Minimum function length (default: 10)",
+            "processor": "Force a specific Ghidra Language ID (e.g., 'x86:LE:64:default')",
+            "cspec": "Force a specific Ghidra Compiler Spec ID (e.g., 'gcc')",
+            "enable": "Analysis module to enable on top of scan.modules (repeatable)",
+            "disable": "Analysis module to disable (repeatable)",
+        }
+    )
+    def post(self):
+        """Scans a raw binary against existing collections without ingesting it.
+
+        The file gets the same Ghidra analysis an upload gets, but nothing is
+        written to Kvrocks: the analysis is cached in Redis under a TTL and the
+        match is computed by reading the target collections' indexes. Returns a
+        scan_id to poll.
+        """
+        from bsimvis.app.routes.scan import start_scan
+
+        return start_scan()
+
+
+@ns_scan.route("/defaults")
+class ScanDefaults(Resource):
+    def get(self):
+        """Reports the configured scan defaults."""
+        from bsimvis.app.routes.scan import scan_defaults
+
+        return scan_defaults()
+
+
+@ns_scan.route("/<string:scan_id>")
+class ScanResult(Resource):
+    def get(self, scan_id):
+        """Status and per-scope summary: matched files with their canonical
+        BSimVis score, and the clusters the file would join."""
+        from bsimvis.app.routes.scan import get_scan
+
+        return get_scan(scan_id)
+
+    def delete(self, scan_id):
+        """Drops the scan's cache before its TTL expires."""
+        from bsimvis.app.routes.scan import delete_scan
+
+        return delete_scan(scan_id)
+
+
+@ns_scan.route("/<string:scan_id>/diff")
+class ScanDiff(Resource):
+    @ns_scan.doc(
+        params={
+            "collection": "Collection the matched file belongs to (required)",
+            "md5": "md5 of the matched file (required)",
+            "table": "matched | unique_to_a | unique_to_b | all (default: matched)",
+            "offset": "Row offset (default: 0)",
+            "limit": "Rows per page, max 500 (default: 50)",
+            "sort_col": "Row field to sort on",
+            "sort_dir": "asc or desc (default: desc)",
+        }
+    )
+    def get(self, scan_id):
+        """One page of the function-level rows behind a scored pair."""
+        from bsimvis.app.routes.scan import get_scan_diff
+
+        return get_scan_diff(scan_id)

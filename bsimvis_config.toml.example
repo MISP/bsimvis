@@ -217,3 +217,24 @@ max_filter_buckets = 200000
 # Ghidra's own scratch project stays in the system temp on purpose: it rejects
 # any path element starting with ".", so it cannot live under a dot-directory.
 upload_dir = "data/uploads"
+
+[scan]
+# Fast scan mode: analyse an uploaded file with Ghidra, compare it against
+# existing collections, and write nothing to Kvrocks. Everything the scan
+# produces lives in Redis under `scan:{id}:*` with this TTL, so the result can
+# be re-read and re-paged without re-analysing.
+cache_ttl = 86400
+
+# Refuse a scan larger than this. The raw bytes and every feature vector sit in
+# Redis, which is RAM.
+max_cached_bytes = 268435456
+
+# How many candidate files get the exact greedy BSimVis file score per scope.
+# The rest of the touched files are dropped from the report entirely.
+top_files = 20
+
+# Tagging modules a scan runs. Empty = BSim + FunctionID only, which is the
+# point of scan mode: capa alone can cost more than the whole rest of the job.
+# Same names as `analysis_modules.enabled`; a request may override with
+# `enable`/`disable`.
+modules = []

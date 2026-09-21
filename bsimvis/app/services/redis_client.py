@@ -112,6 +112,7 @@ REDIS_CONFIG = {
 _kv_pool = None
 _kv_raw_pool = None
 _redis_pool = None
+_redis_raw_pool = None
 
 # TimedRedis records a dict per command, so it is opt-in behind the same flag
 # that turns on the Server-Timing response header (see app/__init__.py).
@@ -157,6 +158,16 @@ def get_queue_redis():
     if _redis_pool is None:
         _redis_pool = redis.ConnectionPool(**REDIS_CONFIG)
     return _client(_redis_pool)
+
+
+def get_raw_queue_redis():
+    """Queue Redis with decode_responses=False, for the scan cache's raw bytes."""
+    global _redis_raw_pool
+    if _redis_raw_pool is None:
+        raw_config = REDIS_CONFIG.copy()
+        raw_config["decode_responses"] = False
+        _redis_raw_pool = redis.ConnectionPool(**raw_config)
+    return _client(_redis_raw_pool)
 
 
 def get_batch_meta(collection, batch_uuid):

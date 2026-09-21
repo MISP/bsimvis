@@ -50,8 +50,11 @@ def make_corpus(seed, n_a=25, n_b=30, vocab=40):
     vectors = {}
     for fid in fids_a + fids_b:
         size = rng.randint(1, 8)
+        # Bare lowercase hex, the way ghidra_service keys a real vector: the
+        # weighted_cosine leg runs these through bsim_weights._as_hash, which
+        # int(key, 16)s them. A "h26"-style key raised ValueError there.
         vectors[fid] = {
-            f"h{rng.randrange(vocab)}": float(rng.randint(1, 3)) for _ in range(size)
+            f"{rng.randrange(vocab):x}": float(rng.randint(1, 3)) for _ in range(size)
         }
     # A function with no features at all: both sweeps must skip it.
     vectors["a:empty"] = {}
@@ -60,7 +63,11 @@ def make_corpus(seed, n_a=25, n_b=30, vocab=40):
 
 
 def test_matches_dense_sweep():
-    for algo in ("unweighted_cosine", "binary_cosine", "jaccard", "weighted_cosine"):
+    # No weighted_cosine: `dense_edges` implements no IDF-weighted branch, so
+    # its reference for that algo was plain cosine and could never agree. The
+    # mismatch was masked because the leg died earlier, on a non-hex feature
+    # key. Re-adding it means writing the weighted reference here first.
+    for algo in ("unweighted_cosine", "binary_cosine", "jaccard"):
         for seed in range(5):
             vectors, fids_a, fids_b = make_corpus(seed)
             for min_score in (0.0, 0.3, 0.9):
@@ -102,9 +109,7 @@ def test_max_df_drops_only_common_features():
     fids_a, fids_b = {"a:0"}, {"b:0", "b:1", "b:2"}
     exact = {
         b: s
-        for _, b, s in discover_edges(
-            vectors, fids_a, fids_b, "unweighted_cosine", 0.0
-        )
+        for _, b, s in discover_edges(vectors, fids_a, fids_b, "unweighted_cosine", 0.0)
     }
     assert set(exact) == {"b:0", "b:1", "b:2"}
     capped = {

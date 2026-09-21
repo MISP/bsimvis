@@ -51,6 +51,7 @@ class JobType(Enum):
     LLM_FILE_ANALYSIS = "llm_file_analysis"
     LLM_PAIR_ANALYSIS = "llm_pair_analysis"
     SEARCH_CLASSIFY = "search_classify"
+    SCAN = "scan"
 
 
 # Lease-based claims. A worker refreshes its lease while it holds a job; if the
@@ -68,6 +69,10 @@ class JobType(Enum):
 LEASE_TTL = 300  # seconds a claim stays valid without a refresh
 HEARTBEAT_INTERVAL = 15  # seconds between refreshes; ~20 misses before expiry
 LEASE_KEY = "jobs:leased"  # ZSET job_id -> expiry timestamp
+
+# Claim order, highest priority first. Workers pop from the tail of each.
+SCAN_QUEUE = "jobs:pending:scan"
+PENDING_QUEUES = (SCAN_QUEUE, "jobs:pending:high", "jobs:pending")
 WORKERS_KEY = "workers:alive"  # ZSET worker_id -> registration expiry
 # NOT tied to LEASE_TTL. Registration feeds count_workers(), which sizes the
 # memory admission budget, so a dead worker must age out fast or the fleet
@@ -728,7 +733,12 @@ class JobService:
             JobType.SEARCH_CLASSIFY.value,
         ]
 
-        if jtype in high_priority_types or job.get("priority") == "high":
+        if jtype == JobType.SCAN.value or job.get("priority") == "scan":
+            # Scans write nothing, so they need no ordering against builds. Their
+            # own lane is what keeps an interactive answer off the back of a
+            # multi-hour sim build.
+            self.r.lpush(SCAN_QUEUE, job_id)
+        elif jtype in high_priority_types or job.get("priority") == "high":
             self.r.lpush("jobs:pending:high", job_id)
         else:
             if is_continuation:
@@ -1252,8 +1262,7 @@ class JobService:
         if not job:
             return
 
-        removed = self.r.lrem("jobs:pending", 0, job_id) or 0
-        removed += self.r.lrem("jobs:pending:high", 0, job_id) or 0
+        removed = sum((self.r.lrem(q, 0, job_id) or 0) for q in PENDING_QUEUES)
         if removed:
             # The `queued` latch must go too, or the resume enqueue is treated as
             # a duplicate and silently dropped -- the same trap worker._requeue hits.
@@ -1491,8 +1500,8 @@ class JobService:
         self.r.hset(f"job:{job_id}", "status", JobStatus.CANCELLED.value)
 
         # Remove from pending queues to update stats immediately
-        self.r.lrem("jobs:pending", 0, job_id)
-        self.r.lrem("jobs:pending:high", 0, job_id)
+        for q in PENDING_QUEUES:
+            self.r.lrem(q, 0, job_id)
 
         self.r.lpush(
             f"job_log:{job_id}", f"[{int(time.time()*1000)}] Job cancelled by user."
@@ -1610,12 +1619,10 @@ class JobService:
     def get_global_stats(self):
         """Returns aggregate stats across all active and pending jobs."""
         processing_ids = self.r.lrange("jobs:processing", 0, -1)
-        pending_count = self.r.llen("jobs:pending") + self.r.llen("jobs:pending:high")
+        pending_count = sum(self.r.llen(q) for q in PENDING_QUEUES)
 
         # ponytail: the UI polls this every 3s; fetch each job hash once, pipelined.
-        pending_ids = self.r.lrange("jobs:pending", 0, 100) + self.r.lrange(
-            "jobs:pending:high", 0, 100
-        )
+        pending_ids = [i for q in PENDING_QUEUES for i in self.r.lrange(q, 0, 100)]
         wanted_ids = list(dict.fromkeys(list(processing_ids) + list(pending_ids)))
         pipe = self.r.pipeline(transaction=False)
         for jid in wanted_ids:

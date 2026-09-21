@@ -124,9 +124,19 @@ WORKER_BUDGET_GB=$(awk -v v="${WORKER_MEMORY_MAX:-2.5G}" 'BEGIN {
 }')
 WORKERS_MAX_BY_RAM=$(awk -v b="$WORKER_BUDGET_GB" '/MemTotal/ {m=$2/1024/1024; n=int((m-8)/b); print (n>1?n:1)}' /proc/meminfo)
 WORKERS_COUNT=${WORKERS_COUNT:-5}
+# Reserved scan-lane workers. They hold a JVM like any other worker, so they
+# come out of the same RAM budget -- cap the general fleet first, then take the
+# scan workers off the top, leaving at least one general worker.
+SCAN_WORKERS_COUNT=${SCAN_WORKERS_COUNT:-1}
 if [ "$WORKERS_COUNT" -gt "$WORKERS_MAX_BY_RAM" ]; then
     echo "Capping WORKERS_COUNT ${WORKERS_COUNT} -> ${WORKERS_MAX_BY_RAM} (host RAM, ${WORKER_BUDGET_GB} GB/worker)"
     WORKERS_COUNT=$WORKERS_MAX_BY_RAM
+fi
+if [ "$((WORKERS_COUNT + SCAN_WORKERS_COUNT))" -gt "$WORKERS_MAX_BY_RAM" ]; then
+    NEW_COUNT=$((WORKERS_MAX_BY_RAM - SCAN_WORKERS_COUNT))
+    [ "$NEW_COUNT" -lt 1 ] && NEW_COUNT=1
+    echo "Reserving ${SCAN_WORKERS_COUNT} scan workers: WORKERS_COUNT ${WORKERS_COUNT} -> ${NEW_COUNT}"
+    WORKERS_COUNT=$NEW_COUNT
 fi
 ENABLE_MILVUS=${ENABLE_MILVUS:-false}
 DATA_BASE_DIR=${DATA_BASE_DIR:-"$(pwd)/data"}
@@ -146,7 +156,7 @@ if [ "$CLEAN_TMUX" = "true" ]; then
     # one after another instead of all at once. Passing every unit to one
     # invocation enqueues independent stop jobs that systemd runs in parallel,
     # so the wall time is the slowest worker, not their sum.
-    UNITS=$(systemctl --user list-units --plain --no-legend "bsimvis-${PROJECT_NAME}-worker-*.scope" 2>/dev/null | awk '{print $1}')
+    UNITS=$(systemctl --user list-units --plain --no-legend "bsimvis-${PROJECT_NAME}-*worker-*.scope" 2>/dev/null | awk '{print $1}')
     if [ -n "$UNITS" ]; then
         echo "Stopping leftover worker scopes: $(echo $UNITS | tr '\n' ' ')"
         systemctl --user stop $UNITS 2>/dev/null || true
@@ -267,6 +277,16 @@ for i in $(seq 1 $WORKERS_COUNT); do
     start_tmux "worker-${i}" \
         "LOG_DIR='${LOG_DIR}' PYTHON_CMD='${PYTHON_CMD}' PROJECT_NAME='${PROJECT_NAME}' WORKER_MEMORY_MAX='${WORKER_MEMORY_MAX}' bash scripts/worker-supervisor.sh worker-${i}"
 done
+
+# Scan workers claim jobs:pending:scan only, so an interactive scan never sits
+# behind a sim build. Normal workers still drain that lane as backup.
+if [ "$SCAN_WORKERS_COUNT" -gt 0 ]; then
+    echo "Starting ${SCAN_WORKERS_COUNT} scan workers..."
+    for i in $(seq 1 $SCAN_WORKERS_COUNT); do
+        start_tmux "scan-worker-${i}" \
+            "LOG_DIR='${LOG_DIR}' PYTHON_CMD='${PYTHON_CMD}' PROJECT_NAME='${PROJECT_NAME}' WORKER_MEMORY_MAX='${WORKER_MEMORY_MAX}' WORKER_ARGS='--scan-only' bash scripts/worker-supervisor.sh scan-worker-${i}"
+    done
+fi
 
 echo "--------------------------"
 wait_for_port "${APP_PORT}" "App"

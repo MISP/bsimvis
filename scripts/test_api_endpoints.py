@@ -741,9 +741,7 @@ def test_cluster_response_contract():
         isinstance(rows, list),
         f"keys={sorted(body) if isinstance(body, dict) else body}",
     )
-    avgs = [
-        (r.get("function_count_stats") or {}).get("avg") or 0 for r in (rows or [])
-    ]
+    avgs = [(r.get("function_count_stats") or {}).get("avg") or 0 for r in (rows or [])]
     check(
         "/api/bin_cluster/list sort_by=functions orders by average function count",
         avgs == sorted(avgs, reverse=True),
@@ -915,8 +913,7 @@ def test_cluster_expansion_and_bin_sim_cluster_filter():
     # comparable with a similarity mean.
     check(
         "config exposes similarity.unweighted_match as a boolean",
-        isinstance(sim_cfg, dict)
-        and isinstance(sim_cfg.get("unweighted_match"), bool),
+        isinstance(sim_cfg, dict) and isinstance(sim_cfg.get("unweighted_match"), bool),
         f"unweighted_match={(sim_cfg or {}).get('unweighted_match')!r}",
     )
 
@@ -967,7 +964,9 @@ def test_cluster_expansion_and_bin_sim_cluster_filter():
         # positive direction of the filter -- that it returns the *right* pairs,
         # not merely fewer -- is therefore unproven by this fixture; it only
         # runs against data with clustered binaries.
-        print(f"  {DIM}no clustered binaries in the fixture; filter semantics skipped{RESET}")
+        print(
+            f"  {DIM}no clustered binaries in the fixture; filter semantics skipped{RESET}"
+        )
         return
 
     member_md5s = {
@@ -991,9 +990,7 @@ def test_cluster_expansion_and_bin_sim_cluster_filter():
     )
     if rows and member_md5s:
         offenders = [
-            r
-            for r in rows
-            if not ({r.get("md5_a"), r.get("md5_b")} & member_md5s)
+            r for r in rows if not ({r.get("md5_a"), r.get("md5_b")} & member_md5s)
         ]
         check(
             "every returned pair has a side inside the cluster",
@@ -2296,7 +2293,9 @@ def run_all_tests():
             check(
                 "unknown weights profile reported as an error",
                 "Unknown BSim profile"
-                in str((bad.get("errors") or {}).get("weighted_cosine:no_such_profile")),
+                in str(
+                    (bad.get("errors") or {}).get("weighted_cosine:no_such_profile")
+                ),
                 f"errors={bad.get('errors')}",
             )
 
@@ -4154,9 +4153,7 @@ def _runtime_doc(unweighted):
     if unweighted:
         params["unweighted"] = "1"
     try:
-        resp = requests.get(
-            f"{BASE_URL}/api/bin_sim/diff", params=params, timeout=120
-        )
+        resp = requests.get(f"{BASE_URL}/api/bin_sim/diff", params=params, timeout=120)
     except Exception as exc:
         vprint(f"     runtime greedy error: {exc}")
         return None
@@ -6396,6 +6393,153 @@ def test_lib_tag_rollup():
             r.delete(*keys)
 
 
+def test_scan_mode():
+    """A scan answers the similarity question without ingesting the sample.
+
+    Three things are worth proving and nothing else can prove them: the scan
+    returns a real BSimVis file score, the sample is scanned rather than
+    ingested (no new Kvrocks key), and the rows behind the score are pageable.
+
+    The scanned bytes are `TEST_BINARY`, which the prelude already uploaded, so
+    the collection contains the same md5 -- the scan must find itself at 1.0.
+    That is the strongest available check that the in-memory discovery path
+    reproduces what the indexed build produced.
+    """
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 4e - Fast scan mode", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not (os.path.isfile(TEST_BINARY) and file_md5):
+        print(_color("\n[SKIP] No analysed test binary.", YELLOW))
+        return
+
+    from bsimvis.app.services.redis_client import get_redis
+
+    r = get_redis()
+
+    defaults = test_endpoint("GET", "/api/scan/defaults")
+    check(
+        "scan defaults report top_files and the lean module list",
+        isinstance(defaults, dict)
+        and "top_files" in defaults
+        and isinstance(defaults.get("modules"), list),
+        str(defaults),
+    )
+
+    with open(TEST_BINARY, "rb") as fh:
+        raw = fh.read()
+
+    before = r.dbsize()
+    started = test_endpoint(
+        "POST",
+        "/api/scan",
+        params={
+            "collection": COLLECTION,
+            "file_name": os.path.basename(TEST_BINARY),
+        },
+        raw_body=raw,
+        headers={"Content-Type": "application/octet-stream"},
+        label="POST /api/scan",
+    )
+    if not isinstance(started, dict) or not started.get("scan_id"):
+        check("scan accepted", False, str(started))
+        return
+
+    scan_id = started["scan_id"]
+    check(
+        "scan is queued lean (no capa/yara unless asked)",
+        started.get("modules") == defaults.get("modules"),
+        f"{started.get('modules')} vs {defaults.get('modules')}",
+    )
+
+    doc = {}
+    deadline = time.time() + 900
+    while time.time() < deadline:
+        time.sleep(POLL_INTERVAL)
+        doc = requests.get(f"{BASE_URL}/api/scan/{scan_id}", timeout=30).json()
+        if doc.get("status") in ("completed", "failed"):
+            break
+        if doc.get("job_status") == "failed":
+            break
+
+    check(
+        "scan completes",
+        doc.get("status") == "completed",
+        f"{doc.get('status')} / {doc.get('error', '')}",
+    )
+    if doc.get("status") != "completed":
+        return
+
+    after = r.dbsize()
+    # The point of scan mode. DBSIZE rather than KEYS: the database holds
+    # millions of keys and must never be enumerated.
+    check(
+        "scan writes no Kvrocks key",
+        after == before,
+        f"dbsize {before} -> {after}",
+    )
+
+    scopes = doc.get("scanned") or []
+    check("scan reports the requested scope", len(scopes) == 1, str(len(scopes)))
+    if not scopes:
+        return
+    files = scopes[0].get("files") or []
+    check("scan finds at least one matching file", bool(files), str(len(files)))
+    if not files:
+        return
+
+    check(
+        "every file score is a similarity in [0, 1]",
+        all(0.0 <= float(f.get("score", -1)) <= 1.0 for f in files),
+        str([f.get("score") for f in files]),
+    )
+
+    self_row = next((f for f in files if f["file_md5"] == file_md5), None)
+    check(
+        "the scanned md5 matches itself at 1.0",
+        self_row is not None and float(self_row["score"]) > 0.99,
+        str(self_row.get("score") if self_row else "no self row"),
+    )
+    check(
+        "already_present names the collection holding the same md5",
+        COLLECTION in (doc.get("already_present") or []),
+        str(doc.get("already_present")),
+    )
+
+    page = test_endpoint(
+        "GET",
+        f"/api/scan/{scan_id}/diff",
+        params={
+            "collection": COLLECTION,
+            "md5": file_md5,
+            "table": "matched",
+            "limit": 5,
+            "sort_col": "similarity",
+        },
+        label="GET /api/scan/{id}/diff?table=matched",
+    )
+    matched = (page or {}).get("matched") or {}
+    check(
+        "diff rows are paged server-side",
+        isinstance(matched.get("rows"), list)
+        and len(matched["rows"]) <= 5
+        and matched.get("total", 0) >= len(matched.get("rows", [])),
+        str({k: v for k, v in matched.items() if k != "rows"}),
+    )
+    check(
+        "matched rows carry the cluster verdict",
+        all(
+            "would_join" in row and "is_clustered" in row
+            for row in matched.get("rows", [])
+        ),
+        str(sorted(matched["rows"][0].keys()) if matched.get("rows") else "no rows"),
+    )
+
+    test_endpoint("DELETE", f"/api/scan/{scan_id}", label="DELETE /api/scan/{id}")
+    gone = requests.get(f"{BASE_URL}/api/scan/{scan_id}", timeout=10)
+    check("a deleted scan is gone", gone.status_code == 404, str(gone.status_code))
+
+
 def test_skip_modules_payload():
     """`enable=` must reach the queued GHIDRA_ANALYZE job, in both directions.
 
@@ -6568,6 +6712,7 @@ if __name__ == "__main__":
         test_container_similarity,
         test_lib_tag_rollup,
         test_skip_modules_payload,
+        test_scan_mode,
         run_all_tests,
     ]
 

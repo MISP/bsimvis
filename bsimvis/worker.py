@@ -18,6 +18,8 @@ from bsimvis.app.services.job_service import (
     JobStatus,
     JobType,
     HEARTBEAT_INTERVAL,
+    PENDING_QUEUES,
+    SCAN_QUEUE,
 )
 from bsimvis.app.services.processing_service import ProcessingService
 from bsimvis.app.services.feature_service import FeatureService
@@ -99,8 +101,15 @@ def _clear_algorithms(payload):
 
 
 class Worker:
-    def __init__(self, name="worker-1", collection=None, pipeline=None):
+    def __init__(
+        self, name="worker-1", collection=None, pipeline=None, scan_only=False
+    ):
         self.name = name
+        # A scan-only worker watches the scan lane alone, so an interactive scan
+        # never queues behind a build. Every other worker drains the scan lane
+        # first and falls back to the normal lanes, which is what makes one
+        # reserved worker enough for the common case.
+        self.queues = [SCAN_QUEUE] if scan_only else list(PENDING_QUEUES)
         # launch_tmux.sh used to start every worker without --name, so a whole
         # fleet registered as "worker-1". The pid keeps ids unique even if that
         # regresses, and makes lease_owner point at a process you can actually
@@ -254,18 +263,28 @@ class Worker:
                     time.sleep(1)
                     continue
 
-                # Reliable Priority Queue Pattern
-                # 1. First check High-Priority Queue (Non-blocking)
-                source_queue = "jobs:pending:high"
-                job_id = self.r_queue.execute_command(
-                    "LMOVE", source_queue, "jobs:processing", "RIGHT", "LEFT"
-                )
-
-                # 2. If empty, fall back to Default Queue (Blocking for 2s)
-                if not job_id:
-                    source_queue = "jobs:pending"
+                # Reliable Priority Queue Pattern: try each lane in priority
+                # order without blocking, then block on the last one so an idle
+                # worker is not spinning. A scan-only worker has one lane, so it
+                # blocks on that.
+                job_id = None
+                for queue in self.queues[:-1]:
                     job_id = self.r_queue.execute_command(
-                        "BLMOVE", source_queue, "jobs:processing", "RIGHT", "LEFT", 2
+                        "LMOVE", queue, "jobs:processing", "RIGHT", "LEFT"
+                    )
+                    if job_id:
+                        source_queue = queue
+                        break
+
+                if not job_id:
+                    source_queue = self.queues[-1]
+                    job_id = self.r_queue.execute_command(
+                        "BLMOVE",
+                        source_queue,
+                        "jobs:processing",
+                        "RIGHT",
+                        "LEFT",
+                        2,
                     )
 
                 if not job_id:
@@ -485,7 +504,9 @@ class Worker:
         # unanalyzed rather than silently missing from the collection.
         collection = payload.get("collection", "main")
         file_md5 = payload.get("file_md5") or payload.get("md5")
-        if file_md5:
+        # A scan belongs to no collection and writes no Kvrocks key, including
+        # this one -- its failure is reported on the scan document instead.
+        if file_md5 and not payload.get("scan_id"):
             try:
                 self.r_data.sadd(f"{collection}:files:unanalyzed", file_md5)
             except Exception as e:
@@ -505,6 +526,22 @@ class Worker:
 
         if jtype == JobType.GHIDRA_ANALYZE.value:
             return self._run_ghidra_out_of_process(job_id, payload)
+
+        elif jtype == JobType.SCAN.value:
+            # Analyse then match, in one job: the analysis output lives in this
+            # scan's Redis cache, so there is nothing to hand to another worker.
+            from bsimvis.app.services.scan_service import get_scan_service
+
+            scan_service = get_scan_service()
+            scan_id = payload["scan_id"]
+            scan_service.update(scan_id, status="analyzing", job_id=job_id)
+            if not self._run_ghidra_out_of_process(job_id, payload):
+                scan_service.update(scan_id, status="failed")
+                return False
+            self.job_service.update_progress(job_id, 60, "Matching against scopes")
+            scan_service.update(scan_id, status="matching")
+            scan_service.run_match(scan_id, self.job_service, job_id)
+            return True
 
         elif jtype == JobType.INDEX_META.value:
             file_meta = payload.get("file_meta")
@@ -1029,9 +1066,19 @@ if __name__ == "__main__":
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--collection")
     target.add_argument("--pipeline")
+    parser.add_argument(
+        "--scan-only",
+        action="store_true",
+        help="Only claim scan jobs (jobs:pending:scan).",
+    )
     args = parser.parse_args()
 
-    worker = Worker(name=args.name, collection=args.collection, pipeline=args.pipeline)
+    worker = Worker(
+        name=args.name,
+        collection=args.collection,
+        pipeline=args.pipeline,
+        scan_only=args.scan_only,
+    )
     signal.signal(signal.SIGINT, worker.stop)
     signal.signal(signal.SIGTERM, worker.stop)
 

@@ -355,15 +355,61 @@ window.ScanView = {
             </tr>`;
         }).join('');
 
-        const clusters = SCAN_AXES.map(axis => {
+        const axisMeta = {
+            'overall': { label: 'Overall', icon: 'fa-solid fa-layer-group', color: 'var(--success)' },
+            'code': { label: 'Code', icon: 'fa-solid fa-code', color: 'var(--info, #3b82f6)' },
+            'library': { label: 'Library', icon: 'fa-solid fa-cubes', color: 'var(--warning, #d97706)' },
+            'content': { label: 'Content', icon: 'fa-solid fa-file-image', color: 'var(--accent, #9333ea)' }
+        };
+
+        const clusterRows = SCAN_AXES.flatMap(axis => {
             const list = (scope.bin_clusters || {})[axis] || [];
-            if (!list.length) return '';
-            const items = list.map(c => {
+            return list.map(c => {
                 const url = `/collections/${encodeURIComponent(scope.collection)}/files/clusters/${encodeURIComponent(c.cluster_uuid)}?axis=${encodeURIComponent(axis)}`;
-                return `<a href="${escapeAttr(url)}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); text-decoration:none;">${escapeHtml(c.cluster_name || c.cluster_id || c.cluster_uuid)}</a> <span style="color:var(--dim);">(${Number(c.member_count || 0)} members, via ${Number((c.via || []).length)})</span>`;
-            }).join(' · ');
-            return `<div style="font-size:0.78rem; color:var(--dim);"><b style="color:var(--text);">${escapeHtml(axis)}</b>: ${items}</div>`;
+                
+                const dists = [
+                    ['Yara', 'fa-solid fa-biohazard', c.yara_distribution],
+                    ['AV Type', 'fa-solid fa-shield', c.avtype_distribution],
+                    ['File Type', 'fa-solid fa-file-code', c.filetype_distribution],
+                    ['CC IP', 'fa-solid fa-network-wired', c.ccip_distribution],
+                    ['File Name', 'fa-solid fa-file', c.filename_distribution],
+                    ['MD5', 'fa-solid fa-fingerprint', c.md5_distribution],
+                ];
+                const cards = dists.map(([title, icon, dist]) => window.renderDist(title, icon, dist)).join('');
+                const ax = axisMeta[axis] || { label: axis, icon: 'fa-solid fa-layer-group', color: 'var(--text)' };
+
+                return `
+                <tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:12px; vertical-align:top; font-weight:bold; color:${ax.color}; white-space:nowrap; width:1px;">
+                        <i class="${ax.icon}" style="margin-right:6px;"></i>${escapeHtml(ax.label)}
+                    </td>
+                    <td style="padding:12px; vertical-align:top;">
+                        <a href="${escapeAttr(url)}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); text-decoration:none; font-weight:600; display:inline-block; word-break:break-word; max-width:250px;">${escapeHtml(c.cluster_name || c.cluster_id || c.cluster_uuid)}</a>
+                        <div style="font-size:0.72rem; color:var(--dim); margin-top:4px;">${Number(c.member_count || 0)} members · via ${Number((c.via || []).length)}</div>
+                    </td>
+                    <td style="padding:12px; vertical-align:top;">
+                        ${cards ? `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">${cards}</div>` : '<span class="dim">No metadata distributions</span>'}
+                    </td>
+                </tr>`;
+            });
         }).join('');
+        
+        const clustersHtml = clusterRows ? `
+            <div style="margin-top:4px;">
+                <div style="font-size:0.72rem; color:var(--dim); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">Would join</div>
+                <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--card-bg);">
+                    <table style="width:100%; border-collapse:collapse; text-align:left; font-size:0.83rem;">
+                        <thead>
+                            <tr style="border-bottom:1px solid var(--border); background:var(--hover); color:var(--dim);">
+                                <th style="padding:8px 12px; width:100px;">Axis</th>
+                                <th style="padding:8px 12px; width:200px;">Cluster</th>
+                                <th style="padding:8px 12px;">Metadata</th>
+                            </tr>
+                        </thead>
+                        <tbody>${clusterRows}</tbody>
+                    </table>
+                </div>
+            </div>` : '';
 
         return `
         <div style="display:flex; flex-direction:column; gap:10px;">
@@ -376,7 +422,7 @@ window.ScanView = {
                     min_features ${Number((scope.params || {}).min_features || 0)}
                 </span>
             </div>
-            ${clusters ? `<div style="display:flex; flex-direction:column; gap:4px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--card-bg);"><div style="font-size:0.72rem; color:var(--dim); text-transform:uppercase; letter-spacing:0.05em;">Would join</div>${clusters}</div>` : ''}
+            ${clustersHtml}
             <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--card-bg);">
                 <table style="width:100%; border-collapse:collapse; text-align:left; font-size:0.83rem;">
                     <thead>

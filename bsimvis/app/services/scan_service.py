@@ -146,7 +146,7 @@ class ScanService:
         keys = self.q.keys("scan:*:doc")
         if not keys:
             return []
-        
+
         docs = []
         for key in keys:
             doc = self.q.get(key)
@@ -157,7 +157,7 @@ class ScanService:
                         docs.append(parsed)
                 except Exception:
                     pass
-                    
+
         # Sort newest first
         docs.sort(key=lambda d: d.get("created_at", 0), reverse=True)
         return docs
@@ -607,7 +607,9 @@ class ScanService:
                 return float(feat_a[fid] or 1.0)
             return float(meta_b.get(fid, {}).get("bsim_features_count", 1.0))
 
-        fid_tags = {t["fid"]: normalize_tags(tags) for t in targets if (tags := t["tags"])}
+        fid_tags = {
+            t["fid"]: normalize_tags(tags) for t in targets if (tags := t["tags"])
+        }
         fid_tags.update(
             {
                 fid: tags
@@ -769,6 +771,19 @@ class ScanService:
                             "cluster_name": meta.get("cluster_name", ""),
                             "cohesion_score": meta.get("cohesion_score", 0.0),
                             "member_count": meta.get("member_count", 0),
+                            "function_count_stats": meta.get(
+                                "function_count_stats", {}
+                            ),
+                            "yara_distribution": meta.get("yara_distribution", []),
+                            "avtype_distribution": meta.get("avtype_distribution", []),
+                            "filetype_distribution": meta.get(
+                                "filetype_distribution", []
+                            ),
+                            "ccip_distribution": meta.get("ccip_distribution", []),
+                            "filename_distribution": meta.get(
+                                "filename_distribution", []
+                            ),
+                            "md5_distribution": meta.get("md5_distribution", []),
                             "via": [],
                         },
                     )

@@ -77,6 +77,22 @@ BOILERPLATE_SYMBOLS = {
     "__FindPESectionByName": "boilerplate:runtime:mingw:support",
     "__GetPEImageBase": "boilerplate:runtime:mingw:support",
     "__IsNonwritableInCurrentImage": "boilerplate:runtime:mingw:support",
+    "_atexit": "boilerplate:runtime:msvc:support",
+    "___do_global_ctors": "boilerplate:runtime:mingw:startup",
+    "___dyn_tls_dtor@12": "boilerplate:runtime:mingw:support",
+    "___dyn_tls_init@12": "boilerplate:runtime:mingw:support",
+    "mark_section_writable": "boilerplate:runtime:mingw:support",
+    "____w64_mingwthr_remove_key_dtor": "boilerplate:runtime:mingw:support",
+    "___gdtoa": "boilerplate:runtime:libc:dtoa",
+    "___freedtoa": "boilerplate:runtime:libc:dtoa",
+    "dtoa_lock": "boilerplate:runtime:libc:dtoa",
+    "__get_invalid_parameter_handler": "boilerplate:runtime:msvc:support",
+    "__set_invalid_parameter_handler": "boilerplate:runtime:msvc:support",
+    "___wcrtomb_cp": "boilerplate:runtime:mingw:support",
+    "___mbrtowc_cp": "boilerplate:runtime:mingw:support",
+    "____mb_cur_max_func": "boilerplate:runtime:mingw:support",
+    "setlocale_codepage_hack": "boilerplate:runtime:mingw:support",
+    "register_frame_ctor": "boilerplate:runtime:mingw:startup",
 }
 
 BOILERPLATE_PREFIXES = {

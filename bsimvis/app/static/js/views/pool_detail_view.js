@@ -143,7 +143,7 @@ window.PoolDetailView = {
             <select id="pool-add-collection" style="flex:1; background:var(--card-bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:7px;">
                 <option value="">Add collection…</option>${collectionOptions}
             </select>
-            <button onclick="window.poolDetailAddCollection(${escapeAttr(jsString(poolId))}, this)" class="btn-action" style="flex:0 0 auto; max-width:100%; box-sizing:border-box; white-space:nowrap; padding:7px 10px;"><i class="fa-solid fa-plus"></i> Add</button>
+            <button onclick="window.poolDetailAddCollection(${escapeAttr(jsString(poolId))}, this)" title="Add collection to pool" aria-label="Add collection to pool" style="flex:0 0 34px; width:34px; height:34px; box-sizing:border-box; padding:0; border:1px solid rgba(59,130,246,.4); border-radius:6px; background:rgba(59,130,246,.12); color:#60a5fa; cursor:pointer; display:inline-flex; align-items:center; justify-content:center;"><i class="fa-solid fa-plus"></i></button>
         </div>
         <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--card-bg);">
             <table style="width:100%; border-collapse:collapse; text-align:left; font-size:0.85rem;">
@@ -331,7 +331,7 @@ window.PoolDetailView = {
                         ${this._configInput('pool-file-cluster-samples-edit', 'Min Samples', fic.min_samples)}
                         ${this._configInput('pool-file-cluster-epsilon-edit', 'Epsilon', fic.epsilon, '0.01')}
                         ${this._configSelect('pool-file-cluster-method-edit', 'Method', fic.selection_method, `<option value="eom" ${fic.selection_method === 'eom' ? 'selected' : ''}>EOM</option><option value="leaf" ${fic.selection_method === 'leaf' ? 'selected' : ''}>Leaf</option>`)}
-                        <button onclick="window.poolDetailSaveConfig(${escapeAttr(jsString(poolId))}, this)" style="margin-top:12px; padding:7px 16px;">Save parameters</button>
+                        <button onclick="window.poolDetailSaveConfig(${escapeAttr(jsString(poolId))}, this)" style="margin-top:14px; padding:8px 14px; border:1px solid rgba(16,185,129,.4); border-radius:6px; background:rgba(16,185,129,.12); color:#10b981; cursor:pointer; display:inline-flex; align-items:center; gap:7px; font-size:.78rem; font-weight:700;"><i class="fa-solid fa-floppy-disk"></i> Save parameters</button>
                     </div>
                 </div>
             </div>

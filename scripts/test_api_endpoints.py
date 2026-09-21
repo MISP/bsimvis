@@ -2977,6 +2977,39 @@ def test_call_edge_id_dedup():
     )
 
 
+def test_pool_hierarchical_axis_fanout():
+    """The pool dispatcher must build every binary-score axis for SNN."""
+    from unittest.mock import patch
+
+    from bsimvis.app.services.bin_cluster_service import bin_cluster_service
+    from bsimvis.app.services.cluster_service import ClusterService
+    from bsimvis.app.services.pool_service import pool_service
+
+    calls = []
+    pool = {
+        "file_sim_params": {"enabled": True},
+        "file_cluster_params": {"cluster_algo": "hierarchical_snn"},
+        "func_sim_params": {"algo": "jaccard"},
+    }
+
+    def record_axis(**kwargs):
+        calls.append(kwargs["axis"])
+        return True
+
+    dispatcher = ClusterService.__new__(ClusterService)
+    with (
+        patch.object(pool_service, "get_pool", return_value=pool),
+        patch.object(bin_cluster_service, "run_clustering", side_effect=record_axis),
+    ):
+        success = dispatcher.run_pool_bin_clustering("test-pool")
+
+    check(
+        "hierarchical pool binary clustering builds every score axis",
+        success and calls == ["code", "library", "content", "overall"],
+        f"axes={calls}",
+    )
+
+
 def test_pool_annotation_propagation():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3b – Pool <-> collection tag/note propagation", BOLD))
@@ -6690,6 +6723,7 @@ if __name__ == "__main__":
     # run_all_tests() stays last: it deletes the collection on its way out.
     STEPS = [
         test_call_edge_id_dedup,
+        test_pool_hierarchical_axis_fanout,
         test_cluster_tags,
         test_incremental_hierarchical_cluster_equivalence,
         test_cluster_response_contract,

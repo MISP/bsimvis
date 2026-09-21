@@ -2686,21 +2686,6 @@ class ClusterService:
         file_sim_params = pool.get("file_sim_params", {})
         if not file_sim_params.get("enabled", True):
             return True
-        if engine != "hdbscan":
-            from bsimvis.app.services.bin_cluster_service import bin_cluster_service
-
-            return bin_cluster_service.run_clustering(
-                collection=f"global:pool:{pool_id}",
-                algo=pool_service.similarity_algo(pool),
-                min_cluster_size=min_cluster_size,
-                min_samples=min_samples,
-                min_sim=min_sim,
-                min_cohesion=min_cohesion,
-                job_service=job_service,
-                job_id=job_id,
-                axis=axis,
-                engine=engine,
-            )
         if axis == "overall":
             for split in ("code", "library", "content"):
                 if not self.run_pool_bin_clustering(
@@ -2716,7 +2701,21 @@ class ClusterService:
                     axis=split,
                 ):
                     return False
-            # and fall through to build the overall axis here
+        if engine != "hdbscan":
+            from bsimvis.app.services.bin_cluster_service import bin_cluster_service
+
+            return bin_cluster_service.run_clustering(
+                collection=f"global:pool:{pool_id}",
+                algo=pool_service.similarity_algo(pool),
+                min_cluster_size=min_cluster_size,
+                min_samples=min_samples,
+                min_sim=min_sim,
+                min_cohesion=min_cohesion,
+                job_service=job_service,
+                job_id=job_id,
+                axis=axis,
+                engine=engine,
+            )
 
         # New structured config handling
         file_sim_params = pool.get("file_sim_params", {})

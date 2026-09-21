@@ -18,6 +18,20 @@ def _avg_function_count(c):
     return (c.get("function_count_stats") or {}).get("avg") or 0
 
 
+def _pool_bin_cluster_namespace(pool, algo, axis, node_type="file"):
+    """Return the writer's namespace and whether it uses collection-style keys."""
+    algo = f"{algo}:{axis}" if axis != "overall" else algo
+    engine = (pool.get("file_cluster_params") or {}).get(
+        "cluster_algo"
+    ) or config_service.get("clustering.bin_engine", "hierarchical_snn")
+    if engine == "hierarchical_snn":
+        algo = f"{algo}:snn"
+    collection_style_keys = engine in ("hierarchical_uf", "hierarchical_snn")
+    if collection_style_keys and node_type == "container":
+        algo = f"{algo}:container"
+    return algo, collection_style_keys
+
+
 def build_bin_cluster():
     """Enqueues a binary clustering job."""
     data = request.json or {}
@@ -246,11 +260,16 @@ def list_bin_clusters():
         pool = pool_service.get_pool(pool_id)
         if not pool:
             return {"error": "Pool not found"}, 404
-        algo = pool_service.similarity_algo(pool)
-        algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
+        algo, collection_style_pool_keys = _pool_bin_cluster_namespace(
+            pool, pool_service.similarity_algo(pool), axis, node_type
+        )
         collection = f"global:pool:{pool_id}"
-        cluster_list_key = f"global:pool:{pool_id}:bin_cluster:list:{algo_ns}"
-        meta_prefix = f"global:pool:{pool_id}:bin_cluster:"
+        cluster_list_key = f"global:pool:{pool_id}:bin_cluster:list:{algo}"
+        meta_prefix = (
+            f"global:pool:{pool_id}:bin_cluster:{algo}:"
+            if collection_style_pool_keys
+            else f"global:pool:{pool_id}:bin_cluster:"
+        )
     else:
         cluster_list_key = f"{collection}:bin_cluster:list:{algo}"
         meta_prefix = f"{collection}:bin_cluster:{algo}:"
@@ -259,21 +278,12 @@ def list_bin_clusters():
     all_meta_keys = []
 
     if cids_raw:
-        if is_pool:
-            all_meta_keys = [
-                f"global:pool:{pool_id}:bin_cluster:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
-                for cid in cids_raw
-            ]
-        else:
-            all_meta_keys = [
-                f"{collection}:bin_cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
-                for cid in cids_raw
-            ]
+        all_meta_keys = [
+            f"{meta_prefix}{cid.decode() if isinstance(cid, bytes) else cid}:meta"
+            for cid in cids_raw
+        ]
     else:
-        if is_pool:
-            pattern = f"global:pool:{pool_id}:bin_cluster:*:meta"
-        else:
-            pattern = f"{collection}:bin_cluster:{algo}:*:meta"
+        pattern = f"{meta_prefix}*:meta"
         cursor = 0
         while True:
             cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
@@ -284,12 +294,7 @@ def list_bin_clusters():
                 break
 
         if all_meta_keys:
-            prefix = (
-                f"global:pool:{pool_id}:bin_cluster:"
-                if is_pool
-                else f"{collection}:bin_cluster:{algo}:"
-            )
-            cids_to_add = [k[len(prefix) : -len(":meta")] for k in all_meta_keys]
+            cids_to_add = [k[len(meta_prefix) : -len(":meta")] for k in all_meta_keys]
             if cids_to_add:
                 r.sadd(cluster_list_key, *cids_to_add)
 
@@ -717,8 +722,9 @@ def get_bin_cluster_tree():
         pool = pool_service.get_pool(pool_id)
         if not pool:
             return {"error": "Pool not found"}, 404
-        algo = pool_service.similarity_algo(pool)
-        algo = f"{algo}:{axis}" if axis != "overall" else algo
+        algo, _ = _pool_bin_cluster_namespace(
+            pool, pool_service.similarity_algo(pool), axis, node_type
+        )
     if not is_pool:
         if (
             config_service.get("clustering.bin_engine", "threshold_uf")

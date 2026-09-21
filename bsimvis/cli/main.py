@@ -18,6 +18,7 @@ from bsimvis.cli import (
     bsimvis_collection,
     bsimvis_metadata,
     bsimvis_rulezet,
+    bsimvis_transfer,
 )
 
 
@@ -650,6 +651,40 @@ def main():
         "-c", "--collection", required=True, help="Collection name to clean"
     )
 
+    # --- TRANSFER ---
+    transfer_parser = subparsers.add_parser(
+        "transfer",
+        help="Copy a collection between Kvrocks instances (scp-style)",
+        description="Copy a collection between Kvrocks instances. Endpoints are "
+        "COLLECTION (the configured Kvrocks) or HOST:PORT:COLLECTION. Talks to "
+        "Kvrocks directly, not to the API.",
+    )
+    transfer_parser.add_argument(
+        "source", metavar="[HOST:PORT:]COLLECTION", help="Collection to copy from"
+    )
+    transfer_parser.add_argument(
+        "dest", metavar="[HOST:PORT:]COLLECTION", help="Collection to copy into"
+    )
+    transfer_parser.add_argument(
+        "--skip-sim",
+        action="store_true",
+        default=False,
+        help="Skip similarities, clusters and their indexes. Much faster -- they "
+        "are the bulk of the keys -- but the target needs `bsimvis sim build`.",
+    )
+    transfer_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Count the keys that would be copied, write nothing",
+    )
+    transfer_parser.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Merge into a destination collection that already exists",
+    )
+
     # --- METADATA ---
     metadata_parser = subparsers.add_parser(
         "metadata", help="Metadata management and propagation"
@@ -793,6 +828,11 @@ def main():
             bsimvis_binsim.run_binsim(g_host, int(g_port), args)
         elif args.subcommand == "collection":
             bsimvis_collection.run_collection(g_host, int(g_port), args)
+        elif args.subcommand == "transfer":
+            # Kvrocks-to-Kvrocks, so the API host resolved above does not apply.
+            rc = bsimvis_transfer.run_transfer(args)
+            if rc:
+                sys.exit(rc)
         elif args.subcommand == "metadata":
             bsimvis_metadata.run_metadata(g_host, int(g_port), args)
         elif args.subcommand == "rulezet":

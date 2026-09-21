@@ -20,7 +20,7 @@ function scanScoreCell(value) {
     if (value === null || value === undefined) return '<span style="color:var(--dim);">—</span>';
     const score = Number(value);
     const color = score >= 0.9 ? '#10b981' : score >= 0.5 ? '#f59e0b' : 'var(--dim)';
-    return `<span style="color:${color}; font-weight:700;">${score.toFixed(4)}</span>`;
+    return `<span style="color:${color}; font-weight:700;">${(score * 100).toFixed(1)}%</span>`;
 }
 
 window.ScanView = {
@@ -29,6 +29,22 @@ window.ScanView = {
     _scanId: null,
     _doc: null,
     _openPair: null, // "collection\u0000md5" of the expanded diff, if any
+    _containerId: null,
+    _sortCol: 'sim',
+    _sortDir: -1,
+
+    setSort(col) {
+        if (this._sortCol === col) {
+            this._sortDir *= -1;
+        } else {
+            this._sortCol = col;
+            this._sortDir = -1;
+        }
+        if (this._doc && this._containerId) {
+            const container = document.getElementById(this._containerId);
+            if (container) container.innerHTML = this._renderReport(this._doc);
+        }
+    },
 
     destroy() {
         this._stopped = true;
@@ -41,6 +57,7 @@ window.ScanView = {
     },
 
     async init(params, containerId) {
+        this._containerId = containerId;
         this._stopped = false;
         const container = document.getElementById(containerId);
         if (!container) return;
@@ -362,47 +379,72 @@ window.ScanView = {
             'content': { label: 'Content', icon: 'fa-solid fa-file-image', color: 'var(--accent, #9333ea)' }
         };
 
-        const clusterRows = SCAN_AXES.flatMap(axis => {
+        let clusterRowsData = SCAN_AXES.flatMap(axis => {
             const list = (scope.bin_clusters || {})[axis] || [];
             return list.map(c => {
-                const url = `/collections/${encodeURIComponent(scope.collection)}/files/clusters/${encodeURIComponent(c.cluster_uuid)}?axis=${encodeURIComponent(axis)}`;
-                
-                const dists = [
-                    ['Yara', 'fa-solid fa-biohazard', c.yara_distribution],
-                    ['AV Type', 'fa-solid fa-shield', c.avtype_distribution],
-                    ['File Type', 'fa-solid fa-file-code', c.filetype_distribution],
-                    ['CC IP', 'fa-solid fa-network-wired', c.ccip_distribution],
-                    ['File Name', 'fa-solid fa-file', c.filename_distribution],
-                    ['MD5', 'fa-solid fa-fingerprint', c.md5_distribution],
-                ];
-                const cards = dists.map(([title, icon, dist]) => window.renderDist(title, icon, dist)).join('');
-                const ax = axisMeta[axis] || { label: axis, icon: 'fa-solid fa-layer-group', color: 'var(--text)' };
-                
                 const maxSim = Math.max(...(c.via || []).map(v => Number(v.score || 0)));
                 const coh = Number(c.cohesion_score || 0);
-
-                return `
-                <tr style="border-bottom:1px solid var(--border);">
-                    <td style="padding:12px; vertical-align:top; font-weight:bold; color:${ax.color}; white-space:nowrap; width:1px;">
-                        <i class="${ax.icon}" style="margin-right:6px;"></i>${escapeHtml(ax.label)}
-                    </td>
-                    <td style="padding:12px; vertical-align:top;">
-                        <a href="${escapeAttr(url)}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); text-decoration:none; font-weight:600; display:inline-block; word-break:break-word; max-width:250px;">${escapeHtml(c.cluster_name || c.cluster_id || c.cluster_uuid)}</a>
-                        <div style="font-size:0.72rem; color:var(--dim); margin-top:4px;">${Number(c.member_count || 0)} members · via ${Number((c.via || []).length)}</div>
-                    </td>
-                    <td style="padding:12px; vertical-align:top; text-align:right;">
-                        ${scanScoreCell(maxSim)}
-                    </td>
-                    <td style="padding:12px; vertical-align:top; text-align:right;">
-                        <span style="color:var(--success); font-weight:bold;">${(coh * 100).toFixed(1)}%</span>
-                    </td>
-                    <td style="padding:12px; vertical-align:top;">
-                        ${cards ? `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">${cards}</div>` : '<span class="dim">No metadata distributions</span>'}
-                    </td>
-                </tr>`;
+                return { axis, c, maxSim, coh };
             });
+        });
+
+        clusterRowsData.sort((a, b) => {
+            let valA, valB;
+            switch(window.ScanViewInstance._sortCol) {
+                case 'axis': valA = a.axis; valB = b.axis; break;
+                case 'cluster': valA = (a.c.cluster_name || a.c.cluster_id || a.c.cluster_uuid).toLowerCase(); valB = (b.c.cluster_name || b.c.cluster_id || b.c.cluster_uuid).toLowerCase(); break;
+                case 'coh': valA = a.coh; valB = b.coh; break;
+                case 'sim': default: valA = a.maxSim; valB = b.maxSim; break;
+            }
+            if (valA < valB) return -1 * window.ScanViewInstance._sortDir;
+            if (valA > valB) return 1 * window.ScanViewInstance._sortDir;
+            return 0;
+        });
+
+        const clusterRows = clusterRowsData.map(({ axis, c, maxSim, coh }) => {
+            const url = `/collections/${encodeURIComponent(scope.collection)}/files/clusters/${encodeURIComponent(c.cluster_uuid)}?axis=${encodeURIComponent(axis)}`;
+            
+            const dists = [
+                ['Yara', 'fa-solid fa-biohazard', c.yara_distribution],
+                ['AV Type', 'fa-solid fa-shield', c.avtype_distribution],
+                ['File Type', 'fa-solid fa-file-code', c.filetype_distribution],
+                ['CC IP', 'fa-solid fa-network-wired', c.ccip_distribution],
+                ['File Name', 'fa-solid fa-file', c.filename_distribution],
+                ['MD5', 'fa-solid fa-fingerprint', c.md5_distribution],
+            ];
+            const cards = dists.map(([title, icon, dist]) => window.renderDist(title, icon, dist)).join('');
+            const ax = axisMeta[axis] || { label: axis, icon: 'fa-solid fa-layer-group', color: 'var(--text)' };
+
+            return `
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:12px; vertical-align:top; font-weight:bold; color:${ax.color}; white-space:nowrap; width:1px;">
+                    <i class="${ax.icon}" style="margin-right:6px;"></i>${escapeHtml(ax.label)}
+                </td>
+                <td style="padding:12px; vertical-align:top;">
+                    <a href="${escapeAttr(url)}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); text-decoration:none; font-weight:600; display:inline-block; word-break:break-word; max-width:250px;">${escapeHtml(c.cluster_name || c.cluster_id || c.cluster_uuid)}</a>
+                    <div style="font-size:0.72rem; color:var(--dim); margin-top:4px;">${Number(c.member_count || 0)} members · via ${Number((c.via || []).length)}</div>
+                </td>
+                <td style="padding:12px; vertical-align:top; text-align:right;">
+                    ${scanScoreCell(maxSim)}
+                </td>
+                <td style="padding:12px; vertical-align:top; text-align:right;">
+                    <span style="color:var(--success); font-weight:bold;">${(coh * 100).toFixed(1)}%</span>
+                </td>
+                <td style="padding:12px; vertical-align:top;">
+                    ${cards ? `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">${cards}</div>` : '<span class="dim">No metadata distributions</span>'}
+                </td>
+            </tr>`;
         }).join('');
         
+        const thSort = (col, label, title, style) => {
+            const active = window.ScanViewInstance._sortCol === col;
+            const icon = active ? (window.ScanViewInstance._sortDir === 1 ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort';
+            const color = active ? 'var(--text)' : 'var(--dim)';
+            return `<th style="${style || ''}; cursor:pointer; color:${color}; user-select:none;" onclick="window.ScanViewInstance.setSort('${col}')" title="${escapeAttr(title || '')}">
+                ${escapeHtml(label)} <i class="fa-solid ${icon}" style="font-size:0.7rem; margin-left:4px;"></i>
+            </th>`;
+        };
+
         const clustersHtml = clusterRows ? `
             <div style="margin-top:4px;">
                 <div style="font-size:0.72rem; color:var(--dim); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">Would join</div>
@@ -410,10 +452,10 @@ window.ScanView = {
                     <table style="width:100%; border-collapse:collapse; text-align:left; font-size:0.83rem;">
                         <thead>
                             <tr style="border-bottom:1px solid var(--border); background:var(--hover); color:var(--dim);">
-                                <th style="padding:8px 12px; width:100px;">Axis</th>
-                                <th style="padding:8px 12px; width:220px;">Cluster</th>
-                                <th style="padding:8px 12px; width:80px; text-align:right;" title="Maximum similarity among matched cluster members">Sim</th>
-                                <th style="padding:8px 12px; width:80px; text-align:right;" title="Cluster cohesion score">Coh</th>
+                                ${thSort('axis', 'Axis', '', 'padding:8px 12px; width:100px;')}
+                                ${thSort('cluster', 'Cluster', '', 'padding:8px 12px; width:220px;')}
+                                ${thSort('sim', 'Sim', 'Maximum similarity among matched cluster members', 'padding:8px 12px; width:80px; text-align:right;')}
+                                ${thSort('coh', 'Coh', 'Cluster cohesion score', 'padding:8px 12px; width:80px; text-align:right;')}
                                 <th style="padding:8px 12px;">Metadata</th>
                             </tr>
                         </thead>

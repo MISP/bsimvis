@@ -60,7 +60,7 @@ window.UI = {
     Sidebar: {
         render: function() {
             const { viewKey, collection, pool } = getRoutingState();
-            if (!collection && !pool && viewKey !== 'home' && viewKey !== 'collections' && viewKey !== 'pools' && viewKey !== 'jobs' && viewKey !== 'search' && viewKey !== 'search-detail') {
+            if (!collection && !pool && viewKey !== 'home' && viewKey !== 'collections' && viewKey !== 'pools' && viewKey !== 'jobs' && viewKey !== 'search' && viewKey !== 'search-detail' && viewKey !== 'scan' && viewKey !== 'scan-detail') {
                 throw new Error("Navigation error: collection context is missing.");
             }
 

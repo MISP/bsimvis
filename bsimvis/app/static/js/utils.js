@@ -452,6 +452,8 @@ function getRoutingState() {
     if (restful.id1 && !params.has('id1')) params.set('id1', restful.id1);
     if (restful.id2 && !params.has('id2')) params.set('id2', restful.id2);
     if (restful.pool && !params.has('pool')) params.set('pool', restful.pool);
+    if (restful.cluster && !params.has('cluster')) params.set('cluster', restful.cluster);
+    if (restful.scan_id && !params.has('scan_id')) params.set('scan_id', restful.scan_id);
     if (restful.search_id && !params.has('search_id')) params.set('search_id', restful.search_id);
     if (restful.cluster_uuid && !params.has('cluster_uuid')) params.set('cluster_uuid', restful.cluster_uuid);
 

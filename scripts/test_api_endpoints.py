@@ -5574,6 +5574,7 @@ def test_pool_collection_equivalence():
             ),
             ("/api/cluster/build", {"collection": single}),
             ("/api/bin_sim/build", {"collection": single}),
+            ("/api/bin_cluster/build", {"collection": single}),
         ):
             resp = requests.post(f"{BASE_URL}{path}", json=payload, timeout=10)
             resp.raise_for_status()
@@ -5590,7 +5591,7 @@ def test_pool_collection_equivalence():
                 "func_sim_params": {},
                 "func_cluster_params": {},
                 "file_sim_params": {"enabled": True},
-                "file_cluster_params": {"enabled": True},
+                "file_cluster_params": {"cluster_algo": "hierarchical_snn"},
             },
         )
         if not check("equivalence: pool created over the split collections", ok, msg):
@@ -5912,6 +5913,45 @@ def test_pool_collection_equivalence():
             "equivalence: function cluster metadata matches",
             not meta_mismatch,
             f"{len(meta_mismatch)} mismatch(es)",
+        )
+
+        # ── 5. binary clusters: membership + metadata ────────────────────────
+        def bin_clusters_of(list_key, member_fmt, meta_fmt):
+            out = {}
+            for cid_b in r.smembers(list_key):
+                cid = cid_b.decode() if isinstance(cid_b, bytes) else str(cid_b)
+                members = tuple(
+                    sorted(m.decode() if isinstance(m, bytes) else str(m) for m in r.smembers(member_fmt.format(cid=cid)))
+                )
+                out[members] = norm_meta(
+                    _json.loads(r.get(meta_fmt.format(cid=cid)) or "{}")
+                )
+            return out
+
+        s_bin_clusters = bin_clusters_of(
+            f"{single}:bin_cluster:list:{EQ_ALGO}:snn",
+            f"{single}:bin_cluster:{EQ_ALGO}:snn:{{cid}}:members",
+            f"{single}:bin_cluster:{EQ_ALGO}:snn:{{cid}}:meta",
+        )
+        p_bin_clusters = bin_clusters_of(
+            f"global:pool:{eq_pool}:bin_cluster:list:{EQ_ALGO}:snn",
+            f"global:pool:{eq_pool}:bin_cluster:{EQ_ALGO}:snn:{{cid}}:members",
+            f"global:pool:{eq_pool}:bin_cluster:{EQ_ALGO}:snn:{{cid}}:meta",
+        )
+        check(
+            "equivalence: binary cluster membership matches",
+            set(s_bin_clusters) == set(p_bin_clusters),
+            f"{len(s_bin_clusters)} single / {len(p_bin_clusters)} pool cluster(s)",
+        )
+        bin_meta_mismatch = [
+            k
+            for k in set(s_bin_clusters) & set(p_bin_clusters)
+            if s_bin_clusters[k] != p_bin_clusters[k]
+        ]
+        check(
+            "equivalence: binary cluster metadata matches",
+            not bin_meta_mismatch,
+            f"{len(bin_meta_mismatch)} mismatch(es)",
         )
 
     finally:

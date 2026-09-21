@@ -110,7 +110,8 @@ window.ClusterDetailView = {
 
         // Fix for binary clusters: parse axis from URL params
         const urlParams = new URLSearchParams(window.location.search);
-        this.axis = params.axis || urlParams.get('axis') || 'overall';
+        const explicitAxis = params.axis || urlParams.get('axis');
+        this.axis = explicitAxis || window.BINSIM_DEFAULT_AXIS || 'overall';
         // Containers and files cluster in separate namespaces; carry whichever
         // one the caller opened, or the listing reads the wrong graph.
         this.nodeType = params.node_type || urlParams.get('node_type') || '';
@@ -220,11 +221,19 @@ window.ClusterDetailView = {
         try {
             // The cluster itself plus its ancestors: enough to draw the path to
             // the root. Everything else in the tree arrives on expand.
-            const chain = await this.fetchClusters({
-                cluster_uuid: uuid,
-                show_parents: 'true',
-                limit: '1',
-            });
+            const lookup = { cluster_uuid: uuid, show_parents: 'true', limit: '1' };
+            let chain = await this.fetchClusters(lookup);
+            // Each score axis clusters into its own namespace, but a uuid is
+            // unique across them: a link that carries no axis probes the
+            // others rather than reporting the cluster missing.
+            if (this.isBinary && !explicitAxis && !chain.length) {
+                for (const ax of ['overall', 'code', 'library', 'content']) {
+                    if (ax === this.axis) continue;
+                    this.axis = ax;
+                    chain = await this.fetchClusters(lookup);
+                    if (chain.length) break;
+                }
+            }
             this.ingest(chain);
 
             // uuid matching is a substring test server-side; pin the exact one.
@@ -372,6 +381,7 @@ window.ClusterDetailView = {
         // Update URL to reflect selected cluster without reloading
         const urlParams = new URLSearchParams(window.location.search);
         urlParams.set(this.isBinary ? 'bin_cluster_uuid' : 'cluster_uuid', uuid);
+        if (this.isBinary) urlParams.set('axis', this.axis);
         const newUrl = window.location.pathname + '?' + urlParams.toString();
         window.history.replaceState({path: newUrl}, '', newUrl);
 

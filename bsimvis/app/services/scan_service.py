@@ -32,6 +32,7 @@ from bsimvis.app.services.bin_sim_tags import (
     greedy_match,
     load_tag_meta,
     merge_tag_fields,
+    normalize_tags,
     read_tags_rev,
     score_pair,
 )
@@ -139,6 +140,27 @@ class ScanService:
 
     def raw(self, scan_id):
         return self.q_raw.get(self.key(scan_id, "raw"))
+
+    def list_scans(self):
+        """Returns a list of all active scan documents from Redis."""
+        keys = self.r.keys("scan:*:doc")
+        if not keys:
+            return []
+        
+        docs = []
+        for key in keys:
+            doc = self.r.get(key)
+            if doc:
+                try:
+                    parsed = _decode(doc)
+                    if parsed:
+                        docs.append(parsed)
+                except Exception:
+                    pass
+                    
+        # Sort newest first
+        docs.sort(key=lambda d: d.get("created_at", 0), reverse=True)
+        return docs
 
     def delete(self, scan_id):
         """Drop one scan's cache. Every key carries the scan id, so this is a
@@ -446,7 +468,7 @@ class ScanService:
                         or len(tf)
                     ),
                     "funcid": meta.get("function_id_hash"),
-                    "tags": meta.get("tags") or {},
+                    "tags": merge_tag_fields(meta),
                 }
             )
         return targets
@@ -585,12 +607,12 @@ class ScanService:
                 return float(feat_a[fid] or 1.0)
             return float(meta_b.get(fid, {}).get("bsim_features_count", 1.0))
 
-        fid_tags = {t["fid"]: tags for t in targets if (tags := t["tags"])}
+        fid_tags = {t["fid"]: normalize_tags(tags) for t in targets if (tags := t["tags"])}
         fid_tags.update(
             {
                 fid: tags
                 for fid, value in meta_b.items()
-                if (tags := merge_tag_fields(value))
+                if (tags := normalize_tags(merge_tag_fields(value)))
             }
         )
         common = score_pair(

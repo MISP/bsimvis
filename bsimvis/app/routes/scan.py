@@ -129,6 +129,22 @@ def start_scan():
         return {"error": str(e)}, 500
 
 
+def list_scans():
+    """List all scans from Redis, resolving their current job statuses."""
+    service = get_scan_service()
+    docs = service.list_scans()
+    
+    # Enrich with job statuses
+    for doc in docs:
+        if doc.get("job_id"):
+            job = job_service.get_job_status(doc["job_id"])
+            if job:
+                doc["job_status"] = job.get("status")
+                doc["progress"] = job.get("progress")
+                if job.get("error"):
+                    doc["error"] = job["error"]
+    return {"scans": docs}
+
 def get_scan(scan_id):
     """The scan document: status, warnings and the per-scope summary."""
     doc = get_scan_service().get(scan_id)

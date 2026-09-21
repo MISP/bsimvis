@@ -65,6 +65,41 @@ window.ScanView = {
         }
         container.innerHTML = this._renderForm(defaults);
         this._loadCollections(preselect);
+        this._loadRecentScans();
+    },
+
+    async _loadRecentScans() {
+        const listEl = document.getElementById('scan-list-container');
+        if (!listEl) return;
+        try {
+            const res = await fetch('/api/scan');
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to load scans');
+            
+            if (!data.scans || !data.scans.length) {
+                listEl.innerHTML = '<div style="color:var(--dim); font-size:0.85rem;">No recent scans found.</div>';
+                return;
+            }
+            
+            listEl.innerHTML = data.scans.map(s => {
+                const date = new Date((s.created_at || 0) * 1000).toLocaleString();
+                const statusColor = s.job_status === 'finished' ? '#10b981' : (s.job_status === 'failed' ? '#f87171' : 'var(--accent)');
+                const progress = s.progress || '';
+                return `
+                <a href="/scans/${escapeAttr(s.scan_id)}" onclick="Nav.openPath(this.href, event)" style="text-decoration:none; display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:var(--bg); border:1px solid var(--border); border-radius:6px; transition:border-color 0.15s;">
+                    <div style="display:flex; flex-direction:column; gap:4px;">
+                        <span style="color:var(--fg); font-weight:600; font-size:0.85rem;">${escapeHtml(s.file_name || 'unknown')}</span>
+                        <span style="color:var(--dim); font-size:0.75rem;">${escapeHtml(date)} &bull; <code>${escapeHtml(s.file_md5 || '').slice(0,8)}</code></span>
+                    </div>
+                    <div style="text-align:right;">
+                        <span style="color:${statusColor}; font-size:0.8rem; font-weight:600;">${escapeHtml(s.job_status || s.status || 'queued')}</span>
+                        ${progress ? `<div style="color:var(--dim); font-size:0.75rem;">${escapeHtml(progress)}</div>` : ''}
+                    </div>
+                </a>`;
+            }).join('');
+        } catch (e) {
+            listEl.innerHTML = `<div style="color:#f87171; font-size:0.85rem;">${escapeHtml(e.message)}</div>`;
+        }
     },
 
     _renderForm(defaults) {
@@ -88,49 +123,61 @@ window.ScanView = {
                 </div>
             </div>
 
-            <div style="border:1px solid var(--border); border-radius:8px; background:var(--card-bg); padding:20px; display:flex; flex-direction:column; gap:16px; max-width:760px;">
-                <div>
-                    <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;">File</label>
-                    <input type="file" id="scan-form-file" style="width:100%; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.85rem;">
-                </div>
-
-                <div>
-                    <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;">
-                        Scope <span style="opacity:0.7;">(ctrl-click for several, or scan everything)</span>
-                    </label>
-                    <select id="scan-form-collections" multiple size="6" style="width:100%; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.85rem;"></select>
-                    <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; color:var(--dim); margin-top:8px; cursor:pointer;">
-                        <input type="checkbox" id="scan-form-all"> Scan against every collection
-                    </label>
-                </div>
-
-                <div>
-                    <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;">
-                        Analysis modules <span style="opacity:0.7;">(a scan runs lean by default; capa alone can cost more than the rest of the job)</span>
-                    </label>
-                    <div style="display:flex; gap:16px; flex-wrap:wrap;">${boxes}</div>
-                </div>
-
-                <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end;">
+            <div style="display:flex; gap: 30px; flex-wrap: wrap; align-items: flex-start;">
+                <div style="flex: 1; min-width: 400px; border:1px solid var(--border); border-radius:8px; background:var(--card-bg); padding:20px; display:flex; flex-direction:column; gap:16px; max-width:760px;">
                     <div>
-                        <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;">Top files scored</label>
-                        <input type="number" id="scan-form-top-files" value="${Number(defaults.top_files) || 20}" min="1" max="200" style="width:110px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.82rem;">
+                        <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;">File</label>
+                        <input type="file" id="scan-form-file" style="width:100%; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.85rem;">
                     </div>
+
                     <div>
-                        <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;" title="Leave blank to use each collection's own locked value">Min score</label>
-                        <input type="number" id="scan-form-min-score" step="0.01" min="0" max="1" placeholder="collection" style="width:110px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.82rem;">
+                        <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;">
+                            Scope <span style="opacity:0.7;">(ctrl-click for several, or scan everything)</span>
+                        </label>
+                        <select id="scan-form-collections" multiple size="6" style="width:100%; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.85rem;"></select>
+                        <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; color:var(--dim); margin-top:8px; cursor:pointer;">
+                            <input type="checkbox" id="scan-form-all"> Scan against every collection
+                        </label>
                     </div>
+
                     <div>
-                        <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;" title="Leave blank to use each collection's own locked value">Min features</label>
-                        <input type="number" id="scan-form-min-features" min="0" placeholder="collection" style="width:110px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.82rem;">
+                        <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;">
+                            Analysis modules <span style="opacity:0.7;">(a scan runs lean by default; capa alone can cost more than the rest of the job)</span>
+                        </label>
+                        <div style="display:flex; gap:16px; flex-wrap:wrap;">${boxes}</div>
                     </div>
-                    <button id="scan-form-submit" onclick="window.ScanViewInstance.submit()" style="background:var(--accent); border:none; color:var(--bg); padding:9px 22px; border-radius:6px; font-size:0.85rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px;">
-                        <i class="fa-solid fa-microscope"></i> Scan
-                    </button>
+
+                    <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end;">
+                        <div>
+                            <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;">Top files scored</label>
+                            <input type="number" id="scan-form-top-files" value="${Number(defaults.top_files) || 20}" min="1" max="200" style="width:110px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.82rem;">
+                        </div>
+                        <div>
+                            <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;" title="Leave blank to use each collection's own locked value">Min score</label>
+                            <input type="number" id="scan-form-min-score" step="0.01" min="0" max="1" placeholder="collection" style="width:110px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.82rem;">
+                        </div>
+                        <div>
+                            <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;" title="Leave blank to use each collection's own locked value">Min features</label>
+                            <input type="number" id="scan-form-min-features" min="0" placeholder="collection" style="width:110px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.82rem;">
+                        </div>
+                        <button id="scan-form-submit" onclick="window.ScanViewInstance.submit()" style="background:var(--accent); border:none; color:var(--bg); padding:9px 22px; border-radius:6px; font-size:0.85rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px;">
+                            <i class="fa-solid fa-microscope"></i> Scan
+                        </button>
+                    </div>
                 </div>
 
-                <div id="scan-form-error" style="color:#f87171; font-size:0.82rem;"></div>
+                <div style="flex: 1; min-width: 400px; border:1px solid var(--border); border-radius:8px; background:var(--card-bg); padding:20px; display:flex; flex-direction:column; gap:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <h2 style="margin:0; font-size:1.1rem; color:var(--text);">Recent Scans</h2>
+                        <button onclick="window.ScanViewInstance._loadRecentScans()" style="background:none; border:none; color:var(--accent); cursor:pointer; font-size:0.9rem;" title="Refresh"><i class="fa-solid fa-rotate-right"></i></button>
+                    </div>
+                    <div id="scan-list-container" style="display:flex; flex-direction:column; gap:8px; max-height:500px; overflow-y:auto; padding-right:5px;">
+                        <div style="color:var(--dim); font-size:0.85rem;"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</div>
+                    </div>
+                </div>
             </div>
+
+            <div id="scan-form-error" style="color:#f87171; font-size:0.82rem;"></div>
         </div>`;
     },
 

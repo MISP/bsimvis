@@ -3469,6 +3469,12 @@ class ScanStart(Resource):
 
         return start_scan()
 
+    def get(self):
+        """Lists all active scans cached in Redis."""
+        from bsimvis.app.routes.scan import list_scans
+
+        return list_scans()
+
 
 @ns_scan.route("/defaults")
 class ScanDefaults(Resource):

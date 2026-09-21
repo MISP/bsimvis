@@ -402,6 +402,58 @@ class SimilarityService:
                 cache[i] = float(v or 0)
         return [cache[i] for i in ids]
 
+    def build_discovery_args(
+        self, fid, collection, algo, min_score, top_k, min_features, features_raw
+    ):
+        """`(feature total, discovery ARGV)` for one target's feature vector.
+
+        The target's whole side of discovery is these arguments -- `_discover`
+        reads only the *collection's* posting lists, never the target's own
+        keys. That is what lets scan mode discover matches for a function that
+        was never indexed: it passes an in-memory vector here and a synthetic
+        fid that collides with nothing.
+
+        `features_raw` is the `(hash, tf)` pair list a `{fid}:vec:tf` ZRANGE
+        returns, or the same shape built from `bsim_features_tf`.
+        """
+        target_feat_total = 0
+        target_feat_norm_sq = 0
+        lua_features_args = []
+
+        for f_hash, f_tf_raw in features_raw:
+            f_tf = float(f_tf_raw)
+            target_feat_total += f_tf
+            target_feat_norm_sq += f_tf * f_tf
+            lua_features_args.extend(
+                [
+                    f_hash.decode() if isinstance(f_hash, bytes) else str(f_hash),
+                    str(f_tf),
+                ]
+            )
+
+        target_feat_norm = math.sqrt(target_feat_norm_sq)
+
+        head = [
+            fid,
+            collection,
+            algo,
+            min_score,
+            target_feat_total,
+            target_feat_norm,
+            top_k,
+            min_features,
+        ]
+
+        if algo == "minhash_lsh":
+            # ARGV: [...head, num_bands, bucket_hashes..., features...]
+            num_bands = 30
+            buckets = self._compute_lsh_buckets(features_raw, num_bands=num_bands)
+            hashes = [b_hash for band, b_hash in buckets]
+            return target_feat_total, head + [num_bands] + hashes + lua_features_args
+
+        # ARGV: [...head, features...]
+        return target_feat_total, head + lua_features_args
+
     def _discover(self, args):
         """Python reimplementation of the find_candidates.lua / minhash_lsh.lua
         discovery step. Takes the same flat ARGV list the Lua scripts took and
@@ -800,56 +852,9 @@ class SimilarityService:
                 continue
             md5, addr = parts[-2], parts[-1]
 
-            target_feat_total = 0
-            target_feat_norm_sq = 0
-            lua_features_args = []
-
-            for f_hash, f_tf_raw in features_raw:
-                f_tf = float(f_tf_raw)
-                target_feat_total += f_tf
-                target_feat_norm_sq += f_tf * f_tf
-                lua_features_args.extend(
-                    [
-                        f_hash.decode() if isinstance(f_hash, bytes) else str(f_hash),
-                        str(f_tf),
-                    ]
-                )
-
-            target_feat_norm = math.sqrt(target_feat_norm_sq)
-
-            if algo == "minhash_lsh":
-                # Lua ARGV: [id, collection, algo, threshold, total, norm, limit, min_features, num_bands, bucket_hashes..., features...]
-                num_bands = 30
-                buckets = self._compute_lsh_buckets(features_raw, num_bands=num_bands)
-                hashes = [b_hash for band, b_hash in buckets]
-                lua_args = (
-                    [
-                        fid,
-                        collection,
-                        algo,
-                        min_score,
-                        target_feat_total,
-                        target_feat_norm,
-                        top_k,
-                        min_features,
-                        num_bands,
-                    ]
-                    + hashes
-                    + lua_features_args
-                )
-            else:
-                # Lua ARGV: [id, collection, algo, threshold, total, norm, limit, min_features, features...]
-                lua_args = [
-                    fid,
-                    collection,
-                    algo,
-                    min_score,
-                    target_feat_total,
-                    target_feat_norm,
-                    top_k,
-                    min_features,
-                ] + lua_features_args
-
+            target_feat_total, lua_args = self.build_discovery_args(
+                fid, collection, algo, min_score, top_k, min_features, features_raw
+            )
             prepared_targets.append((fid, md5, addr, target_feat_total, lua_args))
 
         discovery_results = []

@@ -18,6 +18,7 @@ from bsimvis.cli import (
     bsimvis_collection,
     bsimvis_metadata,
     bsimvis_rulezet,
+    bsimvis_scan,
     bsimvis_transfer,
 )
 
@@ -756,6 +757,47 @@ def main():
         help="Return these rules to the mirror and remember it",
     )
 
+    # --- SCAN ---
+    scan_parser = subparsers.add_parser(
+        "scan",
+        help="Compare a file against existing collections without ingesting it",
+    )
+    scan_parser.add_argument("file", help="Binary to scan")
+    scan_parser.add_argument(
+        "--collection",
+        action="append",
+        help="Collection to scan against (repeatable)",
+    )
+    scan_parser.add_argument(
+        "--pool",
+        action="append",
+        help="Pool to scan against, expanded to its members (repeatable)",
+    )
+    scan_parser.add_argument(
+        "--all", action="store_true", help="Scan against every collection"
+    )
+    scan_parser.add_argument("--algo", help="Similarity algorithm")
+    scan_parser.add_argument("--min-score", dest="min_score", type=float)
+    scan_parser.add_argument("--min-features", dest="min_features", type=int)
+    scan_parser.add_argument(
+        "--top-files",
+        dest="top_files",
+        type=int,
+        help="How many candidate files get the exact file score",
+    )
+    scan_parser.add_argument("--profile", help="Ghidra analysis profile: fast or full")
+    scan_parser.add_argument(
+        "--enable",
+        action="append",
+        help="Analysis module to enable (capa, yara, FunctionID, ...)",
+    )
+    scan_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=1800,
+        help="Seconds to wait for the scan (default: 1800)",
+    )
+
     # Parse and Resolve Host
     args = parser.parse_args()
 
@@ -837,6 +879,10 @@ def main():
             bsimvis_metadata.run_metadata(g_host, int(g_port), args)
         elif args.subcommand == "rulezet":
             bsimvis_rulezet.run_rulezet(g_host, int(g_port), args)
+        elif args.subcommand == "scan":
+            rc = bsimvis_scan.run_scan(g_host, int(g_port), args)
+            if rc:
+                sys.exit(rc)
 
     except Exception as e:
         import traceback

@@ -7,7 +7,7 @@ Use uv run to run
 ## Ports
 Configurable via `.env` file:
 - Kvrocks : `KVROCKS_PORT` (default: 6666) -> storage of functions, binaries and similarities
-- Redis : `REDIS_PORT` (default: 6379) -> Job queue only
+- Redis : `REDIS_PORT` (default: 6379) -> Job queue, plus the TTL'd scan cache
 - API : `APP_PORT` (default: 5000) -> localhost:5000/api
 
 Hosts are also configurable via `KVROCKS_HOST`, `REDIS_HOST`, and `APP_HOST`.
@@ -48,6 +48,30 @@ never hardcode a string. Pipelines and groups are jobs too (`type` = `pipeline` 
   from different jobs interleave instead of one job starving the fleet.
 - Clear jobs (`clear_sim`, `clear_features`, `clear_cluster`, `clear_bin_sim`,
   `sync_milvus`) go to `jobs:pending:high`.
+- `scan` jobs go to `jobs:pending:scan`, which every worker drains first.
+  `SCAN_WORKERS_COUNT` (default 1) reserved workers run `--scan-only` and claim
+  nothing else, so an interactive scan never queues behind a build.
+
+## Scan mode
+
+`bsimvis scan` / `POST /api/scan` analyses a file and compares it to existing
+collections **without writing a single Kvrocks key** (`services/scan_service.py`,
+`routes/scan.py`). The analysis is cached in Redis under `scan:{id}:*`; the match is
+read-only.
+
+This works because discovery is vector-in: `SimilarityService.build_discovery_args`
+turns an in-memory feature vector into the whole target side of `_discover`, which
+reads only the *collection's* posting lists. Scan functions get synthetic ids
+(`scan:{id}:func:{md5}:{addr}`), so they collide with nothing and self-matches survive.
+
+The file score is the canonical one -- the same `bin_sim_tags.greedy_match` +
+`score_pair` the bin_sim builder persists. Do not add a second scoring path. Cluster
+membership is *simulated*: the nearest cluster comes from the matched partner, and
+`would_join` is the real `clustering.uf_threshold` / `bin_uf_threshold` test.
+
+Per-collection `min_features` / `min_score` locks are honoured by default so a scan's
+number matches that collection's own UI; a caller-supplied param overrides everywhere.
+A signature-mask mismatch is a warning on the report, never a silent zero.
 
 ## Pools
 
@@ -110,16 +134,22 @@ This doesnt apply to global indexes and registries which :
 
 ### Redis db
 
-Since its only for jobs, the jobs are in : 
+Jobs, plus the scan cache (the one non-job thing that lives here, because a scan
+deliberately writes nothing to Kvrocks). Everything below carries a TTL except the
+job keys.
 
 | Key Pattern | Type | Description |
 |:--- |:--- |:--- |
 | `job:{id}` | **Hash** | Status, payload and metadata for a job, pipeline or group. |
-| `jobs:pending` / `jobs:pending:high` | **List** | Work queues; workers pop from the tail. |
+| `jobs:pending:scan` / `jobs:pending:high` / `jobs:pending` | **List** | Work queues, in claim order; workers pop from the tail. `job_service.PENDING_QUEUES` is the list — never name one by hand. |
 | `jobs:processing` | **List** | In-flight job IDs; a worker `LMOVE`s here when it claims a job. |
 | `jobs:leased` | **ZSET** | Claimed job ID -> lease expiry (unix seconds). Expired = its worker died. |
 | `jobs:paused` | **String** | Present while the fleet is paused. |
 | `jobs:global` / `jobs:collection:{c}` | **List** | Recent job IDs, trimmed to 1000. |
+| `scan:{id}:doc` | **String** | The scan document: status, scopes, per-scope summary. |
+| `scan:{id}:raw` | **String** | The scanned bytes (binary connection: `get_raw_queue_redis`). |
+| `scan:{id}:meta` / `scan:{id}:chunk:{n}` | **String** | Cached Ghidra output, one chunk per 100 functions. |
+| `scan:{id}:rows:{coll}:{md5}` | **String** | One scored pair's diff rows, served paged. |
 
 ## Worktree testing
 

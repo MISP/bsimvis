@@ -36,6 +36,8 @@ WORKER_RESTART_DELAY=${WORKER_RESTART_DELAY:-5}
 WORKER_OOM_SCORE_ADJ=${WORKER_OOM_SCORE_ADJ:-1000}
 # 0 = restart forever. A crash-looping worker still backs off by the delay.
 WORKER_MAX_RESTARTS=${WORKER_MAX_RESTARTS:-0}
+# Extra worker.py flags, e.g. --scan-only for a reserved scan worker.
+WORKER_ARGS=${WORKER_ARGS:-}
 
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/${NAME}.log"
@@ -96,13 +98,13 @@ while true; do
         WORKER_OOM_SCORE_ADJ="$WORKER_OOM_SCORE_ADJ" \
         systemd-run --user --scope -q --unit="$UNIT" \
             -p MemoryMax="$WORKER_MEMORY_MAX" -p MemoryAccounting=yes \
-            $PYTHON_CMD bsimvis/worker.py --name "$NAME"
+            $PYTHON_CMD bsimvis/worker.py --name "$NAME" $WORKER_ARGS
         rc=$?
         kill "$sampler" 2> /dev/null
         wait "$sampler" 2> /dev/null
         peak=$(cat "$PEAK_FILE" 2> /dev/null)
     else
-        $PYTHON_CMD bsimvis/worker.py --name "$NAME"
+        $PYTHON_CMD bsimvis/worker.py --name "$NAME" $WORKER_ARGS
         rc=$?
         peak=""
     fi

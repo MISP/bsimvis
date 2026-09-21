@@ -12,6 +12,12 @@ from bsimvis.app.services.cluster_utils import function_count_stats
 job_service = JobService()
 
 
+def _avg_function_count(c):
+    """Sort key for the Avg Funcs column. Clusters built before the stat was
+    stored have no spread, and sort as 0 rather than blocking the sort."""
+    return (c.get("function_count_stats") or {}).get("avg") or 0
+
+
 def build_bin_cluster():
     """Enqueues a binary clustering job."""
     data = request.json or {}
@@ -224,7 +230,9 @@ def list_bin_clusters():
     except ValueError:
         return {"error": "Invalid numeric parameter"}, 400
 
-    sort_by = request.args.get("sort_by", "count")  # count, stability, cohesion
+    sort_by = request.args.get(
+        "sort_by", "count"
+    )  # count, stability, cohesion, functions
     sort_order = request.args.get("sort_order", "desc").lower()
 
     r = get_redis()
@@ -485,6 +493,8 @@ def list_bin_clusters():
             matched_results.sort(
                 key=lambda x: x.get("cohesion_score", 0), reverse=reverse
             )
+        elif sort_by == "functions":
+            matched_results.sort(key=_avg_function_count, reverse=reverse)
         else:
             matched_results.sort(
                 key=lambda x: str(x.get("cluster_id", "")), reverse=reverse
@@ -552,6 +562,8 @@ def list_bin_clusters():
         results.sort(key=lambda x: x.get("count") or 0, reverse=reverse)
     elif sort_by == "cohesion":
         results.sort(key=lambda x: x.get("cohesion_score", 0), reverse=reverse)
+    elif sort_by == "functions":
+        results.sort(key=_avg_function_count, reverse=reverse)
     else:
         results.sort(key=lambda x: str(x.get("cluster_id", "")), reverse=reverse)
 

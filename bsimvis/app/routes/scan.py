@@ -14,7 +14,7 @@ from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.ghidra_lang_service import validate as validate_lang
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.scan_service import (
-    default_modules,
+    scan_modules,
     default_top_files,
     get_scan_service,
     max_cached_bytes,
@@ -91,9 +91,9 @@ def start_scan():
         # Scan mode runs lean: `scan.modules` rather than the instance's upload
         # defaults, because capa alone can cost more than the rest of the job.
         # A request may still widen it.
-        modules = set(default_modules())
-        modules |= set(request.args.getlist("enable"))
-        modules -= set(request.args.getlist("disable"))
+        modules = scan_modules(
+            request.args.getlist("enable"), request.args.getlist("disable")
+        )
 
         payload = {
             "scan_id": scan_id,
@@ -101,7 +101,7 @@ def start_scan():
             "file_name": file_name,
             "profile": request.args.get("profile", "fast"),
             "min_func_len": int(request.args.get("min_func_len", 10)),
-            "modules": sorted(modules),
+            "modules": modules,
             "skip_function_id": "FunctionID" not in modules,
             "skip_capa": "capa" not in modules,
             "skip_yara": "yara" not in modules,
@@ -121,7 +121,7 @@ def start_scan():
             "job_id": job_id,
             "file_md5": file_md5,
             "scopes": scopes,
-            "modules": sorted(modules),
+            "modules": modules,
             "warnings": warnings,
         }
     except Exception as e:
@@ -180,7 +180,7 @@ def delete_scan(scan_id):
 def scan_defaults():
     """What a scan would do with no arguments. Cheap; the UI reads it once."""
     return {
-        "modules": default_modules(),
+        "modules": scan_modules(),
         "top_files": default_top_files(),
         "cache_ttl": int(config_service.get("scan.cache_ttl", 86400)),
         "max_cached_bytes": max_cached_bytes(),

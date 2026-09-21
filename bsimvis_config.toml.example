@@ -233,8 +233,7 @@ max_cached_bytes = 268435456
 # The rest of the touched files are dropped from the report entirely.
 top_files = 20
 
-# Tagging modules a scan runs. Empty = BSim + FunctionID only, which is the
-# point of scan mode: capa alone can cost more than the whole rest of the job.
-# Same names as `analysis_modules.enabled`; a request may override with
-# `enable`/`disable`.
+# Extra taggers a scan runs. Empty keeps scans lean; FunctionID follows
+# `analysis_modules.enabled`, the same default uploads use. A request may
+# override either setting with `enable`/`disable`.
 modules = []

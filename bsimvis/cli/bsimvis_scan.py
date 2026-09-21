@@ -32,13 +32,14 @@ def _print_report(doc):
         else:
             print(
                 f"    {'score':>6} {'code':>6} {'lib':>6} {'cov':>6}  "
-                f"{'funcs':>6}  md5                               name"
+                f"{'hits':>5} {'funcs':>6}  md5                               name"
             )
             for row in scope["files"]:
                 print(
                     f"    {_fmt(row.get('score'))} {_fmt(row.get('score_code'))} "
                     f"{_fmt(row.get('score_library'))} {_fmt(row.get('coverage_a'))}  "
-                    f"{str(row.get('matched_functions', 0)).rjust(6)}  "
+                    f"{str(row.get('matched_functions', 0)).rjust(5)} "
+                    f"{str(row.get('functions_count', 0)).rjust(6)}  "
                     f"{row['file_md5']}  {row.get('file_name', '')}"
                 )
         for axis, clusters in (scope.get("bin_clusters") or {}).items():

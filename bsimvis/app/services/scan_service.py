@@ -22,7 +22,14 @@ import json
 import time
 import uuid
 
+from bsimvis.app.services.bin_sim_service import (
+    discover_edges,
+    load_vectors,
+    stored_discovery,
+    stored_unweighted_match,
+)
 from bsimvis.app.services.bin_sim_tags import (
+    greedy_match,
     load_tag_meta,
     merge_tag_fields,
     read_tags_rev,
@@ -62,9 +69,16 @@ def default_top_files():
 
 
 def default_modules():
-    """Tagging modules a scan runs. Empty = BSim + FunctionID only."""
+    """Extra tagging modules a scan runs, from `scan.modules`."""
     mods = config_service.get("scan.modules", [])
     return list(mods) if isinstance(mods, (list, tuple)) else []
+
+
+def scan_modules(enable=(), disable=()):
+    """Scan taggers, with FunctionID matching the upload default."""
+    upload = config_service.get("analysis_modules.enabled", []) or []
+    mods = set(default_modules()) | (set(upload) & {"FunctionID"}) | set(enable)
+    return sorted(mods - set(disable))
 
 
 def _decode(raw):
@@ -337,16 +351,17 @@ class ScanService:
                     continue
                 md5 = parts[-2]
                 mass[md5] = mass.get(md5, 0.0) + cand["score"] * weight
-                hits[md5] = hits.get(md5, 0) + 1
+                # Scan functions, not candidate edges: one function can have
+                # many candidates in the same file.
+                hits.setdefault(md5, set()).add(fid)
         ranked = sorted(mass.items(), key=lambda kv: (-kv[1], kv[0]))
-        return ranked[:top_files], len(ranked), hits
+        return ranked[:top_files], len(ranked), {k: len(v) for k, v in hits.items()}
 
     def _score_file(self, collection, md5, targets, candidates_by_fid, params):
         """The canonical BSimVis file score for one candidate file.
 
-        Same greedy assignment and feature-mass-weighted mean the bin_sim
-        builder persists (`bin_sim_tags.score_pair`), so this number and a
-        stored bin_sim doc's are the same number.
+        Same greedy assignment and `score_pair` settings the bin_sim builder
+        persists, so this number and a stored bin_sim doc's are the same.
         """
         fids_b = {
             _s(f).removesuffix(":meta")
@@ -373,6 +388,15 @@ class ScanService:
         fids_a = {t["fid"] for t in targets}
         feat_a = {t["fid"]: t["feat_count"] for t in targets}
 
+        discovery = stored_discovery()
+        if discovery:
+            edges.extend(
+                self._discover_leftovers(
+                    targets, fids_b, edges, params["algo"], discovery
+                )
+            )
+        unweighted = stored_unweighted_match()
+
         def feat(fid):
             if fid in feat_a:
                 return float(feat_a[fid] or 1.0)
@@ -393,6 +417,7 @@ class ScanService:
             feat,
             fid_tags,
             load_tag_meta(self.r, collection) if fid_tags else {},
+            unweighted=unweighted,
         )
         self._enrich_clusters(collection, common["diff"], meta_b, params)
         return {
@@ -402,9 +427,29 @@ class ScanService:
             "architecture": file_meta_b.get("language_id", ""),
             "functions_count": len(fids_b),
             "algo": params["algo"],
+            # Same provenance a stored bin_sim doc carries: a score built under
+            # the other setting is not comparable with this one.
+            "unweighted_match": unweighted,
+            "discovery": bool(discovery),
             "tags_rev": read_tags_rev(self.r, collection),
             **common,
         }
+
+    def _discover_leftovers(self, targets, fids_b, edges, algo, discovery):
+        """Re-match functions the initial greedy pass did not place."""
+        min_score, max_df = discovery
+        _, matched_a, matched_b = greedy_match(edges)
+        left_a = {t["fid"] for t in targets} - matched_a
+        left_b = set(fids_b) - matched_b
+        if not left_a or not left_b:
+            return []
+        vectors = {
+            t["fid"]: {h: float(tf) for h, tf in t["features"]}
+            for t in targets
+            if t["fid"] in left_a and t["features"]
+        }
+        vectors.update(load_vectors(self.r, left_b))
+        return discover_edges(vectors, left_a, left_b, algo, min_score, max_df=max_df)
 
     def _enrich_clusters(self, collection, diff, meta_b, params):
         """Attach, per matched row, the cluster the scan function would land in.

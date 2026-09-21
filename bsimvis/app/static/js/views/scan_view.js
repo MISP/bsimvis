@@ -80,7 +80,7 @@ window.ScanView = {
         <div style="flex:1; overflow-y:auto; padding:25px 30px; display:flex; flex-direction:column; gap:20px;">
             <div>
                 <h1 style="margin:0 0 6px 0; font-size:1.5rem; color:var(--text); display:flex; align-items:center; gap:10px;">
-                    <i class="fa-solid fa-radar" style="color:var(--accent);"></i> Scan
+                    <i class="fa-solid fa-microscope" style="color:var(--accent);"></i> Scan
                 </h1>
                 <div style="color:var(--dim); font-size:0.85rem;">
                     Compare a binary against existing collections without ingesting it.
@@ -125,7 +125,7 @@ window.ScanView = {
                         <input type="number" id="scan-form-min-features" min="0" placeholder="collection" style="width:110px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.82rem;">
                     </div>
                     <button id="scan-form-submit" onclick="window.ScanViewInstance.submit()" style="background:var(--accent); border:none; color:var(--bg); padding:9px 22px; border-radius:6px; font-size:0.85rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px;">
-                        <i class="fa-solid fa-radar"></i> Scan
+                        <i class="fa-solid fa-microscope"></i> Scan
                     </button>
                 </div>
 
@@ -202,7 +202,7 @@ window.ScanView = {
             if (errEl) errEl.textContent = e.message;
             if (button) {
                 button.disabled = false;
-                button.innerHTML = '<i class="fa-solid fa-radar"></i> Scan';
+                button.innerHTML = '<i class="fa-solid fa-microscope"></i> Scan';
             }
         }
     },
@@ -259,7 +259,7 @@ window.ScanView = {
             <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:20px; flex-wrap:wrap;">
                 <div>
                     <h1 style="margin:0 0 6px 0; font-size:1.3rem; color:var(--text);">
-                        <i class="fa-solid fa-radar" style="color:var(--accent); margin-right:8px;"></i>${escapeHtml(doc.file_name || 'scan')}
+                        <i class="fa-solid fa-microscope" style="color:var(--accent); margin-right:8px;"></i>${escapeHtml(doc.file_name || 'scan')}
                     </h1>
                     <div style="color:var(--dim); font-size:0.82rem; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
                         <code>${escapeHtml(doc.file_md5 || '')}</code>

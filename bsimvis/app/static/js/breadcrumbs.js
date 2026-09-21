@@ -264,19 +264,19 @@ window.Breadcrumbs = {
                 segments.push({
                     label: 'Scan',
                     url: '/scans',
-                    icon: 'fa-solid fa-radar'
+                    icon: 'fa-solid fa-microscope'
                 });
                 break;
             case 'scan-detail':
                 segments.push({
                     label: 'Scan',
                     url: '/scans',
-                    icon: 'fa-solid fa-radar'
+                    icon: 'fa-solid fa-microscope'
                 });
                 segments.push({
                     label: (restful.scan_id || '').slice(0, 8) || 'Scan',
                     url: window.location.pathname,
-                    icon: 'fa-solid fa-radar'
+                    icon: 'fa-solid fa-microscope'
                 });
                 break;
             case 'upload':

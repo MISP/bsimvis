@@ -143,13 +143,13 @@ class ScanService:
 
     def list_scans(self):
         """Returns a list of all active scan documents from Redis."""
-        keys = self.r.keys("scan:*:doc")
+        keys = self.q.keys("scan:*:doc")
         if not keys:
             return []
         
         docs = []
         for key in keys:
-            doc = self.r.get(key)
+            doc = self.q.get(key)
             if doc:
                 try:
                     parsed = _decode(doc)

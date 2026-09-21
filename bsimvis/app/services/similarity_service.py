@@ -62,6 +62,7 @@ class SimilarityService:
         # collection can't OOM the cache. Raise/lower if RAM vs hit-rate needs it.
         self._pl_budget = 5_000_000
         self._norm_cache = {}  # func_id -> vector norm (float)
+        self._weighted_norm_cache = {}  # (algo, func_id) -> weighted norm
         self._count_cache = {}  # (count_idx_key, func_id) -> feature count (float)
         self._unique_count_cache = {}  # func_id -> unique feature count (float)
 
@@ -71,6 +72,7 @@ class SimilarityService:
         self._pl_cache.clear()
         self._pl_pairs = 0
         self._norm_cache.clear()
+        self._weighted_norm_cache.clear()
         self._count_cache.clear()
         self._unique_count_cache.clear()
 
@@ -439,6 +441,9 @@ class SimilarityService:
             return []
 
         weighted_table = None
+        weighted_norm_cache = getattr(self, "_weighted_norm_cache", None)
+        if weighted_norm_cache is None:
+            weighted_norm_cache = self._weighted_norm_cache = {}
         if algo == "weighted_cosine" or algo.startswith("weighted_cosine:"):
             _, profile_name = bsim_profiles.parse_algo(algo)
             weighted_table = bsim_weights.load(
@@ -552,14 +557,18 @@ class SimilarityService:
 
         candidate_list = []
         if weighted_table is not None:
-            # ponytail: scan shared-feature candidates; exact pruning needs
-            # persisted weighted norms, absent from legacy vectors.
+            # ponytail: exact pruning needs persisted weighted norms, absent from
+            # legacy vectors. Cache computed norms across targets in this build.
             candidate_vectors = self.r.pipeline(transaction=False)
             weighted_ids = []
             for cid, cand_total in zip(kept, totals):
                 if cand_total >= min_features and cand_total > 0:
-                    weighted_ids.append((cid, cand_total))
-                    candidate_vectors.zrange(f"{cid}:vec:tf", 0, -1, withscores=True)
+                    cache_key = (algo, cid)
+                    if cache_key not in weighted_norm_cache:
+                        weighted_ids.append((cid, cand_total))
+                        candidate_vectors.zrange(
+                            f"{cid}:vec:tf", 0, -1, withscores=True
+                        )
             for (cid, cand_total), raw_vec in zip(
                 weighted_ids, candidate_vectors.execute()
             ):
@@ -567,7 +576,11 @@ class SimilarityService:
                     h.decode() if isinstance(h, bytes) else h: float(tf)
                     for h, tf in raw_vec
                 }
-                cand_norm = weighted_table.stats(vector)[0]
+                weighted_norm_cache[(algo, cid)] = weighted_table.stats(vector)[0]
+            for cid, cand_total in zip(kept, totals):
+                if cand_total < min_features or cand_total <= 0:
+                    continue
+                cand_norm = weighted_norm_cache[(algo, cid)]
                 score = (
                     intersection_counts[cid] / (target_norm * cand_norm)
                     if target_norm > 0 and cand_norm > 0
@@ -2241,10 +2254,12 @@ class SimilarityService:
             lsh_pipe = r.pipeline(transaction=False)
             has_lsh_writes = False
             targets_with_lua = []
-
+            vector_pipe = r.pipeline(transaction=False)
             for fid in chunk:
-                vec_key = f"{fid}:vec:tf"
-                features_raw = r.zrange(vec_key, 0, -1, withscores=True)
+                vector_pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+            vectors = vector_pipe.execute()
+
+            for fid, features_raw in zip(chunk, vectors):
                 if not features_raw or len(features_raw) < min_features:
                     # Small: skip BSim, match by exact FunctionID hash after the loop
                     pool_small_fids.append(fid)

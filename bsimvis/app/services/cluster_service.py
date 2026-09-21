@@ -2673,9 +2673,12 @@ class ClusterService:
             logging.error(f"Pool {pool_id} not found")
             return False
 
-        # Build every score split from the same function algorithm.
+        # Build every score split from the same function algorithm. "overall"
+        # is this call's own axis, so it is NOT in the fan-out list: recursing
+        # on it re-entered this same branch and only stopped at the recursion
+        # limit, failing every pool bin-clustering job.
         if axis == "overall":
-            for split in ("overall", "code", "library", "content"):
+            for split in ("code", "library", "content"):
                 if not self.run_pool_bin_clustering(
                     pool_id,
                     min_cluster_size=min_cluster_size,
@@ -2689,7 +2692,7 @@ class ClusterService:
                     axis=split,
                 ):
                     return False
-            return True
+            # and fall through to build the overall axis here
 
         # New structured config handling
         file_sim_params = pool.get("file_sim_params", {})

@@ -335,7 +335,12 @@ def list_clusters():
     is_pool = pool_id is not None
 
     if is_pool:
-        # ponytail: standardise collection name for pool
+        from bsimvis.app.services.pool_service import pool_service
+
+        pool = pool_service.get_pool(pool_id)
+        if not pool:
+            return {"error": "Pool not found"}, 404
+        algo = pool_service.similarity_algo(pool)
         collection = f"global:pool:{pool_id}"
 
     cluster_list_key = f"{collection}:cluster:list:{algo}"

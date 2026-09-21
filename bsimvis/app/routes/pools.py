@@ -246,7 +246,9 @@ def cluster_pool(pool_id):
             break
 
     # 3. Clear binary clusters
-    pipe.delete(f"global:pool:{pool_id}:bin_cluster:list")
+    for axis in ("overall", "code", "library", "content"):
+        suffix = f":{algo}:{axis}" if axis != "overall" else f":{algo}"
+        pipe.delete(f"global:pool:{pool_id}:bin_cluster:list{suffix}")
 
     pipe.execute()
 

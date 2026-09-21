@@ -2747,8 +2747,6 @@ class ClusterService:
             if min_sim is None:
                 min_sim = cluster_params.get("min_sim")
             if min_sim is None:
-                min_sim = pool.get("min_score")
-            if min_sim is None:
                 min_sim = config_service.get("clustering.min_sim", 0.0)
             min_sim = float(min_sim)
 

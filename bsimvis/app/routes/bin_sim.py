@@ -596,6 +596,13 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
         coll_b = request.args.get("coll_b", collection)
     if pool_id is None:
         pool_id = request.args.get("pool_id") or request.args.get("pool")
+    if pool_id:
+        from bsimvis.app.services.pool_service import pool_service
+
+        pool = pool_service.get_pool(pool_id)
+        if not pool:
+            abort(404, "Pool not found")
+        algo = pool_service.similarity_algo(pool)
 
     if not md5_a or not md5_b:
         abort(400, "Both md5_a and md5_b are required")
@@ -1319,6 +1326,13 @@ def list_bin_sims():
 
     pool_id = request.args.get("pool")
     is_pool = pool_id is not None
+    if is_pool:
+        from bsimvis.app.services.pool_service import pool_service
+
+        pool = pool_service.get_pool(pool_id)
+        if not pool:
+            abort(404, "Pool not found")
+        algo = pool_service.similarity_algo(pool)
 
     # To efficiently list, we check involves set
     if is_pool:

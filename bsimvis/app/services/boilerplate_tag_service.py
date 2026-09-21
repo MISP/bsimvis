@@ -62,6 +62,21 @@ BOILERPLATE_SYMBOLS = {
     "__pthread_set_own_extricate_if": "boilerplate:runtime:uclibc:support",
     "__xstat_conv": "boilerplate:runtime:libc:support",
     "__xstat64_conv": "boilerplate:runtime:libc:support",
+    "___chkstk_ms": "boilerplate:runtime:mingw:support",
+    "___tmainCRTStartup": "boilerplate:runtime:mingw:startup",
+    "__gnu_exception_handler@4": "boilerplate:runtime:mingw:support",
+    "__matherr": "boilerplate:runtime:mingw:support",
+    "___report_error": "boilerplate:runtime:mingw:support",
+    "__lock_file": "boilerplate:runtime:mingw:support",
+    "__unlock_file": "boilerplate:runtime:mingw:support",
+    "___acrt_iob_func": "boilerplate:runtime:msvc:support",
+    "__pei386_runtime_relocator": "boilerplate:runtime:mingw:startup",
+    "___gcc_register_frame": "boilerplate:runtime:mingw:startup",
+    "__ValidateImageBase": "boilerplate:runtime:mingw:support",
+    "__FindPESection": "boilerplate:runtime:mingw:support",
+    "__FindPESectionByName": "boilerplate:runtime:mingw:support",
+    "__GetPEImageBase": "boilerplate:runtime:mingw:support",
+    "__IsNonwritableInCurrentImage": "boilerplate:runtime:mingw:support",
 }
 
 BOILERPLATE_PREFIXES = {
@@ -77,6 +92,12 @@ BOILERPLATE_PREFIXES = {
     "_store_inttype": "boilerplate:runtime:libc:printf",
     "_promoted_size": "boilerplate:runtime:libc:printf",
     "_uintmaxtostr": "boilerplate:runtime:libc:printf",
+    "___mingw_": "boilerplate:runtime:mingw:support",
+    "___pformat_": "boilerplate:runtime:mingw:printf",
+}
+
+BOILERPLATE_SUFFIXES = {
+    "_D2A": "boilerplate:runtime:libc:dtoa",
 }
 
 
@@ -91,6 +112,12 @@ def boilerplate_tag_for_function_name(name):
                 family = tag_fam
                 break
 
+    if not family:
+        for suffix, tag_fam in BOILERPLATE_SUFFIXES.items():
+            if name_str.endswith(suffix):
+                family = tag_fam
+                break
+
     return tag_taxonomy.canonical_tag_id(f"{family}#{name}") if family else None
 
 
@@ -102,6 +129,10 @@ def demo():
     assert (
         boilerplate_tag_for_function_name("__stdio_WRITE")
         == "boilerplate:runtime:libc:stdio#__stdio_WRITE"
+    )
+    assert (
+        boilerplate_tag_for_function_name("___Balloc_D2A")
+        == "boilerplate:runtime:libc:dtoa#___Balloc_D2A"
     )
     assert boilerplate_tag_for_function_name("main") is None
 

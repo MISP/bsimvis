@@ -42,7 +42,10 @@ const BINSIM_RUNTIME_HINT_KEY = 'bsim-runtime-greedy-hint-dismissed';
 // similarity, so the score reads as feature-weighted coverage. Kept beside the
 // other runtime knobs rather than in binSimCtx because every reader of it also
 // reads the URL, which is the real source of truth.
-let binSimUnweightedMatch = false;
+// null = "not chosen here", so the server applies its configured default.
+// false must reach the server as `unweighted=0`, otherwise an absent param
+// means the default and the checkbox can never be turned off.
+let binSimUnweightedMatch = null;
 let binSimRuntimeAlgo = 'unweighted_cosine';
 
 function binSimRuntimeControls(active, minScore) {
@@ -108,7 +111,9 @@ function renderBinarySimilarityView(params) {
     binSimRuntimeAlgo = params.get('algo') || window.SimAlgos.default;
     const runtimeMinScore = Math.max(0, Math.min(100, Number(params.get('min_score') || 0.5) * 100));
     const showRuntimeHint = runtimeGreedy || localStorage.getItem(BINSIM_RUNTIME_HINT_KEY) !== '1';
-    binSimUnweightedMatch = runtimeGreedy && params.get('unweighted') === '1';
+    binSimUnweightedMatch = runtimeGreedy && params.has('unweighted')
+        ? params.get('unweighted') === '1'
+        : null;
 
     // Parse new RESTful URL using routing state or fallback
     if (!md5a || !md5b || !collB || !poolId) {
@@ -512,7 +517,9 @@ function initResizableCards() {
         if (collB) url += `&collection_b=${encodeURIComponent(collB)}`;
         if (poolId) url += `&pool=${encodeURIComponent(poolId)}`;
         if (runtimeGreedy) url += `&runtime=greedy&algo=${encodeURIComponent(binSimRuntimeAlgo)}&min_score=${runtimeMinScore / 100}`;
-        if (runtimeGreedy && binSimUnweightedMatch) url += '&unweighted=1';
+        if (runtimeGreedy && binSimUnweightedMatch !== null) {
+            url += `&unweighted=${binSimUnweightedMatch ? '1' : '0'}`;
+        }
         const res = await fetch(url, signal ? { signal } : undefined);
         if (!res.ok) {
             let errMsg = "Failed to fetch similarity comparison";
@@ -1251,7 +1258,9 @@ function fileSimTableParams(prefixes, extra = {}) {
         params.set('runtime', 'greedy');
         params.set('algo', binSimCtx.runtimeAlgo);
         params.set('min_score', binSimCtx.runtimeMinScore);
-        if (binSimUnweightedMatch) params.set('unweighted', '1');
+        if (binSimUnweightedMatch !== null) {
+            params.set('unweighted', binSimUnweightedMatch ? '1' : '0');
+        }
     }
     return params;
 }
@@ -3523,12 +3532,17 @@ window.setBinSimUnweighted = function(checked) {
     refreshBinSimRuntime(true, minScore, !!checked);
 };
 
+function setUnweightedParam(url) {
+    if (binSimUnweightedMatch === null) url.searchParams.delete("unweighted");
+    else url.searchParams.set("unweighted", binSimUnweightedMatch ? "1" : "0");
+}
+
 async function refreshBinSimRuntime(runtimeGreedy, minScore, unweighted = binSimUnweightedMatch) {
     if (!binSimCtx) return;
     // Only committed once the new doc renders; the failure path below puts the
     // previous weighting back so the checkbox never disagrees with the rows.
     const prevUnweighted = binSimUnweightedMatch;
-    binSimUnweightedMatch = runtimeGreedy && unweighted;
+    binSimUnweightedMatch = runtimeGreedy ? unweighted : null;
     const url = new URL(location.href);
     if (runtimeGreedy) {
         url.searchParams.set("runtime", "greedy");
@@ -3538,8 +3552,7 @@ async function refreshBinSimRuntime(runtimeGreedy, minScore, unweighted = binSim
         url.searchParams.delete("algo");
     }
     if (runtimeGreedy) url.searchParams.set("min_score", minScore);
-    if (binSimUnweightedMatch) url.searchParams.set("unweighted", "1");
-    else url.searchParams.delete("unweighted");
+    setUnweightedParam(url);
     history.pushState(null, "", url.pathname + url.search + url.hash);
 
     window.binSimRuntimeAbort?.abort();
@@ -3569,8 +3582,7 @@ async function refreshBinSimRuntime(runtimeGreedy, minScore, unweighted = binSim
             fallbackUrl.searchParams.delete("algo");
         }
         fallbackUrl.searchParams.set("min_score", ctx.runtimeMinScore);
-        if (binSimUnweightedMatch) fallbackUrl.searchParams.set("unweighted", "1");
-        else fallbackUrl.searchParams.delete("unweighted");
+        setUnweightedParam(fallbackUrl);
         history.replaceState(null, "", fallbackUrl.pathname + fallbackUrl.search + fallbackUrl.hash);
         setBinSimRuntimePanel(ctx.runtimeGreedy, Math.round(ctx.runtimeMinScore * 100));
         setBinSimRuntimeToast();

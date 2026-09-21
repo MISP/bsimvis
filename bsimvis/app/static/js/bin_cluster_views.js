@@ -171,7 +171,7 @@ class BinClusterHierarchy {
         this.params.color_by_md5 = params.get('color_by_md5') === 'true';
         this.params.q = params.get('q') || '';
         this.params.node_type = params.get('node_type') || 'file';
-        this.params.axis = params.get('axis') || 'overall';
+        this.params.axis = params.get('axis') || window.BINSIM_DEFAULT_AXIS;
 
         const hierControls = `
             <div style="position:absolute; top:20px; left:20px; z-index:10; background:var(--window-bg); padding:15px; border-radius:8px; border:1px solid var(--border); width:240px; backdrop-filter:blur(10px);">
@@ -763,7 +763,7 @@ class BinClusterHierarchy {
         if (!isSameNode) {
             this._renderedNodeUuid = d.data.uuid;
             const _ntInfo = { file: { icon: 'fa-solid fa-file', color: 'var(--info, #3b82f6)', label: 'File' }, container: { icon: 'fa-solid fa-box', color: 'var(--warning, #d97706)', label: 'Container' } };
-            const _axis = (this.params && this.params.axis) || 'overall';
+            const _axis = (this.params && this.params.axis) || window.BINSIM_DEFAULT_AXIS;
             const _nt = (this.params && this.params.node_type) || 'file';
             const bst = window.BinSimScoreTypes || {
                 score: { label: 'Overall', icon: 'fa-solid fa-layer-group', color: 'var(--success)' },
@@ -986,7 +986,7 @@ async function loadBinClusterMeta(d, params) {
             collection: getCurrentCollection(),
             cluster_uuid: d.data.uuid,
             node_type: (params && params.node_type) || 'file',
-            axis: (params && params.axis) || 'overall',
+            axis: (params && params.axis) || window.BINSIM_DEFAULT_AXIS,
             // The spread is stored on clusters built since it existed; for the
             // older ones the server walks that one cluster's members for it.
             with_stats: 'true',
@@ -1085,7 +1085,7 @@ function showBinClusterTableTooltip(event, uuid, name, size, stability, cohesion
     } else if (urlParams && urlParams.has('axis')) {
         window.binHierarchyInstance.params.axis = urlParams.get('axis');
     } else {
-        window.binHierarchyInstance.params.axis = 'overall';
+        window.binHierarchyInstance.params.axis = window.BINSIM_DEFAULT_AXIS;
     }
     
     if (nodeType) {
@@ -1211,7 +1211,7 @@ class BinClusterPacking {
         this.params.color_by_md5 = params.get('color_by_md5') === 'true';
         this.params.q = params.get('q') || '';
         this.params.node_type = params.get('node_type') || 'file';
-        this.params.axis = params.get('axis') || 'overall';
+        this.params.axis = params.get('axis') || window.BINSIM_DEFAULT_AXIS;
 
         const packControls = `
             <div style="position:absolute; top:20px; left:20px; z-index:10; background:var(--window-bg); padding:15px; border-radius:8px; border:1px solid var(--border); width:240px; backdrop-filter:blur(10px);">

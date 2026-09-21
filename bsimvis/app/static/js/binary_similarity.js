@@ -10,6 +10,12 @@ window.BinSimScoreTypes = {
     score_content: { label: 'Content', field: 'score_content', icon: 'fa-solid fa-file-image', color: 'var(--accent, #9333ea)' },
 };
 
+// Score type the bin-sim searches and the bin-cluster views start on when the
+// URL says nothing. Code is the one that answers "is this the same program?";
+// Overall mixes in library and content and buries it.
+window.BINSIM_DEFAULT_SORT = 'score_code';
+window.BINSIM_DEFAULT_AXIS = 'code';
+
 let binSimDataCache = null;
 let binSimMetaCtx = null;
 let binSimMetaCache = null;
@@ -2815,7 +2821,8 @@ function binSimScoreCards(item, activeScoreType) {
         .sort((a, b) => (item[types[b].field] || 0) - (item[types[a].field] || 0));
 
     const promote = (type) =>
-        `event.stopPropagation(); const sel = document.getElementById('bsim-score-type'); if (sel) { sel.value = ${jsString(type)}; applyBinSimSearch(); }`;
+        `event.stopPropagation(); if (document.getElementById('nbr-score-type')) { FileView.setNeighborScoreType(${jsString(type)}); } `
+        + `else { const sel = document.getElementById('bsim-score-type'); if (sel) { sel.value = ${jsString(type)}; applyBinSimSearch(); } }`;
 
     const small = others.map(k => {
         const meta = types[k];
@@ -2868,7 +2875,7 @@ function renderBinSimPairNotes(item) {
     return sid ? EntityRenderer.renderBinSimNoteButton(sid, item.note_owners || [], { raw_data: item }) : '';
 }
 
-function renderBinSimPairs(items, depth = 0, anchorMd5 = null) {
+function renderBinSimPairs(items, depth = 0, anchorMd5 = null, scoreType = null) {
     if (!items || items.length === 0) return '';
     let html = '';
     const { collection, params } = getRoutingState();
@@ -2881,7 +2888,7 @@ function renderBinSimPairs(items, depth = 0, anchorMd5 = null) {
         const caret = kids.length
             ? `<span class="bsim-caret-btn" style="display:inline-block; width:14px; cursor:pointer; color:var(--subtle);" onclick="event.stopPropagation(); Lineage.toggleTreeRow(this.closest('tr'));">▶</span>`
             : (depth > 0 ? `<span style="display:inline-block; width:${14 + (depth - 1) * 12}px;"></span>` : '');
-        const activeScoreType = params.get('sort') || 'score';
+        const activeScoreType = scoreType || params.get('sort') || window.BINSIM_DEFAULT_SORT;
         const archA = item.architecture_a || '---';
         const archB = item.architecture_b || '---';
         const funcsA = item.functions_count_a || 0;
@@ -3002,7 +3009,7 @@ function renderBinSimPairs(items, depth = 0, anchorMd5 = null) {
         `;
 
         // A child is the same kind of row one level down, so it draws itself.
-        if (kids.length) html += renderBinSimPairs(kids, depth + 1);
+        if (kids.length) html += renderBinSimPairs(kids, depth + 1, null, scoreType);
     });
     return html;
 }

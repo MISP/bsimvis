@@ -419,6 +419,14 @@ uv run bsimvis job cancel <job_id>
 ```bash
 # Start workers
 uv run bsimvis worker start --count 5
+
+# Deploy analyst-only capacity scoped to one collection, pool, or pipeline
+scripts/deploy_workers.sh --collection main --count 2
+scripts/deploy_workers.sh --pool <pool-id> --count 2
+scripts/deploy_workers.sh --pipeline <pipeline-id> --count 3
+
+# Dedicated workers consume only matching jobs in a separate tmux session.
+# Stop them with the command printed by the script.
 ```
 
 ## Building clusters

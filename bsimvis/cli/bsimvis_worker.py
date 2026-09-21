@@ -17,7 +17,7 @@ def run_worker(host, port, args):
         rescue_jobs()
 
         # 2. Start the workers
-        start_workers(args.count)
+        start_workers(args.count, args.collection, args.pipeline)
 
 
 def rescue_jobs():
@@ -35,7 +35,7 @@ def rescue_jobs():
         )
 
 
-def start_workers(count):
+def start_workers(count, collection=None, pipeline=None):
     processes = []
     print(f"[*] Starting {count} workers...")
 
@@ -56,6 +56,10 @@ def start_workers(count):
         for i in range(count):
             name = f"worker-{i+1}"
             cmd = ["uv", "run", worker_script, "--name", name]
+            if collection:
+                cmd += ["--collection", collection]
+            elif pipeline:
+                cmd += ["--pipeline", pipeline]
             print(f"  [+] Spawning {name}: {' '.join(cmd)}")
 
             p = subprocess.Popen(cmd)
@@ -79,6 +83,10 @@ def start_workers(count):
                     time.sleep(2)
 
                     cmd = ["uv", "run", worker_script, "--name", name]
+                    if collection:
+                        cmd += ["--collection", collection]
+                    elif pipeline:
+                        cmd += ["--pipeline", pipeline]
                     new_p = subprocess.Popen(cmd)
                     worker_map[name] = new_p
                     print(f"  [+] {name} restarted with PID {new_p.pid}")

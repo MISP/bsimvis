@@ -446,6 +446,9 @@ def main():
         default=int(os.getenv("WORKERS_COUNT", 1)),
         help="Number of workers to start (default: from .env WORKERS_COUNT or 1)",
     )
+    w_target = w_start.add_mutually_exclusive_group()
+    w_target.add_argument("--collection", help="Only process this collection")
+    w_target.add_argument("--pipeline", help="Only process this pipeline and its tasks")
 
     # --- UPLOAD ---
     upload_parser = subparsers.add_parser(

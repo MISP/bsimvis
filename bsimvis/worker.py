@@ -99,13 +99,15 @@ def _clear_algorithms(payload):
 
 
 class Worker:
-    def __init__(self, name="worker-1"):
+    def __init__(self, name="worker-1", collection=None, pipeline=None):
         self.name = name
         # launch_tmux.sh used to start every worker without --name, so a whole
         # fleet registered as "worker-1". The pid keeps ids unique even if that
         # regresses, and makes lease_owner point at a process you can actually
         # find.
         self.id = f"{name}-{os.getpid()}"
+        self.target_collection = collection or os.getenv("WORKER_COLLECTION")
+        self.target_pipeline = pipeline or os.getenv("WORKER_PIPELINE")
         _make_preferred_oom_victim()
         self.r_queue = get_queue_redis()
         self.r_data = get_redis()
@@ -128,6 +130,42 @@ class Worker:
         self.current_job_id = None
         self._last_reap = 0.0
         self._job_peak_rss = 0
+
+    def _job_matches_target(self, job_id, job_data):
+        """Keep dedicated workers from claiming unrelated queue entries."""
+        if not getattr(self, "target_collection", None) and not getattr(
+            self, "target_pipeline", None
+        ):
+            return True
+        seen = set()
+        while job_id and job_id not in seen:
+            seen.add(job_id)
+            if (
+                getattr(self, "target_pipeline", None)
+                and job_id == self.target_pipeline
+            ):
+                return True
+            data = (
+                job_data
+                if job_id == job_data.get("id")
+                else self.r_queue.hgetall(f"job:{job_id}")
+            )
+            if getattr(self, "target_collection", None):
+                collection = data.get("collection")
+                if not collection and data.get("payload"):
+                    try:
+                        payload = json.loads(data["payload"])
+                        collection = payload.get("collection") or (
+                            f"pool:{payload['pool_id']}"
+                            if payload.get("pool_id")
+                            else None
+                        )
+                    except (TypeError, json.JSONDecodeError):
+                        collection = None
+                if collection == self.target_collection:
+                    return True
+            job_id = data.get("parent_id")
+        return False
 
     def _reap(self, interval=30):
         """Runs the lease reaper, at most once per `interval` per worker."""
@@ -218,14 +256,16 @@ class Worker:
 
                 # Reliable Priority Queue Pattern
                 # 1. First check High-Priority Queue (Non-blocking)
+                source_queue = "jobs:pending:high"
                 job_id = self.r_queue.execute_command(
-                    "LMOVE", "jobs:pending:high", "jobs:processing", "RIGHT", "LEFT"
+                    "LMOVE", source_queue, "jobs:processing", "RIGHT", "LEFT"
                 )
 
                 # 2. If empty, fall back to Default Queue (Blocking for 2s)
                 if not job_id:
+                    source_queue = "jobs:pending"
                     job_id = self.r_queue.execute_command(
-                        "BLMOVE", "jobs:pending", "jobs:processing", "RIGHT", "LEFT", 2
+                        "BLMOVE", source_queue, "jobs:processing", "RIGHT", "LEFT", 2
                     )
 
                 if not job_id:
@@ -264,6 +304,12 @@ class Worker:
                         self.r_queue.hdel(f"job:{job_id}", "queued")
                         self.r_queue.hset(f"job:{job_id}", "paused_queued", "1")
                         logging.info(f"[~] Job {job_id} is paused; leaving it held.")
+                        continue
+
+                    if not self._job_matches_target(job_id, job_data):
+                        # Keep unrelated work in its original queue and rotate
+                        # it away from RIGHT-pop so matching work is reachable.
+                        self.r_queue.lpush(source_queue, job_id)
                         continue
 
                     # Admission control: only start if the fleet can still
@@ -980,9 +1026,12 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", default="worker-1")
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--collection")
+    target.add_argument("--pipeline")
     args = parser.parse_args()
 
-    worker = Worker(name=args.name)
+    worker = Worker(name=args.name, collection=args.collection, pipeline=args.pipeline)
     signal.signal(signal.SIGINT, worker.stop)
     signal.signal(signal.SIGTERM, worker.stop)
 

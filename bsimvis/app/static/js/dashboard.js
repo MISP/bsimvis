@@ -5092,18 +5092,18 @@ async function renderPoolCreationForm() {
     const funcMinFeatures = similarity.min_features !== undefined ? similarity.min_features : 0;
     const funcClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
     const funcClusterMinSamples = clustering.min_samples !== undefined ? clustering.min_samples : 1;
-    const funcClusterEpsilon = clustering.epsilon !== undefined ? clustering.epsilon : 0.1;
-    const funcClusterMethod = clustering.selection_method || 'eom';
+    const funcClusterMinSim = clustering.min_sim !== undefined ? clustering.min_sim : 0;
+    const funcClusterMinFeatures = clustering.min_features !== undefined ? clustering.min_features : 0;
 
-    const fileTopK = 100; // default for file-level similarity
-    const fileMinScore = 0.5; // default for file-level similarity
+    const fileTopK = similarity.top_k !== undefined ? similarity.top_k : 1000;
+    const fileMinScore = similarity.file_min_score !== undefined ? similarity.file_min_score : 0.0;
+    const fileMinCohesion = similarity.min_cohesion !== undefined ? similarity.min_cohesion : 0.5;
     const discovery = Boolean(similarity.discovery);
     const discoveryMinScore = similarity.discovery_min_score !== undefined ? similarity.discovery_min_score : 0.5;
     const discoveryMaxDf = similarity.discovery_max_df !== undefined ? similarity.discovery_max_df : 1.0;
     const fileClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
     const fileClusterMinSamples = clustering.min_samples !== undefined ? clustering.min_samples : 1;
-    const fileClusterEpsilon = clustering.epsilon !== undefined ? clustering.epsilon : 0.001;
-    const fileClusterMethod = clustering.selection_method || 'eom';
+    const fileClusterMinSim = clustering.min_sim !== undefined ? clustering.min_sim : 0;
 
     const colCheckboxes = collections.map(col => `
         <label style="display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; font-size:0.8rem; border-bottom: 1px solid var(--border); transition: background 0.2s;">
@@ -5206,17 +5206,8 @@ async function renderPoolCreationForm() {
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
                                             <input type="number" id="pool-cluster-min-samples" value="${escapeAttr(funcClusterMinSamples)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
-                                        <div>
-                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label>
-                                            <input type="number" id="pool-cluster-epsilon" step="0.05" value="${escapeAttr(funcClusterEpsilon)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
-                                        </div>
-                                        <div>
-                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label>
-                                            <select id="pool-cluster-method" style="width:100%; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
-                                                <option value="eom" ${funcClusterMethod === 'eom' ? 'selected' : ''}>EOM</option>
-                                                <option value="leaf" ${funcClusterMethod === 'leaf' ? 'selected' : ''}>Leaf</option>
-                                            </select>
-                                        </div>
+                                        <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Similarity</label><input type="number" id="pool-cluster-min-sim" step="0.05" value="${escapeAttr(funcClusterMinSim)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                        <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Features</label><input type="number" id="pool-cluster-min-features" value="${escapeAttr(funcClusterMinFeatures)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
                                     </div>
                                 </div>
                             </div>
@@ -5240,14 +5231,9 @@ async function renderPoolCreationForm() {
                                                 <div id="pool-file-algo-display" title="Inherited from function similarity: file scores live in the namespace of the function clusters they are built from." style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--dim); padding:6px; border-radius:4px; font-size:0.75rem;">${funcAlgo}</div>
                                             </div>
                                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
-                                                <div>
-                                                    <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
-                                                    <input type="number" id="pool-file-topk" value="${escapeAttr(fileTopK)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
-                                                </div>
-                                                <div>
-                                                    <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
-                                                    <input type="number" id="pool-file-minscore" step="0.05" value="${escapeAttr(fileMinScore)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
-                                                </div>
+                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label><input type="number" id="pool-file-topk" value="${escapeAttr(fileTopK)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label><input type="number" id="pool-file-minscore" step="0.05" value="${escapeAttr(fileMinScore)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
+                                                <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cohesion</label><input type="number" id="pool-file-min-cohesion" step="0.05" value="${escapeAttr(fileMinCohesion)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
                                                 <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Discovery min score</label><input type="number" id="pool-discovery-score" step="0.05" value="${escapeAttr(discoveryMinScore)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
                                                 <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Discovery max DF</label><input type="number" id="pool-discovery-df" step="0.05" value="${escapeAttr(discoveryMaxDf)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
                                                 <label style="display:flex; align-items:center; gap:6px; font-size:0.7rem; color:var(--dim);"><input type="checkbox" id="pool-discovery-enabled" ${discovery ? 'checked' : ''}> Enable discovery</label>
@@ -5264,17 +5250,7 @@ async function renderPoolCreationForm() {
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
                                             <input type="number" id="pool-file-cluster-min-samples" value="${escapeAttr(fileClusterMinSamples)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
-                                        <div>
-                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label>
-                                            <input type="number" id="pool-file-cluster-epsilon" step="0.05" value="${escapeAttr(fileClusterEpsilon)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
-                                        </div>
-                                        <div>
-                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label>
-                                            <select id="pool-file-cluster-method" style="width:100%; background:var(--border); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; font-size:0.8rem;">
-                                                <option value="eom" ${fileClusterMethod === 'eom' ? 'selected' : ''}>EOM</option>
-                                                <option value="leaf" ${fileClusterMethod === 'leaf' ? 'selected' : ''}>Leaf</option>
-                                            </select>
-                                        </div>
+                                        <div><label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Similarity</label><input type="number" id="pool-file-cluster-min-sim" step="0.05" value="${escapeAttr(fileClusterMinSim)}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;"></div>
                                     </div>
                                 </div>
                             </div>
@@ -5356,20 +5332,20 @@ async function submitCreatePool(btn) {
     const funcMinFeatures = parseInt(document.getElementById('pool-func-minfeatures')?.value || '0');
     const funcClusterMinSize = parseInt(document.getElementById('pool-cluster-min-size')?.value || '2');
     const funcClusterMinSamples = parseInt(document.getElementById('pool-cluster-min-samples')?.value || '1');
-    const funcClusterEpsilon = parseFloat(document.getElementById('pool-cluster-epsilon')?.value || '0.1');
-    const funcClusterMethod = document.getElementById('pool-cluster-method')?.value ?? 'eom';
+    const funcClusterMinSim = parseFloat(document.getElementById('pool-cluster-min-sim')?.value || '0');
+    const funcClusterMinFeatures = parseInt(document.getElementById('pool-cluster-min-features')?.value || '0');
     
     // File settings
     const enableFiles = document.getElementById('pool-enable-files')?.checked ?? false;
-    const fileTopK = parseInt(document.getElementById('pool-file-topk')?.value || '100');
-    const fileMinScore = parseFloat(document.getElementById('pool-file-minscore')?.value || '0.5');
+    const fileTopK = parseInt(document.getElementById('pool-file-topk')?.value || '1000');
+    const fileMinScore = parseFloat(document.getElementById('pool-file-minscore')?.value || '0');
+    const fileMinCohesion = parseFloat(document.getElementById('pool-file-min-cohesion')?.value || '0.5');
     const discoveryEnabled = document.getElementById('pool-discovery-enabled')?.checked ?? false;
     const discoveryMinScore = parseFloat(document.getElementById('pool-discovery-score')?.value || '0.5');
     const discoveryMaxDf = parseFloat(document.getElementById('pool-discovery-df')?.value || '1');
     const fileClusterMinSize = parseInt(document.getElementById('pool-file-cluster-min-size')?.value || '2');
     const fileClusterMinSamples = parseInt(document.getElementById('pool-file-cluster-min-samples')?.value || '1');
-    const fileClusterEpsilon = parseFloat(document.getElementById('pool-file-cluster-epsilon')?.value || '0.1');
-    const fileClusterMethod = document.getElementById('pool-file-cluster-method')?.value ?? 'eom';
+    const fileClusterMinSim = parseFloat(document.getElementById('pool-file-cluster-min-sim')?.value || '0');
 
     if (errEl) errEl.style.display = 'none';
 
@@ -5409,23 +5385,22 @@ async function submitCreatePool(btn) {
                     func_cluster_params: {
                         min_cluster_size: funcClusterMinSize,
                         min_samples: funcClusterMinSamples,
-                        epsilon: funcClusterEpsilon,
-                        selection_method: funcClusterMethod
+                        min_sim: funcClusterMinSim,
+                        min_features: funcClusterMinFeatures
                     },
                     file_sim_params: {
                         enabled: enableFiles,
                         top_k: fileTopK,
                         min_score: fileMinScore,
+                        min_cohesion: fileMinCohesion,
                         discovery: discoveryEnabled,
                         discovery_min_score: discoveryMinScore,
                         discovery_max_df: discoveryMaxDf
                     },
                     file_cluster_params: { 
-                        enabled: enableFiles,
                         min_cluster_size: fileClusterMinSize,
                         min_samples: fileClusterMinSamples,
-                        epsilon: fileClusterEpsilon,
-                        selection_method: fileClusterMethod
+                        min_sim: fileClusterMinSim
                     }
                 }
             })

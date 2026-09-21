@@ -765,7 +765,12 @@ def search_bin_sims():
 
         try:
             offset = int(request.args.get("offset", 0))
-            limit = int(request.args.get("limit", DEFAULT_LIMIT))
+            default_limit = (
+                (pool.get("file_sim_params") or {}).get("top_k", 1000)
+                if is_pool
+                else DEFAULT_LIMIT
+            )
+            limit = int(request.args.get("limit", default_limit))
         except ValueError:
             return {"error": "offset and limit must be integers"}, 400
 
@@ -791,7 +796,15 @@ def search_bin_sims():
                 (request.args.get("sort") or "score").strip(), "score"
             )
             or "score",
-            "min_score": parse_float(request.args.get("min_score")),
+            "min_score": (
+                parse_float(request.args.get("min_score"))
+                if request.args.get("min_score") is not None
+                else (
+                    (pool.get("file_sim_params") or {}).get("min_score", 0.0)
+                    if is_pool
+                    else None
+                )
+            ),
             "max_score": parse_float(request.args.get("max_score")),
             "min_cov": parse_float(request.args.get("min_coverage")),
             "max_cov": parse_float(request.args.get("max_coverage")),

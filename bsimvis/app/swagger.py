@@ -3073,11 +3073,10 @@ pool_func_sim_params_model = api.model(
 pool_func_cluster_params_model = api.model(
     "PoolFuncClusterParams",
     {
-        "cluster_algo": fields.String(default="hdbscan"),
         "min_cluster_size": fields.Integer(default=2),
         "min_samples": fields.Integer(default=1),
-        "epsilon": fields.Float(default=0.1),
-        "selection_method": fields.String(default="eom"),
+        "min_sim": fields.Float(default=0.0),
+        "min_features": fields.Integer(default=0),
     },
 )
 
@@ -3085,6 +3084,8 @@ pool_file_sim_params_model = api.model(
     "PoolFileSimParams",
     {
         "enabled": fields.Boolean(default=True),
+        "top_k": fields.Integer(default=1000),
+        "min_score": fields.Float(default=0.0),
         "min_cohesion": fields.Float(default=0.5),
         "discovery": fields.Boolean(default=False),
         "discovery_min_score": fields.Float(default=0.5),
@@ -3097,6 +3098,7 @@ pool_file_cluster_params_model = api.model(
     {
         "min_cluster_size": fields.Integer(default=2),
         "min_samples": fields.Integer(default=1),
+        "min_sim": fields.Float(default=0.0),
         "epsilon": fields.Float(default=0.1),
         "selection_method": fields.String(default="eom"),
     },

@@ -321,9 +321,9 @@ window.PoolDetailView = {
                             <i class="fa-solid fa-file-code"></i> File Similarity ${fileSimEnabled ? '' : '<span style="font-size:0.65rem; margin-left:4px; color:var(--dim);">(disabled)</span>'}
                         </div>
                         <label style="display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--border); font-size:0.8rem; color:var(--dim);"><input id="pool-file-enabled-edit" type="checkbox" ${fileSimEnabled ? 'checked' : ''}> Enabled</label>
+                        ${this._configInput('pool-file-top-k-edit', 'Top K', fis.top_k ?? 1000)}
+                        ${this._configInput('pool-file-min-score-edit', 'Min Score', fis.min_score ?? 0, '0.01')}
                         ${this._configInput('pool-file-min-cohesion-edit', 'Min Cohesion', fis.min_cohesion, '0.01')}
-                        ${this._configInput('pool-file-top-k-edit', 'Top K', fis.top_k)}
-                        ${this._configInput('pool-file-min-score-edit', 'Min Score', fis.min_score, '0.01')}
                         ${this._configInput('pool-discovery-score-edit', 'Discovery Min Score', fis.discovery_min_score ?? 0.5, '0.01')}
                         ${this._configInput('pool-discovery-df-edit', 'Discovery Max DF', fis.discovery_max_df ?? 1, '0.01')}
                         <label style="display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--border); font-size:0.8rem; color:var(--dim);"><input id="pool-discovery-enabled-edit" type="checkbox" ${fis.discovery ? 'checked' : ''}> Discovery Enabled</label>

@@ -736,6 +736,10 @@ class BinClusterHierarchy {
 
         this.renderTooltip(tooltip, d);
 
+        if (await loadBinClusterMeta(d, this.params) && this._activeD === d) {
+            this.renderTooltip(tooltip, d);
+        }
+
         if (!d.data.runtime_members && d.data.uuid && d.data.uuid !== 'root') {
             try {
                 const col = getCurrentCollection();
@@ -797,6 +801,8 @@ class BinClusterHierarchy {
                             </div>
                         </div>
 
+                        <div id="hier-cluster-meta" style="margin-bottom:12px;">${renderBinClusterMetaBlock(d.data)}</div>
+
                         <div style="border-top:1px solid var(--border); padding-top:10px; flex: 1; display: flex; flex-direction: column; overflow: hidden;">
                             <div class="hier-samples-title" style="font-size:0.6rem; color:var(--subtle); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
                                 ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live Samples...' : `Samples (${members.length}):`}
@@ -822,6 +828,12 @@ class BinClusterHierarchy {
                 </div>
             `;
         } else {
+            // Same node, second render: the rebuild above is skipped, so the
+            // metadata block has to be refreshed by hand or a late fetch never
+            // shows up.
+            const metaEl = tooltip.querySelector('#hier-cluster-meta');
+            if (metaEl) metaEl.innerHTML = renderBinClusterMetaBlock(d.data);
+
             const samplesTitle = tooltip.querySelector('.hier-samples-title');
             if (samplesTitle) {
                 samplesTitle.innerHTML = isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live Samples...' : `Samples (${members.length}):`;
@@ -960,6 +972,92 @@ class BinClusterHierarchy {
             window.hideBinaryPreview();
         }
     }
+}
+
+// Cluster metadata the graph nodes never carry: the member function-count
+// spread and the metadata distributions. Both live on the cluster summary, so
+// one listing call fetches them, the same way runtime_members is fetched.
+// Returns true when the tooltip has something new to draw.
+async function loadBinClusterMeta(d, params) {
+    if (!d || !d.data || d.data.meta_loaded || !d.data.uuid || d.data.uuid === 'root') return false;
+    d.data.meta_loaded = true;
+    try {
+        const qs = new URLSearchParams({
+            collection: getCurrentCollection(),
+            cluster_uuid: d.data.uuid,
+            node_type: (params && params.node_type) || 'file',
+            axis: (params && params.axis) || 'overall',
+            // The spread is stored on clusters built since it existed; for the
+            // older ones the server walks that one cluster's members for it.
+            with_stats: 'true',
+            limit: '1',
+        });
+        const res = await fetch(`/api/bin_cluster/list?${qs.toString()}`);
+        if (!res.ok) return false;
+        const data = await res.json();
+        const meta = (data.results || []).find(c => String(c.cluster_uuid) === String(d.data.uuid));
+        if (!meta) return false;
+        d.data.function_count_stats = meta.function_count_stats || {};
+        d.data.yara_distribution = meta.yara_distribution || [];
+        d.data.avtype_distribution = meta.avtype_distribution || [];
+        d.data.filetype_distribution = meta.filetype_distribution || [];
+        d.data.ccip_distribution = meta.ccip_distribution || [];
+        return true;
+    } catch (e) {
+        console.error('Failed to fetch cluster metadata', e);
+        d.data.meta_loaded = false;
+        return false;
+    }
+}
+
+// Functions-per-member plus the top value of each distribution. The tooltip is
+// 450px of fixed height, so this stays to one line per fact; the Metadata tab
+// on the cluster detail view is where the full pies live.
+function renderBinClusterMetaBlock(data) {
+    // The synthetic root of the hierarchy view is not a cluster and has no
+    // summary to read, so it gets no block rather than a permanent "loading".
+    if (!data || !data.uuid || data.uuid === 'root') return '';
+
+    const s = data.function_count_stats || {};
+    const num = v => Number(v || 0).toLocaleString();
+
+    // A fetch that came back with nothing still sets function_count_stats, so
+    // its presence -- not the meta_loaded flag, which is set when the fetch
+    // starts -- is what separates "still loading" from "there is none".
+    const spread = (s.min === undefined)
+        ? `<span class="dim" style="font-size:0.7rem;">${data.function_count_stats === undefined ? 'loading…' : 'not computed'}</span>`
+        : `<span style="color:var(--meta-text); font-weight:bold;">${num(s.min)}</span>
+           <span class="dim" style="font-size:0.65rem;">min</span>
+           <span style="color:var(--accent); font-weight:bold; margin-left:6px;">${num(s.avg)}</span>
+           <span class="dim" style="font-size:0.65rem;">avg</span>
+           <span style="color:var(--meta-text); font-weight:bold; margin-left:6px;">${num(s.max)}</span>
+           <span class="dim" style="font-size:0.65rem;">max</span>`;
+
+    const dists = [
+        ['Yara', data.yara_distribution],
+        ['AV', data.avtype_distribution],
+        ['Type', data.filetype_distribution],
+        ['IP', data.ccip_distribution],
+    ];
+    const rows = dists.map(([label, dist]) => {
+        if (!dist || !dist.length) return '';
+        const top = dist[0];
+        const more = dist.length > 1 ? `<span class="dim" style="font-size:0.6rem;"> +${dist.length - 1}</span>` : '';
+        return `<div style="display:flex; gap:6px; font-size:0.7rem; align-items:baseline;">
+            <span class="dim" style="min-width:34px;">${label}</span>
+            <span style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeAttr(top.value)}">${escapeHtml(top.value)}</span>
+            <span class="dim" style="margin-left:auto;">${Number(top.percent || 0)}%${more}</span>
+        </div>`;
+    }).join('');
+
+    return `
+        <div style="font-size:0.7rem; display:flex; flex-direction:column; gap:4px;">
+            <div style="display:flex; gap:4px; align-items:baseline;">
+                <span class="dim" style="min-width:34px;">Funcs</span>
+                ${spread}
+            </div>
+            ${rows}
+        </div>`;
 }
 
 const binClusterTooltipMockCache = new Map();
@@ -1616,6 +1714,9 @@ class BinClusterPacking {
         tooltip.style.left = x + 'px'; tooltip.style.top = y + 'px';
         tooltip.onmouseleave = () => { this.hideTooltip(); };
         this.renderTooltip(tooltip, d);
+        if (await loadBinClusterMeta(d, this.params) && this._activeD === d) {
+            this.renderTooltip(tooltip, d);
+        }
         if (!d.data.runtime_members && d.data.uuid && d.data.uuid !== 'root') {
             try {
                 const col = getCurrentCollection();

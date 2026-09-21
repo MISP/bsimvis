@@ -179,13 +179,13 @@ window.ClusterDetailView = {
                 <div id="cluster-detail" style="flex:1; min-width:0; display:flex; flex-direction:column; min-height:0;">
                     <div id="cluster-header"></div>
 
-                    <div class="view-toggle" style="margin:20px 0 0; display:flex; align-items:center; flex-shrink:0;">
-                        <button class="view-btn active" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
-                        <button class="view-btn" id="cluster-tab-btn-metadata" onclick="ClusterDetailView.switchTab('metadata')">Metadata</button>
+                    <div class="bsim-tabbar" id="cluster-view-tabs" style="margin:20px 0 16px; flex-shrink:0;">
+                        <button class="bsim-tab active" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
+                        <button class="bsim-tab" id="cluster-tab-btn-metadata" onclick="ClusterDetailView.switchTab('metadata')">Metadata</button>
                     </div>
 
                     <div id="cluster-tab-members" style="display:flex; flex-direction:column; flex:1; min-height:0;">
-                        <div style="display:flex; align-items:center; gap:10px; margin-top:10px; flex-wrap:wrap; flex-shrink:0;">
+                        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; flex-shrink:0;">
                             <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
                                 <span class="bsim-ctl-label">Group by:</span>
                                 <button class="view-btn active" id="cluster-group-btn-cluster" onclick="ClusterDetailView.setGroupBy('cluster')" title="Group by child cluster">Cluster</button>
@@ -212,7 +212,7 @@ window.ClusterDetailView = {
                         </div>
                     </div>
 
-                    <div id="cluster-tab-metadata" style="display:none; flex:1; min-height:0; overflow:auto; margin-top:10px;"></div>
+                    <div id="cluster-tab-metadata" style="display:none; flex:1; min-height:0; overflow:auto;"></div>
                 </div>
             </div>
         `;

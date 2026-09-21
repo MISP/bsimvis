@@ -3957,6 +3957,9 @@ function renderBinClusters(items) {
             displayName = c.yara_distribution[0].value;
         }
 
+        // Clusters built before function_count_stats was stored have none: show a dash.
+        const fnStats = c.function_count_stats || {};
+
         const showDots = (c.sample_members && c.sample_members.length > 0) && (c.count > 3 || c.sample_members.length > 3);
         const remaining = showDots ? Math.max(c.count - 3, c.sample_members.length - 3) : 0;
 

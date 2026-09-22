@@ -105,6 +105,31 @@ def build_freq(items, member_count, limit=5):
     )
 
 
+def cluster_dimensions(metas, member_count):
+    """Return categorical metadata shown by cluster views."""
+    values = {
+        field: []
+        for field in ("filetype", "architecture", "executable_format", "batch_uuid")
+    }
+    for meta in metas:
+        if meta.get("filetype"):
+            values["filetype"].extend(_values(meta["filetype"]))
+        if meta.get("language_id"):
+            values["architecture"].append(meta["language_id"])
+        file_format = meta.get("file_format") or {}
+        executable_format = file_format.get("Executable Format") or file_format.get(
+            "format"
+        )
+        if executable_format:
+            values["executable_format"].append(executable_format)
+        if meta.get("batch_uuid"):
+            values["batch_uuid"].append(meta["batch_uuid"])
+    return {
+        f"{field}_distribution": build_freq(items, member_count)
+        for field, items in values.items()
+    }
+
+
 def build_tag_distribution(by_axis, member_count, limit=10):
     """Build namespace trees from per-member tag hits."""
     out = {}
@@ -160,6 +185,7 @@ def _values(value):
     if not value:
         return []
     return value if isinstance(value, list) else [value]
+
 
 def _member_tag_values(meta):
     values = []
@@ -227,10 +253,14 @@ def cluster_summary(metas, member_count=None, fields=DISTRIBUTION_FIELDS):
             (values[2], values[3], values[4], values[5], values[0], values[1]),
         )
     )
-    result = {
-        f"{field}_distribution": build_freq(value_lists[field], member_count)
-        for field in fields
-    }
+    result = cluster_dimensions(metas, member_count)
+    result.update(
+        {
+            f"{field}_distribution": build_freq(value_lists[field], member_count)
+            for field in fields
+            if field in value_lists
+        }
+    )
 
     by_axis = defaultdict(list)
     for meta in metas:

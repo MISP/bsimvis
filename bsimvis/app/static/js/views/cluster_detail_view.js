@@ -495,12 +495,10 @@ window.ClusterDetailView = {
         }
 
         const dists = [
-            ['Yara', 'fa-solid fa-biohazard', c.yara_distribution],
-            ['AV Type', 'fa-solid fa-shield', c.avtype_distribution],
             ['File Type', 'fa-solid fa-file-code', c.filetype_distribution],
-            ['CC IP', 'fa-solid fa-network-wired', c.ccip_distribution],
-            ['File Name', 'fa-solid fa-file', c.filename_distribution],
-            ['MD5', 'fa-solid fa-fingerprint', c.md5_distribution],
+            ['Architecture', 'fa-solid fa-microchip', c.architecture_distribution],
+            ['Executable Format', 'fa-solid fa-file-code', c.executable_format_distribution],
+            ['Batch UUID', 'fa-solid fa-box', c.batch_uuid_distribution],
         ];
         Object.entries(c.tag_distribution || {}).forEach(([axis, dist]) => {
             dists.push(['Tags · ' + axis, 'fa-solid fa-tags', dist, true]);

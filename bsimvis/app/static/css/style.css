@@ -2345,3 +2345,21 @@ html.light-theme .analysis-tag-badge {
 .lineage-folder-content {
     display: flex; flex-direction: column;
 }
+
+.metadata-axis { background:var(--card-bg); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.metadata-axis + .metadata-axis { margin-top:10px; }
+.metadata-axis summary { cursor:pointer; list-style:none; padding:12px 14px; display:flex; align-items:center; gap:8px; color:var(--accent); font-size:.8rem; font-weight:600; }
+.metadata-axis summary::-webkit-details-marker { display:none; }
+.metadata-axis summary::before { content:'\f054'; font:900 .65rem 'Font Awesome 6 Free'; color:var(--dim); transition:transform .15s; }
+.metadata-axis[open] summary::before { transform:rotate(90deg); }
+.metadata-axis summary .dim { margin-left:auto; font-weight:normal; }
+.metadata-axis-body { display:grid; grid-template-columns:minmax(180px, 28%) 1fr; gap:16px; padding:14px; border-top:1px solid var(--border); }
+.metadata-axis-visual { display:flex; align-items:center; justify-content:center; min-height:170px; }
+.metadata-axis-bars { flex-direction:column; align-items:stretch; justify-content:flex-start; gap:8px; padding:12px; }
+.metadata-axis-table-wrap { min-width:0; overflow:auto; }
+.metadata-axis-table { margin:0; }
+.metadata-axis-table th, .metadata-axis-table td { padding:7px 10px; }
+.metadata-axis-table td:first-child { min-width:220px; }
+.metadata-bar { display:inline-block; width:90px; height:6px; margin-right:7px; background:var(--border); border-radius:4px; vertical-align:middle; overflow:hidden; }
+.metadata-bar span { display:block; height:100%; border-radius:inherit; }
+@media (max-width: 760px) { .metadata-axis-body { grid-template-columns:1fr; } .metadata-axis-visual { min-height:120px; } }

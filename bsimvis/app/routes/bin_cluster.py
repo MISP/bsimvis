@@ -562,6 +562,11 @@ def list_bin_clusters():
                     m.get("member_count") or 0,
                     m.get("cohesion_score"),
                 ),
+                "architecture_distribution": m.get("architecture_distribution", []),
+                "executable_format_distribution": m.get(
+                    "executable_format_distribution", []
+                ),
+                "batch_uuid_distribution": m.get("batch_uuid_distribution", []),
                 "function_count_stats": m.get("function_count_stats", {}),
                 "has_children": bool(parent_to_children.get(str(m.get("cluster_id")))),
             }

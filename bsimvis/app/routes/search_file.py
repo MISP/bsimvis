@@ -10,6 +10,7 @@ from bsimvis.app.services.query_syntax import resolve_targets, union_buckets
 from bsimvis.app.services.cluster_utils import (
     fetch_bin_cluster_meta,
     fetch_bin_cluster_meta_all_axes,
+    normalize_tag_distribution,
 )
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.index_service import (
@@ -672,6 +673,9 @@ def get_file_details(collection, file_md5):
             "filename": {},
             "tags": {},
             "md5": {},
+            "architecture": {},
+            "executable_format": {},
+            "batch_uuid": {},
         }
 
         # Collect existing values to exclude
@@ -691,6 +695,11 @@ def get_file_details(collection, file_md5):
                 to_list(data.get("file_names")) + to_list(data.get("file_name"))
             ),
             "md5": set(to_list(data.get("file_md5"))),
+            "architecture": set(to_list(data.get("language_id"))),
+            "executable_format": set(
+                to_list((data.get("file_format") or {}).get("Executable Format"))
+            ),
+            "batch_uuid": set(to_list(data.get("batch_uuid"))),
         }
 
         for cid, cm in cluster_meta_map.items():
@@ -704,6 +713,9 @@ def get_file_details(collection, file_md5):
                     "ccip_distribution": "ccip",
                     "filename_distribution": "filename",
                     "md5_distribution": "md5",
+                    "architecture_distribution": "architecture",
+                    "executable_format_distribution": "executable_format",
+                    "batch_uuid_distribution": "batch_uuid",
                 }
                 for dist_key, meta_key in mapping.items():
                     dist = cm.get(dist_key) or []
@@ -725,7 +737,12 @@ def get_file_details(collection, file_md5):
                                 "cluster_uuid": cm.get("cluster_uuid"),
                             }
 
-                for axis, dist in (cm.get("tag_distribution") or {}).items():
+                tag_distribution = normalize_tag_distribution(
+                    cm.get("tag_distribution") or {},
+                    cm.get("member_count") or 0,
+                    cohesion_score,
+                )
+                for axis, dist in tag_distribution.items():
                     axis_tags = inferred_meta["tags"].setdefault(axis, {})
                     pending = list(dist)
                     while pending:

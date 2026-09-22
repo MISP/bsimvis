@@ -603,6 +603,11 @@ class BinClusterService:
                 "filename_distribution": filename_freq,
                 "md5_distribution": md5_freq,
                 "tag_distribution": summary["tag_distribution"],
+                "architecture_distribution": summary["architecture_distribution"],
+                "executable_format_distribution": summary[
+                    "executable_format_distribution"
+                ],
+                "batch_uuid_distribution": summary["batch_uuid_distribution"],
                 "function_count_stats": function_count_stats(member_metas),
                 "created_at": int(time.time() * 1000),
             }
@@ -1915,6 +1920,11 @@ class BinClusterService:
                 "filename_distribution": filename_freq,
                 "md5_distribution": md5_freq,
                 "tag_distribution": summary["tag_distribution"],
+                "architecture_distribution": summary["architecture_distribution"],
+                "executable_format_distribution": summary[
+                    "executable_format_distribution"
+                ],
+                "batch_uuid_distribution": summary["batch_uuid_distribution"],
                 "function_count_stats": function_count_stats(member_metas),
                 "created_at": int(time.time() * 1000),
             }

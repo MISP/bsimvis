@@ -525,89 +525,91 @@ window.scoreColor = scoreColor;
 // of its members -- as a pie plus a legend. Shared by the file view and the
 // cluster detail view's Metadata tab, which show the same six distributions off
 // the same cluster meta; two copies of this drifted apart once already.
-function renderDist(title, icon, dist) {
-    if (!dist || dist.length === 0) return '';
-    
-    const colors = ['#66d9ef', '#a6e22e', '#f92672', '#fd971f', '#ae81ff', '#e6db74', '#75715e'];
-    
-    let legendHtml = '';
-    let totalPercent = 0;
-    dist.forEach(d => totalPercent += (d.percent || 0));
-    
-    let pieData = dist.map((d, i) => {
-        const color = colors[i % colors.length];
-        legendHtml += `
-            <div style="display: flex; align-items: center; gap: 6px; font-size: 0.75rem; margin-bottom: 4px;">
-                <div style="width: 10px; height: 10px; background-color: ${color}; border-radius: 2px;"></div>
-                <span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace; overflow-wrap: anywhere; max-width: 260px;" title="${escapeAttr(d.value)}">${escapeHtml(d.value)}</span>
-                <span style="color: var(--dim); margin-left: auto;">${d.percent || 0}%</span>
-            </div>
-        `;
-        return {...d, color: color, value: d.percent || 0};
-    });
-    
-    if (totalPercent < 100) {
-        pieData.push({value: 100 - totalPercent, color: 'var(--border)', isDummy: true});
-    }
-    
-    const width = 50;
-    const height = 50;
-    const radius = Math.min(width, height) / 2;
-    
-    const pie = d3.pie().value(d => d.value).sort(null);
-    const arc = d3.arc().innerRadius(0).outerRadius(radius);
-    
-    const svg = d3.create("svg")
-        .attr("width", width)
-        .attr("height", height)
-        .attr("viewBox", `0 0 ${width} ${height}`)
-        .style("border-radius", "50%");
-        
-    svg.append("g")
-        .attr("transform", `translate(${width/2},${height/2})`)
-        .selectAll("path")
-        .data(pie(pieData))
-        .join("path")
-        .attr("fill", d => d.data.color)
-        .attr("d", arc)
-        .append("title")
-        .text(d => d.data.isDummy ? "" : `${d.data.value}: ${d.value}%`);
-        
-    const svgHtml = svg.node().outerHTML;
-    
-    return `
-        <div style="margin-top: 15px; padding: 10px; background: var(--border); border: 1px solid var(--border); border-radius: 6px;">
-            <div style="font-size: 0.75rem; color: var(--dim); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
-                <i class="${icon}"></i> ${title}
-            </div>
-            <div style="display: flex; gap: 15px; align-items: center;">
-                <div style="flex-shrink: 0;">${svgHtml}</div>
-                <div style="display: flex; flex-direction: column; flex: 1; min-width: 0;">
-                      ${legendHtml}
-                </div>
-            </div>
-        </div>
-    `;
+function metadataSlug(value) {
+    return String(value || 'metadata').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
+
+function metadataPercent(item) {
+    if (item.coverage !== undefined) return Number(item.coverage || 0) * 100;
+    return Number(item.percent || 0);
+}
+
+function renderMetadataTable(title, dist, valueKey = 'value') {
+    const rows = dist.map((item, i) => {
+        const value = item[valueKey] || '';
+        const percent = metadataPercent(item);
+        const color = window.TagColor && valueKey === 'tag_id' ? TagColor.forTag(value) : scoreColor(percent / 100);
+        return `<tr>
+            <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escapeAttr(color)};margin-right:7px;"></span><span class="mono">${escapeHtml(value)}</span></td>
+            <td class="mono">${Number(item.count || 0).toLocaleString()}</td>
+            <td class="mono">${percent.toFixed(0)}%</td>
+            ${item.score === undefined ? '' : `<td class="mono">${(Number(item.score || 0) * 100).toFixed(0)}%</td>`}
+            <td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td>
+        </tr>`;
+    }).join('');
+    return `<table class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>${escapeHtml(title)}</th><th>Count</th><th>Coverage</th>${dist.some(x => x.score !== undefined) ? '<th>Cohesion</th>' : ''}<th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderPie(title, icon, dist) {
+    const colors = ['#66d9ef', '#a6e22e', '#f92672', '#fd971f', '#ae81ff', '#e6db74', '#75715e'];
+    const pieData = dist.map((d, i) => ({ value: metadataPercent(d), color: colors[i % colors.length], label: d.value }));
+    const total = pieData.reduce((sum, d) => sum + d.value, 0);
+    if (total < 100) pieData.push({ value: 100 - total, color: 'var(--border)', isDummy: true });
+    const svg = d3.create('svg').attr('width', 150).attr('height', 150).attr('viewBox', '0 0 150 150');
+    const pie = d3.pie().value(d => d.value).sort(null);
+    const arc = d3.arc().innerRadius(0).outerRadius(70);
+    svg.append('g').attr('transform', 'translate(75,75)').selectAll('path').data(pie(pieData)).join('path')
+        .attr('fill', d => d.data.color).attr('d', arc).append('title').text(d => d.data.isDummy ? '' : `${d.data.label}: ${d.data.value.toFixed(0)}%`);
+    return `<div class="metadata-axis-chart">${svg.node().outerHTML}</div>`;
+}
+
+function renderDist(title, icon, dist) {
+    if (!dist || !dist.length) return '';
+    const id = `metadata-axis-${metadataSlug(title)}`;
+    return `<details class="metadata-axis" id="${escapeAttr(id)}">
+        <summary><i class="${icon}"></i> ${escapeHtml(title)} <span class="dim">${dist.length} values</span></summary>
+        <div class="metadata-axis-body"><div class="metadata-axis-visual">${renderPie(title, icon, dist)}</div><div class="metadata-axis-table-wrap">${renderMetadataTable('Value', dist)}</div></div>
+    </details>`;
+}
+
+let tagTreeCounter = 0;
+function toggleTagTreeRow(id, event) {
+    event.stopPropagation();
+    const button = event.currentTarget;
+    const open = button.getAttribute('aria-expanded') === 'true';
+    button.setAttribute('aria-expanded', String(!open));
+    button.innerHTML = `<i class="fa-solid fa-chevron-${open ? 'right' : 'down'}"></i>`;
+    document.querySelectorAll(`[data-tag-parent="${CSS.escape(id)}"]`).forEach(row => {
+        row.style.display = open ? 'none' : 'table-row';
+        if (open) row.querySelectorAll('[data-tag-parent]').forEach(child => child.style.display = 'none');
+    });
+}
+
 function renderTagDist(title, icon, dist) {
     if (!dist || !dist.length) return '';
-    const row = (item, depth) => {
+    const treeId = `tag-tree-${++tagTreeCounter}`;
+    const rows = [];
+    const walk = (item, depth, parentId) => {
+        const id = `${treeId}-${rows.length}`;
+        const children = item.children || [];
         const color = window.TagColor ? TagColor.forTag(item.tag_id) : 'var(--accent)';
-        const score = item.score == null ? '' : `score ${(Number(item.score) * 100).toFixed(0)}%`;
-        const coverage = `coverage ${(Number(item.coverage || 0) * 100).toFixed(0)}%`;
-        return `<div style="margin-left:${depth * 14}px; padding:3px 0; border-bottom:1px solid var(--border);">
-            <div style="display:flex; gap:6px; align-items:center;">
-                <span style="width:8px; height:8px; border-radius:50%; background:${escapeAttr(color)}; flex:none;"></span>
-                <span style="font-family:monospace; overflow-wrap:anywhere;">${escapeHtml(item.tag_id)}</span>
-                <span class="dim" style="margin-left:auto; white-space:nowrap;">${item.count || 0} · ${coverage}${score ? ` · ${score}` : ''}</span>
-            </div>
-            ${(item.children || []).map(child => row(child, depth + 1)).join('')}
-        </div>`;
+        rows.push({ item, id, depth, parentId, color, hasChildren: children.length > 0 });
+        children.forEach(child => walk(child, depth + 1, id));
     };
-    return `<div style="margin-top:15px; padding:10px; background:var(--border); border:1px solid var(--border); border-radius:6px;">
-        <div style="font-size:0.75rem; color:var(--dim); margin-bottom:8px; display:flex; align-items:center; gap:6px;"><i class="${icon}"></i> ${escapeHtml(title)}</div>
-        ${dist.map(item => row(item, 0)).join('')}
-    </div>`;
+    dist.forEach(item => walk(item, 0, null));
+    const body = rows.map(({item, id, depth, parentId, color, hasChildren}) => {
+        const coverage = metadataPercent(item);
+        return `<tr data-tag-parent="${parentId ? escapeAttr(parentId) : ''}" style="${depth ? 'display:none;' : ''}">
+            <td style="padding-left:${10 + depth * 18}px;"><button class="btn-copy" aria-expanded="false" ${hasChildren ? `onclick="toggleTagTreeRow(${escapeAttr(jsString(id))}, event)"` : 'style="visibility:hidden;"'}><i class="fa-solid fa-chevron-${hasChildren ? 'right' : 'minus'}"></i></button><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escapeAttr(color)};margin:0 7px;"></span><span class="mono">${escapeHtml(item.tag_id)}</span></td>
+            <td class="mono">${Number(item.count || 0).toLocaleString()}</td><td class="mono"><div class="metadata-bar"><span style="width:${Math.min(100, coverage)}%;background:${escapeAttr(color)}"></span></div>${coverage.toFixed(0)}%</td><td class="mono">${(Number(item.score || 0) * 100).toFixed(0)}%</td><td><button class="btn-copy" title="Copy tag" onclick="copyToClipboard(${escapeAttr(jsString(item.tag_id))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td>
+        </tr>`;
+    }).join('');
+    const bars = dist.map(item => {
+        const coverage = metadataPercent(item);
+        const color = window.TagColor ? TagColor.forTag(item.tag_id) : 'var(--accent)';
+        return `<div style="font-size:.72rem;" title="${escapeAttr(item.tag_id)}"><div style="display:flex;justify-content:space-between;gap:8px;"><span class="mono" style="overflow:hidden;text-overflow:ellipsis;">${escapeHtml(item.tag_id)}</span><span class="mono">${coverage.toFixed(0)}%</span></div><div class="metadata-bar" style="width:100%;"><span style="width:${Math.min(100, coverage)}%;background:${escapeAttr(color)}"></span></div></div>`;
+    }).join('');
+    return `<details class="metadata-axis" id="${escapeAttr(treeId)}"><summary><i class="${icon}"></i> ${escapeHtml(title)} <span class="dim">${dist.length} namespaces</span></summary><div class="metadata-axis-body"><div class="metadata-axis-visual metadata-axis-bars"><div class="dim" style="font-size:.75rem;">Raw coverage · overlapping tags may exceed 100%</div>${bars}</div><div class="metadata-axis-table-wrap"><table class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>Tag</th><th>Count</th><th>Coverage</th><th>Cohesion</th><th></th></tr></thead><tbody>${body}</tbody></table></div></div></details>`;
 }
 
 window.renderTagDist = renderTagDist;

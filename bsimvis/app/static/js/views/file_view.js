@@ -578,37 +578,35 @@ window.FileView = {
             // Initial render
             window.renderFileClustersTab();
 
-            // Render Inferred Rows
-            const renderInferredRow = (icon, label, mapObj) => {
-                const keys = Object.keys(mapObj).sort((a,b) => mapObj[b].percent - mapObj[a].percent);
-                if (keys.length === 0) return '';
-                const badges = keys.map(k => {
-                    const confObj = mapObj[k];
-                    const confScore = confObj.percent;
-                    const confColor = scoreColor(confScore / 100);
-                    const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
-                    return `<a href="${clusterLink}" class="stat-badge" style="background: var(--hover); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(clusterLink))}, event);"><span title="${escapeAttr(k)}" style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace; overflow-wrap:anywhere;">${escapeHtml(k)}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
+            // Render inferred metadata as the same expandable table used by cluster metadata.
+            const inferredCategory = (icon, label, mapObj) => {
+                const rows = Object.entries(mapObj || {}).sort(([, a], [, b]) => (b.percent || 0) - (a.percent || 0)).map(([value, item]) => {
+                    const confidence = Number(item.percent || 0);
+                    const clusterLink = item.cluster_uuid ? Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(item.cluster_uuid)}` : '';
+                    const source = clusterLink ? `<a href="${escapeAttr(clusterLink)}" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(clusterLink))}, event);">${escapeHtml(item.cluster_uuid)}</a>` : '<span class="dim">—</span>';
+                    return `<tr><td>${escapeHtml(label)}</td><td class="mono">${escapeHtml(value)}</td><td class="mono">${confidence}%</td><td>${source}</td><td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td></tr>`;
                 }).join('');
-                return `
-                    <div class="meta-label" style="align-items: flex-start; margin-top: 4px; color: var(--dim); text-transform: uppercase; font-size: 0.75rem; display: flex; gap: 6px;"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>
-                    <div class="meta-value" style="display: flex; flex-wrap: wrap;">${badges}</div>
-                `;
+                if (!rows) return '';
+                return `<details class="metadata-axis"><summary><i class="${icon}"></i> ${escapeHtml(label)} <span class="dim">${Object.keys(mapObj || {}).length} values</span></summary><div class="metadata-axis-table-wrap" style="padding:0 14px 14px;"><table class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>Category</th><th>Value</th><th>Confidence</th><th>Source cluster</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
             };
 
-            let inferredHtml = '';
-            inferredHtml += renderInferredRow('fa-solid fa-file', 'File Name', inferredMeta.filename || {});
-            inferredHtml += renderInferredRow('fa-solid fa-fingerprint', 'MD5', inferredMeta.md5 || {});
-            inferredHtml += Object.entries(inferredMeta.tags || {}).sort(([a], [b]) => a.localeCompare(b)).map(([axis, values]) => renderInferredRow('fa-solid fa-tags', axis, values)).join('');
-            inferredHtml += renderInferredRow('fa-solid fa-shield', 'AV Type', inferredMeta.avtype || {});
-            inferredHtml += renderInferredRow('fa-solid fa-file-code', 'File Type', inferredMeta.filetype || {});
-            inferredHtml += renderInferredRow('fa-solid fa-biohazard', 'Yara', inferredMeta.yara || {});
-            inferredHtml += renderInferredRow('fa-solid fa-network-wired', 'CC IP', inferredMeta.ccip || {});
-
+            const inferredCategories = [
+                ['fa-solid fa-file-code', 'File Type', inferredMeta.filetype],
+                ['fa-solid fa-microchip', 'Architecture', inferredMeta.architecture],
+                ['fa-solid fa-file-code', 'Executable Format', inferredMeta.executable_format],
+                ['fa-solid fa-box', 'Batch UUID', inferredMeta.batch_uuid],
+                ['fa-solid fa-file', 'File Name', inferredMeta.filename],
+                ['fa-solid fa-fingerprint', 'MD5', inferredMeta.md5],
+                ['fa-solid fa-shield', 'AV Type', inferredMeta.avtype],
+                ['fa-solid fa-network-wired', 'CC IP', inferredMeta.ccip],
+            ];
+            let inferredHtml = inferredCategories.map(([icon, label, values]) => inferredCategory(icon, label, values)).join('');
+            inferredHtml += Object.entries(inferredMeta.tags || {}).sort(([a], [b]) => a.localeCompare(b)).map(([axis, values]) => inferredCategory('fa-solid fa-tags', axis, values)).join('');
             if (inferredHtml) {
                 document.getElementById('inferred-meta').innerHTML = inferredHtml;
+                document.getElementById('inferred-meta').style.display = 'block';
                 document.getElementById('inferred-meta-card').style.display = 'block';
             }
-
             // Unique-value counts appended to the filter placeholders
             if (typeof loadFieldCardinalities === 'function') {
                 loadFieldCardinalities(collection, 'func', {

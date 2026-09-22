@@ -514,6 +514,13 @@ function renderFileMetadata(container, m, fullId, options = {}) {
 window.seeSimilar = seeSimilar;
 window.navigateToFeatures = navigateToFeatures;
 
+function scoreColor(value) {
+    const t = Math.max(0, Math.min(1, Number(value) || 0));
+    const stops = t < 0.5 ? ['#b42318', '#8a4b08', t * 2] : ['#8a4b08', '#16803c', (t - 0.5) * 2];
+    return d3.interpolateRgb(stops[0], stops[1])(stops[2]);
+}
+window.scoreColor = scoreColor;
+
 // One metadata distribution -- a cluster summary's top values with their share
 // of its members -- as a pie plus a legend. Shared by the file view and the
 // cluster detail view's Metadata tab, which show the same six distributions off

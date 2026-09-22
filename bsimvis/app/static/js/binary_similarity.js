@@ -3404,7 +3404,7 @@ function buildMetaCompareTable(da, db, colA, colB) {
         const badges = keys.map(k => {
             const confObj = mapObj[k];
             const confScore = confObj.percent;
-            const confColor = d3.interpolateRdYlGn(confScore / 100);
+            const confColor = scoreColor(confScore / 100);
             const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
             return `<a href="${clusterLink}" class="stat-badge" style="background: var(--hover); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(clusterLink))}, event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${escapeHtml(k)}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
         }).join('');
@@ -3454,7 +3454,7 @@ function buildInferredMetaCards(da, db, colA, colB) {
         const badges = keys.map(k => {
             const confObj = mapObj[k];
             const confScore = confObj.percent;
-            const confColor = d3.interpolateRdYlGn(confScore / 100);
+            const confColor = scoreColor(confScore / 100);
             const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
             return `<a href="${clusterLink}" class="stat-badge" style="background: var(--hover); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(clusterLink))}, event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${escapeHtml(k)}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
         }).join('');

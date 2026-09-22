@@ -543,7 +543,7 @@ window.FileView = {
                         const name = cm.cluster_name || `Cluster ${cid}`;
                         const size = cm.size || cm.member_count || cm.members || cm.count || 0;
                         const cohesionScore = cm.cohesion_score || 0;
-                        const cohesionColor = d3.interpolateRdYlGn(cohesionScore);
+                        const cohesionColor = scoreColor(cohesionScore);
                         const stability = cm.avg_stability || 0;
                         const features = cm.avg_features || 0;
                         
@@ -585,7 +585,7 @@ window.FileView = {
                 const badges = keys.map(k => {
                     const confObj = mapObj[k];
                     const confScore = confObj.percent;
-                    const confColor = d3.interpolateRdYlGn(confScore / 100);
+                    const confColor = scoreColor(confScore / 100);
                     const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
                     return `<a href="${clusterLink}" class="stat-badge" style="background: var(--hover); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(clusterLink))}, event);"><span title="${escapeAttr(k)}" style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace; overflow-wrap:anywhere;">${escapeHtml(k)}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
                 }).join('');

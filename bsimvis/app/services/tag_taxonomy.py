@@ -26,6 +26,139 @@ questions, and several sources can answer one question.
 
 import fnmatch
 import re
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Policy:
+    axis: str
+    index: bool = True
+    propagate_func: bool = False
+    vocabulary: bool = False
+    aggregate: bool = False
+    writers: tuple[str, ...] = ()
+
+
+_ANALYSIS = ("analysis",)
+NAMESPACE_POLICY = {
+    "fid": Policy(
+        "origin",
+        propagate_func=True,
+        vocabulary=True,
+        aggregate=True,
+        writers=_ANALYSIS,
+    ),
+    "bsim": Policy(
+        "origin",
+        propagate_func=True,
+        vocabulary=True,
+        aggregate=True,
+        writers=_ANALYSIS,
+    ),
+    "boilerplate": Policy(
+        "origin",
+        propagate_func=True,
+        vocabulary=True,
+        aggregate=True,
+        writers=_ANALYSIS,
+    ),
+    "malware": Policy(
+        "origin",
+        propagate_func=True,
+        vocabulary=True,
+        aggregate=True,
+        writers=_ANALYSIS,
+    ),
+    "pkg": Policy(
+        "origin",
+        propagate_func=True,
+        vocabulary=True,
+        aggregate=True,
+        writers=("import",),
+    ),
+    "original": Policy(
+        "origin",
+        propagate_func=True,
+        vocabulary=True,
+        aggregate=True,
+        writers=_ANALYSIS,
+    ),
+    "origin": Policy(
+        "origin",
+        propagate_func=True,
+        vocabulary=True,
+        aggregate=True,
+        writers=_ANALYSIS,
+    ),
+    "severity": Policy("severity", vocabulary=True, aggregate=True, writers=_ANALYSIS),
+    "category": Policy("category", vocabulary=True, aggregate=True, writers=_ANALYSIS),
+    "capa": Policy("capa", vocabulary=True, aggregate=True, writers=_ANALYSIS),
+    "mitre": Policy("mitre", vocabulary=True, aggregate=True, writers=_ANALYSIS),
+    "mbc": Policy("mbc", vocabulary=True, aggregate=True, writers=_ANALYSIS),
+    "yara": Policy("yara", vocabulary=True, aggregate=True, writers=_ANALYSIS),
+    "rulezet": Policy("ruleset", vocabulary=False, aggregate=False, writers=_ANALYSIS),
+    "misp": Policy("family", vocabulary=True, aggregate=True, writers=("rulezet",)),
+    "ms-caro-malware-full": Policy(
+        "family", vocabulary=True, aggregate=True, writers=("rulezet",)
+    ),
+    "runtime-packer": Policy(
+        "family", vocabulary=True, aggregate=True, writers=("rulezet",)
+    ),
+    "cve": Policy("vuln", vocabulary=True, aggregate=True, writers=("rulezet",)),
+    "ghsa": Policy("vuln", vocabulary=True, aggregate=True, writers=("rulezet",)),
+    "pysec": Policy("vuln", vocabulary=True, aggregate=True, writers=("rulezet",)),
+    "av": Policy(
+        "family", vocabulary=True, aggregate=True, writers=("import", "analysis")
+    ),
+    "ip": Policy(
+        "ioc", vocabulary=False, aggregate=False, writers=("import", "analysis", "user")
+    ),
+}
+USER_POLICY = Policy("user", vocabulary=True, aggregate=True, writers=("user",))
+DEFAULT_POLICY = Policy("user")
+POLICY_ALIASES = {"user": USER_POLICY}
+
+
+def tag_namespace(tag_id):
+    return str(tag_id).split(":", 1)[0] if ":" in str(tag_id) else None
+
+
+def tag_policy(tag_id, source=None):
+    namespace = tag_namespace(tag_id)
+    if namespace is None:
+        return USER_POLICY if source == "user" else DEFAULT_POLICY
+    return NAMESPACE_POLICY.get(
+        namespace, POLICY_ALIASES.get(namespace, DEFAULT_POLICY)
+    )
+
+
+def filter_tags(tags, writer):
+    """Keep accepted tags and log rejected values at a writer boundary."""
+    import logging
+
+    values = (
+        tags.items() if isinstance(tags, dict) else ((tag, None) for tag in tags or ())
+    )
+    kept = []
+    for tag, _weight in values:
+        tag = str(tag).strip()
+        if not tag:
+            continue
+        namespace = tag_namespace(tag)
+        policy = tag_policy(tag, writer)
+        if namespace in NAMESPACE_POLICY or namespace in POLICY_ALIASES:
+            if writer not in policy.writers:
+                logging.warning(
+                    "Dropped %s tag %r from %s writer", namespace, tag, writer
+                )
+                continue
+        kept.append(tag)
+    return kept
+
+
+def can_propagate_func(tag_id, source=None):
+    return tag_policy(tag_id, source).propagate_func
+
 
 # --- Severity ---------------------------------------------------------------
 # Ordinal, so the UI can colour-ramp it. Four levels rather than five because a
@@ -146,35 +279,14 @@ VULN_NAMESPACES = ("cve", "ghsa", "pysec")
 # whatever taxonomy produced them. Origin has one namespace per detector, so
 # `fid:` and `bsim:` can be told apart on a function that has room for nothing
 # but its tag ids.
-TAG_AXES = {
-    "fid": "origin",
-    "bsim": "origin",
-    "boilerplate": "origin",
-    "malware": "origin",
-    "pkg": "origin",
-    "original": "origin",
-    "origin": "origin",
-    "severity": "severity",
-    "category": "category",
-    "user": "user",
-    "capa": "capa",
-    "mitre": "mitre",
-    "mbc": "mbc",
-    "yara": "yara",
-    "rulezet": "ruleset",
-    "misp": "family",
-    "ms-caro-malware-full": "family",
-    "runtime-packer": "family",
-    "cve": "vuln",
-    "ghsa": "vuln",
-    "pysec": "vuln",
-    # The two synthetic buckets. They are whole ids rather than namespaces, but
-    # a namespace lookup on an id with no colon returns the id itself, so this
-    # entry answers for them -- and any view reading the map gets what
-    # `tag_axis` special-cases, instead of dropping them on the user axis.
-    "original_code": "origin",
-    "tag_mismatch": "origin",
-}
+TAG_AXES = {ns: policy.axis for ns, policy in NAMESPACE_POLICY.items()}
+TAG_AXES.update(
+    {
+        "user": USER_POLICY.axis,
+        "original_code": "origin",
+        "tag_mismatch": "origin",
+    }
+)
 
 # A tag with no known namespace (a bare `mirai` typed into the tag box) lands on
 # the user axis: it came from a human, and an unrecognised tag must never be
@@ -1176,6 +1288,20 @@ def migrate_origin(tag_id):
 
 
 def demo():
+    assert set(TAG_AXES) == set(NAMESPACE_POLICY) | {
+        "user",
+        "original_code",
+        "tag_mismatch",
+    }
+    assert all(policy.axis for policy in NAMESPACE_POLICY.values())
+    assert tag_policy("fid:libc").propagate_func
+    assert not tag_policy("rulezet:uuid").vocabulary
+    assert tag_policy("reviewed", "user") is USER_POLICY
+    assert filter_tags(["fid:libc", "reviewed"], "user") == ["reviewed"]
+    assert filter_tags(["fid:libc", "unknown:value"], "analysis") == [
+        "fid:libc",
+        "unknown:value",
+    ]
     assert migrate_tag("flag:suspicious:crypto") == [
         "severity:medium",
         "category:crypto:cipher",

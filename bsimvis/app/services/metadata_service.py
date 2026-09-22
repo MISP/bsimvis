@@ -2,7 +2,11 @@ import json
 import logging
 from collections import Counter
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.index_config import INDEX_CONFIG, NUM_FIELDS
+from bsimvis.app.services.index_config import (
+    INDEX_CONFIG,
+    NUM_FIELDS,
+    propagated_tag_values,
+)
 from bsimvis.similarity import registry
 from bsimvis.app.services.index_service import (
     _index_tag,
@@ -303,7 +307,7 @@ class MetadataService:
                         new_fmeta = dict(old_fmeta)
                         f_changed = []
                         for f in fields_to_propagate:
-                            new_fmeta[f] = new_meta.get(f)
+                            new_fmeta[f] = propagated_tag_values(f, new_meta.get(f))
                             old_val = old_fmeta.get(f)
                             new_val = new_meta.get(f)
                             if old_val != new_val:

@@ -545,7 +545,7 @@ class GhidraService:
 
         batch_uuid = options.get("batch_uuid")
         batch_name = options.get("batch_name", "Ghidra Batch")
-        tags = options.get("tags", [])
+        tags = tag_taxonomy.filter_tags(options.get("tags", []), "analysis")
         related_md5 = options.get("related_md5", [])
         min_func_len = options.get("min_func_len", 10)
         batch_order = options.get("batch_order", 0)

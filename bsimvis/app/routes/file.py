@@ -1,7 +1,12 @@
 from flask import current_app, request
 import json
 import hashlib
-from bsimvis.app.services import archive_service, lineage_service, unpack_service
+from bsimvis.app.services import (
+    archive_service,
+    lineage_service,
+    unpack_service,
+    tag_taxonomy,
+)
 from bsimvis.app.services.index_service import normalize_tags, now_ms, save_file
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.job_service import JobService, JobType
@@ -708,7 +713,9 @@ def _ingest_raw_binary(
         "file_name": file_name,
         "batch_uuid": batch_uuid,
         "batch_name": batch_name,
-        "tags": request.args.getlist("tags") + list(extra_tags),
+        "tags": tag_taxonomy.filter_tags(
+            request.args.getlist("tags") + list(extra_tags), "analysis"
+        ),
         "related_md5": request.args.getlist("related_md5"),
         "profile": request.args.get("profile", "fast"),
         "min_func_len": int(request.args.get("min_func_len", 10)),

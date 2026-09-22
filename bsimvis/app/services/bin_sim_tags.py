@@ -28,7 +28,7 @@ It adds no asymptotic cost: everything here is O(1) per already-matched edge.
 
 from collections import defaultdict
 
-from bsimvis.app.services.tag_taxonomy import TAG_AXES, tag_body
+from bsimvis.app.services.tag_taxonomy import TAG_AXES, tag_body, tag_namespace
 
 # Two distinct kinds of "we can't attribute this to a library", kept apart on
 # purpose: UNTAGGED means no evidence -- neither the function nor, for a matched
@@ -153,7 +153,14 @@ DEFAULT_ORIGIN_PRIORITY = 0
 # the library score silently halve the day BSim starts tagging alongside Function
 # ID. `malware:` is deliberately absent -- a bundle names the sample, which is
 # the code under analysis rather than a library it links against.
-LIBRARY_ORIGIN_PREFIXES = ("fid:", "bsim:", "boilerplate:", "pkg:", "origin:lib:", "origin:stdlib:")
+LIBRARY_ORIGIN_PREFIXES = (
+    "fid:",
+    "bsim:",
+    "boilerplate:",
+    "pkg:",
+    "origin:lib:",
+    "origin:stdlib:",
+)
 
 
 def is_library_tag(tag_id, namespaces=LIBRARY_ORIGIN_PREFIXES):
@@ -215,7 +222,10 @@ def merge_tag_fields(meta):
     meta = meta or {}
     out = normalize_tags(meta.get("tags"))
     for tag_id, conf in normalize_tags(meta.get("user_tags")).items():
-        out.setdefault(tag_id, conf)
+        # Keep the stored value bare; the internal prefix preserves provenance
+        # while scoring merged fields.
+        key = tag_id if tag_namespace(tag_id) else f"user:{tag_id}"
+        out.setdefault(key, conf)
     return out
 
 

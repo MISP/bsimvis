@@ -253,6 +253,10 @@ def _index_tag(pipe, coll, level, field, value, doc_id, seen=None):
     for v in values:
         if v is None or v == "":
             continue
+        from bsimvis.app.services.tag_taxonomy import tag_policy
+
+        if not tag_policy(v, "user" if "user_tags" in field else "analysis").index:
+            continue
         v_lower = str(v).lower()
         registry_key = f"{coll}:reg:{level}:{field}"
 
@@ -272,6 +276,12 @@ def _index_tag(pipe, coll, level, field, value, doc_id, seen=None):
 
         # AUTO-DISCOVERY: Ensure tags are registered in global metadata
         if "tags" in field:
+            from bsimvis.app.services.tag_taxonomy import tag_policy
+
+            if not tag_policy(
+                v, "user" if "user_tags" in field else "analysis"
+            ).vocabulary:
+                continue
             meta_key = f"{coll}:tags_metadata"
             # No colour: a tag's colour is derived from its id, so that a library
             # reads the same everywhere and two libraries differ by hue. Rolling
@@ -421,7 +431,11 @@ def save_similarity(
     for orig_field, target_field in propagated["sim"]:
         value = sim_doc.get(orig_field)
         if value is not None:
-            _index_tag(pipe, coll, "sim", target_field, value, sid, seen=seen)
+            from bsimvis.app.services.index_config import propagated_tag_values
+
+            value = propagated_tag_values(orig_field, value)
+            if value:
+                _index_tag(pipe, coll, "sim", target_field, value, sid, seen=seen)
 
     if index_depth == "minimal":
         # Only index file_md5 from file level
@@ -444,7 +458,11 @@ def save_similarity(
                     else:
                         value.append(v)
         if value:
-            _index_tag(pipe, coll, "sim", target_field, value, sid, seen=seen)
+            from bsimvis.app.services.index_config import propagated_tag_values
+
+            value = propagated_tag_values(orig_field, value)
+            if value:
+                _index_tag(pipe, coll, "sim", target_field, value, sid, seen=seen)
 
     # 3. Propagated File Fields (source: file)
     for orig_field, target_field in propagated["file"]:
@@ -462,7 +480,11 @@ def save_similarity(
                         else:
                             value.append(v)
         if value:
-            _index_tag(pipe, coll, "sim", target_field, value, sid, seen=seen)
+            from bsimvis.app.services.index_config import propagated_tag_values
+
+            value = propagated_tag_values(orig_field, value)
+            if value:
+                _index_tag(pipe, coll, "sim", target_field, value, sid, seen=seen)
 
 
 def delete_similarity(
@@ -482,7 +504,11 @@ def delete_similarity(
     for orig_field, target_field in propagated["sim"]:
         value = sim_doc.get(orig_field)
         if value is not None:
-            _unindex_tag(pipe, coll, "sim", target_field, value, sid)
+            from bsimvis.app.services.index_config import propagated_tag_values
+
+            value = propagated_tag_values(orig_field, value)
+            if value:
+                _unindex_tag(pipe, coll, "sim", target_field, value, sid)
 
     # 2. Propagated Func Fields
     for orig_field, target_field in propagated["func"]:
@@ -496,7 +522,11 @@ def delete_similarity(
                     else:
                         value.append(v)
         if value:
-            _unindex_tag(pipe, coll, "sim", target_field, value, sid)
+            from bsimvis.app.services.index_config import propagated_tag_values
+
+            value = propagated_tag_values(orig_field, value)
+            if value:
+                _unindex_tag(pipe, coll, "sim", target_field, value, sid)
 
     # 3. Propagated File Fields
     for orig_field, target_field in propagated["file"]:
@@ -513,7 +543,11 @@ def delete_similarity(
                         else:
                             value.append(v)
         if value:
-            _unindex_tag(pipe, coll, "sim", target_field, value, sid)
+            from bsimvis.app.services.index_config import propagated_tag_values
+
+            value = propagated_tag_values(orig_field, value)
+            if value:
+                _unindex_tag(pipe, coll, "sim", target_field, value, sid)
 
 
 # ---------------------------------------------------------------------------

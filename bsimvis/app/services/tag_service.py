@@ -1,6 +1,7 @@
 import json
 
 from bsimvis.app.services.bin_sim_tags import bump_tags_rev
+from bsimvis.app.services.tag_taxonomy import filter_tags
 import random
 import logging
 from .redis_client import get_redis
@@ -99,6 +100,22 @@ def _cluster_tag_field(entity_type, algo, node_type, meta):
         algo = f"{algo}:container"
     cluster_uuid = meta.get("cluster_uuid")
     return f"{entity_type}:{algo}:{cluster_uuid}" if cluster_uuid else None
+
+
+def prune_non_vocabulary_tags(r, collection):
+    """Remove only metadata rows disabled by the namespace policy."""
+    from bsimvis.app.services.tag_taxonomy import tag_policy
+
+    key = f"{collection}:tags_metadata"
+    raw = r.hgetall(key) or {}
+    stale = []
+    for tag in raw:
+        tag = tag.decode() if isinstance(tag, bytes) else str(tag)
+        if not tag_policy(tag).vocabulary:
+            stale.append(tag)
+    if stale:
+        r.hdel(key, *stale)
+    return len(stale)
 
 
 class TagService:
@@ -219,7 +236,7 @@ class TagService:
             collection = _normalize_collection(collection, entity_id)
         r = self.r
         tag = tag.strip()
-        if not tag:
+        if not tag or not filter_tags([tag], "user"):
             return False
         if not is_cluster:
             self._bump_tag_rev(collection)
@@ -406,7 +423,7 @@ class TagService:
         )
         r = self.r
         tag = tag.strip()
-        if not tag:
+        if not tag or not filter_tags([tag], "user"):
             return False
         self._bump_tag_rev(collection)
 

@@ -309,6 +309,18 @@ def _hierarchy_splitter(seps):
     return _HIERARCHY_SPLIT_RE[key]
 
 
+def propagated_tag_values(field: str, value):
+    """Return only tag values allowed to reach function metadata."""
+    if field not in TAG_FIELDS:
+        return value
+    from bsimvis.app.services.tag_taxonomy import can_propagate_func
+
+    source = "user" if "user_tags" in field else "analysis"
+    values = value if isinstance(value, list) else [value]
+    kept = [v for v in values if v is not None and can_propagate_func(v, source)]
+    return kept if isinstance(value, list) else (kept[0] if kept else None)
+
+
 def tag_ancestors(field: str, value: str) -> list[str]:
     """Ancestor bucket values for a hierarchical field value, excluding itself.
 

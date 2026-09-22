@@ -562,6 +562,27 @@ function renderMetadataTable(title, dist, valueKey = 'value') {
     return `<table id="metadata-table-${++metadataTableCounter}" class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>${escapeHtml(title)}</th><th>Count</th><th>Coverage</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+window.showMetadataPieTooltip = function(event, label, value) {
+    let tooltip = document.getElementById('metadata-pie-tooltip');
+    if (!tooltip) {
+        tooltip = document.createElement('div');
+        tooltip.id = 'metadata-pie-tooltip';
+        Object.assign(tooltip.style, {
+            position: 'fixed', zIndex: '20000', display: 'none', pointerEvents: 'none',
+            background: 'var(--window-bg)', color: 'var(--text)', padding: '7px 10px',
+            border: '1px solid var(--accent)', borderRadius: '4px', fontSize: '0.78rem'
+        });
+        document.body.appendChild(tooltip);
+    }
+    tooltip.textContent = `Selected: ${label} (${Number(value).toFixed(0)}%)`;
+    tooltip.style.display = 'block';
+    tooltip.style.left = `${event.clientX + 14}px`;
+    tooltip.style.top = `${event.clientY + 14}px`;
+};
+window.hideMetadataPieTooltip = function() {
+    const tooltip = document.getElementById('metadata-pie-tooltip');
+    if (tooltip) tooltip.style.display = 'none';
+};
 function renderPie(title, icon, dist) {
     const pieData = dist.map((d, i) => ({ value: metadataPercent(d), color: metadataColor(d, i), label: d.value }));
     const total = pieData.reduce((sum, d) => sum + d.value, 0);
@@ -570,7 +591,12 @@ function renderPie(title, icon, dist) {
     const pie = d3.pie().value(d => d.value).sort(null);
     const arc = d3.arc().innerRadius(0).outerRadius(70);
     svg.append('g').attr('transform', 'translate(75,75)').selectAll('path').data(pie(pieData)).join('path')
-        .attr('fill', d => d.data.color).attr('d', arc).append('title').text(d => d.data.isDummy ? '' : `${d.data.label}: ${d.data.value.toFixed(0)}%`);
+        .attr('fill', d => d.data.color).attr('d', arc)
+        .attr('style', 'cursor:pointer;')
+        .attr('onmouseenter', d => d.data.isDummy ? '' : `showMetadataPieTooltip(event, ${jsString(d.data.label)}, ${d.data.value})`)
+        .attr('onmousemove', d => d.data.isDummy ? '' : `showMetadataPieTooltip(event, ${jsString(d.data.label)}, ${d.data.value})`)
+        .attr('onmouseleave', d => d.data.isDummy ? '' : 'hideMetadataPieTooltip()')
+        .append('title').text(d => d.data.isDummy ? '' : `Selected: ${d.data.label} (${d.data.value.toFixed(0)}%)`);
     return `<div class="metadata-axis-chart">${svg.node().outerHTML}</div>`;
 }
 
@@ -596,7 +622,7 @@ function updateTagChart(treeId) {
     const root = document.getElementById(treeId);
     if (!root) return;
     const rows = Array.from(root.querySelectorAll('tbody tr')).filter(row => row.style.display !== 'none').map(row => ({
-        item: { tag_id: row.dataset.tagId, coverage: Number(row.dataset.tagCoverage) },
+        item: { tag_id: row.dataset.tagId, percent: Number(row.dataset.tagCoverage) },
         color: row.dataset.tagColor,
     }));
     const chart = root.querySelector('[data-tag-chart]');

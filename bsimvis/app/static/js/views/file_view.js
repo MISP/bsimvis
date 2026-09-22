@@ -557,15 +557,18 @@ window.FileView = {
                             clusterUrl += '?axis=' + encodeURIComponent(activeAxis);
                         }
 
+                        const clusterData = { id: cm.cluster_uuid, cluster_id: cm.cluster_uuid, cluster_uuid: cm.cluster_uuid, uuid: cm.cluster_uuid, cluster_name: name, collection, node_type: file.is_container ? 'container' : 'file' };
                         chipsHtml += `
-                            <a href="${clusterUrl}" onclick="Nav.openPath('${clusterUrl}', event)" class="cluster-chip" 
+                            <span onclick="Nav.openPath(${escapeAttr(jsString(clusterUrl))}, event)" class="cluster-chip"
+                               data-entity-data="${escapeAttr(JSON.stringify(clusterData))}"
+                               oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)"
                                onmouseenter="if(window.showBinClusterTableTooltip) showBinClusterTableTooltip(event, '${cm.cluster_uuid}', '${escapeAttr(jsString(name))}', ${size}, ${stability}, ${cohesionScore}, ${features}, null, '${file.is_container ? 'container' : 'file'}', '${activeAxis}')" 
                                onmouseleave="if(window.hideBinClusterTableTooltip) hideBinClusterTableTooltip()"
                                onmousemove="if(window.moveBinClusterTableTooltip) moveBinClusterTableTooltip(event)"
                                style="display:flex; align-items:center; gap:8px; padding:6px 12px; background:var(--hover); border:1px solid var(--border); border-left:3px solid ${cohesionColor}; border-radius:6px; text-decoration:none; color:var(--text); transition:background 0.2s;">
                                <span style="font-weight:600; font-size:0.85rem; max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</span>
                                <span style="display:inline-flex; align-items:center; gap:4px; font-size:0.7rem; color:var(--dim); background:var(--bg); padding:2px 6px; border-radius:10px;"><i class="fa-solid fa-users"></i> ${size}</span>
-                            </a>
+                            </span>
                         `;
                     });
                     chipsHtml += '</div>';
@@ -586,7 +589,7 @@ window.FileView = {
                     const confidence = Number(item.percent || 0);
                     const color = metadataColor({ value }, index);
                     const clusterLink = item.cluster_uuid ? Nav.buildUIUrl(collection, ['files', 'clusters', item.cluster_uuid]) : '';
-                    const source = clusterLink ? `<a href="${escapeAttr(clusterLink)}" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(clusterLink))}, event);">${escapeHtml(item.cluster_uuid)}</a>` : '<span class="dim">—</span>';
+                    const source = clusterLink ? `<span style="color:var(--accent); cursor:pointer;" onclick="Nav.openPath(${escapeAttr(jsString(clusterLink))}, event)" data-entity-data="${escapeAttr(JSON.stringify({ id: item.cluster_uuid, cluster_id: item.cluster_uuid, cluster_uuid: item.cluster_uuid, uuid: item.cluster_uuid, cluster_name: item.cluster_uuid, collection, node_type: 'file' }))}" oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">${escapeHtml(item.cluster_uuid)}</span>` : '<span class="dim">—</span>';
                     return `<tr><td><span class="metadata-value-dot" style="background:${escapeAttr(color)}"></span><span class="mono metadata-value-cell">${escapeHtml(value)}</span></td><td class="mono">${confidence}%</td><td>${source}</td><td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td></tr>`;
                 }).join('');
                 if (!rows) return '';
@@ -622,7 +625,7 @@ window.FileView = {
                 const html = rows.map(row => {
                     const confidence = Number(row.item.percent || 0);
                     const clusterLink = row.item.cluster_uuid ? Nav.buildUIUrl(collection, ['files', 'clusters', row.item.cluster_uuid]) : '';
-                    const source = clusterLink ? `<a href="${escapeAttr(clusterLink)}" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(clusterLink))}, event);">${escapeHtml(row.item.cluster_uuid)}</a>` : '<span class="dim">—</span>';
+                    const source = clusterLink ? `<span style="color:var(--accent); cursor:pointer;" onclick="Nav.openPath(${escapeAttr(jsString(clusterLink))}, event)" data-entity-data="${escapeAttr(JSON.stringify({ id: row.item.cluster_uuid, cluster_id: row.item.cluster_uuid, cluster_uuid: row.item.cluster_uuid, uuid: row.item.cluster_uuid, cluster_name: row.item.cluster_uuid, collection, node_type: 'file' }))}" oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">${escapeHtml(row.item.cluster_uuid)}</span>` : '<span class="dim">—</span>';
                     const color = metadataColor({ tag_id: row.value }, 0, 'tag_id');
                     return `<tr data-inferred-parent="${row.parent ? `inferred-${metadataSlug(axis)}-${rows.findIndex(r => r.value === row.parent)}` : ''}" style="${row.depth ? 'display:none;' : ''}"><td style="padding-left:${10 + row.depth * 18}px;"><button class="btn-copy" ${row.children.length ? `onclick="toggleInferredTagRow(${escapeAttr(jsString(row.id))}, event)"` : 'style="visibility:hidden;"'}><i class="fa-solid fa-chevron-${row.children.length ? 'right' : 'minus'}"></i></button><span class="metadata-value-dot" style="background:${escapeAttr(color)}"></span><span class="mono metadata-value-cell">${escapeHtml(row.value)}</span></td><td class="mono">${confidence}%</td><td>${source}</td><td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(row.value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td></tr>`;
                 }).join('');
@@ -1197,7 +1200,7 @@ window.FileView = {
                         ${originHtml}
                     </td>
                     <td>
-                        <a class="mono" href="${detailUrl}" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(detailUrl))}, event);" style="color:var(--accent); text-decoration:none;">@ ${entry}</a>
+                        <span class="mono" onclick="Nav.openPath(${escapeAttr(jsString(detailUrl))}, event)" style="color:var(--accent); cursor:pointer;">@ ${entry}</span>
                     </td>
                     <td>${tagsHtml}</td>
                     <td>${clusterCardHtml}</td>

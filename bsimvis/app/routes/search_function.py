@@ -626,6 +626,9 @@ def search_functions():
                     cm = json.loads(cm)
                 # Apply cohesion threshold server-side
                 if (cm.get("cohesion_score") or 0) >= min_cohesion:
+                    for k in list(cm.keys()):
+                        if k.endswith("_distribution"):
+                            del cm[k]
                     cluster_meta_map[cid] = cm
 
         # Phase 4: Final Assembly

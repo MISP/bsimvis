@@ -449,23 +449,39 @@ def fetch_bin_cluster_meta_all_axes(
 
     # Single pipeline for all keys
     pipe = r.pipeline(transaction=False)
+    unique_keys = {}
     for _, axis, ns, cid in lookups:
         if pool_id:
-            pipe.get(f"global:pool:{pool_id}:bin_cluster:{cid}:meta")
+            key = f"global:pool:{pool_id}:bin_cluster:{cid}:meta"
         else:
-            pipe.get(f"{collection}:bin_cluster:{ns}:{cid}:meta")
+            key = f"{collection}:bin_cluster:{ns}:{cid}:meta"
+        unique_keys[(axis, ns, cid)] = key
 
-    meta_by_uuid = {}
-    # (entry_idx, axis, cid) -> uuid
-    resolved = {}
-    for (entry_idx, axis, ns, cid), raw in zip(lookups, pipe.execute()):
+    unique_list = list(unique_keys.items())
+    for _, key in unique_list:
+        pipe.get(key)
+
+    parsed_meta = {}
+    for (k_tuple, _), raw in zip(unique_list, pipe.execute()):
         if not raw:
             continue
         cm = json.loads(raw) if not isinstance(raw, dict) else raw
         if isinstance(cm, str):
             cm = json.loads(cm)
+        if cm:
+            parsed_meta[k_tuple] = cm
+
+    meta_by_uuid = {}
+    # (entry_idx, axis, cid) -> uuid
+    resolved = {}
+    for entry_idx, axis, ns, cid in lookups:
+        cm = parsed_meta.get((axis, ns, cid))
         if not cm:
             continue
+        
+        # Copy to avoid mutating shared dict if we inject axis
+        # But wait, axis is the same for the same (axis, ns, cid)
+        
         uuid = cm.get("cluster_uuid") or cid
         cm["axis"] = axis
         meta_by_uuid[uuid] = cm

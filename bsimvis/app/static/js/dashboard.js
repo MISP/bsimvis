@@ -2355,7 +2355,7 @@ function applyAdvancedFuncSearch() {
     const { viewKey, params } = getRoutingState();
 
     const globalQ = document.getElementById('func-search-input')?.value;
-    params.set('q', globalQ || '');
+    if (globalQ?.trim()) params.set('q', globalQ.trim()); else params.delete('q');
 
     const nameFlt = document.getElementById('flt-func-name')?.value;
     const addressFlt = document.getElementById('flt-func-address')?.value;
@@ -2461,7 +2461,7 @@ function applySimSearch() {
     const lang = document.getElementById('flt-func-language')?.value;
     const countLimit = document.getElementById('sim-limit')?.value;
 
-    params.set('q', globalQ || '');
+    if (globalQ?.trim()) params.set('q', globalQ.trim()); else params.delete('q');
     if (lang) params.set('language', lang); else params.delete('language');
     params.set('min_score', minScore || defaultMinScore());
     params.set('max_score', maxScore || '1.0');
@@ -2534,7 +2534,7 @@ function applyAdvancedFileSearch() {
     const { viewKey, params } = getRoutingState();
 
     const globalQ = document.getElementById('file-search-input')?.value;
-    params.set('q', globalQ || '');
+    if (globalQ?.trim()) params.set('q', globalQ.trim()); else params.delete('q');
 
     const nameFlt = document.getElementById('flt-file-name')?.value;
     const md5Flt = document.getElementById('flt-file-md5')?.value;
@@ -2697,7 +2697,7 @@ function applyAdvancedFeatureSearch() {
     const { viewKey, params } = getRoutingState();
 
     const globalQ = document.getElementById('feature-search-input')?.value;
-    params.set('q', globalQ || '');
+    if (globalQ?.trim()) params.set('q', globalQ.trim()); else params.delete('q');
 
     const hashFlt = document.getElementById('flt-feat-hash')?.value;
     const typeFlt = document.getElementById('flt-feat-type')?.value;
@@ -3859,7 +3859,7 @@ function applyClusterSearch() {
     const { viewKey, params } = getRoutingState();
 
     const globalQ = document.getElementById('cluster-search-input')?.value;
-    params.set('q', globalQ || '');
+    if (globalQ?.trim()) params.set('q', globalQ.trim()); else params.delete('q');
 
     const cid = document.getElementById('flt-cluster-id')?.value;
     const cuuid = document.getElementById('flt-cluster-uuid')?.value;
@@ -4049,7 +4049,7 @@ function applyBinClusterSearch() {
     const { viewKey, params } = getRoutingState();
 
     const globalQ = document.getElementById('bin-cluster-search-input')?.value;
-    params.set('q', globalQ || '');
+    if (globalQ?.trim()) params.set('q', globalQ.trim()); else params.delete('q');
     
     const scoreType = document.getElementById('bsim-score-type')?.value;
     if (scoreType) {

@@ -165,7 +165,7 @@ def search_files():
         # 2. Sort — walk the pre-built numeric ZSET keeping only candidates
         # (same idiom as search_bin_sim) for global order across pages.
         total = len(doc_ids)
-        ordered_ids = sort_doc_ids(r, col, doc_ids, sort_by, sort_order)
+        ordered_ids = sort_doc_ids(r, col, doc_ids, sort_by, sort_order, slice_end=offset + limit)
 
         # 3. Paginate
         paged_ids = ordered_ids[offset : offset + limit]
@@ -259,11 +259,13 @@ def search_files():
                 pool_id=pool_id,
             )
             t3 = time.perf_counter()
-            cluster_meta_map = {
-                u: cm
-                for u, cm in meta_by_uuid.items()
-                if (cm.get("cohesion_score") or 0) >= min_cohesion
-            }
+            cluster_meta_map = {}
+            for u, cm in meta_by_uuid.items():
+                if (cm.get("cohesion_score") or 0) >= min_cohesion:
+                    # Strip huge inferred metadata distributions to keep payload tiny
+                    for dist_key in ("yara_distribution", "avtype_distribution", "filetype_distribution", "ccip_distribution", "filename_distribution", "md5_distribution", "tag_distribution", "architecture_distribution", "executable_format_distribution", "batch_uuid_distribution"):
+                        cm.pop(dist_key, None)
+                    cluster_meta_map[u] = cm
             # Flatten to a list of uuids (axis is encoded in meta["axis"])
             for data, uuids_by_axis in zip(raw_files_data, uuids_per_file_by_axis):
                 data["bin_clusters"] = [
@@ -343,7 +345,7 @@ SORTABLE_TAG_FIELDS = {
 }
 
 
-def _sort_by_tag_index(r, collection, doc_ids, sort_by, desc):
+def _sort_by_tag_index(r, collection, doc_ids, sort_by, desc, slice_end=None):
     """Order candidates by a text field, reading the value out of its bucket key.
 
     The bucket name IS the (lowercased) value, so the registry gives every value
@@ -365,24 +367,33 @@ def _sort_by_tag_index(r, collection, doc_ids, sort_by, desc):
         return list(doc_ids)
 
     buckets.sort(key=lambda x: x[0], reverse=desc)
-    pipe = r.pipeline(transaction=False)
-    for _, key in buckets:
-        pipe.smembers(key)
 
     candidates = set(doc_ids)
     ordered, seen = [], set()
-    for members in pipe.execute():
-        for m in members or []:
-            m = m.decode() if isinstance(m, bytes) else str(m)
-            if m in candidates and m not in seen:
-                seen.add(m)
-                ordered.append(m)
-    # Candidates absent from the index (no value) go last, arbitrary order.
-    ordered.extend(candidates - seen)
+    
+    BATCH_SIZE = 500
+    for i in range(0, len(buckets), BATCH_SIZE):
+        batch = buckets[i:i+BATCH_SIZE]
+        pipe = r.pipeline(transaction=False)
+        for _, key in batch:
+            pipe.smembers(key)
+            
+        for members in pipe.execute():
+            for m in members or []:
+                m = m.decode() if isinstance(m, bytes) else str(m)
+                if m in candidates and m not in seen:
+                    seen.add(m)
+                    ordered.append(m)
+                    
+        if slice_end and len(ordered) >= slice_end:
+            break
+
+    if not slice_end or len(ordered) < slice_end:
+        ordered.extend(candidates - seen)
     return ordered
 
 
-def sort_doc_ids(r, collection, doc_ids, sort_by, sort_order):
+def sort_doc_ids(r, collection, doc_ids, sort_by, sort_order, slice_end=None):
     """Order a candidate set, keeping only candidates.
 
     Numeric fields rank off their ZSET; text fields rank off their tag-bucket
@@ -393,7 +404,7 @@ def sort_doc_ids(r, collection, doc_ids, sort_by, sort_order):
     desc = sort_order == "desc"
 
     if sort_by in SORTABLE_TAG_FIELDS:
-        return _sort_by_tag_index(r, collection, doc_ids, sort_by, desc)
+        return _sort_by_tag_index(r, collection, doc_ids, sort_by, desc, slice_end)
 
     if sort_by not in SORTABLE_ZSET_FIELDS:
         return list(doc_ids)
@@ -475,7 +486,7 @@ def query_files_advanced(r, collection, filters):
             from bsimvis.app.services.index_config import INDEX_CONFIG
 
             for f_name, targets in INDEX_CONFIG.get("file", {}).items():
-                if "file" in targets:
+                if "file" in targets and f_name != "inferred_tags":
                     # Free-text box: a bare word stays a substring search.
                     q_matches.update(
                         get_field_matches(f_name, val, default_kind="substring")

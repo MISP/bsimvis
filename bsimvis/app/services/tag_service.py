@@ -111,7 +111,7 @@ def prune_non_vocabulary_tags(r, collection):
     stale = []
     for tag in raw:
         tag = tag.decode() if isinstance(tag, bytes) else str(tag)
-        if not tag_policy(tag).vocabulary:
+        if not tag_policy(tag, "user" if ":" not in tag else None).vocabulary:
             stale.append(tag)
     if stale:
         r.hdel(key, *stale)

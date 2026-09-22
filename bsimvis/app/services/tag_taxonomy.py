@@ -160,6 +160,14 @@ def can_propagate_func(tag_id, source=None):
     return tag_policy(tag_id, source).propagate_func
 
 
+def av_tag(label, vendor="unknown"):
+    """Build a searchable AV family tag while retaining the full signature."""
+    raw = str(label).strip()
+    parts = [part for part in re.split(r"[./:_-]+", raw) if part]
+    family = parts[2] if len(parts) > 2 else (parts[-1] if parts else "unknown")
+    return canonical_tag_id(f"av:{vendor}:{family.lower()}#{raw}")
+
+
 # --- Severity ---------------------------------------------------------------
 # Ordinal, so the UI can colour-ramp it. Four levels rather than five because a
 # model calibrates "medium vs high" poorly enough already.
@@ -1295,6 +1303,10 @@ def demo():
     }
     assert all(policy.axis for policy in NAMESPACE_POLICY.values())
     assert tag_policy("fid:libc").propagate_func
+    assert (
+        av_tag("Unix.Trojan.Mirai-7100807-0", "clamav")
+        == "av:clamav:mirai#Unix.Trojan.Mirai-7100807-0"
+    )
     assert not tag_policy("rulezet:uuid").vocabulary
     assert tag_policy("reviewed", "user") is USER_POLICY
     assert filter_tags(["fid:libc", "reviewed"], "user") == ["reviewed"]

@@ -795,6 +795,7 @@ class GhidraService:
                 if ytag not in func_tags:
                     func_tags.append(ytag)
 
+            func_tags = tag_taxonomy.filter_tags(func_tags, "analysis")
             entry_symbols = symbol_table.getSymbols(entry_point)
             labels = [s.getName() for s in entry_symbols]
             if not labels:

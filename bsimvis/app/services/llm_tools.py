@@ -34,6 +34,13 @@ from bsimvis.app.services.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
 
+
+def _llm_tags(tags):
+    from bsimvis.app.services.tag_taxonomy import tag_namespace
+
+    return [tag for tag in tags or [] if tag_namespace(tag) != "ip"]
+
+
 _standalone_app = None
 
 
@@ -97,7 +104,7 @@ def get_function(func_id):
         "file_md5": md5,
         # `tags`: static/system findings written at ingest (capa:, yara:,
         # origin:lib:, ...). `user_tags`: human- and LLM-writable.
-        "tags": meta.get("tags") or [],
+        "tags": _llm_tags(meta.get("tags")),
         "user_tags": meta.get("user_tags") or [],
         "notes": [n.get("text") for n in notes if n.get("text")],
     }
@@ -293,7 +300,7 @@ def search_functions(collection, filters_qs="", limit=25):
             {
                 "func_id": f.get("function_id") or f.get("id"),
                 "name": f.get("function_name") or f.get("name"),
-                "tags": f.get("tags") or [],
+                "tags": _llm_tags(f.get("tags")),
                 "user_tags": f.get("user_tags") or [],
             }
             for f in funcs

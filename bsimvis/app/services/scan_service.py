@@ -76,7 +76,28 @@ LIST_FIELDS = (
     "job_id",
     "children",
     "container",
+    "scopes",
+    "function_count",
+    "parent_scan",
 )
+
+
+def _top_match(doc):
+    """The best scored pair across every scope, so a listing can show it."""
+    best_scope, best_file = None, None
+    for scope in doc.get("scanned") or []:
+        for row in scope.get("files") or []:
+            if best_file is None or (row.get("score") or 0) > (
+                best_file.get("score") or 0
+            ):
+                best_scope, best_file = scope.get("collection"), row
+    if not best_file:
+        return {}
+    return {
+        "top_collection": best_scope,
+        "top_file": best_file.get("file_name") or best_file.get("file_md5"),
+        "top_score": best_file.get("score"),
+    }
 
 
 def cache_ttl():
@@ -205,7 +226,9 @@ class ScanService:
             if not parsed:
                 dead_ids.append(sid)
                 continue
-            docs.append({f: parsed.get(f) for f in LIST_FIELDS})
+            docs.append(
+                {**{f: parsed.get(f) for f in LIST_FIELDS}, **_top_match(parsed)}
+            )
 
         if dead_ids:
             self.q.zrem("scans:recent", *dead_ids)

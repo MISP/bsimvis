@@ -6648,6 +6648,72 @@ def test_scan_mode():
     check("a deleted scan is gone", gone.status_code == 404, str(gone.status_code))
 
 
+def test_scan_multi_upload():
+    """A multipart POST queues one scan per part, errors reported per file.
+
+    The parts are deliberately tiny: this step checks the request fan-out and
+    the listing summary, not the analysis, so both scans are dropped again as
+    soon as they are queued.
+    """
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 4g - Multi-file scan upload", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    body = test_endpoint(
+        "POST",
+        "/api/scan",
+        params={"collection": COLLECTION, "unpack": "false"},
+        files={"file": ("one.bin", b"\x7fELF" + b"\x00" * 64)},
+        label="POST /api/scan (multipart, 1 part)",
+    )
+    check(
+        "a single multipart part answers like a raw-body scan",
+        isinstance(body, dict) and bool(body.get("scan_id")),
+        str(body),
+    )
+    if isinstance(body, dict) and body.get("scan_id"):
+        test_endpoint("DELETE", f"/api/scan/{body['scan_id']}", label="cleanup")
+
+    multi = requests.post(
+        f"{BASE_URL}/api/scan",
+        params={"collection": COLLECTION, "unpack": "false"},
+        files=[
+            ("file", ("two_a.bin", b"\x7fELF" + b"\x01" * 64)),
+            ("file", ("two_b.bin", b"\x7fELF" + b"\x02" * 64)),
+        ],
+        timeout=60,
+    ).json()
+    scans = multi.get("scans") or []
+    check(
+        "two parts queue two independent scans",
+        multi.get("queued") == 2
+        and len({s.get("scan_id") for s in scans}) == 2
+        and {s.get("file_name") for s in scans} == {"two_a.bin", "two_b.bin"},
+        str(multi),
+    )
+
+    listing = test_endpoint(
+        "GET", "/api/scan", params={"limit": 50}, label="GET /api/scan"
+    )
+    rows = (listing or {}).get("scans") or []
+    ids = {s.get("scan_id") for s in scans}
+    check(
+        "the listing carries the summary fields the table sorts on",
+        any(
+            row.get("scan_id") in ids
+            and "scopes" in row
+            and "function_count" in row
+            and "created_at" in row
+            for row in rows
+        ),
+        str(rows[:1]),
+    )
+
+    for scan in scans:
+        if scan.get("scan_id"):
+            requests.delete(f"{BASE_URL}/api/scan/{scan['scan_id']}", timeout=10)
+
+
 def test_scan_container():
     """A scanned archive is unpacked, its children scanned, and rolled up.
 
@@ -7057,6 +7123,7 @@ if __name__ == "__main__":
         test_lib_tag_rollup,
         test_skip_modules_payload,
         test_scan_mode,
+        test_scan_multi_upload,
         test_scan_container,
         run_all_tests,
     ]

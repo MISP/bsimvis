@@ -3,9 +3,11 @@
  * Form mode:   /scans
  * Report mode: /scans/{id}
  *
- * Fast scan mode compares a file against existing collections without
- * ingesting it, so there is nothing to list: the form posts the bytes to
- * /api/scan and the report reads the cached result back. Matched-function
+ * Fast scan mode compares files against existing collections without
+ * ingesting them: the form posts every picked file to /api/scan in one
+ * multipart request, the recent-scans table below it is filtered and sorted
+ * client-side over that bounded listing, and the report reads the cached
+ * result back. Matched-function
  * rows are paged server-side through /api/scan/{id}/diff, same contract the
  * binary similarity diff uses -- never a full-table load.
  *
@@ -28,6 +30,52 @@ function scanScoreCell(value) {
     return `<span style="color:${color}; font-weight:700;">${(score * 100).toFixed(1)}%</span>`;
 }
 
+// The recent-scans listing, one entry per column: `get` is what sorting and
+// the filter box see, `cell` is how it renders.
+const SCAN_LIST_COLS = [
+    {
+        key: 'file_name', label: 'File',
+        get: s => `${s.file_name || ''} ${s.file_md5 || ''}`,
+        cell: s => `<div style="font-weight:600; color:var(--accent);">${escapeHtml(s.file_name || s.scan_id || '')}</div>
+            <div style="color:var(--dim); font-size:0.72rem;">${s.container ? '<i class="fa-solid fa-box-open"></i> container &middot; ' : ''}<code>${escapeHtml((s.file_md5 || '').slice(0, 16))}</code></div>`
+    },
+    { key: 'scopes', label: 'Scopes', get: s => (s.scopes || []).join(', ') },
+    {
+        key: 'top_score', label: 'Best', align: 'right', num: true,
+        get: s => Number(s.top_score || 0),
+        cell: s => scanScoreCell(s.top_score === undefined ? null : s.top_score)
+    },
+    {
+        key: 'top_file', label: 'Best match',
+        get: s => `${s.top_file || ''} ${s.top_collection || ''}`,
+        cell: s => s.top_file
+            ? `<div>${escapeHtml(s.top_file)}</div><div style="color:var(--dim); font-size:0.72rem;">${escapeHtml(s.top_collection || '')}</div>`
+            : '<span style="color:var(--dim);">&mdash;</span>'
+    },
+    { key: 'function_count', label: 'Funcs', align: 'right', num: true, get: s => Number(s.function_count || 0) },
+    {
+        key: 'size', label: 'Size', align: 'right', num: true,
+        get: s => Number(s.size || 0),
+        cell: s => `${(Number(s.size || 0) / 1024).toFixed(1)} KB`
+    },
+    {
+        key: 'status', label: 'Status',
+        get: s => s.job_status || s.status || 'queued',
+        cell: s => {
+            const status = s.job_status || s.status || 'queued';
+            const color = status === 'finished' || status === 'completed' ? '#10b981'
+                : status === 'failed' ? '#f87171' : 'var(--accent)';
+            return `<span style="color:${color}; font-weight:600;">${escapeHtml(status)}</span>`
+                + (s.progress ? `<div style="color:var(--dim); font-size:0.72rem;">${escapeHtml(String(s.progress))}</div>` : '');
+        }
+    },
+    {
+        key: 'created_at', label: 'Created', num: true,
+        get: s => Number(s.created_at || 0),
+        cell: s => `<span style="color:var(--dim); font-size:0.78rem;">${escapeHtml(new Date(Number(s.created_at || 0)).toLocaleString())}</span>`
+    },
+];
+
 window.ScanView = {
     _pollTimer: null,
     _stopped: false,
@@ -37,6 +85,10 @@ window.ScanView = {
     _containerId: null,
     _sortCol: 'sim',
     _sortDir: -1,
+    _files: [],
+    _scans: [],
+    _listSort: { col: 'created_at', dir: -1 },
+    _listFilters: {},
 
     setSort(col) {
         if (this._sortCol === col) {
@@ -90,122 +142,280 @@ window.ScanView = {
         } catch (e) {
             /* the form still works on the server's own defaults */
         }
+        this._files = [];
         container.innerHTML = this._renderForm(defaults);
+        this._setupDropZone();
         this._loadCollections(preselect);
         this._loadRecentScans();
-    },
-
-    async _loadRecentScans() {
-        const listEl = document.getElementById('scan-list-container');
-        if (!listEl) return;
-        try {
-            const res = await fetch('/api/scan');
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to load scans');
-            
-            if (!data.scans || !data.scans.length) {
-                listEl.innerHTML = '<div style="color:var(--dim); font-size:0.85rem;">No recent scans found.</div>';
-                return;
-            }
-            
-            listEl.innerHTML = data.scans.map(s => {
-                const date = new Date(s.created_at || 0).toLocaleString();
-                const statusColor = s.job_status === 'finished' ? '#10b981' : (s.job_status === 'failed' ? '#f87171' : 'var(--accent)');
-                const progress = s.progress || '';
-                return `
-                <a href="/scans/${escapeAttr(s.scan_id)}" onclick="Nav.openPath(this.href, event)" style="text-decoration:none; display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:var(--bg); border:1px solid var(--border); border-radius:6px; transition:border-color 0.15s;">
-                    <div style="display:flex; flex-direction:column; gap:4px;">
-                        <span style="color:var(--fg); font-weight:600; font-size:0.85rem;">${escapeHtml(s.file_name || 'unknown')}</span>
-                        <span style="color:var(--dim); font-size:0.75rem;">${escapeHtml(date)} &bull; <code>${escapeHtml(s.file_md5 || '').slice(0,8)}</code></span>
-                    </div>
-                    <div style="text-align:right;">
-                        <span style="color:${statusColor}; font-size:0.8rem; font-weight:600;">${escapeHtml(s.job_status || s.status || 'queued')}</span>
-                        ${progress ? `<div style="color:var(--dim); font-size:0.75rem;">${escapeHtml(progress)}</div>` : ''}
-                    </div>
-                </a>`;
-            }).join('');
-        } catch (e) {
-            listEl.innerHTML = `<div style="color:#f87171; font-size:0.85rem;">${escapeHtml(e.message)}</div>`;
-        }
     },
 
     _renderForm(defaults) {
         const modules = ['FunctionID', 'boilerplate', 'capa', 'yara', 'rulezet'];
         const lean = new Set(defaults.modules || []);
         const boxes = modules.map(m => `
-            <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; color:var(--dim); cursor:pointer;">
-                <input type="checkbox" class="scan-module" value="${escapeAttr(m)}" ${lean.has(m) ? 'checked' : ''}>
-                ${escapeHtml(m)}
+            <label style="display:flex; align-items:center; gap:8px; font-size:0.8rem; cursor:pointer;">
+                <input type="checkbox" class="scan-module" value="${escapeAttr(m)}" ${lean.has(m) ? 'checked' : ''} style="cursor:pointer;">
+                <span style="color:var(--text);">${escapeHtml(m)}</span>
             </label>`).join('');
 
         return `
-        <div style="flex:1; overflow-y:auto; padding:25px 30px; display:flex; flex-direction:column; gap:20px;">
-            <div>
-                <h1 style="margin:0 0 6px 0; font-size:1.5rem; color:var(--text); display:flex; align-items:center; gap:10px;">
-                    <i class="fa-solid fa-microscope" style="color:var(--accent);"></i> Scan
-                </h1>
-                <div style="color:var(--dim); font-size:0.85rem;">
-                    Compare a binary against existing collections without ingesting it.
-                    Nothing is written until you commit the result.
-                </div>
+        <div style="flex:1; overflow-y:auto; padding:25px 30px; color:var(--text);">
+            <div style="margin-bottom:25px; border-bottom:1px solid var(--border); padding-bottom:15px;">
+                <h2 style="color:var(--accent); margin:0 0 5px 0; font-size:1.5rem;">
+                    <i class="fa-solid fa-microscope"></i> Scan Binaries
+                </h2>
+                <p style="color:var(--subtle); font-size:0.9rem; margin:0;">
+                    Compare files against existing collections without ingesting them.
+                    Nothing is written until you commit a result.
+                </p>
             </div>
 
-            <div style="display:flex; gap: 30px; flex-wrap: wrap; align-items: flex-start;">
-                <div style="flex: 1; min-width: 400px; border:1px solid var(--border); border-radius:8px; background:var(--card-bg); padding:20px; display:flex; flex-direction:column; gap:16px; max-width:760px;">
-                    <div>
-                        <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;">File</label>
-                        <input type="file" id="scan-form-file" style="width:100%; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.85rem;">
-                    </div>
-
-                    <div>
-                        <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;">
-                            Scope <span style="opacity:0.7;">(ctrl-click for several, or scan everything)</span>
-                        </label>
-                        <select id="scan-form-collections" multiple size="6" style="width:100%; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.85rem;"></select>
-                        <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; color:var(--dim); margin-top:8px; cursor:pointer;">
-                            <input type="checkbox" id="scan-form-all"> Scan against every collection
-                        </label>
-                    </div>
-
-                    <div>
-                        <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;">
-                            Analysis modules <span style="opacity:0.7;">(a scan runs lean by default; capa alone can cost more than the rest of the job)</span>
-                        </label>
-                        <div style="display:flex; gap:16px; flex-wrap:wrap;">${boxes}</div>
-                    </div>
-
-                    <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end;">
-                        <div>
-                            <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;">Top files scored</label>
-                            <input type="number" id="scan-form-top-files" value="${Number(defaults.top_files) || 20}" min="1" max="200" style="width:110px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.82rem;">
+            <div style="display:grid; grid-template-columns:1fr 1.2fr; gap:40px; align-items:start;">
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    <details open style="background:var(--hover); border:1px solid var(--border); border-radius:8px;">
+                        <summary style="padding:15px 20px; font-weight:bold; cursor:pointer; color:var(--accent); user-select:none; font-size:0.9rem; text-transform:uppercase; letter-spacing:1px;">Scope</summary>
+                        <div style="padding:0 20px 20px 20px;">
+                            <label style="display:block; font-size:0.75rem; color:var(--subtle); margin-bottom:6px;">Collections <span style="opacity:0.7;">(ctrl-click for several)</span></label>
+                            <select id="scan-form-collections" multiple size="6" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; font-size:0.85rem;"></select>
+                            <label style="display:inline-flex; align-items:center; gap:8px; font-size:0.8rem; color:var(--subtle); margin-top:8px; cursor:pointer;">
+                                <input type="checkbox" id="scan-form-all"> Scan against every collection
+                            </label>
                         </div>
-                        <div>
-                            <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;" title="Leave blank to use each collection's own locked value">Min score</label>
-                            <input type="number" id="scan-form-min-score" step="0.01" min="0" max="1" placeholder="collection" style="width:110px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.82rem;">
+                    </details>
+
+                    <details style="background:var(--hover); border:1px solid var(--border); border-radius:8px;">
+                        <summary style="padding:15px 20px; font-weight:bold; cursor:pointer; color:var(--accent); user-select:none; font-size:0.9rem; text-transform:uppercase; letter-spacing:1px;">Analysis modules</summary>
+                        <div style="padding:0 20px 20px 20px;">
+                            <div style="font-size:0.7rem; color:var(--subtle); margin-bottom:10px;">A scan runs lean by default; capa alone can cost more than the rest of the job.</div>
+                            <div style="display:flex; flex-direction:column; gap:6px;">${boxes}</div>
                         </div>
-                        <div>
-                            <label style="display:block; font-size:0.78rem; color:var(--dim); margin-bottom:6px;" title="Leave blank to use each collection's own locked value">Min features</label>
-                            <input type="number" id="scan-form-min-features" min="0" placeholder="collection" style="width:110px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.82rem;">
+                    </details>
+
+                    <details style="background:var(--hover); border:1px solid var(--border); border-radius:8px;">
+                        <summary style="padding:15px 20px; font-weight:bold; cursor:pointer; color:var(--accent); user-select:none; font-size:0.9rem; text-transform:uppercase; letter-spacing:1px;">Match params</summary>
+                        <div style="padding:0 20px 20px 20px; display:grid; grid-template-columns:1fr 1fr; gap:15px;">
+                            <div>
+                                <label style="display:block; font-size:0.75rem; color:var(--subtle); margin-bottom:6px;">Top files scored</label>
+                                <input type="number" id="scan-form-top-files" value="${Number(defaults.top_files) || 20}" min="1" max="200" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; font-size:0.85rem;">
+                            </div>
+                            <div>
+                                <label style="display:block; font-size:0.75rem; color:var(--subtle); margin-bottom:6px;" title="Leave blank to use each collection's own locked value">Min score</label>
+                                <input type="number" id="scan-form-min-score" step="0.01" min="0" max="1" placeholder="collection" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; font-size:0.85rem;">
+                            </div>
+                            <div>
+                                <label style="display:block; font-size:0.75rem; color:var(--subtle); margin-bottom:6px;" title="Leave blank to use each collection's own locked value">Min features</label>
+                                <input type="number" id="scan-form-min-features" min="0" placeholder="collection" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; font-size:0.85rem;">
+                            </div>
                         </div>
-                        <button id="scan-form-submit" onclick="window.ScanViewInstance.submit()" style="background:var(--accent); border:none; color:var(--bg); padding:9px 22px; border-radius:6px; font-size:0.85rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px;">
-                            <i class="fa-solid fa-microscope"></i> Scan
+                    </details>
+
+                    <div style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">
+                        <button id="scan-form-submit" onclick="window.ScanViewInstance.submit()" class="btn-primary" style="width:100%; height:50px; justify-content:center; display:flex; align-items:center; gap:10px; font-size:1.1rem; font-weight:bold; border-radius:6px;">
+                            <i class="fa-solid fa-microscope"></i> Start Scan
+                        </button>
+                        <button onclick="window.ScanViewInstance.clearFiles()" class="top-action-btn danger-btn" style="width:100%; height:35px; justify-content:center;">
+                            <i class="fa-solid fa-trash"></i> Clear List
                         </button>
                     </div>
                 </div>
 
-                <div style="flex: 1; min-width: 400px; border:1px solid var(--border); border-radius:8px; background:var(--card-bg); padding:20px; display:flex; flex-direction:column; gap:16px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <h2 style="margin:0; font-size:1.1rem; color:var(--text);">Recent Scans</h2>
-                        <button onclick="window.ScanViewInstance._loadRecentScans()" style="background:none; border:none; color:var(--accent); cursor:pointer; font-size:0.9rem;" title="Refresh"><i class="fa-solid fa-rotate-right"></i></button>
+                <div style="display:flex; flex-direction:column; gap:20px;">
+                    <div id="scan-drop-zone" style="border:2px dashed var(--border); border-radius:8px; padding:50px 20px; text-align:center; cursor:pointer; transition:all 0.2s; background:var(--hover);">
+                        <i class="fa-solid fa-cloud-arrow-up" style="font-size:3.5rem; color:var(--accent); margin-bottom:15px; opacity:0.5;"></i>
+                        <div style="font-weight:bold; font-size:1.1rem; margin-bottom:8px; color:var(--text);">Drop Binaries Here</div>
+                        <div style="font-size:0.85rem; color:var(--subtle);">or click to browse files &mdash; each one gets its own scan</div>
+                        <input type="file" id="scan-form-file" multiple style="display:none;">
                     </div>
-                    <div id="scan-list-container" style="display:flex; flex-direction:column; gap:8px; max-height:500px; overflow-y:auto; padding-right:5px;">
-                        <div style="color:var(--dim); font-size:0.85rem;"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</div>
+
+                    <div id="scan-file-list-container" style="display:none; flex-direction:column;">
+                        <h4 style="font-size:0.8rem; text-transform:uppercase; color:var(--subtle); margin:0 0 10px 0; display:flex; justify-content:space-between;">
+                            Selected Files <span id="scan-file-count" class="badge">0</span>
+                        </h4>
+                        <div id="scan-file-list" style="max-height:260px; overflow-y:auto; background:var(--border); border:1px solid var(--border); border-radius:4px; padding:5px;"></div>
                     </div>
+
+                    <div id="scan-form-error" style="color:#f87171; font-size:0.82rem;"></div>
                 </div>
             </div>
 
-            <div id="scan-form-error" style="color:#f87171; font-size:0.82rem;"></div>
+            <div style="margin-top:30px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <h3 style="margin:0; font-size:0.9rem; text-transform:uppercase; letter-spacing:1px; color:var(--accent);">Recent Scans</h3>
+                    <button onclick="window.ScanViewInstance._loadRecentScans()" class="top-action-btn" title="Refresh"><i class="fa-solid fa-rotate-right"></i></button>
+                </div>
+                <div id="scan-list-container" class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow:auto; background:var(--card-bg);">
+                    <div style="padding:15px; color:var(--dim); font-size:0.85rem;"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</div>
+                </div>
+            </div>
         </div>`;
+    },
+
+    // --- file picking -----------------------------------------------------
+
+    _setupDropZone() {
+        const zone = document.getElementById('scan-drop-zone');
+        const input = document.getElementById('scan-form-file');
+        if (!zone || !input) return;
+
+        zone.onclick = () => input.click();
+        input.onchange = (e) => this.addFiles(e.target.files);
+        zone.ondragover = (e) => {
+            e.preventDefault();
+            zone.style.borderColor = 'var(--accent)';
+        };
+        zone.ondragleave = () => { zone.style.borderColor = 'var(--border)'; };
+        zone.ondrop = (e) => {
+            e.preventDefault();
+            zone.style.borderColor = 'var(--border)';
+            this.addFiles(e.dataTransfer.files);
+        };
+    },
+
+    addFiles(files) {
+        for (const file of files) {
+            if (!this._files.find(f => f.name === file.name && f.size === file.size)) {
+                this._files.push(file);
+            }
+        }
+        this._renderFileList();
+    },
+
+    removeFile(index) {
+        this._files.splice(index, 1);
+        this._renderFileList();
+    },
+
+    clearFiles() {
+        this._files = [];
+        this._renderFileList();
+    },
+
+    _renderFileList() {
+        const list = document.getElementById('scan-file-list');
+        const container = document.getElementById('scan-file-list-container');
+        const badge = document.getElementById('scan-file-count');
+        if (!list || !container) return;
+
+        if (!this._files.length) {
+            container.style.display = 'none';
+            return;
+        }
+        container.style.display = 'flex';
+        if (badge) badge.innerText = this._files.length;
+        list.innerHTML = this._files.map((file, i) => `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-bottom:1px solid var(--border); font-size:0.8rem;">
+                <div style="display:flex; align-items:center; gap:10px; overflow:hidden;">
+                    <i class="fa-solid fa-file-binary" style="color:var(--subtle); flex-shrink:0;"></i>
+                    <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeAttr(file.name)}">${escapeHtml(file.name)}</span>
+                    <span style="color:var(--dim); font-size:0.7rem; flex-shrink:0;">(${(file.size / 1024).toFixed(1)} KB)</span>
+                </div>
+                <button onclick="window.ScanViewInstance.removeFile(${i})" style="background:none; border:none; color:#ff4d8d; cursor:pointer; padding:5px; opacity:0.6;" title="Remove">
+                    <i class="fa-solid fa-times"></i>
+                </button>
+            </div>`).join('');
+    },
+
+    // --- recent scans table ----------------------------------------------
+
+    async _loadRecentScans() {
+        const listEl = document.getElementById('scan-list-container');
+        if (!listEl) return;
+        try {
+            const res = await fetch('/api/scan?limit=200');
+            const data = await res.json();
+            if (!res.ok || data.error) throw new Error(data.error || 'Failed to load scans');
+            this._scans = data.scans || [];
+            listEl.innerHTML = this._renderScanTable();
+        } catch (e) {
+            listEl.innerHTML = `<div style="padding:15px; color:#f87171; font-size:0.85rem;">${escapeHtml(e.message)}</div>`;
+        }
+    },
+
+    _renderScanTable() {
+        if (!this._scans.length) {
+            return '<div style="padding:15px; color:var(--dim); font-size:0.85rem;">No recent scans found.</div>';
+        }
+        const head = SCAN_LIST_COLS.map(col => {
+            const active = this._listSort.col === col.key;
+            const icon = active ? (this._listSort.dir === 1 ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort';
+            return `<th class="sortable" style="${col.align ? `text-align:${col.align};` : ''}${col.width ? `width:${col.width};` : ''}" onclick="window.ScanViewInstance.sortList(${escapeAttr(jsString(col.key))})">
+                ${escapeHtml(col.label)} <i class="fa-solid ${icon}" style="font-size:0.65rem; opacity:${active ? 1 : 0.4};"></i>
+            </th>`;
+        }).join('');
+        const filters = SCAN_LIST_COLS.map(col =>
+            `<th><input type="text" data-scan-filter="${escapeAttr(col.key)}" value="${escapeAttr(this._listFilters[col.key] || '')}" placeholder="filter" oninput="window.ScanViewInstance.filterList(this)"></th>`
+        ).join('');
+
+        return `
+        <table style="width:100%; table-layout:auto;">
+            <thead>
+                <tr>${head}<th style="width:40px;"></th></tr>
+                <tr class="filter-row">${filters}<th></th></tr>
+            </thead>
+            <tbody id="scan-list-body">${this._renderScanRows()}</tbody>
+        </table>`;
+    },
+
+    _visibleScans() {
+        const rows = this._scans.filter(scan => SCAN_LIST_COLS.every(col => {
+            const q = (this._listFilters[col.key] || '').trim().toLowerCase();
+            return !q || String(col.get(scan)).toLowerCase().includes(q);
+        }));
+        const col = SCAN_LIST_COLS.find(c => c.key === this._listSort.col) || SCAN_LIST_COLS[0];
+        return rows.sort((a, b) => {
+            let va = col.get(a), vb = col.get(b);
+            if (!col.num) { va = String(va).toLowerCase(); vb = String(vb).toLowerCase(); }
+            if (va < vb) return -this._listSort.dir;
+            if (va > vb) return this._listSort.dir;
+            return 0;
+        });
+    },
+
+    _renderScanRows() {
+        const rows = this._visibleScans();
+        if (!rows.length) {
+            return `<tr><td colspan="${SCAN_LIST_COLS.length + 1}" style="padding:20px; text-align:center; color:var(--dim);">No scan matches the filter.</td></tr>`;
+        }
+        return rows.map(scan => {
+            const href = `/scans/${encodeURIComponent(scan.scan_id)}`;
+            const cells = SCAN_LIST_COLS.map(col =>
+                `<td style="${col.align ? `text-align:${col.align};` : ''}">${col.cell ? col.cell(scan) : escapeHtml(String(col.get(scan) || ''))}</td>`
+            ).join('');
+            return `<tr style="cursor:pointer;" onclick="Nav.openPath(${escapeAttr(jsString(href))}, event)">
+                ${cells}
+                <td style="text-align:center;">
+                    <button onclick="event.stopPropagation(); window.ScanViewInstance.deleteScan(${escapeAttr(jsString(scan.scan_id))})" style="background:none; border:none; color:#ff4d8d; cursor:pointer; opacity:0.6;" title="Drop this scan's cache">
+                        <i class="fa-solid fa-times"></i>
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
+    },
+
+    sortList(key) {
+        if (this._listSort.col === key) {
+            this._listSort.dir *= -1;
+        } else {
+            this._listSort = { col: key, dir: -1 };
+        }
+        const listEl = document.getElementById('scan-list-container');
+        if (listEl) listEl.innerHTML = this._renderScanTable();
+    },
+
+    // Only the body is redrawn, so the filter input keeps focus and caret.
+    filterList(input) {
+        this._listFilters[input.dataset.scanFilter] = input.value;
+        const body = document.getElementById('scan-list-body');
+        if (body) body.innerHTML = this._renderScanRows();
+    },
+
+    async deleteScan(scanId) {
+        try {
+            await fetch(`/api/scan/${encodeURIComponent(scanId)}`, { method: 'DELETE' });
+        } catch (e) {
+            /* expired already; the reload below is still the right answer */
+        }
+        this._loadRecentScans();
     },
 
     async _loadCollections(preselect) {
@@ -225,16 +435,13 @@ window.ScanView = {
     async submit() {
         const errEl = document.getElementById('scan-form-error');
         const button = document.getElementById('scan-form-submit');
-        const input = document.getElementById('scan-form-file');
-        const file = input && input.files && input.files[0];
         if (errEl) errEl.textContent = '';
-        if (!file) {
-            if (errEl) errEl.textContent = 'Pick a file to scan.';
+        if (!this._files.length) {
+            if (errEl) errEl.textContent = 'Pick at least one file to scan.';
             return;
         }
 
         const qs = new URLSearchParams();
-        qs.set('file_name', file.name);
         const all = document.getElementById('scan-form-all');
         if (all && all.checked) {
             qs.set('all', 'true');
@@ -259,24 +466,40 @@ window.ScanView = {
                 if (el && el.value !== '') qs.set(param, el.value);
             });
 
+        // One multipart POST for the whole list: the server queues a scan per
+        // part and answers with one entry per file.
+        const form = new FormData();
+        this._files.forEach(file => form.append('file', file, file.name));
+
         if (button) {
             button.disabled = true;
             button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Uploading...';
         }
         try {
-            const res = await fetch(`/api/scan?${qs.toString()}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/octet-stream' },
-                body: file
-            });
+            const res = await fetch(`/api/scan?${qs.toString()}`, { method: 'POST', body: form });
             const body = await res.json();
             if (!res.ok || body.error) throw new Error(body.error || `HTTP ${res.status}`);
-            Nav.openPath(`/scans/${encodeURIComponent(body.scan_id)}`);
+            if (body.scan_id) {
+                Nav.openPath(`/scans/${encodeURIComponent(body.scan_id)}`);
+                return;
+            }
+            const failed = (body.scans || []).filter(s => s.error);
+            if (typeof showToast === 'function') {
+                showToast(`Queued ${Number(body.queued || 0)} scan(s)` + (failed.length ? `, ${failed.length} rejected` : ''), failed.length ? 'warning' : 'success');
+            }
+            if (errEl && failed.length) {
+                errEl.innerHTML = failed
+                    .map(s => `${escapeHtml(s.file_name || '')}: ${escapeHtml(s.error)}`)
+                    .join('<br>');
+            }
+            this.clearFiles();
+            this._loadRecentScans();
         } catch (e) {
             if (errEl) errEl.textContent = e.message;
+        } finally {
             if (button) {
                 button.disabled = false;
-                button.innerHTML = '<i class="fa-solid fa-microscope"></i> Scan';
+                button.innerHTML = '<i class="fa-solid fa-microscope"></i> Start Scan';
             }
         }
     },

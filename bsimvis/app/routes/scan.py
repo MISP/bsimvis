@@ -77,21 +77,20 @@ def _scan_tree(raw_bytes, file_name, depth=0):
     return leaves
 
 
-def start_scan():
-    """Queue a scan of the posted bytes against the requested scopes."""
-    try:
-        raw_bytes = request.get_data()
-        if not raw_bytes:
-            return {"error": "No data provided"}, 400
+def _uploads():
+    """Every file posted: the multipart parts, else the raw body as one file."""
+    parts = [f for _, f in request.files.items(multi=True)]
+    if parts:
+        return [(part.read(), part.filename or "unknown") for part in parts]
+    return [(request.get_data(), request.args.get("file_name", "unknown"))]
 
-        # Checked twice on purpose: once here, before unpacking expands an
-        # archive in memory, and again on the whole tree once it is known.
-        limit = max_cached_bytes()
-        if len(raw_bytes) > limit:
-            return {
-                "error": f"File is {len(raw_bytes)} bytes, over the "
-                f"scan.max_cached_bytes limit of {limit}"
-            }, 413
+
+def start_scan():
+    """Queue a scan per posted file against the requested scopes."""
+    try:
+        uploads = _uploads()
+        if not any(raw for raw, _ in uploads):
+            return {"error": "No data provided"}, 400
 
         lang_error = validate_lang(
             request.args.get("processor"), request.args.get("cspec")
@@ -119,29 +118,6 @@ def start_scan():
             "top_files": _int_arg("top_files") or default_top_files(),
         }
 
-        file_name = request.args.get("file_name", "unknown")
-        file_md5 = hashlib.md5(raw_bytes).hexdigest()
-
-        if _flag("unpack", True):
-            try:
-                leaves = _scan_tree(raw_bytes, file_name)
-            except unpack_service.UnpackError as e:
-                return {"error": f"Could not extract: {e}"}, 400
-        else:
-            leaves = [(raw_bytes, file_name, None)]
-        if not leaves:
-            return {"error": f"{file_name} holds nothing to scan"}, 400
-
-        # The sample, everything unpacked out of it and every feature vector
-        # they produce sit in Redis, which is RAM. Refusing is better than
-        # swelling it, and it is the whole tree that gets cached.
-        cached = len(raw_bytes) + sum(len(b) for b, _, _ in leaves)
-        if cached > limit:
-            return {
-                "error": f"Scanning {file_name} would cache {cached} bytes, over "
-                f"the scan.max_cached_bytes limit of {limit}"
-            }, 413
-
         # Scan mode runs lean: `scan.modules` rather than the instance's upload
         # defaults, because capa alone can cost more than the rest of the job.
         # A request may still widen it.
@@ -149,8 +125,69 @@ def start_scan():
             request.args.getlist("enable"), request.args.getlist("disable")
         )
 
-        if len(leaves) > 1 or leaves[0][0] is not raw_bytes:
-            return _start_container_scan(
+        results = []
+        for raw_bytes, file_name in uploads:
+            body, status = _queue_one(
+                scan_service, raw_bytes, file_name, scopes, params, modules, warnings
+            )
+            body.setdefault("file_name", file_name)
+            results.append((body, status))
+
+        if len(results) == 1:
+            return results[0]
+
+        # ponytail: max_cached_bytes stays a per-file check, not a batch one --
+        # posting 50 files is posting 50 independent scans.
+        queued = [body for body, status in results if status == 200]
+        return {
+            "status": "queued" if queued else "failed",
+            "queued": len(queued),
+            "scans": [body for body, _ in results],
+            "scopes": scopes,
+            "modules": modules,
+            "warnings": warnings,
+        }, (200 if queued else 400)
+    except Exception as e:
+        logging.error(f"Scan request failed: {e}")
+        return {"error": str(e)}, 500
+
+
+def _queue_one(scan_service, raw_bytes, file_name, scopes, params, modules, warnings):
+    """Queue one posted file. Returns (response body, status)."""
+    # Checked twice on purpose: once here, before unpacking expands an
+    # archive in memory, and again on the whole tree once it is known.
+    limit = max_cached_bytes()
+    if len(raw_bytes) > limit:
+        return {
+            "error": f"File is {len(raw_bytes)} bytes, over the "
+            f"scan.max_cached_bytes limit of {limit}"
+        }, 413
+
+    file_md5 = hashlib.md5(raw_bytes).hexdigest()
+
+    if _flag("unpack", True):
+        try:
+            leaves = _scan_tree(raw_bytes, file_name)
+        except unpack_service.UnpackError as e:
+            return {"error": f"Could not extract: {e}"}, 400
+    else:
+        leaves = [(raw_bytes, file_name, None)]
+    if not leaves:
+        return {"error": f"{file_name} holds nothing to scan"}, 400
+
+    # The sample, everything unpacked out of it and every feature vector
+    # they produce sit in Redis, which is RAM. Refusing is better than
+    # swelling it, and it is the whole tree that gets cached.
+    cached = len(raw_bytes) + sum(len(b) for b, _, _ in leaves)
+    if cached > limit:
+        return {
+            "error": f"Scanning {file_name} would cache {cached} bytes, over "
+            f"the scan.max_cached_bytes limit of {limit}"
+        }, 413
+
+    if len(leaves) > 1 or leaves[0][0] is not raw_bytes:
+        return (
+            _start_container_scan(
                 scan_service,
                 raw_bytes,
                 file_name,
@@ -160,28 +197,27 @@ def start_scan():
                 params,
                 modules,
                 warnings,
-            )
-
-        scan_id = scan_service.create(raw_bytes, file_name, file_md5, scopes, params)
-        if warnings:
-            scan_service.update(scan_id, warnings=warnings)
-        job_id = job_service.create_job(
-            JobType.SCAN, _analysis_payload(scan_id, file_md5, file_name, modules)
+            ),
+            200,
         )
-        scan_service.update(scan_id, job_id=job_id, status="queued")
 
-        return {
-            "status": "queued",
-            "scan_id": scan_id,
-            "job_id": job_id,
-            "file_md5": file_md5,
-            "scopes": scopes,
-            "modules": modules,
-            "warnings": warnings,
-        }
-    except Exception as e:
-        logging.error(f"Scan request failed: {e}")
-        return {"error": str(e)}, 500
+    scan_id = scan_service.create(raw_bytes, file_name, file_md5, scopes, params)
+    if warnings:
+        scan_service.update(scan_id, warnings=warnings)
+    job_id = job_service.create_job(
+        JobType.SCAN, _analysis_payload(scan_id, file_md5, file_name, modules)
+    )
+    scan_service.update(scan_id, job_id=job_id, status="queued")
+
+    return {
+        "status": "queued",
+        "scan_id": scan_id,
+        "job_id": job_id,
+        "file_md5": file_md5,
+        "scopes": scopes,
+        "modules": modules,
+        "warnings": warnings,
+    }, 200
 
 
 def _analysis_payload(scan_id, file_md5, file_name, modules):

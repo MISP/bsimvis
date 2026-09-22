@@ -90,8 +90,15 @@ analysed itself, so it has no chunks: commit its *children*, not the container.
 `unpack=false` scans the posted bytes as they are, and `scan.max_cached_bytes` is
 checked against the whole unpacked tree, not just the upload.
 
-Surfaces: `bsimvis scan --commit`, the `/scans` UI view (`static/js/views/scan_view.js`)
-and the `scan_file` tool in `llm_tools.py`, which the MCP server re-exports for free.
+`POST /api/scan` takes either a raw body (one file, `file_name` in the query) or
+multipart parts (`_uploads` in `routes/scan.py`): each part is queued by the same
+`_queue_one`, so a batch answers with a `scans` list carrying a per-file error where
+one failed. `max_cached_bytes` stays a per-file check, not a per-batch one.
+
+Surfaces: `bsimvis scan --commit`, the `/scans` UI view (`static/js/views/scan_view.js`,
+drop-zone + multi-file picker like the upload view, recent scans as a filter/sort table
+whose columns are `SCAN_LIST_COLS`) and the `scan_file` tool in `llm_tools.py`, which the
+MCP server re-exports for free.
 
 ## Pools
 

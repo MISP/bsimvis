@@ -3443,7 +3443,7 @@ class ScanStart(Resource):
             "collection": "Collection to scan against (repeatable)",
             "pool": "Pool to scan against, expanded to its member collections (repeatable)",
             "all": "Set to true to scan against every collection",
-            "file_name": "Original name of the file",
+            "file_name": "Original name of the file (raw body posts only)",
             "algo": _BUILD_ALGO_DESC,
             "min_score": "Minimum similarity score (default: the collection's locked value)",
             "min_features": "Minimum feature count (default: the collection's locked value)",
@@ -3460,12 +3460,16 @@ class ScanStart(Resource):
         }
     )
     def post(self):
-        """Scans a raw binary against existing collections without ingesting it.
+        """Scans one or more binaries against existing collections without ingesting them.
 
         The file gets the same Ghidra analysis an upload gets, but nothing is
         written to Kvrocks: the analysis is cached in Redis under a TTL and the
         match is computed by reading the target collections' indexes. Returns a
         scan_id to poll.
+
+        Post the bytes as the raw body for one file, or as multipart/form-data
+        parts for several -- each part becomes its own scan and the answer is a
+        `scans` list, one entry per posted file (errors included, per file).
 
         An archive or packed file is unpacked the way an upload is: one scan per
         code file inside it, plus a container scan that rolls their scores up.

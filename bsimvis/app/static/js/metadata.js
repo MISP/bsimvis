@@ -535,26 +535,35 @@ function metadataPercent(item) {
 }
 
 let metadataTableCounter = 0;
+const metadataPalette = ['#66d9ef', '#a6e22e', '#f92672', '#fd971f', '#ae81ff', '#e6db74', '#75715e'];
+
+function metadataColor(item, index, valueKey = 'value') {
+    if (valueKey === 'tag_id' && window.TagColor) return TagColor.forTag(item.tag_id);
+    return metadataPalette[index % metadataPalette.length];
+}
+
+function metadataPercent(item) {
+    if (item.coverage !== undefined) return Number(item.coverage || 0) * 100;
+    return Number(item.percent || 0);
+}
 
 function renderMetadataTable(title, dist, valueKey = 'value') {
     const rows = dist.map((item, i) => {
         const value = item[valueKey] || '';
         const percent = metadataPercent(item);
-        const color = window.TagColor && valueKey === 'tag_id' ? TagColor.forTag(value) : scoreColor(percent / 100);
+        const color = metadataColor(item, i, valueKey);
         return `<tr>
-            <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escapeAttr(color)};margin-right:7px;"></span><span class="mono">${escapeHtml(value)}</span></td>
+            <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escapeAttr(color)};margin-right:7px;"></span><span class="mono metadata-value-cell">${escapeHtml(value)}</span></td>
             <td class="mono">${Number(item.count || 0).toLocaleString()}</td>
             <td class="mono">${percent.toFixed(0)}%</td>
-            ${item.score === undefined ? '' : `<td class="mono">${(Number(item.score || 0) * 100).toFixed(0)}%</td>`}
             <td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td>
         </tr>`;
     }).join('');
-    return `<table id="metadata-table-${++metadataTableCounter}" class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>${escapeHtml(title)}</th><th>Count</th><th>Coverage</th>${dist.some(x => x.score !== undefined) ? '<th>Cohesion</th>' : ''}<th></th></tr></thead><tbody>${rows}</tbody></table>`;
+    return `<table id="metadata-table-${++metadataTableCounter}" class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>${escapeHtml(title)}</th><th>Count</th><th>Coverage</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderPie(title, icon, dist) {
-    const colors = ['#66d9ef', '#a6e22e', '#f92672', '#fd971f', '#ae81ff', '#e6db74', '#75715e'];
-    const pieData = dist.map((d, i) => ({ value: metadataPercent(d), color: colors[i % colors.length], label: d.value }));
+    const pieData = dist.map((d, i) => ({ value: metadataPercent(d), color: metadataColor(d, i), label: d.value }));
     const total = pieData.reduce((sum, d) => sum + d.value, 0);
     if (total < 100) pieData.push({ value: 100 - total, color: 'var(--border)', isDummy: true });
     const svg = d3.create('svg').attr('width', 150).attr('height', 150).attr('viewBox', '0 0 150 150');
@@ -575,16 +584,38 @@ function renderDist(title, icon, dist) {
 }
 
 let tagTreeCounter = 0;
+function renderTagBars(treeId, rows) {
+    const bars = rows.map(({item, color}) => {
+        const coverage = metadataPercent(item);
+        return `<div style="font-size:.72rem;" title="${escapeAttr(item.tag_id)}"><div style="display:flex;justify-content:space-between;gap:8px;"><span class="mono" style="overflow:hidden;text-overflow:ellipsis;overflow-wrap:anywhere;">${escapeHtml(item.tag_id)}</span><span class="mono">${coverage.toFixed(0)}%</span></div><div class="metadata-bar" style="width:100%;"><span style="width:${Math.min(100, coverage)}%;background:${escapeAttr(color)}"></span></div></div>`;
+    }).join('');
+    return `<div class="dim" style="font-size:.75rem;">Raw coverage · visible tree rows</div>${bars}`;
+}
+
+function updateTagChart(treeId) {
+    const root = document.getElementById(treeId);
+    if (!root) return;
+    const rows = Array.from(root.querySelectorAll('tbody tr')).filter(row => row.style.display !== 'none').map(row => ({
+        item: { tag_id: row.dataset.tagId, coverage: Number(row.dataset.tagCoverage) },
+        color: row.dataset.tagColor,
+    }));
+    const chart = root.querySelector('[data-tag-chart]');
+    if (chart) chart.innerHTML = renderTagBars(treeId, rows);
+}
+
 function toggleTagTreeRow(id, event) {
     event.stopPropagation();
     const button = event.currentTarget;
+    const root = button.closest('.metadata-axis');
     const open = button.getAttribute('aria-expanded') === 'true';
     button.setAttribute('aria-expanded', String(!open));
     button.innerHTML = `<i class="fa-solid fa-chevron-${open ? 'right' : 'down'}"></i>`;
-    document.querySelectorAll(`[data-tag-parent="${CSS.escape(id)}"]`).forEach(row => {
+    root.querySelectorAll('tbody tr').forEach(row => {
+        if (row.dataset.tagParent !== id) return;
         row.style.display = open ? 'none' : 'table-row';
         if (open) row.querySelectorAll('[data-tag-parent]').forEach(child => child.style.display = 'none');
     });
+    updateTagChart(root.id);
 }
 
 function renderTagDist(title, icon, dist) {
@@ -594,24 +625,20 @@ function renderTagDist(title, icon, dist) {
     const walk = (item, depth, parentId) => {
         const id = `${treeId}-${rows.length}`;
         const children = item.children || [];
-        const color = window.TagColor ? TagColor.forTag(item.tag_id) : 'var(--accent)';
+        const color = metadataColor(item, rows.length, 'tag_id');
         rows.push({ item, id, depth, parentId, color, hasChildren: children.length > 0 });
         children.forEach(child => walk(child, depth + 1, id));
     };
     dist.forEach(item => walk(item, 0, null));
     const body = rows.map(({item, id, depth, parentId, color, hasChildren}) => {
         const coverage = metadataPercent(item);
-        return `<tr data-tag-parent="${parentId ? escapeAttr(parentId) : ''}" style="${depth ? 'display:none;' : ''}">
-            <td style="padding-left:${10 + depth * 18}px;"><button class="btn-copy" aria-expanded="false" ${hasChildren ? `onclick="toggleTagTreeRow(${escapeAttr(jsString(id))}, event)"` : 'style="visibility:hidden;"'}><i class="fa-solid fa-chevron-${hasChildren ? 'right' : 'minus'}"></i></button><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escapeAttr(color)};margin:0 7px;"></span><span class="mono">${escapeHtml(item.tag_id)}</span></td>
-            <td class="mono">${Number(item.count || 0).toLocaleString()}</td><td class="mono"><div class="metadata-bar"><span style="width:${Math.min(100, coverage)}%;background:${escapeAttr(color)}"></span></div>${coverage.toFixed(0)}%</td><td class="mono">${(Number(item.score || 0) * 100).toFixed(0)}%</td><td><button class="btn-copy" title="Copy tag" onclick="copyToClipboard(${escapeAttr(jsString(item.tag_id))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td>
+        return `<tr data-tag-parent="${parentId || ''}" data-tag-id="${escapeAttr(item.tag_id)}" data-tag-coverage="${coverage}" data-tag-color="${escapeAttr(color)}" style="${depth ? 'display:none;' : ''}">
+            <td style="padding-left:${10 + depth * 18}px;"><button class="btn-copy" aria-expanded="false" ${hasChildren ? `onclick="toggleTagTreeRow(${escapeAttr(jsString(id))}, event)"` : 'style="visibility:hidden;"'}><i class="fa-solid fa-chevron-${hasChildren ? 'right' : 'minus'}"></i></button><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escapeAttr(color)};margin:0 7px;"></span><span class="mono metadata-value-cell">${escapeHtml(item.tag_id)}</span></td>
+            <td class="mono">${Number(item.count || 0).toLocaleString()}</td><td class="mono"><div class="metadata-bar"><span style="width:${Math.min(100, coverage)}%;background:${escapeAttr(color)}"></span></div>${coverage.toFixed(0)}%</td><td><button class="btn-copy" title="Copy tag" onclick="copyToClipboard(${escapeAttr(jsString(item.tag_id))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td>
         </tr>`;
     }).join('');
-    const bars = dist.map(item => {
-        const coverage = metadataPercent(item);
-        const color = window.TagColor ? TagColor.forTag(item.tag_id) : 'var(--accent)';
-        return `<div style="font-size:.72rem;" title="${escapeAttr(item.tag_id)}"><div style="display:flex;justify-content:space-between;gap:8px;"><span class="mono" style="overflow:hidden;text-overflow:ellipsis;">${escapeHtml(item.tag_id)}</span><span class="mono">${coverage.toFixed(0)}%</span></div><div class="metadata-bar" style="width:100%;"><span style="width:${Math.min(100, coverage)}%;background:${escapeAttr(color)}"></span></div></div>`;
-    }).join('');
-    return `<details class="metadata-axis" id="${escapeAttr(treeId)}"><summary><i class="${icon}"></i> ${escapeHtml(title)} <span class="dim">${dist.length} namespaces</span></summary><div class="metadata-axis-body"><div class="metadata-axis-visual metadata-axis-bars"><div class="dim" style="font-size:.75rem;">Raw coverage · overlapping tags may exceed 100%</div>${bars}</div><div class="metadata-axis-table-wrap"><table id="metadata-table-${++metadataTableCounter}" class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>Tag</th><th>Count</th><th>Coverage</th><th>Cohesion</th><th></th></tr></thead><tbody>${body}</tbody></table></div></div></details>`;
+    const visible = rows.filter(row => row.depth === 0);
+    return `<details class="metadata-axis" id="${escapeAttr(treeId)}"><summary><i class="${icon}"></i> ${escapeHtml(title)} <span class="dim">${dist.length} namespaces</span></summary><div class="metadata-axis-body"><div class="metadata-axis-visual metadata-axis-bars" data-tag-chart>${renderTagBars(treeId, visible)}</div><div class="metadata-axis-table-wrap"><table id="metadata-table-${++metadataTableCounter}" class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>Tag</th><th>Count</th><th>Coverage</th><th></th></tr></thead><tbody>${body}</tbody></table></div></div></details>`;
 }
 
 window.initMetadataTables = function (root) {

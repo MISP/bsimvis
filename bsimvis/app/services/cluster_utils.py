@@ -82,7 +82,7 @@ def collect_member_values(metas):
     return names_list, md5s_list, yara_list, avtype_list, filetype_list, ccip_list
 
 
-def build_freq(items, member_count, limit=5):
+def build_freq(items, member_count, limit=None):
     """Return up to ``limit`` value frequencies for one cluster distribution.
 
     `percent` is a share of `member_count` -- the cluster's members -- never of
@@ -130,7 +130,7 @@ def cluster_dimensions(metas, member_count):
     }
 
 
-def build_tag_distribution(by_axis, member_count, limit=10):
+def build_tag_distribution(by_axis, member_count, limit=None):
     """Build namespace trees from per-member tag hits."""
     out = {}
     for axis, items in by_axis.items():
@@ -161,7 +161,9 @@ def build_tag_distribution(by_axis, member_count, limit=10):
                 parent = node
 
         roots = [node for node_id, node in nodes.items() if node_id not in parent_ids]
-        roots = sorted(roots, key=lambda n: (-n["count"], n["tag_id"]))[:limit]
+        roots = sorted(roots, key=lambda n: (-n["count"], n["tag_id"]))
+        if limit is not None:
+            roots = roots[:limit]
 
         def finish(node):
             node["coverage"] = node["count"] / member_count if member_count else 0.0

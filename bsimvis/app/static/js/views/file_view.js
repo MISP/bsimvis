@@ -582,12 +582,61 @@ window.FileView = {
             const inferredCategory = (icon, label, mapObj) => {
                 const rows = Object.entries(mapObj || {}).sort(([, a], [, b]) => (b.percent || 0) - (a.percent || 0)).map(([value, item]) => {
                     const confidence = Number(item.percent || 0);
-                    const clusterLink = item.cluster_uuid ? Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(item.cluster_uuid)}` : '';
+                    const clusterLink = item.cluster_uuid ? Nav.buildUIUrl(collection, ['files', 'clusters', item.cluster_uuid]) : '';
                     const source = clusterLink ? `<a href="${escapeAttr(clusterLink)}" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(clusterLink))}, event);">${escapeHtml(item.cluster_uuid)}</a>` : '<span class="dim">—</span>';
                     return `<tr><td>${escapeHtml(label)}</td><td class="mono">${escapeHtml(value)}</td><td class="mono">${confidence}%</td><td>${source}</td><td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td></tr>`;
                 }).join('');
                 if (!rows) return '';
                 return `<details class="metadata-axis"><summary><i class="${icon}"></i> ${escapeHtml(label)} <span class="dim">${Object.keys(mapObj || {}).length} values</span></summary><div class="metadata-axis-table-wrap" style="padding:0 14px 14px;"><table id="inferred-table-${metadataSlug(label)}" class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>Category</th><th>Value</th><th>Confidence</th><th>Source cluster</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
+            };
+
+            const inferredTagCategory = (axis, values) => {
+                const nodes = new Map();
+                Object.entries(values || {}).forEach(([value, item]) => {
+                    const parts = String(value).split(':');
+                    const start = parts[0].toLowerCase() === axis.toLowerCase() ? 1 : 0;
+                    let parent = null;
+                    for (let i = start; i < parts.length; i++) {
+                        const nodeValue = parts.slice(0, i + 1).join(':');
+                        const node = nodes.get(nodeValue) || { value: nodeValue, item, children: [], parent };
+                        node.item = i === parts.length - 1 ? item : (node.item || item);
+                        node.parent = parent;
+                        if (parent && !parent.children.includes(nodeValue)) parent.children.push(nodeValue);
+                        nodes.set(nodeValue, node);
+                        parent = nodeValue;
+                    }
+                });
+                const rows = [];
+                const walk = (id, depth) => {
+                    const node = nodes.get(id);
+                    if (!node) return;
+                    const rowId = `inferred-${metadataSlug(axis)}-${rows.length}`;
+                    rows.push({ ...node, id: rowId, depth });
+                    node.children.forEach(child => walk(child, depth + 1));
+                };
+                Array.from(nodes.keys()).filter(id => !nodes.get(id).parent).forEach(id => walk(id, 0));
+                const html = rows.map(row => {
+                    const confidence = Number(row.item.percent || 0);
+                    const clusterLink = row.item.cluster_uuid ? Nav.buildUIUrl(collection, ['files', 'clusters', row.item.cluster_uuid]) : '';
+                    const source = clusterLink ? `<a href="${escapeAttr(clusterLink)}" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(clusterLink))}, event);">${escapeHtml(row.item.cluster_uuid)}</a>` : '<span class="dim">—</span>';
+                    return `<tr data-inferred-parent="${row.parent ? `inferred-${metadataSlug(axis)}-${rows.findIndex(r => r.value === row.parent)}` : ''}" style="${row.depth ? 'display:none;' : ''}"><td>${escapeHtml(axis)}</td><td style="padding-left:${10 + row.depth * 18}px;"><button class="btn-copy" ${row.children.length ? `onclick="toggleInferredTagRow(${escapeAttr(jsString(row.id))}, event)"` : 'style="visibility:hidden;"'}><i class="fa-solid fa-chevron-${row.children.length ? 'right' : 'minus'}"></i></button><span class="mono metadata-value-cell">${escapeHtml(row.value)}</span></td><td class="mono">${confidence}%</td><td>${source}</td><td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(row.value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td></tr>`;
+                }).join('');
+                if (!html) return '';
+                return `<details class="metadata-axis"><summary><i class="fa-solid fa-tags"></i> ${escapeHtml(axis)} <span class="dim">${Object.keys(values || {}).length} values</span></summary><div class="metadata-axis-table-wrap" style="padding:0 14px 14px;"><table id="inferred-table-${metadataSlug(axis)}" class="bin-sim-mc-table metadata-axis-table inferred-metadata-table"><thead><tr><th>Category</th><th>Value</th><th>Confidence</th><th>Source cluster</th><th></th></tr></thead><tbody>${html}</tbody></table></div></details>`;
+            };
+
+            window.toggleInferredTagRow = (id, event) => {
+                event.stopPropagation();
+                const button = event.currentTarget;
+                const root = button.closest('.metadata-axis');
+                const open = button.getAttribute('aria-expanded') === 'true';
+                button.setAttribute('aria-expanded', String(!open));
+                button.innerHTML = `<i class="fa-solid fa-chevron-${open ? 'right' : 'down'}"></i>`;
+                root.querySelectorAll('tbody tr').forEach(row => {
+                    if (row.dataset.inferredParent !== id) return;
+                    row.style.display = open ? 'none' : 'table-row';
+                    if (open) row.querySelectorAll('[data-inferred-parent]').forEach(child => child.style.display = 'none');
+                });
             };
 
             const inferredCategories = [
@@ -601,7 +650,7 @@ window.FileView = {
                 ['fa-solid fa-network-wired', 'CC IP', inferredMeta.ccip],
             ];
             let inferredHtml = inferredCategories.map(([icon, label, values]) => inferredCategory(icon, label, values)).join('');
-            inferredHtml += Object.entries(inferredMeta.tags || {}).sort(([a], [b]) => a.localeCompare(b)).map(([axis, values]) => inferredCategory('fa-solid fa-tags', axis, values)).join('');
+            inferredHtml += Object.entries(inferredMeta.tags || {}).sort(([a], [b]) => a.localeCompare(b)).map(([axis, values]) => inferredTagCategory(axis, values)).join('');
             if (inferredHtml) {
                 const inferredEl = document.getElementById('inferred-meta');
                 inferredEl.innerHTML = inferredHtml;

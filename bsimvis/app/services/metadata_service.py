@@ -27,8 +27,7 @@ from bsimvis.app.services.bin_sim_service import (
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.cluster_utils import (
     bin_cluster_ns,
-    build_freq,
-    collect_member_values,
+    cluster_summary,
     function_count_stats,
 )
 
@@ -412,23 +411,13 @@ class MetadataService:
                     if m.get("file_name"):
                         names.append(m["file_name"])
 
-                _, _, yara_list, avtype_list, filetype_list, ccip_list = (
-                    collect_member_values(decoded_metas)
-                )
+                summary = cluster_summary(decoded_metas, len(members))
+                yara_freq = summary["yara_distribution"]
+                avtype_freq = summary["avtype_distribution"]
+                filetype_freq = summary["filetype_distribution"]
+                ccip_freq = summary["ccip_distribution"]
 
-                yara_freq = build_freq(yara_list, len(members))
-                avtype_freq = build_freq(avtype_list, len(members))
-                filetype_freq = build_freq(filetype_list, len(members))
-                ccip_freq = build_freq(ccip_list, len(members))
-
-                min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
                 cohesion_score = old_cm.get("cohesion_score", 1.0)
-                if cohesion_score < min_cohesion:
-                    yara_freq = []
-                    avtype_freq = []
-                    filetype_freq = []
-                    ccip_freq = []
-
                 snippet = names[0] if names else "unknown"
                 new_default_name = (
                     Counter(names).most_common(1)[0][0]
@@ -442,6 +431,7 @@ class MetadataService:
                 new_cm["avtype_distribution"] = avtype_freq
                 new_cm["filetype_distribution"] = filetype_freq
                 new_cm["ccip_distribution"] = ccip_freq
+                new_cm["tag_distribution"] = summary["tag_distribution"]
                 # An empty result means this collection's file metas carry no
                 # function_count yet, not that the cluster has no functions --
                 # keep whatever the build wrote rather than blanking it.

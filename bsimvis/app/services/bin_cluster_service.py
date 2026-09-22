@@ -7,10 +7,11 @@ import numpy as np
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services import sim_edges
 from bsimvis.app.services.cluster_utils import (
-    build_freq,
+    cluster_summary,
     collect_member_values,
     default_bin_cluster_name,
     function_count_stats,
+    inferred_tag_values,
 )
 
 _EMPTY_I = np.empty(0, dtype=np.int32)
@@ -20,6 +21,25 @@ try:
     import hdbscan
 except ImportError:
     hdbscan = None
+
+
+def _store_inferred_tags(pipe, collection, members, member_metas, values):
+    values = sorted(set(values))
+    if not values:
+        return
+    for file_id, meta in zip(members, member_metas):
+        old = set(meta.get("inferred_tags") or [])
+        meta["inferred_tags"] = sorted(old | set(values))
+        full_id = (
+            file_id
+            if str(file_id).startswith(f"{collection}:file:")
+            else f"{collection}:file:{file_id}"
+        )
+        pipe.set(f"{full_id}:meta", json.dumps(meta))
+    for value in values:
+        bucket_key = f"{collection}:idx:file:inferred_tags:{value.lower()}"
+        pipe.sadd(bucket_key, *members)
+        pipe.sadd(f"{collection}:reg:file:inferred_tags", bucket_key)
 
 
 class BinClusterService:
@@ -522,6 +542,7 @@ class BinClusterService:
 
             # Build Metadata
             member_metas = [all_member_meta.get(file_id, {}) for file_id in members]
+            summary = cluster_summary(member_metas, len(members))
             names_list, md5s_list, yara_list, avtype_list, filetype_list, ccip_list = (
                 collect_member_values(member_metas)
             )
@@ -530,12 +551,12 @@ class BinClusterService:
                 names_list, avtype_list, yara_list, f"Binary Cluster {label}"
             )
 
-            yara_freq = build_freq(yara_list, len(members))
-            avtype_freq = build_freq(avtype_list, len(members))
-            filetype_freq = build_freq(filetype_list, len(members))
-            ccip_freq = build_freq(ccip_list, len(members))
-            filename_freq = build_freq(names_list, len(members))
-            md5_freq = build_freq(md5s_list, len(members))
+            yara_freq = summary["yara_distribution"]
+            avtype_freq = summary["avtype_distribution"]
+            filetype_freq = summary["filetype_distribution"]
+            ccip_freq = summary["ccip_distribution"]
+            filename_freq = summary["filename_distribution"]
+            md5_freq = summary["md5_distribution"]
 
             # A threshold-UF cut guarantees every member is TRANSITIVELY
             # linked above the threshold, not that the average pair is -- the
@@ -579,6 +600,7 @@ class BinClusterService:
                 "ccip_distribution": ccip_freq,
                 "filename_distribution": filename_freq,
                 "md5_distribution": md5_freq,
+                "tag_distribution": summary["tag_distribution"],
                 "function_count_stats": function_count_stats(member_metas),
                 "created_at": int(time.time() * 1000),
             }
@@ -601,6 +623,10 @@ class BinClusterService:
             bucket_key_uuid = f"{collection}:idx:file:bin_cluster_uuid:{c_uuid.lower()}"
             pipe.sadd(bucket_key_uuid, *members)
             pipe.sadd(f"{collection}:reg:file:bin_cluster_uuid", bucket_key_uuid)
+
+            _store_inferred_tags(
+                pipe, collection, members, member_metas, inferred_tag_values(summary)
+            )
 
             inferred_mapping = {
                 "yara_distribution": "inferred_yara",
@@ -1813,6 +1839,7 @@ class BinClusterService:
         for idx, label in enumerate(write_nodes):
             members = cluster_members[label]
             member_metas = [all_member_meta.get(file_id, {}) for file_id in members]
+            summary = cluster_summary(member_metas, len(members))
             names_list, md5s_list, yara_list, avtype_list, filetype_list, ccip_list = (
                 collect_member_values(member_metas)
             )
@@ -1821,12 +1848,12 @@ class BinClusterService:
                 names_list, avtype_list, yara_list, f"Binary Cluster {label}"
             )
 
-            yara_freq = build_freq(yara_list, len(members))
-            avtype_freq = build_freq(avtype_list, len(members))
-            filetype_freq = build_freq(filetype_list, len(members))
-            ccip_freq = build_freq(ccip_list, len(members))
-            filename_freq = build_freq(names_list, len(members))
-            md5_freq = build_freq(md5s_list, len(members))
+            yara_freq = summary["yara_distribution"]
+            avtype_freq = summary["avtype_distribution"]
+            filetype_freq = summary["filetype_distribution"]
+            ccip_freq = summary["ccip_distribution"]
+            filename_freq = summary["filename_distribution"]
+            md5_freq = summary["md5_distribution"]
 
             # Incremental rebuilds carry or recompute cohesion before clearing;
             # full rebuilds use the complete edge-set adjacency, which is
@@ -1844,14 +1871,6 @@ class BinClusterService:
                 cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
             else:
                 cohesion_score = 1.0
-
-            if cohesion_score < min_cohesion:
-                yara_freq = []
-                avtype_freq = []
-                filetype_freq = []
-                ccip_freq = []
-                filename_freq = []
-                md5_freq = []
 
             sample_members = []
             for file_id in members[:5]:
@@ -1892,6 +1911,7 @@ class BinClusterService:
                 "ccip_distribution": ccip_freq,
                 "filename_distribution": filename_freq,
                 "md5_distribution": md5_freq,
+                "tag_distribution": summary["tag_distribution"],
                 "function_count_stats": function_count_stats(member_metas),
                 "created_at": int(time.time() * 1000),
             }
@@ -1911,7 +1931,12 @@ class BinClusterService:
                 pipe.sadd(bucket_key, *members)
                 pipe.sadd(f"{collection}:reg:file:bin_cluster_name", bucket_key)
 
-            # Index top inferred metadata if cohesion is high enough
+            _store_inferred_tags(
+                pipe, collection, members, member_metas, inferred_tag_values(summary)
+            )
+
+            # Keep legacy inferred indexes for compatibility; inferred_tags is the
+            # isolated, namespace-aware representation used by new consumers.
             if cohesion_score >= min_cohesion:
                 inferred_mapping = {
                     "yara_distribution": "inferred_yara",
@@ -2057,6 +2082,7 @@ class BinClusterService:
         self._clear_indexes_via_registry(collection, "file", "inferred_ccip")
         self._clear_indexes_via_registry(collection, "file", "inferred_filename")
         self._clear_indexes_via_registry(collection, "file", "inferred_md5")
+        self._clear_indexes_via_registry(collection, "file", "inferred_tags")
 
         if job_service and job_id:
             job_service.add_log(job_id, "Binary clustering data cleared successfully.")

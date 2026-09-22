@@ -59,6 +59,7 @@ INDEX_CONFIG = {
         "inferred_ccip": ["file"],
         "inferred_filename": ["file"],
         "inferred_md5": ["file"],
+        "inferred_tags": ["file"],
         "note_owners": ["file"],
     },
     "func": {
@@ -380,6 +381,7 @@ POOL_LOCAL_FIELDS = {
     "inferred_ccip",
     "inferred_filename",
     "inferred_md5",
+    "inferred_tags",
 }
 
 

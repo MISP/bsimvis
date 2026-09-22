@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bsimvis.app.services.cluster_utils import (  # noqa: E402
     build_freq,
     collect_member_values,
+    cluster_summary,
     function_count_stats,
 )
 
@@ -78,6 +79,22 @@ def test_nothing_collected_gives_an_empty_distribution():
     assert build_freq([], 3) == []
 
 
+def test_tag_distribution_is_per_member_and_policy_filtered():
+    members = [
+        {"tags": ["av:clamav:mirai#rule_a", "ip:1.2.3.4", "rulezet:uuid-a"]},
+        {"tags": ["av:clamav:mirai#rule_b"], "user_tags": ["reviewed"]},
+    ]
+    result = cluster_summary(members)
+    family = result["tag_distribution"]["family"]
+    assert {row["value"] for row in family} >= {"av:clamav:mirai"}
+    assert (
+        next(row for row in family if row["value"] == "av:clamav:mirai")["count"] == 2
+    )
+    assert "ioc" not in result["tag_distribution"]
+    assert "ruleset" not in result["tag_distribution"]
+    assert result["tag_distribution"]["user"][-1]["value"] == "user:reviewed"
+
+
 def test_function_count_spread_over_members():
     stats = function_count_stats(
         [{"function_count": 10}, {"function_count": 200}, {"function_count": 90}]
@@ -103,6 +120,7 @@ if __name__ == "__main__":
     test_file_names_wins_over_file_name()
     test_only_the_top_five_values_are_kept()
     test_nothing_collected_gives_an_empty_distribution()
+    test_tag_distribution_is_per_member_and_policy_filtered()
     test_function_count_spread_over_members()
     test_members_without_a_function_count_do_not_become_zeroes()
     test_no_member_reports_a_function_count()

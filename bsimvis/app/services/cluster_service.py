@@ -8,7 +8,7 @@ from collections import Counter, defaultdict
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.cluster_utils import (
-    build_freq,
+    cluster_summary,
     collect_member_values,
     default_bin_cluster_name,
     function_count_stats,
@@ -3056,6 +3056,7 @@ class ClusterService:
             members_key = f"global:pool:{pool_id}:bin_cluster:{c_uuid}:members"
 
             member_metas = [all_member_meta.get(file_id, {}) for file_id in members]
+            summary = cluster_summary(member_metas, len(members))
             names_list, md5s_list, yara_list, avtype_list, filetype_list, ccip_list = (
                 collect_member_values(member_metas)
             )
@@ -3064,12 +3065,12 @@ class ClusterService:
                 names_list, avtype_list, yara_list, f"Pool File Cluster {c_uuid}"
             )
 
-            yara_freq = build_freq(yara_list, len(members))
-            avtype_freq = build_freq(avtype_list, len(members))
-            filetype_freq = build_freq(filetype_list, len(members))
-            ccip_freq = build_freq(ccip_list, len(members))
-            filename_freq = build_freq(names_list, len(members))
-            md5_freq = build_freq(md5s_list, len(members))
+            yara_freq = summary["yara_distribution"]
+            avtype_freq = summary["avtype_distribution"]
+            filetype_freq = summary["filetype_distribution"]
+            ccip_freq = summary["ccip_distribution"]
+            filename_freq = summary["filename_distribution"]
+            md5_freq = summary["md5_distribution"]
 
             n_members = len(members)
             if n_members > 1:
@@ -3081,14 +3082,6 @@ class ClusterService:
 
             # Default min_cohesion is set before the function call
             min_cohesion_val = min_cohesion if min_cohesion is not None else 0.5
-            if cohesion_score < min_cohesion_val:
-                yara_freq = []
-                avtype_freq = []
-                filetype_freq = []
-                ccip_freq = []
-                filename_freq = []
-                md5_freq = []
-
             rep_file_id = members[0] if members else None
             rep_meta = all_member_meta.get(rep_file_id, {}) if rep_file_id else {}
             snippet = rep_meta.get("file_name", "unknown")
@@ -3124,6 +3117,7 @@ class ClusterService:
                 "ccip_distribution": ccip_freq,
                 "filename_distribution": filename_freq,
                 "md5_distribution": md5_freq,
+                "tag_distribution": summary["tag_distribution"],
                 "function_count_stats": function_count_stats(member_metas),
             }
 

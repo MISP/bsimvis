@@ -5,9 +5,19 @@ bin_sim_service, similarity_service and cluster_service.
 """
 
 import json
-from collections import Counter
+from collections import Counter, defaultdict
+
+from bsimvis.app.services.tag_taxonomy import tag_body, tag_policy, tag_prefixes
 
 MAX_CLUSTER_NAME_LEN = 40
+DISTRIBUTION_FIELDS = (
+    "yara",
+    "avtype",
+    "filetype",
+    "ccip",
+    "filename",
+    "md5",
+)
 
 
 def default_bin_cluster_name(names_list, avtype_list, yara_list, fallback):
@@ -93,6 +103,72 @@ def build_freq(items, member_count):
         if items
         else []
     )
+
+
+def _values(value):
+    if not value:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _member_tag_values(meta):
+    values = []
+    for field, source in (("tags", "analysis"), ("user_tags", "user")):
+        for tag in _values(meta.get(field)):
+            tag = str(tag).strip()
+            if not tag or not tag_policy(tag, source).aggregate:
+                continue
+            body, detail = tag_body(tag)
+            candidates = set(tag_prefixes(tag))
+            if detail or ":" in body:
+                candidates.add(body)
+            elif source == "user":
+                candidates.add(f"user:{body}")
+            values.extend(
+                (tag_policy(candidate).axis, candidate)
+                for candidate in candidates
+                if tag_policy(candidate).aggregate
+            )
+    return values
+
+
+def cluster_summary(metas, member_count=None, fields=DISTRIBUTION_FIELDS):
+    """Build every distribution stored in one cluster's metadata."""
+    metas = list(metas)
+    member_count = len(metas) if member_count is None else member_count
+    values = collect_member_values(metas)
+    value_lists = dict(
+        zip(
+            ("yara", "avtype", "filetype", "ccip", "filename", "md5"),
+            (values[2], values[3], values[4], values[5], values[0], values[1]),
+        )
+    )
+    result = {
+        f"{field}_distribution": build_freq(value_lists[field], member_count)
+        for field in fields
+    }
+
+    by_axis = defaultdict(list)
+    for meta in metas:
+        by_member = defaultdict(set)
+        for axis, value in _member_tag_values(meta):
+            by_member[axis].add(value)
+        for axis, member_values in by_member.items():
+            by_axis[axis].extend(member_values)
+    result["tag_distribution"] = {
+        axis: build_freq(items, member_count) for axis, items in by_axis.items()
+    }
+    return result
+
+
+def inferred_tag_values(summary):
+    """Top derived tag per axis, kept separate from analyst-evidence tags."""
+    return [
+        f"inferred:{item['value']}"
+        for distribution in (summary.get("tag_distribution") or {}).values()
+        for item in distribution[:1]
+        if item.get("value")
+    ]
 
 
 def function_count_stats(metas):

@@ -256,9 +256,17 @@ MBC_NAMESPACE = "mbc"
 # from the rule's own `category`/`malware`/`family` meta fields instead:
 # `yara:<category>:<family>:<rule_name>`. Most of the 129k-rule rulezet mirror
 # is Defender/MTB signature exports with no structured meta at all (only a
-# `description` string), so `yara:unknown:unknown:<rule_name>` there is the
-# correct, expected id -- not a parsing bug to chase further.
+# `description` string), so `yara:unknown:unknown#<rule_name>` remains the
+# honest fallback when the rule name has no recognised classification prefix.
 YARA_NAMESPACE = "yara"
+YARA_CLASSIFICATIONS = {
+    "anom": "anomaly",
+    "anomaly": "anomaly",
+    "mal": "malware",
+    "malware": "malware",
+    "susp": "suspicious",
+    "suspicious": "suspicious",
+}
 
 # Written by `rulezet_service` from the MISP-style tags it produces for mirrored
 # rules. `misp:` keeps a galaxy's own shape (`misp:tool:cobalt-strike`); a
@@ -782,6 +790,17 @@ def yara_tag(category, family, rule_name, namespace=YARA_NAMESPACE):
     return canonical_tag_id(f"{namespace}:{cat}:{fam}{TAG_DETAIL}{rule_name}")
 
 
+def yara_classification_tag(rule_name):
+    """A recognised rule-name prefix -> `yara:classification:<kind>#<rule>`."""
+    prefix = re.split(r"[_-]", str(rule_name or ""), maxsplit=1)[0].lower()
+    classification = YARA_CLASSIFICATIONS.get(prefix)
+    if not classification:
+        return None
+    return canonical_tag_id(
+        f"{YARA_NAMESPACE}:classification:{classification}{TAG_DETAIL}{rule_name}"
+    )
+
+
 def yara_rule_hits(matches, extra=None):
     """yara-python `Rules.match()` result -> `{file_offset: {tag, ...}}`.
 
@@ -853,6 +872,10 @@ def _match_tag(match):
         parts = str(meta.get("threat_name") or "").split(".")
         if len(parts) == 3:
             category, family = parts[1], parts[2]
+    if not category and not family:
+        classification = yara_classification_tag(match.rule)
+        if classification:
+            return classification
     return yara_tag(category, family, match.rule)
 
 
@@ -1547,9 +1570,22 @@ def demo():
         "yara:ransomware:lockbit#Win32_Ransomware_LockBit"
     )
     assert yara_tag(None, None, "no_meta_rule") == "yara:unknown:unknown#no_meta_rule"
+    assert yara_classification_tag("SUSP_ELF_LNX_UPX_Compressed_File") == (
+        "yara:classification:suspicious#SUSP_ELF_LNX_UPX_Compressed_File"
+    )
+    assert yara_classification_tag("ANOMALY_ELF_thing") == (
+        "yara:classification:anomaly#ANOMALY_ELF_thing"
+    )
+    assert yara_classification_tag("ordinary_rule") is None
     # yarahub-style meta: `family`, no `malware`, no `category`.
     import types
 
+    assert (
+        _match_tag(
+            types.SimpleNamespace(rule="SUSP_ELF_LNX_UPX_Compressed_File", meta={})
+        )
+        == "yara:classification:suspicious#SUSP_ELF_LNX_UPX_Compressed_File"
+    )
     assert (
         _match_tag(
             types.SimpleNamespace(

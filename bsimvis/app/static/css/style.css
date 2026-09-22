@@ -2363,8 +2363,10 @@ html.light-theme .analysis-tag-badge {
 .metadata-axis-table { table-layout:fixed; }
 .metadata-axis-table th, .metadata-axis-table td { overflow-wrap:anywhere; }
 .metadata-axis-table td:first-child { width:46%; min-width:0; }
-.inferred-metadata-table td:first-child { width:15%; }
-.inferred-metadata-table td:nth-child(2) { width:35%; }
+.inferred-metadata-table td:first-child { width:55%; }
+.inferred-metadata-table td:nth-child(2) { width:18%; }
 .metadata-bar { display:inline-block; width:90px; height:6px; margin-right:7px; background:var(--border); border-radius:4px; vertical-align:middle; overflow:hidden; }
 .metadata-bar span { display:block; height:100%; border-radius:inherit; }
 @media (max-width: 760px) { .metadata-axis-body { grid-template-columns:1fr; } .metadata-axis-visual { min-height:120px; } }
+
+.metadata-value-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; flex:none; }

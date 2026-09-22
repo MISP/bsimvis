@@ -134,6 +134,7 @@ window.FileView = {
                 <div class="bsim-tabbar" id="file-view-tabs">
                     <button class="bsim-tab" id="file-tab-btn-files" onclick="FileView.switchTab('files')" style="display: none;">Files</button>
                     <button class="bsim-tab active" id="file-tab-btn-metadata" onclick="FileView.switchTab('metadata')">Metadata (<span id="metadata-count">0</span>)</button>
+                    <button class="bsim-tab" id="file-tab-btn-inferred" onclick="FileView.switchTab('inferred')" style="display:none;">Inferred Metadata (<span id="inferred-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-functions" onclick="FileView.switchTab('functions')">Functions (<span id="functions-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-clusters" onclick="FileView.switchTab('clusters')">Clusters (<span id="cluster-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-extracted_from" onclick="FileView.switchTab('extracted_from')" style="display: none;">Extracted From</button>
@@ -152,19 +153,20 @@ window.FileView = {
 
                 <!-- Metadata Tab Panel (Default Active) -->
                 <div id="file-panel-metadata" class="file-view-panel" style="display: block;">
-                    <div style="display: flex; flex-direction: column; gap: 20px;">
-                        <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; ">
-                            <div id="file-meta-container">
-                                <!-- Reused comparison table layout here -->
-                            </div>
+                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px;">
+                        <div id="file-meta-container">
+                            <!-- Reused comparison table layout here -->
                         </div>
+                    </div>
+                </div>
 
-                        <div class="card" id="inferred-meta-card" style="display: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; ">
-                            <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
-                                <i class="fa-solid fa-wand-magic-sparkles"></i> Inferred Metadata
-                            </div>
-                            <div class="meta-grid" id="inferred-meta" style="display: grid; grid-template-columns: auto 1fr; gap: 10px 15px; font-size: 0.85rem;"></div>
+                <!-- Inferred Metadata Tab Panel -->
+                <div id="file-panel-inferred" class="file-view-panel" style="display: none;">
+                    <div class="card" id="inferred-meta-card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px;">
+                        <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Inferred Metadata
                         </div>
+                        <div id="inferred-meta" style="display:flex; flex-direction:column; gap:10px; font-size:0.85rem;"></div>
                     </div>
                 </div>
 
@@ -580,14 +582,15 @@ window.FileView = {
 
             // Render inferred metadata as the same expandable table used by cluster metadata.
             const inferredCategory = (icon, label, mapObj) => {
-                const rows = Object.entries(mapObj || {}).sort(([, a], [, b]) => (b.percent || 0) - (a.percent || 0)).map(([value, item]) => {
+                const rows = Object.entries(mapObj || {}).sort(([, a], [, b]) => (b.percent || 0) - (a.percent || 0)).map(([value, item], index) => {
                     const confidence = Number(item.percent || 0);
+                    const color = metadataColor({ value }, index);
                     const clusterLink = item.cluster_uuid ? Nav.buildUIUrl(collection, ['files', 'clusters', item.cluster_uuid]) : '';
                     const source = clusterLink ? `<a href="${escapeAttr(clusterLink)}" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(clusterLink))}, event);">${escapeHtml(item.cluster_uuid)}</a>` : '<span class="dim">—</span>';
-                    return `<tr><td>${escapeHtml(label)}</td><td class="mono">${escapeHtml(value)}</td><td class="mono">${confidence}%</td><td>${source}</td><td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td></tr>`;
+                    return `<tr><td><span class="metadata-value-dot" style="background:${escapeAttr(color)}"></span><span class="mono metadata-value-cell">${escapeHtml(value)}</span></td><td class="mono">${confidence}%</td><td>${source}</td><td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td></tr>`;
                 }).join('');
                 if (!rows) return '';
-                return `<details class="metadata-axis"><summary><i class="${icon}"></i> ${escapeHtml(label)} <span class="dim">${Object.keys(mapObj || {}).length} values</span></summary><div class="metadata-axis-table-wrap" style="padding:0 14px 14px;"><table id="inferred-table-${metadataSlug(label)}" class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>Category</th><th>Value</th><th>Confidence</th><th>Source cluster</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
+                return `<details class="metadata-axis"><summary><i class="${icon}"></i> ${escapeHtml(label)} <span class="dim">${Object.keys(mapObj || {}).length} values</span></summary><div class="metadata-axis-table-wrap" style="padding:0 14px 14px;"><table id="inferred-table-${metadataSlug(label)}" class="bin-sim-mc-table metadata-axis-table inferred-metadata-table"><thead><tr><th>Value</th><th>Confidence</th><th>Source cluster</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
             };
 
             const inferredTagCategory = (axis, values) => {
@@ -620,10 +623,11 @@ window.FileView = {
                     const confidence = Number(row.item.percent || 0);
                     const clusterLink = row.item.cluster_uuid ? Nav.buildUIUrl(collection, ['files', 'clusters', row.item.cluster_uuid]) : '';
                     const source = clusterLink ? `<a href="${escapeAttr(clusterLink)}" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(clusterLink))}, event);">${escapeHtml(row.item.cluster_uuid)}</a>` : '<span class="dim">—</span>';
-                    return `<tr data-inferred-parent="${row.parent ? `inferred-${metadataSlug(axis)}-${rows.findIndex(r => r.value === row.parent)}` : ''}" style="${row.depth ? 'display:none;' : ''}"><td>${escapeHtml(axis)}</td><td style="padding-left:${10 + row.depth * 18}px;"><button class="btn-copy" ${row.children.length ? `onclick="toggleInferredTagRow(${escapeAttr(jsString(row.id))}, event)"` : 'style="visibility:hidden;"'}><i class="fa-solid fa-chevron-${row.children.length ? 'right' : 'minus'}"></i></button><span class="mono metadata-value-cell">${escapeHtml(row.value)}</span></td><td class="mono">${confidence}%</td><td>${source}</td><td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(row.value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td></tr>`;
+                    const color = metadataColor({ tag_id: row.value }, 0, 'tag_id');
+                    return `<tr data-inferred-parent="${row.parent ? `inferred-${metadataSlug(axis)}-${rows.findIndex(r => r.value === row.parent)}` : ''}" style="${row.depth ? 'display:none;' : ''}"><td style="padding-left:${10 + row.depth * 18}px;"><button class="btn-copy" ${row.children.length ? `onclick="toggleInferredTagRow(${escapeAttr(jsString(row.id))}, event)"` : 'style="visibility:hidden;"'}><i class="fa-solid fa-chevron-${row.children.length ? 'right' : 'minus'}"></i></button><span class="metadata-value-dot" style="background:${escapeAttr(color)}"></span><span class="mono metadata-value-cell">${escapeHtml(row.value)}</span></td><td class="mono">${confidence}%</td><td>${source}</td><td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(row.value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td></tr>`;
                 }).join('');
                 if (!html) return '';
-                return `<details class="metadata-axis"><summary><i class="fa-solid fa-tags"></i> ${escapeHtml(axis)} <span class="dim">${Object.keys(values || {}).length} values</span></summary><div class="metadata-axis-table-wrap" style="padding:0 14px 14px;"><table id="inferred-table-${metadataSlug(axis)}" class="bin-sim-mc-table metadata-axis-table inferred-metadata-table"><thead><tr><th>Category</th><th>Value</th><th>Confidence</th><th>Source cluster</th><th></th></tr></thead><tbody>${html}</tbody></table></div></details>`;
+                return `<details class="metadata-axis"><summary><i class="fa-solid fa-tags"></i> ${escapeHtml(axis)} <span class="dim">${Object.keys(values || {}).length} values</span></summary><div class="metadata-axis-table-wrap" style="padding:0 14px 14px;"><table id="inferred-table-${metadataSlug(axis)}" class="bin-sim-mc-table metadata-axis-table inferred-metadata-table"><thead><tr><th>Value</th><th>Confidence</th><th>Source cluster</th><th></th></tr></thead><tbody>${html}</tbody></table></div></details>`;
             };
 
             window.toggleInferredTagRow = (id, event) => {
@@ -656,8 +660,10 @@ window.FileView = {
                 const inferredEl = document.getElementById('inferred-meta');
                 inferredEl.innerHTML = inferredHtml;
                 if (window.initMetadataTables) window.initMetadataTables(inferredEl);
-                inferredEl.style.display = 'block';
+                inferredEl.style.display = 'flex';
                 document.getElementById('inferred-meta-card').style.display = 'block';
+                document.getElementById('inferred-count').textContent = inferredEl.querySelectorAll('tbody tr').length;
+                document.getElementById('file-tab-btn-inferred').style.display = 'inline-block';
             }
             // Unique-value counts appended to the filter placeholders
             if (typeof loadFieldCardinalities === 'function') {
@@ -775,7 +781,7 @@ window.FileView = {
     },
 
     applyTabFromHash() {
-        const allowedTabs = ['metadata', 'functions', 'clusters', 'extracted_from', 'files', 'neighbors'];
+        const allowedTabs = ['metadata', 'inferred', 'functions', 'clusters', 'extracted_from', 'files', 'neighbors'];
         let tab = location.hash.slice(1);
 
         const hasChildren = this.file && (this.file.child_count > 0 || this.file.is_container);

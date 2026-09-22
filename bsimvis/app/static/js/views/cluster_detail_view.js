@@ -509,9 +509,10 @@ window.ClusterDetailView = {
             <div style="display:flex; flex-direction:column; gap:14px;">
                 ${this.renderFunctionCountCard(c)}
                 ${cards
-                    ? `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:14px; align-items:start;">${cards}</div>`
+                    ? `<div class="metadata-axis-list">${cards}</div>`
                     : `<div class="dim" style="padding:20px; text-align:center;">No metadata distributions for this cluster.${this.isBinary ? ' A cluster below the configured min_cohesion reports none.' : ''}</div>`}
             </div>`;
+        if (window.initMetadataTables) window.initMetadataTables(panel);
     },
 
     renderFunctionCountCard(c) {

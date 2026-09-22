@@ -534,6 +534,8 @@ function metadataPercent(item) {
     return Number(item.percent || 0);
 }
 
+let metadataTableCounter = 0;
+
 function renderMetadataTable(title, dist, valueKey = 'value') {
     const rows = dist.map((item, i) => {
         const value = item[valueKey] || '';
@@ -547,7 +549,7 @@ function renderMetadataTable(title, dist, valueKey = 'value') {
             <td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td>
         </tr>`;
     }).join('');
-    return `<table class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>${escapeHtml(title)}</th><th>Count</th><th>Coverage</th>${dist.some(x => x.score !== undefined) ? '<th>Cohesion</th>' : ''}<th></th></tr></thead><tbody>${rows}</tbody></table>`;
+    return `<table id="metadata-table-${++metadataTableCounter}" class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>${escapeHtml(title)}</th><th>Count</th><th>Coverage</th>${dist.some(x => x.score !== undefined) ? '<th>Cohesion</th>' : ''}<th></th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderPie(title, icon, dist) {
@@ -609,8 +611,16 @@ function renderTagDist(title, icon, dist) {
         const color = window.TagColor ? TagColor.forTag(item.tag_id) : 'var(--accent)';
         return `<div style="font-size:.72rem;" title="${escapeAttr(item.tag_id)}"><div style="display:flex;justify-content:space-between;gap:8px;"><span class="mono" style="overflow:hidden;text-overflow:ellipsis;">${escapeHtml(item.tag_id)}</span><span class="mono">${coverage.toFixed(0)}%</span></div><div class="metadata-bar" style="width:100%;"><span style="width:${Math.min(100, coverage)}%;background:${escapeAttr(color)}"></span></div></div>`;
     }).join('');
-    return `<details class="metadata-axis" id="${escapeAttr(treeId)}"><summary><i class="${icon}"></i> ${escapeHtml(title)} <span class="dim">${dist.length} namespaces</span></summary><div class="metadata-axis-body"><div class="metadata-axis-visual metadata-axis-bars"><div class="dim" style="font-size:.75rem;">Raw coverage · overlapping tags may exceed 100%</div>${bars}</div><div class="metadata-axis-table-wrap"><table class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>Tag</th><th>Count</th><th>Coverage</th><th>Cohesion</th><th></th></tr></thead><tbody>${body}</tbody></table></div></div></details>`;
+    return `<details class="metadata-axis" id="${escapeAttr(treeId)}"><summary><i class="${icon}"></i> ${escapeHtml(title)} <span class="dim">${dist.length} namespaces</span></summary><div class="metadata-axis-body"><div class="metadata-axis-visual metadata-axis-bars"><div class="dim" style="font-size:.75rem;">Raw coverage · overlapping tags may exceed 100%</div>${bars}</div><div class="metadata-axis-table-wrap"><table id="metadata-table-${++metadataTableCounter}" class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>Tag</th><th>Count</th><th>Coverage</th><th>Cohesion</th><th></th></tr></thead><tbody>${body}</tbody></table></div></div></details>`;
 }
+
+window.initMetadataTables = function (root) {
+    if (!root || !window.TableSelection) return;
+    root.querySelectorAll('table.metadata-axis-table').forEach((table, index) => {
+        if (!table.id) table.id = `metadata-table-${metadataTableCounter + index + 1}`;
+        new window.TableSelection(table.id);
+    });
+};
 
 window.renderTagDist = renderTagDist;
 

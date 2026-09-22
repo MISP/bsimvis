@@ -587,7 +587,7 @@ window.FileView = {
                     return `<tr><td>${escapeHtml(label)}</td><td class="mono">${escapeHtml(value)}</td><td class="mono">${confidence}%</td><td>${source}</td><td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td></tr>`;
                 }).join('');
                 if (!rows) return '';
-                return `<details class="metadata-axis"><summary><i class="${icon}"></i> ${escapeHtml(label)} <span class="dim">${Object.keys(mapObj || {}).length} values</span></summary><div class="metadata-axis-table-wrap" style="padding:0 14px 14px;"><table class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>Category</th><th>Value</th><th>Confidence</th><th>Source cluster</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
+                return `<details class="metadata-axis"><summary><i class="${icon}"></i> ${escapeHtml(label)} <span class="dim">${Object.keys(mapObj || {}).length} values</span></summary><div class="metadata-axis-table-wrap" style="padding:0 14px 14px;"><table id="inferred-table-${metadataSlug(label)}" class="bin-sim-mc-table metadata-axis-table"><thead><tr><th>Category</th><th>Value</th><th>Confidence</th><th>Source cluster</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
             };
 
             const inferredCategories = [
@@ -603,8 +603,10 @@ window.FileView = {
             let inferredHtml = inferredCategories.map(([icon, label, values]) => inferredCategory(icon, label, values)).join('');
             inferredHtml += Object.entries(inferredMeta.tags || {}).sort(([a], [b]) => a.localeCompare(b)).map(([axis, values]) => inferredCategory('fa-solid fa-tags', axis, values)).join('');
             if (inferredHtml) {
-                document.getElementById('inferred-meta').innerHTML = inferredHtml;
-                document.getElementById('inferred-meta').style.display = 'block';
+                const inferredEl = document.getElementById('inferred-meta');
+                inferredEl.innerHTML = inferredHtml;
+                if (window.initMetadataTables) window.initMetadataTables(inferredEl);
+                inferredEl.style.display = 'block';
                 document.getElementById('inferred-meta-card').style.display = 'block';
             }
             // Unique-value counts appended to the filter placeholders

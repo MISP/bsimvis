@@ -2347,7 +2347,8 @@ html.light-theme .analysis-tag-badge {
 }
 
 .metadata-axis { background:var(--card-bg); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
-.metadata-axis + .metadata-axis { margin-top:10px; }
+.metadata-axis-list { display:flex; flex-direction:column; gap:10px; }
+.metadata-axis + .metadata-axis { margin-top:0; }
 .metadata-axis summary { cursor:pointer; list-style:none; padding:12px 14px; display:flex; align-items:center; gap:8px; color:var(--accent); font-size:.8rem; font-weight:600; }
 .metadata-axis summary::-webkit-details-marker { display:none; }
 .metadata-axis summary::before { content:'\f054'; font:900 .65rem 'Font Awesome 6 Free'; color:var(--dim); transition:transform .15s; }

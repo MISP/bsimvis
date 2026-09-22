@@ -11,6 +11,7 @@ from bsimvis.app.services.cluster_utils import (
     cluster_summary,
     collect_member_values,
     default_bin_cluster_name,
+    set_tag_distribution_score,
     function_count_stats,
 )
 from bsimvis.app.services import mem_util, sim_edges
@@ -3080,6 +3081,7 @@ class ClusterService:
             else:
                 cohesion_score = 1.0
 
+            set_tag_distribution_score(summary["tag_distribution"], cohesion_score)
             # Default min_cohesion is set before the function call
             min_cohesion_val = min_cohesion if min_cohesion is not None else 0.5
             rep_file_id = members[0] if members else None

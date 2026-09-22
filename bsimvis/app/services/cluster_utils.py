@@ -105,14 +105,65 @@ def build_freq(items, member_count, limit=5):
     )
 
 
+def build_tag_distribution(by_axis, member_count, limit=10):
+    """Build namespace trees from per-member tag hits."""
+    out = {}
+    for axis, items in by_axis.items():
+        counts = Counter(items)
+        nodes = {}
+        child_ids = defaultdict(set)
+        parent_ids = set()
+        for tag_id in counts:
+            if ":" not in tag_id:
+                continue
+            chain = [p for p in tag_prefixes(tag_id) if p != axis]
+            if tag_id != axis:
+                chain.append(tag_id)
+            parent = None
+            for node_id in chain:
+                node = nodes.setdefault(
+                    node_id,
+                    {
+                        "tag_id": node_id,
+                        "count": counts.get(node_id, 0),
+                        "children": [],
+                    },
+                )
+                if parent is not None and node_id not in child_ids[parent["tag_id"]]:
+                    child_ids[parent["tag_id"]].add(node_id)
+                    parent_ids.add(node_id)
+                    parent["children"].append(node)
+                parent = node
+
+        roots = [node for node_id, node in nodes.items() if node_id not in parent_ids]
+        roots = sorted(roots, key=lambda n: (-n["count"], n["tag_id"]))[:limit]
+
+        def finish(node):
+            node["coverage"] = node["count"] / member_count if member_count else 0.0
+            node["children"] = [finish(child) for child in node["children"]]
+            return node
+
+        out[axis] = [finish(node) for node in roots]
+    return out
+
+
+def set_tag_distribution_score(distribution, score):
+    def visit(nodes):
+        for node in nodes:
+            node["score"] = score
+            visit(node.get("children", []))
+
+    visit([node for nodes in distribution.values() for node in nodes])
+
+
 def _values(value):
     if not value:
         return []
     return value if isinstance(value, list) else [value]
 
-
 def _member_tag_values(meta):
     values = []
+
     for field, source in (("tags", "analysis"), ("user_tags", "user")):
         for tag in _values(meta.get(field)):
             tag = str(tag).strip()
@@ -130,6 +181,39 @@ def _member_tag_values(meta):
                 if tag_policy(candidate).aggregate
             )
     return values
+
+
+def normalize_tag_distribution(distribution, member_count, score=None):
+    """Return the current nested shape, including older stored metadata."""
+    if not distribution:
+        return {}
+    if all(item.get("tag_id") for values in distribution.values() for item in values):
+        set_tag_distribution_score(distribution, score)
+        return distribution
+
+    out = {}
+    for axis, values in distribution.items():
+        exact = {item.get("value"): item for item in values if item.get("value")}
+        nodes = {}
+        parent_ids = set()
+        for tag_id, item in exact.items():
+            chain = [p for p in tag_prefixes(tag_id) if p != axis] + [tag_id]
+            parent = None
+            for node_id in chain:
+                node = nodes.setdefault(node_id, {"tag_id": node_id, "children": []})
+                source = exact.get(node_id, {})
+                node["count"] = source.get("count", item.get("count", 0))
+                node["coverage"] = source.get("percent", item.get("percent", 0)) / 100.0
+                node["score"] = score
+                if parent is not None and node_id not in {
+                    c["tag_id"] for c in parent["children"]
+                }:
+                    parent["children"].append(node)
+                    parent_ids.add(node_id)
+                parent = node
+        roots = [node for tag_id, node in nodes.items() if tag_id not in parent_ids]
+        out[axis] = sorted(roots, key=lambda n: (-n["count"], n["tag_id"]))[:10]
+    return out
 
 
 def cluster_summary(metas, member_count=None, fields=DISTRIBUTION_FIELDS):
@@ -155,20 +239,17 @@ def cluster_summary(metas, member_count=None, fields=DISTRIBUTION_FIELDS):
             by_member[axis].add(value)
         for axis, member_values in by_member.items():
             by_axis[axis].extend(member_values)
-    result["tag_distribution"] = {
-        axis: build_freq(items, member_count, limit=10)
-        for axis, items in by_axis.items()
-    }
+    result["tag_distribution"] = build_tag_distribution(by_axis, member_count)
     return result
 
 
 def inferred_tag_values(summary):
     """Top derived tag per axis, kept separate from analyst-evidence tags."""
     return [
-        f"inferred:{item['value']}"
+        f"inferred:{item['tag_id']}"
         for distribution in (summary.get("tag_distribution") or {}).values()
         for item in distribution[:1]
-        if item.get("value")
+        if item.get("tag_id")
     ]
 
 

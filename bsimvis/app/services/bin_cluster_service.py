@@ -9,6 +9,7 @@ from bsimvis.app.services import sim_edges
 from bsimvis.app.services.cluster_utils import (
     cluster_summary,
     collect_member_values,
+    set_tag_distribution_score,
     default_bin_cluster_name,
     function_count_stats,
     inferred_tag_values,
@@ -567,6 +568,7 @@ class BinClusterService:
                 label, members, sim_prefix, score_key, min_sim, pair_budget
             )
 
+            set_tag_distribution_score(summary["tag_distribution"], cohesion_score)
             sample_members = []
             for file_id in members[:5]:
                 m = all_member_meta.get(file_id, {})
@@ -1871,6 +1873,7 @@ class BinClusterService:
                 cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
             else:
                 cohesion_score = 1.0
+            set_tag_distribution_score(summary["tag_distribution"], cohesion_score)
 
             sample_members = []
             for file_id in members[:5]:

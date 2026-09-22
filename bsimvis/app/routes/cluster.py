@@ -5,6 +5,7 @@ from flask import request
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.cluster_utils import normalize_tag_distribution
 from bsimvis.app.services.index_service import get_pool_id
 from bsimvis.app.services.query_syntax import parse_filter_value
 
@@ -638,7 +639,11 @@ def list_clusters():
                 "parent": child_to_parent.get(str(m.get("cluster_id"))),
                 "sample_members": sample_members,
                 "direct_members": direct_members,
-                "tag_distribution": m.get("tag_distribution", {}),
+                "tag_distribution": normalize_tag_distribution(
+                    m.get("tag_distribution", {}),
+                    m.get("member_count") or 0,
+                    m.get("cohesion_score"),
+                ),
                 "has_children": bool(parent_to_children.get(str(m.get("cluster_id")))),
             }
             results.append(cluster_result)

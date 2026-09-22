@@ -589,5 +589,27 @@ function renderDist(title, icon, dist) {
         </div>
     `;
 }
+function renderTagDist(title, icon, dist) {
+    if (!dist || !dist.length) return '';
+    const row = (item, depth) => {
+        const color = window.TagColor ? TagColor.forTag(item.tag_id) : 'var(--accent)';
+        const score = item.score == null ? '' : `score ${(Number(item.score) * 100).toFixed(0)}%`;
+        const coverage = `coverage ${(Number(item.coverage || 0) * 100).toFixed(0)}%`;
+        return `<div style="margin-left:${depth * 14}px; padding:3px 0; border-bottom:1px solid var(--border);">
+            <div style="display:flex; gap:6px; align-items:center;">
+                <span style="width:8px; height:8px; border-radius:50%; background:${escapeAttr(color)}; flex:none;"></span>
+                <span style="font-family:monospace; overflow-wrap:anywhere;">${escapeHtml(item.tag_id)}</span>
+                <span class="dim" style="margin-left:auto; white-space:nowrap;">${item.count || 0} · ${coverage}${score ? ` · ${score}` : ''}</span>
+            </div>
+            ${(item.children || []).map(child => row(child, depth + 1)).join('')}
+        </div>`;
+    };
+    return `<div style="margin-top:15px; padding:10px; background:var(--border); border:1px solid var(--border); border-radius:6px;">
+        <div style="font-size:0.75rem; color:var(--dim); margin-bottom:8px; display:flex; align-items:center; gap:6px;"><i class="${icon}"></i> ${escapeHtml(title)}</div>
+        ${dist.map(item => row(item, 0)).join('')}
+    </div>`;
+}
+
+window.renderTagDist = renderTagDist;
 
 window.renderDist = renderDist;

@@ -727,11 +727,17 @@ def get_file_details(collection, file_md5):
 
                 for axis, dist in (cm.get("tag_distribution") or {}).items():
                     axis_tags = inferred_meta["tags"].setdefault(axis, {})
-                    for item in dist:
-                        value = item.get("value")
+                    pending = list(dist)
+                    while pending:
+                        item = pending.pop()
+                        pending.extend(item.get("children") or [])
+                        value = item.get("tag_id")
                         if not value:
                             continue
-                        if value not in axis_tags or axis_tags[value]["percent"] < cohesion_pct:
+                        if (
+                            value not in axis_tags
+                            or axis_tags[value]["percent"] < cohesion_pct
+                        ):
                             axis_tags[value] = {
                                 "percent": cohesion_pct,
                                 "cluster_uuid": cm.get("cluster_uuid"),

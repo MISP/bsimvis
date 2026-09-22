@@ -188,13 +188,15 @@ def pool_maintenance(pool_id):
         "binary_similarity",
         "binary_cluster",
     }
+    operation = data.get("operation")
+    if operation not in {"clear", "build", "rebuild", "resplit"}:
+        return {"error": "operation must be clear, build, rebuild, or resplit"}, 400
+    if operation == "resplit":
+        targets.add("binary_similarity")
     if not targets or not targets <= allowed:
         return {"error": "targets must contain supported maintenance targets"}, 400
     if not pool_service.get_pool(pool_id):
         return {"error": "Pool not found"}, 404
-    operation = data.get("operation")
-    if operation not in {"clear", "build", "rebuild"}:
-        return {"error": "operation must be clear, build, or rebuild"}, 400
     if operation in {"clear", "rebuild"}:
         pool_service.clear_pool_targets(pool_id, targets)
     if operation == "clear":
@@ -209,7 +211,10 @@ def pool_maintenance(pool_id):
     if "function_cluster" in targets:
         tasks.append((JobType.CLUSTER_POOL, {"pool_id": pool_id}))
     if "binary_similarity" in targets:
-        tasks.append((JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}))
+        if operation == "resplit":
+            tasks.append((JobType.RESPLIT_BIN_SIM, {"collection": f"global:pool:{pool_id}"}))
+        else:
+            tasks.append((JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}))
     if "binary_cluster" in targets:
         tasks.append((JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}))
     job_id = job_service.create_pipeline(tasks)

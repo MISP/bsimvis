@@ -41,8 +41,10 @@ def maintenance():
 
     if not collection:
         return {"error": "collection is required"}, 400
-    if operation not in {"clear", "build", "rebuild"}:
-        return {"error": "operation must be clear, build, or rebuild"}, 400
+    if operation not in {"clear", "build", "rebuild", "resplit"}:
+        return {"error": "operation must be clear, build, rebuild, or resplit"}, 400
+    if operation == "resplit":
+        targets.add("binary_similarity")
     if not targets or not targets <= _TARGETS:
         return {"error": "targets must contain supported maintenance targets"}, 400
     if address and ("binary_similarity" in targets or "binary_cluster" in targets):
@@ -156,6 +158,13 @@ def maintenance():
                 (
                     JobType.BUILD_BIN_SIM,
                     {**binary_scope, "min_cohesion": data.get("min_cohesion", 0.5)},
+                )
+            )
+        if operation == "resplit":
+            tasks.append(
+                (
+                    JobType.RESPLIT_BIN_SIM,
+                    {"collection": collection, "algo": algo, "md5": binary_files},
                 )
             )
 

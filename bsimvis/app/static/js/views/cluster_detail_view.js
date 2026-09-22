@@ -445,15 +445,22 @@ window.ClusterDetailView = {
                 <div style="font-size:1.1rem; font-weight:bold;">${value}</div>
             </div>`;
 
-        const pct = v => (v === null || v === undefined) ? '---' : (Number(v) * 100).toFixed(1) + '%';
-
+        const axisKey = { overall: 'score', code: 'score_code', library: 'score_library', content: 'score_content' }[this.axis] || 'score';
+        const scoreType = (window.BinSimScoreTypes && window.BinSimScoreTypes[axisKey]) || { color: 'var(--accent)' };
         return `
+        <style>
+            .cluster-axis-score-card { width:fit-content; min-width:250px; margin-top:16px; padding:12px 16px; border:1px solid color-mix(in srgb, var(--cluster-score-color) 45%, var(--border)); border-left:4px solid var(--cluster-score-color); border-radius:7px; background:color-mix(in srgb, var(--cluster-score-color) 10%, var(--card-bg)); }
+            .cluster-axis-score-card > div > div:first-child { gap:10px !important; }
+            .cluster-axis-score-card > div > div:first-child span:first-of-type { font-size:0.9rem !important; }
+            .cluster-axis-score-card > div > div:first-child span:last-of-type { font-size:2rem !important; }
+        </style>
         <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
             <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                 <i class="fa-solid fa-bullseye" style="color:var(--accent);"></i>
                 <span style="font-size:1.2rem; font-weight:bold;">${escapeHtml(self.cluster_name || `Cluster #${self.cluster_id}`)}</span>
-                <span class="badge">${this.isBinary ? (this.axis === 'overall' ? 'binary' : `binary (${this.axis})`) : 'function'}</span>
+                <span class="badge">${this.isBinary ? this.axis : 'function'}</span>
                 ${EntityRenderer.renderTag(this.isBinary ? 'bin_cluster' : 'cluster', self.tag_id || self.cluster_id, [], self.user_tags || [])}
+                <span style="margin-left:auto;">${this.renderMemberListLink(self)}</span>
             </div>
             <div class="mono dim" style="font-size:0.72rem; margin-top:6px;">
                 ${escapeHtml(self.cluster_uuid || '')}
@@ -461,14 +468,11 @@ window.ClusterDetailView = {
             </div>
             <div style="display:flex; gap:26px; flex-wrap:wrap; margin-top:14px;">
                 ${stat('Members', Number(self.count || 0).toLocaleString())}
-                ${stat('Cohesion', pct(self.cohesion_score))}
                 ${stat('Stability', Number(self.avg_stability || 0).toFixed(2))}
                 ${stat('Avg features', Number(self.avg_features || 0).toFixed(0))}
                 ${stat('Cluster ID', escapeHtml(String(self.cluster_id)))}
             </div>
-            <div style="margin-top:14px;">
-                ${this.renderMemberListLink(self)}
-            </div>
+            ${this.isBinary ? `<div class="cluster-axis-score-card" style="--cluster-score-color:${scoreType.color};">${binSimScoreCards({ [axisKey]: self.cohesion_score }, axisKey)}</div>` : ''}
         </div>`;
     },
 
@@ -548,9 +552,12 @@ window.ClusterDetailView = {
         const segs = this.isBinary ? ['files'] : ['functions'];
         const key = this.isBinary ? 'bin_cluster_uuid' : 'cluster_uuid';
         const url = `${Nav.buildUIUrl(col, segs)}?${key}=${encodeURIComponent(self.cluster_uuid)}`;
-        return `<a href="${escapeAttr(url)}" class="ui-button" onclick="Nav.openPath(this.href, event)">
-            <i class="fa-solid fa-list"></i> Open in ${this.isBinary ? 'file' : 'function'} search
-        </a>`;
+        return UI.Button.render({
+            className: 'btn-code-action',
+            icon: 'fa-solid fa-magnifying-glass',
+            label: `Open in ${this.isBinary ? 'file' : 'function'} search`,
+            onClick: `Nav.openPath(${jsString(url)}, event)`,
+        });
     },
 
     async toggleGroup(uuid) {

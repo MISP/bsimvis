@@ -65,10 +65,42 @@ any of that.
 3. **Writers are named in the table, not in the call sites.** A namespace
    declares which producers may write it. `analysis`, `user`, `import`,
    `rulezet`, `fid`.
-4. **An unknown namespace is not rejected.** It is accepted, indexed, kept out
-   of the vocabulary listing, and lands on the `user` axis — which is what
-   `DEFAULT_AXIS` already does. Rejecting it would lose data; the existing
-   `misp:` handling makes the same choice for the same reason.
+4. **`user` is provenance, not a semantic namespace.** `user_tags` already
+   records that a human or LLM wrote a value. New bare user values therefore
+   stay bare (`reviewed`, not `user:reviewed`) and use the user axis only as a
+   source-aware fallback. Do not add `human:`, `analyst:` or another writer
+   namespace.
+5. **An unknown namespace is not rejected.** It is accepted and indexed, but
+   gets the neutral/default policy until a namespace policy is added. Unknown
+   values must not be silently rewritten as `user:<value>` merely because their
+   producer is a user. Rejecting them would lose data; treating them as user
+   semantics would confuse provenance with meaning.
+
+### The `user:` compatibility rule
+
+`user:foo` is a legacy spelling of a bare user value, not a namespace to emit
+for new data. Reads and filters continue to accept it. Display may strip the
+prefix, and a later migration may convert it to `foo`, but no blind rewrite is
+part of Plan B because a collection can contain both static `foo` and user
+`user:foo` values.
+
+The distinction must survive places that currently merge `tags` and
+`user_tags` (notably binary-similarity scoring):
+
+```text
+tags:      ["yara:trojan:mirai"]
+user_tags: ["reviewed", "category:network:c2"]
+
+yara:trojan:mirai   -> yara axis
+reviewed            -> user axis (bare-value fallback from user_tags)
+category:network:c2 -> category axis
+```
+
+The minimal implementation is to preserve the source field while merging tag
+values for axis/scoring decisions. A recognized namespace wins; a bare value
+from `user_tags` uses the user axis. The stored fields remain the provenance
+boundary, and a user-written namespaced value is still user-written even when
+it participates in another semantic axis.
 
 ## Changes
 
@@ -86,7 +118,8 @@ NAMESPACE_POLICY = {
     "mitre":     Policy(axis="mitre",    index=True,  propagate_func=False, vocabulary=True,  aggregate=True,  writers=("analysis",)),
     "av":        Policy(axis="family",   index=True,  propagate_func=False, vocabulary=True,  aggregate=True,  writers=("import", "analysis")),
     "ip":        Policy(axis="ioc",      index=True,  propagate_func=False, vocabulary=False, aggregate=False, writers=("import", "analysis", "user")),
-    "user":      Policy(axis="user",     index=True,  propagate_func=False, vocabulary=True,  aggregate=True,  writers=("user",)),
+    # No `user` namespace row: bare values from user_tags use the source-aware
+    # fallback axis. Keep a read-only compatibility alias for legacy user: ids.
     ...
 }
 ```

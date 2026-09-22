@@ -89,6 +89,7 @@ WORKER_TTL = 60
 # that. Unmeasured types get a modest default and calibrate themselves after
 # one run.
 MEM_PEAK_KEY = "jobs:mem:peak"  # HASH jtype -> largest RSS observed, bytes
+MEM_PEAK_META_KEY = "jobs:mem:peak:meta"  # HASH jtype -> JSON meta
 MEM_RESERVED_KEY = "jobs:mem:reserved"  # HASH job_id -> bytes reserved
 MEM_USED_KEY = "jobs:mem:used"  # INT sum of live reservations
 MEM_DEFAULT_COST = 512 * 1024**2
@@ -1025,13 +1026,16 @@ class JobService:
             pass
         return 8 * 1024**3
 
-    def record_job_peak(self, jtype, peak_bytes):
+    def record_job_peak(self, jtype, peak_bytes, job_id=None, collection_id=None):
         """Remembers the largest RSS ever seen for a job type."""
         if not jtype or not peak_bytes:
             return
         prev = safe_int(self.r.hget(MEM_PEAK_KEY, jtype))
         if peak_bytes > prev:
             self.r.hset(MEM_PEAK_KEY, jtype, int(peak_bytes))
+            if job_id:
+                meta = {"job_id": job_id, "collection_id": collection_id}
+                self.r.hset(MEM_PEAK_META_KEY, jtype, json.dumps(meta))
 
     def job_cost(self, jtype):
         """Measured peak for this job type, or a default until one exists."""

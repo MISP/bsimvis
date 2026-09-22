@@ -16,8 +16,13 @@ prints the cgroup's memory.peak on every worker exit, including OOM kills.
 """
 
 import sys
-
-from bsimvis.app.services.job_service import JobService, MEM_PEAK_KEY, MEM_USED_KEY
+import json
+from bsimvis.app.services.job_service import (
+    JobService,
+    MEM_PEAK_KEY,
+    MEM_USED_KEY,
+    MEM_PEAK_META_KEY,
+)
 
 
 def gib(n):
@@ -32,6 +37,16 @@ def main():
         (k.decode() if isinstance(k, bytes) else k): int(v) for k, v in peaks.items()
     }
 
+    meta_raw = svc.r.hgetall(MEM_PEAK_META_KEY) or {}
+    meta = {}
+    for k, v in meta_raw.items():
+        k_str = k.decode() if isinstance(k, bytes) else k
+        v_str = v.decode() if isinstance(v, bytes) else v
+        try:
+            meta[k_str] = json.loads(v_str)
+        except Exception:
+            pass
+
     print(f"fleet memory budget : {gib(budget)}")
     print(f"live reservations   : {gib(svc.r.get(MEM_USED_KEY) or 0)}")
     print(f"workers alive       : {svc.count_active_workers()}")
@@ -41,12 +56,21 @@ def main():
         print("No measurements yet. Run some jobs; every completed job records one.")
         return 0
 
-    print(f"{'job type':<28} {'measured peak':>14}   share of budget")
-    print("-" * 64)
+    print(
+        f"{'job type':<28} {'measured peak':>14}   {'share':>7}   {'collection/pool':<20}   job UUID"
+    )
+    print("-" * 115)
     for jtype, peak in sorted(peaks.items(), key=lambda kv: -kv[1]):
         share = peak / budget * 100 if budget else 0
         flag = "  <-- exceeds budget alone" if peak > budget else ""
-        print(f"{jtype:<28} {gib(peak):>14}   {share:5.1f}%{flag}")
+
+        m = meta.get(jtype, {})
+        job_id = m.get("job_id", "")
+        coll_id = m.get("collection_id", "")
+
+        print(
+            f"{jtype:<28} {gib(peak):>14}   {share:6.1f}%   {coll_id:<20}   {job_id}{flag}"
+        )
     return 0
 
 

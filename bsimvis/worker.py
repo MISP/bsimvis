@@ -443,7 +443,8 @@ class Worker:
                 peak = max(_current_rss(), self._job_peak_rss)
                 if peak:
                     try:
-                        self.job_service.record_job_peak(jtype, peak)
+                        coll_id = payload.get("collection") or payload.get("pool")
+                        self.job_service.record_job_peak(jtype, peak, job_id, coll_id)
                     except Exception as e:
                         logging.warning(f"[!] Could not record memory peak: {e}")
                     logging.info(f"[#] Job {job_id} peak RSS {peak / 1024**3:.2f} GiB")

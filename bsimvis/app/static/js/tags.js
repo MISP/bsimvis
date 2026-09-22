@@ -644,7 +644,7 @@ window.moveClusterCardTooltip = function(e) {
     }
 };
 
-window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null) => {
+window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null, options = {}) => {
     if (!clusters || clusters.length === 0) return '';
 
     // No client-side cohesion re-filter here: the server already applied
@@ -675,9 +675,9 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null) => 
             const axisColor = (types[axisKey] || {}).color || color;
             // Cohesion 0→1 drives color strength: faded = uncertain, vivid = tight cluster
             const coh = Math.max(0, Math.min(1, c.cohesion_score || 0));
-            const borderAlpha = Math.round(10 + coh * 40);   // 10%→50%
-            const bgAlpha     = Math.round(3  + coh * 17);   // 3%→20%
-            const textOpacity = (0.35 + coh * 0.65).toFixed(2); // 0.35→1.0
+            const borderAlpha = options.fullAxisColor ? 50 : Math.round(10 + coh * 40);
+            const bgAlpha = options.fullAxisColor ? 20 : Math.round(3 + coh * 17);
+            const textOpacity = options.fullAxisColor ? 1 : (0.35 + coh * 0.65).toFixed(2);
             return `
             <span class="${cardClass}"
                   data-filter-value="${escapeAttr(uuid)}"
@@ -687,7 +687,7 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null) => 
                   onclick="openCluster(${escapeAttr(jsString(uuid))}, ${isBinary}, event, ${isBinary ? escapeAttr(jsString(c.axis)) : 'null'})"
                   style="border-color:${tagAlpha(axisColor, borderAlpha)}; color:${axisColor}; background:${tagAlpha(axisColor, bgAlpha)}; opacity:${textOpacity}; align-items:center; gap:4px; padding:2px 6px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;" title="${escapeAttr(name)} (cohesion: ${coh.toFixed(2)})">
                 <i class="${escapeHtml(axisIcon)}" style="font-size:0.6rem;"></i>
-                <span style="font-family:monospace; font-size:0.65rem;">${Number(c.member_count || 0)}</span>
+                <span style="font-family:monospace; font-size:0.65rem;">${options.showUuid ? escapeHtml(uuid) : Number(c.member_count || 0)}</span>
             </span>`;
         }
 

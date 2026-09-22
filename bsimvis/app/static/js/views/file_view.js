@@ -14,6 +14,7 @@ window.FileView = {
     sortState: { col: 'function_name', dir: 1 },
     funcClusters: {},
     funcPage: { total: null, loading: false, reqId: 0 },
+    clusterFilters: { uuid: '', q: '', minSize: '', minStability: '', minCohesion: '' },
     FUNC_PAGE_SIZE: 100,
 
     async init(params, containerId) {
@@ -22,16 +23,21 @@ window.FileView = {
         this.functions = [];
         this.clusters = {};
         this.funcClusters = {};
+        this.clusterFilters = { uuid: '', q: '', minSize: '', minStability: '', minCohesion: '' };
         this.file = null;
         this.funcPage = { total: null, loading: false, reqId: 0 };
         this.functionsLoaded = false;
         this.neighborsLoaded = false;
         this.sortState = { col: 'function_name', dir: 1 };
-        this.fvAxis = '';
+        this.fvScoreAxes = new Set([window.BINSIM_DEFAULT_AXIS || "code"]);
+        this.fvTagAxes = new Set();
         this.fvSelectedTag = null;
         this.fvOpen = new Set();
-        this.fvGroupBy = 'auto';
+        this.fvGroupBy = "auto";
         this.fvTagIndex = null;
+        this.metadataOverlay = false;
+        this.metadataThreshold = 70;
+        this.activeTab = "metadata";
 
         const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
@@ -140,9 +146,7 @@ window.FileView = {
                     <button class="bsim-tab" id="file-tab-btn-extracted_from" onclick="FileView.switchTab('extracted_from')" style="display: none;">Extracted From</button>
                     <button class="bsim-tab" id="file-tab-btn-neighbors" onclick="FileView.switchTab('neighbors')">Similar<span id="nbr-count-wrap" style="display:none;"> (<span id="nbr-count">0</span>)</span></button>
                 </div>
-                <div id="file-axis-selector" style="display:flex; align-items:center; gap:10px; padding:10px 0 14px;">
-                    <span style="font-size:0.75rem; color:var(--meta-text-muted); text-transform:uppercase; letter-spacing:0.5px;">Axis</span>
-                </div>
+                <div id="file-axis-selector" style="padding:10px 0 14px;"></div>
 
                 <!-- Files Tab Panel -->
                 <div id="file-panel-files" class="file-view-panel" style="display: none;">
@@ -157,6 +161,10 @@ window.FileView = {
                 <!-- Metadata Tab Panel (Default Active) -->
                 <div id="file-panel-metadata" class="file-view-panel" style="display: block;">
                     <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px;">
+                        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
+                            <label style="font-size:0.8rem; color:var(--subtle);"><input type="checkbox" onchange="FileView.setMetadataOverlay(this.checked)"> Overlay inferred metadata</label>
+                            <label style="font-size:0.8rem; color:var(--subtle);">Minimum confidence <input type="number" value="70" min="0" max="100" step="1" oninput="FileView.setMetadataThreshold(this.value)" style="width:58px;"></label>
+                        </div>
                         <div id="file-meta-container">
                             <!-- Reused comparison table layout here -->
                         </div>
@@ -254,7 +262,7 @@ window.FileView = {
                                 <input type="hidden" id="nbr-scope" value="collection">
                                 <div id="nbr-scope-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
                             </div>
-                            <div class="home-card" style="padding:16px; min-width:300px;">
+                            <div id="nbr-score-card" class="home-card" style="padding:16px; min-width:300px;">
                                 <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Scoring Metric</h3>
                                 <input type="hidden" id="nbr-score-type" value="${window.BINSIM_DEFAULT_SORT || 'score'}">
                                 <div id="nbr-score-type-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
@@ -333,7 +341,8 @@ window.FileView = {
             if (data.error) throw new Error(data.error);
 
             document.getElementById('file-view-loader').style.display = 'none';
-            document.getElementById('file-view-content').style.display = 'block';
+            document.getElementById("file-view-content").style.display = "block";
+            this.renderScoreMetricCard();
 
             const file = data.file;
             this.clusters = data.bin_cluster_map || {};
@@ -485,114 +494,112 @@ window.FileView = {
                 </table>
             `;
 
+            this.renderFileMetadata = () => {
+                const target = document.getElementById("file-meta-container");
+                if (!target) return;
+                const overlay = this.metadataOverlay;
+                const axes = [...this.fvScoreAxes];
+                const inferredKeys = {
+                    "File Name": "filename", "MD5": "md5", "Batch UUID": "batch_uuid",
+                    "Language": "architecture", "AV Type": "avtype", "File Type": "filetype",
+                    "Yara": "yara", "CC IP": "ccip", "Executable Format": "executable_format"
+                };
+                const bestInference = (key) => axes.reduce((best, axis) => {
+                    for (const [value, item] of Object.entries((inferredMeta[axis] || {})[key] || {})) {
+                        if (!best || Number(item.percent || 0) > Number(best.item.percent || 0)) best = { value, item };
+                    }
+                    return best;
+                }, null);
+                const source = (item) => {
+                    if (!item || !item.cluster_uuid) return "";
+                    const cluster = { ...(this.clusters[item.cluster_uuid] || {}), cluster_uuid: item.cluster_uuid };
+                    return window.EntityRenderer
+                        ? window.EntityRenderer.renderClusterCard([cluster], true, null, { showUuid: true })
+                        : `<span class="mono">${escapeHtml(item.cluster_uuid)}</span>`;
+                };
+                let rendered = "";
+                for (const [cat, fields] of categories) {
+                    rendered += `<tr><td class="bin-sim-mc-cat" colspan="${overlay ? 3 : 2}">${escapeHtml(cat)}</td></tr>`;
+                    for (const [label, value] of fields) {
+                        const inferred = overlay ? bestInference(inferredKeys[label]) : null;
+                        const inferredHtml = inferred && Number(inferred.item.percent || 0) >= this.metadataThreshold
+                            ? `${fmt(inferred.value)} <span class="mono dim">${Number(inferred.item.percent || 0)}%</span>${source(inferred.item)}`
+                            : `<span class="dim">—</span>`;
+                        rendered += `<tr><td class="bin-sim-mc-label" style="display:flex; align-items:center; gap:8px;"><i class="${iconMap[label] || "fa-solid fa-circle-info"}" style="width:14px; text-align:center; color:var(--dim); opacity:0.8;"></i>${escapeHtml(label)}</td><td>${fmt(value)}</td>${overlay ? `<td>${inferredHtml}</td>` : ""}</tr>`;
+                    }
+                }
+                target.innerHTML = `<table class="bin-sim-mc-table"><thead><tr><th>Field</th><th>Value</th>${overlay ? "<th>Inferred (confidence)</th>" : ""}</tr></thead><tbody>${rendered}</tbody></table>`;
+            };
+            this.renderFileMetadata();
+
             // Export render function so dashboard pills can trigger it
             window.renderFileClustersTab = () => {
                 const binClusters = file.bin_clusters || {};
                 const isArray = Array.isArray(binClusters); // Backward compat
-                
-                // Read active axis from the pill state or URL
-                let activeAxis = document.getElementById('bsim-score-type') ? document.getElementById('bsim-score-type').value : (new URLSearchParams(window.location.search).get('axis') || window.BINSIM_DEFAULT_AXIS || 'code');
-                if (activeAxis.startsWith('score_')) activeAxis = activeAxis.replace('score_', '');
-                if (activeAxis === 'score') activeAxis = 'overall';
-
-                const bst = window.BinSimScoreTypes || {
-                    score: { label: 'Overall', icon: 'fa-solid fa-layer-group', color: 'var(--success)' },
-                    score_code: { label: 'Code', icon: 'fa-solid fa-code', color: 'var(--info, #3b82f6)' },
-                    score_library: { label: 'Library', icon: 'fa-solid fa-cubes', color: 'var(--warning, #d97706)' },
-                    score_content: { label: 'Content', icon: 'fa-solid fa-file-image', color: 'var(--accent, #9333ea)' }
-                };
-                
-                // Mock URL params for the pill generators
-                const mockParams = new URLSearchParams();
-                mockParams.set('axis', activeAxis);
-                mockParams.set('node_type', file.is_container ? 'container' : 'file'); // lock to file's actual type
-                
-                const actionsHtml = `
-                    <div style="display:flex; flex-direction:column; gap:12px;">
-                        <div style="display:flex; gap:16px; align-items:center; opacity: 0.7; pointer-events: none;">
-                            <div style="font-size:0.75rem; color:var(--meta-text-muted); text-transform:uppercase; letter-spacing:0.5px; width:80px;">Node Type</div>
-                            ${binSimNodeTypeTagsHtml(mockParams)}
-                        </div>
-                    </div>
-                `;
-                
-                let containerHtml = '<div id="file-cluster-hero-container"></div><div id="file-cluster-chips-container" style="padding: 24px;"></div>';
-                document.getElementById('cluster-list').innerHTML = containerHtml;
-                
-                const heroContainer = document.getElementById('file-cluster-hero-container');
-                renderHeroHeader(heroContainer, 'file-clusters-hero', 'Binary Clusters group structurally identical files into a single family. Select an axis to explore different types of similarity for this file.', actionsHtml);
-
-                // Render the chips for the active axis
-                const cids = isArray ? binClusters : (binClusters[activeAxis] || []);
+                const activeAxes = [...this.fvScoreAxes];
+                const activeAxis = activeAxes[0] || "overall";
+                const cids = isArray ? binClusters : [...new Set(activeAxes.flatMap(axis => binClusters[axis] || []))];
                 document.getElementById('cluster-count').innerText = cids.length;
-                
-                let chipsHtml = '';
-                if (cids.length === 0) {
-                    chipsHtml = '<div class="dim" style="text-align:center; padding: 40px;">This binary does not belong to any clusters on this axis.</div>';
-                } else {
-                    chipsHtml = '<div style="display:flex; flex-wrap:wrap; gap:12px;">';
-                    cids.sort((a, b) => {
-                        const cmA = this.clusters[a] || {};
-                        const cmB = this.clusters[b] || {};
-                        return (cmB.cohesion_score || 0) - (cmA.cohesion_score || 0);
-                    });
+                const filters = this.clusterFilters;
+                const rows = cids.map(cid => {
+                    const cluster = { ...(this.clusters[cid] || {}), cluster_uuid: (this.clusters[cid] || {}).cluster_uuid || cid };
+                    const axes = isArray ? [activeAxis] : activeAxes.filter(axis => (binClusters[axis] || []).includes(cid));
+                    return { cluster, axes, size: Number(cluster.size || cluster.member_count || cluster.members || cluster.count || 0) };
+                }).filter(({ cluster, axes, size }) => {
+                    const needle = filters.q.trim().toLowerCase();
+                    const haystack = [cluster.cluster_uuid, cluster.cluster_id, cluster.cluster_name, ...axes].join(' ').toLowerCase();
+                    return (!filters.uuid || String(cluster.cluster_uuid).toLowerCase().includes(filters.uuid.trim().toLowerCase()))
+                        && (!needle || haystack.includes(needle))
+                        && (!filters.minSize || size >= Number(filters.minSize))
+                        && (!filters.minStability || Number(cluster.avg_stability || 0) >= Number(filters.minStability))
+                        && (!filters.minCohesion || Number(cluster.cohesion_score || 0) >= Number(filters.minCohesion));
+                }).sort((a, b) => Number(b.cluster.cohesion_score || 0) - Number(a.cluster.cohesion_score || 0));
 
-                    cids.forEach(cid => {
-                        const cm = this.clusters[cid];
-                        if (!cm) return;
-                        
-                        const name = cm.cluster_name || `Cluster ${cid}`;
-                        const size = cm.size || cm.member_count || cm.members || cm.count || 0;
-                        const cohesionScore = cm.cohesion_score || 0;
-                        const cohesionColor = scoreColor(cohesionScore);
-                        const stability = cm.avg_stability || 0;
-                        const features = cm.avg_features || 0;
-                        
-                        // The chip names the cluster, so it opens the cluster.
-                        // openClusterFiles() below is still the way to the
-                        // filtered file list.
-                        let clusterUrl = Nav.buildUIUrl(collection, ['files', 'clusters', cm.cluster_uuid]);
-                        if (activeAxis && activeAxis !== 'overall') {
-                            clusterUrl += '?axis=' + encodeURIComponent(activeAxis);
-                        }
+                const filterInput = (key, placeholder, attrs = '') => `<input ${attrs} placeholder="${placeholder}" value="${escapeAttr(filters[key])}" oninput="FileView.clusterFilters.${key}=this.value; window.renderFileClustersTab()">`;
+                const body = rows.map(({ cluster, axes, size }) => {
+                    const name = cluster.cluster_name || `Cluster ${cluster.cluster_uuid}`;
+                    let clusterUrl = Nav.buildUIUrl(collection, ['files', 'clusters', cluster.cluster_uuid]);
+                    if (activeAxis !== 'overall') clusterUrl += `?axis=${encodeURIComponent(activeAxis)}`;
+                    const cohesion = Math.max(0, Math.min(1, Number(cluster.cohesion_score || 0)));
+                    const cohesionColor = `hsl(${Math.round(cohesion * 120)}, 78%, 58%)`;
+                    const card = window.EntityRenderer
+                        ? window.EntityRenderer.renderClusterCard([{ ...cluster, axis: axes[0] || activeAxis }], true, null, { showUuid: true, fullAxisColor: true })
+                        : `<span class="mono">${escapeHtml(cluster.cluster_uuid)}</span>`;
+                    return `<tr data-id="${escapeAttr(cluster.cluster_uuid)}" data-entity-data='${escapeAttr(JSON.stringify({ ...cluster, id: cluster.cluster_uuid, collection, node_type: file.is_container ? 'container' : 'file' }))}' oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
+                        <td>${card}</td>
+                        <td><a href="${escapeAttr(clusterUrl)}" onclick="Nav.openPath(this.href, event)" style="color:var(--text); font-weight:600; text-decoration:none;">${escapeHtml(name)}</a><div class="dim mono" style="font-size:0.65rem;">${escapeHtml(axes.join(', ') || activeAxis)}</div></td>
+                        <td class="mono">${size.toLocaleString()}</td>
+                        <td class="mono">${Number(cluster.avg_stability || 0).toFixed(2)}</td>
+                        <td><div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; min-width:60px; height:5px; background:var(--border); border-radius:3px; overflow:hidden;"><div style="width:${(cohesion * 100).toFixed(0)}%; height:100%; background:${cohesionColor};"></div></div><span class="mono" style="color:${cohesionColor}; font-weight:600;">${(cohesion * 100).toFixed(0)}%</span></div></td>
+                    </tr>`;
+                }).join('') || '<tr><td colspan="5" style="text-align:center; color:var(--dim); padding:40px;">No clusters match these filters.</td></tr>';
 
-                        const clusterData = { id: cm.cluster_uuid, cluster_id: cm.cluster_uuid, cluster_uuid: cm.cluster_uuid, uuid: cm.cluster_uuid, cluster_name: name, collection, node_type: file.is_container ? 'container' : 'file' };
-                        chipsHtml += `
-                            <span onclick="Nav.openPath(${escapeAttr(jsString(clusterUrl))}, event)" class="cluster-chip"
-                               data-entity-data="${escapeAttr(JSON.stringify(clusterData))}"
-                               oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)"
-                               onmouseenter="if(window.showBinClusterTableTooltip) showBinClusterTableTooltip(event, '${cm.cluster_uuid}', '${escapeAttr(jsString(name))}', ${size}, ${stability}, ${cohesionScore}, ${features}, null, '${file.is_container ? 'container' : 'file'}', '${activeAxis}')" 
-                               onmouseleave="if(window.hideBinClusterTableTooltip) hideBinClusterTableTooltip()"
-                               onmousemove="if(window.moveBinClusterTableTooltip) moveBinClusterTableTooltip(event)"
-                               style="display:flex; align-items:center; gap:8px; padding:6px 12px; background:var(--hover); border:1px solid var(--border); border-left:3px solid ${cohesionColor}; border-radius:6px; text-decoration:none; color:var(--text); transition:background 0.2s;">
-                               <span style="font-weight:600; font-size:0.85rem; max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</span>
-                               <span style="display:inline-flex; align-items:center; gap:4px; font-size:0.7rem; color:var(--dim); background:var(--bg); padding:2px 6px; border-radius:10px;"><i class="fa-solid fa-users"></i> ${size}</span>
-                            </span>
-                        `;
-                    });
-                    chipsHtml += '</div>';
-                }
-                
-                document.getElementById('file-cluster-chips-container').innerHTML = chipsHtml;
-                
-                // Sync UI state
-                if (window.syncBinSimTags) window.syncBinSimTags(mockParams);
+                document.getElementById('cluster-list').innerHTML = `<div style="overflow-x:auto;"><table id="file-cluster-table" class="file-func-table"><thead>
+                    <tr><th>Cluster</th><th>Name / axis</th><th>Members</th><th>Stability</th><th>Cohesion</th></tr>
+                    <tr class="filter-row"><th>${filterInput('uuid', 'UUID...')}</th><th>${filterInput('q', 'Name or axis...')}</th><th>${filterInput('minSize', 'Min...', 'type="number" min="0"')}</th><th>${filterInput('minStability', 'Min...', 'type="number" min="0" max="1" step="0.01"')}</th><th>${filterInput('minCohesion', 'Min...', 'type="number" min="0" max="1" step="0.01"')}</th></tr>
+                </thead><tbody>${body}</tbody></table></div>`;
+                if (window.TableSelection) new window.TableSelection('file-cluster-table');
             };
             
-            const axisParams = new URLSearchParams();
-            axisParams.set("sort", "score_" + (window.BINSIM_DEFAULT_AXIS || "code"));
-            document.getElementById("file-axis-selector").innerHTML = binSimScoreTypeTagsHtml(axisParams);
+            this.renderScoreMetricCard();
 
             // Initial render
             window.renderFileClustersTab();
 
             // Render inferred metadata as the same expandable table used by cluster metadata.
+            const inferredClusterCard = (uuid) => {
+                if (!uuid) return `<span class="dim">—</span>`;
+                const cluster = { ...(this.clusters[uuid] || {}), cluster_uuid: uuid };
+                return window.EntityRenderer
+                    ? window.EntityRenderer.renderClusterCard([cluster], true, null, { showUuid: true })
+                    : `<span class="mono">${escapeHtml(uuid)}</span>`;
+            };
+
             const inferredCategory = (icon, label, mapObj) => {
                 const rows = Object.entries(mapObj || {}).sort(([, a], [, b]) => (b.percent || 0) - (a.percent || 0)).map(([value, item], index) => {
                     const confidence = Number(item.percent || 0);
                     const color = metadataColor({ value }, index);
-                    const clusterLink = item.cluster_uuid ? Nav.buildUIUrl(collection, ['files', 'clusters', item.cluster_uuid]) : '';
-                    const source = clusterLink ? `<span style="color:var(--accent); cursor:pointer;" onclick="Nav.openPath(${escapeAttr(jsString(clusterLink))}, event)" data-entity-data="${escapeAttr(JSON.stringify({ id: item.cluster_uuid, cluster_id: item.cluster_uuid, cluster_uuid: item.cluster_uuid, uuid: item.cluster_uuid, cluster_name: item.cluster_uuid, collection, node_type: 'file' }))}" oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">${escapeHtml(item.cluster_uuid)}</span>` : '<span class="dim">—</span>';
+                    const source = inferredClusterCard(item.cluster_uuid);
                     return `<tr><td><span class="metadata-value-dot" style="background:${escapeAttr(color)}"></span><span class="mono metadata-value-cell">${escapeHtml(value)}</span></td><td class="mono">${confidence}%</td><td>${source}</td><td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td></tr>`;
                 }).join('');
                 if (!rows) return '';
@@ -627,8 +634,7 @@ window.FileView = {
                 Array.from(nodes.keys()).filter(id => !nodes.get(id).parent).forEach(id => walk(id, 0));
                 const html = rows.map(row => {
                     const confidence = Number(row.item.percent || 0);
-                    const clusterLink = row.item.cluster_uuid ? Nav.buildUIUrl(collection, ['files', 'clusters', row.item.cluster_uuid]) : '';
-                    const source = clusterLink ? `<span style="color:var(--accent); cursor:pointer;" onclick="Nav.openPath(${escapeAttr(jsString(clusterLink))}, event)" data-entity-data="${escapeAttr(JSON.stringify({ id: row.item.cluster_uuid, cluster_id: row.item.cluster_uuid, cluster_uuid: row.item.cluster_uuid, uuid: row.item.cluster_uuid, cluster_name: row.item.cluster_uuid, collection, node_type: 'file' }))}" oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">${escapeHtml(row.item.cluster_uuid)}</span>` : '<span class="dim">—</span>';
+                    const source = inferredClusterCard(row.item.cluster_uuid);
                     const color = metadataColor({ tag_id: row.value }, 0, 'tag_id');
                     return `<tr data-inferred-parent="${row.parent ? `inferred-${metadataSlug(axis)}-${rows.findIndex(r => r.value === row.parent)}` : ''}" style="${row.depth ? 'display:none;' : ''}"><td style="padding-left:${10 + row.depth * 18}px;"><button class="btn-copy" ${row.children.length ? `onclick="toggleInferredTagRow(${escapeAttr(jsString(row.id))}, event)"` : 'style="visibility:hidden;"'}><i class="fa-solid fa-chevron-${row.children.length ? 'right' : 'minus'}"></i></button><span class="metadata-value-dot" style="background:${escapeAttr(color)}"></span><span class="mono metadata-value-cell">${escapeHtml(row.value)}</span></td><td class="mono">${confidence}%</td><td>${source}</td><td><button class="btn-copy" title="Copy value" onclick="copyToClipboard(${escapeAttr(jsString(row.value))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td></tr>`;
                 }).join('');
@@ -651,10 +657,24 @@ window.FileView = {
             };
 
             window.renderFileInferredMetadata = () => {
-                const selected = document.getElementById("bsim-score-type")?.value || ("score_" + (window.BINSIM_DEFAULT_AXIS || "code"));
-                const rawAxis = selected.replace(/^score_/, "");
-                const activeAxis = rawAxis === "score" ? "overall" : rawAxis;
-                const axisMeta = inferredMeta[activeAxis] || {};
+                const activeAxes = [...this.fvScoreAxes];
+                const merge = (field) => activeAxes.reduce((out, axis) => {
+                    for (const [value, item] of Object.entries((inferredMeta[axis] || {})[field] || {})) {
+                        if (!out[value] || Number(out[value].percent || 0) < Number(item.percent || 0)) out[value] = item;
+                    }
+                    return out;
+                }, {});
+                const axisMeta = {
+                    filetype: merge("filetype"), architecture: merge("architecture"),
+                    executable_format: merge("executable_format"), batch_uuid: merge("batch_uuid"),
+                    filename: merge("filename"), md5: merge("md5"), avtype: merge("avtype"), ccip: merge("ccip"), tags: {}
+                };
+                activeAxes.forEach(axis => Object.entries((inferredMeta[axis] || {}).tags || {}).forEach(([tagAxis, values]) => {
+                    axisMeta.tags[tagAxis] = { ...axisMeta.tags[tagAxis], ...merge("tags")[tagAxis] };
+                    Object.entries(values).forEach(([value, item]) => {
+                        if (!axisMeta.tags[tagAxis][value] || Number(axisMeta.tags[tagAxis][value].percent || 0) < Number(item.percent || 0)) axisMeta.tags[tagAxis][value] = item;
+                    });
+                }));
                 const inferredCategories = [
                     ["fa-solid fa-file-code", "File Type", axisMeta.filetype],
                     ["fa-solid fa-microchip", "Architecture", axisMeta.architecture],
@@ -770,7 +790,56 @@ window.FileView = {
         }
     },
 
+    renderScoreMetricCard() {
+        const host = document.getElementById("file-axis-selector");
+        if (!host) return;
+        const single = this.activeTab === "neighbors";
+        const types = window.BinSimScoreTypes || {};
+        const pills = Object.entries(types).map(([key, meta]) => {
+            const axis = key === "score" ? "overall" : key.replace(/^score_/, "");
+            const active = this.fvScoreAxes.has(axis);
+            return `<span class="bsim-tag-pill" style="${window.binSimPillStyle(active, meta.color)}" title="${escapeAttr(meta.label)}" onclick="FileView.toggleScoreAxis(${escapeAttr(jsString(axis))})"><i class="${meta.icon}"></i>${meta.label}</span>`;
+        }).join("");
+        const hint = single ? "Choose the score used to sort similar binaries." : "Choose one or more score axes for metadata and clusters.";
+        const content = `<div class="dim" style="font-size:0.72rem; margin:-4px 0 10px;">${hint}</div><div style="display:flex; flex-wrap:wrap; gap:8px;">${pills}</div>`;
+        host.innerHTML = window.binSimScoreMetricCardHtml
+            ? window.binSimScoreMetricCardHtml(content)
+            : content;
+    },
+
+    toggleScoreAxis(axis) {
+        if (this.activeTab === "neighbors") {
+            this.fvScoreAxes = new Set([axis]);
+        } else if (this.fvScoreAxes.has(axis) && this.fvScoreAxes.size > 1) {
+            this.fvScoreAxes.delete(axis);
+        } else {
+            this.fvScoreAxes.add(axis);
+        }
+        this.renderScoreMetricCard();
+        if (window.renderFileClustersTab) window.renderFileClustersTab();
+        if (window.renderFileInferredMetadata) window.renderFileInferredMetadata();
+        if (this.renderFileMetadata) this.renderFileMetadata();
+        if (this.activeTab === "neighbors" && this.neighborsLoaded) this.searchNeighbors();
+    },
+
+    scoreSort() {
+        const axis = [...this.fvScoreAxes][0] || "overall";
+        return axis === "overall" ? "score" : `score_${axis}`;
+    },
+
+    setMetadataOverlay(enabled) {
+        this.metadataOverlay = enabled;
+        if (this.renderFileMetadata) this.renderFileMetadata();
+    },
+
+    setMetadataThreshold(value) {
+        this.metadataThreshold = Math.max(0, Math.min(100, Number(value) || 0));
+        if (this.renderFileMetadata) this.renderFileMetadata();
+    },
+
     switchTab(tabId, push = true) {
+        this.activeTab = tabId;
+        this.renderScoreMetricCard();
         document.querySelectorAll('#file-view-tabs .bsim-tab').forEach(btn => btn.classList.remove('active'));
         document.querySelectorAll('.file-view-panel').forEach(panel => panel.style.display = 'none');
 
@@ -875,6 +944,7 @@ window.FileView = {
         p.set('sort_by', this.sortState.col);
         p.set('sort_order', this.sortState.dir === 1 ? 'asc' : 'desc');
         FunctionFilters.setParams(p, this.FUNC_FILTERS);
+        this.fvTagAxes.forEach(axis => p.append("tag_axis", axis));
         return p.toString();
     },
 
@@ -975,7 +1045,7 @@ window.FileView = {
         const scopeEl = document.getElementById('nbr-scope');
         if (scopeEl) scopeEl.value = poolId ? 'pool' : 'collection';
         this.renderScopePills();
-        this.renderScoreTypePills();
+        document.getElementById("nbr-score-card")?.remove();
         this.renderHidePackedPill();
 
         await this.searchNeighbors();
@@ -1001,7 +1071,7 @@ window.FileView = {
         if (scope === 'pool' && poolId) qs.set('pool', poolId);
         else qs.set('collection', collection);
 
-        qs.set('sort', document.getElementById('nbr-score-type')?.value || window.BINSIM_DEFAULT_SORT);
+        qs.set("sort", this.scoreSort());
         qs.set('min_score', document.getElementById('nbr-min-score')?.value
             || (window.defaultFileMinScore ? window.defaultFileMinScore() : '0'));
 
@@ -1307,7 +1377,7 @@ window.FileView = {
     // narrows everything" feel bin-sim's chips have), not a full-file
     // aggregate. A dedicated backend summary endpoint would fix that; skip
     // until someone needs whole-file counts before scrolling/filtering.
-    fvAxis: '',
+    fvTagAxes: new Set(),
     fvSelectedTag: null,
     // Which tree nodes are unfolded, keyed by node id -- which is a tag id.
     fvOpen: new Set(),
@@ -1386,11 +1456,11 @@ window.FileView = {
     // name/version and could only ever draw two levels.
     fvTree() {
         const counts = this.fvTagCounts();
-        const axis = this.fvAxis;
+        const axes = this.fvTagAxes;
         const root = { children: new Map() };
 
         Object.entries(counts).forEach(([tagId, count]) => {
-            if (TagColor.axisOf(tagId) !== axis) return;
+            if (axes.size && !axes.has(TagColor.axisOf(tagId))) return;
             let node = root;
             TagColor.chain(tagId).forEach(prefix => {
                 let next = node.children.get(prefix);
@@ -1422,19 +1492,25 @@ window.FileView = {
     },
 
     fvRenderAxisPicker() {
-        const host = document.getElementById('fv-axis-pick');
+        const host = document.getElementById("fv-axis-pick");
         if (!host) return;
         const avail = this.fvAvailableAxes();
-        if (!avail.includes(this.fvAxis)) this.fvAxis = avail[0] || '';
-        // Always shown -- every axis this file has tags on stays pickable
-        // regardless of the current tag scope, not just while >1 exists.
-        host.innerHTML = !avail.length ? '' : `
-            <div class="view-toggle" style="margin:0; flex:1; min-width:0;">
-                <span class="bsim-ctl-label" style="margin:4px 6px;">Axis:</span>
-                <select class="view-btn" style="flex:1; min-width:0;" onchange="FileView.setTreeAxis(this.value)">
-                    ${avail.map(a => `<option value="${escapeAttr(a)}"${a === this.fvAxis ? ' selected' : ''}>${escapeHtml(a)}</option>`).join('')}
-                </select>
-            </div>`;
+        const selected = this.fvTagAxes;
+        if (!avail.length) { host.innerHTML = ""; return; }
+        const pill = (axis) => `<span class="bsim-tag-pill" style="${window.binSimPillStyle(!selected.size || selected.has(axis), TagColor.forTag(axis + ":axis"))}" onclick="FileView.toggleTagAxis(${escapeAttr(jsString(axis))})">${escapeHtml(axis)}</span>`;
+        host.innerHTML = `<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;"><span class="bsim-ctl-label">Axes:</span><span class="bsim-tag-pill" style="${window.binSimPillStyle(!selected.size, "var(--accent)")}" onclick="FileView.clearTagAxes()">All</span>${avail.map(pill).join("")}</div>`;
+    },
+
+    toggleTagAxis(axis) {
+        if (!this.fvTagAxes.size) this.fvTagAxes = new Set([axis]);
+        else if (this.fvTagAxes.has(axis)) this.fvTagAxes.delete(axis);
+        else this.fvTagAxes.add(axis);
+        this.loadFunctionsTable({ reset: true });
+    },
+
+    clearTagAxes() {
+        this.fvTagAxes.clear();
+        this.loadFunctionsTable({ reset: true });
     },
 
     fvRenderTree() {
@@ -1496,12 +1572,6 @@ window.FileView = {
             if (btn) btn.classList.toggle('active', m === mode);
         });
         this.renderFunctionsTable();
-    },
-
-    setTreeAxis(axis) {
-        this.fvAxis = axis;
-        this.fvSelectedTag = null;
-        this.renderTagTree();
     },
 
     toggleTreeNode(id) {

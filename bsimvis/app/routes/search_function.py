@@ -15,6 +15,7 @@ from bsimvis.app.services.index_service import (
 from bsimvis.app.services.lua_manager import lua_manager
 from bsimvis.app.services.query_syntax import resolve_targets
 from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.tag_taxonomy import NAMESPACE_POLICY, USER_POLICY, tag_policy
 
 DEFAULT_LIMIT = 100
 DEFAULT_POOL_LIMIT = 1000000
@@ -106,6 +107,20 @@ def search_functions():
         ex_file_tag_filters = request.args.getlist("exclude_file_tag")
         ex_file_static_tag_filters = request.args.getlist("exclude_file_static_tag")
         ex_file_user_tag_filters = request.args.getlist("exclude_file_user_tag")
+
+        tag_axes = {
+            axis.strip().lower()
+            for axis in request.args.getlist("tag_axis")
+            if axis.strip()
+        }
+        known_tag_axes = {policy.axis for policy in NAMESPACE_POLICY.values()} | {
+            USER_POLICY.axis
+        }
+        unknown_tag_axes = tag_axes - known_tag_axes
+        if unknown_tag_axes:
+            return {
+                "error": "Unknown tag axis: " + ", ".join(sorted(unknown_tag_axes))
+            }, 400
 
         min_filters = {}
         for _param, _field in MIN_FILTERS.items():
@@ -219,6 +234,27 @@ def search_functions():
                 if lvl in targets:
                     path.append((lvl, resolve_target_field(source_lvl, lvl, field)))
             return [path] if path else []
+
+        if tag_axes:
+            axis_matches = []
+            for field in ("tags", "user_tags"):
+                targets, truncated, _ = resolve_targets(r, col, "func", field, "*")
+                if truncated:
+                    filter_truncated[0] = True
+                matching_targets = [
+                    target for target in targets if tag_policy(target).axis in tag_axes
+                ]
+                if matching_targets:
+                    axis_matches.append(("func", matching_targets, field))
+            if not axis_matches:
+                return {
+                    "total": 0,
+                    "functions": [],
+                    "offset": offset,
+                    "limit": limit,
+                    "tag_axes": sorted(tag_axes),
+                }
+            add_group(axis_matches, field_name="tag_axis:" + ",".join(sorted(tag_axes)))
 
         # Core Filters — fully config-driven
         filter_configs = []
@@ -672,6 +708,7 @@ def search_functions():
             "pool_truncated": pool_truncated,
             "filter_truncated": filter_truncated[0],
             "filters": filter_modes,
+            "tag_axes": sorted(tag_axes),
             "clusters": clusters_response,
             "functions": functions_list,
             "collection": col,

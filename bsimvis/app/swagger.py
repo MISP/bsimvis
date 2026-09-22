@@ -1138,6 +1138,9 @@ class FunctionSearch(Resource):
             "exclude_file_user_tag": {
                 "description": "Exclude functions with this file-level user tag"
             },
+            "tag_axis": {
+                "description": "Repeatable function-tag axis filter; selected axes match as an OR (for example tag_axis=origin&tag_axis=family)."
+            },
             "min_features": {"description": "Minimum BSim feature count", "example": 5},
             "min_callers": {
                 "description": "Minimum number of callers (direct-call in-degree)",

@@ -783,13 +783,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                         </p>
                     </div>
                     <div style="display: flex; gap: 24px; flex-wrap: wrap;">
-                        <div class="home-card" style="padding: 16px; min-width: 300px;">
-                            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
-                                <h3 style="margin: 0; font-size: 0.9rem; color: var(--text);">Scoring Metric</h3>
-                                <span class="home-tip" tabindex="0" data-tip="The dimensions of similarity calculated between two binaries. Overall combines multiple factors, while Library, Code, and Content scores isolate specific types of matches."><i class="fa-solid fa-circle-info"></i></span>
-                            </div>
-                            ${binSimScoreTypeTagsHtml(p)}
-                        </div>
+                        ${binSimScoreMetricCardHtml(binSimScoreTypeTagsHtml(p))}
                         <div class="home-card" style="padding: 16px; min-width: 300px;">
                             <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
                                 <h3 style="margin: 0; font-size: 0.9rem; color: var(--text);">Node Type</h3>
@@ -914,13 +908,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                 gridHeader.innerHTML = `
                     <div style="padding: 24px; border-bottom: 1px solid var(--border); background: var(--bg); display: flex; flex-direction: column;">
                         <div style="display: flex; gap: 24px; flex-wrap: wrap;">
-                            <div class="home-card" style="padding: 16px; min-width: 300px;">
-                                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
-                                    <h3 style="margin: 0; font-size: 0.9rem; color: var(--text);">Scoring Metric</h3>
-                                    <span class="home-tip" tabindex="0" data-tip="The dimensions of similarity calculated between two binaries. Overall combines multiple factors, while Library, Code, and Content scores isolate specific types of matches."><i class="fa-solid fa-circle-info"></i></span>
-                                </div>
-                                ${binSimScoreTypeTagsHtml(p)}
-                            </div>
+                            ${binSimScoreMetricCardHtml(binSimScoreTypeTagsHtml(p))}
                             <div class="home-card" style="padding: 16px; min-width: 300px;">
                                 <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
                                     <h3 style="margin: 0; font-size: 0.9rem; color: var(--text);">Node Type</h3>
@@ -1335,6 +1323,17 @@ function binSimPillStyle(active, color) {
     color = color || 'var(--accent)';
     return `display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap; border:1px solid ${active ? color : 'var(--border)'}; color:${active ? color : 'var(--subtle)'}; background:${active ? color + '22' : 'var(--window-tray, transparent)'};`;
 }
+
+function binSimScoreMetricCardHtml(content) {
+    return `<div class="home-card" style="padding:16px; min-width:300px;">
+        <div style="display:flex; align-items:center; gap:6px; margin-bottom:12px;">
+            <h3 style="margin:0; font-size:0.9rem; color:var(--text);">Scoring Metric</h3>
+            <span class="home-tip" tabindex="0" data-tip="The dimensions of similarity calculated between two binaries. Overall combines multiple factors, while Library, Code, and Content scores isolate specific types of matches."><i class="fa-solid fa-circle-info"></i></span>
+        </div>
+        ${content}
+    </div>`;
+}
+window.binSimScoreMetricCardHtml = binSimScoreMetricCardHtml;
 
 function binSimScoreTypeTagsHtml(p) {
     const state = window.getRoutingState && window.getRoutingState();

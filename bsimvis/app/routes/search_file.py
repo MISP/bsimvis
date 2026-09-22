@@ -181,7 +181,9 @@ def search_files():
                 return {"error": "Pool not found"}, 404
             algo_p = pool_service.similarity_algo(pool)
         else:
-            algo_p = request.args.get("algo", "unweighted_cosine")
+            algo_p = request.args.get("algo") or config_service.get(
+                "similarity.algo", "unweighted_cosine"
+            )
         pipe = r.pipeline(transaction=False)
         for doc_id in paged_ids:
             pipe.get(f"{doc_id}:meta")
@@ -591,7 +593,9 @@ def get_file_details(collection, file_md5):
                 return {"error": "Pool not found"}, 404
             algo_p = pool_service.similarity_algo(pool)
         else:
-            algo_p = request.args.get("algo", "unweighted_cosine")
+            algo_p = request.args.get("algo") or config_service.get(
+                "similarity.algo", "unweighted_cosine"
+            )
         _AXES = ["overall", "code", "library", "content"]
 
         # 1. Fetch full JSON, function counts, and cluster assignments

@@ -309,9 +309,9 @@ window.EntityRenderer = {
     /**
      * Renders cluster cards.
      */
-    renderClusterCard: function(clusters, isBinary = false, visibleAxes = null) {
+    renderClusterCard: function(clusters, isBinary = false, visibleAxes = null, options = {}) {
         if (typeof renderClusterCards === 'function') {
-            return renderClusterCards(clusters, isBinary, visibleAxes);
+            return renderClusterCards(clusters, isBinary, visibleAxes, options);
         }
         return '';
     },

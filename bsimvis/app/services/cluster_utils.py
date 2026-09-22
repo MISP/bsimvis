@@ -82,8 +82,8 @@ def collect_member_values(metas):
     return names_list, md5s_list, yara_list, avtype_list, filetype_list, ccip_list
 
 
-def build_freq(items, member_count):
-    """Top-5 value frequencies for one cluster distribution.
+def build_freq(items, member_count, limit=5):
+    """Return up to ``limit`` value frequencies for one cluster distribution.
 
     `percent` is a share of `member_count` -- the cluster's members -- never of
     `items`, which is flattened: a file carrying two yara hits contributes two
@@ -98,7 +98,7 @@ def build_freq(items, member_count):
                 "count": v,
                 "percent": round((v / member_count) * 100),
             }
-            for k, v in Counter(items).most_common(5)
+            for k, v in Counter(items).most_common(limit)
         ]
         if items
         else []
@@ -156,7 +156,8 @@ def cluster_summary(metas, member_count=None, fields=DISTRIBUTION_FIELDS):
         for axis, member_values in by_member.items():
             by_axis[axis].extend(member_values)
     result["tag_distribution"] = {
-        axis: build_freq(items, member_count) for axis, items in by_axis.items()
+        axis: build_freq(items, member_count, limit=10)
+        for axis, items in by_axis.items()
     }
     return result
 

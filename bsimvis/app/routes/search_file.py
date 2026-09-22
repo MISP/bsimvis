@@ -670,6 +670,7 @@ def get_file_details(collection, file_md5):
             "filetype": {},
             "ccip": {},
             "filename": {},
+            "tags": {},
             "md5": {},
         }
 
@@ -720,6 +721,18 @@ def get_file_details(collection, file_md5):
                             or inferred_meta[meta_key][val]["percent"] < cohesion_pct
                         ):
                             inferred_meta[meta_key][val] = {
+                                "percent": cohesion_pct,
+                                "cluster_uuid": cm.get("cluster_uuid"),
+                            }
+
+                for axis, dist in (cm.get("tag_distribution") or {}).items():
+                    axis_tags = inferred_meta["tags"].setdefault(axis, {})
+                    for item in dist:
+                        value = item.get("value")
+                        if not value:
+                            continue
+                        if value not in axis_tags or axis_tags[value]["percent"] < cohesion_pct:
+                            axis_tags[value] = {
                                 "percent": cohesion_pct,
                                 "cluster_uuid": cm.get("cluster_uuid"),
                             }

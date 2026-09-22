@@ -532,7 +532,7 @@ function renderDist(title, icon, dist) {
         legendHtml += `
             <div style="display: flex; align-items: center; gap: 6px; font-size: 0.75rem; margin-bottom: 4px;">
                 <div style="width: 10px; height: 10px; background-color: ${color}; border-radius: 2px;"></div>
-                <span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px;" title="${escapeAttr(d.value)}">${escapeHtml(d.value)}</span>
+                <span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace; overflow-wrap: anywhere; max-width: 260px;" title="${escapeAttr(d.value)}">${escapeHtml(d.value)}</span>
                 <span style="color: var(--dim); margin-left: auto;">${d.percent || 0}%</span>
             </div>
         `;

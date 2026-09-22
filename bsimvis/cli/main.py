@@ -790,6 +790,12 @@ def main():
     )
     scan_parser.add_argument("--profile", help="Ghidra analysis profile: fast or full")
     scan_parser.add_argument(
+        "--no-unpack",
+        dest="no_unpack",
+        action="store_true",
+        help="Scan the file as posted, without unpacking archives or packers",
+    )
+    scan_parser.add_argument(
         "--enable",
         action="append",
         help="Analysis module to enable (capa, yara, FunctionID, ...)",

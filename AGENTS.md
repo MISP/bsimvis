@@ -81,6 +81,15 @@ exception is the tag top-up: a lean scan skipped modules whose output needs the 
 program (YARA offset mapping, capa's `getFunctionContaining`), so commit queues a plain
 `GHIDRA_ANALYZE` with `skip_sim` behind it. `topup=false` opts out.
 
+An archive or packed file is unpacked in memory the way an upload is
+(`_scan_tree` in `routes/scan.py` mirrors `_ingest_tree`, minus every write): one
+`SCAN` job per code file inside it, then a `SCAN_CONTAINER` finalizer that rolls the
+children up through `container_sim_service.aggregate` -- the same pure formula a stored
+container pair uses, leaf children instead of functions. The container is never
+analysed itself, so it has no chunks: commit its *children*, not the container.
+`unpack=false` scans the posted bytes as they are, and `scan.max_cached_bytes` is
+checked against the whole unpacked tree, not just the upload.
+
 Surfaces: `bsimvis scan --commit`, the `/scans` UI view (`static/js/views/scan_view.js`)
 and the `scan_file` tool in `llm_tools.py`, which the MCP server re-exports for free.
 
@@ -161,6 +170,7 @@ job keys.
 | `scan:{id}:raw` | **String** | The scanned bytes (binary connection: `get_raw_queue_redis`). |
 | `scan:{id}:meta` / `scan:{id}:chunk:{n}` | **String** | Cached Ghidra output, one chunk per 100 functions. |
 | `scan:{id}:rows:{coll}:{md5}` | **String** | One scored pair's diff rows, served paged. |
+| `scans:recent` | **ZSET** | Scan id -> creation time, trimmed to 1000. The listing index; the docs expire on their own. |
 
 ## Worktree testing
 

@@ -52,6 +52,7 @@ class JobType(Enum):
     LLM_PAIR_ANALYSIS = "llm_pair_analysis"
     SEARCH_CLASSIFY = "search_classify"
     SCAN = "scan"
+    SCAN_CONTAINER = "scan_container"
 
 
 # Lease-based claims. A worker refreshes its lease while it holds a job; if the
@@ -733,7 +734,14 @@ class JobService:
             JobType.SEARCH_CLASSIFY.value,
         ]
 
-        if jtype == JobType.SCAN.value or job.get("priority") == "scan":
+        if (
+            jtype
+            in (
+                JobType.SCAN.value,
+                JobType.SCAN_CONTAINER.value,
+            )
+            or job.get("priority") == "scan"
+        ):
             # Scans write nothing, so they need no ordering against builds. Their
             # own lane is what keeps an interactive answer off the back of a
             # multi-hour sim build.

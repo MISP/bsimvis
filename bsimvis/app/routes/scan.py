@@ -10,10 +10,12 @@ import logging
 
 from flask import request
 
+from bsimvis.app.services import archive_service, unpack_service
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.ghidra_lang_service import validate as validate_lang
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.scan_service import (
+    RECENT_DEFAULT,
     scan_modules,
     default_top_files,
     get_scan_service,
@@ -40,6 +42,41 @@ def _float_arg(name):
     return float(value) if value not in (None, "") else None
 
 
+def _scan_tree(raw_bytes, file_name, depth=0):
+    """Everything worth scanning in one upload: (bytes, name, tag) per file.
+
+    Same shape as `_ingest_tree` (`routes/file.py:886`) with the writes taken
+    out: which files get analysed is the handler's call, a packed executable is
+    scanned packed and unpacked, a container only through its children.
+    """
+    options = {
+        "password": request.args.get(
+            "archive_password", archive_service.DEFAULT_PASSWORD
+        )
+    }
+
+    handler, children = None, []
+    if depth < unpack_service.MAX_DEPTH:
+        try:
+            handler, children = unpack_service.unpack(raw_bytes, file_name, options)
+        except unpack_service.UnpackError as e:
+            handler = unpack_service.find_handler(raw_bytes, file_name)
+            if handler is None or not handler.parent_is_code:
+                raise
+            # A packed binary that will not unpack is still a real sample, and
+            # the detector is a heuristic that may simply have been wrong.
+            logging.warning(f"[-] {file_name}: {handler.name} unpack failed: {e}")
+            handler, children = None, []
+
+    tag = handler.tag if handler else None
+    leaves = []
+    if handler is None or handler.parent_is_code:
+        leaves.append((raw_bytes, file_name, tag))
+    for child_name, child_bytes in children:
+        leaves.extend(_scan_tree(child_bytes, child_name, depth + 1))
+    return leaves
+
+
 def start_scan():
     """Queue a scan of the posted bytes against the requested scopes."""
     try:
@@ -47,10 +84,10 @@ def start_scan():
         if not raw_bytes:
             return {"error": "No data provided"}, 400
 
+        # Checked twice on purpose: once here, before unpacking expands an
+        # archive in memory, and again on the whole tree once it is known.
         limit = max_cached_bytes()
         if len(raw_bytes) > limit:
-            # The sample and every feature vector it produces sit in Redis,
-            # which is RAM. Refusing is better than swelling it.
             return {
                 "error": f"File is {len(raw_bytes)} bytes, over the "
                 f"scan.max_cached_bytes limit of {limit}"
@@ -84,9 +121,26 @@ def start_scan():
 
         file_name = request.args.get("file_name", "unknown")
         file_md5 = hashlib.md5(raw_bytes).hexdigest()
-        scan_id = scan_service.create(raw_bytes, file_name, file_md5, scopes, params)
-        if warnings:
-            scan_service.update(scan_id, warnings=warnings)
+
+        if _flag("unpack", True):
+            try:
+                leaves = _scan_tree(raw_bytes, file_name)
+            except unpack_service.UnpackError as e:
+                return {"error": f"Could not extract: {e}"}, 400
+        else:
+            leaves = [(raw_bytes, file_name, None)]
+        if not leaves:
+            return {"error": f"{file_name} holds nothing to scan"}, 400
+
+        # The sample, everything unpacked out of it and every feature vector
+        # they produce sit in Redis, which is RAM. Refusing is better than
+        # swelling it, and it is the whole tree that gets cached.
+        cached = len(raw_bytes) + sum(len(b) for b, _, _ in leaves)
+        if cached > limit:
+            return {
+                "error": f"Scanning {file_name} would cache {cached} bytes, over "
+                f"the scan.max_cached_bytes limit of {limit}"
+            }, 413
 
         # Scan mode runs lean: `scan.modules` rather than the instance's upload
         # defaults, because capa alone can cost more than the rest of the job.
@@ -95,24 +149,25 @@ def start_scan():
             request.args.getlist("enable"), request.args.getlist("disable")
         )
 
-        payload = {
-            "scan_id": scan_id,
-            "file_md5": file_md5,
-            "file_name": file_name,
-            "profile": request.args.get("profile", "fast"),
-            "min_func_len": int(request.args.get("min_func_len", 10)),
-            "modules": modules,
-            "skip_function_id": "FunctionID" not in modules,
-            "skip_capa": "capa" not in modules,
-            "skip_yara": "yara" not in modules,
-            "skip_rulezet": "rulezet" not in modules,
-            "skip_boilerplate": "boilerplate" not in modules,
-        }
-        for opt in ("processor", "cspec"):
-            if opt in request.args:
-                payload[opt] = request.args.get(opt)
+        if len(leaves) > 1 or leaves[0][0] is not raw_bytes:
+            return _start_container_scan(
+                scan_service,
+                raw_bytes,
+                file_name,
+                file_md5,
+                leaves,
+                scopes,
+                params,
+                modules,
+                warnings,
+            )
 
-        job_id = job_service.create_job(JobType.SCAN, payload)
+        scan_id = scan_service.create(raw_bytes, file_name, file_md5, scopes, params)
+        if warnings:
+            scan_service.update(scan_id, warnings=warnings)
+        job_id = job_service.create_job(
+            JobType.SCAN, _analysis_payload(scan_id, file_md5, file_name, modules)
+        )
         scan_service.update(scan_id, job_id=job_id, status="queued")
 
         return {
@@ -129,10 +184,105 @@ def start_scan():
         return {"error": str(e)}, 500
 
 
+def _analysis_payload(scan_id, file_md5, file_name, modules):
+    """The analysis payload a SCAN job carries, lean by default."""
+    payload = {
+        "scan_id": scan_id,
+        "file_md5": file_md5,
+        "file_name": file_name,
+        "profile": request.args.get("profile", "fast"),
+        "min_func_len": int(request.args.get("min_func_len", 10)),
+        "modules": modules,
+        "skip_function_id": "FunctionID" not in modules,
+        "skip_capa": "capa" not in modules,
+        "skip_yara": "yara" not in modules,
+        "skip_rulezet": "rulezet" not in modules,
+        "skip_boilerplate": "boilerplate" not in modules,
+    }
+    for opt in ("processor", "cspec"):
+        if opt in request.args:
+            payload[opt] = request.args.get(opt)
+    return payload
+
+
+def _start_container_scan(
+    scan_service,
+    raw_bytes,
+    file_name,
+    file_md5,
+    leaves,
+    scopes,
+    params,
+    modules,
+    warnings,
+):
+    """One scan per code leaf, then a container node rolling them up.
+
+    The container is never analysed itself -- an APK has no functions of its
+    own -- so its score comes from its children, the way container_sim_service
+    scores a stored container.
+    """
+    children, child_jobs = [], []
+    for child_bytes, child_name, child_tag in leaves:
+        child_md5 = hashlib.md5(child_bytes).hexdigest()
+        child_id = scan_service.create(
+            child_bytes, child_name, child_md5, scopes, params
+        )
+        job_id = job_service.create_job(
+            JobType.SCAN,
+            _analysis_payload(child_id, child_md5, child_name, modules),
+            enqueue=False,
+        )
+        scan_service.update(
+            child_id, job_id=job_id, status="queued", handler_tag=child_tag
+        )
+        child_jobs.append(job_id)
+        children.append(
+            {
+                "scan_id": child_id,
+                "job_id": job_id,
+                "file_name": child_name,
+                "file_md5": child_md5,
+                "handler_tag": child_tag,
+            }
+        )
+
+    parent_id = scan_service.create(raw_bytes, file_name, file_md5, scopes, params)
+    scan_service.update(
+        parent_id,
+        container=True,
+        children=children,
+        warnings=warnings,
+        status="queued",
+    )
+    for child in children:
+        scan_service.update(child["scan_id"], parent_scan=parent_id)
+
+    pipeline_id = job_service.create_pipeline(
+        [
+            job_service.create_group(child_jobs, enqueue=False),
+            (JobType.SCAN_CONTAINER, {"scan_id": parent_id}),
+        ]
+    )
+    scan_service.update(parent_id, job_id=pipeline_id)
+
+    return {
+        "status": "queued",
+        "scan_id": parent_id,
+        "job_id": pipeline_id,
+        "file_md5": file_md5,
+        "container": True,
+        "children": children,
+        "scopes": scopes,
+        "modules": modules,
+        "warnings": warnings,
+    }
+
+
 def list_scans():
-    """List all scans from Redis, resolving their current job statuses."""
+    """The recent scans, newest first, with their current job status."""
     service = get_scan_service()
-    docs = service.list_scans()
+    docs = service.list_scans(limit=_int_arg("limit") or RECENT_DEFAULT)
 
     # Enrich with job statuses using pipeline
     job_ids = [doc["job_id"] for doc in docs if doc.get("job_id")]

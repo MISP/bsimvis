@@ -5921,7 +5921,10 @@ def test_pool_collection_equivalence():
             for cid_b in r.smembers(list_key):
                 cid = cid_b.decode() if isinstance(cid_b, bytes) else str(cid_b)
                 members = tuple(
-                    sorted(m.decode() if isinstance(m, bytes) else str(m) for m in r.smembers(member_fmt.format(cid=cid)))
+                    sorted(
+                        m.decode() if isinstance(m, bytes) else str(m)
+                        for m in r.smembers(member_fmt.format(cid=cid))
+                    )
                 )
                 out[members] = norm_meta(
                     _json.loads(r.get(meta_fmt.format(cid=cid)) or "{}")
@@ -6645,6 +6648,147 @@ def test_scan_mode():
     check("a deleted scan is gone", gone.status_code == 404, str(gone.status_code))
 
 
+def test_scan_container():
+    """A scanned archive is unpacked, its children scanned, and rolled up.
+
+    The zip holds TEST_BINARY, which the prelude already uploaded into
+    COLLECTION as a standalone file. So the container has exactly one child
+    and the collection side has exactly one leaf with no unmatched mass --
+    the roll-up has nothing to dilute, and the container score must BE the
+    child's self-match. Anything else means the aggregation is weighting or
+    orienting differently than container_sim_service says it does.
+
+    Nothing here may touch Kvrocks either: unpacking happens in memory and the
+    children are cached in Redis like any other scan.
+    """
+    import hashlib
+    import io
+    import zipfile
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 4e3 - Scan mode, containers", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not (os.path.isfile(TEST_BINARY) and file_md5):
+        print(_color("\n[SKIP] No analysed test binary.", YELLOW))
+        return
+
+    from bsimvis.app.services.redis_client import get_redis
+
+    r = get_redis()
+
+    with open(TEST_BINARY, "rb") as fh:
+        payload = fh.read()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("lib/one.so", payload)
+    blob = buf.getvalue()
+    inner_md5 = hashlib.md5(payload).hexdigest()
+
+    before = r.dbsize()
+    started = test_endpoint(
+        "POST",
+        "/api/scan",
+        params={"collection": COLLECTION, "file_name": "container.apk"},
+        raw_body=blob,
+        headers={"Content-Type": "application/octet-stream"},
+        label="POST /api/scan (archive)",
+    )
+    if not isinstance(started, dict) or not started.get("scan_id"):
+        check("container scan accepted", False, str(started)[:300])
+        return
+
+    scan_id = started["scan_id"]
+    children = started.get("children") or []
+    check(
+        "an archive is unpacked into one scan per code file",
+        started.get("container") is True
+        and len(children) == 1
+        and children[0]["file_md5"] == inner_md5,
+        str(started)[:300],
+    )
+
+    doc = {}
+    deadline = time.time() + 900
+    while time.time() < deadline:
+        time.sleep(POLL_INTERVAL)
+        doc = requests.get(f"{BASE_URL}/api/scan/{scan_id}", timeout=30).json()
+        if doc.get("status") in ("completed", "failed"):
+            break
+        if doc.get("job_status") == "failed":
+            break
+
+    check(
+        "the container scan completes",
+        doc.get("status") == "completed",
+        f"{doc.get('status')} / {doc.get('error', '')}",
+    )
+    if doc.get("status") != "completed":
+        return
+
+    check(
+        "unpacking and scanning a container writes no Kvrocks key",
+        r.dbsize() == before,
+        f"dbsize {before} -> {r.dbsize()}",
+    )
+
+    scopes = doc.get("scanned") or []
+    files = (scopes[0].get("files") if scopes else []) or []
+    self_row = next((f for f in files if f["file_md5"] == file_md5), None)
+    check(
+        "the container is scored against the file holding its only child",
+        self_row is not None and self_row.get("is_container_pair") is True,
+        str(self_row)[:250] if self_row else str(files)[:250],
+    )
+    if not self_row:
+        return
+
+    # One child on each side, nothing unmatched: the roll-up has nothing to
+    # weigh against, so it must reproduce the child's own score exactly.
+    check(
+        "a container with one matched child scores exactly what that child scored",
+        abs(float(self_row.get("score") or 0) - 1.0) < 1e-6,
+        f"container={self_row.get('score')}",
+    )
+
+    page = test_endpoint(
+        "GET",
+        f"/api/scan/{scan_id}/diff",
+        params={"collection": COLLECTION, "md5": file_md5, "table": "matched"},
+        label="GET /api/scan/{id}/diff (container children)",
+    )
+    rows = ((page or {}).get("matched") or {}).get("rows") or []
+    check(
+        "the container's rows are its child pairs, paged the same way",
+        len(rows) == 1 and rows[0].get("md5_a") == inner_md5,
+        str(rows)[:250],
+    )
+
+    refused = test_endpoint(
+        "POST",
+        f"/api/scan/{scan_id}/commit",
+        params={"collection": f"{COLLECTION}_contscan"},
+        expected_ok=False,
+        label="POST /api/scan/{id}/commit (container, expect 409)",
+    )
+    check(
+        "a container has no analysis of its own to commit",
+        isinstance(refused, dict)
+        and refused.get("children") == [children[0]["scan_id"]],
+        str(refused)[:250],
+    )
+
+    test_endpoint("DELETE", f"/api/scan/{scan_id}", label="DELETE /api/scan/{id}")
+    child_gone = requests.get(
+        f"{BASE_URL}/api/scan/{children[0]['scan_id']}", timeout=10
+    )
+    check(
+        "deleting a container drops its children's caches too",
+        child_gone.status_code == 404,
+        str(child_gone.status_code),
+    )
+
+
 def _check_scan_commit(scan_id, doc):
     """Promoting a scan must ingest it without ever re-running Ghidra.
 
@@ -6709,7 +6853,8 @@ def _check_scan_commit(scan_id, doc):
         check(
             "the committed file carries the scan's own function count",
             isinstance(details, dict)
-            and int((details.get("file") or details).get("function_count", 0)) == doc.get("function_count"),
+            and int((details.get("file") or details).get("function_count", 0))
+            == doc.get("function_count"),
             str(details)[:300],
         )
 
@@ -6912,6 +7057,7 @@ if __name__ == "__main__":
         test_lib_tag_rollup,
         test_skip_modules_payload,
         test_scan_mode,
+        test_scan_container,
         run_all_tests,
     ]
 

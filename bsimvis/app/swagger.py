@@ -3455,6 +3455,8 @@ class ScanStart(Resource):
             "cspec": "Force a specific Ghidra Compiler Spec ID (e.g., 'gcc')",
             "enable": "Analysis module to enable on top of scan.modules (repeatable)",
             "disable": "Analysis module to disable (repeatable)",
+            "unpack": "Set to false to scan the posted bytes as they are (default: true)",
+            "archive_password": "Password for an encrypted archive",
         }
     )
     def post(self):
@@ -3464,13 +3466,20 @@ class ScanStart(Resource):
         written to Kvrocks: the analysis is cached in Redis under a TTL and the
         match is computed by reading the target collections' indexes. Returns a
         scan_id to poll.
+
+        An archive or packed file is unpacked the way an upload is: one scan per
+        code file inside it, plus a container scan that rolls their scores up.
+        Commit the children, not the container -- it was never analysed itself.
         """
         from bsimvis.app.routes.scan import start_scan
 
         return start_scan()
 
+    @ns_scan.doc(
+        params={"limit": "How many recent scans to return (default: 20, max: 1000)"}
+    )
     def get(self):
-        """Lists all active scans cached in Redis."""
+        """Lists the most recent scans, newest first, as summary rows."""
         from bsimvis.app.routes.scan import list_scans
 
         return list_scans()

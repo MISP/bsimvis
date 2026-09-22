@@ -21,6 +21,12 @@ def _print_report(doc):
         print(f"[!] {warning}")
     if doc.get("already_present"):
         print(f"[*] Already present in: {', '.join(doc['already_present'])}")
+    for child in doc.get("children") or []:
+        tag = f" [{child['handler_tag']}]" if child.get("handler_tag") else ""
+        print(
+            f"    unpacked: {child.get('file_name')}{tag}  {child['file_md5']}  "
+            f"(scan {child['scan_id']})"
+        )
 
     for scope in doc.get("scanned") or []:
         print(
@@ -86,6 +92,8 @@ def run_scan(host, port, args):
         params.append(("pool", pool))
     if args.all:
         params.append(("all", "true"))
+    if getattr(args, "no_unpack", False):
+        params.append(("unpack", "false"))
     for name in ("algo", "min_score", "min_features", "top_files", "profile"):
         value = getattr(args, name, None)
         if value is not None:

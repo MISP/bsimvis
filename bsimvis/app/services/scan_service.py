@@ -22,6 +22,8 @@ import json
 import time
 import uuid
 
+import redis
+
 from bsimvis.app.services.bin_sim_service import (
     discover_edges,
     load_vectors,
@@ -36,6 +38,7 @@ from bsimvis.app.services.bin_sim_tags import (
     read_tags_rev,
     score_pair,
 )
+from bsimvis.app.services import container_sim_service, lineage_service
 from bsimvis.app.services.cluster_utils import (
     bin_cluster_ns,
     fetch_bin_cluster_meta_all_axes,
@@ -56,6 +59,24 @@ from bsimvis.app.services.similarity_service import SimilarityService
 from bsimvis.similarity import registry
 
 BIN_AXES = ("overall", "code", "library", "content")
+
+# `scans:recent` is an index, not storage: the docs it points at carry their own
+# TTL, so it is trimmed to the window anything ever reads back.
+RECENT_MAX = 1000
+RECENT_DEFAULT = 20
+
+# What a listing shows. The rest of a finished document is the report itself.
+LIST_FIELDS = (
+    "scan_id",
+    "status",
+    "file_name",
+    "file_md5",
+    "size",
+    "created_at",
+    "job_id",
+    "children",
+    "container",
+)
 
 
 def cache_ttl():
@@ -126,47 +147,65 @@ class ScanService:
         self.q_raw.setex(self.key(scan_id, "raw"), ttl, raw_bytes)
         self.q.setex(self.key(scan_id, "doc"), ttl, json.dumps(doc))
         self.q.zadd("scans:recent", {scan_id: doc["created_at"]})
+        # The docs expire on their own; without this the index keeps every id
+        # ever scanned, since only the newest RECENT_MAX are ever read back.
+        self.q.zremrangebyrank("scans:recent", 0, -(RECENT_MAX + 1))
         return scan_id
 
     def get(self, scan_id):
         return _decode(self.q.get(self.key(scan_id, "doc"))) or None
 
     def update(self, scan_id, **fields):
-        doc = self.get(scan_id)
-        if not doc:
-            return None
-        doc.update(fields)
-        self.q.setex(self.key(scan_id, "doc"), cache_ttl(), json.dumps(doc))
-        return doc
+        """Merge fields into the scan document.
+
+        Read-modify-write under WATCH: the submitting request and the worker
+        that claimed the scan write different fields of the same doc at the
+        same moment, and a plain overwrite loses whichever landed first -- a
+        worker already reporting `analyzing` clobbered back to `queued`.
+        """
+        key = self.key(scan_id, "doc")
+        for _ in range(8):
+            with self.q.pipeline(transaction=True) as pipe:
+                try:
+                    pipe.watch(key)
+                    doc = _decode(pipe.get(key)) or None
+                    if not doc:
+                        return None
+                    doc.update(fields)
+                    pipe.multi()
+                    pipe.setex(key, cache_ttl(), json.dumps(doc))
+                    pipe.execute()
+                    return doc
+                except redis.WatchError:
+                    continue
+        return None
 
     def raw(self, scan_id):
         return self.q_raw.get(self.key(scan_id, "raw"))
 
-    def list_scans(self):
-        """Returns a list of all active scan documents from Redis."""
-        # Get up to 1000 recent scans
-        scan_ids = self.q.zrevrange("scans:recent", 0, 999)
+    def list_scans(self, limit=RECENT_DEFAULT):
+        """The newest scans, projected down to what a listing shows.
+
+        A finished scan document carries the whole report -- every scored file
+        and its cluster distributions -- so the list returns the summary
+        fields only, and a bounded number of them.
+        """
+        limit = max(1, min(int(limit or RECENT_DEFAULT), RECENT_MAX))
+        scan_ids = [_s(sid) for sid in self.q.zrevrange("scans:recent", 0, limit - 1)]
         if not scan_ids:
             return []
 
-        pipe = self.q.pipeline()
+        pipe = self.q.pipeline(transaction=False)
         for sid in scan_ids:
-            pipe.get(self.key(sid if isinstance(sid, str) else sid.decode(), "doc"))
+            pipe.get(self.key(sid, "doc"))
 
-        docs = []
-        dead_ids = []
-
-        for sid, doc in zip(scan_ids, pipe.execute()):
-            sid_str = sid if isinstance(sid, str) else sid.decode()
-            if doc:
-                try:
-                    parsed = _decode(doc)
-                    if parsed:
-                        docs.append(parsed)
-                except Exception:
-                    pass
-            else:
-                dead_ids.append(sid_str)
+        docs, dead_ids = [], []
+        for sid, raw in zip(scan_ids, pipe.execute()):
+            parsed = _decode(raw) if raw else None
+            if not parsed:
+                dead_ids.append(sid)
+                continue
+            docs.append({f: parsed.get(f) for f in LIST_FIELDS})
 
         if dead_ids:
             self.q.zrem("scans:recent", *dead_ids)
@@ -194,6 +233,8 @@ class ScanService:
         if keys:
             self.q.delete(*keys)
         self.q.zrem("scans:recent", scan_id)
+        for child in (doc or {}).get("children") or []:
+            self.delete(child["scan_id"])
         return bool(doc)
 
     def store_meta(self, scan_id, file_meta, modules):
@@ -241,6 +282,13 @@ class ScanService:
         doc = self.get(scan_id)
         if not doc:
             return {"error": "Scan not found or expired"}, 404
+        if doc.get("container"):
+            # The container was never analysed -- there is no chunk of its own
+            # to replay. Its children each hold one and commit on their own.
+            return {
+                "error": f"Scan {scan_id} is a container; commit its children",
+                "children": [c["scan_id"] for c in doc.get("children") or []],
+            }, 409
         if not doc.get("chunk_count"):
             return {"error": f"Scan {scan_id} has no cached analysis to commit"}, 409
         md5 = doc.get("file_md5")
@@ -886,6 +934,161 @@ class ScanService:
             function_count=len(targets),
             completed_at=int(time.time() * 1000),
         )
+
+    # -------------------------------------------------------------- container
+
+    def scan_container(self, scan_id, job_service=None, job_id=None):
+        """Roll the child scans of one container into a container score.
+
+        An archive has no functions of its own, so it is never analysed: its
+        children are, and this is the same roll-up `container_sim_service`
+        runs over a stored container -- leaf children instead of functions,
+        function counts instead of feature counts. Pure reads, like the rest
+        of a scan.
+        """
+        doc = self.get(scan_id)
+        if not doc:
+            raise RuntimeError(f"Scan {scan_id} expired or unknown")
+
+        children = doc.get("children") or []
+        child_docs = {}
+        warnings = list(doc.get("warnings") or [])
+        for child in children:
+            child_doc = self.get(child["scan_id"])
+            if not child_doc:
+                warnings.append(f"{child['file_name']}: scan expired before roll-up")
+                continue
+            if child_doc.get("status") != "completed":
+                warnings.append(
+                    f"{child['file_name']}: {child_doc.get('status', 'unknown')}, "
+                    "left out of the container score"
+                )
+                continue
+            child_docs[child["file_md5"]] = child_doc
+
+        # Every leaf counts in the denominator, matched or not -- an unscanned
+        # child is unmatched mass, exactly as in the stored container formula.
+        funcs_a = {
+            child["file_md5"]: int(
+                (child_docs.get(child["file_md5"]) or {}).get("function_count") or 0
+            )
+            for child in children
+        }
+
+        scanned = []
+        for index, collection in enumerate(doc.get("scopes") or []):
+            if job_service and job_id:
+                job_service.update_progress(
+                    job_id,
+                    10 + int(80 * index / max(1, len(doc["scopes"]))),
+                    f"Rolling up {collection}",
+                )
+            scanned.append(
+                self._container_scope(scan_id, collection, child_docs, funcs_a)
+            )
+
+        already = [
+            s["collection"]
+            for s in scanned
+            if any(f["file_md5"] == doc.get("file_md5") for f in s["files"])
+        ]
+        return self.update(
+            scan_id,
+            status="completed",
+            scanned=scanned,
+            warnings=warnings,
+            already_present=already,
+            function_count=sum(funcs_a.values()),
+            completed_at=int(time.time() * 1000),
+        )
+
+    def _container_scope(self, scan_id, collection, child_docs, funcs_a):
+        """One scope's container rows: the scanned tree against stored trees."""
+        # What each child matched in this scope, keyed by the file it matched.
+        rows_by_child = {}
+        for child_md5, child_doc in child_docs.items():
+            for scope in child_doc.get("scanned") or []:
+                if scope.get("collection") != collection:
+                    continue
+                rows_by_child[child_md5] = {
+                    row["file_md5"]: row for row in (scope.get("files") or [])
+                }
+
+        containers = lineage_service.container_md5s(collection, self.r)
+        # A matched file answers for the whole tree it sits in, and a file with
+        # no container above it stands for itself -- the rule leaf_info uses.
+        roots = set()
+        for rows in rows_by_child.values():
+            for file_md5 in rows:
+                above = [
+                    edge["md5"]
+                    for edge in lineage_service.ancestors(collection, file_md5, self.r)
+                    if edge["md5"] in containers
+                ]
+                roots.add(above[-1] if above else file_md5)
+
+        scored = []
+        for root in roots:
+            funcs_b, _ = container_sim_service.leaf_info(
+                collection, root, self.r, containers
+            )
+            edges, child_scores = [], {}
+            for child_md5, rows in rows_by_child.items():
+                for leaf_md5 in funcs_b:
+                    row = rows.get(leaf_md5)
+                    if not row:
+                        continue
+                    sid = f"{child_md5}::{leaf_md5}"
+                    edges.append((child_md5, leaf_md5, float(row["score"]), sid))
+                    child_scores[sid] = {
+                        "code": row.get("score_code"),
+                        "library": row.get("score_library"),
+                    }
+            if not edges:
+                continue
+
+            rolled = container_sim_service.aggregate(
+                edges, funcs_a, funcs_b, child_scores=child_scores
+            )
+            file_meta = _decode(self.r.get(f"{collection}:file:{root}:meta"))
+            self.q.setex(
+                self.key(scan_id, "rows", collection, root),
+                cache_ttl(),
+                json.dumps(
+                    {
+                        "matched": rolled["matched"],
+                        "unique_to_a": rolled["unique_to_a"],
+                        "unique_to_b": rolled["unique_to_b"],
+                    }
+                ),
+            )
+            scored.append(
+                {
+                    "collection": collection,
+                    "file_md5": root,
+                    "file_name": file_meta.get("file_name", ""),
+                    "architecture": file_meta.get("language_id", ""),
+                    "functions_count": rolled["functions_count_b"],
+                    "matched_functions": len(rolled["matched"]),
+                    "score": rolled["score"],
+                    "score_code": rolled["score_code"],
+                    "score_library": rolled["score_library"],
+                    "coverage_a": rolled["coverage_a"],
+                    "coverage_b": rolled["coverage_b"],
+                    "is_container_pair": True,
+                }
+            )
+
+        scored.sort(key=lambda r: (-float(r.get("score", 0.0)), r["file_md5"]))
+        return {
+            "collection": collection,
+            "files_touched": len(roots),
+            "files_scored": len(scored),
+            "files": scored,
+            # Cluster verdicts stay leaf-level: a container joins nothing, its
+            # children do, and each child scan already answers that.
+            "bin_clusters": {axis: [] for axis in BIN_AXES},
+        }
 
     # ------------------------------------------------------------------- rows
 

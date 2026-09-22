@@ -543,6 +543,17 @@ class Worker:
             scan_service.run_match(scan_id, self.job_service, job_id)
             return True
 
+        elif jtype == JobType.SCAN_CONTAINER.value:
+            # Pure aggregation over the children's cached results: no Ghidra,
+            # no JVM -- the container itself was never analysed.
+            from bsimvis.app.services.scan_service import get_scan_service
+
+            scan_service = get_scan_service()
+            scan_id = payload["scan_id"]
+            scan_service.update(scan_id, status="matching")
+            scan_service.scan_container(scan_id, self.job_service, job_id)
+            return True
+
         elif jtype == JobType.INDEX_META.value:
             file_meta = payload.get("file_meta")
             num_functions = payload.get("num_functions")

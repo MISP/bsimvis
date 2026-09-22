@@ -16,6 +16,11 @@
 const SCAN_AXES = ['overall', 'code', 'library', 'content'];
 const SCAN_ROWS_PAGE = 50;
 
+// One md5 can match in several scopes, so the row id carries the scope too.
+function diffRowId(collection, md5) {
+    return `scan-diff-${encodeURIComponent(collection)}-${md5}`;
+}
+
 function scanScoreCell(value) {
     if (value === null || value === undefined) return '<span style="color:var(--dim);">—</span>';
     const score = Number(value);
@@ -43,6 +48,11 @@ window.ScanView = {
         if (this._doc && this._containerId) {
             const container = document.getElementById(this._containerId);
             if (container) container.innerHTML = this._renderReport(this._doc);
+            // The re-render emits the expanded row visible but empty.
+            if (this._openPair) {
+                const [collection, md5] = this._openPair.split('\u0000');
+                this.loadRows(collection, md5, 0);
+            }
         }
     },
 
@@ -99,7 +109,7 @@ window.ScanView = {
             }
             
             listEl.innerHTML = data.scans.map(s => {
-                const date = new Date((s.created_at || 0) * 1000).toLocaleString();
+                const date = new Date(s.created_at || 0).toLocaleString();
                 const statusColor = s.job_status === 'finished' ? '#10b981' : (s.job_status === 'failed' ? '#f87171' : 'var(--accent)');
                 const progress = s.progress || '';
                 return `
@@ -333,7 +343,7 @@ window.ScanView = {
                     </div>
                 </div>
                 <div style="display:flex; gap:10px;">
-                    <button onclick="window.ScanViewInstance.openCommit()" ${running || doc.committed ? 'disabled' : ''} style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; ${running || doc.committed ? 'opacity:0.4; cursor:not-allowed;' : ''}">
+                    <button onclick="window.ScanViewInstance.openCommit()" ${running || doc.committed || doc.container ? 'disabled' : ''} style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; ${running || doc.committed || doc.container ? 'opacity:0.4; cursor:not-allowed;' : ''}">
                         <i class="fa-solid fa-database"></i> Commit
                     </button>
                     <button onclick="window.ScanViewInstance.discard()" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer;">
@@ -344,7 +354,30 @@ window.ScanView = {
 
             ${warnings}${present}${committed}
             <div id="scan-commit-form"></div>
+            ${this._renderChildren(doc)}
             ${body}
+        </div>`;
+    },
+
+    _renderChildren(doc) {
+        // A container scan is a scan per unpacked file plus this roll-up: the
+        // per-file answers, and their commits, live on the child reports.
+        const kids = doc.container ? (doc.children || []) : [];
+        if (!kids.length) return '';
+        const rows = kids.map(child => `
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:8px 12px;">
+                    <a href="/scans/${encodeURIComponent(child.scan_id)}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); text-decoration:none; font-weight:600;">${escapeHtml(child.file_name || child.file_md5 || '')}</a>
+                    <div style="color:var(--dim); font-size:0.72rem;"><code>${escapeHtml(child.file_md5 || '')}</code></div>
+                </td>
+                <td style="padding:8px 12px; color:var(--dim); font-size:0.78rem;">${escapeHtml(child.handler_tag || '')}</td>
+            </tr>`).join('');
+        return `
+        <div style="border:1px solid var(--border); border-radius:8px; overflow:hidden;">
+            <div style="padding:10px 14px; background:var(--bg-alt, var(--bg)); font-size:0.85rem; font-weight:700; color:var(--text);">
+                <i class="fa-solid fa-box-open" style="color:var(--accent); margin-right:8px;"></i>${kids.length} unpacked file${kids.length === 1 ? '' : 's'}
+            </div>
+            <table style="width:100%; border-collapse:collapse; font-size:0.85rem;"><tbody>${rows}</tbody></table>
         </div>`;
     },
 
@@ -367,7 +400,7 @@ window.ScanView = {
                 <td style="padding:8px 12px; text-align:right; color:var(--dim);">${Number(row.functions_count || 0)}</td>
                 <td style="padding:8px 12px; color:var(--dim); font-size:0.75rem;">${escapeHtml(row.architecture || '')}</td>
             </tr>
-            <tr id="scan-diff-${escapeAttr(row.file_md5)}" style="display:${open ? 'table-row' : 'none'};">
+            <tr id="${escapeAttr(diffRowId(scope.collection, row.file_md5))}" style="display:${open ? 'table-row' : 'none'};">
                 <td colspan="8" style="padding:0; background:var(--bg);"></td>
             </tr>`;
         }).join('');
@@ -500,7 +533,7 @@ window.ScanView = {
 
     async toggleDiff(collection, md5) {
         const pair = `${collection}\u0000${md5}`;
-        const row = document.getElementById(`scan-diff-${md5}`);
+        const row = document.getElementById(diffRowId(collection, md5));
         if (!row) return;
         if (this._openPair === pair) {
             this._openPair = null;
@@ -508,7 +541,8 @@ window.ScanView = {
             return;
         }
         if (this._openPair) {
-            const previous = document.getElementById(`scan-diff-${this._openPair.split('\u0000')[1]}`);
+            const [prevColl, prevMd5] = this._openPair.split('\u0000');
+            const previous = document.getElementById(diffRowId(prevColl, prevMd5));
             if (previous) previous.style.display = 'none';
         }
         this._openPair = pair;
@@ -518,7 +552,7 @@ window.ScanView = {
     },
 
     async loadRows(collection, md5, offset) {
-        const row = document.getElementById(`scan-diff-${md5}`);
+        const row = document.getElementById(diffRowId(collection, md5));
         if (!row) return;
         const qs = new URLSearchParams({
             collection, md5,

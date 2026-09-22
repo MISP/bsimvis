@@ -442,6 +442,16 @@ def scan_file(path, collections=None, pools=None, scan_all=False, limit=5, timeo
         "function_count": doc.get("function_count", 0),
         "warnings": doc.get("warnings") or [],
         "already_present": doc.get("already_present") or [],
+        # An archive is scanned as one scan per file inside it: the scopes
+        # below are the roll-up, and each child holds its own report.
+        "children": [
+            {
+                "scan_id": c["scan_id"],
+                "file_name": c.get("file_name"),
+                "file_md5": c.get("file_md5"),
+            }
+            for c in doc.get("children") or []
+        ],
         "scopes": [
             {
                 "collection": scope["collection"],

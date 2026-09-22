@@ -601,7 +601,8 @@ window.FileView = {
                         const node = nodes.get(nodeValue) || { value: nodeValue, item, children: [], parent };
                         node.item = i === parts.length - 1 ? item : (node.item || item);
                         node.parent = parent;
-                        if (parent && !parent.children.includes(nodeValue)) parent.children.push(nodeValue);
+                        const parentNode = parent ? nodes.get(parent) : null;
+                        if (parentNode && !parentNode.children.includes(nodeValue)) parentNode.children.push(nodeValue);
                         nodes.set(nodeValue, node);
                         parent = nodeValue;
                     }

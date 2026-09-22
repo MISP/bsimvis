@@ -3415,6 +3415,9 @@ function buildMetaCompareTable(da, db, colA, colB) {
     };
 
     const buildInferredHtml = (inferredMeta, collection) => {
+        const selected = document.getElementById("bsim-score-type")?.value || ("score_" + (window.BINSIM_DEFAULT_AXIS || "code"));
+        const axis = selected.replace("score_", "") || "overall";
+        inferredMeta = inferredMeta[axis] || {};
         let html = '';
         html += renderInferredRow('fa-solid fa-file', 'File Name', inferredMeta.filename || {}, collection);
         html += renderInferredRow('fa-solid fa-fingerprint', 'MD5', inferredMeta.md5 || {}, collection);
@@ -3465,6 +3468,9 @@ function buildInferredMetaCards(da, db, colA, colB) {
     };
 
     const buildInferredHtml = (inferredMeta, collection) => {
+        const selected = document.getElementById("bsim-score-type")?.value || ("score_" + (window.BINSIM_DEFAULT_AXIS || "code"));
+        const axis = selected.replace("score_", "") || "overall";
+        inferredMeta = inferredMeta[axis] || {};
         let html = '';
         html += renderInferredRow('fa-solid fa-file', 'File Name', inferredMeta.filename || {}, collection);
         html += renderInferredRow('fa-solid fa-fingerprint', 'MD5', inferredMeta.md5 || {}, collection);

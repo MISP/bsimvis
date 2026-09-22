@@ -140,6 +140,9 @@ window.FileView = {
                     <button class="bsim-tab" id="file-tab-btn-extracted_from" onclick="FileView.switchTab('extracted_from')" style="display: none;">Extracted From</button>
                     <button class="bsim-tab" id="file-tab-btn-neighbors" onclick="FileView.switchTab('neighbors')">Similar<span id="nbr-count-wrap" style="display:none;"> (<span id="nbr-count">0</span>)</span></button>
                 </div>
+                <div id="file-axis-selector" style="display:flex; align-items:center; gap:10px; padding:10px 0 14px;">
+                    <span style="font-size:0.75rem; color:var(--meta-text-muted); text-transform:uppercase; letter-spacing:0.5px;">Axis</span>
+                </div>
 
                 <!-- Files Tab Panel -->
                 <div id="file-panel-files" class="file-view-panel" style="display: none;">
@@ -488,7 +491,7 @@ window.FileView = {
                 const isArray = Array.isArray(binClusters); // Backward compat
                 
                 // Read active axis from the pill state or URL
-                let activeAxis = document.getElementById('bsim-score-type') ? document.getElementById('bsim-score-type').value : (new URLSearchParams(window.location.search).get('axis') || 'overall');
+                let activeAxis = document.getElementById('bsim-score-type') ? document.getElementById('bsim-score-type').value : (new URLSearchParams(window.location.search).get('axis') || window.BINSIM_DEFAULT_AXIS || 'code');
                 if (activeAxis.startsWith('score_')) activeAxis = activeAxis.replace('score_', '');
                 if (activeAxis === 'score') activeAxis = 'overall';
 
@@ -506,10 +509,6 @@ window.FileView = {
                 
                 const actionsHtml = `
                     <div style="display:flex; flex-direction:column; gap:12px;">
-                        <div style="display:flex; gap:16px; align-items:center;">
-                            <div style="font-size:0.75rem; color:var(--meta-text-muted); text-transform:uppercase; letter-spacing:0.5px; width:80px;">Axis</div>
-                            ${binSimScoreTypeTagsHtml(mockParams)}
-                        </div>
                         <div style="display:flex; gap:16px; align-items:center; opacity: 0.7; pointer-events: none;">
                             <div style="font-size:0.75rem; color:var(--meta-text-muted); text-transform:uppercase; letter-spacing:0.5px; width:80px;">Node Type</div>
                             ${binSimNodeTypeTagsHtml(mockParams)}
@@ -580,6 +579,10 @@ window.FileView = {
                 if (window.syncBinSimTags) window.syncBinSimTags(mockParams);
             };
             
+            const axisParams = new URLSearchParams();
+            axisParams.set("sort", "score_" + (window.BINSIM_DEFAULT_AXIS || "code"));
+            document.getElementById("file-axis-selector").innerHTML = binSimScoreTypeTagsHtml(axisParams);
+
             // Initial render
             window.renderFileClustersTab();
 
@@ -647,27 +650,33 @@ window.FileView = {
                 });
             };
 
-            const inferredCategories = [
-                ['fa-solid fa-file-code', 'File Type', inferredMeta.filetype],
-                ['fa-solid fa-microchip', 'Architecture', inferredMeta.architecture],
-                ['fa-solid fa-file-code', 'Executable Format', inferredMeta.executable_format],
-                ['fa-solid fa-box', 'Batch UUID', inferredMeta.batch_uuid],
-                ['fa-solid fa-file', 'File Name', inferredMeta.filename],
-                ['fa-solid fa-fingerprint', 'MD5', inferredMeta.md5],
-                ['fa-solid fa-shield', 'AV Type', inferredMeta.avtype],
-                ['fa-solid fa-network-wired', 'CC IP', inferredMeta.ccip],
-            ];
-            let inferredHtml = inferredCategories.map(([icon, label, values]) => inferredCategory(icon, label, values)).join('');
-            inferredHtml += Object.entries(inferredMeta.tags || {}).sort(([a], [b]) => a.localeCompare(b)).map(([axis, values]) => inferredTagCategory(axis, values)).join('');
-            if (inferredHtml) {
-                const inferredEl = document.getElementById('inferred-meta');
-                inferredEl.innerHTML = inferredHtml;
+            window.renderFileInferredMetadata = () => {
+                const selected = document.getElementById("bsim-score-type")?.value || ("score_" + (window.BINSIM_DEFAULT_AXIS || "code"));
+                const rawAxis = selected.replace(/^score_/, "");
+                const activeAxis = rawAxis === "score" ? "overall" : rawAxis;
+                const axisMeta = inferredMeta[activeAxis] || {};
+                const inferredCategories = [
+                    ["fa-solid fa-file-code", "File Type", axisMeta.filetype],
+                    ["fa-solid fa-microchip", "Architecture", axisMeta.architecture],
+                    ["fa-solid fa-file-code", "Executable Format", axisMeta.executable_format],
+                    ["fa-solid fa-box", "Batch UUID", axisMeta.batch_uuid],
+                    ["fa-solid fa-file", "File Name", axisMeta.filename],
+                    ["fa-solid fa-fingerprint", "MD5", axisMeta.md5],
+                    ["fa-solid fa-shield", "AV Type", axisMeta.avtype],
+                    ["fa-solid fa-network-wired", "CC IP", axisMeta.ccip],
+                ];
+                let inferredHtml = inferredCategories.map(([icon, label, values]) => inferredCategory(icon, label, values)).join("");
+                inferredHtml += Object.entries(axisMeta.tags || {}).sort(([a], [b]) => a.localeCompare(b)).map(([axis, values]) => inferredTagCategory(axis, values)).join("");
+                const inferredEl = document.getElementById("inferred-meta");
+                inferredEl.innerHTML = inferredHtml || '<div class="dim" style="padding:20px;">No inferred metadata for this axis.</div>';
                 if (window.initMetadataTables) window.initMetadataTables(inferredEl);
-                inferredEl.style.display = 'flex';
-                document.getElementById('inferred-meta-card').style.display = 'block';
-                document.getElementById('inferred-count').textContent = inferredEl.querySelectorAll('tbody tr').length;
-                document.getElementById('file-tab-btn-inferred').style.display = 'inline-block';
-            }
+                inferredEl.style.display = "flex";
+                document.getElementById("inferred-meta-card").style.display = "block";
+                document.getElementById("inferred-count").textContent = inferredEl.querySelectorAll("tbody tr").length;
+                document.getElementById("file-tab-btn-inferred").style.display = "inline-block";
+            };
+
+            window.renderFileInferredMetadata();
             // Unique-value counts appended to the filter placeholders
             if (typeof loadFieldCardinalities === 'function') {
                 loadFieldCardinalities(collection, 'func', {

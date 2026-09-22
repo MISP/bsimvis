@@ -665,17 +665,20 @@ def get_file_details(collection, file_md5):
             )
         )
 
+        inferred_fields = [
+            "yara",
+            "avtype",
+            "filetype",
+            "ccip",
+            "filename",
+            "tags",
+            "md5",
+            "architecture",
+            "executable_format",
+            "batch_uuid",
+        ]
         inferred_meta = {
-            "yara": {},
-            "avtype": {},
-            "filetype": {},
-            "ccip": {},
-            "filename": {},
-            "tags": {},
-            "md5": {},
-            "architecture": {},
-            "executable_format": {},
-            "batch_uuid": {},
+            axis: {field: {} for field in inferred_fields} for axis in _AXES
         }
 
         # Collect existing values to exclude
@@ -703,6 +706,8 @@ def get_file_details(collection, file_md5):
         }
 
         for cid, cm in cluster_meta_map.items():
+            axis = cm.get("axis", "overall")
+            axis_meta = inferred_meta.get(axis, inferred_meta["overall"])
             cohesion_score = cm.get("cohesion_score") or 0
             if cohesion_score >= min_cohesion:
                 cohesion_pct = round(cohesion_score * 100)
@@ -729,10 +734,10 @@ def get_file_details(collection, file_md5):
                             continue
 
                         if (
-                            val not in inferred_meta[meta_key]
-                            or inferred_meta[meta_key][val]["percent"] < cohesion_pct
+                            val not in axis_meta[meta_key]
+                            or axis_meta[meta_key][val]["percent"] < cohesion_pct
                         ):
-                            inferred_meta[meta_key][val] = {
+                            axis_meta[meta_key][val] = {
                                 "percent": cohesion_pct,
                                 "cluster_uuid": cm.get("cluster_uuid"),
                             }
@@ -743,7 +748,7 @@ def get_file_details(collection, file_md5):
                     cohesion_score,
                 )
                 for axis, dist in tag_distribution.items():
-                    axis_tags = inferred_meta["tags"].setdefault(axis, {})
+                    axis_tags = axis_meta["tags"].setdefault(axis, {})
                     pending = list(dist)
                     while pending:
                         item = pending.pop()

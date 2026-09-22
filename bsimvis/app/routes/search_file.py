@@ -79,6 +79,7 @@ def search_files():
             ("inferred_ccip", "inferred_ccip"),
             ("inferred_filename", "inferred_filename"),
             ("inferred_md5", "inferred_md5"),
+            ("inferred_tags", "inferred_tags"),
             ("note_owner", "note_owners"),
             ("note_owners", "note_owners"),
             # Every file extracted out of one upload, at any depth.
@@ -508,6 +509,7 @@ def query_files_advanced(r, collection, filters):
             "inferred_ccip",
             "inferred_filename",
             "inferred_md5",
+            "inferred_tags",
             "note_owners",
             "root_md5",
         ]:

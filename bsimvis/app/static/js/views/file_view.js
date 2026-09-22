@@ -601,6 +601,8 @@ window.FileView = {
             inferredHtml += renderInferredRow('fa-solid fa-shield', 'AV Type', inferredMeta.avtype || {});
             inferredHtml += renderInferredRow('fa-solid fa-file-code', 'File Type', inferredMeta.filetype || {});
             inferredHtml += renderInferredRow('fa-solid fa-biohazard', 'Yara', inferredMeta.yara || {});
+            const inferredTags = (file.inferred_tags || []).map(tag => '<span class=\"stat-badge\">' + escapeHtml(tag) + '</span>').join('');
+            if (inferredTags) inferredHtml += '<div class=\"meta-label\"><i class=\"fa-solid fa-tags\"></i> Inferred tags</div><div class=\"meta-value\" style=\"display:flex; flex-wrap:wrap; gap:4px;\">' + inferredTags + '</div>';
             inferredHtml += renderInferredRow('fa-solid fa-network-wired', 'CC IP', inferredMeta.ccip || {});
 
             if (inferredHtml) {

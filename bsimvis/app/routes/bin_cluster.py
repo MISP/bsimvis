@@ -554,6 +554,7 @@ def list_bin_clusters():
                 "ccip_distribution": m.get("ccip_distribution", []),
                 "filename_distribution": m.get("filename_distribution", []),
                 "md5_distribution": m.get("md5_distribution", []),
+                "tag_distribution": m.get("tag_distribution", {}),
                 "function_count_stats": m.get("function_count_stats", {}),
                 "has_children": bool(parent_to_children.get(str(m.get("cluster_id")))),
             }

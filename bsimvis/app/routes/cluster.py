@@ -638,6 +638,7 @@ def list_clusters():
                 "parent": child_to_parent.get(str(m.get("cluster_id"))),
                 "sample_members": sample_members,
                 "direct_members": direct_members,
+                "tag_distribution": m.get("tag_distribution", {}),
                 "has_children": bool(parent_to_children.get(str(m.get("cluster_id")))),
             }
             results.append(cluster_result)

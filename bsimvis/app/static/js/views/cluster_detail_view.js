@@ -502,6 +502,9 @@ window.ClusterDetailView = {
             ['File Name', 'fa-solid fa-file', c.filename_distribution],
             ['MD5', 'fa-solid fa-fingerprint', c.md5_distribution],
         ];
+        Object.entries(c.tag_distribution || {}).forEach(([axis, dist]) => {
+            dists.push(['Tags · ' + axis, 'fa-solid fa-tags', dist]);
+        });
         const cards = dists.map(([title, icon, dist]) => window.renderDist(title, icon, dist)).join('');
 
         panel.innerHTML = `

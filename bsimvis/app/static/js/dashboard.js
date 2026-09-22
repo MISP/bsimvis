@@ -1828,6 +1828,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 2px;">
                                     <input type="text" id="flt-file-inf-type" placeholder="Inf.Type" title="Inferred Type" value="${escapeAttr(p.get('inferred_filetype') || '')}" onfocus="attachAutocomplete(this, 'file', 'inferred_filetype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
                                     <input type="text" id="flt-file-inf-ccip" placeholder="Inf.IP" title="Inferred CC IP" value="${escapeAttr(p.get('inferred_ccip') || '')}" onfocus="attachAutocomplete(this, 'file', 'inferred_ccip', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
+                                <input type="text" id="flt-file-inf-tags" value="${escapeAttr(p.get('inferred_tags') || '')}" placeholder="Inf.Tags..." title="Namespace-aware inferred tags" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
                                 </div>
                             </div>
                         </th>
@@ -2109,6 +2110,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
         // Sync filter inputs
         if (path === 'files') {
             syncInput('flt-file-name', 'file_name'); syncInput('flt-file-md5', 'file_md5'); syncInput('flt-file-language', 'language_id'); syncInput('flt-file-yara', 'yara'); syncInput('flt-file-avtype', 'avtype'); syncInput('flt-file-ccip', 'cc_ip');
+            syncInput('flt-file-inf-tags', 'inferred_tags');
             syncInput('flt-file-inf-yara', 'inferred_yara'); syncInput('flt-file-inf-avtype', 'inferred_avtype'); syncInput('flt-file-inf-type', 'inferred_filetype'); syncInput('flt-file-inf-ccip', 'inferred_ccip');
             syncInput('flt-file-batch', 'batch_uuid'); syncInput('flt-file-min-funcs', 'min_function_count'); syncInput('flt-file-max-funcs', 'max_function_count');
             syncInput('flt-file-note-owner', 'note_owner'); syncInput('flt-file-cluster', 'bin_cluster_uuid'); syncInput('flt-file-cluster-name', 'bin_cluster_name'); syncInput('flt-file-min-cohesion', 'min_cohesion'); syncInput('flt-file-max-cohesion', 'max_cohesion');
@@ -2554,6 +2556,7 @@ function applyAdvancedFileSearch() {
     const infAvtypeFlt = document.getElementById('flt-file-inf-avtype')?.value;
     const infTypeFlt = document.getElementById('flt-file-inf-type')?.value;
     const infCcipFlt = document.getElementById('flt-file-inf-ccip')?.value;
+    const infTagsFlt = document.getElementById('flt-file-inf-tags')?.value;
 
     if (nameFlt) params.set('file_name', nameFlt); else params.delete('file_name');
     if (md5Flt) params.set('file_md5', md5Flt); else params.delete('file_md5');
@@ -2579,6 +2582,7 @@ function applyAdvancedFileSearch() {
     if (infAvtypeFlt) params.set('inferred_avtype', infAvtypeFlt); else params.delete('inferred_avtype');
     if (infTypeFlt) params.set('inferred_filetype', infTypeFlt); else params.delete('inferred_filetype');
     if (infCcipFlt) params.set('inferred_ccip', infCcipFlt); else params.delete('inferred_ccip');
+    if (infTagsFlt) params.set('inferred_tags', infTagsFlt); else params.delete('inferred_tags');
 
     const noteOwnerFlt = document.getElementById('flt-file-note-owner')?.value;
     if (noteOwnerFlt) params.set('note_owner', noteOwnerFlt); else params.delete('note_owner');

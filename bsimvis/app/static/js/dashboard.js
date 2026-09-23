@@ -678,6 +678,9 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         if (!params.has('min_cohesion')) {
             params.set('min_cohesion', '0.5');
         }
+        if (!params.has('score_axis')) {
+            params.set('score_axis', 'code');
+        }
     } else if (viewKey === 'binary-similarity') {
         if (!params.has('sort')) {
             params.set('sort', window.BINSIM_DEFAULT_SORT);
@@ -880,6 +883,20 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                 tableBodyWrap.addEventListener('scroll', window.bsimHeroScrollListener, { passive: true });
             }
         }
+    } else if (viewKey === 'functions') {
+        const gridHeader = document.getElementById('grid-header');
+        if (gridHeader) {
+            const p = new URLSearchParams(params);
+            const activeAxis = p.get('score_axis') || 'code';
+            const types = window.BinSimScoreTypes || {};
+            const pills = Object.entries(types).map(([key, meta]) => {
+                const axis = key === 'score' ? 'overall' : key.replace(/^score_/, '');
+                const active = axis === activeAxis;
+                return `<span class="bsim-tag-pill" style="${binSimPillStyle(active, meta.color)}" title="${escapeAttr(meta.label)}" onclick="setFunctionScoreAxis(${escapeAttr(jsString(axis))})"><i class="${meta.icon}"></i>${meta.label}</span>`;
+            }).join('');
+            const content = `<div class="dim" style="font-size:0.72rem; margin:-4px 0 10px;">Filter functions by scoring axis. Content has no function-level score.</div><div style="display:flex; flex-wrap:wrap; gap:8px;">${pills}</div>`;
+            gridHeader.innerHTML = `<div style="padding:24px; border-bottom:1px solid var(--border); background:var(--bg); display:flex; flex-direction:column;"><div style="display:flex; gap:24px; flex-wrap:wrap;">${binSimScoreMetricCardHtml(content)}</div></div>`;
+        }
     } else if (viewKey === 'function-similarity') {
         const gridHeader = document.getElementById('grid-header');
         if (gridHeader) {
@@ -1071,7 +1088,8 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         if (!append) tbody.innerHTML = '';
 
         if (items.length === 0 && !append) {
-            tbody.innerHTML = '<tr><td colspan="100" style="text-align:center; padding:40px;">No data found</td></tr>';
+            const emptyMessage = viewKey === 'functions' && data.message ? data.message : 'No data found';
+            tbody.innerHTML = `<tr><td colspan="100" style="text-align:center; padding:40px;">${escapeHtml(emptyMessage)}</td></tr>`;
         } else {
             // Pass clusters map for views that use it
             let clustersMap = undefined;
@@ -1393,6 +1411,15 @@ function setBinSimScoreType(v) {
     }
 }
 window.setBinSimScoreType = setBinSimScoreType;
+
+function setFunctionScoreAxis(axis) {
+    const { params } = getRoutingState();
+    params.set('score_axis', axis);
+    currentOffset = 0;
+    isEndOfResults = false;
+    navigate('functions', params);
+}
+window.setFunctionScoreAxis = setFunctionScoreAxis;
 
 function toggleBinSimNodeType(which) {
     const el = document.getElementById('bsim-containers');

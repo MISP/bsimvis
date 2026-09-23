@@ -11,15 +11,6 @@ const src = fs.readFileSync(
     'utf8'
 );
 
-// The axis map the browser gets from /api/tags/colors, and the same level split
-// tag_taxonomy applies. Parity with the Python rule is test_tag_colors.js's job.
-const AXES = {
-    fid: 'origin', bsim: 'origin', malware: 'origin', original: 'origin',
-    category: 'category', severity: 'severity', yara: 'yara', user: 'user',
-    // The synthetic buckets are whole ids, and a namespace lookup on an id with
-    // no colon returns the id itself -- so the shipped map answers for them.
-    original_code: 'origin', tag_mismatch: 'origin',
-};
 const TagColor = {
     groupId: (id) => String(id).split('#')[0],
     levels: (id) => ({ segs: TagColor.groupId(id).split(':').filter(Boolean) }),
@@ -28,13 +19,12 @@ const TagColor = {
         return segs.slice(0, -1).map((_, i) => segs.slice(0, i + 1).join(':'));
     },
     chain: (id) => TagColor.prefixes(id).concat([TagColor.groupId(id)]),
-    axisOf: (id) => AXES[String(id).split(':')[0]] || 'user',
 };
 
-// file_view.js is a browser global object literal; lift the two pure methods out
+// file_view.js is a browser global object literal; lift the tree method out
 // rather than standing up the whole view.
 const slice = (from, to) => src.slice(src.indexOf(from), src.indexOf(to));
-const body = slice('    fvAvailableAxes()', '    fvRenderAxisPicker()');
+const body = slice('    fvTree()', '    fvRenderTree()');
 const View = new Function('TagColor', `
     const V = { ${body} };
     return V;
@@ -52,16 +42,9 @@ const counts = {
     'category:network:c2': 4,
 };
 
-// Axes are the ones Bin Sim names, derived from the shipped namespace map --
-// not the raw first segment, which is what made every namespace look like an
-// axis of its own.
 const v = withTags(counts);
-assert.deepStrictEqual(v.fvAvailableAxes(), ['category', 'origin']);
-
-// Origin: `fid` and `original_code` are two top nodes, so neither collapses.
-v.fvAxis = 'origin';
 const origin = v.fvTree();
-assert.deepStrictEqual(origin.map(n => n.id).sort(), ['fid', 'original_code']);
+assert.deepStrictEqual(origin.map(n => n.id).sort(), ['category', 'fid', 'original_code']);
 
 const fid = origin.find(n => n.id === 'fid');
 assert.strictEqual(fid.count, 6, 'a branch carries the sum beneath it');
@@ -84,13 +67,8 @@ for (const node of walk(fid)) {
     assert.ok(!node.id.includes('#'), `detail tail leaked into node id ${node.id}`);
 }
 
-// A lone top-level namespace is dropped: the picker already says "category".
-v.fvAxis = 'category';
-assert.deepStrictEqual(v.fvTree().map(n => n.id), ['category:network']);
-
 // Sorted by count, biggest first, at every level.
 const sorted = withTags({ 'fid:a:1': 1, 'fid:b:1': 9 });
-sorted.fvAxis = 'origin';
 assert.deepStrictEqual(sorted.fvTree().map(n => n.id), ['fid:b', 'fid:a']);
 
 console.log('ok');

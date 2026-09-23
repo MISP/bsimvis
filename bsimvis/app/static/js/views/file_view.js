@@ -30,7 +30,6 @@ window.FileView = {
         this.neighborsLoaded = false;
         this.sortState = { col: 'function_name', dir: 1 };
         this.fvScoreAxes = new Set([window.BINSIM_DEFAULT_AXIS || "code"]);
-        this.fvTagAxes = new Set();
         this.fvSelectedTag = null;
         this.fvOpen = new Set();
         this.fvGroupBy = "auto";
@@ -54,7 +53,7 @@ window.FileView = {
                 .file-func-table th { text-align:left; padding:10px; border-bottom:1px solid var(--border); color:var(--subtle); text-transform:uppercase; font-size:0.75rem; letter-spacing:0.05em; }
                 .file-func-table td { padding:10px; border-bottom: 1px solid var(--border); vertical-align:middle; }
                 .file-func-table tr:hover { background: var(--hover); }
-                
+
                 .file-func-table th.sortable { cursor: pointer; user-select: none; }
                 .file-func-table th.sortable:hover { color: var(--text); }
                 .file-func-table tr.filter-row th { padding: 4px 10px; border-bottom: 1px solid var(--border); background: var(--border); }
@@ -65,7 +64,7 @@ window.FileView = {
                 .bin-sim-mc-table td { padding:6px 12px; border-bottom: 1px solid var(--border); vertical-align:top; font-family:'Consolas',monospace; word-break:break-word; }
                 .bin-sim-mc-cat { padding:10px 12px 4px; font-weight:bold; color:var(--accent); font-size:0.78rem; }
                 .bin-sim-mc-label { color:var(--subtle); font-family:'Inter',sans-serif; width:160px; }
-                
+
                 .bin-sim-strip { border:1px solid var(--border); border-radius:6px; padding:10px 12px; background:var(--card-bg); display:flex; align-items:center; gap:10px; min-height:24px; }
 
                 /* Function tag tree sidebar -- same shape/classes as bin-sim's
@@ -191,7 +190,6 @@ window.FileView = {
                                 <span onclick="FileView.clearTreeSelection()" title="Clear the tag filter">clear</span>
                             </span>
                         </div>
-                        <div id="fv-axis-pick" class="bsim-axis-pick"></div>
                         <div id="fv-tree" class="bsim-tree"></div>
                         <div id="fv-chips" class="bsim-chips"></div>
                     </div>
@@ -580,7 +578,7 @@ window.FileView = {
                 </thead><tbody>${body}</tbody></table></div>`;
                 if (window.TableSelection) new window.TableSelection('file-cluster-table');
             };
-            
+
             this.renderScoreMetricCard();
 
             // Initial render
@@ -794,13 +792,14 @@ window.FileView = {
         const host = document.getElementById("file-axis-selector");
         if (!host) return;
         const single = this.activeTab === "neighbors";
+        const functionTab = this.activeTab === "functions";
         const types = window.BinSimScoreTypes || {};
         const pills = Object.entries(types).map(([key, meta]) => {
             const axis = key === "score" ? "overall" : key.replace(/^score_/, "");
             const active = this.fvScoreAxes.has(axis);
             return `<span class="bsim-tag-pill" style="${window.binSimPillStyle(active, meta.color)}" title="${escapeAttr(meta.label)}" onclick="FileView.toggleScoreAxis(${escapeAttr(jsString(axis))})"><i class="${meta.icon}"></i>${meta.label}</span>`;
         }).join("");
-        const hint = single ? "Choose the score used to sort similar binaries." : "Choose one or more score axes for metadata and clusters.";
+        const hint = functionTab ? "Filter functions by scoring axis. Content has no function-level score." : single ? "Choose the score used to sort similar binaries." : "Choose one or more score axes for metadata and clusters.";
         const content = `<div class="dim" style="font-size:0.72rem; margin:-4px 0 10px;">${hint}</div><div style="display:flex; flex-wrap:wrap; gap:8px;">${pills}</div>`;
         host.innerHTML = window.binSimScoreMetricCardHtml
             ? window.binSimScoreMetricCardHtml(content)
@@ -808,7 +807,7 @@ window.FileView = {
     },
 
     toggleScoreAxis(axis) {
-        if (this.activeTab === "neighbors") {
+        if (this.activeTab === "neighbors" || this.activeTab === "functions") {
             this.fvScoreAxes = new Set([axis]);
         } else if (this.fvScoreAxes.has(axis) && this.fvScoreAxes.size > 1) {
             this.fvScoreAxes.delete(axis);
@@ -820,6 +819,7 @@ window.FileView = {
         if (window.renderFileInferredMetadata) window.renderFileInferredMetadata();
         if (this.renderFileMetadata) this.renderFileMetadata();
         if (this.activeTab === "neighbors" && this.neighborsLoaded) this.searchNeighbors();
+        if (this.activeTab === "functions") this.loadFunctionsTable({ reset: true });
     },
 
     scoreSort() {
@@ -944,7 +944,7 @@ window.FileView = {
         p.set('sort_by', this.sortState.col);
         p.set('sort_order', this.sortState.dir === 1 ? 'asc' : 'desc');
         FunctionFilters.setParams(p, this.FUNC_FILTERS);
-        this.fvTagAxes.forEach(axis => p.append("tag_axis", axis));
+        p.set('score_axis', [...this.fvScoreAxes][0] || 'overall');
         return p.toString();
     },
 
@@ -976,6 +976,7 @@ window.FileView = {
 
             this.functions = this.functions.concat(data.functions || []);
             this.funcPage.total = data.total || 0;
+            this.functionEmptyMessage = data.message || '';
             this.funcClusters = Object.assign(this.funcClusters || {}, data.clusters || {});
             document.getElementById('functions-count').innerText = this.funcPage.total;
             this.renderFunctionsTable();
@@ -1221,7 +1222,7 @@ window.FileView = {
 
         // Filtering, sorting and paging all happen server-side; render what we hold.
         if (this.functions.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--dim); padding: 20px;">No functions found.</td></tr>';
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--dim); padding: 20px;">${escapeHtml(this.functionEmptyMessage || 'No functions found.')}</td></tr>`;
             this.setFunctionsStatus('');
             return;
         }
@@ -1245,10 +1246,10 @@ window.FileView = {
 
             // Notes
             const noteBtn = window.EntityRenderer ? window.EntityRenderer.renderNoteButton(funcId, f.note_owners, { isTable: true, raw_data: f }) : '';
-            
+
             // Tags
             const tagsHtml = window.EntityRenderer ? window.EntityRenderer.renderTag('function', funcId, f.tags || [], f.user_tags || []) : '';
-            
+
             // Clusters
             const cls = (f.clusters || []).map(uuid => (this.funcClusters || {})[uuid] || this.clusters[uuid]).filter(Boolean);
             const clusterCardHtml = window.EntityRenderer ? window.EntityRenderer.renderClusterCard(cls) : '';
@@ -1377,7 +1378,6 @@ window.FileView = {
     // narrows everything" feel bin-sim's chips have), not a full-file
     // aggregate. A dedicated backend summary endpoint would fix that; skip
     // until someone needs whole-file counts before scrolling/filtering.
-    fvTagAxes: new Set(),
     fvSelectedTag: null,
     // Which tree nodes are unfolded, keyed by node id -- which is a tag id.
     fvOpen: new Set(),
@@ -1437,16 +1437,6 @@ window.FileView = {
         return counts;
     },
 
-    // The axes this file actually carries mass on, named the way Bin Sim names
-    // them. The namespace -> axis map comes from `/api/tags/colors`, so both
-    // views put a tag on the same axis instead of each keeping its own table.
-    fvAvailableAxes() {
-        const counts = this.fvTagCounts();
-        const axes = new Set();
-        Object.keys(counts).forEach(tagId => axes.add(TagColor.axisOf(tagId)));
-        return [...axes].sort();
-    },
-
     // One trie over the tag ids, the same shape Bin Sim's tree has: a node id is
     // a real tag id and a literal prefix of everything beneath it, depth is
     // whatever the ids have, and a detail tail is never a level -- so the
@@ -1456,11 +1446,9 @@ window.FileView = {
     // name/version and could only ever draw two levels.
     fvTree() {
         const counts = this.fvTagCounts();
-        const axes = this.fvTagAxes;
         const root = { children: new Map() };
 
         Object.entries(counts).forEach(([tagId, count]) => {
-            if (axes.size && !axes.has(TagColor.axisOf(tagId))) return;
             let node = root;
             TagColor.chain(tagId).forEach(prefix => {
                 let next = node.children.get(prefix);
@@ -1489,28 +1477,6 @@ window.FileView = {
         // One level only, matching Bin Sim.
         if (nodes.length === 1 && nodes[0].children.length) nodes = nodes[0].children;
         return nodes;
-    },
-
-    fvRenderAxisPicker() {
-        const host = document.getElementById("fv-axis-pick");
-        if (!host) return;
-        const avail = this.fvAvailableAxes();
-        const selected = this.fvTagAxes;
-        if (!avail.length) { host.innerHTML = ""; return; }
-        const pill = (axis) => `<span class="bsim-tag-pill" style="${window.binSimPillStyle(!selected.size || selected.has(axis), TagColor.forTag(axis + ":axis"))}" onclick="FileView.toggleTagAxis(${escapeAttr(jsString(axis))})">${escapeHtml(axis)}</span>`;
-        host.innerHTML = `<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;"><span class="bsim-ctl-label">Axes:</span><span class="bsim-tag-pill" style="${window.binSimPillStyle(!selected.size, "var(--accent)")}" onclick="FileView.clearTagAxes()">All</span>${avail.map(pill).join("")}</div>`;
-    },
-
-    toggleTagAxis(axis) {
-        if (!this.fvTagAxes.size) this.fvTagAxes = new Set([axis]);
-        else if (this.fvTagAxes.has(axis)) this.fvTagAxes.delete(axis);
-        else this.fvTagAxes.add(axis);
-        this.loadFunctionsTable({ reset: true });
-    },
-
-    clearTagAxes() {
-        this.fvTagAxes.clear();
-        this.loadFunctionsTable({ reset: true });
     },
 
     fvRenderTree() {
@@ -1547,7 +1513,6 @@ window.FileView = {
     },
 
     renderTagTree() {
-        this.fvRenderAxisPicker();
         this.fvRenderTree();
         this.fvRenderChips();
     },

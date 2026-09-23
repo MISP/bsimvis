@@ -16,6 +16,7 @@ from bsimvis.app.services.lua_manager import lua_manager
 from bsimvis.app.services.query_syntax import resolve_targets
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.tag_taxonomy import NAMESPACE_POLICY, USER_POLICY, tag_policy
+from bsimvis.app.services.bin_sim_tags import LIBRARY_ORIGIN_PREFIXES, is_library_tag
 
 DEFAULT_LIMIT = 100
 DEFAULT_POOL_LIMIT = 1000000
@@ -107,6 +108,10 @@ def search_functions():
         ex_file_tag_filters = request.args.getlist("exclude_file_tag")
         ex_file_static_tag_filters = request.args.getlist("exclude_file_static_tag")
         ex_file_user_tag_filters = request.args.getlist("exclude_file_user_tag")
+
+        score_axis = request.args.get("score_axis", "overall").strip().lower()
+        if score_axis not in {"overall", "code", "library", "content"}:
+            return {"error": "Unknown score axis: " + score_axis}, 400
 
         tag_axes = {
             axis.strip().lower()
@@ -234,6 +239,35 @@ def search_functions():
                 if lvl in targets:
                     path.append((lvl, resolve_target_field(source_lvl, lvl, field)))
             return [path] if path else []
+
+        if score_axis == "content":
+            return {
+                "total": 0,
+                "functions": [],
+                "offset": offset,
+                "limit": limit,
+                "score_axis": score_axis,
+                "message": "Content score applies to non-code container assets, not functions.",
+            }
+
+        if score_axis in {"code", "library"}:
+            library_matches = []
+            for field in ("tags", "user_tags"):
+                registry = f"{col}:reg:func:{field}"
+                for namespace in LIBRARY_ORIGIN_PREFIXES:
+                    target = namespace[:-1]
+                    bucket = f"{col}:idx:func:{field}:{target}"
+                    if is_library_tag(namespace) and r.sismember(registry, bucket):
+                        library_matches.append(("func", [target], field))
+            if score_axis == "library":
+                if not library_matches:
+                    return {
+                        "total": 0, "functions": [], "offset": offset, "limit": limit,
+                        "score_axis": score_axis,
+                    }
+                add_group(library_matches, field_name="score_axis:library")
+            elif library_matches:
+                add_group(library_matches, field_name="score_axis:code", exclude=True)
 
         if tag_axes:
             axis_matches = []

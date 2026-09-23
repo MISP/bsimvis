@@ -1141,6 +1141,10 @@ class FunctionSearch(Resource):
             "tag_axis": {
                 "description": "Repeatable function-tag axis filter; selected axes match as an OR (for example tag_axis=origin&tag_axis=family)."
             },
+            "score_axis": {
+                "description": "Binary scoring axis: overall (all functions), code (non-library functions), library (library-tagged functions), or content (no function-level score).",
+                "default": "overall",
+            },
             "min_features": {"description": "Minimum BSim feature count", "example": 5},
             "min_callers": {
                 "description": "Minimum number of callers (direct-call in-degree)",

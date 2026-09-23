@@ -38,6 +38,7 @@ class JobType(Enum):
     RESPLIT_BIN_SIM = "resplit_bin_sim"
     ENRICH_FEATURES = "enrich_features"
     DELETE_COLLECTION = "delete_collection"
+    REMOVE_FILES = "remove_files"
     CLEAN_COLLECTION = "clean_collection"
     PROPAGATE_METADATA = "propagate_metadata"
     BUILD_POOL_SIM = "build_pool_sim"

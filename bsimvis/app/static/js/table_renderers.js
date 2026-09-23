@@ -246,6 +246,7 @@ window.TableRenderers = {
                         <a ${createNav('upload', col, { batch_uuid: b['batch_uuid'] })} class="btn-action" title="Upload to Batch" style="color:var(--accent)">
                             <i class="fa-solid fa-cloud-arrow-up"></i>
                         </a>
+                        <button class="btn-action" title="Remove batch" onclick="window.removeFiles(${escapeAttr(jsString(col))}, null, ${escapeAttr(jsString(b['batch_uuid']))})"><i class="fa-solid fa-trash-can" style="color:#f87171"></i></button>
                     </div>
                 </td>
             </tr>
@@ -475,6 +476,7 @@ window.TableRenderers = {
                 </td>
                 <td class="sim-cell file-note-cell" style="text-align:center;">
                     ${EntityRenderer.renderFileNoteButton(fileId, f.note_owners, { isTable: true, raw_data: f })}
+                    <button class="btn-action" title="Remove file" onclick="window.removeFiles(${escapeAttr(jsString(col))}, [${escapeAttr(jsString(f['file_md5']))}])"><i class="fa-solid fa-trash-can" style="color:#f87171"></i></button>
                 </td>
                 <td class="cluster-cards-cell" data-is-binary="true" data-clusters='${escapeAttr(JSON.stringify(clusters))}'>
                     ${EntityRenderer.renderClusterCard(clusters, true, visibleAxes)}
@@ -630,6 +632,20 @@ window.TableRenderers = {
 window.renderCollections = TableRenderers.renderCollections;
 window.renderPools = TableRenderers.renderPools;
 window.renderBatches = TableRenderers.renderBatches;
+
+window.removeFiles = async function(collection, md5s, batchUuid) {
+    const subject = batchUuid ? `batch ${batchUuid}` : `file${md5s.length === 1 ? '' : 's'} ${md5s.join(', ')}`;
+    if (!confirm(`Remove ${subject} from ${collection}? Raw sample bytes will be retained.`)) return;
+    const body = { collection };
+    if (batchUuid) body.batch_uuid = batchUuid; else body.md5s = md5s;
+    try {
+        const res = await fetch('/api/maintenance/remove', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        alert(`Removal queued. Job ID: ${data.job_id}`);
+    } catch (e) { alert(`Failed to remove ${subject}: ${e.message}`); }
+};
+
 window.renderFiles = TableRenderers.renderFiles;
 window.renderFunctions = TableRenderers.renderFunctions;
 window.renderGlobalFeatures = TableRenderers.renderGlobalFeatures;

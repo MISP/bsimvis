@@ -996,6 +996,13 @@ class Worker:
                 job_id=job_id,
             )
 
+        elif jtype == JobType.REMOVE_FILES.value:
+            from bsimvis.app.services.maintenance_service import MaintenanceService
+
+            return MaintenanceService(
+                self.r_data, self.similarity_service
+            ).remove_files(collection, payload, self.job_service, job_id)
+
         elif jtype == JobType.DELETE_COLLECTION.value:
             return self.processing_service.delete_collection(
                 collection, self.job_service, job_id

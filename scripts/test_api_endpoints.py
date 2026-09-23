@@ -117,6 +117,7 @@ def test_endpoint(
     raw_body=None,
     headers=None,
     expected_ok=True,
+    expected_status=None,
     label=None,
 ):
     """
@@ -161,8 +162,10 @@ def test_endpoint(
         except Exception:
             body = resp.text[:500] if resp.text else None
 
-        ok = (200 <= status < 300) if expected_ok else True
-        success = ok
+        if expected_status is not None:
+            success = status == expected_status
+        else:
+            success = (200 <= status < 300) if expected_ok else True
 
     except Exception as exc:
         status = "ERROR"
@@ -2975,6 +2978,100 @@ def test_call_edge_id_dedup():
         _call_edge_ids([], "c", "m") == set()
         and _call_edge_ids(None, "c", "m") == set(),
     )
+
+
+def test_maintenance_remove_validation():
+    """The remove route requires one valid file selector."""
+    test_endpoint(
+        "POST",
+        "/api/maintenance/remove",
+        data={"collection": COLLECTION},
+        expected_status=400,
+        label="remove requires selector",
+    )
+    test_endpoint(
+        "POST",
+        "/api/maintenance/remove",
+        data={"collection": COLLECTION, "md5s": ["a"], "batch_uuid": "b"},
+        expected_status=400,
+        label="remove rejects two selectors",
+    )
+    test_endpoint(
+        "POST",
+        "/api/maintenance/remove",
+        data={"collection": COLLECTION, "md5s": []},
+        expected_status=400,
+        label="remove rejects empty md5 list",
+    )
+
+
+def test_maintenance_remove_file():
+    """A queued file removal clears indexed data and retains its sample bytes."""
+    if not file_md5:
+        raise AssertionError("upload prelude did not produce file_md5")
+    queued = test_endpoint(
+        "POST",
+        "/api/maintenance/remove",
+        data={"collection": COLLECTION, "md5s": [file_md5]},
+        label="queue file removal",
+    )
+    if not queued or not queued.get("job_id"):
+        raise AssertionError("remove endpoint returned no job_id")
+    if not wait_for_pipeline(queued["job_id"], " STEP – Wait for removal"):
+        raise AssertionError("file removal job did not complete")
+    from bsimvis.app.services.redis_client import get_redis
+
+    r = get_redis()
+    _check = r.exists(f"{COLLECTION}:file:{file_md5}:raw")
+    check(
+        "removed file is absent from all_files",
+        not r.sismember(f"{COLLECTION}:all_files", f"{COLLECTION}:file:{file_md5}"),
+        f"{COLLECTION}:all_files",
+    )
+    check("raw sample bytes remain", bool(_check), f"{COLLECTION}:file:{file_md5}:raw")
+    check(
+        "removed file search returns no hit",
+        not requests.get(
+            f"{BASE_URL}/api/file/search",
+            params={"collection": COLLECTION, "file_md5": file_md5},
+            timeout=30,
+        )
+        .json()
+        .get("files", []),
+        f"/api/file/search?file_md5={file_md5}",
+    )
+
+
+def test_pool_member_removal():
+    """Removing the last member clears both links and leaves a reusable pool."""
+    from bsimvis.app.services.pool_service import pool_service
+
+    pool_id = f"remove_member_{uuid.uuid4().hex[:8]}"
+    success, message = pool_service.create_pool(
+        pool_id, "remove test", [COLLECTION], {}
+    )
+    check("create removal test pool", success, message)
+    test_endpoint(
+        "DELETE",
+        f"/api/pool/{pool_id}/collections/{COLLECTION}",
+        label="remove last pool member",
+    )
+    check(
+        "pool has no members",
+        pool_service.get_pool(pool_id).get("collections") == [],
+        pool_id,
+    )
+    check(
+        "collection reverse pool link cleared",
+        not pool_service.r.sismember(f"{COLLECTION}:pools", pool_id),
+        COLLECTION,
+    )
+    check(
+        "pool can accept a member again",
+        pool_service.add_collection(pool_id, COLLECTION)[0],
+        pool_id,
+    )
+    pool_service.delete_pool(pool_id)
 
 
 def test_pool_hierarchical_axis_fanout():
@@ -7099,6 +7196,9 @@ if __name__ == "__main__":
     # run_all_tests() stays last: it deletes the collection on its way out.
     STEPS = [
         test_call_edge_id_dedup,
+        test_maintenance_remove_validation,
+        test_maintenance_remove_file,
+        test_pool_member_removal,
         test_pool_hierarchical_axis_fanout,
         test_cluster_tags,
         test_incremental_hierarchical_cluster_equivalence,

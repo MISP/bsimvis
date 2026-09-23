@@ -70,6 +70,165 @@ class PoolService:
         pipe.execute()
         return True, "Pool created successfully"
 
+    def remove_collection(self, pool_id, collection):
+        """Detach a member, remove its pair edges, and rebuild affected clusters."""
+        from bsimvis.app.services.index_service import delete_similarity
+        from bsimvis.app.services.bin_sim_service import _unindex_bin_sim_pair
+
+        r = self.r
+        meta = self.get_pool(pool_id)
+        if not meta:
+            return False, "Pool not found"
+        if collection not in meta.get("collections", []):
+            return False, "Collection is not a pool member"
+
+        def txt(value):
+            return value.decode() if isinstance(value, bytes) else str(value)
+
+        pool_coll = f"global:pool:{pool_id}"
+        file_ids = [txt(v) for v in r.smembers(f"{collection}:all_files")]
+        func_ids = [txt(v) for v in r.smembers(f"{collection}:all_functions")]
+        sim_ids, bin_ids = set(), set()
+        for file_id in file_ids:
+            md5 = file_id.split(":file:", 1)[-1]
+            sim_ids.update(
+                txt(v)
+                for v in r.smembers(f"{pool_coll}:sim:involves:file:{collection}:{md5}")
+            )
+            bin_ids.update(
+                txt(v)
+                for v in r.smembers(f"{pool_coll}:bin_sim:involves:{collection}:{md5}")
+            )
+        for fid in func_ids:
+            sim_ids.update(
+                txt(v) for v in r.smembers(f"{pool_coll}:sim:involves:func:{fid}")
+            )
+
+        for sid in sim_ids:
+            raw = r.get(sid)
+            try:
+                doc = json.loads(raw) if raw else {}
+            except (ValueError, TypeError):
+                doc = {}
+            if not doc:
+                continue
+            pipe = r.pipeline(transaction=False)
+            for fid in (doc.get("id1"), doc.get("id2")):
+                if fid:
+                    pipe.srem(f"{pool_coll}:sim:involves:func:{fid}", sid)
+            for coll, md5 in (
+                (doc.get("coll_1"), doc.get("md5_1")),
+                (doc.get("coll_2"), doc.get("md5_2")),
+            ):
+                if coll and md5:
+                    pipe.srem(f"{pool_coll}:sim:involves:file:{coll}:{md5}", sid)
+            pipe.zrem(f"{pool_coll}:sim:score", sid)
+            pipe.zrem(f"{pool_coll}:sim:min_features", sid)
+            pipe.zrem(
+                f"{pool_coll}:sim:is_cross_binary:{doc.get('is_cross_binary', 'false')}",
+                sid,
+            )
+            func_meta, file_meta = [], []
+            for fid in (doc.get("id1"), doc.get("id2")):
+                try:
+                    func_meta.append(json.loads(r.get(f"{fid}:meta") or "{}"))
+                except (ValueError, TypeError):
+                    func_meta.append({})
+            for coll, md5 in (
+                (doc.get("coll_1"), doc.get("md5_1")),
+                (doc.get("coll_2"), doc.get("md5_2")),
+            ):
+                try:
+                    file_meta.append(
+                        json.loads(r.get(f"{coll}:file:{md5}:meta") or "{}")
+                    )
+                except (ValueError, TypeError):
+                    file_meta.append({})
+            delete_similarity(pipe, pool_coll, sid, doc, *func_meta, *file_meta)
+            pipe.delete(sid)
+            pipe.execute()
+
+        for sid in bin_ids:
+            raw = r.get(sid)
+            try:
+                doc = json.loads(raw) if raw else {}
+            except (ValueError, TypeError):
+                doc = {}
+            if not doc:
+                continue
+            pipe = r.pipeline(transaction=False)
+            for coll, md5 in (
+                (doc.get("coll_a"), doc.get("md5_a")),
+                (doc.get("coll_b"), doc.get("md5_b")),
+            ):
+                if coll and md5:
+                    pipe.srem(f"{pool_coll}:bin_sim:involves:{coll}:{md5}", sid)
+            algo = doc.get("algo", meta.get("algo", "unweighted_cosine"))
+            for axis in ("", "_code", "_library", "_content"):
+                pipe.zrem(f"{pool_coll}:bin_sim:score{axis}:{algo}", sid)
+            pipe.srem(f"{pool_coll}:bin_sim:built:{algo}", sid)
+            file_meta = []
+            for coll, md5 in (
+                (doc.get("coll_a"), doc.get("md5_a")),
+                (doc.get("coll_b"), doc.get("md5_b")),
+            ):
+                try:
+                    file_meta.append(
+                        json.loads(r.get(f"{coll}:file:{md5}:meta") or "{}")
+                    )
+                except (ValueError, TypeError):
+                    file_meta.append({})
+            _unindex_bin_sim_pair(pipe, pool_coll, sid, doc, *file_meta)
+            pipe.delete(sid)
+            pipe.execute()
+
+        pipe = r.pipeline()
+        pipe.srem(f"global:pool:{pool_id}:collections_list", collection)
+        pipe.srem(f"{collection}:pools", pool_id)
+        pipe.hdel(f"global:pool:{pool_id}:collections", collection)
+        pipe.hset(
+            f"global:pool:{pool_id}:meta",
+            mapping={"sync_status": "outdated", "last_built_at": 0},
+        )
+        pipe.hdel(
+            f"global:pool:{pool_id}:meta",
+            "total_func_similarities",
+            "total_func_clusters",
+            "total_file_similarities",
+            "total_file_clusters",
+        )
+        pipe.execute()
+
+        # Rebuild merged member indexes after deleting the old merged buckets.
+        for pattern in (
+            f"{pool_coll}:idx:file:*",
+            f"{pool_coll}:idx:func:*",
+            f"{pool_coll}:reg:file:*",
+            f"{pool_coll}:reg:func:*",
+            f"{pool_coll}:idx:file:functions:*",
+        ):
+            for key in r.scan_iter(match=pattern, count=1000):
+                r.delete(key)
+        r.delete(
+            f"{pool_coll}:all_files",
+            f"{pool_coll}:all_functions",
+            f"{pool_coll}:tags_metadata",
+        )
+        self.build_pool_indexes(pool_id)
+        self.update_sync_snapshots(pool_id)
+
+        if self.get_pool(pool_id).get("collections"):
+            from bsimvis.app.services.cluster_service import cluster_service
+            from bsimvis.app.services.bin_cluster_service import bin_cluster_service
+
+            algo = self.similarity_algo(self.get_pool(pool_id))
+            cluster_service.clear_clustering(pool_coll, algo)
+            cluster_service.run_pool_clustering(pool_id)
+            for axis in ("overall", "code", "library", "content"):
+                bin_cluster_service.clear_clusters(pool_coll, algo, axis=axis)
+                bin_cluster_service.run_pool_bin_clustering(pool_id, axis=axis)
+        return True, "Collection removed from pool"
+
     def edit_pool_name(self, pool_id, name):
         """Edits the name of a pool."""
         r = self.r

@@ -198,3 +198,31 @@ def maintenance():
 
     pipeline_id = job_service.submit_to_lane(collection, tasks)
     return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
+
+
+def remove():
+    data = request.json or {}
+    collection = data.get("collection")
+    md5s = data.get("md5s")
+    batch_uuid = data.get("batch_uuid")
+    if not collection:
+        return {"error": "collection is required"}, 400
+    if bool(md5s) == bool(batch_uuid):
+        return {"error": "provide exactly one of md5s or batch_uuid"}, 400
+    if md5s is not None and (
+        not isinstance(md5s, list)
+        or not md5s
+        or not all(isinstance(v, str) and v for v in md5s)
+    ):
+        return {"error": "md5s must be a non-empty array of strings"}, 400
+    if batch_uuid is not None and (not isinstance(batch_uuid, str) or not batch_uuid):
+        return {"error": "batch_uuid must be a non-empty string"}, 400
+    job_id = job_service.create_job(
+        JobType.REMOVE_FILES,
+        {
+            "collection": collection,
+            "md5s": list(dict.fromkeys(md5s or [])),
+            "batch_uuid": batch_uuid,
+        },
+    )
+    return {"job_id": job_id, "status": "enqueued"}

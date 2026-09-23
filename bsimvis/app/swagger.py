@@ -3226,6 +3226,14 @@ class PoolCollectionAdd(Resource):
         return add_pool_collection(pool_id)
 
 
+@ns_pool.route("/<string:pool_id>/collections/<string:collection>")
+class PoolCollectionRemove(Resource):
+    def delete(self, pool_id, collection):
+        from bsimvis.app.routes.pools import remove_pool_collection
+
+        return remove_pool_collection(pool_id, collection)
+
+
 @ns_pool.route("/<string:pool_id>/maintenance")
 class PoolMaintenance(Resource):
     def post(self, pool_id):
@@ -3433,6 +3441,25 @@ class SearchAnalyzeSelection(Resource):
 
 
 # --- Maintenance Namespace ---
+@ns_maintenance.route("/remove")
+class MaintenanceRemove(Resource):
+    @ns_maintenance.expect(
+        api.model(
+            "MaintenanceRemove",
+            {
+                "collection": fields.String(required=True),
+                "md5s": fields.List(fields.String, required=False),
+                "batch_uuid": fields.String(required=False),
+            },
+        )
+    )
+    def post(self):
+        """Queues removal of files selected by md5s or batch_uuid."""
+        from bsimvis.app.routes.maintenance import remove
+
+        return remove()
+
+
 @ns_maintenance.route("")
 class Maintenance(Resource):
     def post(self):

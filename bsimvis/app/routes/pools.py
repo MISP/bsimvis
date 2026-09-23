@@ -179,6 +179,11 @@ def add_pool_collection(pool_id):
     return ({"message": message}, 200) if success else ({"error": message}, 404)
 
 
+def remove_pool_collection(pool_id, collection):
+    success, message = pool_service.remove_collection(pool_id, collection)
+    return ({"message": message}, 200) if success else ({"error": message}, 404)
+
+
 def pool_maintenance(pool_id):
     data = request.json or {}
     targets = set(data.get("targets") or [])
@@ -212,7 +217,9 @@ def pool_maintenance(pool_id):
         tasks.append((JobType.CLUSTER_POOL, {"pool_id": pool_id}))
     if "binary_similarity" in targets:
         if operation == "resplit":
-            tasks.append((JobType.RESPLIT_BIN_SIM, {"collection": f"global:pool:{pool_id}"}))
+            tasks.append(
+                (JobType.RESPLIT_BIN_SIM, {"collection": f"global:pool:{pool_id}"})
+            )
         else:
             tasks.append((JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}))
     if "binary_cluster" in targets:

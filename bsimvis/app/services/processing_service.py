@@ -427,6 +427,13 @@ class ProcessingService:
                 job_id, f"Starting full deletion of collection: {collection}"
             )
 
+        # Detach pools first so their reverse membership indexes cannot dangle.
+        from bsimvis.app.services.pool_service import pool_service
+
+        for pool_id in list(r.smembers(f"{collection}:pools")):
+            pool_id = pool_id.decode() if isinstance(pool_id, bytes) else pool_id
+            pool_service.remove_collection(pool_id, collection)
+
         # 1. Find all batch UUIDs associated with this collection
         batch_uuids = set()
         batch_prefix = f"{collection}:batch:"

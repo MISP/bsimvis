@@ -270,7 +270,6 @@ class ClusterService:
                 threshold=threshold,
                 min_sim=min_sim,
                 min_features=min_features,
-                engine=engine,
                 job_service=job_service,
                 job_id=job_id,
             )

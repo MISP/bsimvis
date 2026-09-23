@@ -169,7 +169,9 @@ def similarity_search():
         col = request.args.get("collection")
         from bsimvis.app.services.collection_config import resolve_collection_algo
 
-        algo = resolve_collection_algo(col or "main", request.args.get("algo"))
+        # Search follows the collection or pool build configuration. Ignore legacy
+        # algo query parameters so stale links cannot select an unbuilt algorithm.
+        algo = resolve_collection_algo(col or "main", None)
         if pool_id:
             from bsimvis.app.services.pool_service import pool_service
 
@@ -270,6 +272,9 @@ def similarity_search():
 
         sort_by = request.args.get("sort_by", "score")
         sort_order = request.args.get("sort_order", "desc").lower()
+        score_axis = request.args.get("score_axis", "overall").strip().lower()
+        if score_axis not in {"overall", "code", "library", "content"}:
+            return {"error": "Unknown score axis: " + score_axis}, 400
 
         if not col and not pool_id:
             return {"error": "Missing collection or pool"}, 400
@@ -310,6 +315,7 @@ def similarity_search():
         cache_params = {
             "col": col,
             "algo": algo,
+            "score_axis": score_axis,
             "min_score": min_score,
             "max_score": max_score,
             "min_features": min_features,
@@ -574,6 +580,35 @@ def similarity_search():
                         "exclude": exclude,
                     }
                 )
+
+            if score_axis == "content":
+                add_group([("func", [], "tags")], field_name="score_axis:content")
+            elif score_axis in {"code", "library"}:
+                from bsimvis.app.services.bin_sim_tags import (
+                    LIBRARY_ORIGIN_PREFIXES,
+                    is_library_tag,
+                )
+
+                library_matches = []
+                for field in ("tags", "user_tags"):
+                    registry = f"{col}:reg:func:{field}"
+                    for namespace in LIBRARY_ORIGIN_PREFIXES:
+                        if not is_library_tag(namespace):
+                            continue
+                        bucket = f"{col}:idx:func:{field}:{namespace[:-1]}"
+                        if r.sismember(registry, bucket):
+                            targets = union_buckets(r, [bucket])
+                            if targets:
+                                library_matches.append(("func", targets, field))
+                if score_axis == "library":
+                    add_group(
+                        library_matches or [("func", [], "tags")],
+                        field_name="score_axis:library",
+                    )
+                elif library_matches:
+                    add_group(
+                        library_matches, field_name="score_axis:code", exclude=True
+                    )
 
             # --------------------------------------------------------------------------
             # Filter Configuration — config-driven
@@ -1328,6 +1363,7 @@ def similarity_search():
         response_data = {
             "collection": col,
             "algo": algo,
+            "score_axis": score_axis,
             "min_score": min_score,
             "max_score": max_score,
             "min_features": min_features,

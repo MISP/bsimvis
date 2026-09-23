@@ -784,8 +784,7 @@ window.SimAlgos = {
 // Pickers built before the fetch landed hold only the fallback entry. Each
 // owner exposes its own re-render; a picker that is not on screen is a no-op.
 window.addEventListener('sim-algos-loaded', () => {
-    if (window.refreshSimAlgoPills) window.refreshSimAlgoPills();
-    if (window.FunctionView && document.getElementById('fn-nbr-algo-pills')) {
+    if (window.FunctionView && document.getElementById('fn-nbr-score-axis-pills')) {
         window.FunctionView.renderAllNeighborPills();
     }
     if (window.DiffView && document.getElementById('sim-algo-select')) {

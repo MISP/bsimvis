@@ -104,6 +104,7 @@ class SimilarityGraph {
         if (stopBtn) stopBtn.style.display = 'inline-block';
 
         const cleanParams = new URLSearchParams(params.toString());
+        cleanParams.delete('algo');
         cleanParams.delete('limit');
         cleanParams.delete('offset');
         const base_url = `/api/similarity/search?${cleanParams.toString()}`;

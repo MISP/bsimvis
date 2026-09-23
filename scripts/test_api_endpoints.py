@@ -4023,6 +4023,86 @@ def test_search_filters_and_sorting():
         )
         return
 
+    axis_params = {
+        "collection": COLLECTION,
+        "min_score": 0,
+        "max_score": 1,
+        "limit": 50,
+        "use_cache": "true",
+    }
+    overall = test_endpoint(
+        "GET",
+        "/api/similarity/search",
+        params=axis_params,
+        label="GET /api/similarity/search (overall metric)",
+    )
+    if overall:
+        check("overall metric is echoed", overall.get("score_axis") == "overall")
+        stale_algo = test_endpoint(
+            "GET",
+            "/api/similarity/search",
+            params={**axis_params, "algo": "stale_ignored_algorithm"},
+            label="GET /api/similarity/search (stale algo ignored)",
+        )
+        if stale_algo:
+            check(
+                "stale algo does not change resolved algorithm",
+                stale_algo.get("algo") == overall.get("algo"),
+            )
+            check(
+                "stale algo does not change results",
+                stale_algo.get("total") == overall.get("total"),
+            )
+        overall_hit = test_endpoint(
+            "GET",
+            "/api/similarity/search",
+            params=axis_params,
+            label="GET /api/similarity/search (overall cache hit)",
+        )
+        if overall_hit:
+            check(
+                "overall results use their cache",
+                overall_hit.get("cached_response") is True,
+            )
+        code = test_endpoint(
+            "GET",
+            "/api/similarity/search",
+            params={**axis_params, "score_axis": "code"},
+            label="GET /api/similarity/search (code metric)",
+        )
+        library = test_endpoint(
+            "GET",
+            "/api/similarity/search",
+            params={**axis_params, "score_axis": "library"},
+            label="GET /api/similarity/search (library metric)",
+        )
+        content = test_endpoint(
+            "GET",
+            "/api/similarity/search",
+            params={**axis_params, "score_axis": "content"},
+            label="GET /api/similarity/search (content metric)",
+        )
+        if code:
+            check(
+                "code axis has its own cache entry",
+                code.get("cached_response") is False,
+            )
+            check(
+                "code axis does not add pairs",
+                code.get("total", 0) <= overall.get("total", 0),
+            )
+        if library:
+            check("library axis is echoed", library.get("score_axis") == "library")
+            check(
+                "library axis does not add pairs",
+                library.get("total", 0) <= overall.get("total", 0),
+            )
+        if content:
+            check(
+                "content axis returns no function pairs",
+                content.get("total") == 0 and not content.get("pairs"),
+            )
+
     file_entity_id = f"{COLLECTION}:file:{file_md5}"
     pool_created = False
 
@@ -4064,6 +4144,22 @@ def test_search_filters_and_sorting():
             return
         pool_created = True
         wait_for_pipeline(pool.get("job_id"), banner=" STEP 3c – Wait for pool build")
+        pool_sim = test_endpoint(
+            "GET",
+            "/api/similarity/search",
+            params={
+                "pool": FILTER_POOL_ID,
+                "min_score": 0,
+                "limit": 5,
+                "algo": "stale_ignored_algorithm",
+            },
+            label="GET /api/similarity/search (pool algorithm resolution)",
+        )
+        if pool_sim:
+            check(
+                "pool response reports its configured algorithm",
+                pool_sim.get("algo") == "unweighted_cosine",
+            )
 
         # ── Tag AFTER both builds ─────────────────────────────────────────
         print(_color("\n  [Tags added after the builds]", BOLD))

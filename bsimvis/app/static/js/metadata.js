@@ -350,7 +350,7 @@ function seeSimilar(fullId, e) {
     const md5 = parsed.md5;
     const addr = parsed.address;
     
-    const url = `/collection/${encodeURIComponent(col)}/functions/similarities?md5=${encodeURIComponent(md5)}&address=${encodeURIComponent(addr)}&algo=unweighted_cosine`;
+    const url = `/collection/${encodeURIComponent(col)}/functions/similarities?md5=${encodeURIComponent(md5)}&address=${encodeURIComponent(addr)}`;
 
     Nav.openPath(url, e, { title: `Similar to: ${addr}`, type: 'function-similarity' });
 }

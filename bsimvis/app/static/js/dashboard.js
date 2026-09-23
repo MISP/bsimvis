@@ -450,7 +450,7 @@ function clearFilters() {
     const newParams = new URLSearchParams();
 
     // Preserved context keys
-    const preserved = ['algo', 'view'];
+    const preserved = viewKey === 'function-similarity' ? ['view'] : ['algo', 'view'];
     preserved.forEach(k => {
         if (params.has(k)) newParams.set(k, params.get(k));
     });
@@ -1467,13 +1467,13 @@ function syncBinSimTags(p) {
     if (pillP) pillP.setAttribute('style', binSimPillStyle(hidePacked, 'var(--danger, #dc2626)'));
 }
 
-// Same card/pill treatment as the bin-sim hero, applied to the
-// function-similarity search page's Algorithm/Cross Binary/Match Mode
-// controls -- previously three plain <select>s buried under a mislabeled
-// "Date" column header.
-// Server-driven (SimAlgos in utils.js): the search page reads stored scores, so
-// it offers only algorithms a build can have produced.
-const simAlgoOptions = () => window.SimAlgos.options({ buildable: true });
+// Function similarities use the same four score axes as function search.
+const SimScoreAxisOptions = [
+    { v: 'overall', label: 'Overall', icon: 'fa-solid fa-layer-group' },
+    { v: 'code', label: 'Code', icon: 'fa-solid fa-code' },
+    { v: 'library', label: 'Library', icon: 'fa-solid fa-book' },
+    { v: 'content', label: 'Content', icon: 'fa-solid fa-file-lines' },
+];
 const SimCrossBinaryOptions = [
     { v: '', label: 'All Binaries', icon: 'fa-solid fa-globe' },
     { v: 'false', label: 'Same Binary', icon: 'fa-solid fa-file' },
@@ -1489,17 +1489,17 @@ function simPillGroupHtml(groupClass, options, active, color) {
 }
 
 function simFilterPillsHtml(p) {
-    const algo = p.get('algo') || 'unweighted_cosine';
+    const axis = p.get('score_axis') || 'overall';
     const crossBinary = p.has('cross_binary') ? p.get('cross_binary') : '';
     const matchMode = p.get('match_mode') || 'any';
     return `
-        <input type="hidden" id="sim-algo" value="${escapeAttr(algo)}">
+        <input type="hidden" id="sim-score-axis" value="${escapeAttr(axis)}">
         <input type="hidden" id="sim-cross-binary" value="${escapeAttr(crossBinary)}">
         <input type="hidden" id="sim-match-mode" value="${escapeAttr(matchMode)}">
         <div style="display:flex; gap:24px; flex-wrap:wrap;">
             <div class="home-card" style="padding:16px; min-width:220px;">
-                <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Algorithm</h3>
-                <div id="sim-algo-pills" style="display:flex; flex-wrap:wrap; gap:8px;">${simPillGroupHtml('sim-algo-pill', simAlgoOptions(), algo, 'var(--info, #3b82f6)')}</div>
+                <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Scoring Metric</h3>
+                <div id="sim-score-axis-pills" style="display:flex; flex-wrap:wrap; gap:8px;">${simPillGroupHtml('sim-score-axis-pill', SimScoreAxisOptions, axis, 'var(--info, #3b82f6)')}</div>
             </div>
             <div class="home-card" style="padding:16px; min-width:220px;">
                 <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Cross Binary</h3>
@@ -1512,17 +1512,8 @@ function simFilterPillsHtml(p) {
         </div>`;
 }
 
-// The algorithm list arrives from the server (SimAlgos), so a picker rendered
-// before the fetch lands holds only the fallback entry.
-window.refreshSimAlgoPills = function () {
-    const el = document.getElementById('sim-algo-pills');
-    if (!el) return;
-    const active = document.getElementById('sim-algo')?.value || window.SimAlgos.default;
-    el.innerHTML = simPillGroupHtml('sim-algo-pill', simAlgoOptions(), active, 'var(--info, #3b82f6)');
-};
-
 function setSimPill(groupClass, value) {
-    const idByClass = { 'sim-algo-pill': 'sim-algo', 'sim-cb-pill': 'sim-cross-binary', 'sim-mm-pill': 'sim-match-mode' };
+    const idByClass = { 'sim-score-axis-pill': 'sim-score-axis', 'sim-cb-pill': 'sim-cross-binary', 'sim-mm-pill': 'sim-match-mode' };
     const hidden = document.getElementById(idByClass[groupClass]);
     if (hidden) hidden.value = value;
     if (window.applySimSearch) window.applySimSearch();
@@ -1531,7 +1522,7 @@ window.setSimPill = setSimPill;
 
 function syncSimFilterPills(p) {
     const groups = [
-        ['sim-algo', 'sim-algo-pill', p.get('algo') || 'unweighted_cosine', 'var(--info, #3b82f6)'],
+        ['sim-score-axis', 'sim-score-axis-pill', p.get('score_axis') || 'overall', 'var(--info, #3b82f6)'],
         ['sim-cross-binary', 'sim-cb-pill', p.has('cross_binary') ? p.get('cross_binary') : '', 'var(--warning, #d97706)'],
         ['sim-match-mode', 'sim-mm-pill', p.get('match_mode') || 'any', 'var(--accent, #9333ea)'],
     ];
@@ -2480,7 +2471,7 @@ function applySimSearch() {
 
     const minScore = document.getElementById('sim-min-score')?.value;
     const maxScore = document.getElementById('sim-max-score')?.value;
-    const algo = document.getElementById('sim-algo')?.value;
+    const scoreAxis = document.getElementById('sim-score-axis')?.value || 'overall';
     const minFeatures = document.getElementById('flt-func-min-features')?.value;
     const crossBinary = document.getElementById('sim-cross-binary')?.value;
     const matchMode = document.getElementById('sim-match-mode')?.value;
@@ -2492,7 +2483,8 @@ function applySimSearch() {
     if (lang) params.set('language', lang); else params.delete('language');
     params.set('min_score', minScore || defaultMinScore());
     params.set('max_score', maxScore || '1.0');
-    params.set('algo', algo || 'unweighted_cosine');
+    params.delete('algo');
+    if (scoreAxis === 'overall') params.delete('score_axis'); else params.set('score_axis', scoreAxis);
     params.set('min_features', minFeatures || '0');
 
     if (crossBinary) params.set('cross_binary', crossBinary);
@@ -3184,7 +3176,6 @@ function seeSimilarFromCode() {
     const newParams = new URLSearchParams();
     newParams.set('md5', md5);
     newParams.set('address', addr);
-    newParams.set('algo', 'unweighted_cosine');
 
     navigate('function-similarity', newParams, col);
     windowManager.closeWindow(win);

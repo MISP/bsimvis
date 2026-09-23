@@ -22,6 +22,12 @@ window.FunctionView = {
 
     async init(params, containerId) {
         this.params = params;
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('algo')) {
+            urlParams.delete('algo');
+            const query = urlParams.toString();
+            window.history.replaceState(window.history.state, '', window.location.pathname + (query ? `?${query}` : '') + window.location.hash);
+        }
         this.container = document.getElementById(containerId);
 
         const collection = params.collection || '';
@@ -97,9 +103,9 @@ window.FunctionView = {
                                     <div id="fn-nbr-scope-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
                                 </div>
                                 <div class="home-card" style="padding:16px; min-width:220px;">
-                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Algorithm</h3>
-                                    <input type="hidden" id="fn-nbr-algo" value="unweighted_cosine">
-                                    <div id="fn-nbr-algo-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Scoring Metric</h3>
+                                    <input type="hidden" id="fn-nbr-score-axis" value="${escapeAttr(this.params.score_axis || 'overall')}">
+                                    <div id="fn-nbr-score-axis-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
                                 </div>
                                 <div class="home-card" style="padding:16px; min-width:220px;">
                                     <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Cross Binary</h3>
@@ -595,6 +601,8 @@ window.FunctionView = {
             const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
             if (poolId) qs.set('pool', poolId); else qs.set('collection', collection);
             qs.set('min_score', window.defaultMinScore ? window.defaultMinScore() : '0.9');
+            const scoreAxis = document.getElementById('fn-nbr-score-axis')?.value || 'overall';
+            if (scoreAxis !== 'overall') qs.set('score_axis', scoreAxis);
             qs.set('limit', '0');
             // /api/similarity/search runs a Lua script, and kvrocks serialises
             // every EVAL behind one global lock, so this must not be a fresh
@@ -629,7 +637,8 @@ window.FunctionView = {
         if (scope === 'pool' && poolId) qs.set('pool', poolId);
         else qs.set('collection', collection);
 
-        qs.set('algo', document.getElementById('fn-nbr-algo')?.value || 'unweighted_cosine');
+        const scoreAxis = document.getElementById('fn-nbr-score-axis')?.value || 'overall';
+        if (scoreAxis !== 'overall') qs.set('score_axis', scoreAxis);
         // Function edges really are built at similarity.min_score, so inheriting
         // it here shows exactly what was computed.
         qs.set('min_score', document.getElementById('fn-nbr-min-score')?.value
@@ -678,7 +687,7 @@ window.FunctionView = {
 
     // Generic pill group: [{v, label, icon, disabled}], one hidden input holds
     // the active value, one container div renders the pills. Shared shape for
-    // Scope/Algorithm/Cross Binary/Match Mode -- none of these carry counts
+    // Scope/Scoring Metric/Cross Binary/Match Mode -- none of these carry counts
     // (unlike bin-sim's Scoring Metric cards), so no extra fetches here.
     renderNeighborPillGroup(inputId, containerId, options, color) {
         const el = document.getElementById(containerId);
@@ -690,17 +699,24 @@ window.FunctionView = {
     setNeighborPill(inputId, containerId, value) {
         const el = document.getElementById(inputId);
         if (el) el.value = value;
+        if (inputId === 'fn-nbr-score-axis') {
+            this.params.score_axis = value;
+            const params = new URLSearchParams(window.location.search);
+            if (value === 'overall') params.delete('score_axis'); else params.set('score_axis', value);
+            window.history.replaceState(window.history.state, '', window.location.pathname + (params.toString() ? `?${params}` : '') + window.location.hash);
+        }
         if (inputId === 'fn-nbr-scope') this.renderScopePills();
-        else if (inputId === 'fn-nbr-algo') this.renderNeighborPillGroup(inputId, containerId, this.ALGO_OPTIONS, 'var(--info, #3b82f6)');
+        else if (inputId === 'fn-nbr-score-axis') this.renderNeighborPillGroup(inputId, containerId, this.SCORE_AXIS_OPTIONS, 'var(--info, #3b82f6)');
         else if (inputId === 'fn-nbr-cross-binary') this.renderNeighborPillGroup(inputId, containerId, this.CROSS_BINARY_OPTIONS, 'var(--warning, #d97706)');
         this.searchNeighbors();
     },
 
-    // Neighbours come from stored scores, so only buildable algorithms (SimAlgos
-    // in utils.js — server-driven, so Milvus appears only when it is up).
-    get ALGO_OPTIONS() {
-        return window.SimAlgos.options({ buildable: true });
-    },
+    SCORE_AXIS_OPTIONS: [
+        { v: 'overall', label: 'Overall', icon: 'fa-solid fa-layer-group' },
+        { v: 'code', label: 'Code', icon: 'fa-solid fa-code' },
+        { v: 'library', label: 'Library', icon: 'fa-solid fa-book' },
+        { v: 'content', label: 'Content', icon: 'fa-solid fa-file-lines' },
+    ],
     CROSS_BINARY_OPTIONS: [
         { v: '', label: 'All Binaries', icon: 'fa-solid fa-globe' },
         { v: 'false', label: 'Same Binary', icon: 'fa-solid fa-file' },
@@ -721,7 +737,7 @@ window.FunctionView = {
 
     renderAllNeighborPills() {
         this.renderScopePills();
-        this.renderNeighborPillGroup('fn-nbr-algo', 'fn-nbr-algo-pills', this.ALGO_OPTIONS, 'var(--info, #3b82f6)');
+        this.renderNeighborPillGroup('fn-nbr-score-axis', 'fn-nbr-score-axis-pills', this.SCORE_AXIS_OPTIONS, 'var(--info, #3b82f6)');
         this.renderNeighborPillGroup('fn-nbr-cross-binary', 'fn-nbr-cross-binary-pills', this.CROSS_BINARY_OPTIONS, 'var(--warning, #d97706)');
     },
 

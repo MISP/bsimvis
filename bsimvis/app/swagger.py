@@ -1421,10 +1421,9 @@ class SimilaritySearch(Resource):
                 "description": "Pool ID (targets a cross-collection pool)",
                 "example": "test_pool",
             },
-            "algo": {
-                "description": "Similarity algorithm",
-                "default": "unweighted_cosine",
-                "example": "unweighted_cosine",
+            "score_axis": {
+                "description": "Scoring metric: overall (all pairs), code (pairs without library functions), library (pairs involving library functions), or content (no function pairs).",
+                "default": "overall",
             },
             "min_score": {
                 "description": "Minimum similarity score (inclusive)",
@@ -1538,7 +1537,7 @@ class SimilaritySearch(Resource):
         }
     )
     def get(self):
-        """Main similarity search engine with rich filtering, cross-binary detection, caching, and export."""
+        """Search function pairs using the configured algorithm and optional scoring metric filter."""
         from bsimvis.app.routes.search_similarity import similarity_search
 
         return similarity_search()

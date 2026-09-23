@@ -23,6 +23,14 @@ Once the Lua engine returns a page of similarity IDs (SIDs), Python performs:
 - **Metadata Fetching**: Pipelines JSON fetches for the metadata of both entities in the pair using `idx:{coll}:file:{md5}` or `idx:{coll}:func:{md5}:{addr}`.
 - **Timestamp Parsing**: Normalizes ISO/Unix dates for the UI.
 
+## Scoring metric filter
+
+`score_axis` defaults to `overall`. `code` excludes pairs involving functions tagged
+as library code, `library` includes pairs involving those functions, and `content`
+returns no function pairs. This filters pair membership without recalculating scores.
+The configured collection or pool algorithm selects the stored scoreboard; stale
+`algo` query parameters are ignored. The selected axis is part of the result cache key.
+
 ## 3. Sorting and Pagination
 - **Sorting**: Sorting by `score` or `feat_count` is performed directly in the database layer during selection.
 - **Pagination**: `offset` and `limit` are applied during the SID extraction in Lua.

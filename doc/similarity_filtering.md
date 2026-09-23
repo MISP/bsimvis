@@ -30,6 +30,11 @@ as library code, `library` includes pairs involving those functions, and `conten
 returns no function pairs. This filters pair membership without recalculating scores.
 The configured collection or pool algorithm selects the stored scoreboard; stale
 `algo` query parameters are ignored. The selected axis is part of the result cache key.
+Code and Library queries use `sim:score_axis:*` ZSETs once that namespace is ready;
+older collections can be backfilled with `uv run python scripts/backfill_similarity_score_axes.py`
+(`--collection` plus `--algo`, or `--pool`; add `--apply` to write). Pause similarity
+builds, clears, and library-tag changes while applying the backfill. Until it finishes,
+searches keep using the tag-index filter.
 
 ## 3. Sorting and Pagination
 - **Sorting**: Sorting by `score` or `feat_count` is performed directly in the database layer during selection.

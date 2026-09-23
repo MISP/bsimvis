@@ -407,9 +407,13 @@ def _collection_page(r, collection, algo, f, is_pool=False):
         # Fast path: page straight off the sorted ZSET (O(offset+limit)).
         total = r.zcard(zkey)
         page_raw = (
-            r.zrevrange(zkey, offset, offset + limit - 1)
-            if reverse
-            else r.zrange(zkey, offset, offset + limit - 1)
+            (
+                r.zrevrange(zkey, offset, offset + limit - 1)
+                if reverse
+                else r.zrange(zkey, offset, offset + limit - 1)
+            )
+            if limit > 0
+            else []
         )
         page_sids = [_dec(s) for s in page_raw]
     elif zkey:

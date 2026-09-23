@@ -10,6 +10,7 @@ from bsimvis.app.services.collection_config import assert_signature_settings_mat
 from bsimvis.app.services.index_service import save_similarity
 from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.index_config import get_propagated_fields
+from bsimvis.app.services.similarity_axis_index import add_pair, pair_axis, ready_key
 
 # --- Shared Lua Scripts ---
 
@@ -1175,10 +1176,10 @@ class SimilarityService:
         if index_depth != "none":
             propagated = get_propagated_fields("sim")
             if index_depth == "minimal":
-                needs_func_meta = False
+                needs_func_meta = True
                 needs_file_meta = False
             else:
-                needs_func_meta = len(propagated.get("func", [])) > 0
+                needs_func_meta = True
                 needs_file_meta = (
                     len([f for f, t in propagated.get("file", []) if f != "file_md5"])
                     > 0
@@ -1244,6 +1245,24 @@ class SimilarityService:
 
         if skip_write:
             return 0
+
+        if index_depth == "none":
+            if not hasattr(self, "_func_meta_cache"):
+                self._func_meta_cache = {}
+            func_ids_needed = set()
+            for fid, _, _, t_total, candidates in discovery_results:
+                if t_total >= min_features:
+                    func_ids_needed.add(fid)
+                func_ids_needed.update(
+                    item["id"] for item in candidates if item["c_total"] >= min_features
+                )
+            missing_func_ids = [
+                fid for fid in func_ids_needed if fid not in self._func_meta_cache
+            ]
+            if missing_func_ids:
+                raw_metas = r.mget([f"{fid}:meta" for fid in missing_func_ids])
+                for fid, raw in zip(missing_func_ids, raw_metas):
+                    self._func_meta_cache[fid] = json.loads(raw) if raw else None
 
         # Execute persistence and indexing in chunked batches
         # ponytail: batch size set to 2000 to balance serialization latency and worker contention
@@ -1324,6 +1343,17 @@ class SimilarityService:
 
                 persist_pipe.set(sid, json.dumps(sim_doc))
                 persist_pipe.zadd(score_key, {sid: score_rounded})
+                axis = pair_axis(
+                    self._func_meta_cache.get(id_a), self._func_meta_cache.get(id_b)
+                )
+                add_pair(
+                    persist_pipe,
+                    f"global:pool:{pool_id}" if pool_id else collection,
+                    sid,
+                    score_rounded,
+                    axis,
+                    None if pool_id else algo,
+                )
 
                 # For involves, we use the full FID if it's a pool
                 inv_id_a = id_a if pool_id else clean_id_a
@@ -1374,6 +1404,14 @@ class SimilarityService:
         if sim_count > 0:
             persist_pipe.execute()
 
+        if total_written and not pool_id:
+            axis_total = sum(
+                r.zcard(f"{collection}:sim:score_axis:{axis}:{algo}")
+                for axis in ("code", "library")
+            )
+            if axis_total == r.zcard(f"{collection}:sim:score:{algo}"):
+                r.set(ready_key(collection, algo), "1")
+
         return total_written
 
     def build_function(
@@ -1395,6 +1433,7 @@ class SimilarityService:
         # On-demand single target: drop any caches left from a prior build so we
         # never read a posting list/norm that ingestion has since changed.
         self._reset_read_caches()
+        self._func_meta_cache = {}
         from bsimvis.app.services.config_service import config_service
 
         if algo is None:
@@ -1519,6 +1558,12 @@ class SimilarityService:
 
         r.delete(f"{collection}:sim:all")
         r.delete(f"{collection}:sim:min_features")
+        for a in algos:
+            r.delete(
+                f"{collection}:sim:score_axis:code:{a}",
+                f"{collection}:sim:score_axis:library:{a}",
+                f"{collection}:sim:score_axes_ready:{a}",
+            )
 
         # 2. Scan and delete involves, tag indexes, and similarity docs
         from bsimvis.app.services.index_config import get_propagated_fields

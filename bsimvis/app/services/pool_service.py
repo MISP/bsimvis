@@ -1104,6 +1104,9 @@ class PoolService:
 
         self.update_sync_snapshots(pool_id)
         r.hdel(f"global:pool:{pool_id}:meta", "build_generations")
+        from bsimvis.app.services.similarity_axis_index import ready_key
+
+        r.set(ready_key(pool_coll), "1")
 
         return True
 

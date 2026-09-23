@@ -659,6 +659,16 @@ class TagService:
             _remove_tag_buckets(
                 r, collection, lvl, tag_lower, [eid], remaining, field="tags"
             )
+            from bsimvis.app.services.bin_sim_tags import is_library_tag
+
+            if lvl == "func" and is_library_tag(tag_lower):
+                from bsimvis.app.services.similarity_axis_index import refresh_function
+
+                pools = [
+                    p.decode() if isinstance(p, bytes) else p
+                    for p in r.smembers(f"{collection}:pools")
+                ]
+                refresh_function(r, collection, eid, pools)
             for p_id in r.smembers(f"{collection}:pools"):
                 p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
                 mapped = to_pool_indexed_id(eid, lvl, p_id)
@@ -963,6 +973,16 @@ class TagService:
                                         None,
                                         target_field,
                                     )
+
+        from bsimvis.app.services.bin_sim_tags import is_library_tag
+
+        if src_level == "func" and is_library_tag(tag_lower):
+            from bsimvis.app.services.similarity_axis_index import refresh_function
+
+            pools = [
+                p.decode() if isinstance(p, bytes) else p for p in associated_pools
+            ]
+            refresh_function(r, collection, indexed_id, pools)
 
 
 tag_service = TagService()

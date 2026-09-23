@@ -27,6 +27,8 @@ local function cleanup_key(sm_key)
 
     -- 1. Remove from global ZSETs
     redis.call('ZREM', collection .. ':sim:score:' .. algo, sm_key)
+    redis.call('ZREM', collection .. ':sim:score_axis:code:' .. algo, sm_key)
+    redis.call('ZREM', collection .. ':sim:score_axis:library:' .. algo, sm_key)
     redis.call('ZREM', collection .. ':sim:all', sm_key)
     redis.call('ZREM', collection .. ':sim:min_features', sm_key)
     

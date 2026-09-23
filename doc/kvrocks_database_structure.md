@@ -131,6 +131,8 @@ Stores a list of all existing bucket keys for a specific field.
 
 ### Similarity Engine Indices
 - `{coll}:sim:score:{algo}` (**ZSet**): Global scoreboard (Member: `sid`, Score: `similarity`).
+- `{coll}:sim:score_axis:{code,library}:{algo}` (**ZSet**): Function pairs partitioned by whether either function has a library tag; scores match the global scoreboard.
+- `{coll}:sim:score_axes_ready:{algo}` (**String**): Present when both axis indexes cover the scoreboard.
 - `{coll}:sim:built:{algo}` (**Set**): IDs of functions already processed for similarity.
 - `{coll}:sim:involves:{level}:{doc_id}` (**ZSet**): Map of which similarities involve a specific file or function.
 - `{coll}:sim:min_features` (**ZSet**): Optimization for feature count filtering.
@@ -142,7 +144,7 @@ Stores a list of all existing bucket keys for a specific field.
 The similarity search engine in `search_similarity.lua` leverages these indices:
 1. Filters are resolved by intersecting bucket Sets from `{coll}:idx:...`.
 2. Ranges are resolved using ZSets from `{coll}:idx:...`.
-3. The resulting candidate Set is used to rank similarities from `{coll}:sim:score:{algo}`.
+3. The resulting candidate Set is ranked from `{coll}:sim:score:{algo}` or the selected score-axis ZSET.
 
 ---
 
@@ -164,6 +166,8 @@ A pool combines the functions/binaries of several collections into one searchabl
 | `global:pool:{pool_id}:all_functions` | **Set** | All function IDs in the pool. |
 | `global:pool:{pool_id}:all_files` | **Set** | All file IDs in the pool. |
 | `global:pool:{pool_id}:sim:score` | **ZSet** | Function-pair scoreboard for the pool. |
+| `global:pool:{pool_id}:sim:score_axis:{code,library}` | **ZSet** | Function-pair score index partitioned by library tags. |
+| `global:pool:{pool_id}:sim:score_axes_ready` | **String** | Present when pool axis indexes are ready. |
 | `global:pool:{pool_id}:sim:{coll}:func:{id1}::{coll}:func:{id2}` | **JSON** | Pool function similarity pair (IDs are collection-qualified). |
 | `global:pool:{pool_id}:bin_sim:score:{algo}` | **ZSet** | Binary-pair scoreboard for the pool. |
 | `global:pool:{pool_id}:cluster:list` | **Set** | Pool function cluster IDs. |

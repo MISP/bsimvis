@@ -166,7 +166,12 @@ if producer.type == "metadata" then
                 end
             end
 
-            local score = (score_map and score_map[sid]) or tonumber(redis.call('ZSCORE', algo_zset, sid) or 0)
+            local score = score_map and score_map[sid]
+            if score == nil then
+                local raw_score = redis.call('ZSCORE', algo_zset, sid)
+                if not raw_score then goto continue end
+                score = tonumber(raw_score)
+            end
             if score >= min_score and score <= max_score then
                 table.insert(sorted_raw, sid)
                 table.insert(sorted_raw, tostring(score))
@@ -195,17 +200,18 @@ for i=1, #raw, 2 do
     local sid = raw[i]
     local producer_val = tonumber(raw[i+1])
     local score = 0
-    
-    -- We must ensure we have the real similarity score for range checks (Step 3).
-    -- Only use the producer_val as the score if the producer IS the score index.
+    local match = true
+
+    -- Only use the producer value when it came from the selected score index.
     if producer.type == "score_range" then
         score = producer_val
     else
-        score = (score_map and score_map[sid]) or tonumber(redis.call('ZSCORE', algo_zset, sid) or 0)
+        local raw_score = score_map and score_map[sid]
+        if raw_score == nil then raw_score = redis.call('ZSCORE', algo_zset, sid) end
+        if raw_score then score = tonumber(raw_score) else match = false end
     end
 
     local id1, id2 = nil, nil
-    local match = true
     
     local feat_count_val = nil
     for idx, g in ipairs(groups) do

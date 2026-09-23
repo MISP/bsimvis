@@ -15,6 +15,7 @@ from bsimvis.app.services.index_service import (
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.cluster_utils import pick_best_shared_cluster
 from bsimvis.app.services.query_syntax import resolve_targets, union_buckets
+from bsimvis.app.services.similarity_axis_index import ready_key, score_axis_key
 
 DEFAULT_LIMIT = 100  # API RESULT LIMIT
 DEFAULT_POOL_LIMIT = 1000000  # DATABASE FILTERING LIMIT
@@ -301,6 +302,13 @@ def similarity_search():
 
             algo_zset = f"{col}:sim:score:{algo}"
             min_features_zset = f"{col}:sim:min_features"
+        axis_index_ready = (
+            score_axis in {"code", "library"}
+            and not (score_axis == "library" and match_mode == "both")
+            and bool(r.get(ready_key(col, None if is_pool else algo)))
+        )
+        if axis_index_ready:
+            algo_zset = score_axis_key(col, score_axis, None if is_pool else algo)
         pool_truncated = False
         # Match mode chosen per filter value, echoed in the response so a query
         # that resolved differently than expected is visible rather than silent.
@@ -316,6 +324,7 @@ def similarity_search():
             "col": col,
             "algo": algo,
             "score_axis": score_axis,
+            "axis_index_ready": axis_index_ready,
             "min_score": min_score,
             "max_score": max_score,
             "min_features": min_features,
@@ -324,6 +333,12 @@ def similarity_search():
             "sort_by": sort_by,
             "sort_order": sort_order,
         }
+        if score_axis in {"code", "library"}:
+            from bsimvis.app.services.bin_sim_tags import read_tags_rev
+
+            cache_params["tags_rev"] = read_tags_rev(r, col)
+            cache_params["axis_index_size"] = r.zcard(algo_zset)
+
         # Include all other filters & exclusions
         for f in [
             "md5",
@@ -583,7 +598,7 @@ def similarity_search():
 
             if score_axis == "content":
                 add_group([("func", [], "tags")], field_name="score_axis:content")
-            elif score_axis in {"code", "library"}:
+            elif score_axis in {"code", "library"} and not axis_index_ready:
                 from bsimvis.app.services.bin_sim_tags import (
                     LIBRARY_ORIGIN_PREFIXES,
                     is_library_tag,

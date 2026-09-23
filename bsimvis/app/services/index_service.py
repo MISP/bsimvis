@@ -498,6 +498,13 @@ def delete_similarity(
     file_meta2=None,
 ):
     """Remove sim-level secondary indexes for a similarity document."""
+    from bsimvis.app.services.similarity_axis_index import score_axis_key
+
+    algo = sim_doc.get("algo", "unweighted_cosine")
+    pool = coll.startswith("global:pool:")
+    for axis in ("code", "library"):
+        pipe.zrem(score_axis_key(coll, axis, None if pool else algo), sid)
+
     propagated = get_propagated_fields("sim")
 
     # 1. Native Sim Fields

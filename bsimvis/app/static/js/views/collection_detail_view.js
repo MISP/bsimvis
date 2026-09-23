@@ -120,6 +120,24 @@ window.CollectionDetailView = {
         </div>`;
     },
 
+    _algoRow(p) {
+        const value = String(p.value || '');
+        const options = window.SimAlgos
+            ? window.SimAlgos.optionsHtml(value, { buildable: true })
+            : `<option value="${escapeAttr(value)}">${escapeHtml(value)}</option>`;
+        return `
+        <div style="padding:10px 0; border-bottom:1px solid var(--border);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                <div>
+                    <div style="font-size:0.82rem; color:var(--text); font-weight:600;">Algorithm</div>
+                    <div style="font-size:0.72rem; color:var(--dim); margin-top:2px;">Function similarity scoring algorithm.</div>
+                </div>
+                <select id="coll-param-algo" style="max-width:220px; padding:6px 10px; background:var(--hover); border:1px solid var(--border); border-radius:6px; color:var(--accent); font-family:monospace; font-weight:600; font-size:0.85rem;">${options}</select>
+            </div>
+            <div style="font-size:0.7rem; color:var(--dim); margin-top:6px;">${p.locked ? 'locked on this collection' : 'not set — falls back to the global default'} · global default <code>${escapeHtml(String(p.default ?? '—'))}</code></div>
+        </div>`;
+    },
+
     _renderParamsCard(name, params) {
         return `
         <div>
@@ -129,6 +147,7 @@ window.CollectionDetailView = {
             <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:18px;">
                 ${this._paramRow('min_features', 'Min Features', 'Functions below this many features skip the BSim vector and match by exact FunctionID hash only.', params.min_features, '1')}
                 ${this._paramRow('min_score', 'Min Score', 'Similarity floor — pairs scoring below this are not stored.', params.min_score, '0.01')}
+                ${this._algoRow(params.algo || {})}
                 <div style="display:flex; align-items:center; gap:8px; margin-top:14px; padding:10px 12px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.3); border-radius:6px; font-size:0.75rem; color:#f59e0b;">
                     <i class="fa-solid fa-triangle-exclamation"></i>
                     <span>These are locked on the first similarity build. Changing them does not rescore existing edges — rebuild the collection to apply.</span>
@@ -390,9 +409,11 @@ window.collectionDetailCluster = async function(collName, btn) {
 window.collectionDetailSaveParams = async function(collName, btn) {
     const minFeatures = document.getElementById('coll-param-min_features');
     const minScore = document.getElementById('coll-param-min_score');
+    const algo = document.getElementById('coll-param-algo');
     const body = { collection: collName };
     if (minFeatures && minFeatures.value !== '') body.min_features = Number(minFeatures.value);
     if (minScore && minScore.value !== '') body.min_score = Number(minScore.value);
+    if (algo && algo.value !== '') body.algo = algo.value;
 
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
     try {

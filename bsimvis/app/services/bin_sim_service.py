@@ -14,6 +14,7 @@ from bsimvis.app.services.bin_sim_tags import (
     split_is_current,
 )
 
+
 def stored_unweighted_match():
     """Weighting the build writes into stored pair scores.
 
@@ -28,6 +29,7 @@ def stored_unweighted_match():
     from bsimvis.app.services.config_service import config_service
 
     return bool(config_service.get("similarity.unweighted_match", False))
+
 
 def stored_discovery():
     """Discovery settings the builders apply on top of stored function edges.
@@ -66,9 +68,7 @@ def load_vectors(r, fids):
     return vectors
 
 
-def discover_edges(
-    vectors, fids_a, fids_b, algo, min_score, skip_pairs=(), max_df=1.0
-):
+def discover_edges(vectors, fids_a, fids_b, algo, min_score, skip_pairs=(), max_df=1.0):
     """Score every A/B function pair that shares a feature, from tf vectors.
 
     Same three formulas the comparison view uses, so a discovered score means
@@ -1072,41 +1072,60 @@ class BinSimService:
                 pipe.delete(involves_key)
                 pipe.execute()
         else:
-            patterns = [
-                f"{collection}:bin_sim:{algo}:*",
-                f"{collection}:bin_sim:involves:*",
-            ]
+            prefix = f"{collection}:bin_sim:{algo}:"
+            sids = list(r.scan_iter(match=f"{prefix}*"))
+            raw_docs = r.mget(sids) if sids else []
+            docs = []
+            md5s = set()
+            for raw in raw_docs:
+                try:
+                    doc = json.loads(raw) if raw else {}
+                except (ValueError, TypeError):
+                    doc = {}
+                docs.append(doc)
+                md5s.update(m for m in (doc.get("md5_a"), doc.get("md5_b")) if m)
 
-            for pattern in patterns:
-                cursor = 0
-                while True:
-                    cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
-                    if keys:
-                        r.delete(*keys)
-                    if cursor == 0:
-                        break
+            meta_pipe = r.pipeline(transaction=False)
+            for value in sorted(md5s):
+                meta_pipe.get(f"{collection}:file:{value}:meta")
+            file_meta = {}
+            for value, raw in zip(sorted(md5s), meta_pipe.execute()):
+                try:
+                    file_meta[value] = json.loads(raw) if raw else {}
+                except (ValueError, TypeError):
+                    file_meta[value] = {}
 
-            r.delete(f"{collection}:bin_sim:built:{algo}")
-            r.delete(f"{collection}:all_bin_sims")
+            pipe = r.pipeline(transaction=False)
+            for sid, doc in zip(sids, docs):
+                if not doc:
+                    continue
+                pipe.delete(sid)
+                for axis in ("", "_code", "_library", "_content"):
+                    pipe.zrem(f"{collection}:bin_sim:score{axis}:{algo}", sid)
+                pipe.srem(f"{collection}:bin_sim:built:{algo}", sid)
+                for md5 in (doc.get("md5_a"), doc.get("md5_b")):
+                    if md5:
+                        pipe.srem(f"{collection}:bin_sim:involves:{md5}", sid)
+                _unindex_bin_sim_pair(
+                    pipe,
+                    collection,
+                    sid,
+                    doc,
+                    file_meta.get(doc.get("md5_a"), {}),
+                    file_meta.get(doc.get("md5_b"), {}),
+                )
+            pipe.delete(f"{collection}:bin_sim:built:{algo}")
+            pipe.execute()
 
-            # Actual secondary indexes live under idx:bin_sim:* / reg:bin_sim:*
-            # (written by _index_bin_sim_pair), not the bin_sim:score:{algo}-style
-            # keys above. Those were never populated by the writer, so clearing
-            # them was a no-op that left every idx:/reg: entry orphaned across
-            # every clear+rebuild cycle. ponytail: one algo per collection
-            # (assumed elsewhere in this codebase too), so wipe the whole index
-            # rather than filtering per-sid.
-            for field in BIN_SIM_NUM_FIELDS:
-                r.delete(f"{collection}:idx:bin_sim:{field}")
+            # Drop empty tag buckets for this pair type; registries may also
+            # point at buckets still used by another algorithm, so retain those.
             for field in BIN_SIM_TAG_FIELDS:
                 reg_key = f"{collection}:reg:bin_sim:{field}"
-                buckets = r.smembers(reg_key)
-                if buckets:
-                    bucket_keys = [
-                        b.decode() if isinstance(b, bytes) else b for b in buckets
-                    ]
-                    r.delete(*bucket_keys)
-                r.delete(reg_key)
+                for bucket in r.smembers(reg_key):
+                    bucket = bucket.decode() if isinstance(bucket, bytes) else bucket
+                    if r.scard(bucket) == 0:
+                        r.delete(bucket)
+                        r.srem(reg_key, bucket)
 
         if job_service and job_id:
             job_service.update_progress(job_id, 100, "Cleared binary similarities.")

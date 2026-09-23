@@ -120,14 +120,16 @@ class BinClusterService:
     ):
         from bsimvis.app.services.config_service import config_service
 
-        engine = engine or config_service.get("clustering.bin_engine", "hierarchical_snn")
+        engine = engine or config_service.get(
+            "clustering.bin_engine", "hierarchical_snn"
+        )
+        if min_sim is None:
+            min_sim = config_service.get("clustering.min_sim", 0.0)
 
         if engine in ("hierarchical_uf", "hierarchical_snn"):
             use_snn = engine == "hierarchical_snn"
             if min_cluster_size is None:
                 min_cluster_size = config_service.get("clustering.min_cluster_size", 2)
-            if min_sim is None:
-                min_sim = config_service.get("clustering.min_sim", 0.0)
             if min_cohesion is None:
                 min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
             if batch_uuid and not collection.startswith("global:pool:"):

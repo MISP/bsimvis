@@ -3509,7 +3509,8 @@ class ScanDefaults(Resource):
 class ScanResult(Resource):
     def get(self, scan_id):
         """Status and per-scope summary: matched files with their canonical
-        BSimVis score, and the clusters the file would join."""
+        BSimVis score, and candidate clusters ranked by harmonic mean of
+        scan-to-cluster affinity and stored cluster cohesion."""
         from bsimvis.app.routes.scan import get_scan
 
         return get_scan(scan_id)

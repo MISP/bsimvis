@@ -19,6 +19,7 @@ number.
 """
 
 import json
+import random
 import time
 import uuid
 
@@ -645,7 +646,9 @@ class ScanService:
         ranked = sorted(mass.items(), key=lambda kv: (-kv[1], kv[0]))
         return ranked[:top_files], len(ranked), {k: len(v) for k, v in hits.items()}
 
-    def _score_file(self, collection, md5, targets, candidates_by_fid, params):
+    def _score_file(
+        self, collection, md5, targets, candidates_by_fid, params, enrich_clusters=True
+    ):
         """The canonical BSimVis file score for one candidate file.
 
         Same greedy assignment and `score_pair` settings the bin_sim builder
@@ -709,13 +712,14 @@ class ScanService:
             load_tag_meta(self.r, collection) if fid_tags else {},
             unweighted=unweighted,
         )
-        self._enrich_clusters(
-            collection,
-            common["diff"],
-            meta_b,
-            params,
-            {t["fid"]: t["name"] for t in targets},
-        )
+        if enrich_clusters:
+            self._enrich_clusters(
+                collection,
+                common["diff"],
+                meta_b,
+                params,
+                {t["fid"]: t["name"] for t in targets},
+            )
         return {
             "collection": collection,
             "file_md5": md5,
@@ -800,20 +804,36 @@ class ScanService:
                 "function_name", ""
             )
 
-    def _bin_clusters(self, collection, scored, params):
-        """Binary clusters the scanned file would join, per axis.
+    def _bin_clusters(
+        self, collection, scored, params, targets, candidates_by_fid, scan_md5
+    ):
+        """Rank candidate clusters by member affinity and stored cohesion.
 
-        Binary clustering unions two files above `clustering.bin_uf_threshold`,
-        so the answer is the clusters of every scored file that clears it.
+        Large clusters use a deterministic sample of 16 unscored members.
+        ponytail: bounded sampling keeps scan cost predictable; increase the
+        sample size if ranking variance matters in real reports.
         """
         threshold = float(config_service.get("clustering.bin_uf_threshold", 0.1))
-        joiners = [row for row in scored if float(row.get("score", 0.0)) >= threshold]
-        if not joiners:
+        score_fields = {
+            "overall": "score",
+            "code": "score_code",
+            "library": "score_library",
+        }
+        joiners = {
+            axis: [
+                (row, float(row[field]))
+                for row in scored
+                if row.get(field) is not None and float(row[field]) >= threshold
+            ]
+            for axis, field in score_fields.items()
+        }
+        if not any(joiners.values()):
             return {axis: [] for axis in BIN_AXES}
 
         pipe = self.r.pipeline(transaction=False)
-        for row in joiners:
-            for axis in BIN_AXES:
+        lookups = []
+        for axis, rows in joiners.items():
+            for row, score in rows:
                 axis_algo = (
                     params["algo"] if axis == "overall" else f"{params['algo']}:{axis}"
                 )
@@ -821,32 +841,26 @@ class ScanService:
                     f"{collection}:file:{row['file_md5']}:bin_clusters:"
                     f"{bin_cluster_ns(axis_algo, False)}"
                 )
+                lookups.append((axis, row, score))
         raws = pipe.execute()
 
-        entries = []
-        for index in range(len(joiners)):
-            window = raws[index * len(BIN_AXES) : (index + 1) * len(BIN_AXES)]
-            entries.append(
-                (
-                    {
-                        axis: [_s(c) for c in (raw or set())]
-                        for axis, raw in zip(BIN_AXES, window)
-                    },
-                    False,
-                )
-            )
-
+        entries = [
+            ({axis: [_s(c) for c in (raw or set())]}, False)
+            for (axis, _, _), raw in zip(lookups, raws)
+        ]
         meta_by_uuid, uuids_by_axis = fetch_bin_cluster_meta_all_axes(
             self.r, collection, entries, algo=params["algo"]
         )
         out = {axis: {} for axis in BIN_AXES}
-        for row, per_axis in zip(joiners, uuids_by_axis):
-            for axis, uuids in per_axis.items():
-                if axis not in out:
+        axis_meta = {}
+        scored_by_md5 = {row["file_md5"]: row for row in scored}
+        for (axis, row, score), per_axis in zip(lookups, uuids_by_axis):
+            for found_axis, uuids in per_axis.items():
+                if found_axis not in out:
                     continue
                 for cluster_uuid in uuids:
                     meta = meta_by_uuid.get(cluster_uuid) or {}
-                    entry = out[axis].setdefault(
+                    entry = out[found_axis].setdefault(
                         cluster_uuid,
                         {
                             "cluster_uuid": cluster_uuid,
@@ -854,6 +868,7 @@ class ScanService:
                             "cluster_name": meta.get("cluster_name", ""),
                             "cohesion_score": meta.get("cohesion_score", 0.0),
                             "member_count": meta.get("member_count", 0),
+                            "max_similarity": score,
                             "function_count_stats": meta.get(
                                 "function_count_stats", {}
                             ),
@@ -870,10 +885,95 @@ class ScanService:
                             "via": [],
                         },
                     )
-                    entry["via"].append(
-                        {"file_md5": row["file_md5"], "score": row["score"]}
+                    entry["max_similarity"] = max(entry["max_similarity"], score)
+                    entry["via"].append({"file_md5": row["file_md5"], "score": score})
+                    axis_meta[(found_axis, cluster_uuid)] = meta
+
+        extra_scores = {}
+        sample_size = 16
+        for axis, clusters in out.items():
+            field = score_fields.get(axis)
+            if not field:
+                continue
+            for cluster_uuid, entry in clusters.items():
+                meta = axis_meta.get((axis, cluster_uuid)) or {}
+                cluster_id = meta.get("cluster_id")
+                if cluster_id is None:
+                    continue
+                axis_algo = (
+                    params["algo"] if axis == "overall" else f"{params['algo']}:{axis}"
+                )
+                members = {
+                    _s(member).rsplit(":", 1)[-1]
+                    for member in self.r.smembers(
+                        f"{collection}:bin_cluster:{bin_cluster_ns(axis_algo, False)}:{cluster_id}:members"
                     )
-        return {axis: list(v.values()) for axis, v in out.items()}
+                }
+                if not members:
+                    members = {via["file_md5"] for via in entry["via"]}
+
+                known = {
+                    md5: float(row[field])
+                    for md5, row in scored_by_md5.items()
+                    if md5 in members and row.get(field) is not None
+                }
+                remaining = sorted(members - known.keys())
+                rng = random.Random(f"{scan_md5}:{axis}:{cluster_uuid}")
+                sample = (
+                    rng.sample(remaining, sample_size)
+                    if len(remaining) > sample_size
+                    else remaining
+                )
+                sample_scores = []
+                for md5 in sample:
+                    key = (md5, field)
+                    if key not in extra_scores:
+                        row = self._score_file(
+                            collection,
+                            md5,
+                            targets,
+                            candidates_by_fid,
+                            params,
+                            enrich_clusters=False,
+                        )
+                        extra_scores[key] = (
+                            float(row[field])
+                            if row and row.get(field) is not None
+                            else 0.0
+                        )
+                    sample_scores.append(extra_scores[key])
+
+                estimated_remaining = (
+                    sum(sample_scores) / len(sample_scores) * len(remaining)
+                    if sample_scores
+                    else 0.0
+                )
+                count = len(members)
+                affinity = (
+                    (sum(known.values()) + estimated_remaining) / count
+                    if count
+                    else 0.0
+                )
+                cohesion = float(entry.get("cohesion_score") or 0.0)
+                entry["cluster_affinity"] = affinity
+                entry["fit_score"] = (
+                    2 * affinity * cohesion / (affinity + cohesion)
+                    if affinity + cohesion
+                    else 0.0
+                )
+                entry["affinity_sample_size"] = len(known) + len(sample)
+                entry["affinity_exact"] = len(sample) == len(remaining)
+
+            out[axis] = sorted(
+                clusters.values(),
+                key=lambda c: (
+                    -c.get("fit_score", 0.0),
+                    -c.get("cluster_affinity", 0.0),
+                    -c.get("max_similarity", 0.0),
+                    c.get("cluster_uuid", ""),
+                ),
+            )
+        return {axis: list(clusters) for axis, clusters in out.items()}
 
     def run_match(self, scan_id, job_service=None, job_id=None):
         """Compare a cached scan against its scopes. Writes no Kvrocks key."""
@@ -938,7 +1038,7 @@ class ScanService:
                     "files_scored": len(scored),
                     "files": scored,
                     "bin_clusters": self._bin_clusters(
-                        collection, scored, scope_params
+                        collection, scored, scope_params, targets, candidates, scan_md5
                     ),
                 }
             )

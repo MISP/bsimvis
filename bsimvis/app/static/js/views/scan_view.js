@@ -83,7 +83,7 @@ window.ScanView = {
     _doc: null,
     _openPair: null, // "collection\u0000md5" of the expanded diff, if any
     _containerId: null,
-    _sortCol: 'sim',
+    _sortCol: 'fit',
     _sortDir: -1,
     _files: [],
     _scans: [],
@@ -638,9 +638,10 @@ window.ScanView = {
         let clusterRowsData = SCAN_AXES.flatMap(axis => {
             const list = (scope.bin_clusters || {})[axis] || [];
             return list.map(c => {
-                const maxSim = Math.max(...(c.via || []).map(v => Number(v.score || 0)));
+                const maxSim = Number(c.max_similarity ?? Math.max(...(c.via || []).map(v => Number(v.score || 0))));
                 const coh = Number(c.cohesion_score || 0);
-                return { axis, c, maxSim, coh };
+                const fit = c.fit_score === undefined ? null : Number(c.fit_score);
+                return { axis, c, maxSim, coh, fit };
             });
         });
 
@@ -650,45 +651,28 @@ window.ScanView = {
                 case 'axis': valA = a.axis; valB = b.axis; break;
                 case 'cluster': valA = (a.c.cluster_name || a.c.cluster_id || a.c.cluster_uuid).toLowerCase(); valB = (b.c.cluster_name || b.c.cluster_id || b.c.cluster_uuid).toLowerCase(); break;
                 case 'coh': valA = a.coh; valB = b.coh; break;
-                case 'sim': default: valA = a.maxSim; valB = b.maxSim; break;
+                case 'sim': valA = a.maxSim; valB = b.maxSim; break;
+                case 'affinity': valA = Number(a.c.cluster_affinity ?? -1); valB = Number(b.c.cluster_affinity ?? -1); break;
+                case 'fit': default: valA = a.fit ?? -1; valB = b.fit ?? -1; break;
             }
             if (valA < valB) return -1 * window.ScanViewInstance._sortDir;
             if (valA > valB) return 1 * window.ScanViewInstance._sortDir;
             return 0;
         });
 
-        const clusterRows = clusterRowsData.map(({ axis, c, maxSim, coh }) => {
+        const clusterRows = clusterRowsData.map(({ axis, c, maxSim, coh, fit }) => {
             const url = `/collections/${encodeURIComponent(scope.collection)}/files/clusters/${encodeURIComponent(c.cluster_uuid)}?axis=${encodeURIComponent(axis)}`;
             
-            const dists = [
-                ['Yara', 'fa-solid fa-biohazard', c.yara_distribution],
-                ['AV Type', 'fa-solid fa-shield', c.avtype_distribution],
-                ['File Type', 'fa-solid fa-file-code', c.filetype_distribution],
-                ['CC IP', 'fa-solid fa-network-wired', c.ccip_distribution],
-                ['File Name', 'fa-solid fa-file', c.filename_distribution],
-                ['MD5', 'fa-solid fa-fingerprint', c.md5_distribution],
-            ];
-            const cards = dists.map(([title, icon, dist]) => window.renderDist(title, icon, dist)).join('');
             const ax = axisMeta[axis] || { label: axis, icon: 'fa-solid fa-layer-group', color: 'var(--text)' };
 
             return `
             <tr style="border-bottom:1px solid var(--border);">
-                <td style="padding:12px; vertical-align:top; font-weight:bold; color:${ax.color}; white-space:nowrap; width:1px;">
-                    <i class="${ax.icon}" style="margin-right:6px;"></i>${escapeHtml(ax.label)}
-                </td>
-                <td style="padding:12px; vertical-align:top;">
-                    <a href="${escapeAttr(url)}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); text-decoration:none; font-weight:600; display:inline-block; word-break:break-word; max-width:250px;">${escapeHtml(c.cluster_name || c.cluster_id || c.cluster_uuid)}</a>
-                    <div style="font-size:0.72rem; color:var(--dim); margin-top:4px;">${Number(c.member_count || 0)} members · via ${Number((c.via || []).length)}</div>
-                </td>
-                <td style="padding:12px; vertical-align:top; text-align:right;">
-                    ${scanScoreCell(maxSim)}
-                </td>
-                <td style="padding:12px; vertical-align:top; text-align:right;">
-                    <span style="color:var(--success); font-weight:bold;">${(coh * 100).toFixed(1)}%</span>
-                </td>
-                <td style="padding:12px; vertical-align:top;">
-                    ${cards ? `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">${cards}</div>` : '<span class="dim">No metadata distributions</span>'}
-                </td>
+                <td style="padding:12px; vertical-align:top; font-weight:bold; color:${ax.color}; white-space:nowrap; width:1px;"><i class="${ax.icon}" style="margin-right:6px;"></i>${escapeHtml(ax.label)}</td>
+                <td style="padding:12px; vertical-align:top;"><a href="${escapeAttr(url)}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); text-decoration:none; font-weight:600; display:inline-block; word-break:break-word; max-width:250px;">${escapeHtml(c.cluster_name || c.cluster_id || c.cluster_uuid)}</a><div style="font-size:0.72rem; color:var(--dim); margin-top:4px;">${Number(c.member_count || 0)} members · via ${Number((c.via || []).length)}</div></td>
+                <td style="padding:12px; vertical-align:top; text-align:right;">${scanScoreCell(fit)}${c.affinity_exact === false ? `<div style="font-size:0.68rem; color:var(--dim);">sampled ${Number(c.affinity_sample_size || 0)}</div>` : ''}</td>
+                <td style="padding:12px; vertical-align:top; text-align:right;">${scanScoreCell(c.cluster_affinity)}</td>
+                <td style="padding:12px; vertical-align:top; text-align:right;">${scanScoreCell(maxSim)}</td>
+                <td style="padding:12px; vertical-align:top; text-align:right;"><span style="color:var(--success); font-weight:bold;">${(coh * 100).toFixed(1)}%</span></td>
             </tr>`;
         }).join('');
         
@@ -710,9 +694,10 @@ window.ScanView = {
                             <tr style="border-bottom:1px solid var(--border); background:var(--hover); color:var(--dim);">
                                 ${thSort('axis', 'Axis', '', 'padding:8px 12px; width:100px;')}
                                 ${thSort('cluster', 'Cluster', '', 'padding:8px 12px; width:220px;')}
-                                ${thSort('sim', 'Sim', 'Maximum similarity among matched cluster members', 'padding:8px 12px; width:80px; text-align:right;')}
+                                ${thSort('fit', 'Fit', 'Harmonic mean of mean file-to-cluster similarity and cluster cohesion', 'padding:8px 12px; width:80px; text-align:right;')}
+                                ${thSort('affinity', 'Affinity', 'Mean similarity to cluster members', 'padding:8px 12px; width:90px; text-align:right;')}
+                                ${thSort('sim', 'Sim', 'Maximum axis-specific similarity among matched cluster members', 'padding:8px 12px; width:80px; text-align:right;')}
                                 ${thSort('coh', 'Coh', 'Cluster cohesion score', 'padding:8px 12px; width:80px; text-align:right;')}
-                                <th style="padding:8px 12px;">Metadata</th>
                             </tr>
                         </thead>
                         <tbody>${clusterRows}</tbody>

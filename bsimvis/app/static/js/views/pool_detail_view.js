@@ -531,6 +531,16 @@ window.poolDetailAddCollection = async function(poolId, btn) {
     } catch (e) { alert(`Failed to add collection: ${e.message}`); if (btn) btn.disabled = false; }
 };
 
+window.poolDetailRemoveCollection = async function(poolId, collection, btn) {
+    if (!confirm(`Remove collection "${collection}" from pool "${poolId}"? Only the pool's derived data is cleared; the collection itself is untouched.`)) return;
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}/collections/${encodeURIComponent(collection)}`, { method: 'DELETE' });
+        const data = await res.json(); if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        Nav.openPath(window.location.pathname);
+    } catch (e) { alert(`Failed to remove collection: ${e.message}`); if (btn) btn.disabled = false; }
+};
+
 window.poolDetailSaveConfig = async function(poolId, btn) {
     const n = id => Number(document.getElementById(id)?.value);
     const body = {config:{func_sim_params:{algo:document.getElementById('pool-func-algo-edit')?.value, top_k:n('pool-func-top-k-edit'), min_score:n('pool-func-min-score-edit'), min_features:n('pool-func-min-features-edit')}, func_cluster_params:{cluster_algo:document.getElementById('pool-func-cluster-algo-edit')?.value, min_cluster_size:n('pool-func-cluster-size-edit'), min_samples:n('pool-func-cluster-samples-edit'), min_sim:n('pool-func-cluster-min-sim-edit'), min_features:n('pool-func-cluster-min-features-edit'), epsilon:n('pool-func-cluster-epsilon-edit'), selection_method:document.getElementById('pool-func-cluster-method-edit')?.value}, file_sim_params:{enabled:document.getElementById('pool-file-enabled-edit')?.checked, top_k:n('pool-file-top-k-edit'), min_score:n('pool-file-min-score-edit'), min_cohesion:n('pool-file-min-cohesion-edit'), discovery:document.getElementById('pool-discovery-enabled-edit')?.checked, discovery_min_score:n('pool-discovery-score-edit'), discovery_max_df:n('pool-discovery-df-edit')}, file_cluster_params:{cluster_algo:document.getElementById('pool-file-cluster-algo-edit')?.value, min_cluster_size:n('pool-file-cluster-size-edit'), min_samples:n('pool-file-cluster-samples-edit'), min_sim:n('pool-file-cluster-min-sim-edit'), epsilon:n('pool-file-cluster-epsilon-edit'), selection_method:document.getElementById('pool-file-cluster-method-edit')?.value}}};

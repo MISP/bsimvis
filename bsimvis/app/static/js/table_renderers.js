@@ -476,7 +476,6 @@ window.TableRenderers = {
                 </td>
                 <td class="sim-cell file-note-cell" style="text-align:center;">
                     ${EntityRenderer.renderFileNoteButton(fileId, f.note_owners, { isTable: true, raw_data: f })}
-                    <button class="btn-action" title="Remove file" onclick="window.removeFiles(${escapeAttr(jsString(col))}, [${escapeAttr(jsString(f['file_md5']))}])"><i class="fa-solid fa-trash-can" style="color:#f87171"></i></button>
                 </td>
                 <td class="cluster-cards-cell" data-is-binary="true" data-clusters='${escapeAttr(JSON.stringify(clusters))}'>
                     ${EntityRenderer.renderClusterCard(clusters, true, visibleAxes)}

@@ -399,7 +399,11 @@ window.FileView = {
                 <button class="top-action-btn" onclick="openSearchModal({ scope: 'file', collection: ${escapeAttr(jsString(collection))}, fileMd5: ${escapeAttr(jsString(file.file_md5))} })"
                     style="color:#60a5fa; border-color:#60a5fa;"
                     title="Ask AI which functions of this file match a description">
-                    <i class="fa-solid fa-magnifying-glass"></i> AI search</button>`;
+                    <i class="fa-solid fa-magnifying-glass"></i> AI search</button>
+                <button class="top-action-btn" onclick="window.removeFiles(${escapeAttr(jsString(collection))}, [${escapeAttr(jsString(file.file_md5))}])"
+                    style="color:#f87171; border-color:#f87171;"
+                    title="Remove this file from the collection. Raw sample bytes will be retained.">
+                    <i class="fa-solid fa-trash-can"></i> Remove</button>`;
 
             if (window.EntityRenderer) {
                 document.getElementById('file-note-btn-container').innerHTML = window.EntityRenderer.renderFileNoteButton(

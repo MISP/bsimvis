@@ -151,7 +151,6 @@ class SimilarityService:
         Builds similarities for all functions in a batch or for a specific file.
         Uses chunked pipelining for O(N/100) performance and throttling.
         """
-        assert_buildable_algo(algo)
         self._reset_read_caches()
         self._func_meta_cache = {}
         self._file_meta_cache = {}
@@ -160,6 +159,10 @@ class SimilarityService:
 
         if algo is None:
             algo = config_service.get("similarity.algo", "unweighted_cosine")
+        from bsimvis.app.services.collection_config import resolve_collection_algo
+
+        algo = resolve_collection_algo(collection, algo)
+        assert_buildable_algo(algo)
         if top_k is None:
             top_k = config_service.get("similarity.top_k", 1000)
         if min_score is None:
@@ -1396,6 +1399,10 @@ class SimilarityService:
 
         if algo is None:
             algo = config_service.get("similarity.algo", "unweighted_cosine")
+        from bsimvis.app.services.collection_config import resolve_collection_algo
+
+        algo = resolve_collection_algo(collection, algo)
+        assert_buildable_algo(algo)
         if top_k is None:
             top_k = config_service.get("similarity.top_k", 1000)
         if min_score is None:
@@ -1892,9 +1899,7 @@ class SimilarityService:
         only_cross_collection = pool.get("only_cross_collection", False)
         func_sim_params = pool.get("func_sim_params", {})
 
-        algo = func_sim_params.get(
-            "algo", config_service.get("similarity.algo", "unweighted_cosine")
-        )
+        algo = pool_service.similarity_algo(pool)
         top_k = int(
             func_sim_params.get("top_k", config_service.get("similarity.top_k", 1000))
         )
@@ -2180,9 +2185,7 @@ class SimilarityService:
         only_cross_collection = pool.get("only_cross_collection", False)
         func_sim_params = pool.get("func_sim_params", {})
 
-        algo = func_sim_params.get(
-            "algo", config_service.get("similarity.algo", "unweighted_cosine")
-        )
+        algo = pool_service.similarity_algo(pool)
         top_k = int(
             func_sim_params.get("top_k", config_service.get("similarity.top_k", 1000))
         )

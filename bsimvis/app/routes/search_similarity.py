@@ -167,7 +167,9 @@ def similarity_search():
         t_req_all_start = time.perf_counter()
         pool_id = request.args.get("pool")
         col = request.args.get("collection")
-        algo = request.args.get("algo", "unweighted_cosine")
+        from bsimvis.app.services.collection_config import resolve_collection_algo
+
+        algo = resolve_collection_algo(col or "main", request.args.get("algo"))
         if pool_id:
             from bsimvis.app.services.pool_service import pool_service
 

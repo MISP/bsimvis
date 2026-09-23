@@ -1,4 +1,5 @@
 from flask import request
+from bsimvis.app.services.collection_config import resolve_collection_algo
 from bsimvis.app.services.tag_service import tag_service
 from bsimvis.app.services.redis_client import get_redis
 import logging
@@ -59,7 +60,7 @@ def add_tag():
         etype,
         entry_id,
         tag,
-        data.get("algo", "unweighted_cosine"),
+        resolve_collection_algo(collection, data.get("algo")),
         data.get("node_type", "file"),
     )
     if success:
@@ -123,7 +124,7 @@ def remove_tag():
         etype,
         entry_id,
         tag,
-        data.get("algo", "unweighted_cosine"),
+        resolve_collection_algo(collection, data.get("algo")),
         data.get("node_type", "file"),
     )
     if success:

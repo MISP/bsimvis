@@ -58,7 +58,9 @@ def _resolve_scope(collection, scope):
         return None, "scope.md5_a and scope.md5_b are required for scope.type=pair"
     coll_b = scope.get("coll_b") or collection
     pool_id = scope.get("pool_id")
-    algo = scope.get("algo", "unweighted_cosine")
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    algo = resolve_collection_algo(collection, scope.get("algo"))
     state = scope.get("state")
     if state not in (None, "all", "matched", "unique", "changed"):
         return None, "scope.state must be one of all, matched, unique, changed"

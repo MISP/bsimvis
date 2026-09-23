@@ -15,6 +15,7 @@ from bsimvis.app.services.index_service import (
 from bsimvis.app.services.lua_manager import lua_manager
 from bsimvis.app.services.query_syntax import resolve_targets
 from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.collection_config import resolve_collection_algo
 from bsimvis.app.services.tag_taxonomy import NAMESPACE_POLICY, USER_POLICY, tag_policy
 from bsimvis.app.services.bin_sim_tags import LIBRARY_ORIGIN_PREFIXES, is_library_tag
 
@@ -643,7 +644,7 @@ def search_functions():
 
         # Phase 3: Fetch Cluster Metadata (DEDUPLICATED), filtered by min_cohesion
         cluster_meta_map = {}
-        algo = request.args.get("algo", "unweighted_cosine")
+        algo = resolve_collection_algo(col, request.args.get("algo"))
         if unique_cluster_ids:
             c_pipe = r.pipeline(transaction=False)
             c_list = list(unique_cluster_ids)

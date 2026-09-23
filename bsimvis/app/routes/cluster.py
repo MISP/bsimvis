@@ -5,6 +5,7 @@ from flask import request
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.collection_config import resolve_collection_algo
 from bsimvis.app.services.cluster_utils import normalize_tag_distribution
 from bsimvis.app.services.index_service import get_pool_id
 from bsimvis.app.services.query_syntax import parse_filter_value
@@ -16,7 +17,7 @@ def build_cluster():
     """Enqueues a clustering job."""
     data = request.json or {}
     collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
+    algo = resolve_collection_algo(collection, data.get("algo"))
     min_cluster_size = data.get(
         "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
     )
@@ -47,7 +48,7 @@ def rebuild_cluster():
     lane (no bin_sim rebuild -- use rebuild_all_pipeline for that)."""
     data = request.json or {}
     collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
+    algo = resolve_collection_algo(collection, data.get("algo"))
     priority = str(data.get("priority", "")).lower() == "high"
 
     tasks = build_rebuild_all_tasks(collection, algo, skip_sim=True, data=data)
@@ -211,7 +212,7 @@ def rebuild_all_pipeline():
     for this collection instead of racing it."""
     data = request.json or {}
     collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
+    algo = resolve_collection_algo(collection, data.get("algo"))
     priority = str(data.get("priority", "")).lower() == "high"
 
     tasks = build_rebuild_all_tasks(collection, algo, skip_sim=False, data=data)
@@ -223,7 +224,7 @@ def clear_cluster():
     """Enqueues a cluster clear job."""
     data = request.json or {}
     collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
+    algo = resolve_collection_algo(collection, data.get("algo"))
 
     job_id = job_service.create_job(
         JobType.CLEAR_CLUSTER,
@@ -280,7 +281,7 @@ def list_clusters():
     """Lists discovered clusters with metadata, filtering, and sorting."""
     t_start = time.perf_counter()
     collection = request.args.get("collection", "main")
-    algo = request.args.get("algo", "unweighted_cosine")
+    algo = resolve_collection_algo(collection, request.args.get("algo"))
 
     # Filtering
     format_arg = request.args.get("format")
@@ -748,7 +749,7 @@ def list_clusters():
 def get_cluster_tree():
     """Returns the condensed tree for the clustering."""
     collection = request.args.get("collection", "main")
-    algo = request.args.get("algo", "unweighted_cosine")
+    algo = resolve_collection_algo(collection, request.args.get("algo"))
 
     pool_id = request.args.get("pool") or get_pool_id(collection)
     is_pool = pool_id is not None
@@ -772,7 +773,7 @@ def update_cluster_meta():
     """Updates metadata for a cluster (e.g. rename)."""
     data = request.json or {}
     collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
+    algo = resolve_collection_algo(collection, data.get("algo"))
     cluster_id = data.get("cluster_id")
     cluster_name = data.get("cluster_name")
 
@@ -839,7 +840,7 @@ def update_cluster_meta():
 def list_cluster_members():
     """Lists all function IDs in a specific cluster."""
     collection = request.args.get("collection", "main")
-    algo = request.args.get("algo", "unweighted_cosine")
+    algo = resolve_collection_algo(collection, request.args.get("algo"))
     cluster_id = request.args.get("cluster_id")
     limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
@@ -889,7 +890,7 @@ def get_cluster_functions():
     """Returns a quick sample of function metadata for a given cluster_uuid."""
     collection = request.args.get("collection")
     cluster_uuid = request.args.get("cluster_uuid")
-    algo = request.args.get("algo", "unweighted_cosine")
+    algo = resolve_collection_algo(collection, request.args.get("algo"))
 
     pool_id = request.args.get("pool") or get_pool_id(collection)
     is_pool = pool_id is not None

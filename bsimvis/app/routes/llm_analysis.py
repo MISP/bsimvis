@@ -329,7 +329,7 @@ def pair_analysis():
     if max_functions < 0:
         return {"error": "max_functions must be zero or greater"}, 400
 
-    algo = data.get("algo", "unweighted_cosine")
+    algo = resolve_collection_algo(collection, data.get("algo"))
     sid, pair = bin_sim_service.load_pair(
         collection, md5_a, md5_b, coll_b, pool_id, algo
     )

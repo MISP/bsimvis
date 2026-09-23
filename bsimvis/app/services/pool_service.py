@@ -12,7 +12,13 @@ class PoolService:
     def similarity_algo(pool):
         """Return the algorithm selected for every pool similarity stage."""
         params = pool.get("func_sim_params") or {}
-        return params.get("algo") or pool.get("algo") or "unweighted_cosine"
+        from bsimvis.app.services.config_service import config_service
+
+        return (
+            params.get("algo")
+            or pool.get("algo")
+            or config_service.get("similarity.algo", "unweighted_cosine")
+        )
 
     def create_pool(self, pool_id, name, collections, config):
         """

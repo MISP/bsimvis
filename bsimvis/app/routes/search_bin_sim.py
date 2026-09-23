@@ -6,6 +6,7 @@ from flask import request
 from bsimvis.app.services import lineage_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.collection_config import resolve_collection_algo
 from bsimvis.app.services.index_service import normalize_tags, enrich_pool_data
 from bsimvis.app.services.bin_sim_tags import SUMMARY_FIELDS
 
@@ -759,9 +760,7 @@ def search_bin_sims():
                 return {"error": "Pool not found"}, 404
             algo = pool_service.similarity_algo(pool)
         else:
-            algo = request.args.get("algo") or config_service.get(
-                "similarity.algo", "unweighted_cosine"
-            )
+            algo = resolve_collection_algo(collection, request.args.get("algo"))
 
         try:
             offset = int(request.args.get("offset", 0))

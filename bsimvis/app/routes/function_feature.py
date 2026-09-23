@@ -17,7 +17,9 @@ def get_function_features():
             fid = f"{collection}:func:{md5}:{addr}"
             cluster_ids = r.smembers(f"{fid}:clusters")
             clusters = []
-            algo = "unweighted_cosine"
+            from bsimvis.app.services.collection_config import resolve_collection_algo
+
+            algo = resolve_collection_algo(collection)
             if cluster_ids:
                 cluster_pipe = r.pipeline(transaction=False)
                 for cid_bytes in cluster_ids:

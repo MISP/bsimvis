@@ -1,4 +1,5 @@
 from flask import request
+from bsimvis.app.services.collection_config import resolve_collection_algo
 from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
 from bsimvis.app.services.index_service import (
     parse_timestamp,
@@ -188,7 +189,7 @@ def get_function_code():
                     cluster_ids = r.smembers(f"{fid}:clusters")
                     scores = r.hgetall(f"{fid}:cluster_scores")
                 clusters = []
-                algo = "unweighted_cosine"
+                algo = resolve_collection_algo(collection)
                 if cluster_ids:
                     cluster_pipe = r.pipeline(transaction=False)
                     for cid_bytes in cluster_ids:
@@ -366,7 +367,7 @@ def get_function_relations():
     ids = [i.strip() for i in ids_param.split(",") if i.strip()]
     collection = request.args.get("collection")
     pool = request.args.get("pool")
-    algo = request.args.get("algo", "unweighted_cosine")
+    algo = resolve_collection_algo(collection, request.args.get("algo"))
     min_score = float(request.args.get("min_score", 0.85))
     new_ids_param = request.args.get("new_ids", "")
     new_ids = {i.strip() for i in new_ids_param.split(",") if i.strip()}
@@ -537,7 +538,7 @@ def get_file_call_graph():
                 retain,
                 request.args.get("retain_collection", collection),
                 request.args.get("pool"),
-                request.args.get("algo", "unweighted_cosine"),
+                resolve_collection_algo(collection, request.args.get("algo")),
             )
             if not pair:
                 return {"detail": "Similarity not calculated for this pair"}, 404

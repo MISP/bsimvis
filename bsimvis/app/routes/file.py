@@ -64,9 +64,9 @@ def upload_file_data():
 
         from bsimvis.app.services.config_service import config_service
 
-        algo = data.get("algo")
-        if algo is None:
-            algo = config_service.get("similarity.algo", "unweighted_cosine")
+        from bsimvis.app.services.collection_config import resolve_collection_algo
+
+        algo = resolve_collection_algo(collection, data.get("algo"))
 
         top_k = data.get("top_k")
         if top_k is None:
@@ -407,11 +407,13 @@ def transfer_analyzed_files():
 
     if not pipelines:
         return {"error": "No files could be transferred", "errors": errors}, 400
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
     master_id = job_service.seal_wave(
         destination,
         extra_members=pipelines,
         options={
-            "algo": data.get("algo", "unweighted_cosine"),
+            "algo": resolve_collection_algo(destination, data.get("algo")),
             "batch_uuid": batch_uuid,
             "enrich": True,
         },
@@ -521,9 +523,9 @@ def upload_chunk():
 
             from bsimvis.app.services.config_service import config_service
 
-            algo = data.get("algo") or config_service.get(
-                "similarity.algo", "unweighted_cosine"
-            )
+            from bsimvis.app.services.collection_config import resolve_collection_algo
+
+            algo = resolve_collection_algo(collection, data.get("algo"))
             top_k = data.get("top_k") or config_service.get("similarity.top_k", 1000)
             min_score = data.get("min_score") or config_service.get(
                 "similarity.min_score", 0.9
@@ -1104,8 +1106,10 @@ def finalize_batch_upload():
     if not pipeline_ids:
         return {"error": "No pipelines provided"}, 400
 
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
     options = {
-        "algo": data.get("algo", "unweighted_cosine"),
+        "algo": resolve_collection_algo(collection, data.get("algo")),
         "batch_uuid": batch_uuid,
         "skip_sim": data.get("skip_sim", False),
         "priority": str(data.get("priority", "")).lower() == "high",

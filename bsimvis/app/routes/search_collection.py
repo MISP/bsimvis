@@ -325,6 +325,12 @@ def set_collection_config():
     for name in LOCKED_PARAMS:
         if data.get(name) is None:
             continue
+        if name == "algo":
+            try:
+                updated[name] = set_collection_param(collection, name, data[name])
+            except ValueError as e:
+                return {"error": str(e)}, 400
+            continue
         lo, hi = _PARAM_RANGES[name]
         try:
             num = float(data[name])

@@ -506,9 +506,9 @@ class JobService:
         # here would be circular.
         from bsimvis.app.routes.cluster import build_rebuild_all_tasks
 
-        algo = options.get("algo") or config_service.get(
-            "similarity.algo", "unweighted_cosine"
-        )
+        from bsimvis.app.services.collection_config import resolve_collection_algo
+
+        algo = resolve_collection_algo(collection, options.get("algo"))
         skip_sim = bool(options.get("skip_sim"))
         targets = []
         seen = set()

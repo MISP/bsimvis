@@ -37,7 +37,9 @@ def maintenance():
     batch_uuid = data.get("batch")
     md5 = data.get("md5")
     address = data.get("address")
-    algo = data.get("algo", config_service.get("similarity.algo", "unweighted_cosine"))
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    algo = resolve_collection_algo(collection, data.get("algo"))
 
     if not collection:
         return {"error": "collection is required"}, 400

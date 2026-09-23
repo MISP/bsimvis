@@ -120,7 +120,7 @@ class BinClusterService:
     ):
         from bsimvis.app.services.config_service import config_service
 
-        engine = engine or config_service.get("clustering.bin_engine", "threshold_uf")
+        engine = engine or config_service.get("clustering.bin_engine", "hierarchical_snn")
 
         if engine in ("hierarchical_uf", "hierarchical_snn"):
             use_snn = engine == "hierarchical_snn"
@@ -2017,7 +2017,7 @@ class BinClusterService:
 
         base_algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
         if (
-            config_service.get("clustering.bin_engine", "threshold_uf")
+            config_service.get("clustering.bin_engine", "hierarchical_snn")
             == "hierarchical_snn"
         ):
             base_algo_ns = f"{base_algo_ns}:snn"

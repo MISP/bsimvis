@@ -53,7 +53,9 @@ def list_similarities():
     collection = request.args.get("collection", "main")
     md5 = request.args.get("md5")
     batch_uuid = request.args.get("batch")
-    algo = request.args.get("algo", "unweighted_cosine")
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    algo = resolve_collection_algo(collection, request.args.get("algo"))
     limit = request.args.get("limit", 20, type=int)
     offset = request.args.get("offset", 0, type=int)
 
@@ -103,7 +105,9 @@ def similarity_status():
     collection = request.args.get("collection", "main")
     md5 = request.args.get("md5")
     batch_uuid = request.args.get("batch")
-    algo = request.args.get("algo", "unweighted_cosine")
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    algo = resolve_collection_algo(collection, request.args.get("algo"))
 
     status = similarity_service.get_build_status(
         collection, batch_uuid=batch_uuid, md5=md5, algo=algo
@@ -114,7 +118,9 @@ def similarity_status():
 def list_batches():
     """Returns detailed build status (for batches or files)."""
     collection = request.args.get("collection", "main")
-    algo = request.args.get("algo", "unweighted_cosine")
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    algo = resolve_collection_algo(collection, request.args.get("algo"))
     by_type = request.args.get("by", "batch")
 
     if by_type == "md5":
@@ -133,9 +139,9 @@ def build_similarity():
 
     from bsimvis.app.services.config_service import config_service
 
-    algo = data.get("algo")
-    if algo is None:
-        algo = config_service.get("similarity.algo", "unweighted_cosine")
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    algo = resolve_collection_algo(collection, data.get("algo"))
     if algo in ["milvus_sparse"] and not milvus_service.enabled:
         return {"error": "Milvus is disabled. Cannot use milvus_sparse algorithm."}, 400
 
@@ -207,9 +213,9 @@ def rebuild_similarity():
 
     from bsimvis.app.services.config_service import config_service
 
-    algo = data.get("algo")
-    if algo is None:
-        algo = config_service.get("similarity.algo", "unweighted_cosine")
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    algo = resolve_collection_algo(collection, data.get("algo"))
     if algo in ["milvus_sparse"] and not milvus_service.enabled:
         return {"error": "Milvus is disabled. Cannot use milvus_sparse algorithm."}, 400
 
@@ -285,7 +291,9 @@ def clear_similarity():
     collection = data.get("collection", "main")
     md5 = data.get("md5")
     batch_uuid = data.get("batch")
-    algo = data.get("algo", "unweighted_cosine")
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    algo = resolve_collection_algo(collection, data.get("algo"))
 
     if not md5 and not batch_uuid:
         return {"error": "md5 or batch required"}, 400
@@ -305,7 +313,9 @@ def tag_similarity():
     collection = data.get("collection", "main")
     id1 = data.get("id1")
     id2 = data.get("id2")
-    algo = data.get("algo", "unweighted_cosine")
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    algo = resolve_collection_algo(collection, data.get("algo"))
     tag = data.get("tag")
 
     if not id1 or not id2 or not tag:
@@ -324,7 +334,9 @@ def untag_similarity():
     collection = data.get("collection", "main")
     id1 = data.get("id1")
     id2 = data.get("id2")
-    algo = data.get("algo", "unweighted_cosine")
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    algo = resolve_collection_algo(collection, data.get("algo"))
     tag = data.get("tag")
 
     if not id1 or not id2 or not tag:

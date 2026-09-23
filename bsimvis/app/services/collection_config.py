@@ -48,7 +48,7 @@ def resolve_and_lock(collection, name, requested):
 
 # Only these are settable through the API — the meta hash also holds counters
 # (total_files, total_functions, ...) a client must never be able to write.
-LOCKED_PARAMS = ("min_features", "min_score")
+LOCKED_PARAMS = ("min_features", "min_score", "algo")
 
 
 def get_collection_params(collection):
@@ -62,7 +62,10 @@ def get_collection_params(collection):
     }
     out = {}
     for name in LOCKED_PARAMS:
-        default = config_service.get(f"similarity.{name}", 0)
+        default = config_service.get(
+            f"similarity.{name}",
+            "unweighted_cosine" if name == "algo" else 0,
+        )
         raw = meta.get(name)
         out[name] = {
             "value": _coerce(raw, default) if raw is not None else default,
@@ -78,9 +81,21 @@ def set_collection_param(collection, name, value):
     if name not in LOCKED_PARAMS:
         raise ValueError(f"unknown collection param: {name}")
     default = config_service.get(f"similarity.{name}", 0)
+    if name == "algo":
+        from bsimvis.app.services.similarity_service import assert_buildable_algo
+
+        assert_buildable_algo(value)
+        get_redis().hset(_META.format(coll=collection), name, value)
+        return value
     value = _coerce(value, default)
     get_redis().hset(_META.format(coll=collection), name, value)
     return value
+
+
+def resolve_collection_algo(collection, requested=None):
+    default = config_service.get("similarity.algo", "unweighted_cosine")
+    configured = get_collection_param(collection, "algo", None)
+    return configured or requested or default
 
 
 SIGNATURE_SETTINGS_FIELD = "signature_settings"

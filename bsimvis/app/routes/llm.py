@@ -300,15 +300,15 @@ def summarize_file():
     # Fetch cluster membership and metadata
     from bsimvis.app.services.config_service import config_service
 
-    algo = "unweighted_cosine"
+    algo = resolve_collection_algo(collection)
     if (
-        config_service.get("clustering.bin_engine", "threshold_uf")
+        config_service.get("clustering.bin_engine", "hierarchical_snn")
         == "hierarchical_snn"
     ):
         algo = f"{algo}:snn"
     cluster_ids = r.smembers(f"{collection}:file:{md5}:bin_clusters:{algo}") or []
 
-    algo = "unweighted_cosine"
+    algo = resolve_collection_algo(collection)
     min_cohesion = float(config_service.get("clustering.min_cohesion", 0.5))
 
     meta_by_uuid, _ = fetch_bin_cluster_meta(

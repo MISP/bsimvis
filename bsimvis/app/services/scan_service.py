@@ -507,9 +507,10 @@ class ScanService:
         collection's own UI shows. A caller-supplied value wins everywhere.
         """
         locked = get_collection_params(collection)
+        from bsimvis.app.services.collection_config import resolve_collection_algo
+
         return {
-            "algo": params.get("algo")
-            or config_service.get("similarity.algo", registry.DEFAULT_ALGO),
+            "algo": resolve_collection_algo(collection, params.get("algo")),
             "min_score": (
                 params["min_score"]
                 if params.get("min_score") is not None

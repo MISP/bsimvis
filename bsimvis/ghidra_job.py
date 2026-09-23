@@ -371,9 +371,9 @@ class GhidraAnalyzer:
             )
 
         if not skip_sim and not tail_pending:
-            algo = payload.get(
-                "algo", config_service.get("similarity.algo", "unweighted_cosine")
-            )
+            from bsimvis.app.services.collection_config import resolve_collection_algo
+
+            algo = resolve_collection_algo(collection, payload.get("algo"))
             top_k = payload.get("top_k", config_service.get("similarity.top_k", 1000))
             from bsimvis.app.services.collection_config import resolve_and_lock
 

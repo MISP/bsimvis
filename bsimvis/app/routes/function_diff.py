@@ -1,4 +1,5 @@
 from flask import current_app, request
+from bsimvis.app.services.collection_config import resolve_collection_algo
 
 import difflib
 import json
@@ -152,7 +153,7 @@ def _diff_functions(collection_a, md5_a, addr_a, collection_b, md5_b, addr_b, po
         meta2,
     )
 
-    algo = "unweighted_cosine"
+    algo = resolve_collection_algo(collection_a)
     r = get_redis()
 
     for side_meta, side_md5, side_addr, side_col in [
@@ -634,7 +635,7 @@ def call_graph_similarity_api():
         min_score = max(0.0, min(1.0, float(request.args.get("min_score", 0.5))))
     except ValueError:
         return {"detail": "min_score must be a number between 0 and 1"}, 400
-    algo = request.args.get("algo", "unweighted_cosine")
+    algo = resolve_collection_algo(params["collection_a"], request.args.get("algo"))
     if not registry.get(algo):
         return {"detail": f"Unknown similarity algorithm: {algo}"}, 400
     left = get_enriched_nodes(params["collection_a"], params["md5_a"], params["addr_a"])

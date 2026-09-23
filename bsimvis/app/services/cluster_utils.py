@@ -347,7 +347,7 @@ def bin_cluster_ns(algo, is_container):
     from bsimvis.app.services.config_service import config_service
 
     if (
-        config_service.get("clustering.bin_engine", "threshold_uf")
+        config_service.get("clustering.bin_engine", "hierarchical_snn")
         == "hierarchical_snn"
     ):
         if not algo.endswith(":snn"):

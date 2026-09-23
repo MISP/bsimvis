@@ -671,6 +671,7 @@ class CollectionParams(Resource):
                     description="BSim-vs-FunctionID-hash floor (0-10000)"
                 ),
                 "min_score": fields.Float(description="Edge score floor (0.0-1.0)"),
+                "algo": fields.String(description="Function similarity algorithm"),
             },
         )
     )

@@ -123,9 +123,7 @@ def get_call_graph(func_id):
     return result
 
 
-def get_function_relations(
-    func_ids, collection, algo="unweighted_cosine", min_score=0.85
-):
+def get_function_relations(func_ids, collection, algo=None, min_score=0.85):
     """Call edges and similarity edges among an arbitrary set of function ids.
 
     The bulk equivalent of `get_call_graph` for a whole working set at once --
@@ -133,7 +131,9 @@ def get_function_relations(
     each other.
     """
     from bsimvis.app.routes.function_code import get_function_relations as _relations
+    from bsimvis.app.services.collection_config import resolve_collection_algo
 
+    algo = resolve_collection_algo(collection, algo)
     qs = {
         "ids": ",".join(func_ids),
         "collection": collection,
@@ -324,12 +324,10 @@ def get_file_info(collection, file_md5):
         file_meta = json.loads(file_meta)
 
     from bsimvis.app.services.config_service import config_service
+    from bsimvis.app.services.collection_config import resolve_collection_algo
 
-    algo = "unweighted_cosine"
-    if (
-        config_service.get("clustering.bin_engine", "threshold_uf")
-        == "hierarchical_snn"
-    ):
+    algo = resolve_collection_algo(collection)
+    if config_service.get("clustering.bin_engine", "hierarchical_snn") == "hierarchical_snn":
         algo = f"{algo}:snn"
 
     is_container = bool(file_meta.get("is_container"))
@@ -369,14 +367,15 @@ def get_file_info(collection, file_md5):
     }
 
 
-def get_cluster_info(
-    collection, cluster_id, algo="unweighted_cosine", node_type="file"
-):
+def get_cluster_info(collection, cluster_id, algo=None, node_type="file"):
     """Metadata + member distribution for a binary cluster (name, cohesion,
     yara/avtype/filename distributions, bookmarks/tags already on it).
 
     node_type must match the one get_file_info reported for the cluster:
     container clusters are numbered independently of file clusters."""
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    algo = resolve_collection_algo(collection, algo)
     r = get_redis()
     raw = r.get(
         f"{collection}:bin_cluster:{bin_cluster_ns(algo, node_type == 'container')}"
@@ -654,7 +653,7 @@ TOOLS = [
                 "properties": {
                     "collection": {"type": "string"},
                     "cluster_id": {"type": "string"},
-                    "algo": {"type": "string", "default": "unweighted_cosine"},
+                    "algo": {"type": "string"},
                     "node_type": {
                         "type": "string",
                         "enum": ["file", "container"],
@@ -734,7 +733,7 @@ DISPATCH = {
     "get_cluster_info": lambda a: get_cluster_info(
         a["collection"],
         a["cluster_id"],
-        a.get("algo", "unweighted_cosine"),
+        a.get("algo"),
         a.get("node_type", "file"),
     ),
     "scan_file": lambda a: scan_file(
@@ -826,7 +825,7 @@ def describe_api_call(name, args):
             "query": {
                 "collection": args.get("collection"),
                 "cluster_id": args.get("cluster_id"),
-                "algo": args.get("algo", "unweighted_cosine"),
+                "algo": args.get("algo"),
             },
         }
     return None

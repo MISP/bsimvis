@@ -518,21 +518,31 @@ class SimilarityService:
         elif algo == "binary_cosine":
             min_shared_features = (threshold**2) * target_len
 
-        # 1. Size each feature's posting list, rarest-first (pipelined ZCARDs)
+        # 1. Size each feature's posting list, rarest-first
         feats = list(target_features.items())
         pipe = r.pipeline(transaction=False)
+        size_misses = []
+        sizes_by_hash = {}
         for f_hash, _ in feats:
-            pipe.zcard(f"{collection}:feature:{f_hash}:functions")
-        sizes = pipe.execute()
+            key = f"{collection}:feature:{f_hash}:functions"
+            posting_list = self._pl_cache.get(key)
+            if posting_list is None:
+                size_misses.append(f_hash)
+                pipe.zcard(key)
+            else:
+                sizes_by_hash[f_hash] = len(posting_list)
+        if size_misses:
+            for f_hash, size in zip(size_misses, pipe.execute()):
+                sizes_by_hash[f_hash] = size
         features_sorted = sorted(
             (
                 {
                     "hash": h,
                     "tf": tf,
                     "key": f"{collection}:feature:{h}:functions",
-                    "size": sz,
+                    "size": sizes_by_hash[h],
                 }
-                for (h, tf), sz in zip(feats, sizes)
+                for h, tf in feats
             ),
             key=lambda x: x["size"],
         )

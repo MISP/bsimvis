@@ -10,6 +10,8 @@ import json
 
 from flask import request, Response, stream_with_context
 
+from bsimvis.app.services.collection_config import resolve_collection_algo
+
 
 def start_chat_session():
     from bsimvis.app.services.llm_chat_service import llm_chat_service

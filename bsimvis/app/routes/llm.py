@@ -2,6 +2,7 @@ from flask import request, Response, stream_with_context
 from bsimvis.app.services.llm_service import llm_service
 from bsimvis.app.services.function_service import fetch_function_data
 from bsimvis.app.services.cluster_utils import fetch_bin_cluster_meta
+from bsimvis.app.services.collection_config import resolve_collection_algo
 import json
 import logging
 

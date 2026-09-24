@@ -732,7 +732,12 @@ class BinClusterService:
         if n <= 1:
             return 1.0, True
 
-        md5s = sorted(m.rsplit(":", 1)[-1] for m in members)
+        # The pair key's side is `md5` in a collection but `coll:md5` in a
+        # pool, both ordered as (coll, md5) tuples by their writers.
+        md5s = sorted(
+            (m.rsplit(":file:", 1)[-1] for m in members),
+            key=lambda s: tuple(s.split(":")),
+        )
         total_pairs = n * (n - 1) // 2
         exact = total_pairs <= max_pairs
         if exact:
@@ -779,6 +784,7 @@ class BinClusterService:
         import pandas as pd
 
         from bsimvis.app.services import lineage_service
+        from bsimvis.app.services.config_service import config_service
         from bsimvis.app.services.cluster_common import (
             dirty_ancestors,
             edgeset_from,
@@ -2184,6 +2190,13 @@ def _demo():
     # instead of jittering between runs.
     again, _ = svc_for(scores)._node_cohesion("n3", members, "p:", "sk", 0.0, cap)
     assert again == coh, (again, coh)
+
+    # A pool pair key keeps each side's collection: `a1` sorts before `a`
+    # as a string but after it as a (coll, md5) tuple, which the writer uses.
+    pool = svc_for({"p:a:m2::a1:m1": 0.5})
+    members = ["global:pool:P:file:a1:m1", "global:pool:P:file:a:m2"]
+    coh, _ = pool._node_cohesion("n4", members, "p:", "sk", 0.0, cap)
+    assert coh == 0.5, coh
 
     print("incremental cohesion demo OK")
 

@@ -11,69 +11,6 @@ def get_function_features():
     """
     func_id = request.args.get("id")
     if not func_id:
-
-        try:
-            r = get_redis()
-            fid = f"{collection}:func:{md5}:{addr}"
-            cluster_ids = r.smembers(f"{fid}:clusters")
-            clusters = []
-            from bsimvis.app.services.collection_config import resolve_collection_algo
-
-            algo = resolve_collection_algo(collection)
-            if cluster_ids:
-                cluster_pipe = r.pipeline(transaction=False)
-                for cid_bytes in cluster_ids:
-                    cid = (
-                        cid_bytes.decode()
-                        if isinstance(cid_bytes, bytes)
-                        else cid_bytes
-                    )
-                    cluster_pipe.get(f"{collection}:cluster:{algo}:{cid}:meta")
-
-                raw_cluster_metas = cluster_pipe.execute()
-
-                for raw_cm in raw_cluster_metas:
-                    if raw_cm:
-                        cm = (
-                            json.loads(raw_cm)
-                            if not isinstance(raw_cm, dict)
-                            else raw_cm
-                        )
-                        if isinstance(cm, str):
-                            import json
-
-                            cm = json.loads(cm)
-                        if cm:
-                            clusters.append(
-                                {
-                                    "cluster_id": cm.get("cluster_id"),
-                                    "cluster_uuid": cm.get("cluster_uuid"),
-                                    "cluster_name": cm.get("cluster_name"),
-                                    "cohesion_score": cm.get("cohesion_score", 0),
-                                    "member_count": cm.get("member_count", 0),
-                                    "cluster_stability": cm.get(
-                                        "cluster_stability", 0.0
-                                    ),
-                                    "avg_features": cm.get("avg_features", 0),
-                                }
-                            )
-
-                clusters.sort(key=lambda x: x.get("member_count", 0), reverse=True)
-
-            meta["clusters"] = clusters
-
-        except Exception as ex:
-            print(f"Error fetching clusters: {ex}")
-
-        for field in [
-            "cluster_id",
-            "cluster_name",
-            "cluster_uuid",
-            "cluster_stability",
-        ]:
-            if "meta" in locals() and isinstance(meta, dict):
-                meta.pop(field, None)
-
         return {"detail": "Missing function id"}, 400
 
     try:

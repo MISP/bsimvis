@@ -523,7 +523,11 @@ def test_cluster_tags():
         },
     ]
 
+    from bsimvis.app.services.pool_service import pool_service
+
     try:
+        # The list routes 404 on an unknown pool, so the pool must exist.
+        pool_service.create_pool(pool_id, "cluster tags", [COLLECTION], {})
         for item in fixtures:
             r.set(
                 item["key"],
@@ -690,6 +694,7 @@ def test_cluster_tags():
         r.delete(f"global:pool:{pool_id}:cluster_tags")
         r.hdel(f"{COLLECTION}:tags_metadata", tag)
         r.hdel(f"global:pool:{pool_id}:tags_metadata", tag)
+        pool_service.delete_pool(pool_id)
 
 
 def test_cluster_response_contract():
@@ -2319,8 +2324,8 @@ def run_all_tests():
             f"default={algos.get('default')}",
         )
         check(
-            "weighted_cosine is marked unbuildable",
-            by_name.get("weighted_cosine", {}).get("buildable") is False,
+            "weighted_cosine is marked buildable",
+            by_name.get("weighted_cosine", {}).get("buildable") is True,
             f"weighted_cosine={by_name.get('weighted_cosine')}",
         )
         check(
@@ -3006,40 +3011,64 @@ def test_maintenance_remove_validation():
 
 
 def test_maintenance_remove_file():
-    """A queued file removal clears indexed data and retains its sample bytes."""
-    if not file_md5:
-        raise AssertionError("upload prelude did not produce file_md5")
-    queued = test_endpoint(
-        "POST",
-        "/api/maintenance/remove",
-        data={"collection": COLLECTION, "md5s": [file_md5]},
-        label="queue file removal",
-    )
-    if not queued or not queued.get("job_id"):
-        raise AssertionError("remove endpoint returned no job_id")
-    if not wait_for_pipeline(queued["job_id"], " STEP – Wait for removal"):
-        raise AssertionError("file removal job did not complete")
-    from bsimvis.app.services.redis_client import get_redis
+    """A queued file removal clears indexed data and retains its sample bytes.
 
-    r = get_redis()
-    _check = r.exists(f"{COLLECTION}:file:{file_md5}:raw")
-    check(
-        "removed file is absent from all_files",
-        not r.sismember(f"{COLLECTION}:all_files", f"{COLLECTION}:file:{file_md5}"),
-        f"{COLLECTION}:all_files",
-    )
-    check("raw sample bytes remain", bool(_check), f"{COLLECTION}:file:{file_md5}:raw")
-    check(
-        "removed file search returns no hit",
-        not requests.get(
-            f"{BASE_URL}/api/file/search",
-            params={"collection": COLLECTION, "file_md5": file_md5},
-            timeout=30,
+    Runs on its own collection: removing the shared fixture file would break
+    every later step that reads it."""
+    rm_coll = f"{COLLECTION}_rm"
+    try:
+        uploaded = _upload_eq(TEST_BINARY, rm_coll)
+        rm_md5 = uploaded.get("file_md5")
+        if not rm_md5:
+            raise AssertionError("removal fixture upload returned no file_md5")
+        if not wait_for_pipeline(
+            uploaded.get("pipeline_id"), " STEP – Wait for removal fixture"
+        ):
+            raise AssertionError("removal fixture pipeline did not complete")
+        queued = test_endpoint(
+            "POST",
+            "/api/maintenance/remove",
+            data={"collection": rm_coll, "md5s": [rm_md5]},
+            label="queue file removal",
         )
-        .json()
-        .get("files", []),
-        f"/api/file/search?file_md5={file_md5}",
-    )
+        if not queued or not queued.get("job_id"):
+            raise AssertionError("remove endpoint returned no job_id")
+        if not wait_for_pipeline(queued["job_id"], " STEP – Wait for removal"):
+            raise AssertionError("file removal job did not complete")
+        from bsimvis.app.services.redis_client import get_redis
+
+        r = get_redis()
+        _check = r.exists(f"{rm_coll}:file:{rm_md5}:raw")
+        check(
+            "removed file is absent from all_files",
+            not r.sismember(f"{rm_coll}:all_files", f"{rm_coll}:file:{rm_md5}"),
+            f"{rm_coll}:all_files",
+        )
+        check("raw sample bytes remain", bool(_check), f"{rm_coll}:file:{rm_md5}:raw")
+        check(
+            "removed file search returns no hit",
+            not requests.get(
+                f"{BASE_URL}/api/file/search",
+                params={"collection": rm_coll, "file_md5": rm_md5},
+                timeout=30,
+            )
+            .json()
+            .get("files", []),
+            f"/api/file/search?file_md5={rm_md5}",
+        )
+    finally:
+        del_jobs = []
+        try:
+            resp = requests.post(
+                f"{BASE_URL}/api/collection/delete",
+                json={"collection": rm_coll},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                del_jobs.append(resp.json().get("job_id"))
+        except Exception as exc:
+            vprint(f"     cleanup of {rm_coll} failed: {exc}")
+        _wait_all(del_jobs, "collection cleanup")
 
 
 def test_pool_member_removal():
@@ -4508,7 +4537,9 @@ def test_llm_pair_analysis_job():
                 "max_functions": 2,
             },
         )
-        job_id = (started or {}).get("job_id")
+        # A 5xx body is a string; record it as a failed check, not a crash.
+        started = started if isinstance(started, dict) else {}
+        job_id = started.get("job_id")
         check(
             "pair analysis enqueues candidates",
             bool(job_id)
@@ -5774,6 +5805,12 @@ def test_pool_collection_equivalence():
             _wait_all([resp.json().get("job_id")], path.rsplit("/", 2)[-2])
 
         # ── Path B: two collections joined by a pool ──────────────────────
+        # The single collection follows clustering.bin_engine; the pool must
+        # use the same engine or their cluster keys can't be compared.
+        from bsimvis.app.services.config_service import config_service
+
+        bin_engine = config_service.get("clustering.bin_engine", "hierarchical_snn")
+        bin_ns = f"{EQ_ALGO}:snn" if bin_engine == "hierarchical_snn" else EQ_ALGO
         print(_color("\n  [Pool build]", BOLD))
         ok, msg = pool_service.create_pool(
             eq_pool,
@@ -5784,7 +5821,7 @@ def test_pool_collection_equivalence():
                 "func_sim_params": {},
                 "func_cluster_params": {},
                 "file_sim_params": {"enabled": True},
-                "file_cluster_params": {"cluster_algo": "hierarchical_snn"},
+                "file_cluster_params": {"cluster_algo": bin_engine},
             },
         )
         if not check("equivalence: pool created over the split collections", ok, msg):
@@ -6113,31 +6150,41 @@ def test_pool_collection_equivalence():
             out = {}
             for cid_b in r.smembers(list_key):
                 cid = cid_b.decode() if isinstance(cid_b, bytes) else str(cid_b)
+                # {coll}:file:{md5} (collection) and {coll}:{md5} (pool) -> {md5}
                 members = tuple(
                     sorted(
-                        m.decode() if isinstance(m, bytes) else str(m)
+                        (m.decode() if isinstance(m, bytes) else str(m)).rsplit(":", 1)[
+                            -1
+                        ]
                         for m in r.smembers(member_fmt.format(cid=cid))
                     )
                 )
-                out[members] = norm_meta(
-                    _json.loads(r.get(meta_fmt.format(cid=cid)) or "{}")
-                )
+                meta = norm_meta(_json.loads(r.get(meta_fmt.format(cid=cid)) or "{}"))
+                # File ids embed the namespace; the fallback name embeds one too.
+                for sample in meta.get("sample_members", []):
+                    sample["id"] = sample["id"].rsplit(":", 1)[-1]
+                if "cluster_name" in meta:
+                    meta["cluster_name"] = meta["cluster_name"].rsplit(":", 1)[-1]
+                out[members] = meta
             return out
 
         s_bin_clusters = bin_clusters_of(
-            f"{single}:bin_cluster:list:{EQ_ALGO}:snn",
-            f"{single}:bin_cluster:{EQ_ALGO}:snn:{{cid}}:members",
-            f"{single}:bin_cluster:{EQ_ALGO}:snn:{{cid}}:meta",
+            f"{single}:bin_cluster:list:{bin_ns}",
+            f"{single}:bin_cluster:{bin_ns}:{{cid}}:members",
+            f"{single}:bin_cluster:{bin_ns}:{{cid}}:meta",
         )
         p_bin_clusters = bin_clusters_of(
-            f"global:pool:{eq_pool}:bin_cluster:list:{EQ_ALGO}:snn",
-            f"global:pool:{eq_pool}:bin_cluster:{EQ_ALGO}:snn:{{cid}}:members",
-            f"global:pool:{eq_pool}:bin_cluster:{EQ_ALGO}:snn:{{cid}}:meta",
+            f"global:pool:{eq_pool}:bin_cluster:list:{bin_ns}",
+            f"global:pool:{eq_pool}:bin_cluster:{bin_ns}:{{cid}}:members",
+            f"global:pool:{eq_pool}:bin_cluster:{bin_ns}:{{cid}}:meta",
         )
         check(
             "equivalence: binary cluster membership matches",
             set(s_bin_clusters) == set(p_bin_clusters),
-            f"{len(s_bin_clusters)} single / {len(p_bin_clusters)} pool cluster(s)",
+            f"{bin_engine}: {len(s_bin_clusters)} single / "
+            f"{len(p_bin_clusters)} pool cluster(s); only-single="
+            f"{list(set(s_bin_clusters) - set(p_bin_clusters))[:2]} only-pool="
+            f"{list(set(p_bin_clusters) - set(s_bin_clusters))[:2]}",
         )
         bin_meta_mismatch = [
             k
@@ -6147,7 +6194,13 @@ def test_pool_collection_equivalence():
         check(
             "equivalence: binary cluster metadata matches",
             not bin_meta_mismatch,
-            f"{len(bin_meta_mismatch)} mismatch(es)",
+            f"{len(bin_meta_mismatch)} mismatch(es)"
+            + "".join(
+                f"; {f}: {s_bin_clusters[k].get(f)!r} != {p_bin_clusters[k].get(f)!r}"
+                for k in bin_meta_mismatch[:1]
+                for f in sorted(set(s_bin_clusters[k]) | set(p_bin_clusters[k]))
+                if s_bin_clusters[k].get(f) != p_bin_clusters[k].get(f)
+            ),
         )
 
     finally:

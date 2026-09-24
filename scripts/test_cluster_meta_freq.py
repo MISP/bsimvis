@@ -70,9 +70,12 @@ def test_file_names_wins_over_file_name():
     assert names == ["a.exe"], names
 
 
-def test_only_the_top_five_values_are_kept():
-    freq = build_freq([f"v{i}" for i in range(6)], 6)
-    assert len(freq) == 5, freq
+def test_all_values_are_kept_unless_a_limit_is_given():
+    items = [f"v{i}" for i in range(6)]
+    freq = build_freq(items, 6)
+    assert len(freq) == 6, freq
+    limited = build_freq(items, 6, limit=5)
+    assert len(limited) == 5, limited
 
 
 def test_nothing_collected_gives_an_empty_distribution():
@@ -85,14 +88,21 @@ def test_tag_distribution_is_per_member_and_policy_filtered():
         {"tags": ["av:clamav:mirai#rule_b"], "user_tags": ["reviewed"]},
     ]
     result = cluster_summary(members)
-    family = result["tag_distribution"]["family"]
-    assert {row["value"] for row in family} >= {"av:clamav:mirai"}
-    assert (
-        next(row for row in family if row["value"] == "av:clamav:mirai")["count"] == 2
-    )
+
+    # Each axis is a tree of {tag_id, count, children} nodes.
+    def flatten(nodes):
+        for node in nodes:
+            yield node
+            yield from flatten(node.get("children", []))
+
+    family = {
+        row["tag_id"]: row for row in flatten(result["tag_distribution"]["family"])
+    }
+    assert "av:clamav:mirai" in family, family
+    assert family["av:clamav:mirai"]["count"] == 2
     assert "ioc" not in result["tag_distribution"]
     assert "ruleset" not in result["tag_distribution"]
-    assert result["tag_distribution"]["user"][-1]["value"] == "user:reviewed"
+    assert result["tag_distribution"]["user"][-1]["tag_id"] == "user:reviewed"
 
 
 def test_function_count_spread_over_members():
@@ -118,7 +128,7 @@ if __name__ == "__main__":
     test_percent_is_a_share_of_members()
     test_flattened_lists_are_collected_once_per_value()
     test_file_names_wins_over_file_name()
-    test_only_the_top_five_values_are_kept()
+    test_all_values_are_kept_unless_a_limit_is_given()
     test_nothing_collected_gives_an_empty_distribution()
     test_tag_distribution_is_per_member_and_policy_filtered()
     test_function_count_spread_over_members()

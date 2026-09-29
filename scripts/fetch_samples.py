@@ -7,7 +7,7 @@
 Inputs (any mix): `tag:NAME`, a file path, `-` for stdin, or raw text. Hashes
 (md5 or sha256) are pulled out by regex, so any separator or quoting works.
 Keys (env or .env): MB_API_KEY (abuse.ch Auth-Key), MWDB_API_KEY, MWDB_URL (default mwdb.cert.pl).
-Then: `bsimvis upload` the directory.
+Add `-c COLLECTION [-t TAG ...]` to also run `bsimvis upload` on the samples.
 """
 
 import argparse
@@ -17,6 +17,7 @@ import time
 import zipfile
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -123,6 +124,20 @@ class Mwdb:
         return h, self._get(f"file/{h}/download").content
 
 
+def upload(files, collection, tags):
+    """Hand the files to `bsimvis upload`, in batches to stay under argv limits."""
+    exe = Path(sys.executable).parent / "bsimvis"
+    base = [str(exe), "upload", "-c", collection]
+    for t in tags:
+        base += ["-t", t]
+    for i in range(0, len(files), 200):
+        print(
+            f"uploading {i + 1}..{i + len(files[i:i + 200])}/{len(files)}",
+            file=sys.stderr,
+        )
+        subprocess.run(base + [str(f) for f in files[i : i + 200]], check=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("source", choices=["mb", "mwdb"])
@@ -130,6 +145,12 @@ def main():
     ap.add_argument("-o", "--out", required=True, type=Path)
     ap.add_argument(
         "--list", action="store_true", help="print hashes, download nothing"
+    )
+    ap.add_argument(
+        "-c", "--collection", help="then `bsimvis upload` into this collection"
+    )
+    ap.add_argument(
+        "-t", "--tag", action="append", default=[], help="upload tag (repeatable)"
     )
     ap.add_argument("-n", "--limit", type=int, help="max samples per tag")
     args = ap.parse_args()
@@ -150,17 +171,22 @@ def main():
         return
 
     args.out.mkdir(parents=True, exist_ok=True)
-    failed = 0
+    failed, files = 0, []
     for i, h in enumerate(hashes, 1):
-        if any(args.out.glob(f"{h}*")):
+        have = next(args.out.glob(f"{h}*"), None)
+        if have:
+            files.append(have)
             continue
         try:
             name, data = client.fetch(h)
             (args.out / name).write_bytes(data)
+            files.append(args.out / name)
             print(f"[{i}/{len(hashes)}] {name} {len(data)}B", file=sys.stderr)
         except Exception as e:
             failed += 1
             print(f"[{i}/{len(hashes)}] {h} FAILED: {e}", file=sys.stderr)
+    if args.collection and files:
+        upload(files, args.collection, args.tag)
     sys.exit(1 if failed else 0)
 
 

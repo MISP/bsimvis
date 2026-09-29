@@ -6,24 +6,30 @@
 
 Inputs (any mix): `tag:NAME`, a file path, `-` for stdin, or raw text. Hashes
 (md5 or sha256) are pulled out by regex, so any separator or quoting works.
-Keys: MB_API_KEY (abuse.ch Auth-Key), MWDB_API_KEY, MWDB_URL (default mwdb.cert.pl).
-Then: `bsimvis upload` the directory.
+Keys (env or .env): MB_API_KEY (abuse.ch Auth-Key), MWDB_API_KEY, MWDB_URL (default mwdb.cert.pl).
+Add `-c COLLECTION [-t TAG ...]` to also run `bsimvis upload` on the samples.
 """
 
 import argparse
+import csv
 import io
+import time
+import zipfile
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 import pyzipper
 import requests
+from dotenv import load_dotenv
 
 HASH_RE = re.compile(
     r"(?<![0-9a-fA-F])(?:[0-9a-fA-F]{64}|[0-9a-fA-F]{32})(?![0-9a-fA-F])"
 )
 MB_URL = "https://mb-api.abuse.ch/api/v1/"
+MB_DUMP_URL = "https://bazaar.abuse.ch/export/csv/full/"
 
 
 def parse_inputs(items):
@@ -54,9 +60,28 @@ class Bazaar:
 
     def tag(self, name):
         j = self._post(query="get_taginfo", tag=name, limit=1000).json()
-        if j.get("query_status") != "ok":
-            raise RuntimeError(f"tag {name}: {j.get('query_status')}")
-        return [d["sha256_hash"] for d in j["data"]]
+        if j.get("query_status") == "ok":
+            return [d["sha256_hash"] for d in j["data"]]
+        if "exceeded" in str(j.get("data")):  # big tags time out server-side
+            print(f"tag {name}: API timeout, using bulk dump", file=sys.stderr)
+            return self.dump_signature(name)
+        raise RuntimeError(f"tag {name}: {j}")
+
+    def dump_signature(self, name):
+        """Full public CSV dump, filtered on `signature` (family). It has no tags column."""
+        cache = Path.home() / ".cache/bsimvis/mb_full.zip"
+        if not cache.exists() or time.time() - cache.stat().st_mtime > 86400:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            print("downloading MalwareBazaar full dump (~220MB)", file=sys.stderr)
+            with requests.get(MB_DUMP_URL, stream=True, timeout=600) as r:
+                r.raise_for_status()
+                with open(cache, "wb") as f:
+                    for chunk in r.iter_content(1 << 20):
+                        f.write(chunk)
+        with zipfile.ZipFile(cache) as z, z.open(z.namelist()[0]) as f:
+            lines = (l.decode() for l in f if not l.startswith(b"#"))
+            rows = csv.reader(lines, skipinitialspace=True)
+            return [r[1] for r in rows if len(r) > 8 and r[8].lower() == name.lower()]
 
     def fetch(self, h):
         if len(h) == 32:  # get_file only takes sha256
@@ -99,6 +124,20 @@ class Mwdb:
         return h, self._get(f"file/{h}/download").content
 
 
+def upload(files, collection, tags):
+    """Hand the files to `bsimvis upload`, in batches to stay under argv limits."""
+    exe = Path(sys.executable).parent / "bsimvis"
+    base = [str(exe), "upload", "-c", collection]
+    for t in tags:
+        base += ["-t", t]
+    for i in range(0, len(files), 200):
+        print(
+            f"uploading {i + 1}..{i + len(files[i:i + 200])}/{len(files)}",
+            file=sys.stderr,
+        )
+        subprocess.run(base + [str(f) for f in files[i : i + 200]], check=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("source", choices=["mb", "mwdb"])
@@ -107,7 +146,15 @@ def main():
     ap.add_argument(
         "--list", action="store_true", help="print hashes, download nothing"
     )
+    ap.add_argument(
+        "-c", "--collection", help="then `bsimvis upload` into this collection"
+    )
+    ap.add_argument(
+        "-t", "--tag", action="append", default=[], help="upload tag (repeatable)"
+    )
+    ap.add_argument("-n", "--limit", type=int, help="max samples per tag")
     args = ap.parse_args()
+    load_dotenv()  # MB_API_KEY etc. from .env
 
     key = "MB_API_KEY" if args.source == "mb" else "MWDB_API_KEY"
     if key not in os.environ:
@@ -116,7 +163,7 @@ def main():
 
     hashes, tags = parse_inputs(args.inputs)
     for t in tags:
-        found = client.tag(t)
+        found = client.tag(t)[: args.limit]
         print(f"tag:{t} -> {len(found)} samples", file=sys.stderr)
         hashes += [h for h in found if h not in hashes]
     if args.list:
@@ -124,17 +171,22 @@ def main():
         return
 
     args.out.mkdir(parents=True, exist_ok=True)
-    failed = 0
+    failed, files = 0, []
     for i, h in enumerate(hashes, 1):
-        if any(args.out.glob(f"{h}*")):
+        have = next(args.out.glob(f"{h}*"), None)
+        if have:
+            files.append(have)
             continue
         try:
             name, data = client.fetch(h)
             (args.out / name).write_bytes(data)
+            files.append(args.out / name)
             print(f"[{i}/{len(hashes)}] {name} {len(data)}B", file=sys.stderr)
         except Exception as e:
             failed += 1
             print(f"[{i}/{len(hashes)}] {h} FAILED: {e}", file=sys.stderr)
+    if args.collection and files:
+        upload(files, args.collection, args.tag)
     sys.exit(1 if failed else 0)
 
 

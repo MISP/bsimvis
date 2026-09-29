@@ -11,7 +11,10 @@ Then: `bsimvis upload` the directory.
 """
 
 import argparse
+import csv
 import io
+import time
+import zipfile
 import os
 import re
 import sys
@@ -25,6 +28,7 @@ HASH_RE = re.compile(
     r"(?<![0-9a-fA-F])(?:[0-9a-fA-F]{64}|[0-9a-fA-F]{32})(?![0-9a-fA-F])"
 )
 MB_URL = "https://mb-api.abuse.ch/api/v1/"
+MB_DUMP_URL = "https://bazaar.abuse.ch/export/csv/full/"
 
 
 def parse_inputs(items):
@@ -55,9 +59,28 @@ class Bazaar:
 
     def tag(self, name):
         j = self._post(query="get_taginfo", tag=name, limit=1000).json()
-        if j.get("query_status") != "ok":
-            raise RuntimeError(f"tag {name}: {j}")
-        return [d["sha256_hash"] for d in j["data"]]
+        if j.get("query_status") == "ok":
+            return [d["sha256_hash"] for d in j["data"]]
+        if "exceeded" in str(j.get("data")):  # big tags time out server-side
+            print(f"tag {name}: API timeout, using bulk dump", file=sys.stderr)
+            return self.dump_signature(name)
+        raise RuntimeError(f"tag {name}: {j}")
+
+    def dump_signature(self, name):
+        """Full public CSV dump, filtered on `signature` (family). It has no tags column."""
+        cache = Path.home() / ".cache/bsimvis/mb_full.zip"
+        if not cache.exists() or time.time() - cache.stat().st_mtime > 86400:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            print("downloading MalwareBazaar full dump (~220MB)", file=sys.stderr)
+            with requests.get(MB_DUMP_URL, stream=True, timeout=600) as r:
+                r.raise_for_status()
+                with open(cache, "wb") as f:
+                    for chunk in r.iter_content(1 << 20):
+                        f.write(chunk)
+        with zipfile.ZipFile(cache) as z, z.open(z.namelist()[0]) as f:
+            lines = (l.decode() for l in f if not l.startswith(b"#"))
+            rows = csv.reader(lines, skipinitialspace=True)
+            return [r[1] for r in rows if len(r) > 8 and r[8].lower() == name.lower()]
 
     def fetch(self, h):
         if len(h) == 32:  # get_file only takes sha256
@@ -108,6 +131,7 @@ def main():
     ap.add_argument(
         "--list", action="store_true", help="print hashes, download nothing"
     )
+    ap.add_argument("-n", "--limit", type=int, help="max samples per tag")
     args = ap.parse_args()
     load_dotenv()  # MB_API_KEY etc. from .env
 
@@ -118,7 +142,7 @@ def main():
 
     hashes, tags = parse_inputs(args.inputs)
     for t in tags:
-        found = client.tag(t)
+        found = client.tag(t)[: args.limit]
         print(f"tag:{t} -> {len(found)} samples", file=sys.stderr)
         hashes += [h for h in found if h not in hashes]
     if args.list:

@@ -6,7 +6,7 @@
 
 Inputs (any mix): `tag:NAME`, a file path, `-` for stdin, or raw text. Hashes
 (md5 or sha256) are pulled out by regex, so any separator or quoting works.
-Keys: MB_API_KEY (abuse.ch Auth-Key), MWDB_API_KEY, MWDB_URL (default mwdb.cert.pl).
+Keys (env or .env): MB_API_KEY (abuse.ch Auth-Key), MWDB_API_KEY, MWDB_URL (default mwdb.cert.pl).
 Then: `bsimvis upload` the directory.
 """
 
@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pyzipper
 import requests
+from dotenv import load_dotenv
 
 HASH_RE = re.compile(
     r"(?<![0-9a-fA-F])(?:[0-9a-fA-F]{64}|[0-9a-fA-F]{32})(?![0-9a-fA-F])"
@@ -108,6 +109,7 @@ def main():
         "--list", action="store_true", help="print hashes, download nothing"
     )
     args = ap.parse_args()
+    load_dotenv()  # MB_API_KEY etc. from .env
 
     key = "MB_API_KEY" if args.source == "mb" else "MWDB_API_KEY"
     if key not in os.environ:

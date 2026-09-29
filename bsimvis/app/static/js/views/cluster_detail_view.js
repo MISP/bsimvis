@@ -579,7 +579,7 @@ window.ClusterDetailView = {
                 <span style="font-size:1.2rem; font-weight:bold;">${escapeHtml(self.cluster_name || `Cluster #${self.cluster_id}`)}</span>
                 <span class="badge">${this.isBinary ? this.axis : 'function'}</span>
                 ${EntityRenderer.renderTag(this.isBinary ? 'bin_cluster' : 'cluster', self.tag_id || self.cluster_id, [], self.user_tags || [])}
-                <span style="margin-left:auto;">${this.renderMemberListLink(self)}</span>
+                <span style="margin-left:auto; display:flex; gap:6px;">${this.renderMemberListLink(self)}${this.renderSimilaritiesLink(self)}</span>
             </div>
             <div class="mono dim" style="font-size:0.72rem; margin-top:6px;">
                 ${escapeHtml(self.cluster_uuid || '')}
@@ -675,6 +675,18 @@ window.ClusterDetailView = {
             className: 'btn-code-action',
             icon: 'fa-solid fa-magnifying-glass',
             label: `Open in ${this.isBinary ? 'file' : 'function'} search`,
+            onClick: `Nav.openPath(${jsString(url)}, event)`,
+        });
+    },
+
+    renderSimilaritiesLink(self) {
+        const segs = this.isBinary ? ['files', 'similarities'] : ['functions', 'similarities'];
+        const key = this.isBinary ? 'bin_cluster_uuid' : 'cluster_uuid';
+        const url = `${Nav.buildUIUrl(this.collection || '', segs)}?${key}=${encodeURIComponent(self.cluster_uuid)}`;
+        return UI.Button.render({
+            className: 'btn-code-action',
+            icon: 'fa-solid fa-diagram-project',
+            label: `Open ${this.isBinary ? 'file' : 'function'} similarities`,
             onClick: `Nav.openPath(${jsString(url)}, event)`,
         });
     },

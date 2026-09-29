@@ -55,7 +55,7 @@ class Bazaar:
     def tag(self, name):
         j = self._post(query="get_taginfo", tag=name, limit=1000).json()
         if j.get("query_status") != "ok":
-            raise RuntimeError(f"tag {name}: {j.get('query_status')}")
+            raise RuntimeError(f"tag {name}: {j}")
         return [d["sha256_hash"] for d in j["data"]]
 
     def fetch(self, h):

@@ -7048,6 +7048,91 @@ def test_boilerplate_backfill():
             r.delete(*keys)
 
 
+def test_fid_backfill():
+    """backfill_function_id_tags drops legacy origin:lib tags, keeps only fid:."""
+    from bsimvis.app.services.redis_client import get_redis
+    from backfill_function_id_tags import backfill
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 4d2 – FID backfill replaces legacy origin:lib tags", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    r = get_redis()
+    coll = f"{COLLECTION}_fidfill"
+    md5 = "4" * 32
+    hit = "a" * 16
+    amb = "b" * 16
+    tagbox = "boilerplate:runtime:libc:rpc#xdr_callhdr"
+    db = {hit: ["fid:libc:2.31#memcpy"], amb: ["fid:libc:2.31#ambiguous"]}
+
+    def s(v):
+        return v.decode() if isinstance(v, bytes) else v
+
+    try:
+        r.set(
+            f"{coll}:file:{md5}:meta",
+            json.dumps({"file_md5": md5, "tags": ["origin:lib:libc", "keep"]}),
+        )
+        r.sadd(f"{coll}:all_files", f"{coll}:file:{md5}")
+        seeded = [
+            ("memcpy", hit, ["origin:lib:libc:2.31:memcpy", tagbox]),
+            ("FUN_x", amb, ["origin:lib:libc:2.31:memcpy"]),
+            ("wrong", "c" * 16, ["origin:lib:libc:2.31:memcpy"]),
+        ]
+        ids = []
+        for i, (name, h, tags) in enumerate(seeded):
+            fid = f"{coll}:func:{md5}:{0x401000 + i * 16:08x}"
+            ids.append(fid)
+            r.set(
+                f"{fid}:meta",
+                json.dumps(
+                    {
+                        "function_name": name,
+                        "function_id_hash": h,
+                        "instruction_count": 40,
+                        "language_id": "x86:LE:64:default",
+                        "file_md5": md5,
+                        "tags": tags,
+                    }
+                ),
+            )
+            r.sadd(f"{coll}:all_functions", fid)
+            r.sadd(f"{coll}:idx:file:functions:{md5}", fid)
+
+        lookup = lambda lang, h: db.get(h, [])
+        backfill(r, coll, lookup, apply=False)
+        check(
+            "preview writes nothing",
+            "origin:lib:libc:2.31:memcpy"
+            in json.loads(s(r.get(f"{ids[0]}:meta")))["tags"],
+        )
+        backfill(r, coll, lookup, apply=True)
+        got = [json.loads(s(r.get(f"{f}:meta")))["tags"] for f in ids]
+        check(
+            "legacy tag replaced by its fid: rematch, boilerplate kept",
+            got[0] == [tagbox, "fid:libc:2.31#memcpy"],
+            str(got[0]),
+        )
+        check(
+            "multi-match keeps #ambiguous",
+            got[1] == ["fid:libc:2.31#ambiguous"],
+            str(got[1]),
+        )
+        check("unmatched legacy tag is deleted", got[2] == [], str(got[2]))
+        ftags = json.loads(s(r.get(f"{coll}:file:{md5}:meta")))["tags"]
+        check(
+            "file rollup uses fid: only",
+            "keep" in ftags
+            and "fid:libc" in ftags
+            and not any(t.startswith("origin:lib") for t in ftags),
+            str(ftags),
+        )
+    finally:
+        keys = list(r.scan_iter(match=f"{coll}:*", count=1000))
+        if keys:
+            r.delete(*keys)
+
+
 def test_scan_mode():
     """A scan answers the similarity question without ingesting the sample.
 
@@ -7709,6 +7794,7 @@ if __name__ == "__main__":
         test_container_similarity,
         test_lib_tag_rollup,
         test_boilerplate_backfill,
+        test_fid_backfill,
         test_skip_modules_payload,
         test_scan_mode,
         test_scan_multi_upload,

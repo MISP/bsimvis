@@ -264,5 +264,6 @@ GLIBC_PLAIN_NAMES = frozenset((
     "wcschrnul", "wcslen", "wcsnlen", "wcsnrtombs", "wcsrtombs", "wctomb",
     "wctrans", "wmemchr", "wmemcpy", "wmemmove", "wmempcpy", "wmemset", "write",
     "writev",
+    "_itoa", "_fitoa", "_itowa", "_mid_memalign", "_exit", "_vfprintf_internal", "_wordcopy_fwd_dest_aligned", "_wordcopy_bwd_dest_aligned", "_wordcopy_fwd_aligned", "_wordcopy_bwd_aligned", "_authenticate", "_seterr_reply", "_rpc_dtablesize", "_create_xid", "_fpreset", "_do_one_spec", "_is_equal_or_bigger_arg", "_setargv", "_fpmaxtostr", "_locale_set_l", "_locale_init_l", "_locale_init", "_wchar_utf8sntowcs", "_wchar_wcsntoutf8s", "_restgpr_31_x", "_FINI_0", "_FINI_1", "_ValidateImageBase", "_FindPESection", "_FindPESectionByName", "_FindPESectionExec", "_GetPEImageBase", "_IsNonwritableInCurrentImage", "_pei386_runtime_relocator", "_gnu_exception_handler", "_lock_file", "_unlock_file", "_test_and_set", "_call_via_r0", "_call_via_r1", "_call_via_r2", "_call_via_r3", "_call_via_r4", "_call_via_r5", "_call_via_r6", "_call_via_r7", "_call_via_r8", "_call_via_r9", "_call_via_sl", "_call_via_fp", "_call_via_ip", "_call_via_sp", "_call_via_lr",
 ))
 # fmt: on

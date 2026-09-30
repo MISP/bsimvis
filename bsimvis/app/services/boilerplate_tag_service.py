@@ -172,7 +172,8 @@ BOILERPLATE_SUFFIXES = {
 
 # Plain glibc names (`read`, `check_match`, `do_sym`) also belong to application
 # code, so they only count in a file that already shows a static libc through
-# the reserved-namespace prefixes above.
+# the reserved-namespace prefixes above. Any `__name` counts there too; a single
+# leading underscore does not (malware helpers such as `_memcpy` use it).
 LIBC_GATE_MIN = 25
 CLONE_SUFFIX = re.compile(r"(\.(isra|constprop|part)\.\d+)+$")
 
@@ -186,7 +187,8 @@ def boilerplate_tags_for_names(names):
     )
     if prefixed >= LIBC_GATE_MIN:
         for n in names:
-            if not tags[n] and CLONE_SUFFIX.sub("", str(n)) in GLIBC_PLAIN_NAMES:
+            base = CLONE_SUFFIX.sub("", str(n))
+            if not tags[n] and (base in GLIBC_PLAIN_NAMES or base.startswith("__")):
                 tags[n] = tag_taxonomy.canonical_tag_id(
                     f"boilerplate:runtime:libc:support#{n}"
                 )
@@ -229,12 +231,21 @@ def demo():
     assert boilerplate_tag_for_function_name("main") is None
     assert boilerplate_tag_for_function_name("_IO_flush_all")
     assert boilerplate_tag_for_function_name("read") is None
+    assert boilerplate_tag_for_function_name("__clock_gettime64") is None
 
     libc = [f"_dl_fn{i}" for i in range(LIBC_GATE_MIN)]
     gated = boilerplate_tags_for_names(libc + ["read", "check_match.isra.0", "main"])
     assert gated["read"] and gated["check_match.isra.0"] and gated["main"] is None
     small = boilerplate_tags_for_names(["_dl_a", "read", "check_match"])
     assert small["read"] is None and small["check_match"] is None
+
+    dunder = boilerplate_tags_for_names(
+        libc + ["__clock_gettime64", "_memcpy", "_itoa"]
+    )
+    assert dunder["__clock_gettime64"] and dunder["_itoa"] and dunder["_memcpy"] is None
+    assert (
+        boilerplate_tags_for_names(["__clock_gettime64"])["__clock_gettime64"] is None
+    )
 
 
 if __name__ == "__main__":

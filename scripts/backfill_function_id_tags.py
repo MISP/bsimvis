@@ -76,7 +76,7 @@ class FidLookup:
                 pass
 
 
-def file_fid_tags(r, collection, md5, changes):
+def file_fid_tags(r, collection, md5, changes, prefix="fid:"):
     tags = set()
     ids = r.sscan_iter(f"{collection}:idx:file:functions:{md5}", count=BATCH)
     while batch := list(islice(ids, BATCH)):
@@ -84,20 +84,20 @@ def file_fid_tags(r, collection, md5, changes):
             tags.update(
                 t
                 for t in lib_parents(changes.get(fid, meta.get("tags")))
-                if t.startswith("fid:")
+                if t.startswith(prefix)
             )
     return tags
 
 
-def sync_file(r, collection, md5, changes, apply):
+def sync_file(r, collection, md5, changes, apply, prefix="fid:"):
     key = f"{collection}:file:{md5}:meta"
     raw = r.get(key)
     if not raw:
         return False
     meta = json.loads(raw)
     old = list(meta.get("tags") or [])
-    fid_tags = file_fid_tags(r, collection, md5, changes)
-    new = [tag for tag in old if not str(tag).startswith("fid:")] + sorted(fid_tags)
+    fid_tags = file_fid_tags(r, collection, md5, changes, prefix)
+    new = [tag for tag in old if not str(tag).startswith(prefix)] + sorted(fid_tags)
     if new == old:
         return False
     if apply:
@@ -107,7 +107,7 @@ def sync_file(r, collection, md5, changes, apply):
         pipe.set(key, json.dumps(meta))
         save_file(pipe, collection, md5, meta)
         acc = f"{collection}:file:{md5}:lib_tags"
-        stale = [tag for tag in r.smembers(acc) if str(tag).startswith("fid:")]
+        stale = [tag for tag in r.smembers(acc) if str(tag).startswith(prefix)]
         if stale:
             pipe.srem(acc, *stale)
         if fid_tags:

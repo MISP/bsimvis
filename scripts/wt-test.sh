@@ -19,6 +19,9 @@ export WT_ENV_FILE=.env.wttest
 
 "$WT_ROOT/scripts/wt-setup.sh" || exit 1
 
+# Tests that spawn their own datastore (the pipeline matrix) need bin/redis-server.
+export PATH="$WT_ROOT/bin:$PATH"
+
 # shellcheck disable=SC1091
 set -a; . "./$WT_ENV_FILE"; set +a
 APP_PORT=${APP_PORT:-5100}

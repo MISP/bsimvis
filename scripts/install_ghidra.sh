@@ -27,8 +27,9 @@ JDK_DIR=$(ls -d "${BIN_DIR}"/jdk-21* 2>/dev/null | head -n 1)
 if [ -n "$JDK_DIR" ] && [ -x "$JDK_DIR/bin/java" ]; then
     JAVA_HOME_PATH="$JDK_DIR"
     echo "Using portable JDK in ${JAVA_HOME_PATH}"
-elif command -v java >/dev/null && [ "$(java_major java || echo 0)" -ge 21 ] 2>/dev/null; then
-    echo "Found system Java $(java_major java)."
+# Ghidra's LaunchSupport needs a full JDK: a JRE-only system java (no javac) fails at launch.
+elif command -v java >/dev/null && command -v javac >/dev/null && [ "$(java_major java || echo 0)" -ge 21 ] 2>/dev/null; then
+    echo "Found system JDK $(java_major java)."
 else
     # ponytail: Adoptium "latest 21 ga" redirect, no version pinning. Pin if reproducibility matters.
     case "$(uname -m)" in

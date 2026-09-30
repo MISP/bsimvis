@@ -6913,6 +6913,141 @@ def test_lib_tag_rollup():
             r.delete(*keys)
 
 
+def test_boilerplate_backfill():
+    """backfill_boilerplate_tags replays the name rules over stored functions."""
+    import subprocess
+    from bsimvis.app.services.redis_client import get_redis
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 4d – Boilerplate backfill retags stored names", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    r = get_redis()
+    coll = f"{COLLECTION}_bpfill"
+    script = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "backfill_boilerplate_tags.py"
+    )
+    stale = "boilerplate:runtime:elf:startup#entry"
+    new_tag = "boilerplate:runtime:libc:rpc#xdr_callhdr"
+
+    def s(v):
+        return v.decode() if isinstance(v, bytes) else v
+
+    def seed(md5, funcs):
+        r.set(
+            f"{coll}:file:{md5}:meta",
+            json.dumps({"file_md5": md5, "type": "file", "tags": []}),
+        )
+        r.sadd(f"{coll}:all_files", f"{coll}:file:{md5}")
+        for i, (name, tags) in enumerate(funcs):
+            fid = f"{coll}:func:{md5}:{0x401000 + i * 16:08x}"
+            r.set(f"{fid}:meta", json.dumps({"function_name": name, "tags": tags}))
+            r.sadd(f"{coll}:idx:file:functions:{md5}", fid)
+            for t in tags:
+                r.sadd(f"{coll}:idx:func:tags:{t.lower()}", fid)
+        return fid
+
+    def fmeta(md5, i):
+        raw = r.get(f"{coll}:func:{md5}:{0x401000 + i * 16:08x}:meta")
+        return json.loads(s(raw))
+
+    def bucket(tag):
+        return {s(x) for x in r.smembers(f"{coll}:idx:func:tags:{tag.lower()}")}
+
+    def run(*extra):
+        return subprocess.run(
+            [sys.executable, script, "--collection", coll, *extra],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+    elf, go = "2" * 32, "3" * 32
+    try:
+        funcs = [(f"_dl_fn{i}", []) for i in range(25)]
+        funcs += [
+            ("xdr_callhdr", ["keep:me"]),
+            ("main", []),
+            ("attack_udp", []),
+            ("entry", [stale]),
+            ("FUN_fid", ["fid:zlib#deflate"]),
+        ]
+        seed(elf, funcs)
+        seed(
+            go,
+            [(f"runtime.f{i}", []) for i in range(10)]
+            + [("net.Dial", []), ("main.beacon", [])],
+        )
+        xdr, ent, main_i = 25, 28, 26
+        fidfn = 29
+
+        p = run("--dry-run")
+        check(
+            "dry-run exits cleanly and reports counts",
+            p.returncode == 0 and "would change" in (p.stderr + p.stdout),
+            (p.stderr or p.stdout)[-400:],
+        )
+        check(
+            "dry-run writes nothing",
+            new_tag not in fmeta(elf, xdr)["tags"]
+            and stale in fmeta(elf, ent)["tags"]
+            and not bucket(new_tag),
+            str(fmeta(elf, xdr)),
+        )
+
+        p = run()
+        check(
+            "backfill exits cleanly",
+            p.returncode == 0,
+            (p.stderr or p.stdout)[-400:],
+        )
+        check(
+            "untagged libc name gains its tag in meta and index",
+            new_tag in fmeta(elf, xdr)["tags"]
+            and "keep:me" in fmeta(elf, xdr)["tags"]
+            and any(x.endswith(f":{0x401000 + xdr * 16:08x}") for x in bucket(new_tag)),
+            str(fmeta(elf, xdr)),
+        )
+        check(
+            "stale entry tag is removed from meta and index",
+            stale not in fmeta(elf, ent)["tags"] and not bucket(stale),
+            str(fmeta(elf, ent)),
+        )
+        check(
+            "application names stay untagged",
+            fmeta(elf, main_i)["tags"] == [] and fmeta(elf, 27)["tags"] == [],
+            f"{fmeta(elf, main_i)} {fmeta(elf, 27)}",
+        )
+        check(
+            "non-boilerplate tags survive",
+            fmeta(elf, fidfn)["tags"] == ["fid:zlib#deflate"],
+            str(fmeta(elf, fidfn)),
+        )
+        doc = json.loads(s(r.get(f"{coll}:file:{elf}:meta")))
+        check(
+            "file gains the boilerplate:runtime rollup",
+            "boilerplate:runtime" in (doc.get("tags") or []),
+            str(doc.get("tags")),
+        )
+        check(
+            "Go stdlib name is tagged, application name is not",
+            any(t.startswith("boilerplate:") for t in fmeta(go, 10)["tags"])
+            and fmeta(go, 11)["tags"] == [],
+            f"{fmeta(go, 10)} {fmeta(go, 11)}",
+        )
+
+        p = run()
+        check(
+            "second run changes nothing",
+            "+0 / -0" in (p.stderr + p.stdout),
+            (p.stderr or p.stdout)[-400:],
+        )
+    finally:
+        keys = list(r.scan_iter(match=f"{coll}:*", count=1000))
+        if keys:
+            r.delete(*keys)
+
+
 def test_scan_mode():
     """A scan answers the similarity question without ingesting the sample.
 
@@ -7573,6 +7708,7 @@ if __name__ == "__main__":
         test_lineage,
         test_container_similarity,
         test_lib_tag_rollup,
+        test_boilerplate_backfill,
         test_skip_modules_payload,
         test_scan_mode,
         test_scan_multi_upload,

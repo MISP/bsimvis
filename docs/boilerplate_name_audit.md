@@ -152,7 +152,7 @@ OpenSSL is exact names only. A static OpenSSL is library code, but a prefix such
 - One collection, heavy on uClibc and glibc IoT builds, plus 8 Go files. musl, newlib, MSVC and Mach-O runtimes were not audited. The exact-name tables cover what this collection contains and nothing more.
 - Thin wrappers such as `system`, `execve`, `fork`, `kill`, `ptrace` are tagged boilerplate when the file links libc. The wrapper's body is libc's. The call sites in the bot's own functions are not tagged and stay visible in `callers`. A filter on the boilerplate axis hides the wrapper, not who called it.
 - Third-party Go packages (`github.com/...`) are not tagged. They are libraries, and the same idea would extend to them, but there is no closed list to check against.
-- The rules run at analysis time (`ghidra_service` and the scan path). A stored collection needs a re-analysis or a backfill to pick them up. I did not run a retag.
+- The rules run at analysis time (`ghidra_service` and the scan path). A stored collection needs a re-analysis or a backfill to pick them up. `uv run python scripts/backfill_boilerplate_tags.py --collection <name> --dry-run` replays the rules over the stored names (no Ghidra) and prints the added and removed counts per family; drop `--dry-run` to write. Compare the dry-run against the 42,413 / 344 above before the real run. Limits: sim-level `func_tags` and cluster `tag_distribution` keep the old tags until a rebuild; a file's `boilerplate:runtime` tag stays even if its only runtime function was `entry`; run it with no upload or analysis job active on the collection.
 
 ## Reproducing
 

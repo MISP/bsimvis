@@ -476,6 +476,14 @@ uv run bsimvis rulezet sync
 # Force a full re-fetch (ignores last sync date)
 uv run bsimvis rulezet sync --full
 
+# Dry run: how many rules the next sync would add/change (writes no rules)
+uv run bsimvis rulezet status          # only changes since last sync
+uv run bsimvis rulezet status --full   # diff every rule against disk
+
+# Add mirror file tags to files already in a collection. Sample bytes are not
+# kept after analysis, so point it at the original files (matched by md5).
+uv run bsimvis rulezet backfill -c <collection> <sample_dir> [--dry-run]
+
 # Recover curated MISP-galaxy tags (requires api_key in config)
 uv run bsimvis rulezet index-tags mitre-attack-pattern
 

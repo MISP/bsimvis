@@ -621,6 +621,148 @@ def sync(full=False, limit=None, log=print, meta_only=False):
     log(f"sync done in {time.time() - t0:.0f}s")
 
 
+def classify_rules(rules, tag_config, p=None):
+    """Compare fetched rules to the mirror on disk. Writes nothing.
+
+    Returns counts of `new` (no file in rules/ or quarantine/), `changed` (rule
+    text differs), `retagged` (routed tags the sidecar lacks), `unchanged`, and
+    `skipped` (license/empty, the same filter `_write_rules` applies). A rule
+    can be both changed and retagged; each counter is independent except
+    `unchanged`, which is neither.
+    """
+    p = p or paths()
+    try:
+        sidecar = json.loads(p["tags"].read_text()) if p["tags"].exists() else {}
+    except ValueError:
+        sidecar = {}
+    allow = [x.lower() for x in (cfg("allow_licenses") or [])]
+    c = dict(new=0, changed=0, retagged=0, unchanged=0, skipped=0)
+    for rule in rules:
+        uuid = rule.get("uuid") or str(rule.get("id") or "")
+        text = rule.get("to_string") or rule.get("content") or ""
+        if not uuid or not text.strip():
+            c["skipped"] += 1
+            continue
+        if allow and str(rule.get("license") or "").strip().lower() not in allow:
+            c["skipped"] += 1
+            continue
+        on_disk = next(
+            (
+                f
+                for f in (p["rules"] / f"{uuid}.yara", p["quarantine"] / f"{uuid}.yara")
+                if f.exists()
+            ),
+            None,
+        )
+        routed = route_tags(platform_tags(rule, tag_config))
+        is_new = on_disk is None
+        is_changed = not is_new and on_disk.read_text() != text
+        is_retagged = bool(set(routed) - set(sidecar.get(uuid, [])))
+        c["new"] += is_new
+        c["changed"] += is_changed
+        c["retagged"] += is_retagged
+        c["unchanged"] += not (is_new or is_changed or is_retagged)
+    return c
+
+
+def status(full=False, limit=None, log=print):
+    """What the next `sync` would do, without touching the mirror.
+
+    The fetch is the same as sync's, so an incremental status costs one small
+    `dumpRules`; `full=True` downloads everything to diff it against disk.
+    """
+    p = paths()
+    state = {}
+    if p["state"].exists():
+        try:
+            state = json.loads(p["state"].read_text())
+        except ValueError:
+            pass
+    since = None if full else state.get("last_sync")
+    n = lambda d: len(list(d.glob("*.yara"))) if d.exists() else 0
+    log(f"mirror:   {mirror_dir()}")
+    log(f"on disk:  {n(p['rules'])} rules, {n(p['quarantine'])} quarantined")
+    log(f"last sync: {state.get('last_sync') or 'never'}")
+    log(f"fetching: {'everything' if not since else 'changes since ' + since}")
+
+    rules = fetch_rules(since=since, limit=limit, log=log)
+    c = classify_rules(rules, load_tag_config(log=log), p)
+    log(f"fetched:  {len(rules)} rules")
+    log(
+        f"  new {c['new']}, text changed {c['changed']}, "
+        f"new tags {c['retagged']}, already current {c['unchanged']}, "
+        f"skipped {c['skipped']}"
+    )
+    todo = len(rules) - c["unchanged"] - c["skipped"]
+    log(f"a sync would change {todo} rule(s)." if todo else "mirror is up to date.")
+    return c
+
+
+def backfill(collection, sample_dir, dry_run=False, log=print):
+    """Add the mirror's file-level tags to files already in a collection.
+
+    Sample bytes are deleted after analysis, so the originals have to come from
+    `sample_dir`; each is matched to its stored file by md5. Tags are only ever
+    added. Function-level tags need Ghidra's section layout, so those stay as
+    they were until the file is re-uploaded.
+    """
+    import hashlib
+
+    import yara
+
+    from bsimvis.app.services import tag_provenance
+    from bsimvis.app.services.index_service import _index_tag, _unindex_tag
+    from bsimvis.app.services.redis_client import get_redis
+    from bsimvis.app.services.tag_taxonomy import yara_file_tags
+    from bsimvis.app.services.yara_service import mirror_tags
+
+    blob = paths()["compiled"]
+    if not blob.exists():
+        log("no compiled mirror; run `bsimvis rulezet sync` first")
+        return {}
+    rules, extra, r = yara.load(str(blob)), mirror_tags(), get_redis()
+    c = dict(scanned=0, unknown=0, matched=0, changed=0)
+    for f in sorted(Path(sample_dir).rglob("*")):
+        if not f.is_file():
+            continue
+        h = hashlib.md5()
+        with open(f, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                h.update(block)
+        base = f"{collection}:file:{h.hexdigest()}"
+        raw = r.get(f"{base}:meta")
+        if not raw:
+            c["unknown"] += 1
+            continue
+        c["scanned"] += 1
+        matches = rules.match(filepath=str(f), timeout=300)
+        new = yara_file_tags(matches, extra)
+        c["matched"] += bool(matches)
+        meta = json.loads(raw)
+        old = sorted(set(meta.get("tags") or []))
+        merged = sorted(set(old) | new)
+        if merged == old:
+            continue
+        c["changed"] += 1
+        log(f"  {f.name}: +{len(merged) - len(old)} tags")
+        if dry_run:
+            continue
+        meta["tags"] = merged
+        pipe = r.pipeline(transaction=False)
+        pipe.set(f"{base}:meta", json.dumps(meta))
+        _unindex_tag(pipe, collection, "file", "tags", old, base)
+        _index_tag(pipe, collection, "file", "tags", merged, base)
+        pipe.execute()
+        rows = tag_provenance.match_rows(matches, extra)
+        tag_provenance.put_rules(rows, r)
+        tag_provenance.record_hits_bulk(collection, {base: list(rows)}, r)
+    log(
+        f"{'would change' if dry_run else 'changed'} {c['changed']} of "
+        f"{c['scanned']} known files ({c['unknown']} not in {collection})"
+    )
+    return c
+
+
 def demo():
     """Self-check for the parts that are pure logic."""
     assert _vulns({"cve_id": '["CVE-2021-44228", "GHSA-j8v8-6h6r-m6pq"]'}) == [
@@ -652,6 +794,19 @@ def demo():
     assert "cve:CVE-2021-44228" in tags, tags
     # A rule that matches nothing gets no tags rather than an empty-string tag.
     assert platform_tags({"title": "x", "description": "y"}, cfgs) == []
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "rules").mkdir()
+        (root / "quarantine").mkdir()
+        (root / "rules" / "a.yara").write_text("same")
+        (root / "rules" / "b.yara").write_text("old")
+        q = {"rules": root / "rules", "quarantine": root / "quarantine"}
+        q["tags"] = root / "tags.json"
+        mk = lambda u, t: {"uuid": u, "to_string": t, "title": "x"}
+        c = classify_rules([mk("a", "same"), mk("b", "new"), mk("c", "z")], [], q)
+        assert (c["new"], c["changed"], c["unchanged"]) == (1, 1, 1), c
     print("rulezet_service demo OK")
 
 

@@ -1,4 +1,4 @@
-"""CLI for the rulezet.org YARA mirror: sync, quarantine, index-tags."""
+"""CLI for the rulezet.org YARA mirror: sync, status, backfill, quarantine, index-tags."""
 
 import shutil
 
@@ -47,6 +47,10 @@ def run_rulezet(host, port, args):
             limit=getattr(args, "limit", None),
             meta_only=getattr(args, "meta_only", False),
         )
+    elif action == "status":
+        rz.status(full=args.full, limit=args.limit)
+    elif action == "backfill":
+        rz.backfill(args.collection, args.dir, dry_run=args.dry_run)
     elif action == "index-tags":
         rz.index_tags(args.galaxy, limit=getattr(args, "limit", None))
     elif action == "quarantine":

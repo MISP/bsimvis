@@ -1,7 +1,10 @@
-"""Benchmark discover_edges speed-ups on data/bench (jaccard).
+"""Benchmark sparse-matmul discovery against `discover_edges`, per algorithm.
 
-Pairs: every real binary pair, plus each binary vs a mutated copy of itself
-(the near-identical-variant case that makes discovery slow on Mirai-like sets).
+Every algorithm's shared mass is a sum over hashes of some function of
+min(tf_a, tf_b) (or of tf_a*tf_b), so one layered sparse product covers them:
+    sum_h f(min(a,b)) = sum_k [a>=k][b>=k] * (f(k) - f(k-1))
+Pairs: real binary pairs plus all-pairs of mutated variants of the biggest
+binary (the Mirai-like case).
 
     uv run python scripts/bench_discover.py
 """
@@ -14,10 +17,11 @@ import time
 import numpy as np
 from scipy import sparse
 
+from bsimvis.app.services import bsim_profiles, bsim_weights
 from bsimvis.app.services.bin_sim_service import discover_edges
-from bsimvis.app.services.bin_sim_tags import greedy_match
 
 MIN_SCORE = 0.4
+ALGOS = ["jaccard", "unweighted_cosine", "binary_cosine", "weighted_cosine"]
 random.seed(7)
 
 
@@ -35,87 +39,20 @@ def load():
     return bins
 
 
-def mutate(vecs, tag, frac=0.2):
+def mutate(vecs, tag, frac=0.1):
     out = {}
     for fid, v in vecs.items():
         keys = list(v)
         drop = set(random.sample(keys, int(len(keys) * frac)))
         nv = {h: c for h, c in v.items() if h not in drop}
         for j in range(len(drop)):
-            nv[f"new{tag}{fid}{j}"] = 1.0
+            nv[f"{random.getrandbits(32):x}"] = 1.0
         out[f"{tag}:{fid}"] = nv
     return out
 
 
-# --- option 2: postings + totals built once per binary --------------------
-def index_for(vectors, fids):
-    fids = [f for f in sorted(fids) if vectors.get(f)]
-    postings = {}
-    for fid in fids:
-        for h in vectors[fid]:
-            postings.setdefault(h, []).append(fid)
-    return postings, {f: sum(vectors[f].values()) for f in fids}
-
-
-def discover_cached(vectors, fids_a, index_b, min_score):
-    postings, totals_b = index_b
-    fids_a = [f for f in sorted(fids_a) if vectors.get(f)]
-    edges = []
-    for fid_a in fids_a:
-        vec_a = vectors[fid_a]
-        total_a = sum(vec_a.values())
-        shared_by_b = {}
-        for h, value_a in vec_a.items():
-            for fid_b in postings.get(h, ()):
-                add = min(value_a, vectors[fid_b][h])
-                shared_by_b[fid_b] = shared_by_b.get(fid_b, 0.0) + add
-        for fid_b, shared in shared_by_b.items():
-            score = shared / (total_a + totals_b[fid_b] - shared)
-            if score >= min_score:
-                edges.append((fid_a, fid_b, score))
-    return edges
-
-
-# --- option 3: layered sparse matmul, exact for integer tf ----------------
-def discover_sparse(vectors, fids_a, fids_b, min_score):
-    fa = [f for f in sorted(fids_a) if vectors.get(f)]
-    fb = [f for f in sorted(fids_b) if vectors.get(f)]
-    if not fa or not fb:
-        return []
-    col = {}
-    for f in fa + fb:
-        for h in vectors[f]:
-            col.setdefault(h, len(col))
-
-    def mat(fids):
-        r, c, v = [], [], []
-        for i, f in enumerate(fids):
-            for h, x in vectors[f].items():
-                r.append(i)
-                c.append(col[h])
-                v.append(int(x))
-        return sparse.csr_matrix((v, (r, c)), shape=(len(fids), len(col)))
-
-    A, B = mat(fa), mat(fb)
-    ta = np.asarray(A.sum(axis=1)).ravel()
-    tb = np.asarray(B.sum(axis=1)).ravel()
-    shared = None
-    for k in range(1, int(max(A.max(), B.max())) + 1):
-        Ak = (A >= k).astype(np.float32)
-        Bk = (B >= k).astype(np.float32)
-        part = Ak @ Bk.T
-        shared = part if shared is None else shared + part
-    s = shared.tocoo()
-    score = s.data / (ta[s.row] + tb[s.col] - s.data)
-    keep = score >= min_score
-    return [
-        (fa[i], fb[j], float(x))
-        for i, j, x in zip(s.row[keep], s.col[keep], score[keep])
-    ]
-
-
 class SparseIndex:
-    """Per-binary CSR matrices over one shared hash->column map, built once."""
+    """CSR matrices per function set over one shared hash->column map."""
 
     def __init__(self, vectors):
         self.vectors = vectors
@@ -135,40 +72,67 @@ class SparseIndex:
             self.cache[key] = (fl, r, c, v)
         return self.cache[key]
 
-    def discover(self, fids_a, fids_b, min_score):
-        (fa, ra, ca, va), (fb, rb, cb, vb) = self.get(fids_a), self.get(fids_b)
-        n = len(self.col)
-        A = sparse.csr_matrix((va, (ra, ca)), shape=(len(fa), n))
-        B = sparse.csr_matrix((vb, (rb, cb)), shape=(len(fb), n))
-        ta = np.asarray(A.sum(axis=1)).ravel()
-        tb = np.asarray(B.sum(axis=1)).ravel()
-        # layer k keeps only tf >= k; pruning makes later layers nearly free
-        Al, Bl = A.astype(np.float32), B.astype(np.float32)
+    def layered(self, A, B, layer_weight=None):
+        """sum_k w_k[h] * [a>=k][b>=k], as one sparse (|A|,|B|) matrix."""
+        Al, Bl = A.copy(), B.copy()
+        hashes = {i: h for h, i in self.col.items()}
         parts = []
         for k in range(1, int(min(A.max(), B.max())) + 1):
             for M in (Al, Bl):
                 M.data[M.data < k] = 0
                 M.eliminate_zeros()
-            Ak = Al.copy()
+            Ak, Bk = Al.copy(), Bl.copy()
             Ak.data[:] = 1
-            Bk = Bl.copy()
             Bk.data[:] = 1
+            if layer_weight:
+                Ak.data = np.array([layer_weight(hashes[c], k) for c in Ak.indices])
             part = (Ak @ Bk.T).tocoo()
             parts.append((part.row, part.col, part.data))
-        # one sum of all layers; adding sparse layers one by one is the slow part
-        shared = sparse.coo_matrix(
-            (
-                np.concatenate([p[2] for p in parts]),
-                (
-                    np.concatenate([p[0] for p in parts]),
-                    np.concatenate([p[1] for p in parts]),
-                ),
-            ),
-            shape=(len(fa), len(fb)),
+        # one sum over all layers; adding sparse layers one by one is the slow part
+        cat = [np.concatenate([p[i] for p in parts]) for i in range(3)]
+        return sparse.coo_matrix(
+            (cat[2], (cat[0], cat[1])), shape=(A.shape[0], B.shape[0])
         ).tocsr()
-        s = shared.tocoo()
-        score = s.data / (ta[s.row] + tb[s.col] - s.data)
-        keep = score >= min_score
+
+    def discover(self, fids_a, fids_b, algo, min_score):
+        (fa, ra, ca, va), (fb, rb, cb, vb) = self.get(fids_a), self.get(fids_b)
+        n = len(self.col)
+        A = sparse.csr_matrix((va, (ra, ca)), shape=(len(fa), n), dtype=np.float64)
+        B = sparse.csr_matrix((vb, (rb, cb)), shape=(len(fb), n), dtype=np.float64)
+
+        def rows(M):
+            return np.asarray(M.sum(axis=1)).ravel()
+
+        if algo == "jaccard":
+            ta, tb = rows(A), rows(B)
+            s = self.layered(A, B).tocoo()
+            score = s.data / (ta[s.row] + tb[s.col] - s.data)
+        elif algo == "binary_cosine":
+            Ab, Bb = A.copy(), B.copy()
+            Ab.data[:] = 1
+            Bb.data[:] = 1
+            na, nb = rows(Ab), rows(Bb)
+            s = (Ab @ Bb.T).tocoo()
+            score = s.data / np.sqrt(na[s.row] * nb[s.col])
+        elif algo == "unweighted_cosine":
+            na = np.sqrt(rows(A.multiply(A)))
+            nb = np.sqrt(rows(B.multiply(B)))
+            s = (A @ B.T).tocoo()
+            score = s.data / (na[s.row] * nb[s.col])
+        else:
+            _, prof = bsim_profiles.parse_algo(algo)
+            table = bsim_weights.load(bsim_profiles.get_profile(prof).weights_path)
+
+            def lw(h, k):
+                c1 = table.coeff(h, k)
+                c0 = table.coeff(h, k - 1) if k > 1 else 0.0
+                return c1 * c1 - c0 * c0
+
+            lens = lambda vs: np.array([table.stats(self.vectors[f])[0] for f in vs])
+            la, lb = lens(fa), lens(fb)
+            s = self.layered(A, B, lw).tocoo()
+            score = np.minimum(s.data / (la[s.row] * lb[s.col]), 1.0)
+        keep = (score >= min_score) & (score > 0)
         return [
             (fa[i], fb[j], float(x))
             for i, j, x in zip(s.row[keep], s.col[keep], score[keep])
@@ -181,70 +145,33 @@ def timed(fn):
     return r, time.perf_counter() - t
 
 
-def summarize(edges):
-    accepted, _, _ = greedy_match(edges)
-    return len(edges), len(accepted)
-
-
 def main():
     bins = load()
     names = list(bins)
     vectors = {}
-    for m, v in bins.items():
+    for v in bins.values():
         vectors.update(v)
-    pairs = []
-    for i, a in enumerate(names):
-        for b in names[i + 1 :]:
-            pairs.append((a, b, set(bins[a]), set(bins[b])))
-        mv = mutate(bins[a], f"mut{i}")
-        vectors.update(mv)
-        pairs.append((a, f"{a}~mut", set(bins[a]), set(mv)))
+    sets = [(m, set(bins[m])) for m in names]
     big = max(names, key=lambda m: len(bins[m]))
-    variants = []
     for i in range(10):
-        mv = mutate(bins[big], f"var{i}", frac=0.1)
+        mv = mutate(bins[big], f"var{i}")
         vectors.update(mv)
-        variants.append((f"var{i}", set(mv)))
-    for i, (a, fa) in enumerate(variants):
-        for b, fb in variants[i + 1 :]:
-            pairs.append((a, b, fa, fb))
-    print(f"{len(names)} binaries, {len(vectors)} functions, {len(pairs)} pairs")
-
+        sets.append((f"var{i}", set(mv)))
+    pairs = [(a, b) for i, a in enumerate(sets) for b in sets[i + 1 :]]
+    print(f"{len(vectors)} functions, {len(pairs)} pairs")
     sidx = SparseIndex(vectors)
-    total = {"opt3b": 0.0, "base": 0.0, "opt2": 0.0, "opt3": 0.0, "opt1": 0.0}
-    idx_cache = {}
-    for a, b, fa, fb in pairs:
-        base, t = timed(lambda: discover_edges(vectors, fa, fb, "jaccard", MIN_SCORE))
-        total["base"] += t
-
-        def run2():
-            if b not in idx_cache:
-                idx_cache[b] = index_for(vectors, fb)
-            return discover_cached(vectors, fa, idx_cache[b], MIN_SCORE)
-
-        e2, t = timed(run2)
-        total["opt2"] += t
-        e3, t = timed(lambda: discover_sparse(vectors, fa, fb, MIN_SCORE))
-        total["opt3"] += t
-        e3b, t = timed(lambda: sidx.discover(fa, fb, MIN_SCORE))
-        total["opt3b"] += t
-        e1, t = timed(
-            lambda: discover_edges(vectors, fa, fb, "jaccard", MIN_SCORE, max_df=0.3)
-        )
-        total["opt1"] += t
-
-        key = lambda es: sorted((x, y, round(s, 6)) for x, y, s in es)
-        assert key(e2) == key(base), "opt2 mismatch"
-        assert key(e3) == key(base), "opt3 mismatch"
-        assert key(e3b) == key(base), "opt3b mismatch"
-        nb, gb = summarize(base)
-        n1, g1 = summarize(e1)
+    for algo in ALGOS:
+        base_t = sp_t = 0.0
+        for (_, fa), (_, fb) in pairs:
+            base, t = timed(lambda: discover_edges(vectors, fa, fb, algo, MIN_SCORE))
+            base_t += t
+            sp, t = timed(lambda: sidx.discover(fa, fb, algo, MIN_SCORE))
+            sp_t += t
+            key = lambda es: sorted((x, y, round(s, 6)) for x, y, s in es)
+            assert key(sp) == key(base), f"{algo} mismatch"
         print(
-            f"{a[:6]}-{b[:6]:6} base={nb:6} edges greedy={gb:4} | "
-            f"max_df=0.3: {n1:6} edges greedy={g1:4}"
+            f"{algo:18} base {base_t:6.2f}s  sparse {sp_t:6.2f}s  {base_t / sp_t:.1f}x"
         )
-    for k, v in total.items():
-        print(f"{k}: {v:.2f}s  ({total['base'] / v:.1f}x)")
 
 
 main()

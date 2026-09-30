@@ -52,6 +52,8 @@ if [ ! -L "$VENDOR_DIR" ] || [ "$(readlink -f "$VENDOR_DIR")" != "$MAIN_VENDOR" 
   ln -s "$MAIN_VENDOR" "$VENDOR_DIR"
 fi
 
+git config core.hooksPath scripts/githooks
+
 # --- 1b. config from the example (the upload CLI hard-fails without it) -----
 if [ ! -f bsimvis_config.toml ] && [ -f bsimvis_config.toml.example ]; then
   echo "Seeding bsimvis_config.toml from the example"

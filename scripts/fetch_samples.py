@@ -58,7 +58,7 @@ class Bazaar:
         r.raise_for_status()
         return r
 
-    def tag(self, name):
+    def tag(self, name, limit=None):
         j = self._post(query="get_taginfo", tag=name, limit=1000).json()
         if j.get("query_status") == "ok":
             return [d["sha256_hash"] for d in j["data"]]
@@ -108,14 +108,14 @@ class Mwdb:
         r.raise_for_status()
         return r
 
-    def tag(self, name):
+    def tag(self, name, limit=None):
         out, older = [], None
         while True:  # keyset pagination: `older_than` = last id seen
             params = {"query": f'tag:"{name}"'}
             if older:
                 params["older_than"] = older
             files = self._get("file", **params).json()["files"]
-            if not files:
+            if not files or (limit and len(out) >= limit):
                 return out
             out += [f["sha256"] for f in files]
             older = files[-1]["id"]
@@ -124,12 +124,14 @@ class Mwdb:
         return h, self._get(f"file/{h}/download").content
 
 
-def upload(files, collection, tags):
+def upload(files, collection, tags, host=None):
     """Hand the files to `bsimvis upload`, in batches to stay under argv limits."""
     exe = Path(sys.executable).parent / "bsimvis"
     base = [str(exe), "upload", "-c", collection]
     for t in tags:
         base += ["-t", t]
+    if host:
+        base += ["-H", host]
     for i in range(0, len(files), 200):
         print(
             f"uploading {i + 1}..{i + len(files[i:i + 200])}/{len(files)}",
@@ -152,6 +154,7 @@ def main():
     ap.add_argument(
         "-t", "--tag", action="append", default=[], help="upload tag (repeatable)"
     )
+    ap.add_argument("-H", "--host", help="bsimvis host:port for the upload")
     ap.add_argument("-n", "--limit", type=int, help="max samples per tag")
     args = ap.parse_args()
     load_dotenv()  # MB_API_KEY etc. from .env
@@ -163,7 +166,7 @@ def main():
 
     hashes, tags = parse_inputs(args.inputs)
     for t in tags:
-        found = client.tag(t)[: args.limit]
+        found = client.tag(t, args.limit)[: args.limit]
         print(f"tag:{t} -> {len(found)} samples", file=sys.stderr)
         hashes += [h for h in found if h not in hashes]
     if args.list:
@@ -186,7 +189,7 @@ def main():
             failed += 1
             print(f"[{i}/{len(hashes)}] {h} FAILED: {e}", file=sys.stderr)
     if args.collection and files:
-        upload(files, args.collection, args.tag)
+        upload(files, args.collection, args.tag, args.host)
     sys.exit(1 if failed else 0)
 
 

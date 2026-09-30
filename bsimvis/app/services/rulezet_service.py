@@ -148,15 +148,28 @@ def fetch_rules(since=None, limit=None, log=print):
             else "dumpRules (full): ~130k rules, 128 MB, ~2 min before "
             "anything is written"
         )
-        try:
-            doc = _post(f"{base}/api/rule/private/dumpRules", body, api_key)
-        except urllib.error.HTTPError as e:
-            # An incremental sync with nothing new answers 404 "No rules found
-            # to dump." That is the ordinary quiet case, not a failure -- every
-            # re-run between updates would otherwise raise.
-            if e.code == 404:
-                return []
-            raise
+        for attempt in range(4):
+            try:
+                doc = _post(f"{base}/api/rule/private/dumpRules", body, api_key)
+                break
+            except urllib.error.HTTPError as e:
+                # An incremental sync with nothing new answers 404 "No rules found
+                # to dump." That is the ordinary quiet case, not a failure -- every
+                # re-run between updates would otherwise raise.
+                if e.code == 404:
+                    return []
+                # A big dump can outlast the proxy in front of rulezet.org.
+                if e.code not in (502, 503, 504):
+                    raise
+                if attempt == 3:
+                    raise RuntimeError(
+                        f"dumpRules failed {attempt + 1}x with HTTP {e.code}: the "
+                        "server timed out building the dump. Try again later; a "
+                        "shorter window (a more recent last_sync) makes it smaller."
+                    ) from e
+                wait = 30 * 2**attempt
+                log(f"  HTTP {e.code}, retrying in {wait}s")
+                time.sleep(wait)
         rules = (doc.get("data", {}).get("rules_by_format", {}) or {}).get("yara", [])
         return rules[:limit] if limit else rules
 

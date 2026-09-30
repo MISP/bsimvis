@@ -244,8 +244,10 @@ class TagService:
         tag,
         algo="unweighted_cosine",
         node_type="file",
+        writer="user",
     ):
-        """Adds a user tag to an entity."""
+        """Adds a tag to an entity. `writer="analysis"` lets LLM output into
+        the severity:/category: namespaces a human may not type."""
         is_cluster = entity_type in ("cluster", "bin_cluster")
         pool_id = get_pool_id(collection)
         if is_cluster and pool_id:
@@ -254,7 +256,7 @@ class TagService:
             collection = _normalize_collection(collection, entity_id)
         r = self.r
         tag = tag.strip()
-        if not tag or not filter_tags([tag], "user"):
+        if not tag or not filter_tags([tag], writer):
             return False
         if not is_cluster:
             self._bump_tag_rev(collection)

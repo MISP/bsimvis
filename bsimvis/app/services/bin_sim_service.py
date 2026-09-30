@@ -68,7 +68,9 @@ def load_vectors(r, fids):
     return vectors
 
 
-def discover_edges(vectors, fids_a, fids_b, algo, min_score, skip_pairs=(), max_df=1.0):
+def _discover_edges_py(
+    vectors, fids_a, fids_b, algo, min_score, skip_pairs=(), max_df=1.0
+):
     """Score every A/B function pair that shares a feature, from tf vectors.
 
     Same three formulas the comparison view uses, so a discovered score means
@@ -150,6 +152,170 @@ def discover_edges(vectors, fids_a, fids_b, algo, min_score, skip_pairs=(), max_
             score = shared / denominator
             if score >= min_score and score > 0:
                 edges.append((fid_a, fid_b, score))
+    return edges
+
+
+_BLOCK_ROWS = 1000
+
+
+def discover_edges(vectors, fids_a, fids_b, algo, min_score, skip_pairs=(), max_df=1.0):
+    """Sparse-matmul discovery; same contract and output as `_discover_edges_py`.
+
+    Falls back to the pure-Python loop when numpy/scipy are missing or tf values
+    are not positive integers (the layer identity below needs integers).
+    """
+    try:
+        return _discover_edges_sparse(
+            vectors, fids_a, fids_b, algo, min_score, skip_pairs, max_df
+        )
+    except (ImportError, _NotSparsable):
+        return _discover_edges_py(
+            vectors, fids_a, fids_b, algo, min_score, skip_pairs, max_df
+        )
+
+
+class _NotSparsable(Exception):
+    pass
+
+
+def _discover_edges_sparse(
+    vectors, fids_a, fids_b, algo, min_score, skip_pairs, max_df
+):
+    import numpy as np
+    from scipy import sparse
+
+    fids_a = [fid for fid in sorted(fids_a) if vectors.get(fid)]
+    fids_b = [fid for fid in sorted(fids_b) if vectors.get(fid)]
+    if not fids_a or not fids_b:
+        return []
+
+    is_jaccard = algo == "jaccard"
+    is_binary = algo == "binary_cosine"
+    is_weighted = algo == "weighted_cosine" or algo.startswith("weighted_cosine:")
+    layered = is_jaccard or is_weighted
+
+    col = {}
+
+    def build(fids):
+        rows, cols, vals = [], [], []
+        for i, fid in enumerate(fids):
+            for h, x in vectors[fid].items():
+                if layered and (x < 1 or x != int(x)):
+                    raise _NotSparsable
+                rows.append(i)
+                cols.append(col.setdefault(h, len(col)))
+                vals.append(x)
+        return rows, cols, vals
+
+    ra, ca, va = build(fids_a)
+    rb, cb, vb = build(fids_b)
+    shape = len(col)
+    A = sparse.csr_matrix((va, (ra, ca)), shape=(len(fids_a), shape), dtype=np.float64)
+    B = sparse.csr_matrix((vb, (rb, cb)), shape=(len(fids_b), shape), dtype=np.float64)
+
+    def rows(M):
+        return np.asarray(M.sum(axis=1)).ravel()
+
+    def ones(M):
+        M = M.copy()
+        M.data[:] = 1.0
+        return M
+
+    if is_weighted:
+        from bsimvis.app.services import bsim_profiles, bsim_weights
+
+        _, profile_name = bsim_profiles.parse_algo(algo)
+        table = bsim_weights.load(bsim_profiles.get_profile(profile_name).weights_path)
+        len_a = np.array([table.stats(vectors[f])[0] for f in fids_a])
+        len_b = np.array([table.stats(vectors[f])[0] for f in fids_b])
+        hashes = [None] * shape
+        for h, i in col.items():
+            hashes[i] = h
+        coeff_sq = {}
+
+        def layer_weights(cols, k):
+            # squared-coeff increment (k-1 -> k) for each column of this layer
+            out = np.empty(len(cols))
+            for j, c in enumerate(cols):
+                key = (c, k)
+                if key not in coeff_sq:
+                    c1 = table.coeff(hashes[c], k)
+                    c0 = table.coeff(hashes[c], k - 1) if k > 1 else 0.0
+                    coeff_sq[key] = c1 * c1 - c0 * c0
+                out[j] = coeff_sq[key]
+            return out
+
+    if is_jaccard:
+        tot_a, tot_b = rows(A), rows(B)
+    elif is_binary:
+        A, B = ones(A), ones(B)
+        norm_a, norm_b = rows(A), rows(B)
+    elif not is_weighted:
+        norm_a = np.sqrt(rows(A.multiply(A)))
+        norm_b = np.sqrt(rows(B.multiply(B)))
+
+    # norms above use the full vectors, as the Python loop does
+    if max_df < 1.0:
+        cap = max(1, int(len(fids_b) * max_df))
+        df = np.bincount(B.indices, minlength=shape)
+        B = (B @ sparse.diags((df <= cap).astype(np.float64))).tocsr()
+        B.eliminate_zeros()
+
+    top = int(min(A.max(), B.max())) if layered else 0
+    b_layers = []
+    if layered:
+        Bk = B.copy()
+        for k in range(1, top + 1):
+            Bk.data[Bk.data < k] = 0
+            Bk.eliminate_zeros()
+            b_layers.append(ones(Bk).T.tocsr())
+
+    edges = []
+    for start in range(0, len(fids_a), _BLOCK_ROWS):
+        end = min(start + _BLOCK_ROWS, len(fids_a))
+        Ablk = A[start:end]
+        if layered:
+            # sum_h f(min(a,b)) = sum_k [a>=k][b>=k] * (f(k) - f(k-1)), so each
+            # layer is one sparse product; all layers are summed in one COO->CSR
+            # (adding CSR layers one by one is quadratic in the accumulator).
+            parts = []
+            Ak = Ablk.copy()
+            for k in range(1, top + 1):
+                Ak.data[Ak.data < k] = 0
+                Ak.eliminate_zeros()
+                L = ones(Ak)
+                if is_weighted:
+                    L.data = layer_weights(L.indices, k)
+                part = (L @ b_layers[k - 1]).tocoo()
+                parts.append((part.row, part.col, part.data))
+            if not parts:
+                continue
+            cat = [np.concatenate([p[i] for p in parts]) for i in range(3)]
+            S = sparse.coo_matrix(
+                (cat[2], (cat[0], cat[1])), shape=(end - start, len(fids_b))
+            ).tocsr()
+        else:
+            S = (Ablk @ B.T).tocsr()
+        S = S.tocoo()
+        i, j, shared = S.row + start, S.col, S.data
+        if is_jaccard:
+            denom = tot_a[i] + tot_b[j] - shared
+        elif is_weighted:
+            denom = len_a[i] * len_b[j]
+        elif is_binary:
+            denom = np.sqrt(norm_a[i] * norm_b[j])
+        else:
+            denom = norm_a[i] * norm_b[j]
+        ok = denom > 0
+        score = np.divide(shared, denom, out=np.zeros_like(shared), where=ok)
+        if is_weighted:
+            score = np.minimum(score, 1.0)
+        keep = ok & (score >= min_score) & (score > 0)
+        for x, y, sc in zip(i[keep], j[keep], score[keep]):
+            fa, fb = fids_a[x], fids_b[y]
+            if skip_pairs and frozenset((fa, fb)) in skip_pairs:
+                continue
+            edges.append((fa, fb, float(sc)))
     return edges
 
 

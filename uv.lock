@@ -88,7 +88,7 @@ wheels = [
 
 [[package]]
 name = "bsimvis"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "black" },
@@ -98,6 +98,7 @@ dependencies = [
     { name = "hdbscan" },
     { name = "matplotlib" },
     { name = "mcp" },
+    { name = "numpy" },
     { name = "ollama" },
     { name = "pyghidra" },
     { name = "pymilvus" },
@@ -106,6 +107,7 @@ dependencies = [
     { name = "redis" },
     { name = "requests" },
     { name = "scikit-learn" },
+    { name = "scipy" },
     { name = "tqdm" },
     { name = "yara-python" },
 ]
@@ -119,6 +121,7 @@ requires-dist = [
     { name = "hdbscan", specifier = ">=0.8.40" },
     { name = "matplotlib", specifier = ">=3.11.0" },
     { name = "mcp", specifier = "==1.28.1" },
+    { name = "numpy" },
     { name = "ollama", specifier = ">=0.6.2" },
     { name = "pyghidra", specifier = ">=3.0.2" },
     { name = "pymilvus", specifier = ">=2.4.0" },
@@ -127,6 +130,7 @@ requires-dist = [
     { name = "redis", specifier = ">=7.3.0" },
     { name = "requests", specifier = ">=2.33.1" },
     { name = "scikit-learn", specifier = ">=1.6.0" },
+    { name = "scipy" },
     { name = "tqdm", specifier = ">=4.67.3" },
     { name = "yara-python", specifier = ">=4.5.0" },
 ]

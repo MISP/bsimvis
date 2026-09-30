@@ -325,6 +325,9 @@ def _origin_coll(collection):
     return collection.split(":col:")[-1] if collection else collection
 
 
+RESPLIT_SLICE_SIZE = 5000
+
+
 class BinSimService:
     def __init__(self, r=None):
         self.r = r or get_redis()
@@ -1226,6 +1229,8 @@ class BinSimService:
         sid=None,
         job_service=None,
         job_id=None,
+        slice_key=None,
+        offset=0,
     ):
         """Recompute the tag split of stored pairs from their persisted diff.
 
@@ -1250,6 +1255,11 @@ class BinSimService:
             wanted = [md5] if isinstance(md5, str) else list(md5 or ())
             if wanted:
                 sids = [s for s in sids if any(m and m in s for m in wanted)]
+        if slice_key:
+            raw = r.get(slice_key)
+            if not raw:
+                return True
+            sids = json.loads(raw)[offset : offset + RESPLIT_SLICE_SIZE]
         total = len(sids)
         if not total:
             if job_service and job_id:
@@ -1259,6 +1269,39 @@ class BinSimService:
         if job_service and job_id:
             job_service.add_log(job_id, f"[*] Resplitting {total} bin_sim pairs")
 
+        if not slice_key and total > RESPLIT_SLICE_SIZE and job_service and job_id:
+            parent = job_service.r.hget(f"job:{job_id}", "parent_id") or job_id
+            # A standalone job has no task_ids to splice into: run it inline.
+            if job_service.r.hget(f"job:{parent}", "task_ids"):
+                from bsimvis.app.services.job_service import JobType
+
+                sids.sort()
+                slice_key = f"{collection}:bin_sim_jobs:{job_id}:resplit_sids"
+                r.set(slice_key, json.dumps(sids), ex=86400)
+                tasks = [
+                    (
+                        JobType.RESPLIT_BIN_SIM.value,
+                        {
+                            "collection": collection,
+                            "algo": algo,
+                            "slice_key": slice_key,
+                            "offset": off,
+                        },
+                    )
+                    for off in range(0, total, RESPLIT_SLICE_SIZE)
+                ]
+                group_id = job_service.create_group(
+                    tasks, parent_id=parent, enqueue=False
+                )
+                job_service.splice_tasks(parent, job_id, [group_id])
+                return True
+
+        self._resplit_sids(sids, collection, algo, job_service, job_id)
+        return True
+
+    def _resplit_sids(self, sids, collection, algo, job_service, job_id):
+        r = self.r
+        total = len(sids)
         tag_meta = load_tag_meta(r, collection)
         rev = read_tags_rev(r, collection)
         # fid -> tags, kept across pairs: the same libc function shows up in
@@ -1376,7 +1419,6 @@ class BinSimService:
 
         if job_service and job_id:
             job_service.update_progress(job_id, 100, f"Resplit {total} bin_sim pairs.")
-        return True
 
 
 bin_sim_service = BinSimService()

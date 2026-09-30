@@ -17,6 +17,8 @@ dependencies = [
     "pymilvus>=2.4.0",
     "hdbscan>=0.8.40",
     "scikit-learn>=1.6.0",
+    "numpy",
+    "scipy",
     "ollama>=0.6.2",
     "matplotlib>=3.11.0",
     "pyzipper>=0.4.0",

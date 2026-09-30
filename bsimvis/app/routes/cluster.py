@@ -11,6 +11,7 @@ from bsimvis.app.services.cluster_utils import (
     cluster_tree_slice,
     cluster_children_page,
     get_tree_links,
+    real_links,
     resolve_cluster_id_by_uuid,
 )
 from bsimvis.app.services.index_service import get_pool_id
@@ -520,7 +521,7 @@ def list_clusters():
     parent_to_children = {}
     if links_raw:
         try:
-            links = json.loads(links_raw)
+            links = real_links(json.loads(links_raw))
             child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
             for l in links:
                 p = str(l["parent"])

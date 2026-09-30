@@ -1,6 +1,9 @@
 """Cheap boilerplate tags from exact Ghidra function names."""
 
+import re
+
 from bsimvis.app.services import tag_taxonomy
+from bsimvis.app.services.boilerplate_libc_names import GLIBC_PLAIN_NAMES
 
 # Exact names only: a broad name rule would label application code as runtime.
 BOILERPLATE_SYMBOLS = {
@@ -110,11 +113,84 @@ BOILERPLATE_PREFIXES = {
     "_uintmaxtostr": "boilerplate:runtime:libc:printf",
     "___mingw_": "boilerplate:runtime:mingw:support",
     "___pformat_": "boilerplate:runtime:mingw:printf",
+    # glibc/libgcc-reserved namespaces: application code does not use these.
+    "_IO_": "boilerplate:runtime:glibc:stdio",
+    "__libio_": "boilerplate:runtime:glibc:stdio",
+    "_dl_": "boilerplate:runtime:glibc:loader",
+    "_dlfo_": "boilerplate:runtime:glibc:loader",
+    "__gconv": "boilerplate:runtime:glibc:iconv",
+    "_nl_": "boilerplate:runtime:glibc:locale",
+    "__wcsmbs_": "boilerplate:runtime:glibc:locale",
+    "__printf_": "boilerplate:runtime:glibc:printf",
+    "__wprintf_": "boilerplate:runtime:glibc:printf",
+    "__vfprintf_": "boilerplate:runtime:glibc:printf",
+    "__vfscanf_": "boilerplate:runtime:glibc:scanf",
+    "__strto": "boilerplate:runtime:glibc:strtod",
+    "____strto": "boilerplate:runtime:glibc:strtod",
+    "__isoc": "boilerplate:runtime:glibc:support",
+    "__mpn_": "boilerplate:runtime:glibc:mpn",
+    "__libc_": "boilerplate:runtime:glibc:support",
+    "__nptl_": "boilerplate:runtime:glibc:thread",
+    "__pthread_": "boilerplate:runtime:glibc:thread",
+    "__futex_": "boilerplate:runtime:glibc:thread",
+    "__lll_": "boilerplate:runtime:glibc:thread",
+    "__tunable": "boilerplate:runtime:glibc:tunables",
+    "__syscall_": "boilerplate:runtime:glibc:support",
+    "__malloc_": "boilerplate:runtime:glibc:allocator",
+    "_int_": "boilerplate:runtime:glibc:allocator",
+    "__aeabi_": "boilerplate:runtime:libgcc:support",
+    "__sync_": "boilerplate:runtime:libgcc:support",
+    "__gnu_": "boilerplate:runtime:libgcc:support",
+    "_Unwind_": "boilerplate:runtime:libgcc:unwind",
+    "___Unwind_": "boilerplate:runtime:libgcc:unwind",
+    "_nss_": "boilerplate:runtime:glibc:nss",
+    "__nss_": "boilerplate:runtime:glibc:nss",
+    "__nscd_": "boilerplate:runtime:glibc:nss",
+    "__rpc_": "boilerplate:runtime:glibc:rpc",
+    "_svcauth_": "boilerplate:runtime:glibc:rpc",
+    "__res_": "boilerplate:runtime:glibc:resolver",
+    "_res_": "boilerplate:runtime:glibc:resolver",
+    "__resolv_": "boilerplate:runtime:glibc:resolver",
+    "__dns_": "boilerplate:runtime:glibc:resolver",
+    "_pthread_": "boilerplate:runtime:glibc:thread",
+    "__sig": "boilerplate:runtime:glibc:support",
+    "__sys_": "boilerplate:runtime:glibc:support",
+    "__getdents": "boilerplate:runtime:glibc:support",
+    "__GI_": "boilerplate:runtime:glibc:support",
+    "__glibc_": "boilerplate:runtime:glibc:support",
+    "__aarch64_": "boilerplate:runtime:libgcc:support",
+    "_stdlib_": "boilerplate:runtime:libc:support",
+    "_fp_out_": "boilerplate:runtime:libc:printf",
+    # Ghidra's name for a byte-matched FID candidate set; not gated.
+    "FID_conflict:": "boilerplate:runtime:libc:support",
 }
 
 BOILERPLATE_SUFFIXES = {
     "_D2A": "boilerplate:runtime:libc:dtoa",
 }
+
+
+# Plain glibc names (`read`, `check_match`, `do_sym`) also belong to application
+# code, so they only count in a file that already shows a static libc through
+# the reserved-namespace prefixes above.
+LIBC_GATE_MIN = 25
+CLONE_SUFFIX = re.compile(r"(\.(isra|constprop|part)\.\d+)+$")
+
+
+def boilerplate_tags_for_names(names):
+    """Map name -> tag for a whole file, adding gated plain libc names."""
+    names = list(names)
+    tags = {n: boilerplate_tag_for_function_name(n) for n in names}
+    prefixed = sum(
+        1 for n in names if tags[n] and str(n).startswith(tuple(BOILERPLATE_PREFIXES))
+    )
+    if prefixed >= LIBC_GATE_MIN:
+        for n in names:
+            if not tags[n] and CLONE_SUFFIX.sub("", str(n)) in GLIBC_PLAIN_NAMES:
+                tags[n] = tag_taxonomy.canonical_tag_id(
+                    f"boilerplate:runtime:libc:support#{n}"
+                )
+    return tags
 
 
 def boilerplate_tag_for_function_name(name):
@@ -151,6 +227,14 @@ def demo():
         == "boilerplate:runtime:libc:dtoa#___Balloc_D2A"
     )
     assert boilerplate_tag_for_function_name("main") is None
+    assert boilerplate_tag_for_function_name("_IO_flush_all")
+    assert boilerplate_tag_for_function_name("read") is None
+
+    libc = [f"_dl_fn{i}" for i in range(LIBC_GATE_MIN)]
+    gated = boilerplate_tags_for_names(libc + ["read", "check_match.isra.0", "main"])
+    assert gated["read"] and gated["check_match.isra.0"] and gated["main"] is None
+    small = boilerplate_tags_for_names(["_dl_a", "read", "check_match"])
+    assert small["read"] is None and small["check_match"] is None
 
 
 if __name__ == "__main__":

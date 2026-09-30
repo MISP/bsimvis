@@ -898,6 +898,8 @@ class Worker:
                 sid=payload.get("sid"),
                 job_service=self.job_service,
                 job_id=job_id,
+                slice_key=payload.get("slice_key"),
+                offset=payload.get("offset", 0),
             )
 
         elif jtype == JobType.REINDEX_BIN_SIM.value:

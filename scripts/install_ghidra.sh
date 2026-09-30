@@ -123,9 +123,9 @@ fi
 
 # Update .env if it exists
 if [ -f .env ]; then
-    if grep -q "GHIDRA_INSTALL_DIR" .env; then
-        # Use a different delimiter for sed since path contains slashes
-        sed -i "s|GHIDRA_INSTALL_DIR=.*|GHIDRA_INSTALL_DIR=${GHIDRA_PATH}|" .env
+    if grep -Eq "^[#[:space:]]*GHIDRA_INSTALL_DIR=" .env; then
+        # Also uncomments the placeholder line shipped in .env.example
+        sed -Ei "s|^[#[:space:]]*GHIDRA_INSTALL_DIR=.*|GHIDRA_INSTALL_DIR=${GHIDRA_PATH}|" .env
     else
         echo "" >> .env
         echo "# Ghidra Configuration" >> .env

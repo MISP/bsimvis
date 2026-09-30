@@ -58,7 +58,7 @@ class Bazaar:
         r.raise_for_status()
         return r
 
-    def tag(self, name):
+    def tag(self, name, limit=None):
         j = self._post(query="get_taginfo", tag=name, limit=1000).json()
         if j.get("query_status") == "ok":
             return [d["sha256_hash"] for d in j["data"]]
@@ -108,14 +108,14 @@ class Mwdb:
         r.raise_for_status()
         return r
 
-    def tag(self, name):
+    def tag(self, name, limit=None):
         out, older = [], None
         while True:  # keyset pagination: `older_than` = last id seen
             params = {"query": f'tag:"{name}"'}
             if older:
                 params["older_than"] = older
             files = self._get("file", **params).json()["files"]
-            if not files:
+            if not files or (limit and len(out) >= limit):
                 return out
             out += [f["sha256"] for f in files]
             older = files[-1]["id"]
@@ -163,7 +163,7 @@ def main():
 
     hashes, tags = parse_inputs(args.inputs)
     for t in tags:
-        found = client.tag(t)[: args.limit]
+        found = client.tag(t, args.limit)[: args.limit]
         print(f"tag:{t} -> {len(found)} samples", file=sys.stderr)
         hashes += [h for h in found if h not in hashes]
     if args.list:

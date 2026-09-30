@@ -428,7 +428,9 @@
                     </div>`;
                 }
             }
-
+            // The selected rows, or this function alone when nothing is selected.
+            const llmIds = `(window.getSelectedTableIds && window.getSelectedTableIds('function').length ? window.getSelectedTableIds('function') : [${jsString(norm.id)}])`;
+            actionsSubmenuHtml += renderLLMSubmenu(`{ funcIds: ${llmIds} }`);
         } else if (resolvedType === 'file') {
             const cgUrl = Nav.buildUIUrl(col, ['call_graph', norm.md5]);
             const funcsUrl = Nav.buildUIUrl(col, ['functions']) + '?file_md5=' + encodeURIComponent(norm.md5);
@@ -520,6 +522,13 @@
                 <i class="fa-solid fa-folder-open" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Files</span>
             </div>`;
+        }
+
+        // A cell selection can hold functions the clicked row is not itself one of
+        // (both function columns of a bin diff row).
+        if (resolvedType !== 'function' && window.getSelectedTableIds && window.getSelectedTableIds('function').length) {
+            // Read back at click time: inlined ids would break the onclick attribute.
+            actionsSubmenuHtml += renderLLMSubmenu("{ funcIds: window.getSelectedTableIds('function') }", ` (${window.getSelectedTableIds('function').length} selected)`);
         }
 
         if (actionsSubmenuHtml) {
@@ -747,6 +756,30 @@
 
         return [];
     }
+    /** "AI ▸" entry: summary / tags / both / both with a custom prompt. */
+    function renderLLMSubmenu(opts, suffix = '') {
+        const items = [
+            { label: 'Summary', icon: 'fa-note-sticky', actions: "['notes']", extra: '' },
+            { label: 'Tags', icon: 'fa-tags', actions: "['tags']", extra: '' },
+            { label: 'Summary + tags', icon: 'fa-wand-magic-sparkles', actions: "['notes','tags']", extra: '' },
+            { label: '… with custom prompt', icon: 'fa-pen-nib', actions: "['notes','tags']", extra: ', askPrompt: true' }
+        ];
+        const entries = items.map(i => `
+            <div class="context-menu-item" onclick="${escapeAttr(`event.stopPropagation(); window.closeGraphContextMenu(); startLLMBatch(${i.actions}, ${opts.replace(/ }$/, i.extra + ' }')})`)}">
+                <i class="fa-solid ${i.icon}" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>${escapeHtml(i.label + (i.extra ? '' : suffix))}</span>
+            </div>`).join('');
+        return `
+            <div class="context-menu-item submenu-trigger" style="position: relative;">
+                <i class="fa-solid fa-robot" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>AI${escapeHtml(suffix)}</span>
+                <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 200px; background: var(--card-bg); border: 1px solid var(--border); z-index: 20006;">
+                    ${entries}
+                </div>
+            </div>`;
+    }
+
     // One item, so a submenu was a level of nesting around a single click.
     function renderFileAnalysisSubmenu(md5) {
         return `

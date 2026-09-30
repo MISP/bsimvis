@@ -557,6 +557,16 @@ window.searchViewSubmitNew = async function(btn) {
         if (pool) scope.pool_id = pool;
     }
 
+    // Prefilter fields exist only in the pre-scoped modal; absent = endpoint defaults.
+    if (type === 'file' || type === 'pair') {
+        const skip = document.getElementById('search-form-skip-fid');
+        if (skip) scope.skip_fid_tagged = skip.checked;
+        const min = Number((document.getElementById('search-form-min') || {}).value) || 0;
+        if (min) scope.min_complexity = min;
+        const max = Number((document.getElementById('search-form-max') || {}).value) || 0;
+        if (type === 'pair' && max) scope.max_functions = max;
+    }
+
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
     try {
         const res = await fetch('/api/searches', {
@@ -619,6 +629,18 @@ window.openSearchModal = function (opts = {}) {
                     <option value="matched">Matched only</option>
                     <option value="unique">Unique only</option>
                 </select></label>` : ''}
+            <details style="margin-bottom:16px;">
+                <summary style="cursor:pointer; font-size:.8rem; color:var(--subtle);">Prefilter</summary>
+                <div style="display:grid; grid-template-columns:${isPair ? '1fr 1fr' : '1fr'}; gap:12px; margin:12px 0;">
+                    <label style="font-size:.8rem;">Minimum BSim features
+                        <input id="search-form-min" type="number" min="0" value="0" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+                    </label>
+                    ${isPair ? `<label style="font-size:.8rem;">Maximum functions
+                        <input id="search-form-max" type="number" min="0" value="0" title="0 = no cap. A number takes a complexity-ranked subset." style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+                    </label>` : ''}
+                </div>
+                <label style="font-size:.82rem;"><input id="search-form-skip-fid" type="checkbox" checked> Skip FID-tagged (library) functions</label>
+            </details>
             <div style="display:flex; justify-content:flex-end; gap:10px;">
                 <button type="button" onclick="closeSearchModal()" class="top-action-btn">Cancel</button>
                 <button type="submit" class="top-action-btn" style="color:#60a5fa; border-color:#60a5fa;"><i class="fa-solid fa-magnifying-glass"></i> Start Search</button>

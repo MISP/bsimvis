@@ -36,6 +36,9 @@ def _resolve_scope(collection, scope):
         filters_qs = f"md5={md5}"
         if scope.get("skip_fid_tagged", True):
             filters_qs += "&exclude_tag=fid"
+        min_complexity = int(scope.get("min_complexity") or 0)
+        if min_complexity:
+            filters_qs += f"&min_features={min_complexity}"
         func_ids, error = _resolve_filters_to_ids(
             collection, filters_qs, max_batch_size()
         )

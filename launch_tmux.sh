@@ -125,7 +125,7 @@ WORKER_BUDGET_GB=$(awk -v v="${WORKER_MEMORY_MAX:-2.5G}" 'BEGIN {
     print (n > 0 ? n : 2.5)
 }')
 WORKERS_MAX_BY_RAM=$(awk -v b="$WORKER_BUDGET_GB" -v r="$HOST_RESERVED_GB" '/MemTotal/ {m=$2/1024/1024; n=int((m-r)/b); print (n>1?n:1)}' /proc/meminfo)
-WORKERS_COUNT=${WORKERS_COUNT:-5}
+WORKERS_COUNT=${WORKERS_COUNT:-2}
 # Reserved scan-lane workers. They hold a JVM like any other worker, so they
 # come out of the same RAM budget -- cap the general fleet first, then take the
 # scan workers off the top, leaving at least one general worker.

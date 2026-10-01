@@ -90,7 +90,7 @@ KVROCKS_PORT=${KVROCKS_PORT:-6666}
 # for kvrocks, redis and the desktop.
 HOST_RESERVED_GB=${HOST_RESERVED_GB:-6}
 WORKERS_MAX_BY_RAM=$(awk -v r="$HOST_RESERVED_GB" '/MemTotal/ {m=$2/1024/1024; n=int((m-r)/2.5); print (n>1?n:1)}' /proc/meminfo)
-WORKERS_COUNT=${WORKERS_COUNT:-5}
+WORKERS_COUNT=${WORKERS_COUNT:-2}
 if [ "$WORKERS_COUNT" -gt "$WORKERS_MAX_BY_RAM" ]; then
     echo "Capping WORKERS_COUNT ${WORKERS_COUNT} -> ${WORKERS_MAX_BY_RAM} (host RAM)"
     WORKERS_COUNT=$WORKERS_MAX_BY_RAM

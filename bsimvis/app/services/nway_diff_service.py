@@ -372,7 +372,16 @@ def _load_base(r, scope, members, vparams, labels, warnings):
         library[fid] = any(is_library_tag(t) for t in merge_tag_fields(meta))
         fmeta[fid] = {
             k: meta[k]
-            for k in ("name", "namespace", "entrypoint_address", "tags", "user_tags")
+            for k in (
+                "name",
+                "namespace",
+                "entrypoint_address",
+                "tags",
+                "user_tags",
+                "parameters",
+                "return_type",
+                "bsim_features_count",
+            )
             if k in meta
         }
 

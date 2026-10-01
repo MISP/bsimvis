@@ -92,7 +92,7 @@
             }
             qs.set('limit', PAGE);
             this.picks = {};
-            if (!this.data) this.el.innerHTML = '<div class="dim" style="padding:20px;"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions...</div>';
+            if (!this.data) this.el.innerHTML = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions...</div>';
             try {
                 const res = await fetch(`/api/bin_sim/nway?${qs.toString()}`);
                 const body = await res.json().catch(() => ({}));
@@ -118,13 +118,13 @@
                 const kids = (e.children || []).map(c => {
                     const uuid = c.cluster_uuid || c.uuid || '';
                     const name = escapeHtml(c.cluster_name || c.name || uuid);
-                    const link = uuid && this.onOpenCluster ? `<a href="#" data-open-cluster="${escapeAttr(uuid)}">${name}</a>` : name;
+                    const link = uuid && this.onOpenCluster ? `<a href="#" class="btn-action" data-open-cluster="${escapeAttr(uuid)}">${name}</a>` : name;
                     return `<li>${link}${c.member_count ? ` <span class="dim">${Number(c.member_count)} files</span>` : ''}</li>`;
                 }).join('');
-                return `<div class="dim" style="padding:20px;"><b>Too many members</b> (${Number(e.members) || '?'}): pick fewer files${kids ? ' or open a child cluster:' : '.'}${kids ? `<ul>${kids}</ul>` : ''}</div>`;
+                return `<div class="nway-note warn"><b>Too many members</b> (${Number(e.members) || '?'}): pick fewer files${kids ? ' or open a child cluster:' : '.'}${kids ? `<ul>${kids}</ul>` : ''}</div>`;
             }
             const msg = e.missing ? `Unknown files: ${e.missing.join(', ')}` : (e.message || e.error || `HTTP ${e.status}`);
-            return `<div class="dim" style="padding:20px; color:var(--danger, #ef4444);">${escapeHtml(msg)}</div>`;
+            return `<div class="nway-note err">${escapeHtml(msg)}</div>`;
         }
 
         _count(tab) {
@@ -132,85 +132,128 @@
             return `${c.code} / ${c.library}`;
         }
 
+        // One segmented toggle (the shared .view-toggle); `data-set="key:value"`.
+        _seg(label, key, options, title) {
+            const cur = String(this.state[key]);
+            const btns = options.map(([v, text, tip]) =>
+                `<button class="view-btn${cur === v ? ' active' : ''}" data-set="${escapeAttr(`${key}:${v}`)}"${tip ? ` title="${escapeAttr(tip)}"` : ''}>${escapeHtml(text)}</button>`
+            ).join('');
+            return `<div class="view-toggle"${title ? ` title="${escapeAttr(title)}"` : ''}><span class="nway-lbl">${escapeHtml(label)}</span>${btns}</div>`;
+        }
+
+        _slider(label, key, value, min, max, step, title) {
+            const shown = key === 'k' ? String(value) : Number(value).toFixed(2);
+            return `<label class="nway-ctl"${title ? ` title="${escapeAttr(title)}"` : ''}><span class="nway-lbl">${escapeHtml(label)}</span><b>${shown}</b><input type="range" min="${min}" max="${max}"${step ? ` step="${step}"` : ''} value="${Number(value)}" data-range="${key}"></label>`;
+        }
+
         _controls() {
             const s = this.state, d = this.data;
             const n = d.columns.length;
             const tabs = TABS.map(([key, label]) =>
-                `<button class="btn${s.tab === key ? ' active' : ''}" data-tab="${key}">${label} <span class="dim" title="code / library">${this._count(key)}</span></button>`
+                `<button class="bsim-tab${s.tab === key ? ' active' : ''}" data-tab="${key}">${label}<span class="nway-count" title="code / library">${this._count(key)}</span></button>`
             ).join('');
-            const opt = (v, cur, label) => `<option value="${escapeAttr(v)}"${v === cur ? ' selected' : ''}>${escapeHtml(label)}</option>`;
-            const k = s.tab === 'partial'
-                ? `<label>in at least <b>${Number(s.k)}</b> of ${n} <input type="range" min="2" max="${n}" value="${Number(s.k)}" data-range="k"></label>` : '';
-            const edge = Number(d.min_edge);
             const isNode = !!this.source.cluster_uuid;
-            const cols = isNode
-                ? `<select data-select="columns" title="columns: the node's files, or one per child cluster">${opt('auto', s.columns, 'Columns: auto')}${opt('files', s.columns, 'Columns: files')}${opt('children', s.columns, 'Columns: children')}</select>` : '';
-            const presence = isNode && d.columns_mode === 'children'
-                ? `<label title="share of a child's files that must hold the function for the child to count as present">child presence <b>${Number(s.child_presence).toFixed(2)}</b> <input type="range" min="0.05" max="1" step="0.05" value="${Number(s.child_presence)}" data-range="child_presence"></label>` : '';
-            return `<div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px;">
-                <div style="display:flex; gap:4px;">${tabs}</div>
-                <select data-select="scope">${opt('code', s.scope, 'Code')}${opt('library', s.scope, 'Library')}${opt('all', s.scope, 'All')}</select>
-                ${cols}${presence}
-                ${k}
-                <label>min edge <b>${edge.toFixed(2)}</b> <input type="range" min="0" max="1" step="0.05" value="${edge}" data-range="min_edge"></label>
-                <select data-select="mode" title="stored reads built pair docs; virtual recomputes from vectors">${opt('stored', s.mode, 'Stored')}${opt('virtual', s.mode, 'Virtual')}</select>
-                <input type="text" data-text="q" placeholder="function name / address" value="${escapeAttr(s.q)}" style="width:190px;">
-                <input type="text" data-text="tags" placeholder="tags" value="${escapeAttr(s.tags)}" style="width:130px;">
-            </div>`;
+            const ctl = [
+                this._seg('Show', 'scope', [['code', 'Code'], ['library', 'Library'], ['all', 'All']]),
+                isNode ? this._seg('Columns', 'columns', [['auto', 'Auto'], ['files', 'Files'], ['children', 'Children']], "the node's files, or one column per child cluster") : '',
+                isNode && d.columns_mode === 'children'
+                    ? this._slider('Child presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, "share of a child's files that must hold the function for the child to count as present") : '',
+                s.tab === 'partial' ? this._slider(`In at least (of ${n})`, 'k', s.k, 2, Math.max(2, n), 1) : '',
+                this._slider('Min edge', 'min_edge', Number(d.min_edge), 0, 1, 0.05),
+                this._seg('Mode', 'mode', [['stored', 'Stored', 'reads built pair docs'], ['virtual', 'Virtual', 'recomputes from vectors']]),
+                `<input type="text" class="nway-input" data-text="q" placeholder="function name / address" value="${escapeAttr(s.q)}">`,
+                `<input type="text" class="nway-input" data-text="tags" placeholder="tags" value="${escapeAttr(s.tags)}">`,
+            ].join('');
+            return `<div class="bsim-tabbar">${tabs}</div><div class="nway-controls">${ctl}</div>`;
         }
 
         _notes() {
             const d = this.data;
             let html = '';
-            if (d.mode !== this.state.mode) html += `<div class="dim">Ran in <b>${escapeHtml(d.mode)}</b> mode: files span several collections.</div>`;
-            if (d.fallback_pairs) html += `<div class="dim">${Number(d.fallback_pairs)} pairs computed on the fly (no stored pair doc).</div>`;
+            if (d.mode !== this.state.mode) html += `<div class="nway-note">Ran in <b>${escapeHtml(d.mode)}</b> mode: files span several collections.</div>`;
+            if (d.fallback_pairs) html += `<div class="nway-note">${Number(d.fallback_pairs)} pairs computed on the fly (no stored pair doc).</div>`;
             if ((d.warnings || []).length) {
-                html += `<div style="border-left:3px solid #f59e0b; padding:6px 10px; margin-bottom:8px;">${d.warnings.map(w => `<div>${escapeHtml(w)}</div>`).join('')}</div>`;
+                html += `<div class="nway-note warn">${d.warnings.map(w => `<div>${escapeHtml(w)}</div>`).join('')}</div>`;
             }
             return html;
+        }
+
+        // The compact function entity: the same data, hover preview, click and
+        // right-click menu EntityRenderer.renderFunction gives, with the address
+        // as the label (the row already carries the name).
+        _fnData(fid, col) {
+            const m = this.data.functions_metadata[fid] || {};
+            const addr = fnParts(fid).addr;
+            return {
+                function_id: fid, function_name: m.name || addr, namespace: m.namespace || '',
+                parameters: m.parameters || [], return_type: m.return_type || '',
+                entrypoint_address: m.entrypoint_address || addr, file_md5: col.md5,
+                collection: col.collection, bsim_features_count: m.bsim_features_count || 0,
+                tags: m.tags || [], user_tags: m.user_tags || [],
+            };
+        }
+
+        _fnEntity(fid, col) {
+            const f = this._fnData(fid, col);
+            const sig = typeof formatSigComponent === 'function'
+                ? formatSigComponent(f.namespace, f.return_type, f.function_name, f.parameters).fullSig : f.function_name;
+            return `<span class="entity-function" title="${escapeAttr(sig)}" data-etype="function" data-eid="${escapeAttr(fid)}"
+                    data-entity-data='${escapeAttr(JSON.stringify(f))}'
+                    oncontextmenu='EntityRenderer.handleContextMenu(event, "function", this)'>
+                <b class="entity-name nway-addr"
+                   onmouseenter="typeof showCodePreview === 'function' && showCodePreview(${escapeAttr(jsString(fid))}, ${escapeAttr(jsString(f.function_name))}, ${escapeAttr(jsString(f.entrypoint_address))}, ${escapeAttr(jsString(col.md5))}, ${Number(f.bsim_features_count) || 0}, event)"
+                   onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)"
+                   onmouseleave="typeof hideCodePreview === 'function' && hideCodePreview(event)"
+                   onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(fid))}, ${escapeAttr(jsString(f.function_name))}, '', event)">${escapeHtml(f.entrypoint_address)}</b></span>`;
         }
 
         // A child/direct column: "m/n files", plus links to the functions of the
         // files in that group (a few; the rest as a count).
         _groupCell(row, col) {
             const cell = row.cells[col.id];
-            const style = cell.on ? '' : ' class="dim"';
             const pool = this.source.pool || null;
             const links = [];
             for (const f of this.data.file_columns || []) {
                 const fid = col.members.includes(f.id) && (row.files || {})[f.id];
-                if (fid) links.push(`<a href="${escapeAttr(fnUrl(f, fid, pool))}" data-nav="${escapeAttr(fnUrl(f, fid, pool))}" data-title="${escapeAttr(f.file_name)}" title="${escapeAttr(f.file_name)}"><code>${escapeHtml((this.data.functions_metadata[fid] || {}).entrypoint_address || fnParts(fid).addr)}</code></a>`);
+                if (!fid) continue;
+                const data = this._fnData(fid, f);
+                const url = fnUrl(f, fid, pool);
+                links.push(`<a data-nav="${escapeAttr(url)}" data-title="${escapeAttr(f.file_name)}" title="${escapeAttr(f.file_name)}"
+                    data-etype="function" data-eid="${escapeAttr(fid)}" data-entity-data='${escapeAttr(JSON.stringify(data))}'
+                    oncontextmenu='EntityRenderer.handleContextMenu(event, "function", this)'>${escapeHtml(data.entrypoint_address)}</a>`);
             }
-            const shown = links.slice(0, 3).join(' ');
-            const more = links.length > 3 ? ` <span class="dim">+${links.length - 3}</span>` : '';
-            return `<td${style}><b>${Number(cell.present)}/${Number(cell.total)}</b> files${shown ? `<div>${shown}${more}</div>` : ''}</td>`;
+            const more = links.length > 3 ? `<span class="dim">+${links.length - 3}</span>` : '';
+            return `<td class="col${cell.on ? '' : ' dim'}"><b>${Number(cell.present)}/${Number(cell.total)}</b> files${links.length ? `<div class="nway-group-links">${links.slice(0, 3).join('')}${more}</div>` : ''}</td>`;
         }
 
         _cell(row, col, ri) {
             if (col.kind) return this._groupCell(row, col);
             const fid = row.cells[col.id];
-            if (!fid) return '<td class="dim" style="text-align:center;">&mdash;</td>';
-            const meta = this.data.functions_metadata[fid] || {};
-            const label = meta.entrypoint_address || fnParts(fid).addr;
+            if (!fid) return '<td class="col gap">&mdash;</td>';
             const picked = (this.picks[ri] || []).includes(col.id);
-            const pool = this.source.pool || null;
-            return `<td><a href="${escapeAttr(fnUrl(col, fid, pool))}" data-nav="${escapeAttr(fnUrl(col, fid, pool))}" data-title="${escapeAttr(meta.name || label)}"><code>${escapeHtml(label)}</code></a>
-                <button class="btn" data-pick="${ri}" data-col="${escapeAttr(col.id)}" title="pick for function diff" style="padding:0 5px;${picked ? ' background:var(--accent); color:#fff;' : ''}"><i class="fa-solid fa-code-compare"></i></button></td>`;
+            return `<td class="col"><div class="nway-fn">${this._fnEntity(fid, col)}<button class="nway-pick${picked ? ' active' : ''}" data-pick="${ri}" data-col="${escapeAttr(col.id)}" title="pick for function diff"><i class="fa-solid fa-code-compare"></i></button></div></td>`;
+        }
+
+        // Support / cohesion use the same red-to-green ramp as the other score cells.
+        _score(v) {
+            let color = '';
+            try { color = typeof window.scoreColor === 'function' ? window.scoreColor(v) : ''; } catch (e) { color = ''; }
+            return `<span${color ? ` style="color:${escapeAttr(color)}"` : ''}>${pct(v)}</span>`;
         }
 
         _row(row, ri) {
             const cols = this.data.columns;
             const extra = Array.isArray(row.names) ? row.names.length - 1 : Number(row.names || 0) - 1;
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
-                ? ` <i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b;" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
+                ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             const picks = this.picks[ri] || [];
-            const cmp = picks.length === 2 && !this.data.columns[0].kind ? `<button class="btn" data-compare="${ri}">Compare</button>` : '';
+            const cmp = picks.length === 2 && !this.data.columns[0].kind ? '<button class="top-action-btn" data-compare="' + ri + '">Compare</button>' : '';
             return `<tr>
-                <td>${escapeHtml(row.name)}${extra > 0 ? ` <span class="dim">+${extra} names</span>` : ''}${row.library ? ' <span class="dim">lib</span>' : ''}${low}</td>
-                <td style="text-align:right;">${Number(row.span)}</td>
-                <td style="text-align:right;">${Number(row.weight).toFixed(0)}</td>
-                <td style="text-align:right;">${pct(row.support)}</td>
-                <td style="text-align:right;">${pct(row.cohesion)}</td>
+                <td><span class="nway-name">${escapeHtml(row.name)}${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${row.library ? '<span class="badge">lib</span>' : ''}${low}</span></td>
+                <td class="num">${Number(row.span)}</td>
+                <td class="num">${Number(row.weight).toFixed(0)}</td>
+                <td class="num">${this._score(row.support)}</td>
+                <td class="num">${this._score(row.cohesion)}</td>
                 ${cols.map(c => this._cell(row, c, ri)).join('')}
                 <td>${cmp}</td>
             </tr>`;
@@ -219,43 +262,65 @@
         _head() {
             const s = this.state;
             const th = ([key, label]) => {
-                const arrow = s.sort_col === key ? (s.sort_dir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
-                return `<th data-sort="${key}" style="cursor:pointer; ${key === 'name' ? '' : 'text-align:right;'}">${label}${arrow}</th>`;
+                const arrow = s.sort_col === key ? (s.sort_dir === 'asc' ? '▲' : '▼') : '↕';
+                return `<th class="sortable${key === 'name' ? '' : ' num'}" data-sort="${key}">${label} <span class="dim">${arrow}</span></th>`;
+            };
+            const fileHead = c => {
+                const named = c.file_name && c.file_name !== c.md5;
+                const name = named ? window.EntityRenderer.renderFileName(c.file_name, c.md5, c.collection) : '';
+                const coverage = c.coverage == null ? '' : ` &middot; <span title="share of the shared (span >= 2) weight this file holds">${(Number(c.coverage) * 100).toFixed(0)}% shared</span>`;
+                return `<th class="col" title="${escapeAttr(`${c.file_name} (${c.collection})`)}"><div class="nway-colhead">${name}${window.EntityRenderer.renderMd5(c.md5, { collection: c.collection })}<span class="nway-sub">${Number(c.functions)} fn${coverage}</span></div></th>`;
             };
             const colHead = c => c.kind
-                ? `<th title="${escapeAttr(c.kind === 'child' ? 'child cluster' : 'files at this node, in no child cluster')}">${escapeHtml(c.label)}<div class="dim" style="font-weight:400;">${Number(c.member_count)} files</div></th>`
-                : `<th title="${escapeAttr(`${c.file_name} (${c.collection})`)}">${escapeHtml(c.file_name)}<div class="dim" style="font-weight:400;">${Number(c.functions)} fn</div>${c.coverage == null ? '' : `<div title="share of the shared (span >= 2) weight this file holds" style="font-weight:400; color:var(--accent);">${(Number(c.coverage) * 100).toFixed(0)}% shared</div>`}</th>`;
+                ? `<th class="col" title="${escapeAttr(c.kind === 'child' ? 'child cluster' : 'files at this node, in no child cluster')}"><div class="nway-colhead"><span class="nway-colname">${escapeHtml(c.label)}</span><span class="nway-sub">${Number(c.member_count)} files</span></div></th>`
+                : fileHead(c);
             return `<tr>${SORTS.map(th).join('')}${this.data.columns.map(colHead).join('')}<th></th></tr>`;
         }
 
         render() {
             if (this.error) {
-                this.el.innerHTML = this._renderError();
+                this.el.innerHTML = `<div class="nway-panel">${this._renderError()}</div>`;
                 return;
             }
             const d = this.data;
             const rows = d.items.map((r, i) => this._row(r, i)).join('');
             const off = Number(d.offset), total = Number(d.total);
-            this.el.innerHTML = `${this._controls()}${this._notes()}
-                <div style="overflow:auto;"><table class="data-table" style="width:100%;">
-                    <thead>${this._head()}</thead>
-                    <tbody>${rows || `<tr><td colspan="${d.columns.length + 6}" class="dim" style="padding:16px;">No rows in this tab.</td></tr>`}</tbody>
-                </table></div>
-                <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
-                    <button class="btn" data-page="-1"${off <= 0 ? ' disabled' : ''}>Prev</button>
-                    <span class="dim">${total ? off + 1 : 0}&ndash;${Math.min(off + PAGE, total)} of ${total}</span>
-                    <button class="btn" data-page="1"${off + PAGE >= total ? ' disabled' : ''}>Next</button>
-                </div>`;
+            this.el.innerHTML = `<div class="nway-panel">${this._controls()}${this._notes()}
+                <div class="nway-card table-scope">
+                    <div class="nway-scroll">
+                        <table id="nway-table" class="nway-table">
+                            <thead>${this._head()}</thead>
+                            <tbody>${rows || `<tr><td colspan="${d.columns.length + 6}" class="gap">No rows in this tab.</td></tr>`}</tbody>
+                        </table>
+                    </div>
+                    <div class="table-footer">
+                        <div class="table-footer-left">
+                            <button class="top-action-btn" data-page="-1"${off <= 0 ? ' disabled' : ''}>Prev</button>
+                            <span class="table-footer-badge">${total ? off + 1 : 0}&ndash;${Math.min(off + PAGE, total)} of ${total}</span>
+                            <button class="top-action-btn" data-page="1"${off + PAGE >= total ? ' disabled' : ''}>Next</button>
+                        </div>
+                        <div class="table-footer-right">
+                            <span class="table-footer-sel selection-stats" style="display:none;"></span>
+                        </div>
+                    </div>
+                </div></div>`;
+            // The shared grid selection: it reads the function entities in the
+            // selected cells, so the bulk actions of the function menu apply.
+            if (window.TableSelection) new window.TableSelection('nway-table');
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-tab],[data-sort],[data-page],[data-pick],[data-compare],[data-nav],[data-open-cluster]');
+            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-page],[data-pick],[data-compare],[data-nav],[data-open-cluster]');
             if (!t) return;
             if (t.dataset.openCluster) {
                 e.preventDefault();
                 return this.onOpenCluster(t.dataset.openCluster);
             }
             const pool = this.source.pool || null;
+            if (t.dataset.set) {
+                const i = t.dataset.set.indexOf(':');
+                return this._set({ [t.dataset.set.slice(0, i)]: t.dataset.set.slice(i + 1), offset: 0 });
+            }
             if (t.dataset.tab) return this._set({ tab: t.dataset.tab, offset: 0, sort_col: '' });
             if (t.dataset.sort) {
                 const same = this.state.sort_col === t.dataset.sort;

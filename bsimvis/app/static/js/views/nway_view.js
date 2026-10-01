@@ -57,11 +57,14 @@ window.NwayView = {
     _render() {
         this.destroy();
         this._container.innerHTML = `
-            <div style="padding:16px; overflow:auto; width:100%;">
-                <h3 style="margin:0 0 10px;">N-way file diff</h3>
-                <details id="nway-edit" ${this._hasSet() ? '' : 'open'} style="margin-bottom:12px; border:1px solid var(--border); border-radius:6px; padding:8px 12px;">
-                    <summary style="cursor:pointer; font-weight:600;">Edit set (${this._set.md5s.length} files${this._set.batch ? ' + 1 batch' : ''})</summary>
-                    <div id="nway-set" style="margin-top:10px;"></div>
+            <div class="nway-view">
+                <div class="nway-head">
+                    <h2><i class="fa-solid fa-table-columns"></i> N-way File Diff</h2>
+                    <p>Functions shared across several files, and the ones unique to a single file.</p>
+                </div>
+                <details id="nway-edit" class="nway-edit" ${this._hasSet() ? '' : 'open'}>
+                    <summary>Edit set (${this._set.md5s.length} files${this._set.batch ? ' + 1 batch' : ''})</summary>
+                    <div id="nway-set"></div>
                 </details>
                 <div id="nway-panel"></div>
             </div>`;
@@ -73,7 +76,7 @@ window.NwayView = {
         const host = document.getElementById('nway-panel');
         if (!host) return;
         if (!this._hasSet()) {
-            host.innerHTML = '<div class="dim" style="padding:20px;">Add two or more files (or a batch) above, or pick rows in a file table and use "Add to compare set".</div>';
+            host.innerHTML = '<div class="nway-state">Add two or more files (or a batch) above, or pick rows in a file table and use "Add to compare set".</div>';
             return;
         }
         this._panel = new NwayPanel(host, {
@@ -87,9 +90,10 @@ window.NwayView = {
         this._panel.load();
     },
 
-    _short(token) {
+    // `coll:md5` (or a bare md5) -> its collection and md5.
+    _split(token) {
         const i = token.lastIndexOf(':');
-        return `${i > 0 ? token.slice(0, i) + ':' : ''}${token.slice(i + 1, i + 13)}`;
+        return { coll: i > 0 ? token.slice(0, i) : this._set.collection, md5: token.slice(i + 1) };
     },
 
     async _loadCollections() {
@@ -112,34 +116,35 @@ window.NwayView = {
         if (summary) summary.textContent = `Edit set (${this._set.md5s.length} files${this._set.batch ? ' + 1 batch' : ''})`;
         const pick = this._set.collection || (window.getRoutingState ? window.getRoutingState().collection : '') || '';
         const opts = sel => colls.map(c => `<option value="${escapeAttr(c)}" ${c === sel ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('');
-        const chip = (label, i, kind) => `<span class="badge" style="display:inline-flex; gap:6px; align-items:center; margin:2px 4px 2px 0;">${escapeHtml(label)}
-            <button data-rm="${kind}" data-i="${i}" title="Remove" style="background:none; border:none; cursor:pointer; color:inherit; padding:0;">&times;</button></span>`;
-        const members = this._set.md5s.map((t, i) => chip(this._short(t), i, 'md5')).join('')
-            + (this._set.batch ? chip(`batch ${this._set.batch.slice(0, 8)}`, 0, 'batch') : '');
+        const chip = (inner, title, i, kind) => `<span class="nway-chip" title="${escapeAttr(title)}">${inner}<button data-rm="${kind}" data-i="${i}" title="Remove">&times;</button></span>`;
+        const members = this._set.md5s.map((t, i) => {
+            const { coll, md5 } = this._split(t);
+            return chip(`${window.EntityRenderer.renderMd5(md5, { collection: coll })}${coll ? `<span>${escapeHtml(coll)}</span>` : ''}`, t, i, 'md5');
+        }).join('')
+            + (this._set.batch ? chip(`<span>batch ${escapeHtml(this._set.batch.slice(0, 8))}</span>`, this._set.batch, 0, 'batch') : '');
         const basket = window.NwayBasket ? window.NwayBasket.items() : [];
-        const field = 'padding:6px 8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.8rem;';
         el.innerHTML = `
-            <div style="margin-bottom:10px;">${members || '<span class="dim">No files yet.</span>'}</div>
-            <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start;">
-                <div style="display:flex; flex-direction:column; gap:6px; min-width:320px;">
-                    <label class="dim" style="font-size:0.75rem;">Paste md5s (one <code>collection:md5</code> or bare md5 per token)</label>
-                    <textarea id="nway-paste" rows="3" style="${field}"></textarea>
-                    <div style="display:flex; gap:6px; align-items:center;">
-                        <select id="nway-paste-coll" style="${field}" title="Collection for bare md5s">${opts(pick)}</select>
+            <div class="nway-chips">${members || '<span class="dim">No files yet.</span>'}</div>
+            <div class="nway-edit-grid">
+                <div class="nway-edit-col">
+                    <span class="nway-lbl">Paste md5s (<code>collection:md5</code>, or a bare md5)</span>
+                    <textarea id="nway-paste" class="nway-input" rows="3"></textarea>
+                    <div class="nway-edit-row">
+                        <select id="nway-paste-coll" class="nway-input" title="Collection for bare md5s">${opts(pick)}</select>
                         <button id="nway-add-md5" class="top-action-btn">Add files</button>
                     </div>
                 </div>
-                <div style="display:flex; flex-direction:column; gap:6px; min-width:320px;">
-                    <label class="dim" style="font-size:0.75rem;">Batch UUID (all its files)</label>
-                    <input id="nway-batch" type="text" value="${escapeAttr(this._set.batch)}" style="${field}">
-                    <div style="display:flex; gap:6px; align-items:center;">
-                        <select id="nway-batch-coll" style="${field}" title="Collection of the batch"><option value="">any collection</option>${opts(this._set.collection)}</select>
+                <div class="nway-edit-col">
+                    <span class="nway-lbl">Batch UUID (all its files)</span>
+                    <input id="nway-batch" type="text" class="nway-input" value="${escapeAttr(this._set.batch)}">
+                    <div class="nway-edit-row">
+                        <select id="nway-batch-coll" class="nway-input" title="Collection of the batch"><option value="">any collection</option>${opts(this._set.collection)}</select>
                         <button id="nway-add-batch" class="top-action-btn">Use batch</button>
                     </div>
                 </div>
-                ${basket.length ? `<div style="display:flex; flex-direction:column; gap:6px;"><label class="dim" style="font-size:0.75rem;">Compare set</label><button id="nway-use-basket" class="top-action-btn">Add ${basket.length} from compare set</button></div>` : ''}
+                ${basket.length ? `<div class="nway-edit-col"><span class="nway-lbl">Compare set</span><button id="nway-use-basket" class="top-action-btn">Add ${basket.length} from compare set</button></div>` : ''}
             </div>
-            <div id="nway-set-msg" style="color:#ef4444; font-size:0.8rem; margin-top:6px;"></div>`;
+            <div id="nway-set-msg" class="nway-msg"></div>`;
 
         const msg = t => { el.querySelector('#nway-set-msg').textContent = t; };
         const apply = () => { this._renderSet(); this._writeUrl(this._state); this._mount(); };

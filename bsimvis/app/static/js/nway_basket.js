@@ -36,11 +36,13 @@
         } catch (e) {}
         const n = read().length;
         document.querySelectorAll('#nway-basket-status').forEach(el => {
+            // Same footer pill as the other status chips; hover lists the files.
+            const names = read().map(t => `#${t.split(':').pop().slice(0, 8)} (${t.slice(0, t.lastIndexOf(':'))})`).join('\n');
             el.innerHTML = n
-                ? `<span class="badge diff-queue-badge" style="background:#fd971f; color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold;">
+                ? `<span class="table-footer-badge nway-basket" title="${escapeAttr(names)}">
                     <i class="fa-solid fa-table-columns"></i> ${n} in compare set
-                    ${n >= 2 ? '<button onclick="NwayBasket.open(event)" style="background:var(--window-tray); color:var(--success); border:1px solid var(--success); padding:2px 8px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.75rem;">Open N-way &#8599;</button>' : ''}
-                    <button onclick="NwayBasket.clear()" style="background:none; border:none; cursor:pointer; color:var(--window-tray); font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear compare set">&times;</button>
+                    ${n >= 2 ? '<button class="nway-basket-open" onclick="NwayBasket.open(event)">Open N-way &#8599;</button>' : ''}
+                    <button onclick="NwayBasket.clear()" title="Clear compare set">&times;</button>
                 </span>`
                 : '';
         });

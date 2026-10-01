@@ -384,6 +384,8 @@ def _load_base(r, scope, members, vparams, labels, warnings):
             )
             if k in meta
         }
+        if "function_name" in meta:
+            fmeta[fid]["name"] = meta["function_name"]
 
     columns = [
         {

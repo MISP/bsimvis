@@ -189,7 +189,11 @@
 
         _fnEntity(fid, col, rowName) {
             const f = this._fnData(fid, col);
-            const same = f.function_name === rowName;
+            // Default names (FUN_, sub_, thunk_) add nothing next to the address.
+            const note = /^(FUN_|sub_|thunk_)/i.test(f.function_name) ? ''
+                : f.function_name === rowName
+                    ? ' <span class="dim" title="same name as the function column">(*)</span>'
+                    : ` <span class="dim">(${escapeHtml(f.function_name)})</span>`;
             const sig = typeof formatSigComponent === 'function'
                 ? formatSigComponent(f.namespace, f.return_type, f.function_name, f.parameters).fullSig : f.function_name;
             return `<span class="entity-function" title="${escapeAttr(sig)}" data-etype="function" data-eid="${escapeAttr(fid)}"
@@ -199,9 +203,7 @@
                    onmouseenter="typeof showCodePreview === 'function' && showCodePreview(${escapeAttr(jsString(fid))}, ${escapeAttr(jsString(f.function_name))}, ${escapeAttr(jsString(f.entrypoint_address))}, ${escapeAttr(jsString(col.md5))}, ${Number(f.bsim_features_count) || 0}, event)"
                    onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)"
                    onmouseleave="typeof hideCodePreview === 'function' && hideCodePreview(event)"
-                   onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(fid))}, ${escapeAttr(jsString(f.function_name))}, '', event)">@ ${escapeHtml(f.entrypoint_address)}</b>${same
-                    ? '<span class="nway-same dim" title="same name as the function column">=</span>'
-                    : `<span class="dim"> (${escapeHtml(f.function_name)})</span>`}</span>`;
+                   onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(fid))}, ${escapeAttr(jsString(f.function_name))}, '', event)">@ ${escapeHtml(f.entrypoint_address)}</b>${note}</span>`;
         }
 
         // A child/direct column: "m/n files", plus links to the functions of the

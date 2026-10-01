@@ -557,6 +557,13 @@ window.ClusterDetailView = {
         if (tab === 'metadata') this.renderMetadataTab();
     },
 
+    /** Primary cohesion under the cluster's own axis key, secondary axes under theirs. */
+    axisScores(self, axisKey) {
+        const out = { [axisKey]: self.cohesion_score };
+        Object.entries(self.cohesion_axes || {}).forEach(([ax, v]) => { out[`score_${ax}`] = v; });
+        return out;
+    },
+
     renderHeader(self) {
         const stat = (label, value) => `
             <div style="min-width:110px;">
@@ -569,6 +576,9 @@ window.ClusterDetailView = {
         return `
         <style>
             .cluster-axis-score-card { width:fit-content; min-width:250px; margin-top:16px; padding:12px 16px; border:1px solid color-mix(in srgb, var(--cluster-score-color) 45%, var(--border)); border-left:4px solid var(--cluster-score-color); border-radius:7px; background:color-mix(in srgb, var(--cluster-score-color) 10%, var(--card-bg)); }
+            /* secondary axes sit to the right of the main score */
+            .cluster-axis-score-card > div { flex-direction:row !important; align-items:center; gap:18px !important; }
+            .cluster-axis-score-card > div > div:last-child:not(:first-child) { flex-direction:column !important; gap:2px !important; padding-left:14px; border-left:1px solid var(--border); }
             .cluster-axis-score-card > div > div:first-child { gap:10px !important; }
             .cluster-axis-score-card > div > div:first-child span:first-of-type { font-size:0.9rem !important; }
             .cluster-axis-score-card > div > div:first-child span:last-of-type { font-size:2rem !important; }
@@ -591,7 +601,7 @@ window.ClusterDetailView = {
                 ${stat('Avg features', Number(self.avg_features || 0).toFixed(0))}
                 ${stat('Cluster ID', escapeHtml(String(self.cluster_id)))}
             </div>
-            ${this.isBinary ? `<div class="cluster-axis-score-card" style="--cluster-score-color:${scoreType.color};">${binSimScoreCards({ [axisKey]: self.cohesion_score }, axisKey)}</div>` : ''}
+            ${this.isBinary ? `<div class="cluster-axis-score-card" style="--cluster-score-color:${scoreType.color};">${binSimScoreCards(this.axisScores(self, axisKey), axisKey)}</div>` : ''}
         </div>`;
     },
 

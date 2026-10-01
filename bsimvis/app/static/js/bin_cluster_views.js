@@ -431,6 +431,7 @@ class BinClusterHierarchy {
                     size: m.count || 0,
                     stability: m.avg_stability || 0.0,
                     cohesion: m.cohesion_score || 0.0,
+                    cohesion_axes: m.cohesion_axes || {},
                     snippet: m.snippet || "",
                     members: m.sample_members || [],
                     direct_members: m.direct_members || []
@@ -792,7 +793,10 @@ class BinClusterHierarchy {
                             </div>
                             <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
-                                <div style="color:var(--success); font-weight:bold;">${((d.data.cohesion || 0) * 100).toFixed(1)}%</div>
+                                <div style="display:flex; align-items:baseline; gap:8px;">
+                                    <span style="color:var(--success); font-weight:bold;">${((d.data.cohesion || 0) * 100).toFixed(1)}%</span>
+                                    ${Object.entries(d.data.cohesion_axes || {}).map(([ax, v]) => { const t = bst['score_' + ax]; return t ? `<span title="${escapeAttr(t.label)} cohesion" style="font-size:0.6rem; color:${t.color}; opacity:0.85;"><i class="${t.icon}"></i> ${((v || 0) * 100).toFixed(0)}%</span>` : ''; }).join('')}
+                                </div>
                             </div>
                         </div>
 
@@ -1428,6 +1432,7 @@ class BinClusterPacking {
                     size: m.count || 0,
                     stability: m.avg_stability || 0.0,
                     cohesion: m.cohesion_score || 0.0,
+                    cohesion_axes: m.cohesion_axes || {},
                     snippet: m.snippet || "",
                     members: m.sample_members || [],
                     direct_members: m.direct_members || []

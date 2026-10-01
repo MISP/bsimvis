@@ -34,6 +34,9 @@ uv run python scripts/test_default_bin_cluster_name.py || rc=1
 uv run python scripts/test_cluster_meta_freq.py || rc=1
 uv run python scripts/test_bsim_weights.py || rc=1
 uv run python scripts/test_bin_sim_discovery.py || rc=1
+uv run python scripts/test_index_features_batching.py || rc=1
+uv run python scripts/test_enrich_resumable.py || rc=1
+uv run python scripts/test_enrich_stats_parity.py || rc=1
 
 echo "=== algorithm pipeline matrix (disposable Redis) ==="
 uv run python scripts/test_algo_pipeline_matrix.py || rc=1

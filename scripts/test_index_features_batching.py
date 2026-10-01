@@ -47,6 +47,20 @@ class StubPipe:
             lambda: self.store.setdefault(key, {}).update(mapping or {field: value})
         )
 
+    def hincrby(self, key, field, amount):
+        def apply():
+            h = self.store.setdefault(key, {})
+            h[field] = int(h.get(field, 0)) + amount
+
+        self._w(apply)
+
+    def hsetnx(self, key, field, value):
+        def apply():
+            h = self.store.setdefault(key, {})
+            h.setdefault(field, value)
+
+        self._w(apply)
+
     def sadd(self, key, *values):
         self._w(lambda: self.store.setdefault(key, set()).update(values))
 
@@ -86,6 +100,14 @@ class StubRedis:
     def sadd(self, key, *values):
         self.store.setdefault(key, set()).update(values)
 
+    def incr(self, key, amount=1):
+        self.store[key] = int(self.store.get(key, 0)) + amount
+        return self.store[key]
+
+    def delete(self, *keys):
+        for k in keys:
+            self.store.pop(k, None)
+
 
 def test_batched_and_correct():
     """Realistic shape: many functions sharing a small pool of feature hashes."""
@@ -93,22 +115,55 @@ def test_batched_and_correct():
     store = {}
     fids = [f"main:function:abc:{i}" for i in range(n)]
     hashes = {}  # fid -> {f_hash: tf}
+    meta_features = {}  # f_hash -> [(type, pcode_op), ...] first-occurrence order
     for k, fid in enumerate(fids):
         hs = {f"h{(k + j) % pool}": float(j + 1) for j in range(per_func)}
         hashes[fid] = hs
-        store[f"{fid}:vec:meta"] = json.dumps(
-            [{"hash": h, "tf": tf} for h, tf in hs.items()]
-        )
+        # Each occurrence has a type/pcode_op so the stats tally exercises
+        # _pair_key and the HSETNX first-rep semantics.
+        feats = [
+            {
+                "hash": h,
+                "tf": tf,
+                "type": f"T{i % 3}",
+                "pcode_op": f"OP{i % 4}",
+                "line_idx": [1, 2],
+                "seq": f"seq{k}:{i}",
+                "function_name": f"fn{k}",
+                "pcode_op_full": f"full{k}:{i}",
+            }
+            for i, (h, tf) in enumerate(hs.items())
+        ]
+        for f in feats:
+            meta_features.setdefault(f["hash"], []).append((f["type"], f["pcode_op"]))
+        store[f"{fid}:vec:meta"] = json.dumps(feats)
         store[f"{fid}:vec:tf"] = list(hs.items())
 
     r = StubRedis(store)
     assert FeatureService(r).index_functions("main", fids) is True
 
+    # --- stats table: pair-count fields + one rep per pair ---
+    for h in set(fh for hs in hashes.values() for fh in hs):
+        stats_key = f"main:feature:{h}:stats"
+        assert stats_key in store, f"missing {stats_key}"
+        stats = store[stats_key]
+        # At least 1 pair-count and 1 rep per feature
+        count_fields = [k for k in stats if not k.startswith("occ\u241f")]
+        rep_fields = [k for k in stats if k.startswith("occ\u241f")]
+        assert len(count_fields) >= 1
+        assert len(rep_fields) >= 1
+        # Reps are JSON objects
+        for k in rep_fields:
+            rep = json.loads(stats[k])
+            assert "function_id" in rep
+
     # No per-function blocking reads outside the pipeline.
     assert r.stats["direct"] == 0, r.stats
 
     # Naive fan-out would be n*per_func*3 = 30000 commands.
-    assert r.stats["cmds"] < 3000, r.stats
+    # The stats path (~2 HINCRBY+HSETNX per pair) adds a modest per-feature
+    # overhead; both are bounded by the pool size, not the function count.
+    assert r.stats["cmds"] < 8000, r.stats
 
     # --- writes must be identical to the un-merged version ---
     expected_by_tf = {}

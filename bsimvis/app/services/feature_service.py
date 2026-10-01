@@ -6,6 +6,50 @@ import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.milvus_service import milvus_service
 
+# Field separator for the per-feature stats hash. Chars in type/op are a small
+# enum-like set (DATA_FLOW, COPY_SIG, ...) so one byte outside the Latin-1
+# alphabet is a safe delimiter.
+PAIR_SEP = "\u241f"
+OCC_FIELD = "occ\u241f"
+
+
+def _pair_key(feat):
+    """(type, op) pair-key as stored on the stats hash fields."""
+    return (
+        f"{str(feat.get('type', 'N/A'))}{PAIR_SEP}"
+        f"{str(feat.get('pcode_op', 'N/A'))}"
+    )
+
+
+def _compact_rep(occ, func_id):
+    """One representative occurrence for a (type, op) pair.
+
+    Only what enrich needs to build context; the full occurrence is still in
+    :feature:{fh}:meta under the function's field name. This is a derived
+    cache enrich consumes when present."""
+    return json.dumps(
+        {
+            "function_id": func_id,
+            "line_idx": occ.get("line_idx", []),
+            "seq": occ.get("seq"),
+            "function_name": occ.get("function_name"),
+            "pcode_op_full": occ.get("pcode_op_full"),
+        },
+        separators=(",", ":"),
+    )
+
+
+def _safe_json(raw):
+    """Parse a JSON field value; returns None on any failure."""
+    if raw is None:
+        return None
+    try:
+        if isinstance(raw, (bytes, bytearray)):
+            raw = raw.decode()
+        return json.loads(raw)
+    except Exception:
+        return None
+
 
 class _WriteBuffer:
     """Merges one window of index_functions writes, keyed by feature hash."""
@@ -15,6 +59,12 @@ class _WriteBuffer:
         self.zadds = defaultdict(dict)  # f_hash -> {func_id: tf}
         self.incrs = defaultdict(float)  # f_hash -> summed tf
         self.metas = defaultdict(dict)  # f_hash -> {func_id: json}
+        # (type, op) pair counts and reps. Argmax crosses functions/windows,
+        # so we persist the full table and let enrich compute the winner.
+        # Distinct pairs per feature is bounded (it is one pcode family), so
+        # each :stats hash stays small (4-10 fields in real data).
+        self.pair_counts = defaultdict(dict)  # f_hash -> {pair_key: int}
+        self.pair_reps = defaultdict(dict)  # f_hash -> {pair_key: json-rep}
         self.indexed = []  # func_ids
 
     def flush(self, pipe, collection):
@@ -26,6 +76,18 @@ class _WriteBuffer:
             pipe.zincrby(f"{collection}:features:by_tf", amount, f_hash)
         for f_hash, fields in self.metas.items():
             pipe.hset(f"{collection}:feature:{f_hash}:meta", mapping=fields)
+        # :stats — HINCRBY accumulates pair counts across the 100-func
+        # windows (a window that saw 0 occurrences is absent and adds 0).
+        # HSETNX keeps the first rep per pair: arbitrary but deterministic
+        # within a feature, which matches the legacy path's non-determinism
+        # on ties. One HINCRBY + one HSETNX per pair per window, in the same
+        # pipeline that already writes the per-feature :meta/:by_tf.
+        for f_hash in set(self.pair_counts) | set(self.pair_reps):
+            stats_key = f"{collection}:feature:{f_hash}:stats"
+            for k, v in self.pair_counts.get(f_hash, {}).items():
+                pipe.hincrby(stats_key, k, v)
+            for pair_key, rep in self.pair_reps.get(f_hash, {}).items():
+                pipe.hsetnx(stats_key, f"{OCC_FIELD}{pair_key}", rep)
         if self.indexed:
             pipe.sadd(f"{collection}:indexed:functions", *self.indexed)
         self.__init__()
@@ -126,6 +188,15 @@ class FeatureService:
                 meta_entry["function_id"] = func_id
                 # Convention: {coll}:feature:{hash}:meta -> HASH (field=func_id, value=JSON)
                 acc.metas[f_hash][func_id] = json.dumps(meta_entry)
+                # :stats tally — one HINCRBY per (type, op) pair per window.
+                # HSETNX on the rep keeps the first occurrence (arbitrary but
+                # deterministic; the legacy sampling path was already non-
+                # deterministic on ties).
+                pk = _pair_key(feat_item)
+                pc = acc.pair_counts[f_hash]
+                pc[pk] = pc.get(pk, 0) + 1
+                if pk not in acc.pair_reps[f_hash]:
+                    acc.pair_reps[f_hash][pk] = _compact_rep(feat_item, func_id)
 
             # Mark as indexed (Base ID)
             acc.indexed.append(func_id)
@@ -194,6 +265,9 @@ class FeatureService:
                 patterns = [
                     f"{collection}:feature:*:functions",
                     f"{collection}:feature:*:meta",
+                    # :stats is a derived cache of :meta; invalidate it the same way
+                    # so the next enrich falls back to sampling surviving :meta.
+                    f"{collection}:feature:*:stats",
                     f"{collection}:features:by_tf",
                     f"{collection}:feature:*:global_meta",
                     f"{collection}:idx:feature:*",
@@ -254,6 +328,10 @@ class FeatureService:
                     pipe.zrem(f"{collection}:feature:{f_hash}:functions", fid)
                     pipe.zincrby(f"{collection}:features:by_tf", -float(tf), f_hash)
                     pipe.hdel(f"{collection}:feature:{f_hash}:meta", fid)
+                    # :stats is a derived cache; subtracting counts would drift,
+                    # so invalidate it. The affected_features reindex right after
+                    # falls back to sampling the surviving :meta, which is exact.
+                    pipe.delete(f"{collection}:feature:{f_hash}:stats")
 
                 pipe.delete(f"{fid}:vec:norm")
                 pipe.srem(f"{collection}:indexed:functions", fid)
@@ -465,129 +543,94 @@ class FeatureService:
 
             chunk = feature_hashes[i : i + chunk_size]
 
-            # --- STAGE 1: Batch fetch sparse samples, frequencies, and scores ---
-            pipe1 = self.r.pipeline(transaction=False)
+            # Stats fast path. Pair counts and one representative occurrence per
+            # (type, op) pair are persisted at write time on
+            # {coll}:feature:{fh}:stats. A feature is covered when :stats has
+            # at least one pair-count field; anything else takes the old
+            # HRANDFIELD sampling path below (unchanged).
+            #
+            # `frequency` is still HLEN :feature:{fh}:meta — number of distinct
+            # functions with the feature (what the legacy path stored). That is
+            # a per-function count, so it is independent of how many (type, op)
+            # pairs a function contributes to :stats. Adding one HLEN per
+            # feature per chunk (50 extra cmds at chunk_size=50) keeps the
+            # stored field byte-identical to the pre-optimization output.
+            sp = self.r.pipeline(transaction=False)
             for fh in chunk:
-                # HRANDFIELD withvalues → 100 random entries across ALL functions
-                # Covers every function proportionally, avoids first-N clustering bias
-                pipe1.hrandfield(
-                    f"{collection}:feature:{fh}:meta", count=100, withvalues=True
-                )
-                pipe1.hlen(f"{collection}:feature:{fh}:meta")
-                pipe1.zscore(f"{collection}:features:by_tf", fh)
+                sp.hgetall(f"{collection}:feature:{fh}:stats")
+                sp.hlen(f"{collection}:feature:{fh}:meta")
+                sp.zscore(f"{collection}:features:by_tf", fh)
+            stats_res = sp.execute()
 
-            res1 = pipe1.execute()
-
-            # --- STAGE 2: Find best (type, op) per feature, assemble into save_pipe ---
+            # --- STAGE 2: Pick winner per feature; dispatch legacy for missing ---
             save_pipe = self.r.pipeline(transaction=False)
 
-            # Phase A: parse HRANDFIELD, collect unique func_ids for context fetch
+            # Phase A: parse pair counts, build `results`. Legacy features are
+            # collected in slow_hashes and handled in the block below.
             results = []
             pending_funcs = {}  # func_id → {func_id, line_idxs list}
-
-            # Features with < 100 occurrences need a full HGETALL (HRANDFIELD may
-            # dedup). That is the common case, so batch them into one round-trip.
-            small_pipe = self.r.pipeline(transaction=False)
-            small_hashes = [
-                fh for idx, fh in enumerate(chunk) if 0 < res1[idx * 3 + 1] <= 100
-            ]
-            for fh in small_hashes:
-                small_pipe.hgetall(f"{collection}:feature:{fh}:meta")
-            small_full = dict(zip(small_hashes, small_pipe.execute()))
+            slow_hashes = []
 
             for idx, fh in enumerate(chunk):
-                hr = res1[idx * 3]
-                # HRANDFIELD withvalues returns flat list [key1, val1, key2, val2, ...]
-                data_batch = dict(zip(hr[0::2], hr[1::2])) if hr else {}
-                total_freq = res1[idx * 3 + 1]
-                tf_score_val = res1[idx * 3 + 2]
+                stats_map = stats_res[idx * 3] or {}
+                meta_len = stats_res[idx * 3 + 1]
+                tf_score_val = stats_res[idx * 3 + 2]
 
-                if fh in small_full:
-                    data_batch = small_full[fh]
-
-                # parse each occ, include function_id from the hash field
-                parsed = {}
-                for func_key, occ_str in data_batch.items():
-                    try:
-                        occ = json.loads(occ_str)
-                        occ["function_id"] = (
-                            func_key.decode()
-                            if isinstance(func_key, bytes)
-                            else func_key
-                        )
-                        parsed[func_key] = occ
-                    except Exception:
-                        pass
-
-                # find most common (type, op) pair
-                best_type, best_op = "N/A", "N/A"
-                func_id, line_idxs, best_occ = None, [], {}
-                if parsed:
-                    counts = {}
-                    for key, occ in parsed.items():
-                        pair = (
-                            str(occ.get("type", "N/A")),
-                            str(occ.get("pcode_op", "N/A")),
-                        )
-                        counts[pair] = counts.get(pair, 0) + 1
-                    if counts:
-                        best_pair = max(counts.items(), key=lambda x: (x[1], x[0]))[0]
-                        best_type, best_op = best_pair
-                        for key, occ in parsed.items():
-                            if (
-                                str(occ.get("type", "N/A")) == best_type
-                                and str(occ.get("pcode_op", "N/A")) == best_op
-                            ):
-                                best_occ = occ
-                                bk = key
-                                if isinstance(bk, bytes):
-                                    bk = bk.decode()
-                                func_id = bk  # func_id from hash field name
-                                line_idxs = best_occ.get("line_idx", [])
-                                break
-                        # pcode_op_full may be in a non-mode-matching entry — check all
-                        pcode_full = best_occ.get("pcode_op_full") or "lazy"
-                        if pcode_full == "lazy":
-                            for occ in parsed.values():
-                                if occ.get("pcode_op_full"):
-                                    pcode_full = occ["pcode_op_full"]
-                                    break
+                counts = {}
+                reps = {}
+                for f_name, val in stats_map.items():
+                    if isinstance(f_name, bytes):
+                        f_name = f_name.decode()
+                    if f_name.startswith(OCC_FIELD):
+                        reps[f_name[len(OCC_FIELD) :]] = val
                     else:
-                        delete_feature(self.r, collection, fh)
-                        continue
-                else:
-                    delete_feature(self.r, collection, fh)
+                        try:
+                            counts[f_name] = int(val)
+                        except (TypeError, ValueError):
+                            pass
+
+                if not counts:
+                    slow_hashes.append(fh)
                     continue
 
-                # Queue source fetch for this func if not already queued (dedup across chunk)
+                # Winner = max(counts, key=(count, pair)) — byte-identical
+                # tie-break semantics to the legacy sampling path.
+                best_key, _best_count = max(counts.items(), key=lambda x: (x[1], x[0]))
+                best_type, best_op = best_key.split(PAIR_SEP, 1)
+                best_rep = _safe_json(reps.get(best_key)) or {}
+                func_id = best_rep.get("function_id")
+                line_idxs = best_rep.get("line_idx") or []
                 if func_id and func_id not in pending_funcs:
                     pending_funcs[func_id] = func_id
-
-                # Function parts from func_id (hash key format: {coll}:func:{md5}:{addr})
                 fid = func_id or "N/A"
                 parts = fid.split(":")
-                md5, addr = "N/A", "N/A"
                 if len(parts) >= 4:
-                    md5 = parts[-2]
-                    addr = parts[-1]
+                    md5, addr = parts[-2], parts[-1]
+                else:
+                    md5 = addr = "N/A"
+                pcode_full = best_rep.get("pcode_op_full")
+                if pcode_full is None:
+                    # pcode_op_full may live on a non-winner pair's rep; the
+                    # legacy path scanned all occurrences and took the first
+                    # non-None. Reps are stored in pair order, so this is
+                    # equivalent up to the (irrelevant) order of pairs.
+                    for rk, rv in reps.items():
+                        if rk == best_key:
+                            continue
+                        r = _safe_json(rv) or {}
+                        if r.get("pcode_op_full") is not None:
+                            pcode_full = r["pcode_op_full"]
+                            break
+                if pcode_full is None:
+                    pcode_full = "N/A"
 
-                pcode_full = pcode_full  # from Phase A loop
-                # Function parts from func_id (hash key format: {coll}:func:{md5}:{addr})
-                fid = func_id or "N/A"
-                parts = fid.split(":")
-                md5, addr = "N/A", "N/A"
-                if len(parts) >= 4:
-                    md5 = parts[-2]
-                    addr = parts[-1]
-
-                # pcode_full will be filled from source fetch below
                 results.append(
                     {
                         "fh": fh,
                         "best_type": best_type,
                         "best_op": best_op,
                         "func_id": fid,
-                        "frequency": total_freq,
+                        "frequency": meta_len,
                         "tf_score": (
                             float(tf_score_val) if tf_score_val is not None else 0.0
                         ),
@@ -599,15 +642,160 @@ class FeatureService:
                             "op": best_op,
                             "pcode_full": pcode_full,
                             "func_id": fid,
-                            "seq": best_occ.get("seq"),
+                            "seq": best_rep.get("seq"),
                             "line_idxs": line_idxs,
                             "md5": md5,
                             "addr": addr,
-                            "name": best_occ.get("function_name", addr),
+                            "name": best_rep.get("function_name") or addr,
                             "c_code": None,
                         },
                     }
                 )
+
+            if slow_hashes:
+                # --- LEGACY PATH: HRANDFIELD + HGETALL sampling (unchanged) ---
+                # Only features with no :stats reach this — legacy collections,
+                # or features cleared since their last write. Cost is bounded by
+                # the number of stats-missing features in the chunk, usually 0.
+                pipe1 = self.r.pipeline(transaction=False)
+                for fh in slow_hashes:
+                    # HRANDFIELD withvalues → 100 random entries across ALL functions
+                    # Covers every function proportionally, avoids first-N clustering bias
+                    pipe1.hrandfield(
+                        f"{collection}:feature:{fh}:meta", count=100, withvalues=True
+                    )
+                    pipe1.hlen(f"{collection}:feature:{fh}:meta")
+                    pipe1.zscore(f"{collection}:features:by_tf", fh)
+
+                res1 = pipe1.execute()
+
+                # Features with < 100 occurrences need a full HGETALL (HRANDFIELD may
+                # dedup). That is the common case, so batch them into one round-trip.
+                small_pipe = self.r.pipeline(transaction=False)
+                small_hashes = [
+                    fh
+                    for idx, fh in enumerate(slow_hashes)
+                    if 0 < res1[idx * 3 + 1] <= 100
+                ]
+                for fh in small_hashes:
+                    small_pipe.hgetall(f"{collection}:feature:{fh}:meta")
+                small_full = dict(zip(small_hashes, small_pipe.execute()))
+
+                for idx, fh in enumerate(slow_hashes):
+                    hr = res1[idx * 3]
+                    # HRANDFIELD withvalues returns flat list [key1, val1, key2, val2, ...]
+                    data_batch = dict(zip(hr[0::2], hr[1::2])) if hr else {}
+                    total_freq = res1[idx * 3 + 1]
+                    tf_score_val = res1[idx * 3 + 2]
+
+                    if fh in small_full:
+                        data_batch = small_full[fh]
+
+                    # parse each occ, include function_id from the hash field
+                    parsed = {}
+                    for func_key, occ_str in data_batch.items():
+                        try:
+                            occ = json.loads(occ_str)
+                            occ["function_id"] = (
+                                func_key.decode()
+                                if isinstance(func_key, bytes)
+                                else func_key
+                            )
+                            parsed[func_key] = occ
+                        except Exception:
+                            pass
+
+                    # find most common (type, op) pair
+                    best_type, best_op = "N/A", "N/A"
+                    func_id, line_idxs, best_occ = None, [], {}
+                    if parsed:
+                        counts = {}
+                        for key, occ in parsed.items():
+                            pair = (
+                                str(occ.get("type", "N/A")),
+                                str(occ.get("pcode_op", "N/A")),
+                            )
+                            counts[pair] = counts.get(pair, 0) + 1
+                        if counts:
+                            best_pair = max(counts.items(), key=lambda x: (x[1], x[0]))[
+                                0
+                            ]
+                            best_type, best_op = best_pair
+                            for key, occ in parsed.items():
+                                if (
+                                    str(occ.get("type", "N/A")) == best_type
+                                    and str(occ.get("pcode_op", "N/A")) == best_op
+                                ):
+                                    best_occ = occ
+                                    bk = key
+                                    if isinstance(bk, bytes):
+                                        bk = bk.decode()
+                                    func_id = bk  # func_id from hash field name
+                                    line_idxs = best_occ.get("line_idx", [])
+                                    break
+                            # pcode_op_full may be in a non-mode-matching entry — check all
+                            pcode_full = best_occ.get("pcode_op_full") or "lazy"
+                            if pcode_full == "lazy":
+                                for occ in parsed.values():
+                                    if occ.get("pcode_op_full"):
+                                        pcode_full = occ["pcode_op_full"]
+                                        break
+                        else:
+                            delete_feature(self.r, collection, fh)
+                            continue
+                    else:
+                        delete_feature(self.r, collection, fh)
+                        continue
+
+                    # Queue source fetch for this func if not already queued (dedup across chunk)
+                    if func_id and func_id not in pending_funcs:
+                        pending_funcs[func_id] = func_id
+
+                    # Function parts from func_id (hash key format: {coll}:func:{md5}:{addr})
+                    fid = func_id or "N/A"
+                    parts = fid.split(":")
+                    md5, addr = "N/A", "N/A"
+                    if len(parts) >= 4:
+                        md5 = parts[-2]
+                        addr = parts[-1]
+
+                    pcode_full = pcode_full  # from Phase A loop
+                    # Function parts from func_id (hash key format: {coll}:func:{md5}:{addr})
+                    fid = func_id or "N/A"
+                    parts = fid.split(":")
+                    md5, addr = "N/A", "N/A"
+                    if len(parts) >= 4:
+                        md5 = parts[-2]
+                        addr = parts[-1]
+
+                    # pcode_full will be filled from source fetch below
+                    results.append(
+                        {
+                            "fh": fh,
+                            "best_type": best_type,
+                            "best_op": best_op,
+                            "func_id": fid,
+                            "frequency": total_freq,
+                            "tf_score": (
+                                float(tf_score_val) if tf_score_val is not None else 0.0
+                            ),
+                            "line_idxs": line_idxs,
+                            "c_code": None,
+                            "pcode_full": pcode_full,
+                            "context": {
+                                "type": best_type,
+                                "op": best_op,
+                                "pcode_full": pcode_full,
+                                "func_id": fid,
+                                "seq": best_occ.get("seq"),
+                                "line_idxs": line_idxs,
+                                "md5": md5,
+                                "addr": addr,
+                                "name": best_occ.get("function_name", addr),
+                                "c_code": None,
+                            },
+                        }
+                    )
 
             # Phase B: 1 GET per unique func (2 per func: source + vec:meta)
             source_lookup = {}

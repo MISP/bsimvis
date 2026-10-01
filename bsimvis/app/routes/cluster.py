@@ -531,6 +531,25 @@ def list_clusters():
         except Exception:
             pass
 
+    # The exact-uuid shortcut loaded one meta; load the relatives it will expand to.
+    if exact_cid and (show_parents or show_children):
+        start = exact_cid.decode() if isinstance(exact_cid, bytes) else str(exact_cid)
+        related = set()
+        if show_parents:
+            curr = start
+            while curr in child_to_parent:
+                curr = child_to_parent[curr]
+                related.add(curr)
+        if show_children:
+            queue = [start]
+            while queue:
+                for child in parent_to_children.get(queue.pop(), []):
+                    if child not in related:
+                        related.add(child)
+                        queue.append(child)
+        related.discard(start)
+        all_meta_keys += [f"{collection}:cluster:{algo}:{cid}:meta" for cid in related]
+
     if all_meta_keys:
         t_fetch = time.perf_counter()
         pipe = r.pipeline(transaction=False)

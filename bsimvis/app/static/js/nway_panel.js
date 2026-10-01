@@ -187,8 +187,9 @@
             };
         }
 
-        _fnEntity(fid, col) {
+        _fnEntity(fid, col, rowName) {
             const f = this._fnData(fid, col);
+            const same = f.function_name === rowName;
             const sig = typeof formatSigComponent === 'function'
                 ? formatSigComponent(f.namespace, f.return_type, f.function_name, f.parameters).fullSig : f.function_name;
             return `<span class="entity-function" title="${escapeAttr(sig)}" data-etype="function" data-eid="${escapeAttr(fid)}"
@@ -198,7 +199,9 @@
                    onmouseenter="typeof showCodePreview === 'function' && showCodePreview(${escapeAttr(jsString(fid))}, ${escapeAttr(jsString(f.function_name))}, ${escapeAttr(jsString(f.entrypoint_address))}, ${escapeAttr(jsString(col.md5))}, ${Number(f.bsim_features_count) || 0}, event)"
                    onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)"
                    onmouseleave="typeof hideCodePreview === 'function' && hideCodePreview(event)"
-                   onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(fid))}, ${escapeAttr(jsString(f.function_name))}, '', event)">${escapeHtml(f.entrypoint_address)}</b></span>`;
+                   onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(fid))}, ${escapeAttr(jsString(f.function_name))}, '', event)">@ ${escapeHtml(f.entrypoint_address)}</b>${same
+                    ? '<span class="nway-same dim" title="same name as the function column">=</span>'
+                    : `<span class="dim"> (${escapeHtml(f.function_name)})</span>`}</span>`;
         }
 
         // A child/direct column: "m/n files", plus links to the functions of the
@@ -224,7 +227,7 @@
             if (col.kind) return this._groupCell(row, col);
             const fid = row.cells[col.id];
             if (!fid) return '<td class="col gap">&mdash;</td>';
-            return `<td class="col"><div class="nway-fn">${this._fnEntity(fid, col)}</div></td>`;
+            return `<td class="col"><div class="nway-fn">${this._fnEntity(fid, col, row.name)}</div></td>`;
         }
 
         // Support / cohesion use the same red-to-green ramp as the other score cells.

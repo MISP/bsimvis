@@ -259,7 +259,7 @@
             };
             const ret = mode('ret'), params = mode('params');
             const fits = items.filter(i => i.ret === ret && i.params === params);
-            const best = fits.sort((x, y) => (y.m.bsim_features_count || 0) - (x.m.bsim_features_count || 0))[0];
+            const best = (fits.length ? fits : items).sort((x, y) => (y.m.bsim_features_count || 0) - (x.m.bsim_features_count || 0))[0];
             return { ret, params: JSON.parse(params), best };
         }
 

@@ -203,6 +203,17 @@ See slice 5b. `centrality` is persisted at cluster build time (rebuild needed);
    lock/signature warnings, `minhash_lsh` refused. Test: virtual mode on fixture files
    equals the stored path on a real collection of the same files.
 4. **UI.** `nway_panel.js`, standalone `/diff/nway` view, multi-select in file tables.
+4b. **Compare basket + set picker.**
+   - *Basket:* right-click "Add to compare set" on file rows, kept in sessionStorage
+     (`nway_basket.js`, deduped `coll:md5`), shown as a header chip with "Open N-way"
+     and clear. The direct "Compare N Files" stays.
+   - *Picker* on `/diff/nway`: an "Edit set" panel (always available, open when the set
+     has fewer than 2 files) with removable members, a paste box (`coll:md5` or bare
+     md5 + collection select), a batch UUID field, and "add from compare set".
+   - *Backend:* `batch_uuid=` (+ `collection=`, else every collection) adds a batch's
+     files through the transfer UI's own resolver (`_resolve_transfer_batch_sources`).
+     Unknown or empty batch -> 404 `{"error":"unknown_batch"}`. Same dedupe, caps and
+     container expansion; the 413 body carries a "narrow the set" message.
 5. **Cluster entry.** `cluster_uuid=`, adaptive columns with the x% rule, runtime column
    switch, the tab in `cluster_detail_view.js`.
 5b. **Member centrality + medoid.** Two parts, built after slice 5.

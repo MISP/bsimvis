@@ -470,6 +470,15 @@
                     <span>Compare ${nwayFiles.length} Files (N-way)</span>
                 </div>`;
             }
+            if (window.NwayBasket) {
+                const picked = window.getSelectedTableIds ? window.getSelectedTableIds('file') : [];
+                const basketIds = picked.length ? picked : [norm.id];
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); NwayBasket.add(${escapeAttr('[' + basketIds.map(jsString).join(',') + ']')}, ${escapeAttr(jsString(col))})">
+                    <i class="fa-solid fa-table-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>Add ${basketIds.length > 1 ? basketIds.length + ' files ' : ''}to compare set</span>
+                </div>`;
+            }
             if (window.getSelectedTableIds && window.getSelectedTableIds('file').length === 2) {
                 const selFiles = window.getSelectedTableIds('file');
                 const md5a = selFiles[0].split(':').pop();

@@ -27,6 +27,23 @@ def _members(collection, pool_id):
     return list(dict.fromkeys(members))
 
 
+class _UnknownBatch(Exception):
+    pass
+
+
+def _batch_members(r, collection, batch_uuid):
+    """A batch's files as [(coll, md5)]; unknown or empty batch -> 404."""
+    from bsimvis.app.routes.file import _resolve_transfer_batch_sources
+
+    found = [
+        (_origin_coll(c), m.lower())
+        for c, m in _resolve_transfer_batch_sources(r, collection, batch_uuid)
+    ]
+    if not found:
+        raise _UnknownBatch()
+    return found
+
+
 def _scope(members, pool_id):
     if pool_id:
         from bsimvis.app.services.pool_service import pool_service
@@ -289,6 +306,11 @@ def get_nway():
                 groups = node_groups if len(node_groups) > 1 else None
         else:
             members = _members(collection, pool_id)
+            batch_uuid = (request.args.get("batch_uuid") or "").strip()
+            if batch_uuid:
+                members = list(
+                    dict.fromkeys(members + _batch_members(r, collection, batch_uuid))
+                )
             scope = _scope(members, pool_id)
         if len(members) < 2:
             abort(400, "need at least two distinct files")
@@ -311,9 +333,12 @@ def get_nway():
     except nway_diff_service.TooLarge as e:
         return {
             "error": "too_large",
+            "message": "too many files: narrow the set",
             "members": e.members,
             "children": getattr(e, "children", children),
         }, 413
+    except _UnknownBatch:
+        return {"error": "unknown_batch"}, 404
     except nway_diff_service.MemberMissing as e:
         return {"error": "unknown_files", "missing": e.missing}, 404
     return _page(doc, request.args)

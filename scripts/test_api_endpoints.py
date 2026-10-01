@@ -4687,6 +4687,39 @@ def test_nway_diff():
         _nway(md5s=f"{file_md5},{'0' * 32}")[0] == 404,
     )
 
+    # batch_uuid= adds a batch's files to the set; an unknown batch is a 404.
+    status, missing = _nway(batch_uuid="00000000-0000-0000-0000-000000000000")
+    check(
+        "nway: unknown batch is 404 unknown_batch",
+        status == 404 and (missing or {}).get("error") == "unknown_batch",
+        f"HTTP {status} {missing}",
+    )
+    listing = requests.get(
+        f"{BASE_URL}/api/file/search",
+        params={"collection": COLLECTION, "limit": 100},
+        timeout=60,
+    ).json()
+    batch = next(
+        (
+            f.get("batch_uuid")
+            for f in (listing or {}).get("files") or []
+            if f.get("file_md5") == file_md5 and f.get("batch_uuid")
+        ),
+        None,
+    )
+    if batch:
+        status, with_batch = _nway(
+            md5s=file_md5_2, batch_uuid=batch, tab="core", scope="all", limit=1000
+        )
+        got = {c["md5"] for c in (with_batch or {}).get("columns", [])}
+        check(
+            "nway: batch files join the md5s (deduped)",
+            status == 200 and {file_md5, file_md5_2} <= got,
+            f"HTTP {status} columns={sorted(got)}",
+        )
+    else:
+        print(_color("\n[SKIP] no batch uuid on the fixture file.", YELLOW))
+
     # The 413 cannot be forced over HTTP (caps live in server config); check the
     # cap logic itself.
     try:

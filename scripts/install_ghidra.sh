@@ -31,7 +31,7 @@ if [ -n "$JDK_DIR" ] && [ -x "$JDK_DIR/bin/java" ]; then
 elif command -v java >/dev/null && command -v javac >/dev/null && [ "$(java_major java || echo 0)" -ge 21 ] 2>/dev/null; then
     echo "Found system JDK $(java_major java)."
 else
-    # ponytail: Adoptium "latest 21 ga" redirect, no version pinning. Pin if reproducibility matters.
+    # Set JDK_VERSION (e.g. 21.0.12.1+1) to pin; unset follows Adoptium's "latest 21 ga".
     case "$(uname -m)" in
         x86_64) JDK_ARCH="x64" ;;
         aarch64|arm64) JDK_ARCH="aarch64" ;;
@@ -41,7 +41,11 @@ else
         echo "Warning: no prebuilt JDK for $(uname -m). Install OpenJDK 21+ manually."
     else
         echo "Java 21+ not found. Installing portable Temurin JDK 21 into ${BIN_DIR}..."
-        JDK_URL="https://api.adoptium.net/v3/binary/latest/21/ga/linux/${JDK_ARCH}/jdk/hotspot/normal/eclipse"
+        if [ -n "${JDK_VERSION:-}" ]; then
+            JDK_URL="https://api.adoptium.net/v3/binary/version/jdk-${JDK_VERSION//+/%2B}/linux/${JDK_ARCH}/jdk/hotspot/normal/eclipse"
+        else
+            JDK_URL="https://api.adoptium.net/v3/binary/latest/21/ga/linux/${JDK_ARCH}/jdk/hotspot/normal/eclipse"
+        fi
         if (
             cd "${SCRATCH_DIR}" \
             && curl -fsSL "${JDK_URL}" -o jdk21.tar.gz \

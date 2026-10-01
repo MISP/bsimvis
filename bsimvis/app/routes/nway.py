@@ -38,11 +38,9 @@ def _scope(members, pool_id):
         if outside:
             abort(400, f"not in pool {pool_id}: {sorted(outside)}")
         return {"pool": pool_id}
-    colls = {c for c, _ in members}
-    if len(colls) > 1:
-        # ponytail: mixed collections need discovery over raw vectors (slice 3).
-        abort(501, "members from several collections need a pool for now")
-    return {"collection": colls.pop()}
+    colls = sorted({c for c, _ in members})
+    # Several collections and no pool: compute() runs them in virtual mode.
+    return {"collection": colls[0]} if len(colls) == 1 else {"collections": colls}
 
 
 def _in_tab(row, tab, k, n):
@@ -145,21 +143,32 @@ def get_nway():
     if len(members) < 2:
         abort(400, "md5s needs at least two distinct files")
     mode = request.args.get("mode", "stored")
-    if mode == "virtual":
-        abort(501, "mode=virtual is not available yet")
-    if mode != "stored":
+    if mode not in ("stored", "virtual"):
         abort(400, "mode must be stored or virtual")
     try:
         min_edge = request.args.get("min_edge")
         min_edge = None if min_edge is None else max(0.0, min(1.0, float(min_edge)))
+        min_score = request.args.get("min_score", type=float)
+        min_features = request.args.get("min_features", type=int)
     except ValueError:
         abort(400, "min_edge must be a number between 0 and 1")
 
     scope = _scope(members, pool_id)
     try:
         doc = nway_diff_service.compute(
-            get_redis(), scope, members, {"min_edge": min_edge, "mode": mode}
+            get_redis(),
+            scope,
+            members,
+            {
+                "min_edge": min_edge,
+                "mode": mode,
+                "algo": request.args.get("algo"),
+                "min_score": min_score,
+                "min_features": min_features,
+            },
         )
+    except nway_diff_service.BadParams as e:
+        abort(400, str(e))
     except nway_diff_service.TooLarge as e:
         return {"error": "too_large", "members": e.members, "children": []}, 413
     except nway_diff_service.MemberMissing as e:

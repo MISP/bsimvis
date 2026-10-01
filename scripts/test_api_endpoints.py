@@ -4575,6 +4575,11 @@ def _nway(**params):
         return resp.status_code, None
 
 
+def _nway_rows(body):
+    """A page of N-way rows as a set of function-id sets, comparable across modes."""
+    return {frozenset(r["cells"].values()) for r in (body or {}).get("items", [])}
+
+
 def test_nway_diff():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-ter – N-way file diff (stored path)", BOLD))
@@ -4658,7 +4663,24 @@ def test_nway_diff():
     # Errors.
     check("nway: one file is a 400", _nway(md5s=file_md5)[0] == 400)
     check("nway: bad tab is a 400", _nway(tab="nope")[0] == 400)
-    check("nway: mode=virtual is a 501 for now", _nway(mode="virtual")[0] == 501)
+    check("nway: bad mode is a 400", _nway(mode="nope")[0] == 400)
+    check(
+        "nway: virtual mode refuses minhash_lsh",
+        _nway(mode="virtual", algo="minhash_lsh")[0] == 400,
+    )
+    # R1: a fresh collection of these two files, rebuilt from their vectors, must
+    # find the rows the stored build found.
+    status, virt = _nway(mode="virtual", tab="core", scope="all", limit=1000)
+    if check("nway: virtual mode is served", status == 200 and virt, f"HTTP {status}"):
+        _, virt_only = _nway(mode="virtual", tab="unique", scope="all", limit=1000)
+        check(
+            "nway: virtual rows equal the stored rows",
+            _nway_rows(virt) == _nway_rows(core)
+            and _nway_rows(virt_only) == _nway_rows(only),
+            f"core virtual={virt['total']} stored={core['total']}; "
+            f"unique virtual={(virt_only or {}).get('total')} stored={only['total']}",
+        )
+        check("nway: virtual body says so", virt["mode"] == "virtual")
     check(
         "nway: unknown file is a 404",
         _nway(md5s=f"{file_md5},{'0' * 32}")[0] == 404,
@@ -6292,6 +6314,67 @@ def test_pool_collection_equivalence():
                     if n_s == n_p
                     else f"single={_json.dumps(n_s)[:200]} pool={_json.dumps(n_p)[:200]}"
                 ),
+            )
+
+        # ── 2b. N-way: the same two files, three ways ─────────────────────
+        # Stored rows of the real collection are the reference. Virtual mode must
+        # reproduce them for the same collection, and for the files split over two
+        # collections (no pool: the mixed-collection path); the pool's stored docs
+        # must too.
+        from bsimvis.app.services.collection_config import get_collection_params
+
+        locked = get_collection_params(single)
+        vparams = {
+            "algo": EQ_ALGO,
+            "min_score": locked["min_score"]["value"],
+            "min_features": locked["min_features"]["value"],
+        }
+
+        def nway_rows(**params):
+            out = {}
+            for tab in ("core", "unique"):
+                resp = requests.get(
+                    f"{BASE_URL}/api/bin_sim/nway",
+                    params={"scope": "all", "limit": 1000, "tab": tab, **params},
+                    timeout=120,
+                )
+                if resp.status_code != 200:
+                    return resp.status_code, None
+                body = resp.json()
+                out[tab] = {
+                    frozenset(canon(f) for f in row["cells"].values())
+                    for row in body["items"]
+                }
+                out["mode"], out["warnings"] = body["mode"], body["warnings"]
+            return 200, out
+
+        both = f"{md5_arm},{md5_linux}"
+        split = f"{sep_arm}:{md5_arm},{sep_linux}:{md5_linux}"
+        ref_status, ref = nway_rows(collection=single, md5s=both)
+        if check(
+            "nway equivalence: stored reference served", ref_status == 200, ref_status
+        ):
+            for label, params in (
+                (
+                    "virtual on the same collection",
+                    dict(collection=single, md5s=both, mode="virtual", **vparams),
+                ),
+                ("virtual over split collections", dict(md5s=split, **vparams)),
+                ("stored over the pool", dict(pool=eq_pool, md5s=split)),
+            ):
+                status, got = nway_rows(**params)
+                check(
+                    f"nway equivalence: {label} equals the stored collection rows",
+                    status == 200
+                    and got["core"] == ref["core"]
+                    and got["unique"] == ref["unique"],
+                    f"HTTP {status}; core {len((got or {}).get('core', ()))}/{len(ref['core'])}"
+                    f" unique {len((got or {}).get('unique', ()))}/{len(ref['unique'])}",
+                )
+            _, mixed = nway_rows(md5s=split, **vparams)
+            check(
+                "nway equivalence: split collections run in virtual mode",
+                (mixed or {}).get("mode") == "virtual",
             )
 
         if p_doc:

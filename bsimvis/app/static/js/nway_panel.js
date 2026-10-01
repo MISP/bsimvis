@@ -43,10 +43,6 @@
         return `${base}/files/${encodeURIComponent(col.md5)}/functions/${encodeURIComponent(addr)}`;
     }
 
-    function diffUrl(colA, fidA, colB, fidB, pool) {
-        return `${fnUrl(colA, fidA, pool)}/vs/${encodeURIComponent(colB.collection)}/${encodeURIComponent(colB.md5)}/${encodeURIComponent(fnParts(fidB).addr)}`;
-    }
-
     function pct(v) {
         return `${(Number(v || 0) * 100).toFixed(0)}%`;
     }
@@ -60,7 +56,6 @@
             this.onOpenCluster = opts.onOpenCluster || null;
             this.data = null;
             this.error = null;
-            this.picks = {};
             this._gen = 0;
             this._debounce = null;
             this.el.addEventListener('click', e => this._onClick(e));
@@ -91,7 +86,6 @@
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
             qs.set('limit', PAGE);
-            this.picks = {};
             if (!this.data) this.el.innerHTML = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions...</div>';
             try {
                 const res = await fetch(`/api/bin_sim/nway?${qs.toString()}`);
@@ -230,8 +224,7 @@
             if (col.kind) return this._groupCell(row, col);
             const fid = row.cells[col.id];
             if (!fid) return '<td class="col gap">&mdash;</td>';
-            const picked = (this.picks[ri] || []).includes(col.id);
-            return `<td class="col"><div class="nway-fn">${this._fnEntity(fid, col)}<button class="nway-pick${picked ? ' active' : ''}" data-pick="${ri}" data-col="${escapeAttr(col.id)}" title="pick for function diff"><i class="fa-solid fa-code-compare"></i></button></div></td>`;
+            return `<td class="col"><div class="nway-fn">${this._fnEntity(fid, col)}</div></td>`;
         }
 
         // Support / cohesion use the same red-to-green ramp as the other score cells.
@@ -246,8 +239,6 @@
             const extra = Array.isArray(row.names) ? row.names.length - 1 : Number(row.names || 0) - 1;
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
-            const picks = this.picks[ri] || [];
-            const cmp = picks.length === 2 && !this.data.columns[0].kind ? '<button class="top-action-btn" data-compare="' + ri + '">Compare</button>' : '';
             return `<tr>
                 <td><span class="nway-name">${escapeHtml(row.name)}${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${row.library ? '<span class="badge">lib</span>' : ''}${low}</span></td>
                 <td class="num">${Number(row.span)}</td>
@@ -255,7 +246,6 @@
                 <td class="num">${this._score(row.support)}</td>
                 <td class="num">${this._score(row.cohesion)}</td>
                 ${cols.map(c => this._cell(row, c, ri)).join('')}
-                <td>${cmp}</td>
             </tr>`;
         }
 
@@ -274,7 +264,7 @@
             const colHead = c => c.kind
                 ? `<th class="col" title="${escapeAttr(c.kind === 'child' ? 'child cluster' : 'files at this node, in no child cluster')}"><div class="nway-colhead"><span class="nway-colname">${escapeHtml(c.label)}</span><span class="nway-sub">${Number(c.member_count)} files</span></div></th>`
                 : fileHead(c);
-            return `<tr>${SORTS.map(th).join('')}${this.data.columns.map(colHead).join('')}<th></th></tr>`;
+            return `<tr>${SORTS.map(th).join('')}${this.data.columns.map(colHead).join('')}</tr>`;
         }
 
         render() {
@@ -310,7 +300,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-page],[data-pick],[data-compare],[data-nav],[data-open-cluster]');
+            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-page],[data-nav],[data-open-cluster]');
             if (!t) return;
             if (t.dataset.openCluster) {
                 e.preventDefault();
@@ -327,17 +317,6 @@
                 return this._set({ sort_col: t.dataset.sort, sort_dir: same && this.state.sort_dir === 'desc' ? 'asc' : 'desc', offset: 0 });
             }
             if (t.dataset.page) return this._set({ offset: Math.max(0, Number(this.state.offset) + Number(t.dataset.page) * PAGE) });
-            if (t.dataset.pick) {
-                const ri = t.dataset.pick, id = t.dataset.col;
-                const cur = this.picks[ri] || [];
-                this.picks[ri] = cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id].slice(-2);
-                return this.render();
-            }
-            if (t.dataset.compare) {
-                const row = this.data.items[Number(t.dataset.compare)];
-                const [a, b] = this.picks[t.dataset.compare].map(id => this.data.columns.find(c => c.id === id));
-                return window.Nav.openPath(diffUrl(a, row.cells[a.id], b, row.cells[b.id], pool), e, { title: `Diff: ${row.name}`, type: 'diff' });
-            }
             if (t.dataset.nav && window.Nav) {
                 e.preventDefault();
                 window.Nav.openPath(t.dataset.nav, e, { title: t.dataset.title || 'Function', type: 'function' });

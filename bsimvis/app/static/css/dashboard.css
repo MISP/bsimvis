@@ -2764,22 +2764,9 @@ a.home-card:hover,
 .nway-addr:hover { text-decoration: underline; }
 .nway-sub { display: block; margin-top: 2px; font-size: 0.68rem; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--subtle); }
 .nway-table td.gap { text-align: center; color: var(--dim); }
-.nway-table .top-action-btn { height: 24px; padding: 0 8px; }
 .nway-fn { display: flex; align-items: center; gap: 6px; min-width: 170px; }
 .nway-fn .entity-function { min-width: 0; }
 .nway-name { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.nway-pick {
-    flex-shrink: 0;
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--subtle);
-    cursor: pointer;
-    padding: 1px 5px;
-    font-size: 0.7rem;
-}
-.nway-pick:hover { color: var(--accent); border-color: var(--accent); }
-.nway-pick.active { color: var(--window-tray); background: var(--accent); border-color: var(--accent); }
 .nway-warn { color: var(--token-warning); }
 .nway-group-links { margin-top: 3px; font-size: 0.75rem; }
 .nway-group-links a { color: var(--accent); cursor: pointer; margin-right: 6px; }

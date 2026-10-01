@@ -263,11 +263,8 @@
             const name = escapeHtml(row.name);
             if (!sig) return name;
             const f = this._fnData(sig.best.fid, sig.best.col);
-            const tok = t => `<span style="color:var(--token-address)">${escapeHtml(t)}</span>`;
-            return `<span class="nway-sig"
-                    onmouseenter="typeof showCodePreview === 'function' && showCodePreview(${escapeAttr(jsString(f.function_id))}, ${escapeAttr(jsString(f.function_name))}, ${escapeAttr(jsString(f.entrypoint_address))}, ${escapeAttr(jsString(f.file_md5))}, ${Number(f.bsim_features_count) || 0}, event)"
-                    onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)"
-                    onmouseleave="typeof hideCodePreview === 'function' && hideCodePreview(event)">${tok(sig.ret)} ${name}<span class="dim">(</span>${sig.params.map(tok).join('<span class="dim">, </span>')}<span class="dim">)</span></span>`;
+            // Same renderer as the function search table, fed the guessed signature.
+            return window.EntityRenderer.renderFunction({ ...f, function_name: row.name, return_type: sig.ret, parameters: sig.params }, { hideNote: true, showActions: false });
         }
 
         _row(row, ri) {
@@ -276,7 +273,7 @@
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             return `<tr>
-                <td><span class="nway-name">${this._nameSig(row)}${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${row.library ? '<span class="badge">lib</span>' : ''}${low}</span></td>
+                <td style="min-width:260px; max-width:420px;">${this._nameSig(row)}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${row.library ? '<span class="badge">lib</span>' : ''}${low}</span></td>
                 <td class="num">${Number(row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>

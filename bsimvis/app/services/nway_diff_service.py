@@ -419,7 +419,7 @@ def _load_base(r, scope, members, vparams, labels, warnings):
 
 
 def _label(cells, fmeta, weights):
-    """Most frequent non-default name, else the heaviest function's address."""
+    """Most frequent non-default name, else the heaviest function's own name (FUN_addr)."""
     names = Counter(
         n
         for fid in cells
@@ -428,10 +428,9 @@ def _label(cells, fmeta, weights):
     if names:
         return names.most_common(1)[0][0], len(names)
     heaviest = max(cells, key=lambda f: (weights[f], f))
-    addr = (fmeta.get(heaviest) or {}).get("entrypoint_address") or heaviest.rsplit(
-        ":", 1
-    )[-1]
-    return str(addr), 0
+    meta = fmeta.get(heaviest) or {}
+    addr = meta.get("entrypoint_address") or heaviest.rsplit(":", 1)[-1]
+    return meta.get("name") or f"FUN_{addr}", 0
 
 
 def _match(base, min_edge):

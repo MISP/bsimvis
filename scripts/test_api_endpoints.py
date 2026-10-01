@@ -4563,6 +4563,130 @@ def test_bin_sim_diff_cache():
     _check_runtime_unweighted_matching()
 
 
+def _nway(**params):
+    """(status, body) of GET /api/bin_sim/nway for the uploaded pair, extra params merged."""
+    base = {"collection": COLLECTION, "md5s": f"{file_md5},{file_md5_2}"}
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway", params={**base, **params}, timeout=60
+    )
+    try:
+        return resp.status_code, resp.json()
+    except ValueError:
+        return resp.status_code, None
+
+
+def test_nway_diff():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-ter – N-way file diff (stored path)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – nway checks skipped.", YELLOW))
+        return
+
+    status, core = _nway(tab="core", scope="all", limit=1000)
+    if not check("nway: pair is served", status == 200 and core, f"HTTP {status}"):
+        return
+    check(
+        "nway: columns are the two requested files",
+        [c["md5"] for c in core["columns"]] == [file_md5, file_md5_2],
+        str(core["columns"]),
+    )
+
+    # With two files the rows must be the pair diff's own matched / unique rows.
+    matched = (_diff_page(file_md5, file_md5_2, "matched") or {}).get("total")
+    uniq = sum(
+        (_diff_page(file_md5, file_md5_2, t) or {}).get("total", 0)
+        for t in ("unique_to_a", "unique_to_b")
+    )
+    check(
+        "nway: core rows equal the pair diff's matched rows",
+        core["total"] == matched,
+        f"nway={core['total']} pair diff={matched}",
+    )
+    _, only = _nway(tab="unique", scope="all", limit=1000)
+    check(
+        "nway: unique rows equal the pair diff's unique rows",
+        only and only["total"] == uniq,
+        f"nway={only and only['total']} pair diff={uniq}",
+    )
+    check(
+        "nway: pair has rows to compare",
+        (only or {}).get("total", 0) + core["total"] > 0,
+        f"core={core['total']} unique={(only or {}).get('total')}",
+    )
+    check(
+        "nway: tab counts add up to the rows scope=all returns",
+        sum(core["counts"]["core"].values()) == core["total"]
+        and sum(only["counts"]["unique"].values()) == only["total"],
+        str(core["counts"]),
+    )
+    check(
+        "nway: every core row has a function in both files",
+        all(len(r["cells"]) == 2 and r["span"] == 2 for r in core["items"]),
+    )
+
+    # Paging, sorting, filtering.
+    if core["total"] > 1:
+        _, page = _nway(tab="core", scope="all", limit=1, offset=1)
+        check(
+            "nway: offset/limit slice the same total",
+            page and len(page["items"]) == 1 and page["total"] == core["total"],
+            str(page and (len(page["items"]), page["total"])),
+        )
+        _, asc = _nway(tab="core", scope="all", sort_col="weight", sort_dir="asc")
+        weights = [r["weight"] for r in asc["items"]]
+        check("nway: sort_dir=asc orders by weight", weights == sorted(weights))
+    _, none = _nway(tab="core", scope="all", q="zz-no-such-function-zz")
+    check(
+        "nway: q filters rows out",
+        none and none["total"] == 0 and none["counts"] == core["counts"],
+        "counts must ignore filters so hidden rows stay visible",
+    )
+
+    # Same md5 twice is one column.
+    _, dup = _nway(
+        md5s=f"{file_md5},{file_md5_2},{COLLECTION}:{file_md5}",
+        tab="core",
+        scope="all",
+    )
+    check(
+        "nway: duplicate members are dropped",
+        dup and len(dup["columns"]) == 2 and dup["total"] == core["total"],
+    )
+
+    # Errors.
+    check("nway: one file is a 400", _nway(md5s=file_md5)[0] == 400)
+    check("nway: bad tab is a 400", _nway(tab="nope")[0] == 400)
+    check("nway: mode=virtual is a 501 for now", _nway(mode="virtual")[0] == 501)
+    check(
+        "nway: unknown file is a 404",
+        _nway(md5s=f"{file_md5},{'0' * 32}")[0] == 404,
+    )
+
+    # The 413 cannot be forced over HTTP (caps live in server config); check the
+    # cap logic itself.
+    try:
+        from bsimvis.app.services.nway_diff_service import TooLarge, check_caps
+    except Exception as exc:
+        print(_color(f"\n[SKIP] cap checks need the package: {exc}", YELLOW))
+        return
+
+    def raises(*args, **kwargs):
+        try:
+            check_caps(*args, **kwargs)
+        except TooLarge:
+            return True
+        return False
+
+    check(
+        "nway caps: too many members and too many functions are refused",
+        raises(3, max_members=2)
+        and raises(2, 100, max_functions=50)
+        and not raises(2, 50, max_members=2, max_functions=50),
+    )
+
+
 def _runtime_doc(unweighted):
     """The runtime-greedy summary for the uploaded pair, or None."""
     params = {
@@ -7781,6 +7905,7 @@ if __name__ == "__main__":
         test_tag_vocabulary_and_llm_batch,
         test_llm_agentic_analysis,
         test_bin_sim_diff_cache,
+        test_nway_diff,
         test_llm_pair_analysis_job,
         test_search_job,
         test_bin_sim_notes_and_tags,
@@ -7809,6 +7934,7 @@ if __name__ == "__main__":
     STEP_DEPS = {
         # Issues the /api/bin_sim/build whose doc the diff cache step reads.
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
+        "test_nway_diff": ["test_search_filters_and_sorting"],
         "test_llm_pair_analysis_job": ["test_search_filters_and_sorting"],
         "test_search_job": ["test_search_filters_and_sorting"],
         "test_bin_sim_notes_and_tags": ["test_search_filters_and_sorting"],

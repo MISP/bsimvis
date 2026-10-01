@@ -2552,6 +2552,37 @@ class BinSimDiff(Resource):
         return diff_api()
 
 
+@ns_bin_sim.route("/nway")
+class BinSimNway(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "md5s": "Comma-separated files, each `<collection>:<md5>` or a bare md5 with `collection` (2 or more)",
+            "collection": "Collection for bare md5s",
+            "pool": "Pool ID; members must come from the pool's collections",
+            "mode": "stored (default); virtual is not available yet",
+            "min_edge": "Drop function matches below this similarity (default similarity.file_min_score)",
+            "tab": "core (in every file), partial (in at least k files) or unique (one file)",
+            "k": "Minimum files for the partial tab (default 2)",
+            "scope": "code (default), library or all",
+            "column": "Only rows that have a function in this file (`<collection>:<md5>`)",
+            "q": "Search function names, addresses and tags",
+            "tags": "Comma-separated tag prefixes to keep",
+            "feat_min": "Minimum row weight",
+            "feat_max": "Maximum row weight",
+            "support_min": "Minimum share of file pairs matched inside a row (0-1)",
+            "sort_col": "span, weight, support, cohesion or name",
+            "sort_dir": "asc or desc",
+            "limit": "Page size",
+            "offset": "Pagination offset",
+        }
+    )
+    def get(self):
+        """Rows of functions shared across N files, with core/partial/unique tabs and per-tab code/library counts."""
+        from bsimvis.app.routes.nway import get_nway
+
+        return get_nway()
+
+
 @ns_bin_sim.route("/list")
 class BinSimList(Resource):
     @ns_bin_sim.doc(

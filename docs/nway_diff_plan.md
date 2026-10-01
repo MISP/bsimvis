@@ -177,6 +177,11 @@ compute step later without touching the rest:
 - Mounted in a standalone `/diff/nway?...` view, opened from a multi-select in the file
   tables.
 
+### Member centrality
+
+See slice 5b. `centrality` is persisted at cluster build time (rebuild needed);
+`coverage` is derived live from the N-way rows.
+
 ### Out of v1
 
 - CLI subcommand: none.
@@ -200,6 +205,20 @@ compute step later without touching the rest:
 4. **UI.** `nway_panel.js`, standalone `/diff/nway` view, multi-select in file tables.
 5. **Cluster entry.** `cluster_uuid=`, adaptive columns with the x% rule, runtime column
    switch, the tab in `cluster_detail_view.js`.
+5b. **Member centrality + medoid.** Two parts, built after slice 5.
+   - *Build time (user-approved DB change, needs a cluster rebuild):*
+     `bin_cluster_service` already sums pair scores per node for `cohesion_score`;
+     keep a per-member sum in the same pass and persist `centrality` (mean score to
+     the node's other members) on each member. The medoid is the member with the
+     highest centrality; store it on the cluster meta (`medoid`). No extra reads at
+     request time, so it works on nodes over the N-way cap.
+   - *UI:* sortable `centrality` column in the cluster member list, a main-file
+     badge, and a jump button to the medoid. Existing clusters show nothing until
+     rebuilt.
+   - *N-way tab (free inside the cap):* a `coverage` column per file = share of the
+     node's Core + Partial weight that the file holds. It measures function overlap,
+     a different signal from file-score centrality; a disagreement between the two
+     is informative.
 6. **Later, after real use.** Worker job + Redis cache, `nway_diff` LLM tool, optional
    linkage gate, optional sampling for large clusters.
 

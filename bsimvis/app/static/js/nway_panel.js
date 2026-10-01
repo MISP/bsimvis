@@ -269,7 +269,10 @@
             if (!sig) return name;
             const f = this._fnData(sig.best.fid, sig.best.col);
             // Same renderer as the function search table, fed the guessed signature.
-            return window.EntityRenderer.renderFunction({ ...f, function_name: row.name, return_type: sig.ret, parameters: sig.params }, { hideNote: true, showActions: false });
+            const fn = window.EntityRenderer.renderFunction({ ...f, function_name: row.name, return_type: sig.ret, parameters: sig.params }, { hideNote: true, showActions: false });
+            // Tags land on the best candidate, the function the preview shows.
+            const tags = window.EntityRenderer.renderTag('function', f.function_id, f.tags, f.user_tags);
+            return `${fn}<div class="nway-tags" title="tags apply to the best candidate: ${escapeAttr(f.entrypoint_address)}">${tags}</div>`;
         }
 
         _row(row, ri) {

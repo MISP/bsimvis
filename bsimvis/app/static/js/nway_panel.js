@@ -172,9 +172,7 @@
             return html;
         }
 
-        // The compact function entity: the same data, hover preview, click and
-        // right-click menu EntityRenderer.renderFunction gives, with the address
-        // as the label (the row already carries the name).
+        // Function data for one cell, in the shape EntityRenderer.renderFunction takes.
         _fnData(fid, col) {
             const m = this.data.functions_metadata[fid] || {};
             const addr = fnParts(fid).addr;
@@ -188,17 +186,7 @@
         }
 
         _fnEntity(fid, col) {
-            const f = this._fnData(fid, col);
-            const sig = typeof formatSigComponent === 'function'
-                ? formatSigComponent(f.namespace, f.return_type, f.function_name, f.parameters).fullSig : f.function_name;
-            return `<span class="entity-function" title="${escapeAttr(sig)}" data-etype="function" data-eid="${escapeAttr(fid)}"
-                    data-entity-data='${escapeAttr(JSON.stringify(f))}'
-                    oncontextmenu='EntityRenderer.handleContextMenu(event, "function", this)'>
-                <b class="entity-name nway-addr"
-                   onmouseenter="typeof showCodePreview === 'function' && showCodePreview(${escapeAttr(jsString(fid))}, ${escapeAttr(jsString(f.function_name))}, ${escapeAttr(jsString(f.entrypoint_address))}, ${escapeAttr(jsString(col.md5))}, ${Number(f.bsim_features_count) || 0}, event)"
-                   onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)"
-                   onmouseleave="typeof hideCodePreview === 'function' && hideCodePreview(event)"
-                   onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(fid))}, ${escapeAttr(jsString(f.function_name))}, '', event)">${escapeHtml(f.entrypoint_address)}</b></span>`;
+            return window.EntityRenderer.renderFunction(this._fnData(fid, col), { hideNote: true, showActions: false });
         }
 
         // A child/direct column: "m/n files", plus links to the functions of the

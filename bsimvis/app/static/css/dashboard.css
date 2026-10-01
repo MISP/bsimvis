@@ -2760,11 +2760,9 @@ a.home-card:hover,
 .nway-table td:first-child { background: var(--bg); }
 .nway-table tbody tr:nth-child(even) td:first-child { background: var(--card-bg); }
 .nway-table tbody tr:hover td:first-child { background: var(--hover); }
-.nway-addr { color: var(--accent); cursor: pointer; font-family: 'Consolas', monospace; font-weight: 600; }
-.nway-addr:hover { text-decoration: underline; }
 .nway-sub { display: block; margin-top: 2px; font-size: 0.68rem; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--subtle); }
 .nway-table td.gap { text-align: center; color: var(--dim); }
-.nway-fn { display: flex; align-items: center; gap: 6px; min-width: 170px; }
+.nway-fn { display: flex; align-items: center; gap: 6px; min-width: 260px; max-width: 420px; }
 .nway-fn .entity-function { min-width: 0; }
 .nway-name { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .nway-warn { color: var(--token-warning); }

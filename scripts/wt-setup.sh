@@ -63,6 +63,8 @@ if [ ! -f "$ENV_FILE" ]; then
   # Bands kept clear of main (.env: 5001/6380/6667) and of each other.
   # Hash only spreads names; the busy-port guard below is what guarantees safety.
   OFF=$(( ( $(cksum <<<"$WT_ID" | cut -d' ' -f1) % 50 ) * 10 ))
+  # Follow the main repo's datastore mode: a Docker-only install has no native kvrocks.
+  DOCKER_MODE=${DOCKER_DATASTORES:-$(grep -E '^DOCKER_DATASTORES=' "$MAIN_ROOT/.env" 2>/dev/null | tail -n 1 | cut -d= -f2)}
   echo "Writing isolated $ENV_FILE (offset $OFF)"
   cat > "$ENV_FILE" <<EOF
 GHIDRA_INSTALL_DIR=$WT_ROOT/bin/ghidra_12.1_PUBLIC
@@ -75,6 +77,7 @@ KVROCKS_PORT=$((7400 + OFF))
 WORKERS_COUNT=5
 PROJECT_NAME=bsimvis-$WT_ID
 DATA_BASE_DIR=$WT_ROOT/data${SESSION_TAG:+-$SESSION_TAG}
+DOCKER_DATASTORES=${DOCKER_MODE:-false}
 EOF
 fi
 # shellcheck disable=SC1091

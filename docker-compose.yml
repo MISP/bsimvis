@@ -1,25 +1,52 @@
+# Lightweight datastores for DOCKER_DATASTORES=true (see launch_tmux.sh).
+# Both run as the host user so the bind-mounted data dirs stay writable, and
+# publish on 127.0.0.1 only: neither has a password.
 services:
   redis:
-    image: redis:latest
+    image: redis:7.2
     container_name: ${PROJECT_NAME}_redis
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     ports:
-      - "${REDIS_PORT:-6379}:6379"
-    restart: always
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - ${DATA_BASE_DIR:-./data}/redis:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
 
   kvrocks:
-    image: apache/kvrocks:latest
+    image: apache/kvrocks:2.17.0
     container_name: ${PROJECT_NAME}_kvrocks
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     ports:
-      - "${KVROCKS_PORT:-6666}:6666"
+      - "127.0.0.1:${KVROCKS_PORT:-6666}:6666"
     volumes:
-      - ./data/kvrocks:/var/lib/kvrocks
-      - ./kvrocks.conf:/var/lib/kvrocks/kvrocks.conf:ro
-    command: [ "--bind", "0.0.0.0", "--dir", "/var/lib/kvrocks" ]
+      - ${DATA_BASE_DIR:-./data}/kvrocks:/var/lib/kvrocks
+      - ./kvrocks.conf:/etc/kvrocks/kvrocks.conf:ro
+    # Appended to the image entrypoint; the last -c and later flags win.
+    # The default pidfile dir is only writable by the image's uid 999.
+    command:
+      - "-c"
+      - "/etc/kvrocks/kvrocks.conf"
+      - "--pidfile"
+      - "/var/lib/kvrocks/kvrocks.pid"
+      - "--rocksdb.block_cache_size"
+      - "${KVROCKS_BLOCK_CACHE_MB:-1024}"
+      - "--rocksdb.max_background_jobs"
+      - "2"
+    healthcheck:
+      test: [ "CMD-SHELL", "redis-cli -p 6666 PING | grep -E '(PONG|NOAUTH)'" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     deploy:
       resources:
         limits:
-          memory: 8G
-    restart: always
+          memory: ${KVROCKS_MEMORY_LIMIT:-3G}
+    restart: unless-stopped
 
   etcd:
     profiles:

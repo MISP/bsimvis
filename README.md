@@ -158,6 +158,30 @@ Use `--clear` to kill stale sessions before restarting:
 `launch_tmux.sh` is the tmux equivalent, and additionally caps the worker count by host
 RAM and runs each worker under a memory-limited systemd scope.
 
+On a small machine, set `DOCKER_DATASTORES=true` in `.env` before `./install.sh`: it skips
+the Redis/Kvrocks source builds, and both launch scripts start them with
+`docker compose up -d --wait redis kvrocks` instead (bound to `127.0.0.1`, data under
+`DATA_BASE_DIR`). Milvus stays opt-in via `COMPOSE_PROFILES=milvus`. Don't run the
+Docker and native Kvrocks against the same data dir at once.
+
+### Sizing
+
+The defaults target a 16 GB machine: 2 workers plus 1 scan worker (each a Ghidra
+JVM with a 1.5 GB heap, capped at `WORKER_MEMORY_MAX=3G`), Kvrocks capped at 3 GB in
+Docker, and `HOST_RESERVED_GB=6` left for Kvrocks, Redis and the desktop. Both launch
+scripts lower `WORKERS_COUNT` to fit `(RAM - HOST_RESERVED_GB) / WORKER_MEMORY_MAX`.
+On 8 GB, expect a single worker. With 32 GB+, raise `WORKERS_COUNT`.
+
+On WSL2, Linux only gets half the Windows RAM by default, so a 16 GB PC sees about
+8 GB, which runs 1 worker plus the scan worker. Giving WSL 12 GB (keep ~4 GB for
+Windows) leaves more headroom for large samples, still with 1 worker plus the scan
+worker. Set it in `%UserProfile%\.wslconfig`, then run `wsl --shutdown`:
+
+```ini
+[wsl2]
+memory=12GB
+```
+
 Services are configured via `.env` (see `.env.example`). Key variables:
 
 | Variable | Default | Description |
@@ -168,8 +192,12 @@ Services are configured via `.env` (see `.env.example`). Key variables:
 | `REDIS_PORT` | `6379` | Redis job queue port |
 | `KVROCKS_HOST` | `localhost` | Kvrocks host |
 | `KVROCKS_PORT` | `6666` | Kvrocks database port |
-| `WORKERS_COUNT` | `5` | Number of background workers |
+| `WORKERS_COUNT` | `2` | Number of background workers (capped by host RAM) |
 | `DATA_BASE_DIR` | `./data` | Storage path for all service data |
+| `DOCKER_DATASTORES` | `false` | Run Redis + Kvrocks from `docker-compose.yml` instead of built binaries |
+| `KVROCKS_BLOCK_CACHE_MB` | `1024` | Kvrocks block cache in the container (Docker only) |
+| `KVROCKS_MEMORY_LIMIT` | `3G` | Kvrocks container memory limit (Docker only) |
+| `HOST_RESERVED_GB` | `6` | RAM kept for kvrocks, redis and the desktop when capping workers |
 | `ENABLE_MILVUS` | `false` | Enable optional Milvus vector DB |
 | `MILVUS_HOST` | `localhost` | Milvus host (when enabled) |
 | `MILVUS_PORT` | `19530` | Milvus gRPC port |

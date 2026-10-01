@@ -48,6 +48,58 @@ services:
           memory: ${KVROCKS_MEMORY_LIMIT:-3G}
     restart: unless-stopped
 
+  # Whole stack: `docker compose up -d --build`. Inside the network the
+  # datastores are on their container ports, whatever REDIS_PORT/KVROCKS_PORT say.
+  app:
+    build: .
+    image: bsimvis:local
+    container_name: ${PROJECT_NAME}_app
+    environment: &bsimvis-env
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      KVROCKS_HOST: kvrocks
+      KVROCKS_PORT: "6666"
+      APP_PORT: "5000"
+      HOME: /tmp
+    ports:
+      - "127.0.0.1:${APP_PORT:-5000}:5000"
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:5000/api/collections')" ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    depends_on: &bsimvis-deps
+      redis:
+        condition: service_healthy
+      kvrocks:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    image: bsimvis:local
+    command: [ "sh", "-c", 'exec python bsimvis/worker.py --name "worker-$$(hostname)"' ]
+    environment: *bsimvis-env
+    depends_on: *bsimvis-deps
+    deploy:
+      replicas: ${WORKERS_COUNT:-2}
+      resources:
+        limits:
+          memory: ${WORKER_MEMORY_MAX:-3G}
+    restart: unless-stopped
+
+  # Claims the scan lane only, so an interactive scan never queues behind a build.
+  scan-worker:
+    image: bsimvis:local
+    command: [ "sh", "-c", 'exec python bsimvis/worker.py --scan-only --name "scan-worker-$$(hostname)"' ]
+    environment: *bsimvis-env
+    depends_on: *bsimvis-deps
+    deploy:
+      replicas: ${SCAN_WORKERS_COUNT:-1}
+      resources:
+        limits:
+          memory: ${WORKER_MEMORY_MAX:-3G}
+    restart: unless-stopped
+
   etcd:
     profiles:
       - milvus

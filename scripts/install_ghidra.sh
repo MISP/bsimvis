@@ -142,6 +142,8 @@ if [ -n "${JAVA_HOME_PATH:-}" ]; then
     if grep -q "^JAVA_HOME=" .env; then
         sed -i "s|^JAVA_HOME=.*|JAVA_HOME=${JAVA_HOME_PATH}|" .env
     else
+        # A .env without a trailing newline would glue JAVA_HOME onto its last line.
+        [ -n "$(tail -c1 .env)" ] && echo >> .env
         echo "JAVA_HOME=${JAVA_HOME_PATH}" >> .env
     fi
     echo "Updated .env with JAVA_HOME"

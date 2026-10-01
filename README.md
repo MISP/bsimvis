@@ -164,6 +164,15 @@ the Redis/Kvrocks source builds, and both launch scripts start them with
 `DATA_BASE_DIR`). Milvus stays opt-in via `COMPOSE_PROFILES=milvus`. Don't run the
 Docker and native Kvrocks against the same data dir at once.
 
+### Everything in Docker
+
+`docker compose up -d --build` builds one image (Python, Ghidra, a portable JDK, capa, UPX,
+YARA rules; `install.sh` runs at build time) and starts Redis, Kvrocks, the app and
+`WORKERS_COUNT` workers plus `SCAN_WORKERS_COUNT` scan workers. The dashboard is on
+`127.0.0.1:${APP_PORT}`. Worker memory is capped by `WORKER_MEMORY_MAX`. The first build
+downloads about 1 GB. `bsimvis_config.toml` is baked in from the example at build time:
+edit it and rebuild.
+
 ### Sizing
 
 The defaults target a 16 GB machine: 2 workers plus 1 scan worker (each a Ghidra

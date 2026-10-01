@@ -572,6 +572,7 @@ class BinClusterService:
         # "{collection}:file:{md5}"; stored bare, downstream id parsing
         # (routes/bin_cluster.py, the context-menu frontend) mistakes the
         # md5 itself for a collection-qualified id.
+        axis_keys = self._secondary_axis_keys(collection, algo, sim_score_key)
         prefix = f"{collection}:file:"
         for label, members in cluster_members.items():
             members = [m if m.startswith(prefix) else f"{prefix}{m}" for m in members]
@@ -616,6 +617,10 @@ class BinClusterService:
                 label, members, sim_prefix, score_key, min_sim, pair_budget
             )
 
+            cohesion_axes, cohesion_axes_exact = self._secondary_cohesion(
+                label, members, sim_prefix, axis_keys, min_sim, pair_budget
+            )
+
             set_tag_distribution_score(summary["tag_distribution"], cohesion_score)
             gated_inferred_tags = inferred_tag_values(
                 summary, cohesion_score, inferred_min_cohesion, inferred_min_coverage
@@ -642,6 +647,8 @@ class BinClusterService:
                 "cluster_name": default_name,
                 "cohesion_score": float(cohesion_score),
                 "cohesion_exact": bool(cohesion_exact),
+                "cohesion_axes": cohesion_axes,
+                "cohesion_axes_exact": bool(cohesion_axes_exact),
                 "inferred_tags": gated_inferred_tags,
                 "avg_stability": 1.0,
                 "cluster_stability": 1.0,
@@ -750,6 +757,34 @@ class BinClusterService:
                 death_lambdas[p] = l
 
         return birth_lambdas, death_lambdas
+
+    _SECONDARY_AXES = ("code", "library", "content")
+
+    def _secondary_axis_keys(self, collection, algo, sim_score_key):
+        """{axis: score zset key} for every non-primary axis that has pairs."""
+        keys = {}
+        for ax in self._SECONDARY_AXES:
+            key = f"{collection}:bin_sim:score_{ax}:{algo}"
+            if key != sim_score_key and self.r.exists(key):
+                keys[ax] = key
+        return keys
+
+    def _secondary_cohesion(self, label, members, prefix, axis_keys, min_sim, budget):
+        """Cohesion of the same members on each secondary axis.
+
+        Returns ({axis: score}, exact). The pair budget is split across axes
+        so the total reads stay flat.
+        """
+        if not axis_keys:
+            return {}, True
+        per_axis = max(self._COHESION_MIN_PAIRS, budget // len(axis_keys))
+        out, exact = {}, True
+        for ax, key in axis_keys.items():
+            out[ax], ex = self._node_cohesion(
+                label, members, prefix, key, min_sim, per_axis
+            )
+            exact = exact and ex
+        return out, exact
 
     def _node_cohesion(self, label, members, prefix, score_key, min_sim, max_pairs):
         """Mean similarity over the pairs inside one cluster.
@@ -1634,6 +1669,7 @@ class BinClusterService:
         )
 
         label_key = (lambda label: f"c{label}") if node_type == "container" else str
+        axis_keys = self._secondary_axis_keys(collection, algo, sim_score_key)
 
         # 4. Extract Condensed Tree for UI
         tree_json = tree_df.to_json(orient="records")
@@ -1954,6 +1990,17 @@ class BinClusterService:
                 summary, cohesion_score, inferred_min_cohesion, inferred_min_coverage
             )
             gated_by_label[label] = gated_inferred_tags
+            cohesion_axes, cohesion_axes_exact = self._secondary_cohesion(
+                label,
+                members,
+                f"{collection}:bin_sim:{algo}:",
+                axis_keys,
+                0.0,
+                max(
+                    self._COHESION_MIN_PAIRS,
+                    self._COHESION_BUDGET // max(1, len(write_nodes)),
+                ),
+            )
 
             sample_members = []
             for file_id in members[:5]:
@@ -1983,6 +2030,8 @@ class BinClusterService:
                 # False when cohesion came off a pair sample rather than every
                 # pair -- see BinClusterService._node_cohesion.
                 "cohesion_exact": bool(cohesion_exact),
+                "cohesion_axes": cohesion_axes,
+                "cohesion_axes_exact": bool(cohesion_axes_exact),
                 "avg_stability": float(stabilities.get(label, 0.0)),
                 "cluster_stability": float(stabilities.get(label, 0.0)),
                 "member_count": len(members),
@@ -2345,6 +2394,16 @@ def _demo():
     members = ["global:pool:P:file:a1:m1", "global:pool:P:file:a:m2"]
     coh, _ = pool._node_cohesion("n4", members, "p:", "sk", 0.0, cap)
     assert coh == 0.5, coh
+
+    # Secondary axes: one value per axis key, none when no other axis has pairs.
+    two = svc_for({"p:m1::m2": 1.0, "p:m2::m3": 1.0})
+    members = ["c:file:m1", "c:file:m2", "c:file:m3"]
+    axes, exact = two._secondary_cohesion(
+        "n5", members, "p:", {"library": "k1", "content": "k2"}, 0.0, cap
+    )
+    assert set(axes) == {"library", "content"} and exact, axes
+    assert all(abs(v - 2.0 / 3.0) < 1e-9 for v in axes.values()), axes
+    assert two._secondary_cohesion("n5", members, "p:", {}, 0.0, cap) == ({}, True)
 
     print("incremental cohesion demo OK")
 

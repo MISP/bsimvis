@@ -131,6 +131,22 @@ class BinClusterService:
         return [(u, v, raw_sims[(min(u, v), max(u, v))]) for u, v, _ in mst]
 
     @staticmethod
+    def _bottlenecks(tree_rows, raw_mst):
+        """{tree node: weakest raw MST edge inside it}.
+
+        tree_rows[2i] / [2i+1] are the two child rows of raw_mst[i]'s merge
+        (see cluster_common.stabilise), and merges run strongest first, so
+        both children are already scored when their parent is.
+        """
+        out = {}
+        for i, (_u, _v, sim) in enumerate(raw_mst):
+            a, b = tree_rows[2 * i], tree_rows[2 * i + 1]
+            out[a["parent"]] = min(
+                sim, out.get(a["child"], 1.0), out.get(b["child"], 1.0)
+            )
+        return out
+
+    @staticmethod
     def _hierarchical_algo_ns(algo, axis, node_type, use_snn):
         algo_ns = f"{algo}:{axis}" if axis != "overall" else algo
         if use_snn:
@@ -1058,7 +1074,8 @@ class BinClusterService:
                     node_meta[c] = json.loads(raw) if raw else {}
 
             cohesion = {
-                c: meta.get("cohesion_score", 1.0) for c, meta in node_meta.items()
+                c: meta.get("cohesion_mean", meta.get("cohesion_score", 1.0))
+                for c, meta in node_meta.items()
             }
             # Every dirty node is recomputed, and `dirty` holds the whole
             # root-path of every new leaf, so the node count grows with the
@@ -1091,6 +1108,7 @@ class BinClusterService:
                 for c in node_members
             }
             birth_lambdas, _ = self._tree_lambdas(tree_df)
+            bottlenecks = self._bottlenecks(tree_rows, state["mst"])
             results.append(
                 (
                     node_type,
@@ -1108,6 +1126,7 @@ class BinClusterService:
                     retired,
                     algo_ns,
                     centrality,
+                    bottlenecks,
                 )
             )
 
@@ -1130,6 +1149,7 @@ class BinClusterService:
             retired,
             algo_ns,
             centrality,
+            bottlenecks,
         ) in results:
             persisted = self._persist_hierarchical_binary_clusters(
                 collection,
@@ -1150,6 +1170,7 @@ class BinClusterService:
                 cohesion_by_label=cohesion,
                 cohesion_exact_by_label=cohesion_exact,
                 centrality_by_label=centrality,
+                bottleneck_by_label=bottlenecks,
                 only_nodes=dirty,
                 only_fids=affected_fids,
                 retired_nodes=retired,
@@ -1285,6 +1306,7 @@ class BinClusterService:
                 job_service.add_log(job_id, msg)
 
             birth_lambdas, _ = self._tree_lambdas(tree_df)
+            bottlenecks = self._bottlenecks(tree_rows, hier_state["mst"])
 
             persisted = self._persist_hierarchical_binary_clusters(
                 collection,
@@ -1303,6 +1325,7 @@ class BinClusterService:
                 node_type=node_type,
                 algo=algo,
                 sim_score_key=sim_score_key,
+                bottleneck_by_label=bottlenecks,
             )
             if persisted is False:
                 return False
@@ -1695,6 +1718,7 @@ class BinClusterService:
         cohesion_by_label=None,
         cohesion_exact_by_label=None,
         centrality_by_label=None,
+        bottleneck_by_label=None,
         only_nodes=None,
         only_fids=None,
         retired_nodes=(),
@@ -2056,6 +2080,9 @@ class BinClusterService:
             else:
                 cohesion_score = 1.0
                 centrality = {m: 1.0 for m in members}
+            cohesion_mean = cohesion_score
+            if bottleneck_by_label is not None:
+                cohesion_score = bottleneck_by_label.get(label, 1.0)
             set_tag_distribution_score(summary["tag_distribution"], cohesion_score)
             gated_inferred_tags = inferred_tag_values(
                 summary, cohesion_score, inferred_min_cohesion, inferred_min_coverage
@@ -2098,7 +2125,10 @@ class BinClusterService:
                 "cluster_uuid": label_to_uuid[label],
                 "cluster_name": default_name,
                 "cohesion_score": float(cohesion_score),
-                # False when cohesion came off a pair sample rather than every
+                # Mean over all pairs (unstored = 0): density, kept off the
+                # headline because chains and mixed families always score low.
+                "cohesion_mean": float(cohesion_mean),
+                # False when the mean came off a pair sample rather than every
                 # pair -- see BinClusterService._node_cohesion.
                 "cohesion_exact": bool(cohesion_exact),
                 "medoid": pick_medoid(centrality),
@@ -2500,6 +2530,19 @@ def _demo():
         sums = adj.member_sums(idx)
         assert abs(sum(sums) / 2.0 - adj.cohesion_sum(idx)) < 1e-4, n
         assert abs(sums[0] - 0.5) < 1e-6 and abs(sums[1] - 1.0) < 1e-6, sums[:2]
+
+    # Bottleneck: a tight pair stays 0.9, one loose member drags the parent to 0.2.
+    from bsimvis.app.services.cluster_threshold import build_single_linkage_tree
+
+    edges = SimpleNamespace(
+        src=np.array([0, 1]),
+        dst=np.array([1, 2]),
+        dist=np.array([0.1, 0.8]),
+        idx_to_id=["a", "b", "c"],
+    )
+    rows, _root, _n, mst = build_single_linkage_tree(edges)
+    bn = BinClusterService._bottlenecks(rows, mst)
+    assert sorted(round(v, 3) for v in bn.values()) == [0.2, 0.9], bn
 
     print("incremental cohesion demo OK")
 

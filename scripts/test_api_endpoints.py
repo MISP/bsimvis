@@ -4901,9 +4901,99 @@ def test_nway_cluster_entry():
             "nway cluster: unknown child cluster is a 404",
             nway("no-such-cluster-0000")[0] == 404,
         )
+
+        # Slice 5b: file columns carry coverage; centrality + medoid are read
+        # from what the cluster build persists (seeded the way it writes them).
+        check(
+            "nway: file columns carry a coverage in [0,1] or null",
+            files
+            and all(
+                c["coverage"] is None or 0.0 <= c["coverage"] <= 1.0
+                for c in files["columns"]
+            ),
+            f"{files and [c.get('coverage') for c in files['columns']]}",
+        )
+        nwp = f"nwp{tag}"
+        meta = json.loads(r.get(f"{base}:{nwp}:meta"))
+        r.set(f"{base}:{nwp}:meta", json.dumps({**meta, "medoid": f2}))
+        r.sadd(f"{base}:{nwp}:direct_members", f1, f2)
+        r.hset(f"{base}:{nwp}:centrality", mapping={f1: 0.25, f2: 0.75})
+        lst = test_endpoint(
+            "GET",
+            "/api/bin_cluster/list",
+            params={
+                "collection": COLLECTION,
+                "algo": "unweighted_cosine",
+                "cluster_uuid": f"uuid-{nwp}",
+                "show_members": "true",
+            },
+        )
+        row = next(
+            (
+                c
+                for c in (lst or {}).get("results", [])
+                if c.get("cluster_uuid") == f"uuid-{nwp}"
+            ),
+            {},
+        )
+        check(
+            "bin_cluster/list carries medoid and per-member centrality",
+            row.get("medoid") == f2
+            and {m["id"]: m["centrality"] for m in row.get("direct_members", [])}
+            == {f1: 0.25, f2: 0.75},
+            f"{row.get('medoid')} {row.get('direct_members')}",
+        )
+        mem = test_endpoint(
+            "GET",
+            "/api/bin_cluster/members",
+            params={
+                "collection": COLLECTION,
+                "algo": "unweighted_cosine",
+                "cluster_id": nwp,
+                "sort": "centrality",
+            },
+        )
+        check(
+            "bin_cluster/members sort=centrality ranks highest first, with medoid",
+            mem
+            and mem.get("medoid") == f2
+            and [m["id"] for m in mem["results"]] == [f2, f1]
+            and [m["centrality"] for m in mem["results"]] == [0.75, 0.25],
+            f"{mem}",
+        )
+        old_row = next(
+            (
+                c
+                for c in (
+                    test_endpoint(
+                        "GET",
+                        "/api/bin_cluster/list",
+                        params={
+                            "collection": COLLECTION,
+                            "algo": "unweighted_cosine",
+                            "cluster_uuid": f"uuid-nwq{tag}",
+                            "show_members": "true",
+                        },
+                    )
+                    or {}
+                ).get("results", [])
+                if c.get("cluster_uuid") == f"uuid-nwq{tag}"
+            ),
+            {},
+        )
+        check(
+            "bin_cluster/list: cluster without centrality reports null medoid",
+            "medoid" in old_row and old_row["medoid"] is None,
+            f"{old_row.get('medoid', 'missing')}",
+        )
     finally:
         for cid in tree:
-            r.delete(f"{base}:{cid}:meta", f"{base}:{cid}:members")
+            r.delete(
+                f"{base}:{cid}:meta",
+                f"{base}:{cid}:members",
+                f"{base}:{cid}:direct_members",
+                f"{base}:{cid}:centrality",
+            )
         r.hdel(f"{base}:uf:uuid", *tree)
         if old_links is None:
             r.delete(links_key)

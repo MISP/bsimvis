@@ -465,7 +465,33 @@ def project_rows(rows, groups, presence):
     return out
 
 
+def coverage(rows, column_ids):
+    """{column id: share of the shared weight that file holds}.
+
+    Shared weight = sum of `weight` over rows spanning at least two files
+    (Core + Partial, whatever `k` is); a file's share counts the same rows it
+    has a function in. None for every file when nothing is shared.
+    """
+    shared = [r for r in rows if r["span"] >= 2]
+    total = sum(r["weight"] for r in shared)
+    if total <= 0:
+        return {c: None for c in column_ids}
+    return {
+        c: sum(r["weight"] for r in shared if c in r["cells"]) / total
+        for c in column_ids
+    }
+
+
 def demo():
+    cov_rows = [
+        {"span": 3, "weight": 6.0, "cells": {"a": 1, "b": 2, "c": 3}},
+        {"span": 2, "weight": 2.0, "cells": {"a": 4, "b": 5}},
+        {"span": 1, "weight": 50.0, "cells": {"c": 6}},
+    ]
+    cov = coverage(cov_rows, ["a", "b", "c"])
+    assert cov == {"a": 1.0, "b": 1.0, "c": 0.75}, cov
+    assert coverage(cov_rows[2:], ["c"]) == {"c": None}
+
     groups = [
         {"id": "A", "members": ["f1", "f2", "f3", "f4"]},
         {"id": "B", "members": ["f5", "f6"]},
@@ -542,15 +568,17 @@ def compute(r, scope, members, params=None):
         base = _load_base(r, scope, members, vparams, labels, warnings)
         _BASE_CACHE.put(base_key, base)
     rows = _match(base, min_edge)
+    cov = coverage(rows, [c["id"] for c in base["columns"]])
+    file_columns = [{**c, "coverage": cov[c["id"]]} for c in base["columns"]]
     if groups:
         rows = project_rows(rows, groups, presence)
     doc = {
         "mode": mode,
         "algo": base["algo"],
         "min_edge": min_edge,
-        "columns": groups or base["columns"],
+        "columns": groups or file_columns,
         "columns_mode": "children" if groups else "files",
-        "file_columns": base["columns"] if groups else None,
+        "file_columns": file_columns if groups else None,
         "rows": rows,
         "fmeta": base["fmeta"],
         "fallback_pairs": base["fallback_pairs"],

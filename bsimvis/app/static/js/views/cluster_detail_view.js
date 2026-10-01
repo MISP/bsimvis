@@ -36,6 +36,7 @@ window.ClusterDetailView = {
     selectedClusterUuid: null,
     expandedGroups: new Set(),
     memberCache: {}, // cluster_uuid -> direct_members array
+    centralitySort: false, // members ranked by centrality, highest first
     groupBy: 'cluster',
     treeExpanded: new Set(), // cluster_id
     tab: 'members',
@@ -314,6 +315,7 @@ window.ClusterDetailView = {
                                 <button class="view-btn active" id="cluster-group-btn-cluster" onclick="ClusterDetailView.setGroupBy('cluster')" title="Group by child cluster">Cluster</button>
                                 <button class="view-btn" id="cluster-group-btn-none" onclick="ClusterDetailView.setGroupBy('none')" title="Flat list of direct members">None</button>
                             </div>
+                            <span id="cluster-medoid-ctl" style="font-size:0.78rem;"></span>
                         </div>
 
                         <div class="resizable-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; flex:1; min-height:200px; overflow:hidden; margin-top: 10px; background: var(--card-bg);">
@@ -324,6 +326,7 @@ window.ClusterDetailView = {
                                             <th style="padding:8px 12px; text-align:left;">${this.isBinary ? 'File Name' : 'Function'}</th>
                                             <th style="padding:8px 12px; text-align:left;">MD5</th>
                                             <th style="padding:8px 12px; text-align:left;">${this.isBinary ? 'Arch' : 'File Name'}</th>
+                                            ${this.isBinary ? `<th style="padding:8px 12px; text-align:right; cursor:pointer; user-select:none;" id="cluster-centrality-th" onclick="ClusterDetailView.toggleCentralitySort()" title="Mean similarity to the other files of this cluster">Centrality</th>` : ''}
                                         </tr>
                                     </thead>
                                     <tbody id="cluster-members-tbody"></tbody>
@@ -777,6 +780,7 @@ window.ClusterDetailView = {
         tbody.innerHTML = '';
 
         if (!this.selectedClusterUuid) return;
+        this.renderMedoidCtl();
 
         if (this.groupBy === 'none') {
             this.renderFlatMembers(tbody);
@@ -785,8 +789,30 @@ window.ClusterDetailView = {
         }
     },
 
+    toggleCentralitySort() {
+        this.centralitySort = !this.centralitySort;
+        const th = document.getElementById('cluster-centrality-th');
+        if (th) th.textContent = this.centralitySort ? 'Centrality ▼' : 'Centrality';
+        this.renderTable();
+    },
+
+    /** Main file (medoid) shortcut; the hint shows for clusters built before centrality. */
+    renderMedoidCtl() {
+        const el = document.getElementById('cluster-medoid-ctl');
+        if (!el || !this.isBinary) return;
+        const medoid = (this.clusterMapByUuid[this.selectedClusterUuid] || {}).medoid;
+        if (!medoid) {
+            el.innerHTML = `<span class="dim">rebuild clusters to compute centrality</span>`;
+            return;
+        }
+        const parts = String(medoid).split(':file:');
+        el.innerHTML = `<button class="view-btn" id="cluster-medoid-btn" title="Most central file of this cluster">★ Main file</button>`;
+        document.getElementById('cluster-medoid-btn').onclick = e =>
+            openFileDetails(parts.length > 1 ? parts[0] : this.collection || '', parts[parts.length - 1], parts[parts.length - 1], e);
+    },
+
     async renderFlatMembers(tbody) {
-        tbody.innerHTML = `<tr><td colspan="3" class="dim" style="padding:20px; text-align:center;"><i class="fa-solid fa-spinner fa-spin"></i> Loading full membership...</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="4" class="dim" style="padding:20px; text-align:center;"><i class="fa-solid fa-spinner fa-spin"></i> Loading full membership...</td></tr>`;
         try {
             const qs = new URLSearchParams();
             if (this.params.pool) qs.set('pool', this.params.pool);
@@ -802,7 +828,7 @@ window.ClusterDetailView = {
             tbody.innerHTML = '';
             const items = this.isBinary ? data.files : data.functions;
             if (!items || items.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="3" class="dim" style="padding:20px; text-align:center;">No members found in search index.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="4" class="dim" style="padding:20px; text-align:center;">No members found in search index.</td></tr>`;
                 return;
             }
 
@@ -831,13 +857,13 @@ window.ClusterDetailView = {
 
             if (data.total > 1000) {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td colspan="3" class="dim" style="padding:15px; text-align:center; font-style:italic;">Showing first 1000 members out of ${data.total}. ${this.renderMemberListLink(this.clusterMapByUuid[this.selectedClusterUuid])}</td>`;
+                tr.innerHTML = `<td colspan="4" class="dim" style="padding:15px; text-align:center; font-style:italic;">Showing first 1000 members out of ${data.total}. ${this.renderMemberListLink(this.clusterMapByUuid[this.selectedClusterUuid])}</td>`;
                 tbody.appendChild(tr);
             }
 
         } catch (e) {
             console.error(e);
-            tbody.innerHTML = `<tr><td colspan="3" style="padding:20px; text-align:center; color:var(--error);"><i class="fa-solid fa-circle-exclamation"></i> Error loading members: ${e.message}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="4" style="padding:20px; text-align:center; color:var(--error);"><i class="fa-solid fa-circle-exclamation"></i> Error loading members: ${e.message}</td></tr>`;
         }
     },
 
@@ -852,7 +878,7 @@ window.ClusterDetailView = {
             tr.className = 'bsim-grp-row';
             tr.onclick = () => this.toggleGroup(uuid);
             tr.innerHTML = `
-                <td colspan="3" style="padding-left: ${12 + depth * 20}px;">
+                <td colspan="4" style="padding-left: ${12 + depth * 20}px;">
                     <i class="fa-solid fa-chevron-${isExpanded ? 'down' : 'right'} bsim-caret-btn"></i>
                     <i class="fa-solid fa-bullseye" style="color:var(--accent); margin:0 6px;"></i>
                     <b>${escapeHtml(c.cluster_name || `Cluster #${c.cluster_id}`)}</b>
@@ -887,7 +913,7 @@ window.ClusterDetailView = {
                      this.renderTable();
                  };
                  tr.innerHTML = `
-                    <td colspan="3" style="padding-left: ${12 + targetDepth * 20}px; opacity: 0.9;">
+                    <td colspan="4" style="padding-left: ${12 + targetDepth * 20}px; opacity: 0.9;">
                         <i class="fa-solid fa-chevron-${isDmExpanded ? 'down' : 'right'} bsim-caret-btn"></i>
                         <i class="fa-solid fa-users" style="color:var(--dim); margin:0 6px;"></i>
                         <b>Direct Members</b>
@@ -905,7 +931,7 @@ window.ClusterDetailView = {
         } else if (members.length === 0 && children.length === 0) {
             // Empty leaf
             const tr = document.createElement('tr');
-            tr.innerHTML = `<td colspan="3" class="dim" style="padding-left: ${12 + targetDepth * 20}px; font-style:italic;">No direct members</td>`;
+            tr.innerHTML = `<td colspan="4" class="dim" style="padding-left: ${12 + targetDepth * 20}px; font-style:italic;">No direct members</td>`;
             tbody.appendChild(tr);
         }
 
@@ -921,13 +947,17 @@ window.ClusterDetailView = {
             const tr = document.createElement('tr');
             tr.className = 'bsim-grp-row';
             tr.onclick = () => this.loadMoreChildren(c.cluster_id);
-            tr.innerHTML = `<td colspan="3" style="padding-left: ${12 + targetDepth * 20}px; color:var(--accent);">+ ${hiddenChildren} more groups…</td>`;
+            tr.innerHTML = `<td colspan="4" style="padding-left: ${12 + targetDepth * 20}px; color:var(--accent);">+ ${hiddenChildren} more groups…</td>`;
             tbody.appendChild(tr);
         }
     },
 
     renderMembersList(tbody, members, depth) {
         const col = this.collection || '';
+        const medoid = (this.clusterMapByUuid[this.selectedClusterUuid] || {}).medoid;
+        if (this.centralitySort) {
+            members = [...members].sort((a, b) => (b.centrality ?? -1) - (a.centrality ?? -1));
+        }
 
         members.forEach(m => {
             // A bare md5 id (flat file search) has no collection to split out.
@@ -940,6 +970,7 @@ window.ClusterDetailView = {
             let c1, c2, c3;
             if (this.isBinary) {
                 c1 = EntityRenderer.renderFileName(m.name || '', md5, memberCol);
+                if (medoid && m.id === medoid) c1 = `<span title="Main file (medoid)" style="color:var(--accent);">★</span> ${c1}`;
                 c2 = EntityRenderer.renderMd5(md5, { collection: memberCol });
                 c3 = `<span class="dim">${escapeHtml(m.language_id || '---')}</span>`;
             } else {
@@ -962,6 +993,7 @@ window.ClusterDetailView = {
                 <td style="padding-left: ${12 + depth * 20}px;">${c1}</td>
                 <td>${c2}</td>
                 <td>${c3}</td>
+                ${this.isBinary ? `<td style="text-align:right;" class="dim">${m.centrality == null ? '---' : escapeHtml(Number(m.centrality).toFixed(3))}</td>` : ''}
             `;
             tbody.appendChild(tr);
         });

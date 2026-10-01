@@ -2376,6 +2376,7 @@ class BinClusterMembers(Resource):
             "axis": "Similarity axis",
             "node_type": "Node type (file/container)",
             "cluster_id": "Target cluster ID",
+            "sort": "Set to 'centrality' to rank members by centrality, highest first",
             "limit": "Max results",
             "offset": "Pagination offset",
         }

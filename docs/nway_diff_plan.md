@@ -258,3 +258,33 @@ See slice 5b. `centrality` is persisted at cluster build time (rebuild needed);
   clustering (resolve members from a cluster created in the test, or test the resolver
   separately).
 - `RESULT: PASS` from `wt-test.sh` is not enough: require `Failed : 0`.
+
+## Slice 5b as built
+
+- `BinClusterService._node_cohesion(..., centrality_out=)` fills `{member: mean score
+  to the other members}` off the pairs it already reads, so it follows the same
+  sample and budget as `cohesion_score`. The full-rebuild path gets the same numbers
+  from `SimAdjacency.member_sums` (a `cohesion_sum` that keeps the per-member sums).
+  An unstored pair counts as 0, as in cohesion. `pick_medoid` takes the highest
+  centrality, ties by id.
+- Persisted (additive, nothing existing changed; a rebuild is needed):
+  - `{coll}:bin_cluster:{algo_ns}:{label}:centrality`: hash, member id -> centrality
+    (4 decimals). Rewritten with the node, deleted with it (`clear_clusters`, stale
+    and retired nodes). A separate hash, not a field on the file meta, because a file
+    sits in many nested nodes and in many algo namespaces.
+  - cluster meta `medoid` (member id) and `centrality_exact` (same flag as
+    `cohesion_exact`).
+  - The incremental path recomputes only the dirty nodes, like cohesion.
+- API: `/api/bin_cluster/list` rows carry `medoid`, and each `direct_members` entry
+  carries `centrality`; `/api/bin_cluster/members` takes `sort=centrality` and returns
+  `medoid` and `centrality` per member. All are null for a cluster not rebuilt.
+  `/api/bin_cluster/files` is unchanged. Pools whose engine writes per-uuid keys
+  (hdbscan) have no centrality hash and read as null.
+- UI: Centrality column (click the header to rank highest first), a star on the
+  medoid, a "Main file" button, and a hint when the cluster has no centrality. The
+  flat "Group by: None" list comes from file search and shows no centrality.
+- N-way `coverage` per file column = sum of `weight` over the rows spanning at least
+  two files that hold a function of that file / sum of `weight` over all rows spanning
+  at least two files. It ignores `k` and `min_edge` only through the rows it is given
+  (it follows `min_edge`). It is shown as "N% shared" in the file column header and
+  is absent on child columns (`file_columns` carries it in children mode).

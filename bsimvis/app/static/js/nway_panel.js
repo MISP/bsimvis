@@ -224,7 +224,7 @@
             };
             const colHead = c => c.kind
                 ? `<th title="${escapeAttr(c.kind === 'child' ? 'child cluster' : 'files at this node, in no child cluster')}">${escapeHtml(c.label)}<div class="dim" style="font-weight:400;">${Number(c.member_count)} files</div></th>`
-                : `<th title="${escapeAttr(`${c.file_name} (${c.collection})`)}">${escapeHtml(c.file_name)}<div class="dim" style="font-weight:400;">${Number(c.functions)} fn</div></th>`;
+                : `<th title="${escapeAttr(`${c.file_name} (${c.collection})`)}">${escapeHtml(c.file_name)}<div class="dim" style="font-weight:400;">${Number(c.functions)} fn</div>${c.coverage == null ? '' : `<div title="share of the shared (span >= 2) weight this file holds" style="font-weight:400; color:var(--accent);">${(Number(c.coverage) * 100).toFixed(0)}% shared</div>`}</th>`;
             return `<tr>${SORTS.map(th).join('')}${this.data.columns.map(colHead).join('')}<th></th></tr>`;
         }
 

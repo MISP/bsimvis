@@ -670,6 +670,9 @@ def list_bin_clusters():
                 "batch_uuid_distribution": m.get("batch_uuid_distribution", []),
                 "function_count_stats": m.get("function_count_stats", {}),
                 "has_children": bool(parent_to_children.get(str(m.get("cluster_id")))),
+                # null until the cluster is rebuilt with centrality
+                "medoid": m.get("medoid"),
+                "centrality_exact": m.get("centrality_exact"),
             }
             results.append(cluster_result)
 
@@ -699,6 +702,21 @@ def list_bin_clusters():
                 cid = str(c["cluster_id"])
                 p_pipe.smembers(f"{collection}:bin_cluster:{algo}:{cid}:direct_members")
         direct_members_ids_list = p_pipe.execute()
+        c_pipe = r.pipeline(transaction=False)
+        for c in page:
+            ckey = (
+                f"global:pool:{pool_id}:bin_cluster:{c['cluster_uuid']}:centrality"
+                if is_pool
+                else f"{collection}:bin_cluster:{algo}:{c['cluster_id']}:centrality"
+            )
+            c_pipe.hgetall(ckey)
+        centrality_list = [
+            {
+                (k.decode() if isinstance(k, bytes) else k): float(v)
+                for k, v in (h or {}).items()
+            }
+            for h in c_pipe.execute()
+        ]
 
         all_member_ids = set()
         cluster_to_member_ids = {}
@@ -736,7 +754,7 @@ def list_bin_clusters():
                 m["function_count"] = func_count
                 member_meta_map[mid] = m
 
-        for cluster_res in page:
+        for cluster_res, centrality in zip(page, centrality_list):
             cid = str(cluster_res["cluster_id"])
             mids = cluster_to_member_ids.get(cid, [])
             cluster_res["direct_members"] = [
@@ -753,6 +771,7 @@ def list_bin_clusters():
                     "tags": member_meta_map.get(mid, {}).get("tags", []),
                     "user_tags": member_meta_map.get(mid, {}).get("user_tags", []),
                     "filetype": member_meta_map.get(mid, {}).get("filetype", []),
+                    "centrality": centrality.get(mid),
                 }
                 for mid in mids
             ]
@@ -967,6 +986,16 @@ def list_bin_cluster_members():
     members = [m.decode() if isinstance(m, bytes) else m for m in members_raw]
     members.sort()
 
+    # Written at cluster build; empty on a cluster built before centrality.
+    centrality = {
+        (k.decode() if isinstance(k, bytes) else k): float(v)
+        for k, v in r.hgetall(
+            cluster_set_key[: -len(":members")] + ":centrality"
+        ).items()
+    }
+    if request.args.get("sort") == "centrality":
+        members.sort(key=lambda m: -centrality.get(m, -1.0))
+
     page = members[offset : offset + limit]
 
     results = []
@@ -983,10 +1012,17 @@ def list_bin_cluster_members():
 
     for i, meta in enumerate(raw_metas):
         m = json.loads(meta) if meta and not isinstance(meta, dict) else (meta or {})
-        results.append({"id": page[i], "meta": m})
+        results.append(
+            {"id": page[i], "meta": m, "centrality": centrality.get(page[i])}
+        )
+
+    medoid = None
+    if centrality:
+        medoid = min(centrality, key=lambda m: (-centrality[m], m))
 
     return {
         "cluster_id": cluster_id,
+        "medoid": medoid,
         "total": total,
         "offset": offset,
         "limit": limit,

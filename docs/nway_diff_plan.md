@@ -111,8 +111,8 @@ Nothing is written to Kvrocks in any mode.
 
 Config keys in `bsimvis_config.toml`:
 
-- `nway.max_members` (default 60, so 1770 pairs).
-- `nway.max_functions` (sum over members, default 120000).
+- `nway.max_members` (default 150, so 11175 pairs).
+- `nway.max_functions` (sum over members, default 300000).
 
 Over a cap: HTTP 413 with
 `{"error": "too_large", "members": n, "children": [...]}`. The UI offers the child
@@ -238,7 +238,7 @@ See slice 5b. `centrality` is persisted at cluster build time (rebuild needed);
 - `columns=auto` picks file columns when the node has no children or at most 12
   files in all (`AUTO_FILE_COLUMNS` in `routes/nway.py`), not "12 direct files": the
   matcher always runs on every file of the node, so the node's file count is what
-  decides readability. The default `nway.max_members` is 60, so a node of 13 to 60
+  decides readability. The default `nway.max_members` is 150, so a node of 13 to 150
   files gets child columns under `auto`; larger nodes are over the cap until the job
   lands.
 - A child column is `on` for a row when at least `child_presence` of its files hold a

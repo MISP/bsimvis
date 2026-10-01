@@ -19,7 +19,7 @@
 (function () {
     const TABS = [['core', 'Core'], ['partial', 'Partial'], ['unique', 'Unique']];
     const PAGE = 50;
-    const SORTS = [['name', 'Function'], ['span', 'Span'], ['weight', 'Weight'], ['support', 'Support'], ['cohesion', 'Cohesion']];
+    const SORTS = [['name', 'Function'], ['span', 'Span'], ['weight', 'Features'], ['support', 'Support'], ['cohesion', 'Cohesion']];
     const DEFAULTS = {
         tab: 'core', scope: 'code', k: 2, min_edge: '', mode: 'stored',
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
@@ -286,6 +286,7 @@
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
                 <td class="num">${this._score(row.cohesion)}</td>
+                <td class="cluster-cards-cell">${window.EntityRenderer.renderClusterCard((row.clusters || []).map(u => this.data.clusters[u]).filter(Boolean))}</td>
                 ${cols.map(c => this._cell(row, c, ri)).join('')}
             </tr>`;
         }
@@ -305,7 +306,7 @@
             const colHead = c => c.kind
                 ? `<th class="col" title="${escapeAttr(c.kind === 'child' ? 'child cluster' : 'files at this node, in no child cluster')}"><div class="nway-colhead"><span class="nway-colname">${escapeHtml(c.label)}</span><span class="nway-sub">${Number(c.member_count)} files</span></div></th>`
                 : fileHead(c);
-            return `<tr>${SORTS.map(th).join('')}${this.data.columns.map(colHead).join('')}</tr>`;
+            return `<tr>${SORTS.map(th).join('')}<th>Cluster</th>${this.data.columns.map(colHead).join('')}</tr>`;
         }
 
         render() {
@@ -321,7 +322,7 @@
                     <div class="nway-scroll">
                         <table id="nway-table" class="nway-table">
                             <thead>${this._head()}</thead>
-                            <tbody>${rows || `<tr><td colspan="${d.columns.length + 6}" class="gap">No rows in this tab.</td></tr>`}</tbody>
+                            <tbody>${rows || `<tr><td colspan="${d.columns.length + 7}" class="gap">No rows in this tab.</td></tr>`}</tbody>
                         </table>
                     </div>
                     <div class="table-footer">

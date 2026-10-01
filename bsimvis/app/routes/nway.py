@@ -180,7 +180,62 @@ def _row_fids(row):
     return (row.get("files") or row["cells"]).values()
 
 
-def _page(doc, args):
+def _row_clusters(r, rows, fmeta, pool_id, args):
+    """Function clusters of the paged rows: {row index: [uuid]}, plus the uuid -> card map.
+
+    A row lists the clusters its functions sit in, most shared first.
+    """
+    from bsimvis.app.services.cluster_utils import get_cluster_metas
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    fids = list(dict.fromkeys(f for row in rows for f in _row_fids(row)))
+    pipe = r.pipeline(transaction=False)
+    for fid in fids:
+        pipe.hkeys(
+            f"global:pool:{pool_id}:{fid}:cluster_scores"
+            if pool_id
+            else f"{fid}:cluster_scores"
+        )
+    by_fid = {
+        f: [c.decode() if isinstance(c, bytes) else c for c in cs]
+        for f, cs in zip(fids, pipe.execute())
+    }
+    ns = (
+        f"global:pool:{pool_id}" if pool_id else (fids[0].split(":")[0] if fids else "")
+    )
+    cids = {c for cs in by_fid.values() for c in cs}
+    metas = (
+        get_cluster_metas(r, ns, resolve_collection_algo(ns, args.get("algo")), cids)
+        if cids
+        else {}
+    )
+    cards, per_row = {}, []
+    for row in rows:
+        n = {}
+        for f in _row_fids(row):
+            for c in by_fid.get(f, []):
+                if c in metas:
+                    n[c] = n.get(c, 0) + 1
+        top = sorted(n, key=lambda c: -n[c])[:3]
+        per_row.append([metas[c].get("cluster_uuid") for c in top])
+        for c in top:
+            m = metas[c]
+            cards[m.get("cluster_uuid")] = {
+                k: m.get(k)
+                for k in (
+                    "cluster_id",
+                    "cluster_uuid",
+                    "cluster_name",
+                    "cohesion_score",
+                    "member_count",
+                    "cluster_stability",
+                    "avg_features",
+                )
+            }
+    return per_row, cards
+
+
+def _page(doc, args, r=None, pool_id=None):
     """Tab counts, then filter + sort + slice one tab of the rows."""
     rows, fmeta = doc["rows"], doc["fmeta"]
     n = len(doc["columns"])
@@ -249,9 +304,13 @@ def _page(doc, args):
     except ValueError:
         abort(400, "offset and limit must be integers")
     page = filtered[offset : offset + limit] if limit > 0 else filtered[offset:]
-    page_fids = {f for r in page for f in _row_fids(r)}
+    page_fids = {f for row in page for f in _row_fids(row)}
+    per_row, cards = _row_clusters(r, page, fmeta, pool_id, args)
+    for row, uuids in zip(page, per_row):
+        row["clusters"] = uuids
     return {
         "items": page,
+        "clusters": cards,
         "total": len(filtered),
         "offset": offset,
         "limit": limit,
@@ -341,4 +400,4 @@ def get_nway():
         return {"error": "unknown_batch"}, 404
     except nway_diff_service.MemberMissing as e:
         return {"error": "unknown_files", "missing": e.missing}, 404
-    return _page(doc, request.args)
+    return _page(doc, request.args, r, pool_id)

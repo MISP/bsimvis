@@ -4577,7 +4577,8 @@ def _nway(**params):
 
 def _nway_rows(body):
     """A page of N-way rows as a set of function-id sets, comparable across modes."""
-    return {frozenset(r["cells"].values()) for r in (body or {}).get("items", [])}
+    rows = (body or {}).get("items", [])
+    return {frozenset((r.get("files") or r["cells"]).values()) for r in rows}
 
 
 def test_nway_diff():
@@ -4706,6 +4707,187 @@ def test_nway_diff():
         raises(3, max_members=2)
         and raises(2, 100, max_functions=50)
         and not raises(2, 50, max_members=2, max_functions=50),
+    )
+
+
+def test_nway_cluster_entry():
+    """`cluster_uuid=`: a synthetic cluster tree over the two uploaded files.
+
+    The fixture never forms binary clusters, so the node, its two child
+    clusters and a second node (one child + one direct file) are written the
+    way the hierarchical engine stores them, then removed.
+    """
+    from redis import Redis
+    from bsimvis.app.services.config_service import config_service
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-quater – N-way file diff (cluster entry)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – nway checks skipped.", YELLOW))
+        return
+
+    r = Redis(
+        host=os.getenv("KVROCKS_HOST", "localhost"),
+        port=int(os.getenv("KVROCKS_PORT", "6666")),
+        decode_responses=True,
+    )
+    algo = "unweighted_cosine"
+    if config_service.get("clustering.bin_engine", "hierarchical_snn") == (
+        "hierarchical_snn"
+    ):
+        algo += ":snn"
+    base = f"{COLLECTION}:bin_cluster:{algo}"
+    tag = uuid.uuid4().hex[:8]
+    f1, f2 = (f"{COLLECTION}:file:{m}" for m in (file_md5, file_md5_2))
+    # cid -> (members, parent); `root` is the synthetic global root real_links drops.
+    tree = {
+        f"nwp{tag}": ({f1, f2}, "root"),
+        f"nwc1{tag}": ({f1}, f"nwp{tag}"),
+        f"nwc2{tag}": ({f2}, f"nwp{tag}"),
+        f"nwq{tag}": ({f1, f2}, "root"),
+        f"nwc3{tag}": ({f1}, f"nwq{tag}"),
+    }
+    links_key = f"{COLLECTION}:bin_cluster:tree_links:{algo}"
+    old_links = r.get(links_key)
+    try:
+        for cid, (members, _) in tree.items():
+            r.set(
+                f"{base}:{cid}:meta",
+                json.dumps(
+                    {
+                        "cluster_id": cid,
+                        "cluster_uuid": f"uuid-{cid}",
+                        "cluster_name": f"Cluster {cid}",
+                        "member_count": len(members),
+                    }
+                ),
+            )
+            r.sadd(f"{base}:{cid}:members", *members)
+            r.hset(f"{base}:uf:uuid", cid, f"uuid-{cid}")
+        links = [{"child": c, "parent": p} for c, (_, p) in tree.items()]
+        r.set(links_key, json.dumps(json.loads(old_links or "[]") + links))
+
+        def nway(uuid_, **params):
+            status, body = _nway(
+                md5s=None,
+                cluster_uuid=f"uuid-{uuid_}",
+                algo="unweighted_cosine",
+                **params,
+            )
+            return status, body
+
+        _, pair = _nway(tab="core", scope="all", limit=1000)
+        _, pair_only = _nway(tab="unique", scope="all", limit=1000)
+
+        status, files = nway(f"nwp{tag}", tab="core", scope="all", columns="files")
+        check(
+            "nway cluster: columns=files gives the node's two files",
+            status == 200
+            and files["columns_mode"] == "files"
+            and sorted(c["md5"] for c in files["columns"])
+            == sorted([file_md5, file_md5_2]),
+            f"HTTP {status} {files and files.get('columns_mode')}",
+        )
+        check(
+            "nway cluster: file columns equal the md5s= request",
+            files and _nway_rows(files) == _nway_rows(pair),
+        )
+
+        status, kids = nway(f"nwp{tag}", tab="core", scope="all", columns="children")
+        check(
+            "nway cluster: columns=children gives one column per child cluster",
+            status == 200
+            and kids["columns_mode"] == "children"
+            and sorted(c["kind"] for c in kids["columns"]) == ["child", "child"]
+            and len(kids["file_columns"]) == 2,
+            f"HTTP {status} {kids and kids['columns']}",
+        )
+        check(
+            "nway cluster: core rows are the same function groups, now over children",
+            kids
+            and _nway_rows(kids) == _nway_rows(pair)
+            and all(
+                r["span"] == 2 and all(c["on"] for c in r["cells"].values())
+                for r in kids["items"]
+            ),
+        )
+        _, kids_only = nway(f"nwp{tag}", tab="unique", scope="all", columns="children")
+        check(
+            "nway cluster: unique tab stays per file under child columns",
+            kids_only
+            and _nway_rows(kids_only) == _nway_rows(pair_only)
+            and all(
+                r["file_span"] == 1 and r["files"] and len(r["files"]) == 1
+                for r in kids_only["items"]
+            ),
+        )
+        _, strict = nway(
+            f"nwp{tag}",
+            tab="core",
+            scope="all",
+            columns="children",
+            child_presence="1",
+        )
+        check(
+            "nway cluster: child_presence=1 keeps single-file children present",
+            strict and strict["total"] == kids["total"],
+        )
+
+        status, direct = nway(f"nwq{tag}", tab="core", scope="all", columns="children")
+        check(
+            "nway cluster: files in no child become a direct-files column",
+            status == 200
+            and sorted(c["kind"] for c in direct["columns"]) == ["child", "direct"]
+            and next(c for c in direct["columns"] if c["kind"] == "direct")["members"]
+            == [f"{COLLECTION}:{file_md5_2}"],
+            f"HTTP {status} {direct and direct['columns']}",
+        )
+        _, auto = nway(f"nwp{tag}", tab="core", scope="all")
+        check(
+            "nway cluster: auto uses file columns for a small node",
+            auto and auto["columns_mode"] == "files",
+        )
+        _, one = nway(f"nwp{tag}", tab="unique", scope="all", columns="children")
+        _, first = nway(
+            f"nwp{tag}",
+            tab="unique",
+            scope="all",
+            columns="children",
+            column=f"uuid-nwc1{tag}",
+        )
+        check(
+            "nway cluster: column filter keeps rows present in that child",
+            one
+            and first
+            and all(r["cells"][f"uuid-nwc1{tag}"]["present"] for r in first["items"])
+            and first["total"] <= one["total"],
+        )
+        check(
+            "nway cluster: unknown child cluster is a 404",
+            nway("no-such-cluster-0000")[0] == 404,
+        )
+    finally:
+        for cid in tree:
+            r.delete(f"{base}:{cid}:meta", f"{base}:{cid}:members")
+        r.hdel(f"{base}:uf:uuid", *tree)
+        if old_links is None:
+            r.delete(links_key)
+        else:
+            r.set(links_key, old_links)
+
+    check("nway: bad columns is a 400", _nway(columns="nope")[0] == 400)
+    check(
+        "nway: columns=children without a cluster is a 400",
+        _nway(columns="children")[0] == 400,
+    )
+    check(
+        "nway: cluster_uuid without collection or pool is a 400",
+        requests.get(
+            f"{BASE_URL}/api/bin_sim/nway", params={"cluster_uuid": "x"}, timeout=30
+        ).status_code
+        == 400,
     )
 
 
@@ -7989,6 +8171,7 @@ if __name__ == "__main__":
         test_llm_agentic_analysis,
         test_bin_sim_diff_cache,
         test_nway_diff,
+        test_nway_cluster_entry,
         test_llm_pair_analysis_job,
         test_search_job,
         test_bin_sim_notes_and_tags,
@@ -8018,6 +8201,7 @@ if __name__ == "__main__":
         # Issues the /api/bin_sim/build whose doc the diff cache step reads.
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
         "test_nway_diff": ["test_search_filters_and_sorting"],
+        "test_nway_cluster_entry": ["test_search_filters_and_sorting"],
         "test_llm_pair_analysis_job": ["test_search_filters_and_sorting"],
         "test_search_job": ["test_search_filters_and_sorting"],
         "test_bin_sim_notes_and_tags": ["test_search_filters_and_sorting"],

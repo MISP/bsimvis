@@ -222,6 +222,24 @@ See slice 5b. `centrality` is persisted at cluster build time (rebuild needed);
 6. **Later, after real use.** Worker job + Redis cache, `nway_diff` LLM tool, optional
    linkage gate, optional sampling for large clusters.
 
+## Slice 5 as built
+
+- `columns=auto` picks file columns when the node has no children or at most 12
+  files in all (`AUTO_FILE_COLUMNS` in `routes/nway.py`), not "12 direct files": the
+  matcher always runs on every file of the node, so the node's file count is what
+  decides readability. With the default `nway.max_members` of 12 a node that needs
+  child columns is over the cap, so child columns are reached with an explicit
+  `columns=children` until the cap is raised or the job lands.
+- A child column is `on` for a row when at least `child_presence` of its files hold a
+  function in it. A row whose file span is above 1 but that is `on` in fewer than
+  two columns appears in no tab under child columns (Core needs every column,
+  Partial needs `k`). Unique is always per file (`file_span == 1`).
+- The cluster resolver (`_cluster_node` in `routes/nway.py`) reads each node's
+  `:members` set and its children's; the `direct` column is members minus the
+  children's members. Pools whose cluster engine has no per-node member sets
+  (not hierarchical) get a 400.
+- Not merged: rows with the same child-column mask stay separate rows.
+
 ## Testing notes
 
 - The `data/test/` fixture never forms binary clusters, so slices 1–4 are tested

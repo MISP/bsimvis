@@ -54,6 +54,13 @@ window.ClusterDetailView = {
         this.treeExpanded.clear();
         this._sliceCenteredOn = null;
         this.tab = 'members';
+        if (this._nway) this._nway.destroy();
+        this._nway = null;
+    },
+
+    /** The Functions tab (N-way diff of the node's files) exists for binary file clusters only. */
+    hasFunctionsTab() {
+        return this.isBinary && this.nodeType !== 'container';
     },
 
     /** up/down/width, remembered per browser -- a per-viewer convenience, never load-bearing. */
@@ -297,6 +304,7 @@ window.ClusterDetailView = {
                     <div class="bsim-tabbar" id="cluster-view-tabs" style="margin:20px 0 16px; flex-shrink:0;">
                         <button class="bsim-tab active" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
                         <button class="bsim-tab" id="cluster-tab-btn-metadata" onclick="ClusterDetailView.switchTab('metadata')">Metadata</button>
+                        ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-functions" onclick="ClusterDetailView.switchTab('functions')">Functions</button>` : ''}
                     </div>
 
                     <div id="cluster-tab-members" style="display:flex; flex-direction:column; flex:1; min-height:0;">
@@ -328,6 +336,7 @@ window.ClusterDetailView = {
                     </div>
 
                     <div id="cluster-tab-metadata" style="display:none; flex:1; min-height:0; overflow:auto;"></div>
+                    <div id="cluster-tab-functions" style="display:none; flex:1; min-height:0; overflow:auto;"></div>
                 </div>
             </div>
         `;
@@ -362,6 +371,7 @@ window.ClusterDetailView = {
             await this.selectNode(this.selectedClusterUuid);
 
             if (window.TableSelection) new window.TableSelection('cluster-members-table');
+            if (urlParams.get('tab') === 'functions' && this.hasFunctionsTab()) this.switchTab('functions');
         } catch (e) {
             console.error(e);
             container.innerHTML = `<div style="padding:30px; color:#f92672;">
@@ -518,6 +528,7 @@ window.ClusterDetailView = {
 
         this.renderTable();
         if (this.tab === 'metadata') this.renderMetadataTab();
+        if (this.tab === 'functions') this.renderFunctionsTab();
     },
 
     async fetchMembers(uuid) {
@@ -549,12 +560,51 @@ window.ClusterDetailView = {
 
     switchTab(tab) {
         this.tab = tab;
-        ['members', 'metadata'].forEach(t => {
-            document.getElementById(`cluster-tab-btn-${t}`).classList.toggle('active', t === tab);
+        ['members', 'metadata', 'functions'].forEach(t => {
+            const btn = document.getElementById(`cluster-tab-btn-${t}`);
+            if (!btn) return;
+            btn.classList.toggle('active', t === tab);
             document.getElementById(`cluster-tab-${t}`).style.display =
                 t === tab ? (t === 'members' ? 'flex' : 'block') : 'none';
         });
+        const url = new URL(window.location.href);
+        if (tab === 'functions') url.searchParams.set('tab', 'functions');
+        else url.searchParams.delete('tab');
+        window.history.replaceState({ path: url.pathname + url.search }, '', url.pathname + url.search);
         if (tab === 'metadata') this.renderMetadataTab();
+        if (tab === 'functions') this.renderFunctionsTab();
+    },
+
+    /**
+     * N-way diff of the selected node (nway_panel.js). Remounted whenever the
+     * node changes; its controls live in the URL (`ntab` is the panel's own tab,
+     * `tab=functions` is this view's).
+     */
+    renderFunctionsTab() {
+        const el = document.getElementById('cluster-tab-functions');
+        if (!el || !this.selectedClusterUuid || !window.NwayPanel) return;
+        if (this._nway) this._nway.destroy();
+        const url = new URLSearchParams(window.location.search);
+        const keys = ['scope', 'k', 'min_edge', 'mode', 'columns', 'child_presence', 'q', 'tags'];
+        const state = {};
+        keys.forEach(k => { if (url.get(k)) state[k] = url.get(k); });
+        if (url.get('ntab')) state.tab = url.get('ntab');
+        const source = { cluster_uuid: this.selectedClusterUuid, axis: this.axis };
+        if (this.params && this.params.pool) source.pool = this.params.pool;
+        else source.collection = this.collection;
+        this._nway = new window.NwayPanel(el, {
+            source,
+            state,
+            onState: s => {
+                const u = new URL(window.location.href);
+                u.searchParams.set('tab', 'functions');
+                u.searchParams.set('ntab', s.tab);
+                keys.forEach(k => (s[k] === '' || s[k] == null ? u.searchParams.delete(k) : u.searchParams.set(k, s[k])));
+                window.history.replaceState({ path: u.pathname + u.search }, '', u.pathname + u.search);
+            },
+            onOpenCluster: uuid => this.selectNode(uuid),
+        });
+        this._nway.load();
     },
 
     /** Secondary-axis cohesion, outside the main card so its tint doesn't clash. */

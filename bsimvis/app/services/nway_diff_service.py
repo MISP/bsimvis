@@ -433,6 +433,62 @@ def _match(base, min_edge):
     return rows
 
 
+def project_rows(rows, groups, presence):
+    """Re-express file-level rows over child-cluster / direct-file groups.
+
+    `groups` is `[{"id", "members": [file column id, ...]}]`. A group is `on`
+    for a row when at least `presence` of its files hold a function in it; the
+    row's mask and span count the `on` groups. Rows are not merged: one function
+    group stays one row. `file_span` keeps the file-level span (the Unique tab
+    still means "one file"), `files` keeps the file-level cells.
+    """
+    out = []
+    for row in rows:
+        cells, mask, span = {}, 0, 0
+        for i, g in enumerate(groups):
+            present = sum(1 for m in g["members"] if m in row["cells"])
+            on = present > 0 and present / len(g["members"]) >= presence
+            cells[g["id"]] = {"present": present, "total": len(g["members"]), "on": on}
+            if on:
+                mask |= 1 << i
+                span += 1
+        out.append(
+            {
+                **row,
+                "mask": mask,
+                "span": span,
+                "cells": cells,
+                "file_span": row["span"],
+                "files": row["cells"],
+            }
+        )
+    return out
+
+
+def demo():
+    groups = [
+        {"id": "A", "members": ["f1", "f2", "f3", "f4"]},
+        {"id": "B", "members": ["f5", "f6"]},
+    ]
+
+    def row(cells):
+        return {"cells": cells, "span": len(cells), "mask": 0}
+
+    full = row({f"f{i}": f"x{i}" for i in range(1, 7)})
+    half = row({"f1": "a", "f2": "b", "f5": "c"})
+    lone = row({"f3": "z"})
+    got = project_rows([full, half, lone], groups, 0.5)
+    assert [(r["span"], r["mask"]) for r in got] == [(2, 3), (2, 3), (0, 0)], got
+    assert got[1]["cells"]["A"] == {"present": 2, "total": 4, "on": True}
+    assert got[1]["cells"]["B"] == {"present": 1, "total": 2, "on": True}
+    assert (got[2]["file_span"], got[2]["cells"]["A"]["on"]) == (1, False)
+    assert got[2]["files"] == {"f3": "z"} and len(got) == 3
+    strict = project_rows([half], groups, 0.75)[0]
+    assert (strict["span"], strict["mask"]) == (0, 0), strict
+    assert project_rows([half], groups, 0.25)[0]["span"] == 2
+    print("nway_diff_service demo ok")
+
+
 def compute(r, scope, members, params=None):
     """Rows for `members` (list of `(collection, md5)`) under `scope`.
 
@@ -440,6 +496,8 @@ def compute(r, scope, members, params=None):
     `params`: `min_edge` (default `similarity.file_min_score`); `mode`
     (`stored` | `virtual`; a set spanning collections with no pool is always
     virtual); `algo` / `min_score` / `min_features` override virtual-mode values.
+    `groups` (+ `child_presence`, default 0.5) re-expresses the rows over
+    child-cluster columns; see `project_rows`.
     """
     params = params or {}
     mode = params.get("mode") or "stored"
@@ -468,7 +526,13 @@ def compute(r, scope, members, params=None):
         mode,
         json.dumps(vparams, sort_keys=True),
     )
-    doc_key = base_key + (min_edge,)
+    groups = params.get("groups")
+    presence = float(params.get("child_presence", 0.5))
+    doc_key = base_key + (
+        min_edge,
+        presence,
+        hashlib.md5(json.dumps(groups, sort_keys=True).encode()).hexdigest(),
+    )
     doc = _DOC_CACHE.get(doc_key)
     if doc is not None:
         return doc
@@ -477,15 +541,24 @@ def compute(r, scope, members, params=None):
     if base is None:
         base = _load_base(r, scope, members, vparams, labels, warnings)
         _BASE_CACHE.put(base_key, base)
+    rows = _match(base, min_edge)
+    if groups:
+        rows = project_rows(rows, groups, presence)
     doc = {
         "mode": mode,
         "algo": base["algo"],
         "min_edge": min_edge,
-        "columns": base["columns"],
-        "rows": _match(base, min_edge),
+        "columns": groups or base["columns"],
+        "columns_mode": "children" if groups else "files",
+        "file_columns": base["columns"] if groups else None,
+        "rows": rows,
         "fmeta": base["fmeta"],
         "fallback_pairs": base["fallback_pairs"],
         "warnings": base["warnings"],
     }
     _DOC_CACHE.put(doc_key, doc)
     return doc
+
+
+if __name__ == "__main__":
+    demo()

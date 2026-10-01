@@ -43,9 +43,124 @@ def _scope(members, pool_id):
     return {"collection": colls[0]} if len(colls) == 1 else {"collections": colls}
 
 
+AUTO_FILE_COLUMNS = 12
+
+
+def _cluster_node(r, pool_id, collection, uuid):
+    """A binary cluster node's files and child groups, read-only.
+
+    Mirrors the namespace rules of routes/bin_cluster.py (file nodes only).
+    Returns `(scope, members, groups, children)`: `groups` is one entry per
+    child cluster plus a `direct` pseudo-group for files in no child, `children`
+    is the same child list shaped for the 413 body.
+    """
+    from bsimvis.app.routes.bin_cluster import _pool_bin_cluster_namespace
+    from bsimvis.app.services.cluster_utils import (
+        get_cluster_metas,
+        get_tree_links,
+        resolve_cluster_id_by_uuid,
+    )
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+    from bsimvis.app.services.config_service import config_service
+
+    algo = request.args.get("algo")
+    axis = request.args.get("axis", "overall").strip().lower()
+    if pool_id:
+        from bsimvis.app.services.pool_service import pool_service
+
+        pool = pool_service.get_pool(pool_id)
+        if not pool:
+            abort(404, "Pool not found")
+        algo, collection_style = _pool_bin_cluster_namespace(
+            pool, pool_service.similarity_algo(pool), axis
+        )
+        if not collection_style:
+            abort(400, "this pool's cluster engine has no per-node member sets")
+        ns, scope = f"global:pool:{pool_id}", {"pool": pool_id}
+    else:
+        if not collection:
+            abort(400, "collection or pool required with cluster_uuid")
+        algo = resolve_collection_algo(collection, algo)
+        algo = f"{algo}:{axis}" if axis != "overall" else algo
+        if config_service.get("clustering.bin_engine") == "hierarchical_snn":
+            algo = f"{algo}:snn"
+        ns, scope = collection, {"collection": collection}
+
+    cid = resolve_cluster_id_by_uuid(r, ns, algo, uuid, "bin_cluster")
+    if cid is None:
+        abort(404, "unknown cluster_uuid")
+    base = f"{ns}:bin_cluster:{algo}"
+    _, parent_to_children = get_tree_links(r, ns, algo, "bin_cluster")
+    child_ids = parent_to_children.get(str(cid), [])
+    metas = get_cluster_metas(r, ns, algo, child_ids, "bin_cluster")
+    child_ids = sorted(
+        metas, key=lambda c: metas[c].get("member_count", 0), reverse=True
+    )
+    children = [
+        {
+            "cluster_uuid": metas[c].get("cluster_uuid"),
+            "cluster_name": metas[c].get("cluster_name"),
+            "member_count": metas[c].get("member_count", 0),
+        }
+        for c in child_ids
+    ]
+
+    n = r.scard(f"{base}:{cid}:members")
+    if n > nway_diff_service.caps()[0]:
+        err = nway_diff_service.TooLarge(n)
+        err.children = children
+        raise err
+    pipe = r.pipeline(transaction=False)
+    for key in [f"{base}:{cid}:members", *(f"{base}:{c}:members" for c in child_ids)]:
+        pipe.smembers(key)
+
+    def ident(raw):
+        # member ids are `{coll}:file:{md5}`; the service's column id is `{coll}:{md5}`
+        parts = (raw.decode() if isinstance(raw, bytes) else str(raw)).split(":")
+        return f"{_origin_coll(parts[0])}:{parts[-1].lower()}"
+
+    sets = [{ident(m) for m in raw} for raw in pipe.execute()]
+    all_ids = sorted(sets[0])
+    members = [tuple(i.rsplit(":", 1)) for i in all_ids]
+    groups, taken = [], set()
+    for c, ids in zip(child_ids, sets[1:]):
+        ids = sorted(ids & sets[0])
+        if ids:
+            groups.append(
+                {
+                    "id": metas[c].get("cluster_uuid") or str(c),
+                    "kind": "child",
+                    "label": metas[c].get("cluster_name") or str(c),
+                    "cluster_uuid": metas[c].get("cluster_uuid"),
+                    "member_count": len(ids),
+                    "members": ids,
+                }
+            )
+            taken.update(ids)
+    direct = [i for i in all_ids if i not in taken]
+    if direct and groups:
+        groups.append(
+            {
+                "id": "direct",
+                "kind": "direct",
+                "label": "direct files",
+                "member_count": len(direct),
+                "members": direct,
+            }
+        )
+    return scope, members, groups, children
+
+
 def _in_tab(row, tab, k, n):
     span = row["span"]
-    return span == n if tab == "core" else span >= k if tab == "partial" else span == 1
+    if tab == "unique":  # always one file, even when columns are child groups
+        return row.get("file_span", span) == 1
+    return span == n if tab == "core" else span >= k
+
+
+def _row_fids(row):
+    """Function ids of a row; child-group rows keep them under `files`."""
+    return (row.get("files") or row["cells"]).values()
 
 
 def _page(doc, args):
@@ -82,13 +197,15 @@ def _page(doc, args):
             return False
         if scope != "all" and row["library"] != (scope == "library"):
             return False
-        if column and column not in row["cells"]:
-            return False
+        if column:
+            cell = row["cells"].get(column)
+            if not cell or (isinstance(cell, dict) and not cell["present"]):
+                return False
         if not in_bounds(row["weight"], feat_min, feat_max):
             return False
         if sup_min is not None and row["support"] < sup_min:
             return False
-        fids = list(row["cells"].values())
+        fids = list(_row_fids(row))
         if q and not any(q in _fn_haystack(f, fmeta) for f in fids):
             return False
         if tag_scope:
@@ -115,7 +232,7 @@ def _page(doc, args):
     except ValueError:
         abort(400, "offset and limit must be integers")
     page = filtered[offset : offset + limit] if limit > 0 else filtered[offset:]
-    page_fids = {f for r in page for f in r["cells"].values()}
+    page_fids = {f for r in page for f in _row_fids(r)}
     return {
         "items": page,
         "total": len(filtered),
@@ -126,6 +243,8 @@ def _page(doc, args):
         "scope": scope,
         "counts": counts,
         "columns": doc["columns"],
+        "columns_mode": doc["columns_mode"],
+        "file_columns": doc["file_columns"],
         "functions_metadata": {f: fmeta[f] for f in page_fids if f in fmeta},
         "fallback_pairs": doc["fallback_pairs"],
         "min_edge": doc["min_edge"],
@@ -136,12 +255,15 @@ def _page(doc, args):
 
 
 def get_nway():
-    """N-way file diff over `md5s=`: rows of functions shared across the files."""
+    """N-way file diff over `md5s=` or a binary cluster's files (`cluster_uuid=`)."""
     pool_id = request.args.get("pool")
     collection = request.args.get("collection")
-    members = _members(collection, pool_id)
-    if len(members) < 2:
-        abort(400, "md5s needs at least two distinct files")
+    cluster_uuid = (request.args.get("cluster_uuid") or "").strip().lower()
+    columns = request.args.get("columns", "auto")
+    if columns not in ("auto", "files", "children"):
+        abort(400, "columns must be auto, files or children")
+    if columns == "children" and not cluster_uuid:
+        abort(400, "columns=children needs cluster_uuid")
     mode = request.args.get("mode", "stored")
     if mode not in ("stored", "virtual"):
         abort(400, "mode must be stored or virtual")
@@ -150,13 +272,28 @@ def get_nway():
         min_edge = None if min_edge is None else max(0.0, min(1.0, float(min_edge)))
         min_score = request.args.get("min_score", type=float)
         min_features = request.args.get("min_features", type=int)
+        presence = float(request.args.get("child_presence", 0.5))
     except ValueError:
-        abort(400, "min_edge must be a number between 0 and 1")
+        abort(400, "min_edge and child_presence must be numbers between 0 and 1")
 
-    scope = _scope(members, pool_id)
+    r = get_redis()
+    children, groups = [], None
     try:
+        if cluster_uuid:
+            scope, members, node_groups, children = _cluster_node(
+                r, pool_id, collection, cluster_uuid
+            )
+            if columns == "children" or (
+                columns == "auto" and len(members) > AUTO_FILE_COLUMNS
+            ):
+                groups = node_groups if len(node_groups) > 1 else None
+        else:
+            members = _members(collection, pool_id)
+            scope = _scope(members, pool_id)
+        if len(members) < 2:
+            abort(400, "need at least two distinct files")
         doc = nway_diff_service.compute(
-            get_redis(),
+            r,
             scope,
             members,
             {
@@ -165,12 +302,18 @@ def get_nway():
                 "algo": request.args.get("algo"),
                 "min_score": min_score,
                 "min_features": min_features,
+                "groups": groups,
+                "child_presence": max(0.0, min(1.0, presence)),
             },
         )
     except nway_diff_service.BadParams as e:
         abort(400, str(e))
     except nway_diff_service.TooLarge as e:
-        return {"error": "too_large", "members": e.members, "children": []}, 413
+        return {
+            "error": "too_large",
+            "members": e.members,
+            "children": getattr(e, "children", children),
+        }, 413
     except nway_diff_service.MemberMissing as e:
         return {"error": "unknown_files", "missing": e.missing}, 404
     return _page(doc, request.args)

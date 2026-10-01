@@ -2556,7 +2556,10 @@ class BinSimDiff(Resource):
 class BinSimNway(Resource):
     @ns_bin_sim.doc(
         params={
-            "md5s": "Comma-separated files, each `<collection>:<md5>` or a bare md5 with `collection` (2 or more)",
+            "md5s": "Comma-separated files, each `<collection>:<md5>` or a bare md5 with `collection` (2 or more); or use cluster_uuid",
+            "cluster_uuid": "Binary cluster (file node) to diff instead of `md5s`; with `collection` or `pool`, optional `axis`/`algo`",
+            "columns": "With cluster_uuid: auto (default), files or children (one column per child cluster + direct files)",
+            "child_presence": "children columns: share of a child's files that must hold a function for it to count as present (default 0.5)",
             "collection": "Collection for bare md5s",
             "pool": "Pool ID; members must come from the pool's collections",
             "mode": "stored (default: stored pair docs) or virtual (rebuild edges as a fresh collection of these files would; always used when files span collections without a pool)",

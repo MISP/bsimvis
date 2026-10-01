@@ -9,7 +9,10 @@
  *   panel.load(); ... panel.destroy();
  *
  * `source` is passed to the API untouched, so a cluster entry only supplies
- * `{ cluster_uuid, collection }` (and `columns` through `state`). Rows are paged
+ * `{ cluster_uuid, collection | pool }`; `state.columns` (auto | files | children)
+ * and `state.child_presence` are the cluster-only controls. `onOpenCluster(uuid)`
+ * is called when a child cluster link in the too-many-members state is clicked.
+ * Rows are paged
  * server-side; nothing here loads a full table. Function and file names come off
  * uploaded samples, so every value goes through escapeHtml / escapeAttr.
  */
@@ -20,9 +23,10 @@
     const DEFAULTS = {
         tab: 'core', scope: 'code', k: 2, min_edge: '', mode: 'stored',
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
+        columns: 'auto', child_presence: 0.5,
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns'];
+    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence'];
     const LOW_SUPPORT = 0.5;
 
     function fnParts(fid) {
@@ -53,6 +57,7 @@
             this.source = opts.source || {};
             this.state = { ...DEFAULTS, ...(opts.state || {}) };
             this.onState = opts.onState || null;
+            this.onOpenCluster = opts.onOpenCluster || null;
             this.data = null;
             this.error = null;
             this.picks = {};
@@ -110,7 +115,12 @@
         _renderError() {
             const e = this.error;
             if (e.status === 413) {
-                const kids = (e.children || []).map(c => `<li>${escapeHtml(c.cluster_name || c.name || c.cluster_uuid || c.uuid || '')}</li>`).join('');
+                const kids = (e.children || []).map(c => {
+                    const uuid = c.cluster_uuid || c.uuid || '';
+                    const name = escapeHtml(c.cluster_name || c.name || uuid);
+                    const link = uuid && this.onOpenCluster ? `<a href="#" data-open-cluster="${escapeAttr(uuid)}">${name}</a>` : name;
+                    return `<li>${link}${c.member_count ? ` <span class="dim">${Number(c.member_count)} files</span>` : ''}</li>`;
+                }).join('');
                 return `<div class="dim" style="padding:20px;"><b>Too many members</b> (${Number(e.members) || '?'}): pick fewer files${kids ? ' or open a child cluster:' : '.'}${kids ? `<ul>${kids}</ul>` : ''}</div>`;
             }
             const msg = e.missing ? `Unknown files: ${e.missing.join(', ')}` : (e.message || e.error || `HTTP ${e.status}`);
@@ -132,9 +142,15 @@
             const k = s.tab === 'partial'
                 ? `<label>in at least <b>${Number(s.k)}</b> of ${n} <input type="range" min="2" max="${n}" value="${Number(s.k)}" data-range="k"></label>` : '';
             const edge = Number(d.min_edge);
+            const isNode = !!this.source.cluster_uuid;
+            const cols = isNode
+                ? `<select data-select="columns" title="columns: the node's files, or one per child cluster">${opt('auto', s.columns, 'Columns: auto')}${opt('files', s.columns, 'Columns: files')}${opt('children', s.columns, 'Columns: children')}</select>` : '';
+            const presence = isNode && d.columns_mode === 'children'
+                ? `<label title="share of a child's files that must hold the function for the child to count as present">child presence <b>${Number(s.child_presence).toFixed(2)}</b> <input type="range" min="0.05" max="1" step="0.05" value="${Number(s.child_presence)}" data-range="child_presence"></label>` : '';
             return `<div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px;">
                 <div style="display:flex; gap:4px;">${tabs}</div>
                 <select data-select="scope">${opt('code', s.scope, 'Code')}${opt('library', s.scope, 'Library')}${opt('all', s.scope, 'All')}</select>
+                ${cols}${presence}
                 ${k}
                 <label>min edge <b>${edge.toFixed(2)}</b> <input type="range" min="0" max="1" step="0.05" value="${edge}" data-range="min_edge"></label>
                 <select data-select="mode" title="stored reads built pair docs; virtual recomputes from vectors">${opt('stored', s.mode, 'Stored')}${opt('virtual', s.mode, 'Virtual')}</select>
@@ -154,7 +170,24 @@
             return html;
         }
 
+        // A child/direct column: "m/n files", plus links to the functions of the
+        // files in that group (a few; the rest as a count).
+        _groupCell(row, col) {
+            const cell = row.cells[col.id];
+            const style = cell.on ? '' : ' class="dim"';
+            const pool = this.source.pool || null;
+            const links = [];
+            for (const f of this.data.file_columns || []) {
+                const fid = col.members.includes(f.id) && (row.files || {})[f.id];
+                if (fid) links.push(`<a href="${escapeAttr(fnUrl(f, fid, pool))}" data-nav="${escapeAttr(fnUrl(f, fid, pool))}" data-title="${escapeAttr(f.file_name)}" title="${escapeAttr(f.file_name)}"><code>${escapeHtml((this.data.functions_metadata[fid] || {}).entrypoint_address || fnParts(fid).addr)}</code></a>`);
+            }
+            const shown = links.slice(0, 3).join(' ');
+            const more = links.length > 3 ? ` <span class="dim">+${links.length - 3}</span>` : '';
+            return `<td${style}><b>${Number(cell.present)}/${Number(cell.total)}</b> files${shown ? `<div>${shown}${more}</div>` : ''}</td>`;
+        }
+
         _cell(row, col, ri) {
+            if (col.kind) return this._groupCell(row, col);
             const fid = row.cells[col.id];
             if (!fid) return '<td class="dim" style="text-align:center;">&mdash;</td>';
             const meta = this.data.functions_metadata[fid] || {};
@@ -168,10 +201,10 @@
         _row(row, ri) {
             const cols = this.data.columns;
             const extra = Array.isArray(row.names) ? row.names.length - 1 : Number(row.names || 0) - 1;
-            const low = row.support < LOW_SUPPORT && row.span > 2
+            const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
                 ? ` <i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b;" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             const picks = this.picks[ri] || [];
-            const cmp = picks.length === 2 ? `<button class="btn" data-compare="${ri}">Compare</button>` : '';
+            const cmp = picks.length === 2 && !this.data.columns[0].kind ? `<button class="btn" data-compare="${ri}">Compare</button>` : '';
             return `<tr>
                 <td>${escapeHtml(row.name)}${extra > 0 ? ` <span class="dim">+${extra} names</span>` : ''}${row.library ? ' <span class="dim">lib</span>' : ''}${low}</td>
                 <td style="text-align:right;">${Number(row.span)}</td>
@@ -189,8 +222,10 @@
                 const arrow = s.sort_col === key ? (s.sort_dir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
                 return `<th data-sort="${key}" style="cursor:pointer; ${key === 'name' ? '' : 'text-align:right;'}">${label}${arrow}</th>`;
             };
-            return `<tr>${SORTS.map(th).join('')}${this.data.columns.map(c =>
-                `<th title="${escapeAttr(`${c.file_name} (${c.collection})`)}">${escapeHtml(c.file_name)}<div class="dim" style="font-weight:400;">${Number(c.functions)} fn</div></th>`).join('')}<th></th></tr>`;
+            const colHead = c => c.kind
+                ? `<th title="${escapeAttr(c.kind === 'child' ? 'child cluster' : 'files at this node, in no child cluster')}">${escapeHtml(c.label)}<div class="dim" style="font-weight:400;">${Number(c.member_count)} files</div></th>`
+                : `<th title="${escapeAttr(`${c.file_name} (${c.collection})`)}">${escapeHtml(c.file_name)}<div class="dim" style="font-weight:400;">${Number(c.functions)} fn</div></th>`;
+            return `<tr>${SORTS.map(th).join('')}${this.data.columns.map(colHead).join('')}<th></th></tr>`;
         }
 
         render() {
@@ -214,8 +249,12 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-tab],[data-sort],[data-page],[data-pick],[data-compare],[data-nav]');
+            const t = e.target.closest('[data-tab],[data-sort],[data-page],[data-pick],[data-compare],[data-nav],[data-open-cluster]');
             if (!t) return;
+            if (t.dataset.openCluster) {
+                e.preventDefault();
+                return this.onOpenCluster(t.dataset.openCluster);
+            }
             const pool = this.source.pool || null;
             if (t.dataset.tab) return this._set({ tab: t.dataset.tab, offset: 0, sort_col: '' });
             if (t.dataset.sort) {

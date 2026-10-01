@@ -758,13 +758,14 @@ class BinClusterService:
 
         return birth_lambdas, death_lambdas
 
-    _SECONDARY_AXES = ("code", "library", "content")
+    _SECONDARY_AXES = ("overall", "code", "library", "content")
 
     def _secondary_axis_keys(self, collection, algo, sim_score_key):
         """{axis: score zset key} for every non-primary axis that has pairs."""
         keys = {}
         for ax in self._SECONDARY_AXES:
-            key = f"{collection}:bin_sim:score_{ax}:{algo}"
+            suffix = "" if ax == "overall" else f"_{ax}"
+            key = f"{collection}:bin_sim:score{suffix}:{algo}"
             if key != sim_score_key and self.r.exists(key):
                 keys[ax] = key
         return keys

@@ -234,13 +234,49 @@
             return `<span${color ? ` style="color:${escapeAttr(color)}"` : ''}>${pct(v)}</span>`;
         }
 
+        // The row's guessed signature: the most common return type and parameter
+        // list over its functions. The best function carries that signature (ties
+        // broken by feature count) and feeds the hover preview.
+        _rowSig(row) {
+            const src = row.files || row.cells;
+            const sigOf = m => formatSigComponent('', m.return_type, '', m.parameters);
+            const items = [];
+            for (const col of this.data.file_columns || this.data.columns.filter(c => !c.kind)) {
+                const fid = src[col.id];
+                const m = typeof fid === 'string' && this.data.functions_metadata[fid];
+                if (m) items.push({ fid, col, m, ret: sigOf(m).ret, params: JSON.stringify(sigOf(m).params) });
+            }
+            if (!items.length) return null;
+            const mode = key => {
+                const n = {};
+                items.forEach(i => { n[i[key]] = (n[i[key]] || 0) + 1; });
+                return Object.entries(n).sort((x, y) => y[1] - x[1])[0][0];
+            };
+            const ret = mode('ret'), params = mode('params');
+            const fits = items.filter(i => i.ret === ret && i.params === params);
+            const best = fits.sort((x, y) => (y.m.bsim_features_count || 0) - (x.m.bsim_features_count || 0))[0];
+            return { ret, params: JSON.parse(params), best };
+        }
+
+        _nameSig(row) {
+            const sig = this._rowSig(row);
+            const name = escapeHtml(row.name);
+            if (!sig) return name;
+            const f = this._fnData(sig.best.fid, sig.best.col);
+            const tok = t => `<span style="color:var(--token-address)">${escapeHtml(t)}</span>`;
+            return `<span class="nway-sig"
+                    onmouseenter="typeof showCodePreview === 'function' && showCodePreview(${escapeAttr(jsString(f.function_id))}, ${escapeAttr(jsString(f.function_name))}, ${escapeAttr(jsString(f.entrypoint_address))}, ${escapeAttr(jsString(f.file_md5))}, ${Number(f.bsim_features_count) || 0}, event)"
+                    onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)"
+                    onmouseleave="typeof hideCodePreview === 'function' && hideCodePreview(event)">${tok(sig.ret)} ${name}<span class="dim">(</span>${sig.params.map(tok).join('<span class="dim">, </span>')}<span class="dim">)</span></span>`;
+        }
+
         _row(row, ri) {
             const cols = this.data.columns;
             const extra = Array.isArray(row.names) ? row.names.length - 1 : Number(row.names || 0) - 1;
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             return `<tr>
-                <td><span class="nway-name">${escapeHtml(row.name)}${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${row.library ? '<span class="badge">lib</span>' : ''}${low}</span></td>
+                <td><span class="nway-name">${this._nameSig(row)}${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${row.library ? '<span class="badge">lib</span>' : ''}${low}</span></td>
                 <td class="num">${Number(row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>

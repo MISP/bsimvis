@@ -67,8 +67,8 @@ class MemberMissing(Exception):
 
 def caps():
     return (
-        int(config_service.get("nway.max_members", 30)),
-        int(config_service.get("nway.max_functions", 60000)),
+        int(config_service.get("nway.max_members", 60)),
+        int(config_service.get("nway.max_functions", 120000)),
     )
 
 

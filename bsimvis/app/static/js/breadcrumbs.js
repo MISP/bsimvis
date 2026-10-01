@@ -279,6 +279,13 @@ window.Breadcrumbs = {
                     icon: 'fa-solid fa-microscope'
                 });
                 break;
+            case 'nway':
+                segments.push({
+                    label: 'N-way diff',
+                    url: window.location.pathname + window.location.search,
+                    icon: 'fa-solid fa-code-compare'
+                });
+                break;
             case 'upload':
                 segments.push({
                     label: route ? route.title : 'Upload',

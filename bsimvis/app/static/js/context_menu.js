@@ -461,6 +461,15 @@
                 <span>Similar Files (by container)</span>
             </div>
             `;
+            if (window.getSelectedTableIds && window.getSelectedTableIds('file').length >= 2 && window.NwayPanel) {
+                const nwayFiles = window.getSelectedTableIds('file');
+                const nwayUrl = NwayPanel.urlFor(nwayFiles, col);
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(nwayUrl))}, event, { title: 'N-way diff', type: 'bin_sim' })">
+                    <i class="fa-solid fa-table-columns" style="width: 16px; text-align: center; opacity: 0.8; color: #fd971f;"></i>
+                    <span>Compare ${nwayFiles.length} Files (N-way)</span>
+                </div>`;
+            }
             if (window.getSelectedTableIds && window.getSelectedTableIds('file').length === 2) {
                 const selFiles = window.getSelectedTableIds('file');
                 const md5a = selFiles[0].split(':').pop();

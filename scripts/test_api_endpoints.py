@@ -4563,6 +4563,457 @@ def test_bin_sim_diff_cache():
     _check_runtime_unweighted_matching()
 
 
+def _nway(**params):
+    """(status, body) of GET /api/bin_sim/nway for the uploaded pair, extra params merged."""
+    base = {"collection": COLLECTION, "md5s": f"{file_md5},{file_md5_2}"}
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway", params={**base, **params}, timeout=60
+    )
+    try:
+        return resp.status_code, resp.json()
+    except ValueError:
+        return resp.status_code, None
+
+
+def _nway_rows(body):
+    """A page of N-way rows as a set of function-id sets, comparable across modes."""
+    rows = (body or {}).get("items", [])
+    return {frozenset((r.get("files") or r["cells"]).values()) for r in rows}
+
+
+def test_nway_diff():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-ter – N-way file diff (stored path)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – nway checks skipped.", YELLOW))
+        return
+
+    status, core = _nway(tab="core", scope="all", limit=1000)
+    if not check("nway: pair is served", status == 200 and core, f"HTTP {status}"):
+        return
+    check(
+        "nway: columns are the two requested files",
+        [c["md5"] for c in core["columns"]] == [file_md5, file_md5_2],
+        str(core["columns"]),
+    )
+
+    # With two files the rows must be the pair diff's own matched / unique rows.
+    matched = (_diff_page(file_md5, file_md5_2, "matched") or {}).get("total")
+    uniq = sum(
+        (_diff_page(file_md5, file_md5_2, t) or {}).get("total", 0)
+        for t in ("unique_to_a", "unique_to_b")
+    )
+    check(
+        "nway: core rows equal the pair diff's matched rows",
+        core["total"] == matched,
+        f"nway={core['total']} pair diff={matched}",
+    )
+    _, only = _nway(tab="unique", scope="all", limit=1000)
+    check(
+        "nway: unique rows equal the pair diff's unique rows",
+        only and only["total"] == uniq,
+        f"nway={only and only['total']} pair diff={uniq}",
+    )
+    check(
+        "nway: pair has rows to compare",
+        (only or {}).get("total", 0) + core["total"] > 0,
+        f"core={core['total']} unique={(only or {}).get('total')}",
+    )
+    check(
+        "nway: tab counts add up to the rows scope=all returns",
+        sum(core["counts"]["core"].values()) == core["total"]
+        and sum(only["counts"]["unique"].values()) == only["total"],
+        str(core["counts"]),
+    )
+    check(
+        "nway: every core row has a function in both files",
+        all(len(r["cells"]) == 2 and r["span"] == 2 for r in core["items"]),
+    )
+
+    # Paging, sorting, filtering.
+    if core["total"] > 1:
+        _, page = _nway(tab="core", scope="all", limit=1, offset=1)
+        check(
+            "nway: offset/limit slice the same total",
+            page and len(page["items"]) == 1 and page["total"] == core["total"],
+            str(page and (len(page["items"]), page["total"])),
+        )
+        _, asc = _nway(tab="core", scope="all", sort_col="weight", sort_dir="asc")
+        weights = [r["weight"] for r in asc["items"]]
+        check("nway: sort_dir=asc orders by weight", weights == sorted(weights))
+    _, none = _nway(tab="core", scope="all", q="zz-no-such-function-zz")
+    check(
+        "nway: q filters rows out",
+        none and none["total"] == 0 and none["counts"] == core["counts"],
+        "counts must ignore filters so hidden rows stay visible",
+    )
+
+    # Same md5 twice is one column.
+    _, dup = _nway(
+        md5s=f"{file_md5},{file_md5_2},{COLLECTION}:{file_md5}",
+        tab="core",
+        scope="all",
+    )
+    check(
+        "nway: duplicate members are dropped",
+        dup and len(dup["columns"]) == 2 and dup["total"] == core["total"],
+    )
+
+    # Errors.
+    check("nway: one file is a 400", _nway(md5s=file_md5)[0] == 400)
+    check("nway: bad tab is a 400", _nway(tab="nope")[0] == 400)
+    check("nway: bad mode is a 400", _nway(mode="nope")[0] == 400)
+    check(
+        "nway: virtual mode refuses minhash_lsh",
+        _nway(mode="virtual", algo="minhash_lsh")[0] == 400,
+    )
+    # R1: a fresh collection of these two files, rebuilt from their vectors, must
+    # find the rows the stored build found.
+    status, virt = _nway(mode="virtual", tab="core", scope="all", limit=1000)
+    if check("nway: virtual mode is served", status == 200 and virt, f"HTTP {status}"):
+        _, virt_only = _nway(mode="virtual", tab="unique", scope="all", limit=1000)
+        check(
+            "nway: virtual rows equal the stored rows",
+            _nway_rows(virt) == _nway_rows(core)
+            and _nway_rows(virt_only) == _nway_rows(only),
+            f"core virtual={virt['total']} stored={core['total']}; "
+            f"unique virtual={(virt_only or {}).get('total')} stored={only['total']}",
+        )
+        check("nway: virtual body says so", virt["mode"] == "virtual")
+    check(
+        "nway: unknown file is a 404",
+        _nway(md5s=f"{file_md5},{'0' * 32}")[0] == 404,
+    )
+
+    # batch_uuid= adds a batch's files to the set; an unknown batch is a 404.
+    status, missing = _nway(batch_uuid="00000000-0000-0000-0000-000000000000")
+    check(
+        "nway: unknown batch is 404 unknown_batch",
+        status == 404 and (missing or {}).get("error") == "unknown_batch",
+        f"HTTP {status} {missing}",
+    )
+    listing = requests.get(
+        f"{BASE_URL}/api/file/search",
+        params={"collection": COLLECTION, "limit": 100},
+        timeout=60,
+    ).json()
+    batch = next(
+        (
+            f.get("batch_uuid")
+            for f in (listing or {}).get("files") or []
+            if f.get("file_md5") == file_md5 and f.get("batch_uuid")
+        ),
+        None,
+    )
+    if batch:
+        status, with_batch = _nway(
+            md5s=file_md5_2, batch_uuid=batch, tab="core", scope="all", limit=1000
+        )
+        got = {c["md5"] for c in (with_batch or {}).get("columns", [])}
+        check(
+            "nway: batch files join the md5s (deduped)",
+            status == 200 and {file_md5, file_md5_2} <= got,
+            f"HTTP {status} columns={sorted(got)}",
+        )
+    else:
+        print(_color("\n[SKIP] no batch uuid on the fixture file.", YELLOW))
+
+    # The 413 cannot be forced over HTTP (caps live in server config); check the
+    # cap logic itself.
+    try:
+        from bsimvis.app.services.nway_diff_service import TooLarge, check_caps
+    except Exception as exc:
+        print(_color(f"\n[SKIP] cap checks need the package: {exc}", YELLOW))
+        return
+
+    def raises(*args, **kwargs):
+        try:
+            check_caps(*args, **kwargs)
+        except TooLarge:
+            return True
+        return False
+
+    check(
+        "nway caps: too many members and too many functions are refused",
+        raises(3, max_members=2)
+        and raises(2, 100, max_functions=50)
+        and not raises(2, 50, max_members=2, max_functions=50),
+    )
+
+
+def test_nway_cluster_entry():
+    """`cluster_uuid=`: a synthetic cluster tree over the two uploaded files.
+
+    The fixture never forms binary clusters, so the node, its two child
+    clusters and a second node (one child + one direct file) are written the
+    way the hierarchical engine stores them, then removed.
+    """
+    from redis import Redis
+    from bsimvis.app.services.config_service import config_service
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-quater – N-way file diff (cluster entry)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – nway checks skipped.", YELLOW))
+        return
+
+    r = Redis(
+        host=os.getenv("KVROCKS_HOST", "localhost"),
+        port=int(os.getenv("KVROCKS_PORT", "6666")),
+        decode_responses=True,
+    )
+    algo = "unweighted_cosine"
+    if config_service.get("clustering.bin_engine", "hierarchical_snn") == (
+        "hierarchical_snn"
+    ):
+        algo += ":snn"
+    base = f"{COLLECTION}:bin_cluster:{algo}"
+    tag = uuid.uuid4().hex[:8]
+    f1, f2 = (f"{COLLECTION}:file:{m}" for m in (file_md5, file_md5_2))
+    # cid -> (members, parent); `root` is the synthetic global root real_links drops.
+    tree = {
+        f"nwp{tag}": ({f1, f2}, "root"),
+        f"nwc1{tag}": ({f1}, f"nwp{tag}"),
+        f"nwc2{tag}": ({f2}, f"nwp{tag}"),
+        f"nwq{tag}": ({f1, f2}, "root"),
+        f"nwc3{tag}": ({f1}, f"nwq{tag}"),
+    }
+    links_key = f"{COLLECTION}:bin_cluster:tree_links:{algo}"
+    old_links = r.get(links_key)
+    try:
+        for cid, (members, _) in tree.items():
+            r.set(
+                f"{base}:{cid}:meta",
+                json.dumps(
+                    {
+                        "cluster_id": cid,
+                        "cluster_uuid": f"uuid-{cid}",
+                        "cluster_name": f"Cluster {cid}",
+                        "member_count": len(members),
+                    }
+                ),
+            )
+            r.sadd(f"{base}:{cid}:members", *members)
+            r.hset(f"{base}:uf:uuid", cid, f"uuid-{cid}")
+        links = [{"child": c, "parent": p} for c, (_, p) in tree.items()]
+        r.set(links_key, json.dumps(json.loads(old_links or "[]") + links))
+
+        def nway(uuid_, **params):
+            status, body = _nway(
+                md5s=None,
+                cluster_uuid=f"uuid-{uuid_}",
+                algo="unweighted_cosine",
+                **params,
+            )
+            return status, body
+
+        _, pair = _nway(tab="core", scope="all", limit=1000)
+        _, pair_only = _nway(tab="unique", scope="all", limit=1000)
+
+        status, files = nway(f"nwp{tag}", tab="core", scope="all", columns="files")
+        check(
+            "nway cluster: columns=files gives the node's two files",
+            status == 200
+            and files["columns_mode"] == "files"
+            and sorted(c["md5"] for c in files["columns"])
+            == sorted([file_md5, file_md5_2]),
+            f"HTTP {status} {files and files.get('columns_mode')}",
+        )
+        check(
+            "nway cluster: file columns equal the md5s= request",
+            files and _nway_rows(files) == _nway_rows(pair),
+        )
+
+        status, kids = nway(f"nwp{tag}", tab="core", scope="all", columns="children")
+        check(
+            "nway cluster: columns=children gives one column per child cluster",
+            status == 200
+            and kids["columns_mode"] == "children"
+            and sorted(c["kind"] for c in kids["columns"]) == ["child", "child"]
+            and len(kids["file_columns"]) == 2,
+            f"HTTP {status} {kids and kids['columns']}",
+        )
+        check(
+            "nway cluster: core rows are the same function groups, now over children",
+            kids
+            and _nway_rows(kids) == _nway_rows(pair)
+            and all(
+                r["span"] == 2 and all(c["on"] for c in r["cells"].values())
+                for r in kids["items"]
+            ),
+        )
+        _, kids_only = nway(f"nwp{tag}", tab="unique", scope="all", columns="children")
+        check(
+            "nway cluster: unique tab stays per file under child columns",
+            kids_only
+            and _nway_rows(kids_only) == _nway_rows(pair_only)
+            and all(
+                r["file_span"] == 1 and r["files"] and len(r["files"]) == 1
+                for r in kids_only["items"]
+            ),
+        )
+        _, strict = nway(
+            f"nwp{tag}",
+            tab="core",
+            scope="all",
+            columns="children",
+            child_presence="1",
+        )
+        check(
+            "nway cluster: child_presence=1 keeps single-file children present",
+            strict and strict["total"] == kids["total"],
+        )
+
+        status, direct = nway(f"nwq{tag}", tab="core", scope="all", columns="children")
+        check(
+            "nway cluster: files in no child become a direct-files column",
+            status == 200
+            and sorted(c["kind"] for c in direct["columns"]) == ["child", "direct"]
+            and next(c for c in direct["columns"] if c["kind"] == "direct")["members"]
+            == [f"{COLLECTION}:{file_md5_2}"],
+            f"HTTP {status} {direct and direct['columns']}",
+        )
+        _, auto = nway(f"nwp{tag}", tab="core", scope="all")
+        check(
+            "nway cluster: auto uses file columns for a small node",
+            auto and auto["columns_mode"] == "files",
+        )
+        _, one = nway(f"nwp{tag}", tab="unique", scope="all", columns="children")
+        _, first = nway(
+            f"nwp{tag}",
+            tab="unique",
+            scope="all",
+            columns="children",
+            column=f"uuid-nwc1{tag}",
+        )
+        check(
+            "nway cluster: column filter keeps rows present in that child",
+            one
+            and first
+            and all(r["cells"][f"uuid-nwc1{tag}"]["present"] for r in first["items"])
+            and first["total"] <= one["total"],
+        )
+        check(
+            "nway cluster: unknown child cluster is a 404",
+            nway("no-such-cluster-0000")[0] == 404,
+        )
+
+        # Slice 5b: file columns carry coverage; centrality + medoid are read
+        # from what the cluster build persists (seeded the way it writes them).
+        check(
+            "nway: file columns carry a coverage in [0,1] or null",
+            files
+            and all(
+                c["coverage"] is None or 0.0 <= c["coverage"] <= 1.0
+                for c in files["columns"]
+            ),
+            f"{files and [c.get('coverage') for c in files['columns']]}",
+        )
+        nwp = f"nwp{tag}"
+        meta = json.loads(r.get(f"{base}:{nwp}:meta"))
+        r.set(f"{base}:{nwp}:meta", json.dumps({**meta, "medoid": f2}))
+        r.sadd(f"{base}:{nwp}:direct_members", f1, f2)
+        r.hset(f"{base}:{nwp}:centrality", mapping={f1: 0.25, f2: 0.75})
+        lst = test_endpoint(
+            "GET",
+            "/api/bin_cluster/list",
+            params={
+                "collection": COLLECTION,
+                "algo": "unweighted_cosine",
+                "cluster_uuid": f"uuid-{nwp}",
+                "show_members": "true",
+            },
+        )
+        row = next(
+            (
+                c
+                for c in (lst or {}).get("results", [])
+                if c.get("cluster_uuid") == f"uuid-{nwp}"
+            ),
+            {},
+        )
+        check(
+            "bin_cluster/list carries medoid and per-member centrality",
+            row.get("medoid") == f2
+            and {m["id"]: m["centrality"] for m in row.get("direct_members", [])}
+            == {f1: 0.25, f2: 0.75},
+            f"{row.get('medoid')} {row.get('direct_members')}",
+        )
+        mem = test_endpoint(
+            "GET",
+            "/api/bin_cluster/members",
+            params={
+                "collection": COLLECTION,
+                "algo": "unweighted_cosine",
+                "cluster_id": nwp,
+                "sort": "centrality",
+            },
+        )
+        check(
+            "bin_cluster/members sort=centrality ranks highest first, with medoid",
+            mem
+            and mem.get("medoid") == f2
+            and [m["id"] for m in mem["results"]] == [f2, f1]
+            and [m["centrality"] for m in mem["results"]] == [0.75, 0.25],
+            f"{mem}",
+        )
+        old_row = next(
+            (
+                c
+                for c in (
+                    test_endpoint(
+                        "GET",
+                        "/api/bin_cluster/list",
+                        params={
+                            "collection": COLLECTION,
+                            "algo": "unweighted_cosine",
+                            "cluster_uuid": f"uuid-nwq{tag}",
+                            "show_members": "true",
+                        },
+                    )
+                    or {}
+                ).get("results", [])
+                if c.get("cluster_uuid") == f"uuid-nwq{tag}"
+            ),
+            {},
+        )
+        check(
+            "bin_cluster/list: cluster without centrality reports null medoid",
+            "medoid" in old_row and old_row["medoid"] is None,
+            f"{old_row.get('medoid', 'missing')}",
+        )
+    finally:
+        for cid in tree:
+            r.delete(
+                f"{base}:{cid}:meta",
+                f"{base}:{cid}:members",
+                f"{base}:{cid}:direct_members",
+                f"{base}:{cid}:centrality",
+            )
+        r.hdel(f"{base}:uf:uuid", *tree)
+        if old_links is None:
+            r.delete(links_key)
+        else:
+            r.set(links_key, old_links)
+
+    check("nway: bad columns is a 400", _nway(columns="nope")[0] == 400)
+    check(
+        "nway: columns=children without a cluster is a 400",
+        _nway(columns="children")[0] == 400,
+    )
+    check(
+        "nway: cluster_uuid without collection or pool is a 400",
+        requests.get(
+            f"{BASE_URL}/api/bin_sim/nway", params={"cluster_uuid": "x"}, timeout=30
+        ).status_code
+        == 400,
+    )
+
+
 def _runtime_doc(unweighted):
     """The runtime-greedy summary for the uploaded pair, or None."""
     params = {
@@ -5997,6 +6448,32 @@ def test_pool_collection_equivalence():
             resp = requests.post(f"{BASE_URL}{path}", timeout=10)
             resp.raise_for_status()
             _wait_all([resp.json().get("job_id")], path.rsplit("/", 1)[-1])
+            if path.endswith("/build"):
+                build_job = resp.json().get("job_id")
+
+        # Fan-out: every pair has a doc, and the pipeline holds tile group + finalizer.
+        n_bins = 2
+        check(
+            "pool bin_sim: built set holds N*(N-1)/2 pairs",
+            r.scard(f"global:pool:{eq_pool}:bin_sim:built:{EQ_ALGO}")
+            == n_bins * (n_bins - 1) // 2,
+        )
+        from bsimvis.app.services.job_service import JobService
+
+        jr = JobService().r  # jobs live in Redis, not Kvrocks
+        kids = [
+            jr.hgetall(f"job:{t}")
+            for t in _json.loads(jr.hget(f"job:{build_job}", "task_ids") or "[]")
+        ]
+        check(
+            "pool bin_sim: tile group and finalizer spliced into pipeline",
+            any(k.get("type") == "group" for k in kids)
+            and any(
+                k.get("type") == "build_pool_bin_sim"
+                and _json.loads(k.get("payload", "{}")).get("finalize")
+                for k in kids
+            ),
+        )
 
         # ── Canonical map, from the single collection's cross-binary sims ──
         single_scores = r.zrange(
@@ -6142,6 +6619,67 @@ def test_pool_collection_equivalence():
                     if n_s == n_p
                     else f"single={_json.dumps(n_s)[:200]} pool={_json.dumps(n_p)[:200]}"
                 ),
+            )
+
+        # ── 2b. N-way: the same two files, three ways ─────────────────────
+        # Stored rows of the real collection are the reference. Virtual mode must
+        # reproduce them for the same collection, and for the files split over two
+        # collections (no pool: the mixed-collection path); the pool's stored docs
+        # must too.
+        from bsimvis.app.services.collection_config import get_collection_params
+
+        locked = get_collection_params(single)
+        vparams = {
+            "algo": EQ_ALGO,
+            "min_score": locked["min_score"]["value"],
+            "min_features": locked["min_features"]["value"],
+        }
+
+        def nway_rows(**params):
+            out = {}
+            for tab in ("core", "unique"):
+                resp = requests.get(
+                    f"{BASE_URL}/api/bin_sim/nway",
+                    params={"scope": "all", "limit": 1000, "tab": tab, **params},
+                    timeout=120,
+                )
+                if resp.status_code != 200:
+                    return resp.status_code, None
+                body = resp.json()
+                out[tab] = {
+                    frozenset(canon(f) for f in row["cells"].values())
+                    for row in body["items"]
+                }
+                out["mode"], out["warnings"] = body["mode"], body["warnings"]
+            return 200, out
+
+        both = f"{md5_arm},{md5_linux}"
+        split = f"{sep_arm}:{md5_arm},{sep_linux}:{md5_linux}"
+        ref_status, ref = nway_rows(collection=single, md5s=both)
+        if check(
+            "nway equivalence: stored reference served", ref_status == 200, ref_status
+        ):
+            for label, params in (
+                (
+                    "virtual on the same collection",
+                    dict(collection=single, md5s=both, mode="virtual", **vparams),
+                ),
+                ("virtual over split collections", dict(md5s=split, **vparams)),
+                ("stored over the pool", dict(pool=eq_pool, md5s=split)),
+            ):
+                status, got = nway_rows(**params)
+                check(
+                    f"nway equivalence: {label} equals the stored collection rows",
+                    status == 200
+                    and got["core"] == ref["core"]
+                    and got["unique"] == ref["unique"],
+                    f"HTTP {status}; core {len((got or {}).get('core', ()))}/{len(ref['core'])}"
+                    f" unique {len((got or {}).get('unique', ()))}/{len(ref['unique'])}",
+                )
+            _, mixed = nway_rows(md5s=split, **vparams)
+            check(
+                "nway equivalence: split collections run in virtual mode",
+                (mixed or {}).get("mode") == "virtual",
             )
 
         if p_doc:
@@ -6887,6 +7425,226 @@ def test_lib_tag_rollup():
             r.delete(*keys)
 
 
+def test_boilerplate_backfill():
+    """backfill_boilerplate_tags replays the name rules over stored functions."""
+    import subprocess
+    from bsimvis.app.services.redis_client import get_redis
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 4d – Boilerplate backfill retags stored names", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    r = get_redis()
+    coll = f"{COLLECTION}_bpfill"
+    script = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "backfill_boilerplate_tags.py"
+    )
+    stale = "boilerplate:runtime:elf:startup#entry"
+    new_tag = "boilerplate:runtime:libc:rpc#xdr_callhdr"
+
+    def s(v):
+        return v.decode() if isinstance(v, bytes) else v
+
+    def seed(md5, funcs):
+        r.set(
+            f"{coll}:file:{md5}:meta",
+            json.dumps({"file_md5": md5, "type": "file", "tags": []}),
+        )
+        r.sadd(f"{coll}:all_files", f"{coll}:file:{md5}")
+        for i, (name, tags) in enumerate(funcs):
+            fid = f"{coll}:func:{md5}:{0x401000 + i * 16:08x}"
+            r.set(f"{fid}:meta", json.dumps({"function_name": name, "tags": tags}))
+            r.sadd(f"{coll}:idx:file:functions:{md5}", fid)
+            for t in tags:
+                r.sadd(f"{coll}:idx:func:tags:{t.lower()}", fid)
+        return fid
+
+    def fmeta(md5, i):
+        raw = r.get(f"{coll}:func:{md5}:{0x401000 + i * 16:08x}:meta")
+        return json.loads(s(raw))
+
+    def bucket(tag):
+        return {s(x) for x in r.smembers(f"{coll}:idx:func:tags:{tag.lower()}")}
+
+    def run(*extra):
+        return subprocess.run(
+            [sys.executable, script, "--collection", coll, *extra],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+    elf, go = "2" * 32, "3" * 32
+    try:
+        funcs = [(f"_dl_fn{i}", []) for i in range(25)]
+        funcs += [
+            ("xdr_callhdr", ["keep:me"]),
+            ("main", []),
+            ("attack_udp", []),
+            ("entry", [stale]),
+            ("FUN_fid", ["fid:zlib#deflate"]),
+        ]
+        seed(elf, funcs)
+        seed(
+            go,
+            [(f"runtime.f{i}", []) for i in range(10)]
+            + [("net.Dial", []), ("main.beacon", [])],
+        )
+        xdr, ent, main_i = 25, 28, 26
+        fidfn = 29
+
+        p = run("--dry-run")
+        check(
+            "dry-run exits cleanly and reports counts",
+            p.returncode == 0 and "would change" in (p.stderr + p.stdout),
+            (p.stderr or p.stdout)[-400:],
+        )
+        check(
+            "dry-run writes nothing",
+            new_tag not in fmeta(elf, xdr)["tags"]
+            and stale in fmeta(elf, ent)["tags"]
+            and not bucket(new_tag),
+            str(fmeta(elf, xdr)),
+        )
+
+        p = run()
+        check(
+            "backfill exits cleanly",
+            p.returncode == 0,
+            (p.stderr or p.stdout)[-400:],
+        )
+        check(
+            "untagged libc name gains its tag in meta and index",
+            new_tag in fmeta(elf, xdr)["tags"]
+            and "keep:me" in fmeta(elf, xdr)["tags"]
+            and any(x.endswith(f":{0x401000 + xdr * 16:08x}") for x in bucket(new_tag)),
+            str(fmeta(elf, xdr)),
+        )
+        check(
+            "stale entry tag is removed from meta and index",
+            stale not in fmeta(elf, ent)["tags"] and not bucket(stale),
+            str(fmeta(elf, ent)),
+        )
+        check(
+            "application names stay untagged",
+            fmeta(elf, main_i)["tags"] == [] and fmeta(elf, 27)["tags"] == [],
+            f"{fmeta(elf, main_i)} {fmeta(elf, 27)}",
+        )
+        check(
+            "non-boilerplate tags survive",
+            fmeta(elf, fidfn)["tags"] == ["fid:zlib#deflate"],
+            str(fmeta(elf, fidfn)),
+        )
+        doc = json.loads(s(r.get(f"{coll}:file:{elf}:meta")))
+        check(
+            "file gains the boilerplate:runtime rollup",
+            "boilerplate:runtime" in (doc.get("tags") or []),
+            str(doc.get("tags")),
+        )
+        check(
+            "Go stdlib name is tagged, application name is not",
+            any(t.startswith("boilerplate:") for t in fmeta(go, 10)["tags"])
+            and fmeta(go, 11)["tags"] == [],
+            f"{fmeta(go, 10)} {fmeta(go, 11)}",
+        )
+
+        p = run()
+        check(
+            "second run changes nothing",
+            "+0 / -0" in (p.stderr + p.stdout),
+            (p.stderr or p.stdout)[-400:],
+        )
+    finally:
+        keys = list(r.scan_iter(match=f"{coll}:*", count=1000))
+        if keys:
+            r.delete(*keys)
+
+
+def test_fid_backfill():
+    """backfill_function_id_tags drops legacy origin:lib tags, keeps only fid:."""
+    from bsimvis.app.services.redis_client import get_redis
+    from backfill_function_id_tags import backfill
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 4d2 – FID backfill replaces legacy origin:lib tags", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    r = get_redis()
+    coll = f"{COLLECTION}_fidfill"
+    md5 = "4" * 32
+    hit = "a" * 16
+    amb = "b" * 16
+    tagbox = "boilerplate:runtime:libc:rpc#xdr_callhdr"
+    db = {hit: ["fid:libc:2.31#memcpy"], amb: ["fid:libc:2.31#ambiguous"]}
+
+    def s(v):
+        return v.decode() if isinstance(v, bytes) else v
+
+    try:
+        r.set(
+            f"{coll}:file:{md5}:meta",
+            json.dumps({"file_md5": md5, "tags": ["origin:lib:libc", "keep"]}),
+        )
+        r.sadd(f"{coll}:all_files", f"{coll}:file:{md5}")
+        seeded = [
+            ("memcpy", hit, ["origin:lib:libc:2.31:memcpy", tagbox]),
+            ("FUN_x", amb, ["origin:lib:libc:2.31:memcpy"]),
+            ("wrong", "c" * 16, ["origin:lib:libc:2.31:memcpy"]),
+        ]
+        ids = []
+        for i, (name, h, tags) in enumerate(seeded):
+            fid = f"{coll}:func:{md5}:{0x401000 + i * 16:08x}"
+            ids.append(fid)
+            r.set(
+                f"{fid}:meta",
+                json.dumps(
+                    {
+                        "function_name": name,
+                        "function_id_hash": h,
+                        "instruction_count": 40,
+                        "language_id": "x86:LE:64:default",
+                        "file_md5": md5,
+                        "tags": tags,
+                    }
+                ),
+            )
+            r.sadd(f"{coll}:all_functions", fid)
+            r.sadd(f"{coll}:idx:file:functions:{md5}", fid)
+
+        lookup = lambda lang, h: db.get(h, [])
+        backfill(r, coll, lookup, apply=False)
+        check(
+            "preview writes nothing",
+            "origin:lib:libc:2.31:memcpy"
+            in json.loads(s(r.get(f"{ids[0]}:meta")))["tags"],
+        )
+        backfill(r, coll, lookup, apply=True)
+        got = [json.loads(s(r.get(f"{f}:meta")))["tags"] for f in ids]
+        check(
+            "legacy tag replaced by its fid: rematch, boilerplate kept",
+            got[0] == [tagbox, "fid:libc:2.31#memcpy"],
+            str(got[0]),
+        )
+        check(
+            "multi-match keeps #ambiguous",
+            got[1] == ["fid:libc:2.31#ambiguous"],
+            str(got[1]),
+        )
+        check("unmatched legacy tag is deleted", got[2] == [], str(got[2]))
+        ftags = json.loads(s(r.get(f"{coll}:file:{md5}:meta")))["tags"]
+        check(
+            "file rollup uses fid: only",
+            "keep" in ftags
+            and "fid:libc" in ftags
+            and not any(t.startswith("origin:lib") for t in ftags),
+            str(ftags),
+        )
+    finally:
+        keys = list(r.scan_iter(match=f"{coll}:*", count=1000))
+        if keys:
+            r.delete(*keys)
+
+
 def test_scan_mode():
     """A scan answers the similarity question without ingesting the sample.
 
@@ -7535,6 +8293,8 @@ if __name__ == "__main__":
         test_tag_vocabulary_and_llm_batch,
         test_llm_agentic_analysis,
         test_bin_sim_diff_cache,
+        test_nway_diff,
+        test_nway_cluster_entry,
         test_llm_pair_analysis_job,
         test_search_job,
         test_bin_sim_notes_and_tags,
@@ -7547,6 +8307,8 @@ if __name__ == "__main__":
         test_lineage,
         test_container_similarity,
         test_lib_tag_rollup,
+        test_boilerplate_backfill,
+        test_fid_backfill,
         test_skip_modules_payload,
         test_scan_mode,
         test_scan_multi_upload,
@@ -7561,6 +8323,8 @@ if __name__ == "__main__":
     STEP_DEPS = {
         # Issues the /api/bin_sim/build whose doc the diff cache step reads.
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
+        "test_nway_diff": ["test_search_filters_and_sorting"],
+        "test_nway_cluster_entry": ["test_search_filters_and_sorting"],
         "test_llm_pair_analysis_job": ["test_search_filters_and_sorting"],
         "test_search_job": ["test_search_filters_and_sorting"],
         "test_bin_sim_notes_and_tags": ["test_search_filters_and_sorting"],

@@ -647,6 +647,9 @@ def delete_feature(r, coll, f_hash):
             _unindex_num(pipe, coll, "feature", f, base_id)
     pipe.srem(f"{coll}:all_features", base_id)
     pipe.delete(doc_id)
+    # :stats is a derived cache of :meta — remove it, otherwise enrich would
+    # read a stale table for a feature that has no occurrences left.
+    pipe.delete(f"{base_id}:stats")
     pipe.execute()
 
 

@@ -15,7 +15,7 @@ import tomllib
 
 from bsimvis.app.services import tag_taxonomy
 from bsimvis.app.services.boilerplate_tag_service import (
-    boilerplate_tag_for_function_name,
+    boilerplate_tags_for_names,
 )
 from bsimvis.app.services.bsim_profiles import get_signature_settings
 
@@ -709,6 +709,12 @@ class GhidraService:
         except Exception as e:
             logging.debug(f"FID service unavailable: {e}")
 
+        boilerplate_tags = (
+            {}
+            if skip_boilerplate
+            else boilerplate_tags_for_names(f.getName() for f in eligible_funcs)
+        )
+
         chunk = []
         decompiled_count = 0
 
@@ -777,10 +783,9 @@ class GhidraService:
                 if ft not in func_tags:
                     func_tags.append(ft)
 
-            if not skip_boilerplate:
-                boilerplate_tag = boilerplate_tag_for_function_name(func_name)
-                if boilerplate_tag:
-                    func_tags.append(boilerplate_tag)
+            boilerplate_tag = boilerplate_tags.get(func_name)
+            if boilerplate_tag:
+                func_tags.append(boilerplate_tag)
 
             # Insert Capa tags based on function address
             addr_hex = hex(func.getEntryPoint().getOffset())

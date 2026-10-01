@@ -516,6 +516,7 @@ window.ModuleLoader = {
             'search-detail': window.SearchView,
             'scan': window.ScanView,
             'scan-detail': window.ScanView,
+            'nway': window.NwayView,
             'bin_sim': {
                 init: (p) => {
                     if (window.renderBinarySimilarityView) {
@@ -640,11 +641,14 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     const myGen = ++_refreshGeneration;
     if (window.updateJobStatusIcon) window.updateJobStatusIcon();
     const append = (appendArg === true);
+    // A filter input's blur (from clicking a link) arms a debounced search
+    // that would navigate back after the new view opens.
+    if (!append && filterDebounceTimer) clearTimeout(filterDebounceTimer);
     const { viewKey, collection, pool, params } = getRoutingState();
 
 
     // Check if we should load a module view
-    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail', 'search', 'search-detail', 'scan', 'scan-detail', 'cluster-detail', 'bin-cluster-detail'].includes(viewKey)) {
+    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail', 'search', 'search-detail', 'scan', 'scan-detail', 'nway', 'cluster-detail', 'bin-cluster-detail'].includes(viewKey)) {
         const stateParams = Object.fromEntries(params);
         stateParams.collection = collection;
         stateParams.pool = pool;

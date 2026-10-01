@@ -143,6 +143,12 @@
     discovery_max_df = 1.0
 
 
+[nway]
+# N-way file diff runs in the request, so it is capped. Over either cap the
+# endpoint answers 413 and the UI points at smaller clusters.
+max_members = 30
+max_functions = 60000
+
 [llm]
     ollama_url = "http://localhost:11434"
     model = "qwen3.6:35b"

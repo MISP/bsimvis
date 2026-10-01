@@ -29,6 +29,17 @@ DEFAULT_LIMIT = 100
 # API stops handing them back now that the tags cover the same ground.
 # filetype is NOT here -- Decision 5 keeps it a plain returned field.
 _LEGACY_RAW_FIELDS = ("avtype", "yara", "cc_ip")
+_HEAVY_CLUSTER_FIELDS = {
+    "tag_distribution",
+    "md5_distribution",
+    "filename_distribution",
+    "architecture_distribution",
+    "batch_uuid_distribution",
+    "executable_format_distribution",
+    "function_count_stats",
+    "sample_members",
+    "sample_files",
+}
 
 
 def search_files():
@@ -812,9 +823,16 @@ def get_file_details(collection, file_md5):
             if date_field in data:
                 data[date_field] = parse_timestamp(data[date_field])
 
+        # The file view only draws cluster cards; the distributions were just
+        # folded into inferred_meta, so they would be ~10MB of dead weight.
+        slim_clusters = {
+            cid: {k: v for k, v in cm.items() if k not in _HEAVY_CLUSTER_FIELDS}
+            for cid, cm in cluster_meta_map.items()
+        }
+
         return {
             "file": data,
-            "bin_cluster_map": cluster_meta_map,
+            "bin_cluster_map": slim_clusters,
             "inferred_meta": inferred_meta,
             "collection": collection,
         }

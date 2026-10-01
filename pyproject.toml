@@ -17,12 +17,15 @@ dependencies = [
     "pymilvus>=2.4.0",
     "hdbscan>=0.8.40",
     "scikit-learn>=1.6.0",
+    "numpy",
+    "scipy",
     "ollama>=0.6.2",
     "matplotlib>=3.11.0",
     "pyzipper>=0.4.0",
     "yara-python>=4.5.0",
     "mcp==1.28.1",
     "gunicorn>=26.2.0",
+    "flask-compress>=1.25",
 ]
 
 [project.scripts]

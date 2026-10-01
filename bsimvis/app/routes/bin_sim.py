@@ -942,7 +942,14 @@ def _diff_rows(diff_data, table):
 
 
 def _row_tags(item, fmeta):
-    """Tag ids attributed to a row, unioned over whichever sides it has.
+    """Tag ids attributed to a row, unioned over whichever sides it has."""
+    return _fids_tags(
+        [item.get("func_a"), item.get("func_b"), item.get("func_id")], fmeta
+    )
+
+
+def _fids_tags(fids, fmeta):
+    """Tag ids attributed to a row made of these functions (any may be None).
 
     Both tag fields count, exactly as the split does (`merge_tag_fields`): the
     severity/category/user axes are written to `user_tags` by the LLM and by
@@ -961,17 +968,22 @@ def _row_tags(item, fmeta):
     that is nobody else's.
     """
     tags = set()
-    sides = [
-        set(merge_tag_fields(fmeta.get(fid) or {}))
-        for fid in (item.get("func_a"), item.get("func_b"), item.get("func_id"))
-        if fid
-    ]
+    sides = [set(merge_tag_fields(fmeta.get(fid) or {})) for fid in fids if fid]
     library = any(is_library_tag(t) for own in sides for t in own)
     for own in sides:
         if not library and not any(tag_axis(t) == AXIS_ORIGIN for t in own):
             own.add(TAG_UNTAGGED)
         tags |= own
     return tags
+
+
+def _fn_haystack(fid, fmeta):
+    """Searchable text of one function: name, namespace, address and tags."""
+    m = fmeta.get(fid, {})
+    addr = m.get("entrypoint_address") or (fid.split(":")[-1] if fid else "")
+    parts = [m.get("name"), m.get("namespace"), addr]
+    parts += m.get("tags", []) + m.get("user_tags", [])
+    return " ".join(str(p) for p in parts if p).lower()
 
 
 def _function_address(fid, fmeta):
@@ -1093,11 +1105,7 @@ def _page_diff(diff_data, table, r=None, collection=None, algo=None, pool_id=Non
     fold_name = request.args.get("name")
 
     def haystack(fid):
-        m = fmeta.get(fid, {})
-        addr = m.get("entrypoint_address") or (fid.split(":")[-1] if fid else "")
-        parts = [m.get("name"), m.get("namespace"), addr]
-        parts += m.get("tags", []) + m.get("user_tags", [])
-        return " ".join(str(p) for p in parts if p).lower()
+        return _fn_haystack(fid, fmeta)
 
     def owners_match(fid, needle):
         owners = fmeta.get(fid, {}).get("note_owners", []) if fid else []

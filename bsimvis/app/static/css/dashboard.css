@@ -2681,3 +2681,125 @@ a.home-card:hover,
     border-radius: 8px;
     padding: 3px 10px;
 }
+
+/* --- N-way file diff (nway_panel.js, nway_view.js, nway_basket.js) ---
+   Built from the shared pieces: .bsim-tabbar, .view-toggle, .table-footer,
+   .top-action-btn. Only what those do not cover lives here. */
+.nway-panel { display: flex; flex-direction: column; min-width: 0; }
+.nway-panel .bsim-tabbar { margin-bottom: 12px; }
+.nway-count {
+    margin-left: 6px;
+    font-size: 0.72rem;
+    font-weight: 400;
+    color: var(--subtle);
+    font-family: 'Consolas', monospace;
+}
+.nway-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin: 0 0 12px; }
+.nway-controls .view-toggle { margin: 0; align-items: center; }
+.nway-ctl { display: inline-flex; align-items: center; gap: 6px; }
+.nway-ctl b {
+    min-width: 2.6em;
+    text-align: right;
+    color: var(--accent);
+    font-family: 'Consolas', monospace;
+    font-size: 0.78rem;
+}
+.nway-ctl input[type="range"] { width: 110px; accent-color: var(--accent); }
+.nway-lbl {
+    font-size: 0.7rem;
+    font-weight: bold;
+    font-family: sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--subtle);
+    margin-right: 6px;
+}
+.nway-ctl .nway-lbl { margin-right: 0; }
+.nway-input[data-text="q"] { width: 190px; }
+.nway-input[data-text="tags"] { width: 130px; }
+.nway-input {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 0.8rem;
+}
+.nway-input:focus { outline: none; border-color: var(--accent); }
+.nway-note {
+    margin: 0 0 10px;
+    padding: 8px 12px;
+    border: 1px dashed var(--border);
+    border-radius: 7px;
+    background: var(--card-bg);
+    color: var(--subtle);
+    font-size: 0.78rem;
+}
+.nway-note.warn, .nway-note.err { border-style: solid; color: var(--text); }
+.nway-note.warn { border-left: 3px solid var(--token-warning); }
+.nway-note.err { border-left: 3px solid var(--token-instruction); }
+.nway-note ul { margin: 6px 0 0; padding-left: 18px; }
+.nway-state { padding: 40px 20px; text-align: center; color: var(--dim); }
+.nway-card { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.nway-scroll { overflow: auto; }
+.nway-table { width: 100%; table-layout: auto; font-size: 0.82rem; }
+.nway-table th, .nway-table td { padding: 8px 12px; }
+.nway-table th { white-space: nowrap; vertical-align: bottom; }
+.nway-table th.num, .nway-table td.num { text-align: right; }
+.nway-table td.num { font-family: 'Consolas', monospace; }
+.nway-table th .entity-filename { text-transform: none; letter-spacing: 0; font-size: 0.8rem; }
+/* One column per file: fixed width so 12-30 columns scroll sideways instead of
+   colliding, with the function-name column pinned on the left. */
+.nway-table th.col, .nway-table td.col { min-width: 150px; max-width: 200px; }
+.nway-colhead { max-width: 190px; }
+.nway-colhead .entity-filename { display: block; max-width: 190px; }
+.nway-colname { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); text-transform: none; letter-spacing: 0; font-size: 0.8rem; }
+.nway-colhead .entity-md5 { font-size: 0.72rem; font-weight: 400; }
+.nway-table th:first-child, .nway-table td:first-child { position: sticky; left: 0; z-index: 1; max-width: 280px; box-shadow: 1px 0 0 var(--border); }
+.nway-table th:first-child { z-index: 3; }
+.nway-table td:first-child { background: var(--bg); }
+.nway-table tbody tr:nth-child(even) td:first-child { background: var(--card-bg); }
+.nway-table tbody tr:hover td:first-child { background: var(--hover); }
+.nway-addr { color: var(--accent); cursor: pointer; font-family: 'Consolas', monospace; font-weight: 600; }
+.nway-addr:hover { text-decoration: underline; }
+.nway-sub { display: block; margin-top: 2px; font-size: 0.68rem; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--subtle); }
+.nway-table td.gap { text-align: center; color: var(--dim); }
+.nway-fn { display: flex; align-items: center; gap: 6px; min-width: 170px; }
+.nway-fn .entity-function { min-width: 0; }
+.nway-name { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.nway-warn { color: var(--token-warning); }
+.nway-group-links { margin-top: 3px; font-size: 0.75rem; }
+.nway-group-links a { color: var(--accent); cursor: pointer; margin-right: 6px; }
+.nway-group-links a:hover { text-decoration: underline; }
+
+/* View header, set editor and basket chip */
+.nway-view { flex: 1; width: 100%; overflow-y: auto; padding: 25px 30px; color: var(--text); }
+#nway-set { margin-top: 10px; }
+.nway-chip .entity-md5 { font-size: 0.72rem; }
+.nway-head { margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.nway-head h2 { margin: 0 0 4px; color: var(--accent); font-size: 1.5rem; }
+.nway-head p { margin: 0; color: var(--subtle); font-size: 0.9rem; }
+.nway-edit { margin-bottom: 14px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); }
+.nway-edit summary { cursor: pointer; font-weight: 600; font-size: 0.85rem; color: var(--text); }
+.nway-edit-grid { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; margin-top: 10px; }
+.nway-edit-col { display: flex; flex-direction: column; gap: 6px; min-width: 300px; }
+.nway-edit-row { display: flex; gap: 6px; align-items: center; }
+.nway-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.nway-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg);
+    color: var(--subtle);
+    font-size: 0.72rem;
+}
+.nway-chip button { background: none; border: none; padding: 0; cursor: pointer; color: var(--dim); }
+.nway-chip button:hover { color: var(--token-instruction); }
+.nway-msg { margin-top: 6px; min-height: 1em; font-size: 0.8rem; color: var(--token-instruction); }
+.nway-basket { display: inline-flex; align-items: center; gap: 8px; }
+.nway-basket button { background: none; border: none; padding: 0 2px; cursor: pointer; color: var(--subtle); font-size: inherit; }
+.nway-basket button:hover { color: var(--accent); }
+.nway-basket .nway-basket-open { color: var(--accent); font-weight: 600; }

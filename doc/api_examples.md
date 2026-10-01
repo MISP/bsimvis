@@ -41,6 +41,10 @@ curl -X POST --data-binary "@/path/to/file" \
 curl -X POST --data-binary "@/path/to/file" \
   "http://localhost:5000/api/file/upload?collection=test_api&file_name=my_binary&tags=dropper&related_md5=<md5b>&file_metadata_extra=%7B%22parent_md5%22%3A%22<md5parent>%22%2C%22parent_file_name%22%3A%22sample.zip%22%7D"
 
+# With AV and IP tags (metadata-derived)
+curl -X POST --data-binary "@/path/to/file" \
+  "http://localhost:5000/api/file/upload?collection=test_api&file_name=malware.bin&tags=av:clamav:mirai%23Unix.Trojan.Mirai-7100807-0&tags=ip:192.0.2.1"
+
 # Search by the parent hash: returns the children too
 curl -s "http://localhost:5000/api/file/search?collection=test_api&md5=<md5parent>"
 ```
@@ -99,6 +103,32 @@ curl -X POST -H "Content-Type: application/json" \
 curl -X POST -H "Content-Type: application/json" \
   -d '{"collection": "test_api", "entity_type": "function", "entity_id": "test_api:func:59281a167473ca9b98515b11cb709f82:00101144", "tag": "important"}' \
   http://localhost:5000/api/tags/add
+
+# Tag a file with AV family (metadata-derived)
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection": "test_api", "entity_type": "file", "entity_id": "test_api:file:59281a167473ca9b98515b11cb709f82", "tag": "av:clamav:mirai#Unix.Trojan.Mirai-7100807-0"}' \
+  http://localhost:5000/api/tags/add
+
+# Tag a file with IP address
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection": "test_api", "entity_type": "file", "entity_id": "test_api:file:59281a167473ca9b98515b11cb709f82", "tag": "ip:192.0.2.1"}' \
+  http://localhost:5000/api/tags/add
+```
+
+## Files — Bulk metadata via CSV
+```bash
+# Propagate metadata from CSV: avtype → av: tags, cc_ip → ip: tags
+uv run bsimvis metadata --collection test_api metadata.csv
+
+# CSV format (pipe-delimited): avtype column becomes av:vendor:family#signature tags
+# cc_ip column becomes ip:address tags
+```
+
+Example `metadata.csv`:
+```
+file_name|file_md5|avtype|cc_ip
+malware_a.bin|abc123def456...|Unix.Trojan.Mirai-7100807-0|192.0.2.1
+malware_b.bin|789ghi012jkl...|Generic.Trojan.Variant.A|10.0.0.5
 ```
 
 ## Function Clustering

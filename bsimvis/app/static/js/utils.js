@@ -222,6 +222,9 @@ function parseRestfulPath() {
             params.view = 'scan';
         }
         return params;
+    } else if (parts[pIdx] === 'diff' && parts[pIdx + 1] === 'nway') {
+        params.view = 'nway';
+        return params;
     } else if (parts[pIdx] === 'upload') {
         params.view = 'upload';
         return params;

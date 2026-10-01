@@ -2376,6 +2376,7 @@ class BinClusterMembers(Resource):
             "axis": "Similarity axis",
             "node_type": "Node type (file/container)",
             "cluster_id": "Target cluster ID",
+            "sort": "Set to 'centrality' to rank members by centrality, highest first",
             "limit": "Max results",
             "offset": "Pagination offset",
         }
@@ -2550,6 +2551,44 @@ class BinSimDiff(Resource):
         from bsimvis.app.routes.function_diff import diff_api
 
         return diff_api()
+
+
+@ns_bin_sim.route("/nway")
+class BinSimNway(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "md5s": "Comma-separated files, each `<collection>:<md5>` or a bare md5 with `collection` (2 or more); or use cluster_uuid",
+            "batch_uuid": "Upload batch whose files are added to `md5s` (with `collection`, or searched in every collection); unknown batch -> 404",
+            "cluster_uuid": "Binary cluster (file node) to diff instead of `md5s`; with `collection` or `pool`, optional `axis`/`algo`",
+            "columns": "With cluster_uuid: auto (default), files or children (one column per child cluster + direct files)",
+            "child_presence": "children columns: share of a child's files that must hold a function for it to count as present (default 0.5)",
+            "collection": "Collection for bare md5s",
+            "pool": "Pool ID; members must come from the pool's collections",
+            "mode": "stored (default: stored pair docs) or virtual (rebuild edges as a fresh collection of these files would; always used when files span collections without a pool)",
+            "algo": "virtual mode: similarity algorithm (default: the first file's collection lock)",
+            "min_score": "virtual mode: function min_score (default: locked value)",
+            "min_features": "virtual mode: BSim feature floor (default: locked value)",
+            "min_edge": "Drop function matches below this similarity (default similarity.file_min_score)",
+            "tab": "core (in every file), partial (in at least k files) or unique (one file)",
+            "k": "Minimum files for the partial tab (default 2)",
+            "scope": "code (default), library or all",
+            "column": "Only rows that have a function in this file (`<collection>:<md5>`)",
+            "q": "Search function names, addresses and tags",
+            "tags": "Comma-separated tag prefixes to keep",
+            "feat_min": "Minimum row weight",
+            "feat_max": "Maximum row weight",
+            "support_min": "Minimum share of file pairs matched inside a row (0-1)",
+            "sort_col": "span, weight, support, cohesion or name",
+            "sort_dir": "asc or desc",
+            "limit": "Page size",
+            "offset": "Pagination offset",
+        }
+    )
+    def get(self):
+        """Rows of functions shared across N files, with core/partial/unique tabs and per-tab code/library counts."""
+        from bsimvis.app.routes.nway import get_nway
+
+        return get_nway()
 
 
 @ns_bin_sim.route("/list")

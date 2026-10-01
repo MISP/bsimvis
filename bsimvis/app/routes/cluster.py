@@ -11,6 +11,7 @@ from bsimvis.app.services.cluster_utils import (
     cluster_tree_slice,
     cluster_children_page,
     get_tree_links,
+    real_links,
     resolve_cluster_id_by_uuid,
 )
 from bsimvis.app.services.index_service import get_pool_id
@@ -520,7 +521,7 @@ def list_clusters():
     parent_to_children = {}
     if links_raw:
         try:
-            links = json.loads(links_raw)
+            links = real_links(json.loads(links_raw))
             child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
             for l in links:
                 p = str(l["parent"])
@@ -529,6 +530,25 @@ def list_clusters():
                 parent_to_children[p].append(str(l["child"]))
         except Exception:
             pass
+
+    # The exact-uuid shortcut loaded one meta; load the relatives it will expand to.
+    if exact_cid and (show_parents or show_children):
+        start = exact_cid.decode() if isinstance(exact_cid, bytes) else str(exact_cid)
+        related = set()
+        if show_parents:
+            curr = start
+            while curr in child_to_parent:
+                curr = child_to_parent[curr]
+                related.add(curr)
+        if show_children:
+            queue = [start]
+            while queue:
+                for child in parent_to_children.get(queue.pop(), []):
+                    if child not in related:
+                        related.add(child)
+                        queue.append(child)
+        related.discard(start)
+        all_meta_keys += [f"{collection}:cluster:{algo}:{cid}:meta" for cid in related]
 
     if all_meta_keys:
         t_fetch = time.perf_counter()

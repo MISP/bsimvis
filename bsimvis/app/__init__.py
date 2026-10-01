@@ -1,5 +1,6 @@
 from flask import Flask, send_from_directory, request, g
 from flask_cors import CORS
+from flask_compress import Compress
 import os
 import time
 import logging
@@ -10,6 +11,7 @@ def create_app():
     # Tell Flask the static folder is one level up
     app = Flask(__name__, static_folder="static")
     CORS(app)
+    Compress(app)
 
     # Disable default Flask static file caching
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0

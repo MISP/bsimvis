@@ -307,7 +307,12 @@ class MaintenanceService:
             ):
                 if self.r.zcard(key) == 0:
                     stem = txt(key)[: -len(":functions")]
-                    self.r.delete(key, f"{stem}:meta", f"{stem}:global_meta")
+                    # :stats is the derived cache of :meta; drop it with the
+                    # feature so a later enrich never reads a stale table for
+                    # a feature that has no occurrences.
+                    self.r.delete(
+                        key, f"{stem}:meta", f"{stem}:stats", f"{stem}:global_meta"
+                    )
             # The batch membership index also covers legacy files without metadata.
             was_batch_member = False
             if not batch_uuid:

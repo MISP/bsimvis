@@ -191,6 +191,8 @@ it prints `RESULT: FAIL` or the run was skipped. Show the output.
 - **For UI changes only:** Do not run `wt-test.sh` (as there are no UI tests). Instead, simply run `node --check <file>` on the modified JavaScript files to verify they compile.
 - **For UI changes only:** also run `node scripts/test_xss_escaping.js`. It fails if a value that came off an uploaded sample reaches `innerHTML` without `escapeHtml` / `escapeAttr`.
 
+`bsimvis/app/static/vendor` and `bin/` are symlinks in a worktree and gitignored: never `git add -f` them. `scripts/githooks/pre-commit` (enabled via `git config core.hooksPath scripts/githooks`, done by `wt-setup.sh`) rejects them.
+
 Three scripts, all refusing to run outside a linked worktree so they can never touch
 the main stack's `.env`, ports or confidential DB:
 

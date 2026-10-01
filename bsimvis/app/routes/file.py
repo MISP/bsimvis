@@ -186,12 +186,23 @@ def _batch_file_md5s(r, collection, batch_uuid):
     # ponytail: legacy batches lack a file set; scan their collection registry
     # once. New ingests populate the set, so this remains a compatibility path.
     md5s = set()
-    for file_id in r.sscan_iter(f"{collection}:all_files"):
+
+    def flush(chunk):
+        pipe = r.pipeline(transaction=False)
+        for md5 in chunk:
+            pipe.get(f"{collection}:file:{md5}:meta")
+        for md5, raw in zip(chunk, pipe.execute()):
+            if raw and json.loads(raw).get("batch_uuid") == batch_uuid:
+                md5s.add(md5)
+
+    chunk = []
+    for file_id in r.sscan_iter(f"{collection}:all_files", count=1000):
         file_id = file_id.decode() if isinstance(file_id, bytes) else file_id
-        md5 = file_id.rsplit(":", 1)[-1]
-        raw = r.get(f"{collection}:file:{md5}:meta")
-        if raw and json.loads(raw).get("batch_uuid") == batch_uuid:
-            md5s.add(md5)
+        chunk.append(file_id.rsplit(":", 1)[-1])
+        if len(chunk) >= 1000:
+            flush(chunk)
+            chunk = []
+    flush(chunk)
     return md5s
 
 
@@ -211,18 +222,21 @@ def _resolve_transfer_sources(r, source, md5s):
     if source:
         return [(source, md5) for md5 in sorted(md5s)]
 
-    # ponytail: check the small collection registry once per pasted MD5. A
-    # dedicated global MD5 index is unnecessary until this becomes a hotspot.
+    # ponytail: one pipelined membership probe per (md5, collection); a global
+    # MD5 index is unnecessary until the collection count grows.
     collections = sorted(
         value.decode() if isinstance(value, bytes) else value
         for value in r.smembers("global:collections")
     )
-    resolved = []
-    for md5 in sorted(md5s):
-        for collection in collections:
-            if r.sismember(f"{collection}:all_files", f"{collection}:file:{md5}"):
-                resolved.append((collection, md5))
-                break
+    pairs = [(c, md5) for md5 in sorted(md5s) for c in collections]
+    pipe = r.pipeline(transaction=False)
+    for collection, md5 in pairs:
+        pipe.sismember(f"{collection}:all_files", f"{collection}:file:{md5}")
+    resolved, seen = [], set()
+    for (collection, md5), hit in zip(pairs, pipe.execute()):
+        if hit and md5 not in seen:
+            seen.add(md5)
+            resolved.append((collection, md5))
     return resolved
 
 
@@ -302,15 +316,22 @@ def _load_analyzed_data(r, collection, md5):
 
 
 def _transfer_candidates(r, destination, sources):
-    files = []
+    # Existence checks only: _load_analyzed_data can rebuild the whole blob
+    # from function records, but it returns None exactly when :meta is missing.
+    pipe = r.pipeline(transaction=False)
     for source, md5 in sources:
-        raw = _load_analyzed_data(r, source, md5)
-        meta_raw = r.get(f"{source}:file:{md5}:meta")
+        pipe.exists(f"{source}:file:{md5}:data")
+        pipe.get(f"{source}:file:{md5}:meta")
+        pipe.sismember(f"{destination}:all_files", f"{destination}:file:{md5}")
+    values = pipe.execute()
+    files = []
+    for i, (source, md5) in enumerate(sources):
+        has_data, meta_raw, exists = values[i * 3 : i * 3 + 3]
         meta = json.loads(meta_raw) if meta_raw else {}
         status = "ready"
-        if not raw:
+        if not (has_data or meta_raw):
             status = "unavailable"
-        elif r.sismember(f"{destination}:all_files", f"{destination}:file:{md5}"):
+        elif exists:
             status = "already_exists"
         files.append(
             {
@@ -352,7 +373,8 @@ def transfer_analyzed_files():
             )
         }, 404
 
-    sources.extend(_resolve_transfer_sources(r_data, source, md5s))
+    known = {md5 for _, md5 in sources}
+    sources.extend(_resolve_transfer_sources(r_data, source, md5s - known))
     sources = list(dict.fromkeys(sources))
     if not sources:
         return {"error": "No analyzed files found for the requested MD5s"}, 404

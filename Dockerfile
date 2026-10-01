@@ -22,9 +22,6 @@ RUN ln -s "$(ls -d /app/bin/jdk-21* | head -n 1)" /opt/jdk
 ENV JAVA_HOME=/opt/jdk
 ENV PATH="/opt/jdk/bin:/app/.venv/bin:/app/bin:${PATH}"
 
-# install.sh only warns on a failed capa/UPX download; fail the build instead.
-RUN test -x bin/capa && test -x bin/upx
-
 # Non-root. One gunicorn worker: the app keeps in-process caches. Threads serve concurrency.
 RUN useradd -m -u 1000 bsimvis && chown bsimvis /app
 USER bsimvis

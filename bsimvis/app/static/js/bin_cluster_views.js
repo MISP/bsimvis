@@ -795,7 +795,7 @@ class BinClusterHierarchy {
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
                                 <div style="display:flex; align-items:baseline; gap:8px;">
                                     <span style="color:var(--success); font-weight:bold;">${((d.data.cohesion || 0) * 100).toFixed(1)}%</span>
-                                    ${Object.entries(d.data.cohesion_axes || {}).map(([ax, v]) => { const t = bst['score_' + ax]; return t ? `<span title="${escapeAttr(t.label)} cohesion" style="font-size:0.6rem; color:${t.color}; opacity:0.85;"><i class="${t.icon}"></i> ${((v || 0) * 100).toFixed(0)}%</span>` : ''; }).join('')}
+                                    ${Object.entries(d.data.cohesion_axes || {}).map(([ax, v]) => { const t = bst[ax === 'overall' ? 'score' : 'score_' + ax]; return t ? `<span title="${escapeAttr(t.label)} cohesion" style="font-size:0.6rem; color:${t.color}; opacity:0.85;"><i class="${t.icon}"></i> ${((v || 0) * 100).toFixed(0)}%</span>` : ''; }).join('')}
                                 </div>
                             </div>
                         </div>

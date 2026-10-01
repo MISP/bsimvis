@@ -561,10 +561,10 @@ window.ClusterDetailView = {
     renderSecondaryAxes(self) {
         const types = window.BinSimScoreTypes || {};
         const chips = Object.entries(self.cohesion_axes || {})
-            .filter(([ax]) => types[`score_${ax}`])
+            .filter(([ax]) => types[ax === 'overall' ? 'score' : `score_${ax}`])
             .sort((a, b) => b[1] - a[1])
             .map(([ax, v]) => {
-                const t = types[`score_${ax}`];
+                const t = types[ax === 'overall' ? 'score' : `score_${ax}`];
                 return `<div title="${escapeAttr(t.label)} cohesion" style="display:flex; align-items:center; gap:6px; font-size:0.75rem; font-weight:600; color:${t.color};">
                     <i class="${t.icon}"></i><span>${escapeHtml(t.label)}</span><span>${(v * 100).toFixed(0)}%</span></div>`;
             }).join('');

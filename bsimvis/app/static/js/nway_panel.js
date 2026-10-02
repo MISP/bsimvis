@@ -624,17 +624,21 @@
             // One column of cards, with suggested merges decorated or folded.
             const col0 = (role, lv, entries) => {
                 const gs = st.suggest ? this._cgGroups(`${role}${lv}|`, entries, files, focus) : [];
-                const by = new Map(), done = new Set();
+                const by = new Map(), done = new Set(), pos = new Map();
+                let n = 0;
                 gs.forEach(g => g.m.forEach(r => by.set(r.x, g)));
-                return entries.map(x => {
+                const html = entries.map(x => {
                     const g = by.get(x);
-                    if (!g) return node(role, lv, x);
+                    if (!g) { pos.set(x.it.key, n++); return node(role, lv, x); }
                     if (done.has(g)) return '';
                     done.add(g);
+                    g.m.forEach(r => pos.set(r.x.it.key, n));
+                    n++;
                     if (st.fold[g.id] !== false) return folded(role, lv, g);
                     const chip = `<span class="nway-grp" style="--gc:${g.color}" data-cg-fold="${escapeAttr(g.id)}" title="Suggested merge: ${g.m.length} cards with complementary files and the same parent. Click to fold them into one.">&asymp; ${g.label} &middot; ${g.cov}/${files.length} &middot; fold</span>`;
                     return `<div class="nway-grpbox${lv ? ' deep' : ''}" style="--gc:${g.color}"><div class="nway-grpbox-h">${chip}</div>${g.m.map(r => node(role, lv, r.x)).join('')}</div>`;
                 }).join('');
+                return { html, pos, n };
             };
             // Every out-of-scope neighbor of a side as one faded card.
             const merged = (role, list, more) => {
@@ -656,24 +660,37 @@
             for (const role of ['callers', 'callees']) {
                 const all = this._cgShown(nb, role);
                 const inn = all.filter(x => !x.out), out = all.filter(x => x.out);
-                let first;
+                let first, c0;
                 if (st.outside === 'merge') {
                     const cut = st.more[role] ? inn.length : CAP;
                     hidden[role] = Math.max(0, inn.length - cut);
-                    first = col0(role, 0, inn.slice(0, cut)) + (hidden[role] ? merged(role, inn.slice(cut), true) : '') + (out.length ? merged(role, out) : '');
+                    c0 = col0(role, 0, inn.slice(0, cut));
+                    first = c0.html + (hidden[role] ? merged(role, inn.slice(cut), true) : '') + (out.length ? merged(role, out) : '');
                     var prev = new Set(inn.slice(0, cut).map(x => x.it.key).concat(out.length ? ['merged'] : []));
                 } else {
                     const list = inn.concat(out);
                     const cut = st.more[role] ? list.length : CAP;
                     hidden[role] = Math.max(0, list.length - cut);
-                    first = col0(role, 0, list.slice(0, cut)) + (hidden[role] ? merged(role, list.slice(cut), true) : '');
+                    c0 = col0(role, 0, list.slice(0, cut));
+                    first = c0.html + (hidden[role] ? merged(role, list.slice(cut), true) : '');
                     var prev = new Set(list.slice(0, cut).map(x => x.it.key));
                 }
                 columns[role].push(first);
+                // Later hops are ordered by where their parents sit, so a path stays beside its parent.
+                let prevPos = c0.pos;
+                prevPos.set('more', c0.n);
+                prevPos.set('merged', c0.n);
                 for (let lv = 1; lv < depth; lv++) {
                     const level = (nb[role].levels[lv] || []).map((it, i) => ({ it, i, out: !(st.scope === 'all' || (st.scope === 'library') === !!it.library) }))
                         .filter(x => !x.out && x.it.parents.some(k => prev.has(k)));
-                    columns[role].push(col0(role, lv, level));
+                    const bary = x => {
+                        const ps = x.it.parents.map(k => prevPos.get(k)).filter(v => v !== undefined);
+                        return ps.length ? ps.reduce((a, b) => a + b, 0) / ps.length : Infinity;
+                    };
+                    level.sort((a, b) => bary(a) - bary(b));
+                    const c = col0(role, lv, level);
+                    columns[role].push(c.html);
+                    prevPos = c.pos;
                     prev = new Set(level.map(x => x.it.key));
                 }
             }
@@ -698,6 +715,28 @@
             const byKey = {};
             const nodes = [...g.querySelectorAll('[data-key]')];
             nodes.forEach(n => { for (const k of (n.dataset.alias || n.dataset.key).split(' ')) byKey[`${n.dataset.side}|${k}`] = n; });
+            // Columns are centered, so slide each hop beyond the first toward its parents
+            // (nearest the focus first), within the room the graph has.
+            const cols = [...g.children].filter(e => e.classList.contains('nway-gcol'));
+            const mid = (cols.length - 1) / 2;
+            const midY = r => r.top + r.height / 2;
+            for (let k = 1; k < mid; k++) {
+                for (const col of [cols[mid - 1 - k], cols[mid + 1 + k]]) {
+                    const ns = [...col.querySelectorAll('[data-key]')];
+                    const ys = [], py = [];
+                    for (const n of ns) {
+                        ys.push(midY(n.getBoundingClientRect()));
+                        for (const pk of n.dataset.parents.split(' ')) {
+                            const par = byKey[`${n.dataset.side}|${pk}`];
+                            if (par) py.push(midY(par.getBoundingClientRect()));
+                        }
+                    }
+                    if (!ys.length || !py.length) continue;
+                    const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+                    const cr = col.getBoundingClientRect();
+                    col.style.transform = `translateY(${Math.max(gr.top - cr.top, Math.min(gr.bottom - cr.bottom, avg(py) - avg(ys))).toFixed(1)}px)`;
+                }
+            }
             const svg = g.querySelector(':scope > svg');
             svg.setAttribute('viewBox', `0 0 ${gr.width} ${gr.height}`);
             svg.setAttribute('width', gr.width);

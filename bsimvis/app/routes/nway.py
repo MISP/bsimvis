@@ -10,7 +10,7 @@ from bsimvis.app.services.bin_sim_service import _origin_coll
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.tag_taxonomy import tag_in_scope
 
-TABS = ("core", "partial", "unique")
+TABS = ("all", "core", "partial", "unique")
 _MD5 = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -168,8 +168,12 @@ def _cluster_node(r, pool_id, collection, uuid):
     return scope, members, groups, children
 
 
-def _in_tab(row, tab, k, n):
+def _in_tab(row, tab, k, n, focus=False):
     span = row["span"]
+    if tab == "all":
+        return span >= 1 or not focus
+    if tab == "unique" and focus:  # one side only
+        return span == 1
     if tab == "unique":  # always one file, even when columns are child groups
         return row.get("file_span", span) == 1
     return span == n if tab == "core" else span >= k
@@ -238,6 +242,7 @@ def _row_clusters(r, rows, fmeta, pool_id, args):
 def _page(doc, args, r=None, pool_id=None):
     """Tab counts, then filter + sort + slice one tab of the rows."""
     rows, fmeta = doc["rows"], doc["fmeta"]
+    focus = doc["columns_mode"] == "focus"
     n = len(doc["columns"])
     tab = args.get("tab", "core")
     if tab not in TABS:
@@ -246,14 +251,21 @@ def _page(doc, args, r=None, pool_id=None):
         k = max(2, int(args.get("k", 2)))
     except ValueError:
         abort(400, "k must be an integer")
+    side = args.get("side", "")
+    if side not in ("", "focus", "rest"):
+        abort(400, "side must be focus or rest")
     scope = args.get("scope", "code")
     if scope not in ("code", "library", "all"):
         abort(400, "scope must be code, library or all")
 
     counts = {
         t: {
-            "code": sum(1 for r in rows if _in_tab(r, t, k, n) and not r["library"]),
-            "library": sum(1 for r in rows if _in_tab(r, t, k, n) and r["library"]),
+            "code": sum(
+                1 for r in rows if _in_tab(r, t, k, n, focus) and not r["library"]
+            ),
+            "library": sum(
+                1 for r in rows if _in_tab(r, t, k, n, focus) and r["library"]
+            ),
         }
         for t in TABS
     }
@@ -265,7 +277,9 @@ def _page(doc, args, r=None, pool_id=None):
     sup_min = fnum("support_min", args)
 
     def keep(row):
-        if not _in_tab(row, tab, k, n):
+        if not _in_tab(row, tab, k, n, focus):
+            return False
+        if focus and side and not row["mask"] & (1 if side == "focus" else 2):
             return False
         if scope != "all" and row["library"] != (scope == "library"):
             return False
@@ -340,6 +354,12 @@ def get_nway():
         abort(400, "columns must be auto, files or children")
     if columns == "children" and not cluster_uuid:
         abort(400, "columns=children needs cluster_uuid")
+    focus = [
+        t.strip() for t in (request.args.get("focus") or "").split(",") if t.strip()
+    ]
+    focus_rule = request.args.get("focus_rule", "any")
+    if focus_rule not in ("any", "all"):
+        abort(400, "focus_rule must be any or all")
     mode = request.args.get("mode", "stored")
     if mode not in ("stored", "virtual"):
         abort(400, "mode must be stored or virtual")
@@ -384,6 +404,8 @@ def get_nway():
                 "min_score": min_score,
                 "min_features": min_features,
                 "groups": groups,
+                "focus": focus,
+                "focus_rule": focus_rule,
                 "child_presence": max(0.0, min(1.0, presence)),
             },
         )

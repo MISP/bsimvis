@@ -27,7 +27,7 @@ window.NwayView = {
             pool: q.get('pool') || '',
         };
         this._state = {};
-        for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset']) {
+        for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'column', 'focus', 'focus_rule', 'side']) {
             if (q.has(k)) this._state[k] = q.get(k);
         }
         this._collections = null;

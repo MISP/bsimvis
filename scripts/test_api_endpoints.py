@@ -4661,6 +4661,53 @@ def test_nway_diff():
         dup and len(dup["columns"]) == 2 and dup["total"] == core["total"],
     )
 
+    # All tab, column filter, focus mode.
+    _, every = _nway(tab="all", scope="all", limit=1000)
+    check(
+        "nway: all tab is every row",
+        every and every["total"] == core["total"] + only["total"],
+        f"all={every and every['total']} core={core['total']} unique={only['total']}",
+    )
+    col_a, col_b = (c["id"] for c in core["columns"])
+    _, in_a = _nway(tab="all", scope="all", column=col_a, limit=1000)
+    check(
+        "nway: column filter keeps rows with a function in that file",
+        in_a and all(col_a in r["cells"] for r in in_a["items"]),
+    )
+    status, foc = _nway(tab="all", scope="all", focus=col_a, limit=1000)
+    if check("nway: focus is served", status == 200 and foc, f"HTTP {status}"):
+        check(
+            "nway: focus splits into Focus and Rest columns",
+            foc["columns_mode"] == "focus"
+            and [c["id"] for c in foc["columns"]] == ["focus", "rest"],
+            str(foc["columns"]),
+        )
+        _, foc_core = _nway(tab="core", scope="all", focus=col_a, limit=1000)
+        _, foc_only = _nway(tab="unique", scope="all", focus=col_a, limit=1000)
+        check(
+            "nway: focus core / unique match the plain pair",
+            foc_core["total"] == core["total"] and foc_only["total"] == only["total"],
+            f"core={foc_core['total']}/{core['total']} unique={foc_only['total']}/{only['total']}",
+        )
+        _, side = _nway(tab="unique", scope="all", focus=col_a, side="focus")
+        _, other = _nway(tab="unique", scope="all", focus=col_a, side="rest")
+        check(
+            "nway: side splits the unique tab",
+            side["total"] + other["total"] == foc_only["total"],
+            f"{side['total']} + {other['total']} != {foc_only['total']}",
+        )
+        _, strict = _nway(tab="all", scope="all", focus=col_a, focus_rule="all")
+        check("nway: focus_rule=all is served", strict["total"] == foc["total"])
+    check(
+        "nway: focus of every file is a 400", _nway(focus=f"{col_a},{col_b}")[0] == 400
+    )
+    check(
+        "nway: focus outside the set is a 400",
+        _nway(focus=f"{COLLECTION}:{'0' * 32}")[0] == 400,
+    )
+    check("nway: bad focus_rule is a 400", _nway(focus=col_a, focus_rule="x")[0] == 400)
+    check("nway: bad side is a 400", _nway(focus=col_a, side="x")[0] == 400)
+
     # Errors.
     check("nway: one file is a 400", _nway(md5s=file_md5)[0] == 400)
     check("nway: bad tab is a 400", _nway(tab="nope")[0] == 400)

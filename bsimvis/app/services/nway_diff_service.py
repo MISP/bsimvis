@@ -450,14 +450,16 @@ def project_rows(rows, groups, presence):
     for a row when at least `presence` of its files hold a function in it; the
     row's mask and span count the `on` groups. Rows are not merged: one function
     group stays one row. `file_span` keeps the file-level span (the Unique tab
-    still means "one file"), `files` keeps the file-level cells.
+    still means "one file"), `files` keeps the file-level cells. A group's own
+    `presence` overrides the shared one.
     """
     out = []
     for row in rows:
         cells, mask, span = {}, 0, 0
         for i, g in enumerate(groups):
             present = sum(1 for m in g["members"] if m in row["cells"])
-            on = present > 0 and present / len(g["members"]) >= presence
+            need = g.get("presence", presence)
+            on = present > 0 and present / len(g["members"]) >= need
             cells[g["id"]] = {"present": present, "total": len(g["members"]), "on": on}
             if on:
                 mask |= 1 << i
@@ -522,6 +524,8 @@ def demo():
     strict = project_rows([half], groups, 0.75)[0]
     assert (strict["span"], strict["mask"]) == (0, 0), strict
     assert project_rows([half], groups, 0.25)[0]["span"] == 2
+    own = [dict(groups[0], presence=1.0), groups[1]]
+    assert project_rows([half], own, 0.25)[0]["cells"]["A"]["on"] is False
     print("nway_diff_service demo ok")
 
 
@@ -533,7 +537,9 @@ def compute(r, scope, members, params=None):
     (`stored` | `virtual`; a set spanning collections with no pool is always
     virtual); `algo` / `min_score` / `min_features` override virtual-mode values.
     `groups` (+ `child_presence`, default 0.5) re-expresses the rows over
-    child-cluster columns; see `project_rows`.
+    child-cluster columns; see `project_rows`. `focus` (column ids) +
+    `focus_rule` (`any` | `all`) instead split the files into Focus vs Rest
+    groups: Rest uses `child_presence`, Focus needs any / all of its files.
     """
     params = params or {}
     mode = params.get("mode") or "stored"
@@ -564,6 +570,27 @@ def compute(r, scope, members, params=None):
     )
     groups = params.get("groups")
     presence = float(params.get("child_presence", 0.5))
+    focus = list(dict.fromkeys(params.get("focus") or []))
+    if focus:
+        ids = [_col_id(c, m) for c, m in members]
+        if [f for f in focus if f not in ids]:
+            raise BadParams("focus must name files of the set")
+        rest = [i for i in ids if i not in focus]
+        if not rest:
+            raise BadParams("focus must leave at least one file out")
+        need = 1.0 if params.get("focus_rule") == "all" else 1e-9
+        groups = [
+            {
+                "id": "focus",
+                "kind": "focus",
+                "label": "Focus",
+                "members": focus,
+                "presence": need,
+            },
+            {"id": "rest", "kind": "rest", "label": "Rest", "members": rest},
+        ]
+        for g in groups:
+            g["member_count"] = len(g["members"])
     doc_key = base_key + (
         min_edge,
         presence,
@@ -587,7 +614,7 @@ def compute(r, scope, members, params=None):
         "algo": base["algo"],
         "min_edge": min_edge,
         "columns": groups or file_columns,
-        "columns_mode": "children" if groups else "files",
+        "columns_mode": "focus" if focus else "children" if groups else "files",
         "file_columns": file_columns if groups else None,
         "rows": rows,
         "fmeta": base["fmeta"],

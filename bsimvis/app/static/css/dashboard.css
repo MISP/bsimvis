@@ -2715,6 +2715,17 @@ a.home-card:hover,
     margin-right: 6px;
 }
 .nway-ctl .nway-lbl { margin-right: 0; }
+.nway-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; }
+.nway-chip {
+    background: var(--card-bg);
+    color: var(--subtle);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2px 10px;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+.nway-chip.on { color: var(--text); border-color: var(--accent); }
 .nway-input[data-text="q"] { width: 190px; }
 .nway-input[data-text="tags"] { width: 130px; }
 .nway-input {

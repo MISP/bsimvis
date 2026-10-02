@@ -12,21 +12,25 @@
  * `{ cluster_uuid, collection | pool }`; `state.columns` (auto | files | children)
  * and `state.child_presence` are the cluster-only controls. `onOpenCluster(uuid)`
  * is called when a child cluster link in the too-many-members state is clicked.
+ * `state.column` keeps the rows with a function in one file; `state.focus` (file
+ * ids) splits the files into Focus vs Rest, both set from the file header's
+ * right-click menu.
  * Rows are paged
  * server-side; nothing here loads a full table. Function and file names come off
  * uploaded samples, so every value goes through escapeHtml / escapeAttr.
  */
 (function () {
-    const TABS = [['core', 'Core'], ['partial', 'Partial'], ['unique', 'Unique']];
+    const TABS = [['all', 'All'], ['core', 'Core'], ['partial', 'Partial'], ['unique', 'Unique']];
     const PAGE = 50;
     const SORTS = [['name', 'Function'], ['span', 'Span'], ['weight', 'Features'], ['support', 'Support'], ['cohesion', 'Cohesion']];
     const DEFAULTS = {
         tab: 'core', scope: 'code', k: 2, min_edge: '', mode: 'stored',
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
         columns: 'auto', child_presence: 0.5,
+        column: '', focus: '', focus_rule: 'any', side: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence'];
+    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'column', 'focus', 'focus_rule', 'side'];
     const LOW_SUPPORT = 0.5;
 
     function fnParts(fid) {
@@ -61,12 +65,17 @@
             this.el.addEventListener('click', e => this._onClick(e));
             this.el.addEventListener('change', e => this._onChange(e));
             this.el.addEventListener('input', e => this._onInput(e));
+            this.el.addEventListener('contextmenu', e => {
+                const th = e.target.closest('th[data-col]');
+                if (th) this._menu(e, th.dataset.col);
+            }, true);
             this.el.addEventListener('keydown', e => {
                 if (e.key === 'Enter' && e.target.dataset.text) this._set({ [e.target.dataset.text]: e.target.value.trim(), offset: 0 });
             });
         }
 
         destroy() {
+            this._closeMenu();
             this._gen++;
             clearTimeout(this._debounce);
         }
@@ -143,22 +152,91 @@
         _controls() {
             const s = this.state, d = this.data;
             const n = d.columns.length;
-            const tabs = TABS.map(([key, label]) =>
+            const focus = d.columns_mode === 'focus';
+            const tabs = TABS.filter(([key]) => !(focus && key === 'partial')).map(([key, label]) =>
                 `<button class="bsim-tab${s.tab === key ? ' active' : ''}" data-tab="${key}">${label}<span class="nway-count" title="code / library">${this._count(key)}</span></button>`
             ).join('');
             const isNode = !!this.source.cluster_uuid;
             const ctl = [
                 this._seg('Show', 'scope', [['code', 'Code'], ['library', 'Library'], ['all', 'All']]),
                 isNode ? this._seg('Columns', 'columns', [['auto', 'Auto'], ['files', 'Files'], ['children', 'Children']], "the node's files, or one column per child cluster") : '',
+                focus ? this._seg('Focus holds', 'focus_rule', [['any', 'Any'], ['all', 'All']], 'a function counts on the focus side when any / all of the focus files have it') : '',
+                focus ? this._slider('Rest presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, 'share of the rest files that must hold the function for the rest side to count as present') : '',
+                focus && s.tab === 'unique' ? this._seg('Side', 'side', [['', 'Both'], ['focus', 'Focus only'], ['rest', 'Rest only']]) : '',
                 isNode && d.columns_mode === 'children'
                     ? this._slider('Child presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, "share of a child's files that must hold the function for the child to count as present") : '',
-                s.tab === 'partial' ? this._slider(`In at least (of ${n})`, 'k', s.k, 2, Math.max(2, n), 1) : '',
+                s.tab === 'partial' && !focus ? this._slider(`In at least (of ${n})`, 'k', s.k, 2, Math.max(2, n), 1) : '',
                 this._slider('Min edge', 'min_edge', Number(d.min_edge), 0, 1, 0.05),
                 this._seg('Mode', 'mode', [['stored', 'Stored', 'reads built pair docs'], ['virtual', 'Virtual', 'recomputes from vectors']]),
                 `<input type="text" class="nway-input" data-text="q" placeholder="function name / address" value="${escapeAttr(s.q)}">`,
                 `<input type="text" class="nway-input" data-text="tags" placeholder="tags" value="${escapeAttr(s.tags)}">`,
             ].join('');
-            return `<div class="bsim-tabbar">${tabs}</div><div class="nway-controls">${ctl}</div>`;
+            return `<div class="bsim-tabbar">${tabs}</div>${this._chips()}<div class="nway-controls">${ctl}</div>`;
+        }
+
+        _files() {
+            return this.data.file_columns || this.data.columns.filter(c => !c.kind);
+        }
+
+        _focusIds() {
+            return String(this.state.focus || '').split(',').filter(Boolean);
+        }
+
+        // Focus: one toggle chip per file (the file headers are gone while it is
+        // on). Column filter: one chip to drop it.
+        _chips() {
+            const files = this._files(), focus = this._focusIds(), col = this.state.column;
+            let html = '';
+            if (focus.length) {
+                const chips = files.map(f => `<button class="nway-chip${focus.includes(f.id) ? ' on' : ''}" data-focus-toggle="${escapeAttr(f.id)}" title="${escapeAttr(f.collection)}">${escapeHtml(f.file_name || f.md5)}</button>`).join('');
+                html += `<div class="nway-chips"><span class="nway-lbl">Focus</span>${chips}<button class="nway-chip" data-clear="focus" title="back to the plain N-way">&times; clear focus</button></div>`;
+            }
+            const only = col && files.find(f => f.id === col);
+            if (only) html += `<div class="nway-chips"><span class="nway-lbl">Only</span><button class="nway-chip on" data-clear="column" title="drop the file filter">${escapeHtml(only.file_name || only.md5)} &times;</button></div>`;
+            return html;
+        }
+
+        // Header right-click menu: focus / unfocus / filter on one file.
+        _menu(e, id) {
+            e.preventDefault();
+            e.stopPropagation();
+            this._closeMenu();
+            const focus = this._focusIds(), n = this._files().length;
+            const items = [];
+            if (!focus.includes(id)) items.push([focus.length ? 'Add to focus' : 'Focus on this file', 'add']);
+            else items.push(['Remove from focus', 'remove']);
+            items.push([this.state.column === id ? 'Show all files' : 'Only rows with this file', 'column']);
+            const menu = document.createElement('div');
+            menu.className = 'context-menu';
+            menu.id = 'nway-col-menu';
+            menu.style.cssText = `position:fixed;left:${Number(e.clientX)}px;top:${Number(e.clientY)}px;z-index:10000;`;
+            menu.innerHTML = items.map(([text, act]) => `<div class="context-menu-item" data-act="${act}">${escapeHtml(text)}</div>`).join('');
+            menu.addEventListener('click', ev => {
+                const act = ev.target.closest('[data-act]');
+                if (!act) return;
+                this._closeMenu();
+                if (act.dataset.act === 'column') return this._set({ column: this.state.column === id ? '' : id, offset: 0 });
+                const next = act.dataset.act === 'add' ? [...focus, id] : focus.filter(f => f !== id);
+                this._setFocus(next, n);
+            });
+            document.body.appendChild(menu);
+            this._menuOff = () => this._closeMenu();
+            setTimeout(() => {
+                document.addEventListener('click', this._menuOff, { once: true });
+                document.addEventListener('keydown', this._menuOff, { once: true });
+            });
+        }
+
+        _closeMenu() {
+            const m = document.getElementById('nway-col-menu');
+            if (m) m.remove();
+        }
+
+        // Focus keeps at least one file on each side; the tab resets because
+        // Partial does not exist in focus mode.
+        _setFocus(ids, n) {
+            if (ids.length >= n) return;
+            this._set({ focus: ids.join(','), side: '', offset: 0, sort_col: '', tab: ids.length && this.state.tab === 'partial' ? 'core' : this.state.tab });
         }
 
         _notes() {
@@ -301,10 +379,11 @@
                 const named = c.file_name && c.file_name !== c.md5;
                 const name = named ? window.EntityRenderer.renderFileName(c.file_name, c.md5, c.collection) : '';
                 const coverage = c.coverage == null ? '' : ` &middot; <span title="share of the shared (span >= 2) weight this file holds">${(Number(c.coverage) * 100).toFixed(0)}% shared</span>`;
-                return `<th class="col" title="${escapeAttr(`${c.file_name} (${c.collection})`)}"><div class="nway-colhead">${name}${window.EntityRenderer.renderMd5(c.md5, { collection: c.collection })}<span class="nway-sub">${Number(c.functions)} fn${coverage}</span></div></th>`;
+                return `<th class="col" data-col="${escapeAttr(c.id)}" title="${escapeAttr(`${c.file_name} (${c.collection}) - right-click: focus / filter`)}"><div class="nway-colhead">${name}${window.EntityRenderer.renderMd5(c.md5, { collection: c.collection })}<span class="nway-sub">${Number(c.functions)} fn${coverage}</span></div></th>`;
             };
+            const names = c => (this.data.file_columns || []).filter(f => c.members.includes(f.id)).map(f => f.file_name || f.md5).join(', ');
             const colHead = c => c.kind
-                ? `<th class="col" title="${escapeAttr(c.kind === 'child' ? 'child cluster' : 'files at this node, in no child cluster')}"><div class="nway-colhead"><span class="nway-colname">${escapeHtml(c.label)}</span><span class="nway-sub">${Number(c.member_count)} files</span></div></th>`
+                ? `<th class="col" title="${escapeAttr(c.kind === 'focus' || c.kind === 'rest' ? names(c) : c.kind === 'child' ? 'child cluster' : 'files at this node, in no child cluster')}"><div class="nway-colhead"><span class="nway-colname">${escapeHtml(c.label)}</span><span class="nway-sub">${Number(c.member_count)} files</span></div></th>`
                 : fileHead(c);
             return `<tr>${SORTS.map(th).join('')}<th>Cluster</th>${this.data.columns.map(colHead).join('')}</tr>`;
         }
@@ -342,13 +421,19 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-page],[data-nav],[data-open-cluster]');
+            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-page],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear]');
             if (!t) return;
             if (t.dataset.openCluster) {
                 e.preventDefault();
                 return this.onOpenCluster(t.dataset.openCluster);
             }
             const pool = this.source.pool || null;
+            if (t.dataset.clear) return this._set({ [t.dataset.clear]: '', side: '', offset: 0 });
+            if (t.dataset.focusToggle) {
+                const id = t.dataset.focusToggle, focus = this._focusIds();
+                const next = focus.includes(id) ? focus.filter(f => f !== id) : [...focus, id];
+                return next.length ? this._setFocus(next, this._files().length) : this._set({ focus: '', side: '', offset: 0 });
+            }
             if (t.dataset.set) {
                 const i = t.dataset.set.indexOf(':');
                 return this._set({ [t.dataset.set.slice(0, i)]: t.dataset.set.slice(i + 1), offset: 0 });

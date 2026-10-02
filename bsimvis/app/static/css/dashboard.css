@@ -2887,16 +2887,16 @@ a.home-card:hover,
 .r-hi { --rc: var(--success); } .r-mid { --rc: #e6db74; } .r-low { --rc: #f92672; }
 .nway-ext { font-style: italic; font-family: monospace; font-size: 0.8rem; }
 .nway-badge { font-size: 0.66rem; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; color: var(--dim); margin-left: 6px; font-style: normal; }
-.nway-graph { position: relative; }
+.nway-graph { position: relative; display: grid; grid-template-columns: 230px 1fr 230px; align-items: center; width: 800px; }
+.nway-gcol { display: flex; flex-direction: column; gap: 12px; align-items: center; }
 .nway-graph > svg { position: absolute; inset: 0; pointer-events: none; }
 .nway-edge { fill: none; stroke: var(--rc); opacity: 0.55; }
-.nway-node { position: absolute; box-sizing: border-box; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); overflow: hidden; cursor: pointer; display: flex; flex-direction: column; justify-content: space-between; }
+.nway-node { position: relative; box-sizing: border-box; width: 230px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
 .nway-node:hover, .nway-node:focus-visible { border-color: var(--accent); outline: none; }
 .nway-node.center { border-color: var(--accent); cursor: default; }
 .nway-node.static { cursor: default; }
 .nway-node-name { min-width: 0; overflow: hidden; }
 .nway-node-sub { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; }
-.nway-node .nway-tags { max-height: 34px; overflow: hidden; }
 .nway-node .entity-function { width: 100%; }
 .nway-cg-box { border: 1px solid var(--border); border-radius: 8px; padding: 0 10px 6px; margin-bottom: 14px; background: rgba(128, 128, 128, 0.05); }
 .nway-cg-box > header { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); padding: 8px 0; margin-bottom: 4px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }

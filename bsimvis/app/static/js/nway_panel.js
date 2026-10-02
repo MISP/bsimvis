@@ -504,34 +504,41 @@
         }
 
         _cgGraph(nb, focus, files) {
-            const W = 800, BW = 230, PAD = 0, NW = BW, NH = 104, GAP = 12, CAP = 12, T = 0, CW = 230;
+            const CAP = 12;
             // Out-of-scope neighbors stay in the graph, faded and after the in-scope ones.
             const lists = { callers: this._cgShown(nb, 'callers').sort((a, b) => a.out - b.out), callees: this._cgShown(nb, 'callees').sort((a, b) => a.out - b.out) };
-            const shown = { callers: lists.callers.slice(0, CAP), callees: lists.callees.slice(0, CAP) };
-            const H = T + Math.max(shown.callers.length, shown.callees.length, 1) * (NH + GAP) + GAP;
-            const cx = (W - CW) / 2, cy = (H - NH) / 2;
-            const nodes = [], edges = [];
-            for (const [role, bx] of [['callers', 0], ['callees', W - BW]]) {
-                const list = shown[role];
-                const x = bx + PAD;
-                const y0 = T + (H - T - (list.length * (NH + GAP) - GAP)) / 2;
-                list.forEach(({ it, i, out }, k) => {
-                    const y = y0 + k * (NH + GAP);
-                    const on = files.map(c => { const f = focus.cells[c.id]; return !!(f && it.sources[f]); });
-                    const st = this._cgStrip(on, files);
-                    const [x1, x2] = role === 'callers' ? [x + NW, cx] : [cx + CW, x];
-                    const [y1, y2] = role === 'callers' ? [y + NH / 2, cy + NH / 2] : [cy + NH / 2, y + NH / 2];
-                    const mx = (x1 + x2) / 2;
-                    edges.push(`<path class="nway-edge ${st.cls}${out ? ' out' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${(1 + st.n * 0.8).toFixed(1)}"></path>`);
-                    nodes.push(`<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${i}"` : ''} style="left:${x}px; top:${y}px; width:${NW}px; height:${NH}px">
-                        <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div></div>`);
-                });
-            }
+            const col = role => lists[role].slice(0, CAP).map(({ it, i, out }) => {
+                const on = files.map(c => { const f = focus.cells[c.id]; return !!(f && it.sources[f]); });
+                const st = this._cgStrip(on, files);
+                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${i}"` : ''} data-edge="${role}" data-cls="${st.cls}" data-n="${st.n}">
+                    <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div></div>`;
+            }).join('');
             const more = ['callers', 'callees'].map(r => lists[r].length > CAP ? `${lists[r].length - CAP} more ${r} (see the list view)` : '').filter(Boolean).join('; ');
             return `<div class="dim" style="margin-bottom:6px">Edge width is the number of files that share the edge. Click a node to recenter.</div>
-                <div class="nway-graph" style="height:${H}px; width:${W}px"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${edges.join('')}</svg>${nodes.join('')}
-                <div class="nway-node center" style="left:${cx}px; top:${cy}px; width:${CW}px; height:${NH}px"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div></div></div>
+                <div class="nway-graph"><svg></svg><div class="nway-gcol">${col('callers')}</div>
+                <div class="nway-gcol"><div class="nway-node center"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div></div></div>
+                <div class="nway-gcol">${col('callees')}</div></div>
                 ${more ? `<div class="dim" style="margin-top:6px">${escapeHtml(more)}</div>` : ''}`;
+        }
+
+        // Cards have the height their tags need, so the edges are drawn from where they landed.
+        _cgEdges() {
+            const g = this._dw && this._dw.querySelector('.nway-graph');
+            if (!g) return;
+            const gr = g.getBoundingClientRect();
+            const c = g.querySelector('.nway-node.center').getBoundingClientRect();
+            const svg = g.querySelector(':scope > svg');
+            svg.setAttribute('viewBox', `0 0 ${gr.width} ${gr.height}`);
+            svg.setAttribute('width', gr.width);
+            svg.setAttribute('height', gr.height);
+            svg.innerHTML = [...g.querySelectorAll('[data-edge]')].map(n => {
+                const r = n.getBoundingClientRect();
+                const callers = n.dataset.edge === 'callers';
+                const x1 = (callers ? r.right : c.right) - gr.left, x2 = (callers ? c.left : r.left) - gr.left;
+                const y1 = (callers ? r.top + r.height / 2 : c.top + c.height / 2) - gr.top, y2 = (callers ? c.top + c.height / 2 : r.top + r.height / 2) - gr.top;
+                const mx = (x1 + x2) / 2;
+                return `<path class="nway-edge ${n.dataset.cls}${n.classList.contains('out') ? ' out' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${(1 + Number(n.dataset.n) * 0.8).toFixed(1)}"></path>`;
+            }).join('');
         }
 
         _cgDraw(err) {
@@ -549,6 +556,7 @@
             this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div><div class="view-toggle" style="margin:0">${toggle}</div><button class="nway-chip" data-cg-close title="close (Esc)">&times;</button></div>
                 <div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>
                 <div class="nway-cg-body">${body}</div>`;
+            if (!err && st.nb && st.view === 'graph') this._cgEdges();
         }
 
         _onDrawerClick(e) {

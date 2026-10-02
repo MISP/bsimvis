@@ -62,6 +62,10 @@ window.NwayView = {
                 if (url === cur) return;
                 cur = url;
                 history.pushState(null, '', url);
+                if (window.Breadcrumbs && window.getRoutingState) {
+                    const r = window.getRoutingState();
+                    window.Breadcrumbs.render(window.Breadcrumbs.generate({ viewKey: r.viewKey, collection: r.collection, pool: r.pool, params: r.params }, null));
+                }
             },
         });
         this._panel.load();

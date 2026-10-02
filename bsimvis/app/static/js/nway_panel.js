@@ -1093,6 +1093,21 @@
             + item('column', 'fa-filter', n.filtered ? 'Show all files' : 'Only rows with this file');
     };
 
+    // The N-way diff a graph URL (/diff/nway/graph?...) came from: the cluster's N-way tab, or /diff/nway for a file set.
+    NwayPanel.backUrl = function (q) {
+        const uuid = q.get('cluster_uuid');
+        if (!uuid) {
+            const keep = new URLSearchParams();
+            for (const [k, v] of q) if (!k.startsWith('cg_')) keep.set(k, v);
+            return `/diff/nway?${keep.toString()}`;
+        }
+        const pool = q.get('pool');
+        const base = pool ? `/pools/${encodeURIComponent(pool)}/files/clusters/${encodeURIComponent(uuid)}` : window.Nav.buildUIUrl(q.get('collection'), ['files', 'clusters', uuid]);
+        const out = new URLSearchParams({ tab: 'functions' });
+        for (const k of ['axis', 'scope', 'min_edge', 'mode', 'columns', 'child_presence']) if (q.has(k)) out.set(k, q.get(k));
+        return `${base}?${out.toString()}`;
+    };
+
     // Selected file ids are `{coll}:file:{md5}`; the page's pool (if any) rides along.
     NwayPanel.urlFor = function (ids, fallbackCollection) {
         const md5s = ids.map(id => `${id.split(':')[0] || fallbackCollection}:${id.split(':').pop()}`).join(',');

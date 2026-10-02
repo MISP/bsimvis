@@ -2573,6 +2573,22 @@ class BinSimDiff(Resource):
         return diff_api()
 
 
+@ns_bin_sim.route("/nway/neighbors")
+class BinSimNwayNeighbors(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "fids": "Comma-separated function ids of one N-way row (its cells)",
+            "role": "callees (default) or callers",
+            "md5s": "Same file set / scope params as /nway (cluster_uuid, collection, pool, mode, ...)",
+        }
+    )
+    def get(self):
+        """Callers or callees of one N-way row, regrouped by the rows holding them, with how many files reach each."""
+        from bsimvis.app.routes.nway import get_nway_neighbors
+
+        return get_nway_neighbors()
+
+
 @ns_bin_sim.route("/nway")
 class BinSimNway(Resource):
     @ns_bin_sim.doc(

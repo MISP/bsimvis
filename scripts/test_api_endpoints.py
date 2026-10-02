@@ -4712,6 +4712,31 @@ def test_nway_diff():
         str(core["columns"]),
     )
 
+    # Call-graph neighbors of a row come back regrouped into rows.
+    _first = next(iter(core["items"]), None)
+    if _first:
+        _fids = ",".join(f for f in _first["cells"].values() if isinstance(f, str))
+        _base = {"collection": COLLECTION, "md5s": f"{file_md5},{file_md5_2}"}
+        for _role in ("callees", "callers"):
+            _r = requests.get(
+                f"{BASE_URL}/api/bin_sim/nway/neighbors",
+                params={**_base, "fids": _fids, "role": _role},
+                timeout=60,
+            )
+            _b = _r.json() if _r.status_code == 200 else {}
+            check(
+                f"nway neighbors {_role}: items reach at most the row's files",
+                _r.status_code == 200
+                and all(1 <= i["support"] <= _b["of"] for i in _b["items"]),
+                f"HTTP {_r.status_code} {str(_b)[:200]}",
+            )
+        _r = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/neighbors",
+            params={**_base, "fids": _fids, "role": "bogus"},
+            timeout=30,
+        )
+        check("nway neighbors rejects unknown role", _r.status_code == 400)
+
     # With two files the rows must be the pair diff's own matched / unique rows.
     matched = (_diff_page(file_md5, file_md5_2, "matched") or {}).get("total")
     uniq = sum(

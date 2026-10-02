@@ -33,6 +33,7 @@
     // State keys that go to the API as query params (empty ones are dropped).
     const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'column', 'focus', 'focus_rule', 'side'];
     const LOW_SUPPORT = 0.5;
+    const DOC_KEYS = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule'];
 
     function fnParts(fid) {
         // `{coll}:func:{md5}:{addr}` -- the collection can contain colons.
@@ -393,13 +394,62 @@
             return `${fn}<div class="nway-tags" title="tags apply to the best candidate: ${escapeAttr(f.entrypoint_address)}">${tags}</div>`;
         }
 
+        // Callers / callees of a row's functions, regrouped into rows (see /nway/neighbors).
+        _callBtns(cells) {
+            const fids = Object.values(cells).filter(f => typeof f === 'string');
+            if (!fids.length) return '';
+            const btn = (role, icon) => `<button class="nway-chip" data-calls="${role}" data-fids="${escapeAttr(fids.join(','))}" title="${role} of this row's functions"><i class="fa-solid ${icon}"></i> ${role}</button>`;
+            return `<div class="nway-callbtns">${btn('callers', 'fa-right-to-bracket')}${btn('callees', 'fa-right-from-bracket')}</div>`;
+        }
+
+        _callItems(body) {
+            if (!body.items.length) return '<div class="dim">none</div>';
+            return body.items.map(it => {
+                const name = escapeHtml(it.name || '?');
+                const reach = `<span class="${it.support === it.of ? '' : 'dim'}" title="files whose function calls this: ${it.support} of ${it.of}">${it.support}/${it.of}</span>`;
+                const fids = it.kind === 'row' ? Object.values(it.cells).filter(f => typeof f === 'string') : [];
+                const more = fids.length ? ['callers', 'callees'].map(r => `<button class="nway-chip" data-calls="${r}" data-fids="${escapeAttr(fids.join(','))}" title="${r} of this row">${r === 'callers' ? '&#9664;' : '&#9654;'}</button>`).join('') : '';
+                const tag = it.kind === 'row' ? '' : `<span class="dim"> (${it.kind === 'ext' ? 'external' : 'not in a row'})</span>`;
+                return `<div class="nway-call"><div style="display:flex; gap:8px; align-items:center;"><b>${name}</b>${tag}${reach}${more}</div></div>`;
+            }).join('');
+        }
+
+        async _toggleCalls(btn) {
+            const host = btn.closest('.nway-call') || btn.closest('td');
+            const role = btn.dataset.calls;
+            const box = host.querySelector(':scope > .nway-calls-box');
+            if (box && box.dataset.role === role) return box.remove();
+            if (box) box.remove();
+            const el = document.createElement('div');
+            el.className = 'nway-calls-box';
+            el.dataset.role = role;
+            el.style.cssText = 'margin:6px 0 2px 14px; padding-left:8px; border-left:2px solid var(--border); font-size:0.8rem;';
+            el.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+            host.appendChild(el);
+            const qs = new URLSearchParams();
+            for (const [k, v] of Object.entries(this.source)) if (v !== null && v !== undefined && v !== '') qs.set(k, v);
+            for (const k of DOC_KEYS) {
+                const v = this.state[k];
+                if (v !== null && v !== undefined && v !== '') qs.set(k, v);
+            }
+            qs.set('fids', btn.dataset.fids);
+            qs.set('role', role);
+            try {
+                const res = await fetch(`/api/bin_sim/nway/neighbors?${qs.toString()}`);
+                const body = await res.json();
+                el.innerHTML = res.ok ? this._callItems(body) : `<span style="color:#f92672;">${escapeHtml(body.message || body.error || 'failed')}</span>`;
+            } catch (err) {
+                el.innerHTML = `<span style="color:#f92672;">${escapeHtml(String(err))}</span>`;
+            }
+        }
+
         _row(row, ri) {
             const cols = this.data.columns;
             const extra = Array.isArray(row.names) ? row.names.length - 1 : Number(row.names || 0) - 1;
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             return `<tr>
-                <td style="min-width:260px; max-width:420px;">${this._nameSig(row)}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}</span></td>
+                <td style="min-width:260px; max-width:420px;">${this._nameSig(row)}${this._callBtns(row.files || row.cells)}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}</span></td>
                 <td class="num">${Number(row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
@@ -481,8 +531,9 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear]');
+            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-calls]');
             if (!t) return;
+            if (t.dataset.calls) return this._toggleCalls(t);
             if (t.dataset.openCluster) {
                 e.preventDefault();
                 return this.onOpenCluster(t.dataset.openCluster);

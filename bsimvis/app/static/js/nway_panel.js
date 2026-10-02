@@ -433,6 +433,7 @@
                 depth: Number(init.depth || prev.depth || 1),
                 more: {},
                 place: {},
+                co: init.co === '1' || init.co === true || (init.co === undefined && !!prev.co),
                 suggest: prev.suggest !== false,
                 nb: null,
             };
@@ -474,6 +475,7 @@
             qs.set('cg_name', f.name);
             qs.set('cg_cells', JSON.stringify(f.cells));
             for (const k of ['view', 'scope', 'outside', 'depth']) qs.set(`cg_${k}`, st[k]);
+            if (st.co) qs.set('cg_co', '1');
             return `/diff/nway/graph?${qs.toString()}`;
         }
 
@@ -501,10 +503,11 @@
             this._cg.place = {};
             this._cgDraw();
             try {
-                const [callers, callees] = await Promise.all([this._cgFetch(focus, 'callers'), this._cgFetch(focus, 'callees')]);
+                const [callers, callees, cocallers] = await Promise.all([this._cgFetch(focus, 'callers'), this._cgFetch(focus, 'callees'), this._cg.co ? this._cgFetch(focus, 'cocallers') : null]);
                 if (tok !== this._cgTok || !this._cg) return;
-                Object.assign(this.data.functions_metadata, callers.functions_metadata, callees.functions_metadata);
+                Object.assign(this.data.functions_metadata, callers.functions_metadata, callees.functions_metadata, cocallers ? cocallers.functions_metadata : {});
                 this._cg.nb = { callers, callees };
+                if (cocallers) this._cg.nb.cocallers = cocallers;
                 this._cgDraw();
                 this._cgPlace(tok);
             } catch (err) {
@@ -535,9 +538,10 @@
             // the second pass, adds a bonus when a piece's child joined a group whose other
             // members hang under the candidate group: the call graph agreeing with the score.
             const pass = async support => {
-                const seen = {};
-                for (const role of ['callers', 'callees']) {
-                    let canon = null;
+                const seen = {}, canonCallees = {};
+                for (const role of ['callers', 'callees', 'cocallers']) {
+                    if (!nb[role]) continue;
+                    let canon = role === 'cocallers' ? canonCallees.map : null;
                     seen[role] = [];
                     for (let lv = 0; lv < nb[role].levels.length; lv++) {
                         const entries = nb[role].levels[lv].map((it, i) => ({ it, i, out: !(st.scope === 'all' || (st.scope === 'library') === !!it.library) })).filter(x => !x.out);
@@ -565,6 +569,7 @@
                         }
                         seen[role].push({ gs, entries });
                         canon = gs.canon;
+                        if (role === 'callees' && lv === 0) canonCallees.map = canon;
                     }
                 }
                 return seen;
@@ -714,7 +719,11 @@
                         done.add(g);
                         units.push({ xs: g.m.map(r => r.x), html: () => {
                             const chip = `<span class="nway-grp" title="Suggested merge: ${g.m.length} cards with complementary files and the same parent.">&asymp; ${g.label} &middot; ${g.cov}/${files.length}</span>`;
-                            return `<div class="nway-grpbox${lv ? ' deep' : ''}"><div class="nway-grpbox-h">${chip}</div>${g.m.map(r => node(role, lv, r.x)).join('')}</div>`;
+                            const cells = {};
+                            g.m.forEach(m => Object.entries(m.x.it.cells).forEach(([k, v]) => { if (typeof v === 'string') cells[k] = v; }));
+                            this._cgGrp[g.id] = { name: g.m[0].x.it.name, cells };
+                            const focusBtn = `<button class="nway-chip" data-cg-focusgrp="${escapeAttr(g.id)}" title="Make this merged group the focus: its functions in every file">&#9678; focus</button>`;
+                            return `<div class="nway-grpbox${lv ? ' deep' : ''}"><div class="nway-grpbox-h">${chip}${focusBtn}</div>${g.m.map(r => node(role, lv, r.x)).join('')}</div>`;
                         } });
                     }
                 }
@@ -732,12 +741,14 @@
                 const axis = st.scope === 'library' ? 'code' : 'library';
                 const ax = more ? { color: 'var(--accent)', icon: 'fa-solid fa-ellipsis' } : AXIS[axis];
                 const label = more ? `+${list.length} more` : `${list.length} ${axis}`;
-                return `<div class="nway-node ${more ? '' : 'out '}merged" tabindex="0" ${more ? `data-cg-more="${role}"` : 'data-cg-expand="1"'} data-side="${role}" data-key="${more ? 'more' : 'merged'}" data-parents="focus" data-n="${ne}" style="border-color:${ax.color}" title="${escapeAttr(names)}&#10;click to show each one">
+                return `<div class="nway-node ${more ? '' : 'out '}merged" tabindex="0" ${more ? `data-cg-more="${role}"` : 'data-cg-expand="1"'} data-side="${role}" data-key="${more ? 'more' : 'merged'}" data-parents="${role === 'cocallers' ? '' : 'focus'}" data-n="${ne}" style="border-color:${ax.color}" title="${escapeAttr(names)}&#10;click to show each one">
                     <div class="nway-node-name"><b style="color:${ax.color}"><i class="${ax.icon}"></i> ${label}</b></div><div class="nway-node-sub">${r.html}<span class="nway-edgecnt" title="called from ${ne} of ${files.length} files"><i class="fa-solid fa-link"></i> ${ne}/${files.length}</span></div></div>`;
             };
             // columns[role][lv]: the hop-1 column keeps the in-scope / out-of-scope handling,
             // later hops only list rows whose parent is on screen.
             const columns = { callers: [], callees: [] };
+            const canon0 = {};
+            this._cgGrp = {};
             for (const role of ['callers', 'callees']) {
                 const all = this._cgShown(nb, role);
                 const inn = all.filter(x => !x.out), out = all.filter(x => x.out);
@@ -755,6 +766,7 @@
                 columns[role].push(first);
                 // Later hops are ordered by where their parents sit, so a path stays beside its parent.
                 let prevPos = c0.pos, canon = c0.canon;
+                canon0[role] = c0.canon;
                 prevPos.set('more', c0.n);
                 prevPos.set('merged', c0.n);
                 for (let lv = 1; lv < depth; lv++) {
@@ -772,15 +784,25 @@
                     prev = new Set(level.map(x => x.it.key));
                 }
             }
-            const notes = ['callers', 'callees'].map(r => nb[r].truncated ? `${r}: capped at 60 nodes` : '').filter(Boolean).join('; ');
+            // Other callers of the focus's callees, in one column at the far right; their edges run back to those callees.
+            let coHtml = '';
+            if (nb.cocallers) {
+                const all = this._cgShown(nb, 'cocallers').filter(x => !x.out);
+                const cc = col0('cocallers', 0, all, st.more.cocallers ? Infinity : CAP, canon0.callees);
+                coHtml = cc.html + (cc.rest.length ? merged('cocallers', cc.rest, true) : '') || '<div class="dim nway-cg-none">no other callers in this scope</div>';
+            }
+            const co = nb.cocallers;
+            const notes = [...['callers', 'callees', 'cocallers'].filter(r => nb[r]).map(r => nb[r].truncated ? `${r}: capped at 60 nodes` : ''),
+                co && co.hubs.length ? `${co.hubs.length} callee${co.hubs.length > 1 ? 's' : ''} skipped as too widely called: ${co.hubs.join(', ')}` : ''].filter(Boolean).join('; ');
             const widths = lv => (lv ? '170px' : '230px');
             const cols = [...Array(depth).keys()].reverse().map(widths).concat(['230px'], [...Array(depth).keys()].map(widths));
             const col = html => `<div class="nway-gcol">${html}</div>`;
-            const grid = depth > 1 ? ` style="grid-template-columns:${cols.join(' ')}; column-gap:56px; width:max-content"` : '';
+            if (nb.cocallers) cols.push('230px');
+            const grid = depth > 1 || nb.cocallers ? ` style="grid-template-columns:${cols.join(' ')}; column-gap:56px; width:max-content"` : '';
             const left = [...columns.callers].reverse().map(col).join(''), right = columns.callees.map(col).join('');
-            return `<div class="nway-graph"${grid}><svg></svg>${left}
+            return `<div class="nway-graph" data-mid="${depth}"${nb.cocallers ? ' data-co="1"' : ''}${grid}><svg></svg>${left}
                 <div class="nway-gcol"><div class="nway-node center"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div></div></div>
-                ${right}</div>
+                ${right}${nb.cocallers ? col(coHtml) : ''}</div>
                 ${notes ? `<div class="dim" style="margin-top:6px">${escapeHtml(notes)}</div>` : ''}`;
         }
 
@@ -796,16 +818,19 @@
             // Columns are centered, so slide each hop beyond the first toward its parents
             // (nearest the focus first), within the room the graph has.
             const cols = [...g.children].filter(e => e.classList.contains('nway-gcol'));
-            const mid = (cols.length - 1) / 2;
+            const mid = Number(g.dataset.mid);
             const midY = r => r.top + r.height / 2;
-            for (let k = 1; k < mid; k++) {
-                for (const col of [cols[mid - 1 - k], cols[mid + 1 + k]]) {
+            const slide = [];
+            for (let k = 1; k < mid; k++) slide.push(cols[mid - 1 - k], cols[mid + 1 + k]);
+            if (g.dataset.co) slide.push(cols[cols.length - 1]);
+            {
+                for (const col of slide) {
                     const ns = [...col.querySelectorAll('[data-key]')];
                     const ys = [], py = [];
                     for (const n of ns) {
                         ys.push(midY(n.getBoundingClientRect()));
                         for (const pk of n.dataset.parents.split(' ')) {
-                            const par = byKey[`${n.dataset.side}|${pk}`];
+                            const par = byKey[`${n.dataset.side === 'cocallers' ? 'callees' : n.dataset.side}|${pk}`];
                             if (par) py.push(midY(par.getBoundingClientRect()));
                         }
                     }
@@ -822,7 +847,7 @@
             const paths = [], meta = [];
             for (const n of nodes) {
                 for (const pk of n.dataset.parents.split(' ')) {
-                    const parent = pk === 'focus' ? center : byKey[`${n.dataset.side}|${pk}`];
+                    const parent = pk === 'focus' ? center : byKey[`${n.dataset.side === 'cocallers' ? 'callees' : n.dataset.side}|${pk}`];
                     if (!parent) continue;
                     // a callee is called by its parent; a caller calls its parent
                     const [from, to] = n.dataset.side === 'callers' ? [n, parent] : [parent, n];
@@ -831,7 +856,7 @@
                     const y1 = a.top + a.height / 2 - gr.top, y2 = b.top + b.height / 2 - gr.top;
                     const mx = (x1 + x2) / 2;
                     meta.push([n, parent]);
-                    paths.push(`<path data-i="${meta.length}" class="nway-edge${n.classList.contains('out') ? ' out' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${Math.min(1 + Number(n.dataset.n) * 0.8, 8).toFixed(1)}"></path>`);
+                    paths.push(`<path data-i="${meta.length}" class="nway-edge${n.classList.contains('out') ? ' out' : ''}${n.dataset.side === 'cocallers' ? ' co' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${Math.min(1 + Number(n.dataset.n) * 0.8, 8).toFixed(1)}"></path>`);
                 }
             }
             svg.innerHTML = paths.join('');
@@ -876,25 +901,28 @@
             const scopeToggle = [['code', 'Code', AXIS.code.icon, AXIS.code.color], ['library', 'Library', AXIS.library.icon, AXIS.library.color], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']].map(([v, text, icon, color]) => `<span class="bsim-tag-pill" data-cg-scope="${v}" style="${window.binSimPillStyle(st.scope === v, color)} padding:4px 10px; font-size:0.78rem;"><i class="${icon}"></i>${text}</span>`).join('');
             const depthCtl = st.view === 'graph' ? `<label class="nway-ctl" title="How many hops to walk. Beyond the first, only rows in the selected scope are expanded (8 per row, 60 nodes)."><span class="nway-lbl">Depth</span><b>${st.depth}</b><input type="range" min="1" max="3" value="${st.depth}" data-cg-depth></label>` : '';
             const suggestCtl = st.view === 'graph' ? `<button class="view-btn${st.suggest ? ' active' : ''}" data-cg-suggest title="Mark cards that look like one function split across files: complementary file sets, same parent"><i class="fa-solid fa-object-group"></i> Suggest merges</button>` : '';
+            const coCtl = st.view === 'graph' ? `<button class="view-btn${st.co ? ' active' : ''}" data-cg-co title="Also show the other functions that call what the focus calls (ranked by shared callees), to find look-alikes and unmatched siblings. Callees called by more than 25 functions are skipped. Off by default: it can add a lot."><i class="fa-solid fa-share-nodes"></i> Also called by</button>` : '';
             const toggle = ['list', 'graph'].map(v => `<button class="view-btn${st.view === v ? ' active' : ''}" data-cg-view="${v}">${v === 'list' ? 'List' : 'Graph'}</button>`).join('');
             const on = files.map(c => !!focus.cells[c.id]);
             const fs = this._cgStrip(on, files);
             let body;
             if (err) body = `<div style="color:#f92672;">${escapeHtml(err)}</div>`;
             else if (!st.nb) body = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Reading call graph...</div>';
-            else body = `<div class="dim nway-cg-legend"><i class="fa-solid fa-file-code"></i> files that have the function (color: how many) &middot; dot: the focus function there calls it &middot; <i class="fa-solid fa-link"></i> calls from the focus${st.view === 'graph' ? ' (edge width)' : ''}. Click to recenter.${st.depth > 1 ? (st.view === 'graph' ? ' Further hops show in-scope rows only.' : ' The list shows the first hop; depth applies to the graph.') : ''}</div>` + (st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files));
-            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}${depthCtl}${suggestCtl}<div class="view-toggle" style="margin:0">${toggle}</div>${this.cgInit ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
+            else body = `<div class="dim nway-cg-legend"><i class="fa-solid fa-file-code"></i> files that have the function (color: how many) &middot; dot: the focus function there calls it &middot; <i class="fa-solid fa-link"></i> calls from the focus${st.view === 'graph' ? ' (edge width)' : ''}. Click to recenter.${st.co ? ' Dashed lines: other callers of the same callee.' : ''}${st.depth > 1 ? (st.view === 'graph' ? ' Further hops show in-scope rows only.' : ' The list shows the first hop; depth applies to the graph.') : ''}</div>` + (st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files));
+            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}${depthCtl}${suggestCtl}${coCtl}<div class="view-toggle" style="margin:0">${toggle}</div>${this.cgInit ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
                 <div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>
                 <div class="nway-cg-body">${body}</div>`;
             if (!err && st.nb && st.view === 'graph') {
                 this._cgEdges();
                 const body = this._dw.querySelector('.nway-cg-body'), c = body.querySelector('.nway-node.center');
-                body.scrollLeft = Math.max(0, c.getBoundingClientRect().left - body.getBoundingClientRect().left + body.scrollLeft + c.offsetWidth / 2 - body.clientWidth / 2);
+                const cr = c.getBoundingClientRect(), br = body.getBoundingClientRect();
+                body.scrollLeft = Math.max(0, cr.left - br.left + body.scrollLeft + cr.width / 2 - body.clientWidth / 2);
+                body.scrollTop = Math.max(0, cr.top - br.top + body.scrollTop + cr.height / 2 - body.clientHeight / 2);
             }
         }
 
         _onDrawerClick(e) {
-            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-suggest]');
+            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-suggest],[data-cg-co],[data-cg-focusgrp]');
             if (!t || !this._cg) return;
             if (t.dataset.cgClose !== undefined) return window.closeCallsPanel();
             if (t.dataset.cgPop !== undefined) {
@@ -904,10 +932,18 @@
             }
             if (t.dataset.cgView) { this._cg.view = t.dataset.cgView; return this._cgDraw(); }
             if (t.dataset.cgOutside) { this._cg.outside = t.dataset.cgOutside; return this._cgDraw(); }
+            if (t.dataset.cgCo !== undefined) { this._cg.co = !this._cg.co; return this._cgShow(); }
+            if (t.dataset.cgFocusgrp) {
+                const g = this._cgGrp && this._cgGrp[t.dataset.cgFocusgrp];
+                if (!g) return;
+                this._cg.stack.push({ name: g.name, cells: g.cells });
+                this._cg.more = {};
+                return this._cgShow();
+            }
             if (t.dataset.cgSuggest !== undefined) { this._cg.suggest = !this._cg.suggest; return this._cgDraw(); }
             if (t.dataset.cgMore) { this._cg.more[t.dataset.cgMore] = true; return this._cgDraw(); }
             if (t.dataset.cgExpand) { this._cg.outside = 'each'; return this._cgDraw(); }
-            if (t.dataset.cgScope) { this._cg.scope = t.dataset.cgScope; return this._cg.depth > 1 ? this._cgShow() : this._cgDraw(); }
+            if (t.dataset.cgScope) { this._cg.scope = t.dataset.cgScope; return this._cg.depth > 1 || this._cg.co ? this._cgShow() : this._cgDraw(); }
             if (t.dataset.cgCrumb) {
                 this._cg.stack = this._cg.stack.slice(0, Number(t.dataset.cgCrumb) + 1);
                 this._cg.more = {};

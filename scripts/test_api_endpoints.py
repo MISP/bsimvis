@@ -4732,6 +4732,24 @@ def test_nway_diff():
             )
         _r = requests.get(
             f"{BASE_URL}/api/bin_sim/nway/neighbors",
+            params={**_base, "fids": _fids, "role": "cocallers"},
+            timeout=60,
+        )
+        _b = _r.json() if _r.status_code == 200 else {}
+        _sh = [i["shared"] for i in _b.get("items", [])]
+        check(
+            "nway neighbors cocallers: ranked by shared callees, never the focus row",
+            _r.status_code == 200
+            and _sh == sorted(_sh, reverse=True)
+            and all(
+                i["parents"] and i["shared"] == len(i["parents"]) for i in _b["items"]
+            )
+            and all(i["cells"] != _first["cells"] for i in _b["items"] if "cells" in i)
+            and isinstance(_b.get("hubs"), list),
+            f"HTTP {_r.status_code} {str(_b)[:200]}",
+        )
+        _r = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/neighbors",
             params={**_base, "fids": _fids, "role": "bogus"},
             timeout=30,
         )

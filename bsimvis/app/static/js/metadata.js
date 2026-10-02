@@ -91,7 +91,16 @@ window.getNavHandler = () => {
     };
 };
 
-return `<span class="relation-tag" onclick="event.stopPropagation(); window.getNavHandler()(${escapeAttr(jsString(funcData.function_id))}, ${escapeAttr(jsString(funcData.function_name || ''))}, '', event);" style="border-color:${color}; color:${color}; cursor:pointer;">
+// A pair diff routes relation clicks/hovers through its greedy partner lookup.
+const nav = options.relationNav;
+const clickJs = nav
+    ? `${nav}.openCalledPair(${escapeAttr(jsString(funcData.function_id))}, event)`
+    : `window.getNavHandler()(${escapeAttr(jsString(funcData.function_id))}, ${escapeAttr(jsString(funcData.function_name || ''))}, '', event)`;
+const hoverJs = nav && !isExt
+    ? ` onmouseenter="${nav}.previewCalledPair(${escapeAttr(jsString(funcData.function_id))}, ${escapeAttr(jsString(funcData.function_name || ''))}, event)" onmouseleave="${nav}.hideCalledPreview(event)"`
+    : '';
+
+return `<span class="relation-tag" onclick="event.stopPropagation(); ${clickJs};"${hoverJs} style="border-color:${color}; color:${color}; cursor:pointer;">
     ${funcHtml}
     ${isExt ? '<span class="ext-badge" style="background:${color}; color:white; font-size:0.6rem; padding:1px 3px; border-radius:2px; margin-left:4px;">EXT</span>' : ''}
 </span>`;

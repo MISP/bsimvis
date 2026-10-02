@@ -2327,6 +2327,45 @@ def run_all_tests():
             params={"id1": func_id1, "id2": func_id2},
             label="GET /api/diff (alias)",
         )
+        _pa, _pb = func_id1.split(":func:"), func_id2.split(":func:")
+        if len(_pa) == 2 and len(_pb) == 2:
+            _q = {
+                "collection_a": _pa[0],
+                "collection_b": _pb[0],
+                "md5_a": _pa[1].split(":")[0],
+                "md5_b": _pb[1].split(":")[0],
+                "addr_a": _pa[1].split(":")[1],
+                "addr_b": _pb[1].split(":")[1],
+            }
+            for _src in ("local", "stored", "runtime"):
+                _r = requests.get(
+                    f"{BASE_URL}/api/function/call_graph_similarity",
+                    params={**_q, "source": _src},
+                    timeout=60,
+                )
+                # a pair without stored sims is a clean 404, never a 500
+                check(
+                    f"call_graph_similarity source={_src}: 200 or 404",
+                    _r.status_code in (200, 404),
+                    f"status={_r.status_code}",
+                )
+                if _r.status_code == 200:
+                    _b = _r.json()
+                    check(
+                        f"call_graph_similarity source={_src}: echoes source, has counts",
+                        _b.get("source") == _src and "matched" in _b.get("counts", {}),
+                        str(_b)[:200],
+                    )
+            _r = requests.get(
+                f"{BASE_URL}/api/function/call_graph_similarity",
+                params={**_q, "source": "bogus"},
+                timeout=30,
+            )
+            check(
+                "call_graph_similarity rejects unknown source",
+                _r.status_code == 400,
+                f"status={_r.status_code}",
+            )
 
     # ── Features (global) ──────────────────────────────────────────────────
     print(_color("\n  [Features – global]", BOLD))

@@ -605,19 +605,22 @@
             const st = this._cg, depth = st.depth;
             const node = (role, lv, { it, i, out }, grp) => {
                 const m = this._cgMeasures(it, focus, files);
-                const chip = grp ? `<span class="nway-grp" style="--gc:${grp.color}" data-cg-fold="${escapeAttr(grp.id)}" title="Suggested merge: ${grp.m.length} cards with complementary files and the same parent. Click to fold them into one.">&asymp; ${grp.label} &middot; ${grp.cov}/${files.length}</span>` : '';
+                const chip = grp ? `<span class="nway-grp" style="--gc:${grp.color}" data-cg-fold="${escapeAttr(grp.id)}" title="Suggested merge: ${grp.m.length} cards with complementary files and the same parent. Click to fold them back into one.">&asymp; ${grp.label} &middot; ${grp.cov}/${files.length}</span>` : '';
                 return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}${grp ? ' grouped' : ''}"${grp ? ` style="--gc:${grp.color}"` : ''} ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}" data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}">
                     <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${chip}${this._cgReach(it, focus, files)}</div></div>`;
             };
-            const folded = (role, g) => {
+            // A folded group shows its biggest member as a normal card; +N expands the rest.
+            const folded = (role, lv, g) => {
                 const ms = g.m.map(r => r.m);
                 const present = files.map((_, k) => ms.some(m => m.present[k])), edge = files.map((_, k) => ms.some(m => m.edge[k]));
                 const r = this._cgStrip(present, files, edge);
                 const ne = edge.filter(Boolean).length;
-                const names = g.m.map(x => x.x.it.name || '?').join(' + ');
+                const rep = g.m[0].x;
                 const keys = g.m.map(x => x.x.it.key), parents = [...g.par];
-                return `<div class="nway-node folded" tabindex="0" data-cg-fold="${escapeAttr(g.id)}" data-side="${role}" data-key="${escapeAttr(keys[0])}" data-alias="${escapeAttr(keys.join(' '))}" data-parents="${escapeAttr(parents.join(' '))}" data-n="${ne}" style="--gc:${g.color}" title="${escapeAttr(names)}&#10;click to unfold">
-                    <div class="nway-node-name"><b style="color:${g.color}"><i class="fa-solid fa-object-group"></i> &asymp; ${g.label}: ${g.m.length} functions</b><div class="dim nway-grp-names">${escapeHtml(names)}</div></div><div class="nway-node-sub">${r.html}<span class="nway-reach ${r.cls}"><i class="fa-solid fa-file-code"></i> ${g.cov}/${files.length}</span><span class="nway-edgecnt"><i class="fa-solid fa-link"></i> ${ne}/${files.length}</span></div></div>`;
+                const others = g.m.slice(1).map(x => x.x.it.name || '?').join(', ');
+                const chip = `<span class="nway-grp" style="--gc:${g.color}" data-cg-fold="${escapeAttr(g.id)}" title="${escapeAttr(`Also in this group (complementary files, same parent): ${others}. Click to show each one.`)}">+${g.m.length - 1}</span>`;
+                return `<div class="nway-node folded${lv ? ' deep' : ''}" tabindex="0" data-cg-go="${role}:${lv}:${rep.i}" data-side="${role}" data-key="${escapeAttr(keys[0])}" data-alias="${escapeAttr(keys.join(' '))}" data-parents="${escapeAttr(parents.join(' '))}" data-n="${ne}" style="--gc:${g.color}">
+                    <div class="nway-node-name">${this._cgName(rep.it)}</div><div class="nway-node-sub">${chip}${r.html}<span class="nway-reach ${r.cls}" title="the group's functions exist in ${g.cov} of ${files.length} files"><i class="fa-solid fa-file-code"></i> ${g.cov}/${files.length}</span><span class="nway-edgecnt" title="called from ${ne} of ${files.length} files"><i class="fa-solid fa-link"></i> ${ne}/${files.length}</span></div></div>`;
             };
             // One column of cards, with suggested merges decorated or folded.
             const col0 = (role, lv, entries) => {
@@ -627,10 +630,10 @@
                 return entries.map(x => {
                     const g = by.get(x);
                     if (!g) return node(role, lv, x);
-                    if (!st.fold[g.id]) return node(role, lv, x, g);
+                    if (st.fold[g.id] === false) return node(role, lv, x, g);
                     if (done.has(g)) return '';
                     done.add(g);
-                    return folded(role, g);
+                    return folded(role, lv, g);
                 }).join('');
             };
             // Every out-of-scope neighbor of a side as one faded card.
@@ -753,7 +756,7 @@
             }
             if (t.dataset.cgView) { this._cg.view = t.dataset.cgView; return this._cgDraw(); }
             if (t.dataset.cgOutside) { this._cg.outside = t.dataset.cgOutside; return this._cgDraw(); }
-            if (t.dataset.cgFold) { this._cg.fold[t.dataset.cgFold] = !this._cg.fold[t.dataset.cgFold]; return this._cgDraw(); }
+            if (t.dataset.cgFold) { this._cg.fold[t.dataset.cgFold] = this._cg.fold[t.dataset.cgFold] === false; return this._cgDraw(); }
             if (t.dataset.cgSuggest !== undefined) { this._cg.suggest = !this._cg.suggest; return this._cgDraw(); }
             if (t.dataset.cgMore) { this._cg.more[t.dataset.cgMore] = true; return this._cgDraw(); }
             if (t.dataset.cgExpand) { this._cg.outside = 'each'; return this._cgDraw(); }

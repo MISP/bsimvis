@@ -63,11 +63,11 @@ window.EntityRenderer = {
                  data-entity-data='${escapeAttr(JSON.stringify(f))}'
                  draggable="true" ondragstart="typeof onTableRowDragStart === 'function' && onTableRowDragStart(event)"
                  oncontextmenu='EntityRenderer.handleContextMenu(event, "function", this)'>
-                <b class="entity-name" style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
-                   onmouseenter="typeof showCodePreview === 'function' && showCodePreview(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, ${escapeAttr(jsString(entry))}, ${escapeAttr(jsString(file_md5))}, ${Number(featCount) || 0}, event)" 
+                <b class="entity-name" style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" ${options.noNav ? '' : `
+                   onmouseenter="typeof showCodePreview === 'function' && showCodePreview(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, ${escapeAttr(jsString(entry))}, ${escapeAttr(jsString(file_md5))}, ${Number(featCount) || 0}, event)"
                    onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)"
                    onmouseleave="typeof hideCodePreview === 'function' && hideCodePreview(event)"
-                   onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, '', event)">
+                   onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, '', event)"`}>
                     ${fInfo.ret ? `<span style="color:var(--token-address)">${escapeHtml(fInfo.ret)}</span> ` : ''}${fInfo.ns ? `<span style="opacity:0.8; color:var(--text)">${escapeHtml(fInfo.ns)}::</span>` : ''}${escapeHtml(name)}<span style="color:var(--text)">(</span>${fInfo.params.map(t => `<span style="color:var(--token-address)">${escapeHtml(t)}</span>`).join('<span style="color:var(--text)">, </span>')}<span style="color:var(--text)">)</span>
                 </b>
                 ${actionsHtml}

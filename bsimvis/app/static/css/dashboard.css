@@ -2909,8 +2909,8 @@ a.home-card:hover,
 .nway-node.static { cursor: default; }
 .nway-node-name { min-width: 0; overflow: hidden; }
 .nway-node-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 0.72rem; min-width: 0; }
-.nway-bar { display: inline-block; width: 80px; height: 8px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
-.nway-bar b { display: block; height: 100%; background: var(--rc); }
+.nway-pbar { display: inline-block; width: 80px; height: 8px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.nway-pbar b { display: block; height: 100%; background: var(--rc); }
 .nway-node .entity-function { width: 100%; }
 .nway-cg-box { border: 1px solid var(--border); border-radius: 8px; padding: 0 10px 6px; margin-bottom: 14px; background: rgba(128, 128, 128, 0.05); }
 .nway-cg-box > header { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); padding: 8px 0; margin-bottom: 4px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }

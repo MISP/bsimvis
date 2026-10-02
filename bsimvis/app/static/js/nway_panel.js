@@ -594,7 +594,7 @@
             const cls = n === files.length ? 'r-hi' : n * 2 >= files.length ? 'r-mid' : 'r-low';
             const total = files.length;
             if (total > 120) {
-                return { html: `<span class="nway-bar ${cls}" title="${n} of ${total} files"><b style="width:${(100 * n / total).toFixed(0)}%"></b></span>`, n, cls };
+                return { html: `<span class="nway-pbar ${cls}" title="${n} of ${total} files"><b style="width:${(100 * n / total).toFixed(0)}%"></b></span>`, n, cls };
             }
             const sz = total <= 16 ? 11 : total <= 64 ? 6 : 4;
             const sq = files.map((c, i) => {

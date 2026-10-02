@@ -464,6 +464,11 @@
         _cgStrip(on, files, yes = 'has this edge', no = 'no such edge') {
             const n = on.filter(Boolean).length;
             const cls = n === files.length ? 'r-hi' : n * 2 >= files.length ? 'r-mid' : 'r-low';
+            const total = files.length;
+            if (total > 120) {
+                return { html: `<span class="nway-bar ${cls}" title="${n} of ${total} files"><b style="width:${(100 * n / total).toFixed(0)}%"></b></span>`, n, cls };
+            }
+            const sz = total <= 16 ? 11 : total <= 64 ? 6 : 4;
             const sq = files.map((c, i) => {
                 const coll = c.collection || '';
                 const data = { md5: c.md5, fileId: `${coll}:file:${c.md5}`, name: c.file_name || c.md5, file_name: c.file_name || '', collection: coll };
@@ -472,7 +477,7 @@
                     onclick="event.stopPropagation(); openFileDetails(${escapeAttr(jsString(coll))}, ${escapeAttr(jsString(c.md5))}, ${escapeAttr(jsString(c.file_name || c.md5))}, event)"
                     oncontextmenu='event.stopPropagation(); EntityRenderer.handleContextMenu(event, "file", this)'></i>`;
             }).join('');
-            return { html: `<span class="nway-strip ${cls}">${sq}</span>`, n, cls };
+            return { html: `<span class="nway-strip ${cls}" style="--sq:${sz}px">${sq}</span>`, n, cls };
         }
 
         _cgName(it) {

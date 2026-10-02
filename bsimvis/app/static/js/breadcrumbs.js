@@ -280,6 +280,20 @@ window.Breadcrumbs = {
                 });
                 break;
             case 'nway':
+                if (window.location.pathname.endsWith('/nway/graph') && window.NwayPanel) {
+                    const q = new URLSearchParams(window.location.search);
+                    segments.push({
+                        label: 'N-way diff',
+                        url: window.NwayPanel.backUrl(q),
+                        icon: 'fa-solid fa-code-compare'
+                    });
+                    segments.push({
+                        label: `Call graph: ${q.get('cg_name') || ''}`,
+                        url: window.location.pathname + window.location.search,
+                        icon: 'fa-solid fa-diagram-project'
+                    });
+                    break;
+                }
                 segments.push({
                     label: 'N-way diff',
                     url: window.location.pathname + window.location.search,

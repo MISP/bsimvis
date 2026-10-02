@@ -48,6 +48,7 @@ window.NwayView = {
         }
         let cells = {};
         try { cells = JSON.parse(cg.cells || '{}'); } catch (e) { /* bad link: the empty graph below says so */ }
+        try { cg.pieces = cg.pieces ? JSON.parse(cg.pieces) : undefined; } catch (e) { cg.pieces = undefined; }
         this.destroy();
         this._container.innerHTML = '<div id="nway-graph-host" class="nway-cgp" style="height: calc(100vh - 130px);"></div>';
         if (!Object.keys(cells).length) {

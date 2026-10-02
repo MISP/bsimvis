@@ -624,8 +624,63 @@ def _greedy_call_role(left, right, collection, pool_id, min_score, algo):
     }
 
 
+def _pair_call_role(left, right, partners):
+    """Match one neighbor role through the file pair's greedy partner map."""
+    right_by_id = {node["id"]: node for node in right}
+    used_right, matched, unique_a = set(), [], []
+    for a in left:
+        hit = partners.get(a["id"])
+        if a["id"].startswith("ext:"):
+            hit = (a["id"], 1.0) if a["id"] in right_by_id else None
+        if hit and hit[0] in right_by_id and hit[0] not in used_right:
+            used_right.add(hit[0])
+            matched.append(
+                {"func_a": a, "func_b": right_by_id[hit[0]], "similarity": hit[1]}
+            )
+        else:
+            unique_a.append(a)
+    return {
+        "matched": matched,
+        "unique_to_a": unique_a,
+        "unique_to_b": [n for n in right if n["id"] not in used_right],
+    }
+
+
+def _file_pair_partners(params, algo, runtime, min_score):
+    """{func_a id: (func_b id, score)} from the file pair's greedy match."""
+    from bsimvis.app.routes.bin_sim import get_bin_sim
+
+    query = {
+        "collection": params["collection_a"],
+        "coll_b": params["collection_b"],
+        "md5_a": params["md5_a"],
+        "md5_b": params["md5_b"],
+        "algo": algo,
+        "min_score": str(min_score),
+    }
+    if runtime:
+        query["runtime"] = "greedy"
+    if params["pool"]:
+        query["pool"] = params["pool"]
+    with current_app.test_request_context("/api/bin_sim", query_string=query):
+        result = get_bin_sim()
+    status = 200
+    if isinstance(result, tuple):
+        result, status = result[0], result[1]
+    if status != 200 or not isinstance(result, dict):
+        return None, (result or {}).get("message", "Pair similarity not found")
+    rows = result.get("diff", {}).get("matched", [])
+    return {
+        m["func_a"]: (m["func_b"], float(m.get("similarity") or 0)) for m in rows
+    }, None
+
+
 def call_graph_similarity_api():
-    """Runtime direct caller/callee matching for a function diff."""
+    """Direct caller/callee matching for a function diff.
+
+    source=local (default): greedy over the two functions' own neighbors.
+    source=stored|runtime: partners come from the file pair's greedy match.
+    """
     params, err = parse_diff_params()
     if err:
         return {"detail": err}, 400
@@ -642,23 +697,36 @@ def call_graph_similarity_api():
     right = get_enriched_nodes(
         params["collection_b"], params["md5_b"], params["addr_b"]
     )
-    callers = _greedy_call_role(
-        left["callers"],
-        right["callers"],
-        params["collection_a"],
-        params["pool"],
-        min_score,
-        algo,
-    )
-    callees = _greedy_call_role(
-        left["callees"],
-        right["callees"],
-        params["collection_a"],
-        params["pool"],
-        min_score,
-        algo,
-    )
+    source = request.args.get("source", "local")
+    if source not in ("local", "stored", "runtime"):
+        return {"detail": "source must be local, stored or runtime"}, 400
+    if source == "local":
+        callers = _greedy_call_role(
+            left["callers"],
+            right["callers"],
+            params["collection_a"],
+            params["pool"],
+            min_score,
+            algo,
+        )
+        callees = _greedy_call_role(
+            left["callees"],
+            right["callees"],
+            params["collection_a"],
+            params["pool"],
+            min_score,
+            algo,
+        )
+    else:
+        partners, err = _file_pair_partners(
+            params, algo, source == "runtime", min_score
+        )
+        if partners is None:
+            return {"detail": err}, 404
+        callers = _pair_call_role(left["callers"], right["callers"], partners)
+        callees = _pair_call_role(left["callees"], right["callees"], partners)
     return {
+        "source": source,
         "callers": callers,
         "callees": callees,
         "counts": {

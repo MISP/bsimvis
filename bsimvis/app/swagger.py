@@ -1292,10 +1292,11 @@ class FunctionCallGraphSimilarity(Resource):
             "pool": "Pool ID for cross-collection similarity",
             "algo": "Function similarity algorithm (default: unweighted_cosine)",
             "min_score": "Runtime minimum similarity (0-1)",
+            "source": "local (default, neighbors only), stored (file pair doc) or runtime (file pair re-matched at min_score)",
         }
     )
     def get(self):
-        """Greedily matches direct callers and callees at request time."""
+        """Matches direct callers and callees, locally or through the file pair's greedy match."""
         from bsimvis.app.routes.function_diff import call_graph_similarity_api
 
         return call_graph_similarity_api()

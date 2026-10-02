@@ -443,7 +443,7 @@ window.DiffView = {
                 if (tokenTarget) {
                     const calledFuncId = tokenTarget.getAttribute('data-called-func-id');
                     if (calledFuncId) {
-                        this.navigateToFunction(calledFuncId, event);
+                        this.openCalledPair(calledFuncId, event);
                         return;
                     }
                     if (tokenTarget.classList.contains('feature-highlight')) {
@@ -687,7 +687,7 @@ window.DiffView = {
                     if (els.funcCallToken) {
                         const calledFuncId = els.funcCallToken.getAttribute('data-called-func-id');
                         if (calledFuncId) {
-                            this.navigateToFunction(calledFuncId, e);
+                            this.openCalledPair(calledFuncId, e);
                             return;
                         }
                     }
@@ -1306,24 +1306,40 @@ window.DiffView = {
         if (mode === 'similarity') this.loadCallGraphSimilarity();
     },
 
-    async loadCallGraphSimilarity(minScore = 0.5, algo = this._callSimAlgo || 'unweighted_cosine') {
+    // Click on a called function: open the diff of its partner on the other side.
+    async openCalledPair(funcId, e) {
+        const p = this._getCurrentP() || this._parsePathUrl();
+        if (!p || !p.addr_a || !p.addr_b || funcId.startsWith('ext:')) return this.navigateToFunction(funcId, e);
+        if (this._callSimKey !== `${p.collection_a}${p.md5_a}${p.addr_a}${p.collection_b}${p.md5_b}${p.addr_b}`) await this.loadCallGraphSimilarity(this._callSimMin ?? 0.5, undefined, false);
+        const data = this._callSimData;
+        const hit = data && ['callers', 'callees'].flatMap(r => data[r].matched).find(m => m.func_a.id === funcId || m.func_b.id === funcId);
+        if (hit && window.buildDiffUrl) {
+            Nav.openPath(buildDiffUrl(hit.func_a.id, hit.func_b.id), e, { title: `Diff: ${hit.func_a.name || hit.func_a.id} vs ${hit.func_b.name || hit.func_b.id}`, type: 'diff' });
+        } else if (window.showToast) {
+            window.showToast(`NO MATCH (${this._callSimSource}) -- try another match source in the Similarity tab`, 'info');
+        }
+    },
+
+    async loadCallGraphSimilarity(minScore = 0.5, algo = this._callSimAlgo || 'unweighted_cosine', render = true) {
         const wrap = document.getElementById('bsim-call-sim-wrap');
         const p = this._getCurrentP() || this._parsePathUrl();
         if (!wrap || !p || !p.addr_a || !p.addr_b) return;
         this._callSimMin = minScore;
         this._callSimAlgo = algo;
-        wrap.innerHTML = '<div class="dim"><i class="fa-solid fa-spinner fa-spin"></i> Matching direct callers and callees…</div>';
-        const q = new URLSearchParams({ collection_a: p.collection_a, collection_b: p.collection_b, md5_a: p.md5_a, md5_b: p.md5_b, addr_a: p.addr_a, addr_b: p.addr_b, min_score: minScore, algo });
+        this._callSimSource = this._callSimSource || 'stored';
+        if (render) wrap.innerHTML = '<div class="dim"><i class="fa-solid fa-spinner fa-spin"></i> Matching direct callers and callees…</div>';
+        const q = new URLSearchParams({ collection_a: p.collection_a, collection_b: p.collection_b, md5_a: p.md5_a, md5_b: p.md5_b, addr_a: p.addr_a, addr_b: p.addr_b, min_score: minScore, algo, source: this._callSimSource });
         if (p.pool) q.set('pool', p.pool);
         try {
             const res = await fetch(`/api/function/call_graph_similarity?${q}`);
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || 'Could not match call graph');
             this._callSimData = data;
+            this._callSimKey = `${p.collection_a}${p.md5_a}${p.addr_a}${p.collection_b}${p.md5_b}${p.addr_b}`;
             this._callSimFilter = this._callSimFilter || 'all';
-            this.renderCallGraphSimilarity();
+            if (render) this.renderCallGraphSimilarity();
         } catch (err) {
-            wrap.innerHTML = `<div style="color:#f92672;">${escapeHtml(err.message)}</div>`;
+            if (render) wrap.innerHTML = `<div style="color:#f92672;">${escapeHtml(err.message)}</div>`;
         }
     },
 
@@ -1389,9 +1405,15 @@ window.DiffView = {
             </tr>`;
         };
         const threshold = Math.round((this._callSimMin ?? 0.5) * 100);
+        const src = this._callSimSource || 'stored';
+        const srcOpt = (v, l) => `<option value="${v}" ${src === v ? 'selected' : ''}>${l}</option>`;
         wrap.innerHTML = `<section class="call-sim-threshold" aria-label="Call graph similarity threshold">
                 <div>
-                    <strong>Algorithm</strong>
+                    <strong>Match</strong>
+                    <select onchange="DiffView.setCallSimSource(this.value)" style="margin-left:8px; background:var(--card-bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 6px;">
+                        ${srcOpt('stored', 'File pair (stored)')}${srcOpt('runtime', 'File pair (runtime greedy)')}${srcOpt('local', 'Neighbors only')}
+                    </select>
+                    <strong style="margin-left:16px;">Algorithm</strong>
                     <select onchange="DiffView.setCallSimAlgorithm(this.value)" style="margin-left:8px; background:var(--card-bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 6px;">
                         ${window.SimAlgos.optionsHtml(this._callSimAlgo || window.SimAlgos.default, { exact: true })}
                     </select>
@@ -1408,6 +1430,11 @@ window.DiffView = {
     },
 
     setCallSimFilter(filter) { this._callSimFilter = filter; this.renderCallGraphSimilarity(); },
+
+    setCallSimSource(source) {
+        this._callSimSource = source;
+        this.loadCallGraphSimilarity(this._callSimMin ?? 0.5);
+    },
 
     setCallSimAlgorithm(algo) {
         this._callSimAlgo = algo;

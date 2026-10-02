@@ -209,7 +209,7 @@
             const menu = document.createElement('div');
             menu.className = 'context-menu';
             menu.id = 'nway-col-menu';
-            menu.style.cssText = `position:fixed;left:${Number(e.clientX)}px;top:${Number(e.clientY)}px;z-index:10000;`;
+            menu.style.cssText = `display:block;left:${Number(e.clientX)}px;top:${Number(e.clientY)}px;`;
             menu.innerHTML = items.map(([text, act]) => `<div class="context-menu-item" data-act="${act}">${escapeHtml(text)}</div>`).join('');
             menu.addEventListener('click', ev => {
                 const act = ev.target.closest('[data-act]');

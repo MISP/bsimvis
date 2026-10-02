@@ -148,12 +148,12 @@
             const btns = options.map(([v, text, t]) =>
                 `<button class="view-btn${cur === v ? ' active' : ''}" data-set="${escapeAttr(`${key}:${v}`)}"${t ? ` title="${escapeAttr(t)}"` : ''}>${escapeHtml(text)}</button>`
             ).join('');
-            return `<div class="view-toggle"><span class="nway-lbl">${escapeHtml(label)}</span>${btns}${this._tip(tip)}</div>`;
+            return `<span class="nway-ctlwrap"><div class="view-toggle"><span class="nway-lbl">${escapeHtml(label)}</span>${btns}</div>${this._tip(tip)}</span>`;
         }
 
         _slider(label, key, value, min, max, step, tip) {
             const shown = key === 'k' ? String(value) : Number(value).toFixed(2);
-            return `<label class="nway-ctl"><span class="nway-lbl">${escapeHtml(label)}</span><b>${shown}</b><input type="range" min="${min}" max="${max}"${step ? ` step="${step}"` : ''} value="${Number(value)}" data-range="${key}">${this._tip(tip)}</label>`;
+            return `<span class="nway-ctlwrap"><label class="nway-ctl"><span class="nway-lbl">${escapeHtml(label)}</span><b>${shown}</b><input type="range" min="${min}" max="${max}"${step ? ` step="${step}"` : ''} value="${Number(value)}" data-range="${key}"></label>${this._tip(tip)}</span>`;
         }
 
         _group(label, inner) {

@@ -409,11 +409,15 @@
         _cgOpen(row) {
             const cells = {};
             for (const [k, v] of Object.entries(row.files || row.cells)) if (typeof v === 'string') cells[k] = v;
-            this._cg = { stack: [{ name: row.name, cells }], view: (this._cg && this._cg.view) || 'graph', scope: (this._cg && this._cg.scope) || this.state.scope || 'code', outside: (this._cg && this._cg.outside) || 'merge', nb: null };
+            this._cg = { stack: [{ name: row.name, cells }], view: (this._cg && this._cg.view) || 'graph', scope: (this._cg && this._cg.scope) || this.state.scope || 'code', outside: (this._cg && this._cg.outside) || 'merge', depth: (this._cg && this._cg.depth) || 1, nb: null };
             if (!this._dw) {
                 this._dw = document.createElement('aside');
                 this._dw.className = 'nway-drawer';
                 this._dw.addEventListener('click', e => this._onDrawerClick(e));
+                this._dw.addEventListener('change', e => {
+                    const t = e.target.closest('[data-cg-depth]');
+                    if (t && this._cg) { this._cg.depth = Number(t.value); this._cgShow(); }
+                });
                 document.body.appendChild(this._dw);
                 this._escKey = e => { if (e.key === 'Escape') this._cgClose(); };
                 document.addEventListener('keydown', this._escKey);
@@ -437,6 +441,8 @@
             }
             qs.set('fids', Object.values(focus.cells).join(','));
             qs.set('role', role);
+            qs.set('depth', this._cg.depth);
+            qs.set('scope', this._cg.scope);
             const res = await fetch(`/api/bin_sim/nway/neighbors?${qs.toString()}`);
             const body = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(body.message || body.error || `HTTP ${res.status}`);
@@ -485,7 +491,9 @@
 
         // Presence: the neighbor's function exists in that file. Edge: the focus function there calls it.
         _cgMeasures(it, focus, files) {
-            const edge = files.map(c => { const f = focus.cells[c.id]; return !!(f && it.sources[f]); });
+            // Sources are the parent row's functions (the focus for the first hop), so match them to files by md5.
+            const srcs = Object.keys(it.sources);
+            const edge = files.map(c => srcs.some(f => f.includes(`:func:${c.md5}:`)));
             const present = it.kind === 'row' ? files.map(c => !!it.cells[c.id]) : edge;
             return { present, edge, np: present.filter(Boolean).length, ne: edge.filter(Boolean).length };
         }
@@ -516,7 +524,7 @@
         _cgList(nb, focus, files) {
             const box = (role, label, icon) => {
                 const shown = this._cgShown(nb, role).filter(x => !x.out);
-                const rows = shown.map(({ it, i }) => `<div class="nway-cg-item${it.kind === 'row' ? '' : ' static'}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${i}"` : ''}>
+                const rows = shown.map(({ it, i }) => `<div class="nway-cg-item${it.kind === 'row' ? '' : ' static'}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:0:${i}"` : ''}>
                     <span class="nway-cg-l">${this._cgName(it)}</span><span class="nway-cg-r">${this._cgReach(it, focus, files)}</span></div>`).join('');
                 return `<section class="nway-cg-box"><header><i class="fa-solid ${icon}"></i> ${label} <span class="dim">(${shown.length})</span></header>${rows || '<div class="dim nway-cg-none">none in this scope</div>'}</section>`;
             };
@@ -525,10 +533,10 @@
 
         _cgGraph(nb, focus, files) {
             const CAP = 12;
-            const st = this._cg;
-            const node = (role, { it, i, out }) => {
+            const st = this._cg, depth = st.depth;
+            const node = (role, lv, { it, i, out }) => {
                 const m = this._cgMeasures(it, focus, files);
-                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${i}"` : ''} data-edge="${role}" data-n="${m.ne}">
+                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}" data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}">
                     <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div></div>`;
             };
             // Every out-of-scope neighbor of a side as one faded card.
@@ -540,27 +548,45 @@
                 const names = list.map(({ it }) => it.name || '?').join(', ');
                 const axis = st.scope === 'library' ? 'code' : 'library';
                 const ax = AXIS[axis];
-                return `<div class="nway-node out merged" tabindex="0" data-cg-expand="1" data-edge="${role}" data-n="${ne}" style="border-color:${ax.color}" title="${escapeAttr(names)}&#10;click to show each one">
+                return `<div class="nway-node out merged" tabindex="0" data-cg-expand="1" data-side="${role}" data-key="merged" data-parents="focus" data-n="${ne}" style="border-color:${ax.color}" title="${escapeAttr(names)}&#10;click to show each one">
                     <div class="nway-node-name"><b style="color:${ax.color}"><i class="${ax.icon}"></i> ${list.length} ${axis}</b></div><div class="nway-node-sub">${r.html}<span class="nway-edgecnt" title="called from ${ne} of ${files.length} files"><i class="fa-solid fa-link"></i> ${ne}/${files.length}</span></div></div>`;
             };
             const hidden = {};
-            const col = role => {
+            // columns[role][lv]: the hop-1 column keeps the in-scope / out-of-scope handling,
+            // later hops only list rows whose parent is on screen.
+            const columns = { callers: [], callees: [] };
+            for (const role of ['callers', 'callees']) {
                 const all = this._cgShown(nb, role);
                 const inn = all.filter(x => !x.out), out = all.filter(x => x.out);
+                let first;
                 if (st.outside === 'merge') {
                     hidden[role] = Math.max(0, inn.length - CAP);
-                    return inn.slice(0, CAP).map(x => node(role, x)).join('') + (out.length ? merged(role, out) : '');
+                    first = inn.slice(0, CAP).map(x => node(role, 0, x)).join('') + (out.length ? merged(role, out) : '');
+                    var prev = new Set(inn.slice(0, CAP).map(x => x.it.key).concat(out.length ? ['merged'] : []));
+                } else {
+                    const list = inn.concat(out);
+                    hidden[role] = Math.max(0, list.length - CAP);
+                    first = list.slice(0, CAP).map(x => node(role, 0, x)).join('');
+                    var prev = new Set(list.slice(0, CAP).map(x => x.it.key));
                 }
-                const list = inn.concat(out);
-                hidden[role] = Math.max(0, list.length - CAP);
-                return list.slice(0, CAP).map(x => node(role, x)).join('');
-            };
-            const left = col('callers'), right = col('callees');
-            const more = ['callers', 'callees'].map(r => hidden[r] ? `${hidden[r]} more ${r} (see the list view)` : '').filter(Boolean).join('; ');
-            return `<div class="nway-graph"><svg></svg><div class="nway-gcol">${left}</div>
+                columns[role].push(first);
+                for (let lv = 1; lv < depth; lv++) {
+                    const level = (nb[role].levels[lv] || []).map((it, i) => ({ it, i, out: !(st.scope === 'all' || (st.scope === 'library') === !!it.library) }))
+                        .filter(x => !x.out && x.it.parents.some(k => prev.has(k)));
+                    columns[role].push(level.map(x => node(role, lv, x)).join(''));
+                    prev = new Set(level.map(x => x.it.key));
+                }
+            }
+            const notes = ['callers', 'callees'].map(r => hidden[r] ? `${hidden[r]} more ${r} (see the list view)` : (nb[r].truncated ? `${r}: capped at 60 nodes` : '')).filter(Boolean).join('; ');
+            const widths = lv => (lv ? '170px' : '230px');
+            const cols = [...Array(depth).keys()].reverse().map(widths).concat(['230px'], [...Array(depth).keys()].map(widths));
+            const col = html => `<div class="nway-gcol">${html}</div>`;
+            const grid = depth > 1 ? ` style="grid-template-columns:${cols.join(' ')}; column-gap:56px; width:max-content"` : '';
+            const left = [...columns.callers].reverse().map(col).join(''), right = columns.callees.map(col).join('');
+            return `<div class="nway-graph"${grid}><svg></svg>${left}
                 <div class="nway-gcol"><div class="nway-node center"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div></div></div>
-                <div class="nway-gcol">${right}</div></div>
-                ${more ? `<div class="dim" style="margin-top:6px">${escapeHtml(more)}</div>` : ''}`;
+                ${right}</div>
+                ${notes ? `<div class="dim" style="margin-top:6px">${escapeHtml(notes)}</div>` : ''}`;
         }
 
         // Cards have the height their tags need, so the edges are drawn from where they landed.
@@ -568,19 +594,29 @@
             const g = this._dw && this._dw.querySelector('.nway-graph');
             if (!g) return;
             const gr = g.getBoundingClientRect();
-            const c = g.querySelector('.nway-node.center').getBoundingClientRect();
+            const center = g.querySelector('.nway-node.center');
+            const byKey = {};
+            const nodes = [...g.querySelectorAll('[data-key]')];
+            nodes.forEach(n => { byKey[`${n.dataset.side}|${n.dataset.key}`] = n; });
             const svg = g.querySelector(':scope > svg');
             svg.setAttribute('viewBox', `0 0 ${gr.width} ${gr.height}`);
             svg.setAttribute('width', gr.width);
             svg.setAttribute('height', gr.height);
-            svg.innerHTML = [...g.querySelectorAll('[data-edge]')].map(n => {
-                const r = n.getBoundingClientRect();
-                const callers = n.dataset.edge === 'callers';
-                const x1 = (callers ? r.right : c.right) - gr.left, x2 = (callers ? c.left : r.left) - gr.left;
-                const y1 = (callers ? r.top + r.height / 2 : c.top + c.height / 2) - gr.top, y2 = (callers ? c.top + c.height / 2 : r.top + r.height / 2) - gr.top;
-                const mx = (x1 + x2) / 2;
-                return `<path class="nway-edge${n.classList.contains('out') ? ' out' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${Math.min(1 + Number(n.dataset.n) * 0.8, 8).toFixed(1)}"></path>`;
-            }).join('');
+            const paths = [];
+            for (const n of nodes) {
+                for (const pk of n.dataset.parents.split(' ')) {
+                    const parent = pk === 'focus' ? center : byKey[`${n.dataset.side}|${pk}`];
+                    if (!parent) continue;
+                    // a callee is called by its parent; a caller calls its parent
+                    const [from, to] = n.dataset.side === 'callers' ? [n, parent] : [parent, n];
+                    const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
+                    const x1 = a.right - gr.left, x2 = b.left - gr.left;
+                    const y1 = a.top + a.height / 2 - gr.top, y2 = b.top + b.height / 2 - gr.top;
+                    const mx = (x1 + x2) / 2;
+                    paths.push(`<path class="nway-edge${n.classList.contains('out') ? ' out' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${Math.min(1 + Number(n.dataset.n) * 0.8, 8).toFixed(1)}"></path>`);
+                }
+            }
+            svg.innerHTML = paths.join('');
         }
 
         _cgDraw(err) {
@@ -589,14 +625,15 @@
             const crumbs = st.stack.map((f, i) => `<button class="nway-crumb" data-cg-crumb="${i}">${escapeHtml(f.name)}</button>`).join('<span class="dim">/</span>');
             const outsideToggle = st.view === 'graph' && st.scope !== 'all' ? `<span class="nway-lbl" title="Neighbors outside the selected scope: grouped into one card per side, or each listed (faded)">Outside scope</span><div class="view-toggle" style="margin:0">${[['merge', 'Grouped'], ['each', 'Each']].map(([v, l]) => `<button class="view-btn${st.outside === v ? ' active' : ''}" data-cg-outside="${v}">${l}</button>`).join('')}</div>` : '';
             const scopeToggle = [['code', 'Code', AXIS.code.icon, AXIS.code.color], ['library', 'Library', AXIS.library.icon, AXIS.library.color], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']].map(([v, text, icon, color]) => `<span class="bsim-tag-pill" data-cg-scope="${v}" style="${window.binSimPillStyle(st.scope === v, color)} padding:4px 10px; font-size:0.78rem;"><i class="${icon}"></i>${text}</span>`).join('');
+            const depthCtl = st.view === 'graph' ? `<label class="nway-ctl" title="How many hops to walk. Beyond the first, only rows in the selected scope are expanded (8 per row, 60 nodes)."><span class="nway-lbl">Depth</span><b>${st.depth}</b><input type="range" min="1" max="3" value="${st.depth}" data-cg-depth></label>` : '';
             const toggle = ['list', 'graph'].map(v => `<button class="view-btn${st.view === v ? ' active' : ''}" data-cg-view="${v}">${v === 'list' ? 'List' : 'Graph'}</button>`).join('');
             const on = files.map(c => !!focus.cells[c.id]);
             const fs = this._cgStrip(on, files);
             let body;
             if (err) body = `<div style="color:#f92672;">${escapeHtml(err)}</div>`;
             else if (!st.nb) body = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Reading call graph...</div>';
-            else body = `<div class="dim nway-cg-legend"><i class="fa-solid fa-file-code"></i> files that have the function (color: how many) &middot; dot: the focus function there calls it &middot; <i class="fa-solid fa-link"></i> calls from the focus${st.view === 'graph' ? ' (edge width)' : ''}. Click to recenter.</div>` + (st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files));
-            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}<div class="view-toggle" style="margin:0">${toggle}</div><button class="nway-chip" data-cg-close title="close (Esc)">&times;</button></div>
+            else body = `<div class="dim nway-cg-legend"><i class="fa-solid fa-file-code"></i> files that have the function (color: how many) &middot; dot: the focus function there calls it &middot; <i class="fa-solid fa-link"></i> calls from the focus${st.view === 'graph' ? ' (edge width)' : ''}. Click to recenter.${st.depth > 1 ? (st.view === 'graph' ? ' Further hops show in-scope rows only.' : ' The list shows the first hop; depth applies to the graph.') : ''}</div>` + (st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files));
+            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}${depthCtl}<div class="view-toggle" style="margin:0">${toggle}</div><button class="nway-chip" data-cg-close title="close (Esc)">&times;</button></div>
                 <div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>
                 <div class="nway-cg-body">${body}</div>`;
             if (!err && st.nb && st.view === 'graph') this._cgEdges();
@@ -609,13 +646,13 @@
             if (t.dataset.cgView) { this._cg.view = t.dataset.cgView; return this._cgDraw(); }
             if (t.dataset.cgOutside) { this._cg.outside = t.dataset.cgOutside; return this._cgDraw(); }
             if (t.dataset.cgExpand) { this._cg.outside = 'each'; return this._cgDraw(); }
-            if (t.dataset.cgScope) { this._cg.scope = t.dataset.cgScope; return this._cgDraw(); }
+            if (t.dataset.cgScope) { this._cg.scope = t.dataset.cgScope; return this._cg.depth > 1 ? this._cgShow() : this._cgDraw(); }
             if (t.dataset.cgCrumb) {
                 this._cg.stack = this._cg.stack.slice(0, Number(t.dataset.cgCrumb) + 1);
                 return this._cgShow();
             }
-            const [role, i] = t.dataset.cgGo.split(':');
-            const it = this._cg.nb && this._cg.nb[role].items[Number(i)];
+            const [role, lv, i] = t.dataset.cgGo.split(':');
+            const it = this._cg.nb && this._cg.nb[role].levels[Number(lv)][Number(i)];
             if (!it || it.kind !== 'row') return;
             const cells = {};
             for (const [k, v] of Object.entries(it.cells)) if (typeof v === 'string') cells[k] = v;

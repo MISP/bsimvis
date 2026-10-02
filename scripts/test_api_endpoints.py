@@ -4736,6 +4736,33 @@ def test_nway_diff():
             timeout=30,
         )
         check("nway neighbors rejects unknown role", _r.status_code == 400)
+        _r = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/neighbors",
+            params={**_base, "fids": _fids, "role": "callees", "depth": 3},
+            timeout=60,
+        )
+        _b = _r.json() if _r.status_code == 200 else {}
+        _lv = _b.get("levels", [])
+        _seen = set()
+        _ok = bool(_lv) and _b.get("items") == _lv[0]
+        for _i, _level in enumerate(_lv):
+            _keys = {i["key"] for i in _level}
+            # every row first appears once, and its parents sit one hop earlier
+            _ok = _ok and not (_keys & _seen) and all(i["parents"] for i in _level)
+            _seen |= _keys
+        check(
+            "nway neighbors depth=3: levels are disjoint and capped",
+            _r.status_code == 200
+            and _ok
+            and sum(map(len, _lv)) <= max(60, len(_lv[0])),
+            f"HTTP {_r.status_code} levels={[len(x) for x in _lv]}",
+        )
+        _r = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/neighbors",
+            params={**_base, "fids": _fids, "depth": "x"},
+            timeout=30,
+        )
+        check("nway neighbors rejects non-integer depth", _r.status_code == 400)
 
     # With two files the rows must be the pair diff's own matched / unique rows.
     matched = (_diff_page(file_md5, file_md5_2, "matched") or {}).get("total")

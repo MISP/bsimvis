@@ -443,24 +443,18 @@ def get_nway():
     return _page(doc, request.args, r, pool_id)
 
 
-def get_nway_neighbors():
-    """Call-graph neighbors of one N-way row, regrouped into the doc's rows.
+NEIGHBOR_MAX_DEPTH = 3
+DEEP_CAP = 8  # neighbors kept per expanded row, from depth 2 on
+MAX_NODES = 60  # all levels together
 
-    `fids` are the row's functions; each neighbor is mapped to the row that
-    holds it, so a callee present in 5 of 6 files reads as one conserved edge.
+
+def _group_neighbors(r, doc, fids, role, row_of):
+    """Callers/callees of `fids` regrouped into the doc's rows.
+
+    Each item is one neighbor row (or an imported symbol, or a function outside
+    every row) with the source functions that reach it.
     """
-    role = request.args.get("role", "callees")
-    if role not in ("callers", "callees"):
-        abort(400, "role must be callers or callees")
-    fids = [t for t in (request.args.get("fids") or "").split(",") if t]
-    if not fids:
-        abort(400, "fids is required")
-    try:
-        doc, r, _ = _load_doc()
-    except _Reply as e:
-        return e.args[0]
     fmeta = doc["fmeta"]
-    row_of = {f: i for i, row in enumerate(doc["rows"]) for f in _row_fids(row)}
     pipe = r.pipeline(transaction=False)
     for f in fids:
         pipe.smembers(f"{f}:{role}")
@@ -480,6 +474,7 @@ def get_nway_neighbors():
     for (kind, ref), g in groups.items():
         item = {"kind": kind, "support": len(g["sources"]), "of": len(fids)}
         item["sources"] = g["sources"]
+        item["key"] = f"{kind}:{ref}"
         if kind == "row":
             row = doc["rows"][ref]
             item["cells"] = dict(row.get("files") or row["cells"])
@@ -493,12 +488,91 @@ def get_nway_neighbors():
             item["name"] = (fmeta.get(ref) or {}).get("name") or ref.rsplit(":", 1)[-1]
         items.append(item)
     items.sort(key=lambda i: (-i["support"], i["name"] or ""))
+    return items
+
+
+def get_nway_neighbors():
+    """Call-graph neighbors of one N-way row, regrouped into the doc's rows.
+
+    `fids` are the row's functions; each neighbor is mapped to the row that
+    holds it, so a callee present in 5 of 6 files reads as one conserved edge.
+    `depth` > 1 keeps walking from each neighbor row (in `scope` only, so library
+    code is not expanded): `levels[d]` are the rows first reached at distance d+1,
+    each listing its `parents` (keys of the previous level, `focus` for the first).
+    A row already placed is not reached again, so cycles and shared helpers show
+    up once, at their shortest distance.
+    """
+    role = request.args.get("role", "callees")
+    if role not in ("callers", "callees"):
+        abort(400, "role must be callers or callees")
+    fids = [t for t in (request.args.get("fids") or "").split(",") if t]
+    if not fids:
+        abort(400, "fids is required")
+    try:
+        depth = int(request.args.get("depth", 1))
+    except ValueError:
+        abort(400, "depth must be an integer")
+    depth = max(1, min(NEIGHBOR_MAX_DEPTH, depth))
+    scope = request.args.get("scope", "all")
+    if scope not in ("code", "library", "all"):
+        abort(400, "scope must be code, library or all")
+    try:
+        doc, r, _ = _load_doc()
+    except _Reply as e:
+        return e.args[0]
+    fmeta = doc["fmeta"]
+    row_of = {f: i for i, row in enumerate(doc["rows"]) for f in _row_fids(row)}
+
+    first = _group_neighbors(r, doc, fids, role, row_of)
+    for item in first:
+        item["parents"] = ["focus"]
+    levels = [first]
+    visited = {i["key"] for i in first}
+    if fids[0] in row_of:
+        visited.add(f"row:{row_of[fids[0]]}")
+
+    def expandable(item):
+        return item["kind"] == "row" and (
+            scope == "all" or (scope == "library") == item["library"]
+        )
+
+    total, truncated = len(first), False
+    frontier = [i for i in first if expandable(i)]
+    for _ in range(depth - 1):
+        nxt = {}
+        for parent in frontier:
+            src = [f for f in parent["cells"].values() if isinstance(f, str)]
+            for item in _group_neighbors(r, doc, src, role, row_of)[:DEEP_CAP]:
+                if item["key"] in visited:
+                    continue
+                if item["key"] in nxt:
+                    nxt[item["key"]]["parents"].append(parent["key"])
+                else:
+                    item["parents"] = [parent["key"]]
+                    nxt[item["key"]] = item
+        level = list(nxt.values())
+        if total + len(level) > MAX_NODES:
+            level = level[: max(0, MAX_NODES - total)]
+            truncated = True
+        if not level:
+            break
+        levels.append(level)
+        total += len(level)
+        visited.update(i["key"] for i in level)
+        frontier = [i for i in level if expandable(i)]
+
     shown = set(fids)
-    for item in items:
-        shown.update(f for f in item.get("cells", {}).values() if isinstance(f, str))
+    for level in levels:
+        for item in level:
+            shown.update(
+                f for f in item.get("cells", {}).values() if isinstance(f, str)
+            )
     return {
         "role": role,
         "of": len(fids),
-        "items": items,
+        "depth": depth,
+        "items": levels[0],
+        "levels": levels,
+        "truncated": truncated,
         "functions_metadata": {f: fmeta[f] for f in shown if f in fmeta},
     }

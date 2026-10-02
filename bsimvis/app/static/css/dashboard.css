@@ -2914,3 +2914,5 @@ a.home-card:hover,
 .nway-edgecnt { flex-shrink: 0; white-space: nowrap; font-size: 0.74rem; font-variant-numeric: tabular-nums; color: var(--accent); }
 .nway-reach i, .nway-edgecnt i { font-size: 0.85em; margin-right: 2px; }
 .nway-cg-legend { font-size: 0.76rem; margin-bottom: 8px; line-height: 1.5; }
+.nway-node.deep { width: 170px; }
+.nway-node.deep .nway-tags, .nway-node.deep .nway-strip { display: none; }

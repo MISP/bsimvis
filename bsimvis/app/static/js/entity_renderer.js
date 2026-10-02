@@ -67,7 +67,7 @@ window.EntityRenderer = {
                    onmouseenter="typeof showCodePreview === 'function' && showCodePreview(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, ${escapeAttr(jsString(entry))}, ${escapeAttr(jsString(file_md5))}, ${Number(featCount) || 0}, event)"
                    onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)"
                    onmouseleave="typeof hideCodePreview === 'function' && hideCodePreview(event)"
-                   onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, '', event)"`}>
+                   ${options.noClick ? '' : `onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, '', event)"`}`}>
                     ${fInfo.ret ? `<span style="color:var(--token-address)">${escapeHtml(fInfo.ret)}</span> ` : ''}${fInfo.ns ? `<span style="opacity:0.8; color:var(--text)">${escapeHtml(fInfo.ns)}::</span>` : ''}${escapeHtml(name)}<span style="color:var(--text)">(</span>${fInfo.params.map(t => `<span style="color:var(--token-address)">${escapeHtml(t)}</span>`).join('<span style="color:var(--text)">, </span>')}<span style="color:var(--text)">)</span>
                 </b>
                 ${actionsHtml}

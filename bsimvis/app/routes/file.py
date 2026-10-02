@@ -1321,6 +1321,23 @@ def bulk_propagate_metadata():
         return {"error": str(e)}, 500
 
 
+def backfill_entrypoints():
+    """Enqueues the collection-wide `entry:process` backfill (BACKFILL_ENTRYPOINTS)."""
+    try:
+        collection = (request.json or {}).get("collection", "main")
+        job_id = job_service.create_job(
+            JobType.BACKFILL_ENTRYPOINTS, {"collection": collection}
+        )
+        return {
+            "status": "processing",
+            "job_id": job_id,
+            "message": "Entry-point backfill job enqueued.",
+        }
+    except Exception as e:
+        logging.error(f"Failed to enqueue entry-point backfill: {e}")
+        return {"error": str(e)}, 500
+
+
 def backfill_import_tags():
     """Plan D2: enqueues the collection-wide av:/yara:/ip: tag backfill.
 

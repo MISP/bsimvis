@@ -1082,6 +1082,23 @@ class BulkMetadataPropagate(Resource):
         return bulk_propagate_metadata()
 
 
+@ns_file.route("/backfill_entrypoints")
+class BackfillEntrypoints(Resource):
+    @ns_file.doc(
+        description=(
+            "Tags the program entry function (entry:process) of already-analysed "
+            "files from their stored raw bytes, with no Ghidra run. Chunked "
+            "self-continuing job (BACKFILL_ENTRYPOINTS)."
+        )
+    )
+    @ns_file.expect(backfill_import_tags_model)
+    def post(self):
+        """Enqueues the entry-point backfill job for a collection."""
+        from bsimvis.app.routes.file import backfill_entrypoints
+
+        return backfill_entrypoints()
+
+
 @ns_file.route("/metadata/backfill_import_tags")
 class BackfillImportTags(Resource):
     @ns_file.doc(

@@ -578,19 +578,29 @@
 
         // Suggested merges: cards on one side/hop whose file sets barely overlap (so they never
         // co-occur) and that share a parent -- likely one function the greedy match split.
-        // Any number of members; only rows present in 2+ files take part (1-file rows are noise).
+        // Any number of members; a group is seeded by rows present in 2+ files; a 1-file row joins only when exactly one group can take it.
         _cgGroups(prefix, entries, files, focus) {
             const rows = entries.filter(x => x.it.kind === 'row').map(x => {
                 const m = this._cgMeasures(x.it, focus, files);
                 return { x, m, par: new Set(x.it.parents || ['focus']) };
-            }).filter(r => r.m.np >= 2).sort((a, b) => b.m.np - a.m.np);
+            }).filter(r => r.m.np >= 1).sort((a, b) => b.m.np - a.m.np);
+            const singles = rows.filter(r => r.m.np === 1);
             const groups = [];
             for (const r of rows) {
                 const g = groups.find(g => [...r.par].some(k => g.par.has(k)) && r.m.present.filter((v, k) => v && g.u[k]).length <= Math.floor(r.m.np * 0.1));
+                if (r.m.np < 2) continue;
                 if (!g) { groups.push({ m: [r], u: r.m.present.slice(), par: new Set(r.par) }); continue; }
                 g.m.push(r);
                 r.m.present.forEach((v, k) => { if (v) g.u[k] = true; });
                 r.par.forEach(k => g.par.add(k));
+            }
+            // A 1-file row joins only when it is the one row missing from exactly one group (no score to pick between several).
+            for (const r of singles) {
+                const k = r.m.present.indexOf(true);
+                const cands = groups.filter(g => !g.u[k] && [...r.par].some(p => g.par.has(p)));
+                if (cands.length !== 1 || singles.filter(o => o.m.present[k]).length !== 1) continue;
+                cands[0].m.push(r);
+                cands[0].u[k] = true;
             }
             const colors = ['var(--subtle, #8b949e)'];
             return groups.filter(g => g.m.length > 1).map((g, n) => ({

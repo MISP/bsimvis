@@ -59,7 +59,8 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                 };
 
                 const renderOptions = {
-                    showActions: false
+                    showActions: false,
+                    noNav: !!options.relationNav
                 };
 
                 const funcHtml = EntityRenderer.renderFunction(funcData, renderOptions);
@@ -97,7 +98,7 @@ const clickJs = nav
     ? `${nav}.openCalledPair(${escapeAttr(jsString(funcData.function_id))}, event)`
     : `window.getNavHandler()(${escapeAttr(jsString(funcData.function_id))}, ${escapeAttr(jsString(funcData.function_name || ''))}, '', event)`;
 const hoverJs = nav && !isExt
-    ? ` onmouseenter="${nav}.previewCalledPair(${escapeAttr(jsString(funcData.function_id))}, ${escapeAttr(jsString(funcData.function_name || ''))}, event)" onmouseleave="${nav}.hideCalledPreview(event)"`
+    ? ` onmouseenter="${nav}.previewCalledPair(${escapeAttr(jsString(funcData.function_id))}, ${escapeAttr(jsString(funcData.function_name || ''))}, event)" onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)" onmouseleave="${nav}.hideCalledPreview(event)"`
     : '';
 
 return `<span class="relation-tag" onclick="event.stopPropagation(); ${clickJs};"${hoverJs} style="border-color:${color}; color:${color}; cursor:pointer;">

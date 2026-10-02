@@ -632,23 +632,27 @@
                     <div class="nway-node-name">${this._cgName(rep.it)}</div><div class="nway-node-sub">${chip}${r.html}<span class="nway-reach ${r.cls}" title="the group's functions exist in ${g.cov} of ${files.length} files"><i class="fa-solid fa-file-code"></i> ${g.cov}/${files.length}</span><span class="nway-edgecnt" title="called from ${ne} of ${files.length} files"><i class="fa-solid fa-link"></i> ${ne}/${files.length}</span></div></div>`;
             };
             // One column of cards, with suggested merges decorated or folded.
-            const col0 = (role, lv, entries) => {
+            // Groups form over all `entries`, then `cap` counts a group as one card; the
+            // entries past it come back in `rest` for the "+N more" card.
+            const col0 = (role, lv, entries, cap = Infinity) => {
                 const gs = st.suggest ? this._cgGroups(`${role}${lv}|`, entries, files, focus) : [];
-                const by = new Map(), done = new Set(), pos = new Map();
-                let n = 0;
+                const by = new Map(), done = new Set(), pos = new Map(), units = [];
                 gs.forEach(g => g.m.forEach(r => by.set(r.x, g)));
-                const html = entries.map(x => {
+                for (const x of entries) {
                     const g = by.get(x);
-                    if (!g) { pos.set(x.it.key, n++); return node(role, lv, x); }
-                    if (done.has(g)) return '';
-                    done.add(g);
-                    g.m.forEach(r => pos.set(r.x.it.key, n));
-                    n++;
-                    if (st.fold[g.id] !== false) return folded(role, lv, g);
-                    const chip = `<span class="nway-grp" style="--gc:${g.color}" data-cg-fold="${escapeAttr(g.id)}" title="Suggested merge: ${g.m.length} cards with complementary files and the same parent. Click to fold them into one.">&asymp; ${g.label} &middot; ${g.cov}/${files.length} &middot; fold</span>`;
-                    return `<div class="nway-grpbox${lv ? ' deep' : ''}" style="--gc:${g.color}"><div class="nway-grpbox-h">${chip}</div>${g.m.map(r => node(role, lv, r.x)).join('')}</div>`;
-                }).join('');
-                return { html, pos, n };
+                    if (!g) units.push({ xs: [x], html: () => node(role, lv, x) });
+                    else if (!done.has(g)) {
+                        done.add(g);
+                        units.push({ xs: g.m.map(r => r.x), html: () => {
+                            if (st.fold[g.id] !== false) return folded(role, lv, g);
+                            const chip = `<span class="nway-grp" style="--gc:${g.color}" data-cg-fold="${escapeAttr(g.id)}" title="Suggested merge: ${g.m.length} cards with complementary files and the same parent. Click to fold them into one.">&asymp; ${g.label} &middot; ${g.cov}/${files.length} &middot; fold</span>`;
+                            return `<div class="nway-grpbox${lv ? ' deep' : ''}" style="--gc:${g.color}"><div class="nway-grpbox-h">${chip}</div>${g.m.map(r => node(role, lv, r.x)).join('')}</div>`;
+                        } });
+                    }
+                }
+                const shown = units.slice(0, cap);
+                shown.forEach((u, n) => u.xs.forEach(x => pos.set(x.it.key, n)));
+                return { html: shown.map(u => u.html()).join(''), pos, n: shown.length, rest: units.slice(cap).flatMap(u => u.xs), kept: shown.flatMap(u => u.xs) };
             };
             // Every out-of-scope neighbor of a side as one faded card.
             const merged = (role, list, more) => {
@@ -663,7 +667,6 @@
                 return `<div class="nway-node ${more ? '' : 'out '}merged" tabindex="0" ${more ? `data-cg-more="${role}"` : 'data-cg-expand="1"'} data-side="${role}" data-key="${more ? 'more' : 'merged'}" data-parents="focus" data-n="${ne}" style="border-color:${ax.color}" title="${escapeAttr(names)}&#10;click to show each one">
                     <div class="nway-node-name"><b style="color:${ax.color}"><i class="${ax.icon}"></i> ${label}</b></div><div class="nway-node-sub">${r.html}<span class="nway-edgecnt" title="called from ${ne} of ${files.length} files"><i class="fa-solid fa-link"></i> ${ne}/${files.length}</span></div></div>`;
             };
-            const hidden = {};
             // columns[role][lv]: the hop-1 column keeps the in-scope / out-of-scope handling,
             // later hops only list rows whose parent is on screen.
             const columns = { callers: [], callees: [] };
@@ -672,18 +675,14 @@
                 const inn = all.filter(x => !x.out), out = all.filter(x => x.out);
                 let first, c0;
                 if (st.outside === 'merge') {
-                    const cut = st.more[role] ? inn.length : CAP;
-                    hidden[role] = Math.max(0, inn.length - cut);
-                    c0 = col0(role, 0, inn.slice(0, cut));
-                    first = c0.html + (hidden[role] ? merged(role, inn.slice(cut), true) : '') + (out.length ? merged(role, out) : '');
-                    var prev = new Set(inn.slice(0, cut).map(x => x.it.key).concat(out.length ? ['merged'] : []));
+                    c0 = col0(role, 0, inn, st.more[role] ? Infinity : CAP);
+                    first = c0.html + (c0.rest.length ? merged(role, c0.rest, true) : '') + (out.length ? merged(role, out) : '');
+                    var prev = new Set(c0.kept.map(x => x.it.key).concat(out.length ? ['merged'] : []));
                 } else {
                     const list = inn.concat(out);
-                    const cut = st.more[role] ? list.length : CAP;
-                    hidden[role] = Math.max(0, list.length - cut);
-                    c0 = col0(role, 0, list.slice(0, cut));
-                    first = c0.html + (hidden[role] ? merged(role, list.slice(cut), true) : '');
-                    var prev = new Set(list.slice(0, cut).map(x => x.it.key));
+                    c0 = col0(role, 0, list, st.more[role] ? Infinity : CAP);
+                    first = c0.html + (c0.rest.length ? merged(role, c0.rest, true) : '');
+                    var prev = new Set(c0.kept.map(x => x.it.key));
                 }
                 columns[role].push(first);
                 // Later hops are ordered by where their parents sit, so a path stays beside its parent.

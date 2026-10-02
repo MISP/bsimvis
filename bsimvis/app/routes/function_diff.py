@@ -660,6 +660,8 @@ def _file_pair_partners(params, algo, runtime, min_score):
     }
     if runtime:
         query["runtime"] = "greedy"
+        if request.args.get("unweighted") is not None:
+            query["unweighted"] = request.args["unweighted"]
     if params["pool"]:
         query["pool"] = params["pool"]
     with current_app.test_request_context("/api/bin_sim", query_string=query):

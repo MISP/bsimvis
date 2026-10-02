@@ -1292,6 +1292,7 @@ class FunctionCallGraphSimilarity(Resource):
             "pool": "Pool ID for cross-collection similarity",
             "algo": "Function similarity algorithm (default: unweighted_cosine)",
             "min_score": "Runtime minimum similarity (0-1)",
+            "unweighted": "runtime source only: count every match as 1.0 (1/true/yes)",
             "source": "local (default, neighbors only), stored (file pair doc) or runtime (file pair re-matched at min_score)",
         }
     )

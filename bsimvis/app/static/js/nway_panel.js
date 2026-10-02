@@ -33,6 +33,8 @@
     // State keys that go to the API as query params (empty ones are dropped).
     const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'column', 'focus', 'focus_rule', 'side'];
     const LOW_SUPPORT = 0.5;
+    // Same icon + color as the Code / Library / All pills in the table's Show control.
+    const AXIS = { code: { icon: 'fa-solid fa-code', color: 'var(--info, #3b82f6)' }, library: { icon: 'fa-solid fa-cubes', color: 'var(--warning, #d97706)' } };
     const DOC_KEYS = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule'];
 
     function fnParts(fid) {
@@ -407,7 +409,7 @@
         _cgOpen(row) {
             const cells = {};
             for (const [k, v] of Object.entries(row.files || row.cells)) if (typeof v === 'string') cells[k] = v;
-            this._cg = { stack: [{ name: row.name, cells }], view: (this._cg && this._cg.view) || 'graph', scope: (this._cg && this._cg.scope) || this.state.scope || 'code', ghosts: (this._cg && this._cg.ghosts) || 'merge', nb: null };
+            this._cg = { stack: [{ name: row.name, cells }], view: (this._cg && this._cg.view) || 'graph', scope: (this._cg && this._cg.scope) || this.state.scope || 'code', outside: (this._cg && this._cg.outside) || 'merge', nb: null };
             if (!this._dw) {
                 this._dw = document.createElement('aside');
                 this._dw.className = 'nway-drawer';
@@ -522,14 +524,16 @@
                 const on = files.map(c => { const f = focus.cells[c.id]; return list.some(({ it }) => !!(f && it.sources[f])); });
                 const r = this._cgStrip(on, files);
                 const names = list.map(({ it }) => it.name || '?').join(', ');
-                return `<div class="nway-node out merged" tabindex="0" data-cg-expand="1" data-edge="${role}" data-cls="${r.cls}" data-n="${r.n}" title="${escapeAttr(names)}&#10;click to show each one">
-                    <div class="nway-node-name"><b>+${list.length} ${st.scope === 'library' ? 'code' : 'library'}</b></div><div class="nway-node-sub">${r.html}<span class="nway-reach ${r.cls}">${r.n}/${files.length}</span></div></div>`;
+                const axis = st.scope === 'library' ? 'code' : 'library';
+                const ax = AXIS[axis];
+                return `<div class="nway-node out merged" tabindex="0" data-cg-expand="1" data-edge="${role}" data-cls="${r.cls}" data-n="${r.n}" style="border-color:${ax.color}" title="${escapeAttr(names)}&#10;click to show each one">
+                    <div class="nway-node-name"><b style="color:${ax.color}"><i class="${ax.icon}"></i> ${list.length} ${axis}</b></div><div class="nway-node-sub">${r.html}<span class="nway-reach ${r.cls}">${r.n}/${files.length}</span></div></div>`;
             };
             const hidden = {};
             const col = role => {
                 const all = this._cgShown(nb, role);
                 const inn = all.filter(x => !x.out), out = all.filter(x => x.out);
-                if (st.ghosts === 'merge') {
+                if (st.outside === 'merge') {
                     hidden[role] = Math.max(0, inn.length - CAP);
                     return inn.slice(0, CAP).map(x => node(role, x)).join('') + (out.length ? merged(role, out) : '');
                 }
@@ -570,8 +574,8 @@
             if (!this._dw || !this._cg) return;
             const st = this._cg, focus = this._cgFocus(), files = this._cgFiles();
             const crumbs = st.stack.map((f, i) => `<button class="nway-crumb" data-cg-crumb="${i}">${escapeHtml(f.name)}</button>`).join('<span class="dim">/</span>');
-            const ghostToggle = st.view === 'graph' && st.scope !== 'all' ? `<span class="nway-lbl" title="Neighbors outside the Code / Library scope are shown faded">Ghosts</span><div class="view-toggle" style="margin:0">${[['merge', 'Merged'], ['each', 'Each']].map(([v, l]) => `<button class="view-btn${st.ghosts === v ? ' active' : ''}" data-cg-ghosts="${v}">${l}</button>`).join('')}</div>` : '';
-            const scopeToggle = [['code', 'Code', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['library', 'Library', 'fa-solid fa-cubes', 'var(--warning, #d97706)'], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']].map(([v, text, icon, color]) => `<span class="bsim-tag-pill" data-cg-scope="${v}" style="${window.binSimPillStyle(st.scope === v, color)} padding:4px 10px; font-size:0.78rem;"><i class="${icon}"></i>${text}</span>`).join('');
+            const outsideToggle = st.view === 'graph' && st.scope !== 'all' ? `<span class="nway-lbl" title="Neighbors outside the selected scope: grouped into one card per side, or each listed (faded)">Outside scope</span><div class="view-toggle" style="margin:0">${[['merge', 'Grouped'], ['each', 'Each']].map(([v, l]) => `<button class="view-btn${st.outside === v ? ' active' : ''}" data-cg-outside="${v}">${l}</button>`).join('')}</div>` : '';
+            const scopeToggle = [['code', 'Code', AXIS.code.icon, AXIS.code.color], ['library', 'Library', AXIS.library.icon, AXIS.library.color], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']].map(([v, text, icon, color]) => `<span class="bsim-tag-pill" data-cg-scope="${v}" style="${window.binSimPillStyle(st.scope === v, color)} padding:4px 10px; font-size:0.78rem;"><i class="${icon}"></i>${text}</span>`).join('');
             const toggle = ['list', 'graph'].map(v => `<button class="view-btn${st.view === v ? ' active' : ''}" data-cg-view="${v}">${v === 'list' ? 'List' : 'Graph'}</button>`).join('');
             const on = files.map(c => !!focus.cells[c.id]);
             const fs = this._cgStrip(on, files, 'has this function', 'function missing');
@@ -579,19 +583,19 @@
             if (err) body = `<div style="color:#f92672;">${escapeHtml(err)}</div>`;
             else if (!st.nb) body = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Reading call graph...</div>';
             else body = st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files);
-            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${ghostToggle}<div class="view-toggle" style="margin:0">${toggle}</div><button class="nway-chip" data-cg-close title="close (Esc)">&times;</button></div>
+            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}<div class="view-toggle" style="margin:0">${toggle}</div><button class="nway-chip" data-cg-close title="close (Esc)">&times;</button></div>
                 <div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>
                 <div class="nway-cg-body">${body}</div>`;
             if (!err && st.nb && st.view === 'graph') this._cgEdges();
         }
 
         _onDrawerClick(e) {
-            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-ghosts],[data-cg-expand],[data-cg-crumb],[data-cg-close]');
+            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close]');
             if (!t || !this._cg) return;
             if (t.dataset.cgClose !== undefined) return this._cgClose();
             if (t.dataset.cgView) { this._cg.view = t.dataset.cgView; return this._cgDraw(); }
-            if (t.dataset.cgGhosts) { this._cg.ghosts = t.dataset.cgGhosts; return this._cgDraw(); }
-            if (t.dataset.cgExpand) { this._cg.ghosts = 'each'; return this._cgDraw(); }
+            if (t.dataset.cgOutside) { this._cg.outside = t.dataset.cgOutside; return this._cgDraw(); }
+            if (t.dataset.cgExpand) { this._cg.outside = 'each'; return this._cgDraw(); }
             if (t.dataset.cgScope) { this._cg.scope = t.dataset.cgScope; return this._cgDraw(); }
             if (t.dataset.cgCrumb) {
                 this._cg.stack = this._cg.stack.slice(0, Number(t.dataset.cgCrumb) + 1);

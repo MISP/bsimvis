@@ -431,6 +431,7 @@
                 scope: init.scope || prev.scope || this.state.scope || 'code',
                 outside: init.outside || prev.outside || 'merge',
                 depth: Number(init.depth || prev.depth || 1),
+                more: {},
                 nb: null,
             };
             this._dw = host;
@@ -565,16 +566,17 @@
                     <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div></div>`;
             };
             // Every out-of-scope neighbor of a side as one faded card.
-            const merged = (role, list) => {
+            const merged = (role, list, more) => {
                 const ms = list.map(({ it }) => this._cgMeasures(it, focus, files));
                 const present = files.map((_, k) => ms.some(m => m.present[k])), edge = files.map((_, k) => ms.some(m => m.edge[k]));
                 const r = this._cgStrip(present, files, edge);
                 const ne = edge.filter(Boolean).length;
                 const names = list.map(({ it }) => it.name || '?').join(', ');
                 const axis = st.scope === 'library' ? 'code' : 'library';
-                const ax = AXIS[axis];
-                return `<div class="nway-node out merged" tabindex="0" data-cg-expand="1" data-side="${role}" data-key="merged" data-parents="focus" data-n="${ne}" style="border-color:${ax.color}" title="${escapeAttr(names)}&#10;click to show each one">
-                    <div class="nway-node-name"><b style="color:${ax.color}"><i class="${ax.icon}"></i> ${list.length} ${axis}</b></div><div class="nway-node-sub">${r.html}<span class="nway-edgecnt" title="called from ${ne} of ${files.length} files"><i class="fa-solid fa-link"></i> ${ne}/${files.length}</span></div></div>`;
+                const ax = more ? { color: 'var(--accent)', icon: 'fa-solid fa-ellipsis' } : AXIS[axis];
+                const label = more ? `+${list.length} more` : `${list.length} ${axis}`;
+                return `<div class="nway-node ${more ? '' : 'out '}merged" tabindex="0" ${more ? `data-cg-more="${role}"` : 'data-cg-expand="1"'} data-side="${role}" data-key="${more ? 'more' : 'merged'}" data-parents="focus" data-n="${ne}" style="border-color:${ax.color}" title="${escapeAttr(names)}&#10;click to show each one">
+                    <div class="nway-node-name"><b style="color:${ax.color}"><i class="${ax.icon}"></i> ${label}</b></div><div class="nway-node-sub">${r.html}<span class="nway-edgecnt" title="called from ${ne} of ${files.length} files"><i class="fa-solid fa-link"></i> ${ne}/${files.length}</span></div></div>`;
             };
             const hidden = {};
             // columns[role][lv]: the hop-1 column keeps the in-scope / out-of-scope handling,
@@ -585,14 +587,16 @@
                 const inn = all.filter(x => !x.out), out = all.filter(x => x.out);
                 let first;
                 if (st.outside === 'merge') {
-                    hidden[role] = Math.max(0, inn.length - CAP);
-                    first = inn.slice(0, CAP).map(x => node(role, 0, x)).join('') + (out.length ? merged(role, out) : '');
-                    var prev = new Set(inn.slice(0, CAP).map(x => x.it.key).concat(out.length ? ['merged'] : []));
+                    const cut = st.more[role] ? inn.length : CAP;
+                    hidden[role] = Math.max(0, inn.length - cut);
+                    first = inn.slice(0, cut).map(x => node(role, 0, x)).join('') + (hidden[role] ? merged(role, inn.slice(cut), true) : '') + (out.length ? merged(role, out) : '');
+                    var prev = new Set(inn.slice(0, cut).map(x => x.it.key).concat(out.length ? ['merged'] : []));
                 } else {
                     const list = inn.concat(out);
-                    hidden[role] = Math.max(0, list.length - CAP);
-                    first = list.slice(0, CAP).map(x => node(role, 0, x)).join('');
-                    var prev = new Set(list.slice(0, CAP).map(x => x.it.key));
+                    const cut = st.more[role] ? list.length : CAP;
+                    hidden[role] = Math.max(0, list.length - cut);
+                    first = list.slice(0, cut).map(x => node(role, 0, x)).join('') + (hidden[role] ? merged(role, list.slice(cut), true) : '');
+                    var prev = new Set(list.slice(0, cut).map(x => x.it.key));
                 }
                 columns[role].push(first);
                 for (let lv = 1; lv < depth; lv++) {
@@ -602,7 +606,7 @@
                     prev = new Set(level.map(x => x.it.key));
                 }
             }
-            const notes = ['callers', 'callees'].map(r => hidden[r] ? `${hidden[r]} more ${r} (see the list view)` : (nb[r].truncated ? `${r}: capped at 60 nodes` : '')).filter(Boolean).join('; ');
+            const notes = ['callers', 'callees'].map(r => nb[r].truncated ? `${r}: capped at 60 nodes` : '').filter(Boolean).join('; ');
             const widths = lv => (lv ? '170px' : '230px');
             const cols = [...Array(depth).keys()].reverse().map(widths).concat(['230px'], [...Array(depth).keys()].map(widths));
             const col = html => `<div class="nway-gcol">${html}</div>`;
@@ -666,7 +670,7 @@
         }
 
         _onDrawerClick(e) {
-            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop]');
+            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more]');
             if (!t || !this._cg) return;
             if (t.dataset.cgClose !== undefined) return window.closeCallsPanel();
             if (t.dataset.cgPop !== undefined) {
@@ -676,10 +680,12 @@
             }
             if (t.dataset.cgView) { this._cg.view = t.dataset.cgView; return this._cgDraw(); }
             if (t.dataset.cgOutside) { this._cg.outside = t.dataset.cgOutside; return this._cgDraw(); }
+            if (t.dataset.cgMore) { this._cg.more[t.dataset.cgMore] = true; return this._cgDraw(); }
             if (t.dataset.cgExpand) { this._cg.outside = 'each'; return this._cgDraw(); }
             if (t.dataset.cgScope) { this._cg.scope = t.dataset.cgScope; return this._cg.depth > 1 ? this._cgShow() : this._cgDraw(); }
             if (t.dataset.cgCrumb) {
                 this._cg.stack = this._cg.stack.slice(0, Number(t.dataset.cgCrumb) + 1);
+                this._cg.more = {};
                 return this._cgShow();
             }
             const [role, lv, i] = t.dataset.cgGo.split(':');
@@ -688,6 +694,7 @@
             const cells = {};
             for (const [k, v] of Object.entries(it.cells)) if (typeof v === 'string') cells[k] = v;
             this._cg.stack.push({ name: it.name, cells });
+            this._cg.more = {};
             this._cgShow();
         }
 

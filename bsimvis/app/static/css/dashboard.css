@@ -2916,3 +2916,18 @@ a.home-card:hover,
 .nway-cg-legend { font-size: 0.76rem; margin-bottom: 8px; line-height: 1.5; }
 .nway-node.deep { width: 170px; }
 .nway-node.deep .nway-tags, .nway-node.deep .nway-strip { display: none; }
+
+/* Call-graph drawer, light theme: cards need to stand off the drawer, and the hard-coded ramp colors need contrast on white. */
+html.light-theme .nway-drawer { box-shadow: -8px 0 28px rgba(0, 0, 0, 0.14); }
+html.light-theme .nway-node, html.light-theme .nway-cg-item { background: var(--bg); border-color: #c3c8d0; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+html.light-theme .nway-node.center { background: #eaf3fc; border-color: var(--accent); }
+html.light-theme .nway-node:hover, html.light-theme .nway-cg-item:hover { border-color: var(--accent); }
+html.light-theme .nway-cg-box, html.light-theme .nway-cg-head { border-color: #c3c8d0; }
+html.light-theme .nway-strip i { border-color: #b4bac4; }
+html.light-theme .r-mid { --rc: #b45309; }
+html.light-theme .r-low { --rc: #c62828; }
+html.light-theme .nway-node.out { opacity: 0.45; }
+html.light-theme .nway-node.merged { opacity: 0.85; }
+html.light-theme .nway-edge { opacity: 0.7; }
+html.light-theme .nway-edge.out { opacity: 0.3; }
+html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-visible, html.light-theme .nway-node.merged:hover { opacity: 1; }

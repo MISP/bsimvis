@@ -531,28 +531,57 @@
         async _cgPlace(tok) {
             const st = this._cg, nb = st.nb, files = this._cgFiles(), focus = this._cgFocus();
             if (!st.suggest) return;
-            const jobs = [];
-            for (const role of ['callers', 'callees']) {
-                nb[role].levels.forEach((level, lv) => {
-                    const entries = level.map((it, i) => ({ it, i, out: !(st.scope === 'all' || (st.scope === 'library') === !!it.library) })).filter(x => !x.out);
-                    for (const p of this._cgGroups(`${role}${lv}|`, entries, files, focus).pending) {
-                        for (const c of p.cands) jobs.push({ key: p.key, k: p.k, fid: p.fid, anchor: c.anchor, fids: c.fids.slice(0, 4), role, lv });
+            const place = {};
+            // One top-down pass (a level's groups are the parents of the next). `support`, set on
+            // the second pass, adds a bonus when a piece's child joined a group whose other
+            // members hang under the candidate group: the call graph agreeing with the score.
+            const pass = async support => {
+                const seen = {};
+                for (const role of ['callers', 'callees']) {
+                    let canon = null;
+                    seen[role] = [];
+                    for (let lv = 0; lv < nb[role].levels.length; lv++) {
+                        const entries = nb[role].levels[lv].map((it, i) => ({ it, i, out: !(st.scope === 'all' || (st.scope === 'library') === !!it.library) })).filter(x => !x.out);
+                        const prefix = `${role}${lv}|`;
+                        let gs = this._cgGroups(prefix, entries, files, focus, place, canon);
+                        const jobs = [];
+                        for (const p of gs.pending) {
+                            for (const c of p.cands) jobs.push({ key: p.key, k: p.k, fid: p.fid, anchor: c.anchor, fids: c.fids.slice(0, 4) });
+                        }
+                        if (jobs.length) {
+                            await Promise.all(jobs.map(async j => { j.s = Math.max(0, ...(await Promise.all(j.fids.map(f => this._cgPair(j.fid, f))))); }));
+                            if (tok !== this._cgTok || this._cg !== st) return null;
+                            if (support) jobs.forEach(j => { j.s += support(role, lv, j); });
+                            const used = new Set(), taken = new Set();
+                            for (const j of jobs.sort((x, y) => y.s - x.s)) {
+                                const slot = `${j.anchor}|${j.k}`;
+                                if (j.s < 0.3 || used.has(j.key) || taken.has(slot)) continue;
+                                place[j.key] = j.anchor;
+                                used.add(j.key);
+                                taken.add(slot);
+                            }
+                            gs = this._cgGroups(prefix, entries, files, focus, place, canon);
+                        }
+                        seen[role].push({ gs, entries });
+                        canon = gs.canon;
                     }
-                });
-            }
-            if (!jobs.length) return;
-            await Promise.all(jobs.map(async j => { j.s = Math.max(0, ...(await Promise.all(j.fids.map(f => this._cgPair(j.fid, f))))); }));
-            if (tok !== this._cgTok || this._cg !== st) return;
-            const placed = {}, used = new Set(), taken = new Set();
-            for (const j of jobs.sort((a, b) => b.s - a.s)) {
-                const slot = `${j.role}${j.lv}|${j.anchor}|${j.k}`;
-                if (j.s < 0.3 || used.has(j.key) || taken.has(slot)) continue;
-                placed[j.key] = j.anchor;
-                used.add(j.key);
-                taken.add(slot);
-            }
-            if (!Object.keys(placed).length) return;
-            st.place = placed;
+                }
+                return seen;
+            };
+            const first = await pass(null);
+            if (!first) return;
+            Object.keys(place).forEach(k => delete place[k]);
+            await pass((role, lv, j) => {
+                const nxt = first[role][lv + 1];
+                if (!nxt) return 0;
+                const kids = nxt.entries.filter(e => (e.it.parents || []).includes(j.key));
+                return kids.some(kid => {
+                    const h = nxt.gs.find(g => g.m.some(r => r.x.it.key === kid.it.key));
+                    return h && h.m.some(r => r.x.it.key !== kid.it.key && r.par.has(j.anchor));
+                }) ? 0.25 : 0;
+            });
+            if (tok !== this._cgTok || this._cg !== st || !Object.keys(place).length) return;
+            st.place = place;
             this._cgDraw();
         }
 
@@ -624,10 +653,11 @@
         // Suggested merges: cards on one side/hop whose file sets barely overlap (so they never
         // co-occur) and that share a parent -- likely one function the greedy match split.
         // Any number of members; a group is seeded by rows present in 2+ files; a 1-file row joins only when exactly one group can take it.
-        _cgGroups(prefix, entries, files, focus, place = {}) {
+        _cgGroups(prefix, entries, files, focus, place = {}, canon = null) {
             const rows = entries.filter(x => x.it.kind === 'row').map(x => {
                 const m = this._cgMeasures(x.it, focus, files);
-                return { x, m, par: new Set(x.it.parents || ['focus']) };
+                // Parents count by their group (`canon`: previous hop's member -> anchor), so pieces of one split parent are one parent.
+                return { x, m, par: new Set((x.it.parents || ['focus']).map(k => (canon && canon.get(k)) || k)) };
             }).filter(r => r.m.np >= 1).sort((a, b) => b.m.np - a.m.np);
             const singles = rows.filter(r => r.m.np === 1);
             const groups = [];
@@ -644,7 +674,9 @@
             const pending = [];
             for (const r of singles) {
                 const k = r.m.present.indexOf(true);
-                const cands = groups.filter(g => !g.u[k] && [...r.par].some(p => g.par.has(p)));
+                // A piece whose parents are all ungrouped (a loose piece one hop up) has no group to share a parent with: let it try any group.
+                const orphan = canon && [...r.par].every(p => !canon.has(p));
+                const cands = groups.filter(g => !g.u[k] && (orphan || [...r.par].some(p => g.par.has(p))));
                 const placed = cands.find(g => g.m[0].x.it.key === place[r.x.it.key]);
                 if (placed || (cands.length === 1 && singles.filter(o => o.m.present[k]).length === 1)) {
                     const g = placed || cands[0];
@@ -662,6 +694,7 @@
                 id: prefix + g.m.map(r => r.x.it.key).sort().join('+'),
             }));
             out.pending = pending;
+            out.canon = new Map(out.flatMap(g => g.m.map(r => [r.x.it.key, g.m[0].x.it.key])));
             return out;
         }
 
@@ -689,8 +722,8 @@
             // One column of cards, with suggested merges decorated or folded.
             // Groups form over all `entries`, then `cap` counts a group as one card; the
             // entries past it come back in `rest` for the "+N more" card.
-            const col0 = (role, lv, entries, cap = Infinity) => {
-                const gs = st.suggest ? this._cgGroups(`${role}${lv}|`, entries, files, focus, st.place) : [];
+            const col0 = (role, lv, entries, cap = Infinity, canon = null) => {
+                const gs = st.suggest ? this._cgGroups(`${role}${lv}|`, entries, files, focus, st.place, canon) : [];
                 const by = new Map(), done = new Set(), pos = new Map(), units = [];
                 gs.forEach(g => g.m.forEach(r => by.set(r.x, g)));
                 for (const x of entries) {
@@ -707,7 +740,7 @@
                 }
                 const shown = units.slice(0, cap);
                 shown.forEach((u, n) => u.xs.forEach(x => pos.set(x.it.key, n)));
-                return { html: shown.map(u => u.html()).join(''), pos, n: shown.length, rest: units.slice(cap).flatMap(u => u.xs), kept: shown.flatMap(u => u.xs) };
+                return { html: shown.map(u => u.html()).join(''), pos, canon: gs.canon, n: shown.length, rest: units.slice(cap).flatMap(u => u.xs), kept: shown.flatMap(u => u.xs) };
             };
             // Every out-of-scope neighbor of a side as one faded card.
             const merged = (role, list, more) => {
@@ -741,7 +774,7 @@
                 }
                 columns[role].push(first);
                 // Later hops are ordered by where their parents sit, so a path stays beside its parent.
-                let prevPos = c0.pos;
+                let prevPos = c0.pos, canon = c0.canon;
                 prevPos.set('more', c0.n);
                 prevPos.set('merged', c0.n);
                 for (let lv = 1; lv < depth; lv++) {
@@ -752,9 +785,10 @@
                         return ps.length ? ps.reduce((a, b) => a + b, 0) / ps.length : Infinity;
                     };
                     level.sort((a, b) => bary(a) - bary(b));
-                    const c = col0(role, lv, level);
+                    const c = col0(role, lv, level, Infinity, canon);
                     columns[role].push(c.html);
                     prevPos = c.pos;
+                    canon = c.canon;
                     prev = new Set(level.map(x => x.it.key));
                 }
             }

@@ -2868,7 +2868,7 @@ a.home-card:hover,
 /* N-way call-graph drawer: list and graph views of a row's callers / callees. */
 .nway-callbtns { margin-top: 4px; }
 .nway-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(860px, 100vw); z-index: 900; display: flex; flex-direction: column; background: var(--card-bg); border-left: 1px solid var(--border); box-shadow: -8px 0 28px rgba(0, 0, 0, 0.35); }
-.nway-cg-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.nway-cg-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .nway-cg-crumbs { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; font-size: 0.78rem; }
 .nway-crumb { background: none; border: none; padding: 0 2px; color: var(--accent); cursor: pointer; font: inherit; }
 .nway-cg-focus { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -2879,11 +2879,11 @@ a.home-card:hover,
 .nway-cg-item.static { cursor: default; opacity: 0.85; }
 .nway-cg-item.static:hover { border-color: var(--border); }
 .nway-cg-l { min-width: 0; flex: 1; overflow: hidden; }
-.nway-cg-r { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.nway-strip { display: inline-flex; gap: 2px; vertical-align: middle; }
-.nway-strip i { width: 11px; height: 11px; cursor: pointer; border-radius: 2px; border: 1px solid var(--border); background: transparent; }
+.nway-cg-r { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 55%; }
+.nway-strip { display: inline-flex; flex-wrap: wrap; gap: calc(var(--sq, 11px) / 6); min-width: 0; max-width: 100%; vertical-align: middle; }
+.nway-strip i { width: var(--sq, 11px); height: var(--sq, 11px); cursor: pointer; border-radius: 2px; border: 1px solid var(--border); background: transparent; }
 .nway-strip i.on { background: var(--rc); border-color: var(--rc); }
-.nway-reach { font-size: 0.74rem; font-variant-numeric: tabular-nums; color: var(--rc); }
+.nway-reach { flex-shrink: 0; white-space: nowrap; font-size: 0.74rem; font-variant-numeric: tabular-nums; color: var(--rc); }
 .r-hi { --rc: var(--success); } .r-mid { --rc: #e6db74; } .r-low { --rc: #f92672; }
 .nway-ext { font-style: italic; font-family: monospace; font-size: 0.8rem; }
 .nway-badge { font-size: 0.66rem; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; color: var(--dim); margin-left: 6px; font-style: normal; }
@@ -2896,7 +2896,9 @@ a.home-card:hover,
 .nway-node.center { border-color: var(--accent); cursor: default; }
 .nway-node.static { cursor: default; }
 .nway-node-name { min-width: 0; overflow: hidden; }
-.nway-node-sub { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; }
+.nway-node-sub { display: flex; align-items: flex-start; gap: 6px; font-size: 0.72rem; min-width: 0; }
+.nway-bar { display: inline-block; width: 80px; height: 8px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.nway-bar b { display: block; height: 100%; background: var(--rc); }
 .nway-node .entity-function { width: 100%; }
 .nway-cg-box { border: 1px solid var(--border); border-radius: 8px; padding: 0 10px 6px; margin-bottom: 14px; background: rgba(128, 128, 128, 0.05); }
 .nway-cg-box > header { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); padding: 8px 0; margin-bottom: 4px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }

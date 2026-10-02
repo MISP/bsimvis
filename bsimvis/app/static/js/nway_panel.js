@@ -432,6 +432,7 @@
                 outside: init.outside || prev.outside || 'merge',
                 depth: Number(init.depth || prev.depth || 1),
                 more: {},
+                place: {},
                 fold: {},
                 suggest: prev.suggest !== false,
                 nb: null,
@@ -498,6 +499,7 @@
             const focus = this._cgFocus();
             const tok = this._cgTok = (this._cgTok || 0) + 1;
             this._cg.nb = null;
+            this._cg.place = {};
             this._cgDraw();
             try {
                 const [callers, callees] = await Promise.all([this._cgFetch(focus, 'callers'), this._cgFetch(focus, 'callees')]);
@@ -505,10 +507,53 @@
                 Object.assign(this.data.functions_metadata, callers.functions_metadata, callees.functions_metadata);
                 this._cg.nb = { callers, callees };
                 this._cgDraw();
+                this._cgPlace(tok);
             } catch (err) {
                 if (tok !== this._cgTok || !this._cg) return;
                 this._cgDraw(String(err.message || err));
             }
+        }
+
+        async _cgPair(a, b) {
+            const cache = this._pairCache || (this._pairCache = new Map());
+            const key = `${a}|${b}`;
+            if (!cache.has(key)) {
+                cache.set(key, fetch(`/api/similarity?${new URLSearchParams({ id1: a, id2: b, algo: 'binary_cosine' })}`)
+                    .then(r => r.json()).then(d => Number(d.scores && d.scores.binary_cosine) || 0).catch(() => 0));
+            }
+            return cache.get(key);
+        }
+
+        // Pieces present in one file that several groups could take: score each against
+        // the groups' functions (BSim, cross-file, so it can tell what the greedy match
+        // dropped) and give each group's free file slot to the best-scoring piece.
+        // ponytail: binary cosine over up to 4 functions per group; a BSim-weighted score or a call-set term if this misplaces pieces.
+        async _cgPlace(tok) {
+            const st = this._cg, nb = st.nb, files = this._cgFiles(), focus = this._cgFocus();
+            if (!st.suggest) return;
+            const jobs = [];
+            for (const role of ['callers', 'callees']) {
+                nb[role].levels.forEach((level, lv) => {
+                    const entries = level.map((it, i) => ({ it, i, out: !(st.scope === 'all' || (st.scope === 'library') === !!it.library) })).filter(x => !x.out);
+                    for (const p of this._cgGroups(`${role}${lv}|`, entries, files, focus).pending) {
+                        for (const c of p.cands) jobs.push({ key: p.key, k: p.k, fid: p.fid, anchor: c.anchor, fids: c.fids.slice(0, 4), role, lv });
+                    }
+                });
+            }
+            if (!jobs.length) return;
+            await Promise.all(jobs.map(async j => { j.s = Math.max(0, ...(await Promise.all(j.fids.map(f => this._cgPair(j.fid, f))))); }));
+            if (tok !== this._cgTok || this._cg !== st) return;
+            const placed = {}, used = new Set(), taken = new Set();
+            for (const j of jobs.sort((a, b) => b.s - a.s)) {
+                const slot = `${j.role}${j.lv}|${j.anchor}|${j.k}`;
+                if (j.s < 0.3 || used.has(j.key) || taken.has(slot)) continue;
+                placed[j.key] = j.anchor;
+                used.add(j.key);
+                taken.add(slot);
+            }
+            if (!Object.keys(placed).length) return;
+            st.place = placed;
+            this._cgDraw();
         }
 
         // One square per file: lit when that file's function has the edge.
@@ -579,7 +624,7 @@
         // Suggested merges: cards on one side/hop whose file sets barely overlap (so they never
         // co-occur) and that share a parent -- likely one function the greedy match split.
         // Any number of members; a group is seeded by rows present in 2+ files; a 1-file row joins only when exactly one group can take it.
-        _cgGroups(prefix, entries, files, focus) {
+        _cgGroups(prefix, entries, files, focus, place = {}) {
             const rows = entries.filter(x => x.it.kind === 'row').map(x => {
                 const m = this._cgMeasures(x.it, focus, files);
                 return { x, m, par: new Set(x.it.parents || ['focus']) };
@@ -594,20 +639,30 @@
                 r.m.present.forEach((v, k) => { if (v) g.u[k] = true; });
                 r.par.forEach(k => g.par.add(k));
             }
-            // A 1-file row joins only when it is the one row missing from exactly one group (no score to pick between several).
+            // A 1-file row joins when exactly one group can take it, or where _cgPlace
+            // already picked its group by BSim score; the rest come back as `pending`.
+            const pending = [];
             for (const r of singles) {
                 const k = r.m.present.indexOf(true);
                 const cands = groups.filter(g => !g.u[k] && [...r.par].some(p => g.par.has(p)));
-                if (cands.length !== 1 || singles.filter(o => o.m.present[k]).length !== 1) continue;
-                cands[0].m.push(r);
-                cands[0].u[k] = true;
+                const placed = cands.find(g => g.m[0].x.it.key === place[r.x.it.key]);
+                if (placed || (cands.length === 1 && singles.filter(o => o.m.present[k]).length === 1)) {
+                    const g = placed || cands[0];
+                    g.m.push(r);
+                    g.u[k] = true;
+                } else if (cands.length) {
+                    pending.push({ key: r.x.it.key, k, fid: Object.values(r.x.it.cells).find(v => typeof v === 'string'),
+                        cands: cands.map(g => ({ anchor: g.m[0].x.it.key, fids: g.m.flatMap(m => Object.values(m.x.it.cells).filter(v => typeof v === 'string')) })) });
+                }
             }
             const colors = ['var(--subtle, #8b949e)'];
-            return groups.filter(g => g.m.length > 1).map((g, n) => ({
+            const out = groups.filter(g => g.m.length > 1).map((g, n) => ({
                 ...g, n, color: colors[n % colors.length], label: `G${n + 1}`,
                 cov: g.u.filter(Boolean).length,
                 id: prefix + g.m.map(r => r.x.it.key).sort().join('+'),
             }));
+            out.pending = pending;
+            return out;
         }
 
         _cgGraph(nb, focus, files) {
@@ -635,7 +690,7 @@
             // Groups form over all `entries`, then `cap` counts a group as one card; the
             // entries past it come back in `rest` for the "+N more" card.
             const col0 = (role, lv, entries, cap = Infinity) => {
-                const gs = st.suggest ? this._cgGroups(`${role}${lv}|`, entries, files, focus) : [];
+                const gs = st.suggest ? this._cgGroups(`${role}${lv}|`, entries, files, focus, st.place) : [];
                 const by = new Map(), done = new Set(), pos = new Map(), units = [];
                 gs.forEach(g => g.m.forEach(r => by.set(r.x, g)));
                 for (const x of entries) {

@@ -14,9 +14,11 @@ window.Paging = {
     controls({ offset, total, size }) {
         const pages = Math.max(1, Math.ceil(total / size));
         const page = Math.min(pages, Math.floor(offset / size) + 1);
-        return `<button class="top-action-btn" data-page="-1" title="Previous page"${page <= 1 ? ' disabled' : ''}>&lsaquo;</button>`
-            + `<span class="paging-page">Page <input class="paging-input" type="number" min="1" max="${pages}" value="${page}" data-page-input title="Go to page"> / ${pages.toLocaleString()}</span>`
-            + `<button class="top-action-btn" data-page="1" title="Next page"${page >= pages ? ' disabled' : ''}>&rsaquo;</button>`;
+        return '<span class="paging">'
+            + `<button data-page="-1" title="Previous page"${page <= 1 ? ' disabled' : ''}>&lsaquo;</button>`
+            + `Page <input class="paging-input" type="number" min="1" max="${pages}" value="${page}" data-page-input title="Go to page"> / ${pages.toLocaleString()}`
+            + `<button data-page="1" title="Next page"${page >= pages ? ' disabled' : ''}>&rsaquo;</button>`
+            + '</span>';
     },
 
     // `shown` is how many rows are loaded so far (scroll mode counts from the top).

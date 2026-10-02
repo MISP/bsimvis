@@ -75,7 +75,6 @@
         }
 
         destroy() {
-            this._closeMenu();
             this._gen++;
             clearTimeout(this._debounce);
         }
@@ -196,40 +195,26 @@
             return html;
         }
 
-        // Header right-click menu: focus / unfocus / filter on one file.
+        // Header right-click: the shared file menu, plus this panel's focus / filter
+        // actions (rendered by context_menu.js from `__nway`).
         _menu(e, id) {
             e.preventDefault();
             e.stopPropagation();
-            this._closeMenu();
-            const focus = this._focusIds(), n = this._files().length;
-            const items = [];
-            if (!focus.includes(id)) items.push([focus.length ? 'Add to focus' : 'Focus on this file', 'add']);
-            else items.push(['Remove from focus', 'remove']);
-            items.push([this.state.column === id ? 'Show all files' : 'Only rows with this file', 'column']);
-            const menu = document.createElement('div');
-            menu.className = 'context-menu';
-            menu.id = 'nway-col-menu';
-            menu.style.cssText = `display:block;left:${Number(e.clientX)}px;top:${Number(e.clientY)}px;`;
-            menu.innerHTML = items.map(([text, act]) => `<div class="context-menu-item" data-act="${act}">${escapeHtml(text)}</div>`).join('');
-            menu.addEventListener('click', ev => {
-                const act = ev.target.closest('[data-act]');
-                if (!act) return;
-                this._closeMenu();
-                if (act.dataset.act === 'column') return this._set({ column: this.state.column === id ? '' : id, offset: 0 });
-                const next = act.dataset.act === 'add' ? [...focus, id] : focus.filter(f => f !== id);
-                this._setFocus(next, n);
-            });
-            document.body.appendChild(menu);
-            this._menuOff = () => this._closeMenu();
-            setTimeout(() => {
-                document.addEventListener('click', this._menuOff, { once: true });
-                document.addEventListener('keydown', this._menuOff, { once: true });
+            const f = this._files().find(x => x.id === id);
+            if (!f || !window.showGraphContextMenu) return;
+            NwayPanel._active = this;
+            const focus = this._focusIds();
+            window.showGraphContextMenu(e, 'file', {
+                md5: f.md5, file_name: f.file_name, collection: f.collection,
+                fileId: `${f.collection}:file:${f.md5}`,
+                __nway: { id, focused: focus.includes(id), anyFocus: focus.length > 0, filtered: this.state.column === id },
             });
         }
 
-        _closeMenu() {
-            const m = document.getElementById('nway-col-menu');
-            if (m) m.remove();
+        _act(act, id) {
+            const focus = this._focusIds();
+            if (act === 'column') return this._set({ column: this.state.column === id ? '' : id, offset: 0 });
+            this._setFocus(act === 'add' ? [...focus, id] : focus.filter(f => f !== id), this._files().length);
         }
 
         // Focus keeps at least one file on each side; the tab resets because
@@ -464,6 +449,18 @@
             if (label) label.textContent = t.dataset.range === 'k' ? t.value : Number(t.value).toFixed(2);
         }
     }
+
+    NwayPanel.act = (act, id) => NwayPanel._active && NwayPanel._active._act(act, id);
+
+    // Focus / filter items for a file header's right-click menu (see `_menu`).
+    NwayPanel.menuHtml = function (n) {
+        const item = (act, icon, text) =>
+            `<div class="context-menu-item" onclick="${escapeAttr(`event.stopPropagation(); window.closeGraphContextMenu(); NwayPanel.act(${jsString(act)}, ${jsString(n.id)})`)}"><i class="fa-solid ${icon}" style="width: 16px; text-align: center; opacity: 0.8; color: #fd971f;"></i><span>${escapeHtml(text)}</span></div>`;
+        return (n.focused
+            ? item('remove', 'fa-eye-slash', 'Remove from focus')
+            : item('add', 'fa-bullseye', n.anyFocus ? 'Add to focus' : 'Focus on this file'))
+            + item('column', 'fa-filter', n.filtered ? 'Show all files' : 'Only rows with this file');
+    };
 
     // Selected file ids are `{coll}:file:{md5}`; the page's pool (if any) rides along.
     NwayPanel.urlFor = function (ids, fallbackCollection) {

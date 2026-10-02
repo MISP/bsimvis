@@ -565,6 +565,8 @@
             actionsSubmenuHtml += renderLLMSubmenu("{ funcIds: window.getSelectedTableIds('function') }", ` (${window.getSelectedTableIds('function').length} selected)`);
         }
 
+        if (resolvedType === 'file' && data.__nway && window.NwayPanel) html += NwayPanel.menuHtml(data.__nway);
+
         if (actionsSubmenuHtml) {
             html += `
             <div class="context-menu-item submenu-trigger" style="position: relative;">

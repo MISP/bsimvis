@@ -433,7 +433,6 @@
                 depth: Number(init.depth || prev.depth || 1),
                 more: {},
                 place: {},
-                fold: {},
                 suggest: prev.suggest !== false,
                 nb: null,
             };
@@ -546,19 +545,21 @@
                         let gs = this._cgGroups(prefix, entries, files, focus, place, canon);
                         const jobs = [];
                         for (const p of gs.pending) {
-                            for (const c of p.cands) jobs.push({ key: p.key, k: p.k, fid: p.fid, anchor: c.anchor, fids: c.fids.slice(0, 4) });
+                            for (const c of p.cands) jobs.push({ key: p.key, idx: p.idx, fids: p.fids, anchor: c.anchor, gf: c.fids });
                         }
                         if (jobs.length) {
-                            await Promise.all(jobs.map(async j => { j.s = Math.max(0, ...(await Promise.all(j.fids.map(f => this._cgPair(j.fid, f))))); }));
+                            await Promise.all(jobs.map(async j => { j.s = Math.max(0, ...(await Promise.all(j.fids.flatMap(a => j.gf.map(b => this._cgPair(a, b)))))); }));
                             if (tok !== this._cgTok || this._cg !== st) return null;
                             if (support) jobs.forEach(j => { j.s += support(role, lv, j); });
-                            const used = new Set(), taken = new Set();
+                            // Best score first; a group takes pieces whose files do not overlap.
+                            const used = new Set(), taken = new Map();
                             for (const j of jobs.sort((x, y) => y.s - x.s)) {
-                                const slot = `${j.anchor}|${j.k}`;
-                                if (j.s < 0.3 || used.has(j.key) || taken.has(slot)) continue;
+                                const t = taken.get(j.anchor) || new Set();
+                                if (j.s < 0.3 || used.has(j.key) || j.idx.some(i => t.has(i))) continue;
                                 place[j.key] = j.anchor;
                                 used.add(j.key);
-                                taken.add(slot);
+                                j.idx.forEach(i => t.add(i));
+                                taken.set(j.anchor, t);
                             }
                             gs = this._cgGroups(prefix, entries, files, focus, place, canon);
                         }
@@ -652,44 +653,38 @@
 
         // Suggested merges: cards on one side/hop whose file sets barely overlap (so they never
         // co-occur) and that share a parent -- likely one function the greedy match split.
-        // Any number of members; a group is seeded by rows present in 2+ files; a 1-file row joins only when exactly one group can take it.
+        // A row joins a group when exactly one group can take it (or _cgPlace picked its group by
+        // score); a row several groups could take comes back in `pending`, never first-fit.
+        // Seeds are rows present in 2+ files.
         _cgGroups(prefix, entries, files, focus, place = {}, canon = null) {
             const rows = entries.filter(x => x.it.kind === 'row').map(x => {
                 const m = this._cgMeasures(x.it, focus, files);
                 // Parents count by their group (`canon`: previous hop's member -> anchor), so pieces of one split parent are one parent.
                 return { x, m, par: new Set((x.it.parents || ['focus']).map(k => (canon && canon.get(k)) || k)) };
             }).filter(r => r.m.np >= 1).sort((a, b) => b.m.np - a.m.np);
-            const singles = rows.filter(r => r.m.np === 1);
-            const groups = [];
+            const groups = [], pending = [];
+            const cellFids = r => Object.values(r.x.it.cells).filter(v => typeof v === 'string');
             for (const r of rows) {
-                const g = groups.find(g => [...r.par].some(k => g.par.has(k)) && r.m.present.filter((v, k) => v && g.u[k]).length <= Math.floor(r.m.np * 0.1));
-                if (r.m.np < 2) continue;
-                if (!g) { groups.push({ m: [r], u: r.m.present.slice(), par: new Set(r.par) }); continue; }
-                g.m.push(r);
-                r.m.present.forEach((v, k) => { if (v) g.u[k] = true; });
-                r.par.forEach(k => g.par.add(k));
-            }
-            // A 1-file row joins when exactly one group can take it, or where _cgPlace
-            // already picked its group by BSim score; the rest come back as `pending`.
-            const pending = [];
-            for (const r of singles) {
-                const k = r.m.present.indexOf(true);
+                const k1 = r.m.present.indexOf(true);
                 // A piece whose parents are all ungrouped (a loose piece one hop up) has no group to share a parent with: let it try any group.
                 const orphan = canon && [...r.par].every(p => !canon.has(p));
-                const cands = groups.filter(g => !g.u[k] && (orphan || [...r.par].some(p => g.par.has(p))));
+                const cands = groups.filter(g => (orphan || [...r.par].some(p => g.par.has(p))) && r.m.present.filter((v, k) => v && g.u[k]).length <= Math.floor(r.m.np * 0.1));
                 const placed = cands.find(g => g.m[0].x.it.key === place[r.x.it.key]);
-                if (placed || (cands.length === 1 && singles.filter(o => o.m.present[k]).length === 1)) {
-                    const g = placed || cands[0];
+                const alone = r.m.np > 1 || rows.filter(o => o.m.np === 1 && o.m.present[k1]).length === 1;
+                const g = placed || (cands.length === 1 && alone ? cands[0] : null);
+                if (g) {
                     g.m.push(r);
-                    g.u[k] = true;
+                    r.m.present.forEach((v, k) => { if (v) g.u[k] = true; });
+                    r.par.forEach(k => g.par.add(k));
                 } else if (cands.length) {
-                    pending.push({ key: r.x.it.key, k, fid: Object.values(r.x.it.cells).find(v => typeof v === 'string'),
-                        cands: cands.map(g => ({ anchor: g.m[0].x.it.key, fids: g.m.flatMap(m => Object.values(m.x.it.cells).filter(v => typeof v === 'string')) })) });
+                    pending.push({ key: r.x.it.key, idx: r.m.present.map((v, k) => v ? k : -1).filter(k => k >= 0), fids: cellFids(r).slice(0, 3),
+                        cands: cands.map(g => ({ anchor: g.m[0].x.it.key, fids: g.m.flatMap(m => cellFids(m)).slice(0, 4) })) });
+                } else if (r.m.np >= 2) {
+                    groups.push({ m: [r], u: r.m.present.slice(), par: new Set(r.par) });
                 }
             }
-            const colors = ['var(--subtle, #8b949e)'];
             const out = groups.filter(g => g.m.length > 1).map((g, n) => ({
-                ...g, n, color: colors[n % colors.length], label: `G${n + 1}`,
+                ...g, n, label: `G${n + 1}`,
                 cov: g.u.filter(Boolean).length,
                 id: prefix + g.m.map(r => r.x.it.key).sort().join('+'),
             }));
@@ -706,20 +701,6 @@
                 return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}" data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}">
                     <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div></div>`;
             };
-            // A folded group shows its biggest member as a normal card; +N expands the rest.
-            const folded = (role, lv, g) => {
-                const ms = g.m.map(r => r.m);
-                const present = files.map((_, k) => ms.some(m => m.present[k])), edge = files.map((_, k) => ms.some(m => m.edge[k]));
-                const r = this._cgStrip(present, files, edge);
-                const ne = edge.filter(Boolean).length;
-                const rep = g.m[0].x;
-                const keys = g.m.map(x => x.x.it.key), parents = [...g.par];
-                const others = g.m.slice(1).map(x => x.x.it.name || '?').join(', ');
-                const chip = `<span class="nway-grp" style="--gc:${g.color}" data-cg-fold="${escapeAttr(g.id)}" title="${escapeAttr(`Also in this group (complementary files, same parent): ${others}. Click to show each one.`)}">+${g.m.length - 1}</span>`;
-                return `<div class="nway-node folded${lv ? ' deep' : ''}" tabindex="0" data-cg-go="${role}:${lv}:${rep.i}" data-side="${role}" data-key="${escapeAttr(keys[0])}" data-alias="${escapeAttr(keys.join(' '))}" data-parents="${escapeAttr(parents.join(' '))}" data-n="${ne}" style="--gc:${g.color}">
-                    <div class="nway-node-name">${this._cgName(rep.it)}</div><div class="nway-node-sub">${chip}${r.html}<span class="nway-reach ${r.cls}" title="the group's functions exist in ${g.cov} of ${files.length} files"><i class="fa-solid fa-file-code"></i> ${g.cov}/${files.length}</span><span class="nway-edgecnt" title="called from ${ne} of ${files.length} files"><i class="fa-solid fa-link"></i> ${ne}/${files.length}</span></div></div>`;
-            };
-            // One column of cards, with suggested merges decorated or folded.
             // Groups form over all `entries`, then `cap` counts a group as one card; the
             // entries past it come back in `rest` for the "+N more" card.
             const col0 = (role, lv, entries, cap = Infinity, canon = null) => {
@@ -732,9 +713,8 @@
                     else if (!done.has(g)) {
                         done.add(g);
                         units.push({ xs: g.m.map(r => r.x), html: () => {
-                            if (st.fold[g.id] !== false) return folded(role, lv, g);
-                            const chip = `<span class="nway-grp" style="--gc:${g.color}" data-cg-fold="${escapeAttr(g.id)}" title="Suggested merge: ${g.m.length} cards with complementary files and the same parent. Click to fold them into one.">&asymp; ${g.label} &middot; ${g.cov}/${files.length} &middot; fold</span>`;
-                            return `<div class="nway-grpbox${lv ? ' deep' : ''}" style="--gc:${g.color}"><div class="nway-grpbox-h">${chip}</div>${g.m.map(r => node(role, lv, r.x)).join('')}</div>`;
+                            const chip = `<span class="nway-grp" title="Suggested merge: ${g.m.length} cards with complementary files and the same parent.">&asymp; ${g.label} &middot; ${g.cov}/${files.length}</span>`;
+                            return `<div class="nway-grpbox${lv ? ' deep' : ''}"><div class="nway-grpbox-h">${chip}</div>${g.m.map(r => node(role, lv, r.x)).join('')}</div>`;
                         } });
                     }
                 }
@@ -914,7 +894,7 @@
         }
 
         _onDrawerClick(e) {
-            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-fold],[data-cg-suggest]');
+            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-suggest]');
             if (!t || !this._cg) return;
             if (t.dataset.cgClose !== undefined) return window.closeCallsPanel();
             if (t.dataset.cgPop !== undefined) {
@@ -924,7 +904,6 @@
             }
             if (t.dataset.cgView) { this._cg.view = t.dataset.cgView; return this._cgDraw(); }
             if (t.dataset.cgOutside) { this._cg.outside = t.dataset.cgOutside; return this._cgDraw(); }
-            if (t.dataset.cgFold) { this._cg.fold[t.dataset.cgFold] = this._cg.fold[t.dataset.cgFold] === false; return this._cgDraw(); }
             if (t.dataset.cgSuggest !== undefined) { this._cg.suggest = !this._cg.suggest; return this._cgDraw(); }
             if (t.dataset.cgMore) { this._cg.more[t.dataset.cgMore] = true; return this._cgDraw(); }
             if (t.dataset.cgExpand) { this._cg.outside = 'each'; return this._cgDraw(); }
@@ -932,7 +911,6 @@
             if (t.dataset.cgCrumb) {
                 this._cg.stack = this._cg.stack.slice(0, Number(t.dataset.cgCrumb) + 1);
                 this._cg.more = {};
-            this._cg.fold = {};
                 return this._cgShow();
             }
             const [role, lv, i] = t.dataset.cgGo.split(':');
@@ -942,7 +920,6 @@
             for (const [k, v] of Object.entries(it.cells)) if (typeof v === 'string') cells[k] = v;
             this._cg.stack.push({ name: it.name, cells });
             this._cg.more = {};
-            this._cg.fold = {};
             this._cgShow();
         }
 

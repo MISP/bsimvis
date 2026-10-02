@@ -2789,6 +2789,14 @@ a.home-card:hover,
 .nway-colhead .entity-md5 { font-size: 0.72rem; font-weight: 400; }
 .nway-table th:first-child, .nway-table td:first-child { position: sticky; left: 0; z-index: 1; max-width: 280px; box-shadow: 1px 0 0 var(--border); }
 .nway-table th:first-child { z-index: 3; }
+/* Cluster view, Functions tab: the controls stay put, only the rows scroll under
+   pinned column names (the tab is a flex item with a definite height). */
+#cluster-tab-functions { overflow: hidden !important; }
+#cluster-tab-functions .nway-panel { height: 100%; display: flex; flex-direction: column; }
+#cluster-tab-functions .nway-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#cluster-tab-functions .nway-scroll { flex: 1; min-height: 0; }
+#cluster-tab-functions .nway-table thead th { position: sticky; top: 0; z-index: 4; background: var(--bg); }
+#cluster-tab-functions .nway-table thead th:first-child { z-index: 5; }
 .nway-table td:first-child { background: var(--bg); }
 .nway-table tbody tr:nth-child(even) td:first-child { background: var(--card-bg); }
 .nway-table tbody tr:hover td:first-child { background: var(--hover); }

@@ -344,8 +344,12 @@ def _page(doc, args, r=None, pool_id=None):
     }
 
 
-def get_nway():
-    """N-way file diff over `md5s=` or a binary cluster's files (`cluster_uuid=`)."""
+class _Reply(Exception):
+    """An early (body, status) answer from _load_doc."""
+
+
+def _load_doc():
+    """Parse the shared N-way params and compute the doc: (doc, redis, pool_id)."""
     pool_id = request.args.get("pool")
     collection = request.args.get("collection")
     cluster_uuid = (request.args.get("cluster_uuid") or "").strip().lower()
@@ -412,14 +416,79 @@ def get_nway():
     except nway_diff_service.BadParams as e:
         abort(400, str(e))
     except nway_diff_service.TooLarge as e:
-        return {
-            "error": "too_large",
-            "message": "too many files: narrow the set",
-            "members": e.members,
-            "children": getattr(e, "children", children),
-        }, 413
+        raise _Reply(
+            (
+                {
+                    "error": "too_large",
+                    "message": "too many files: narrow the set",
+                    "members": e.members,
+                    "children": getattr(e, "children", children),
+                },
+                413,
+            )
+        )
     except _UnknownBatch:
-        return {"error": "unknown_batch"}, 404
+        raise _Reply(({"error": "unknown_batch"}, 404))
     except nway_diff_service.MemberMissing as e:
-        return {"error": "unknown_files", "missing": e.missing}, 404
+        raise _Reply(({"error": "unknown_files", "missing": e.missing}, 404))
+    return doc, r, pool_id
+
+
+def get_nway():
+    """N-way file diff over `md5s=` or a binary cluster's files (`cluster_uuid=`)."""
+    try:
+        doc, r, pool_id = _load_doc()
+    except _Reply as e:
+        return e.args[0]
     return _page(doc, request.args, r, pool_id)
+
+
+def get_nway_neighbors():
+    """Call-graph neighbors of one N-way row, regrouped into the doc's rows.
+
+    `fids` are the row's functions; each neighbor is mapped to the row that
+    holds it, so a callee present in 5 of 6 files reads as one conserved edge.
+    """
+    role = request.args.get("role", "callees")
+    if role not in ("callers", "callees"):
+        abort(400, "role must be callers or callees")
+    fids = [t for t in (request.args.get("fids") or "").split(",") if t]
+    if not fids:
+        abort(400, "fids is required")
+    try:
+        doc, r, _ = _load_doc()
+    except _Reply as e:
+        return e.args[0]
+    fmeta = doc["fmeta"]
+    row_of = {f: i for i, row in enumerate(doc["rows"]) for f in _row_fids(row)}
+    pipe = r.pipeline(transaction=False)
+    for f in fids:
+        pipe.smembers(f"{f}:{role}")
+    groups = {}
+    for src, members in zip(fids, pipe.execute()):
+        for n in members:
+            n = n.decode() if isinstance(n, bytes) else n
+            if n.startswith("ext:"):
+                key = ("ext", n)
+            elif n in row_of:
+                key = ("row", row_of[n])
+            else:
+                key = ("none", n)
+            g = groups.setdefault(key, {"kind": key[0], "sources": {}})
+            g["sources"].setdefault(src, []).append(n)
+    items = []
+    for (kind, ref), g in groups.items():
+        item = {"kind": kind, "support": len(g["sources"]), "of": len(fids)}
+        item["sources"] = g["sources"]
+        if kind == "row":
+            row = doc["rows"][ref]
+            item["cells"] = dict(row.get("files") or row["cells"])
+            first = next(iter(item["cells"].values()))
+            item["name"] = (fmeta.get(first) or {}).get("name")
+        elif kind == "ext":
+            item["name"] = ref[4:]
+        else:
+            item["name"] = (fmeta.get(ref) or {}).get("name") or ref.rsplit(":", 1)[-1]
+        items.append(item)
+    items.sort(key=lambda i: (-i["support"], i["name"] or ""))
+    return {"role": role, "of": len(fids), "items": items}

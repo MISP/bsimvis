@@ -461,9 +461,10 @@
         }
 
         // One square per file: lit when that file's function has the edge.
-        // Each square is a file: hover shows its name and md5, click opens the file
-        // details, right-click gives the usual file menu.
-        _cgStrip(on, files, yes = 'has this edge', no = 'no such edge') {
+        // Each square is a file. Lit (colored by how many files) = the file has the function;
+        // a dot inside = the focus function in that file calls it. Hover shows name and md5,
+        // click opens the file details, right-click gives the usual file menu.
+        _cgStrip(on, files, edge) {
             const n = on.filter(Boolean).length;
             const cls = n === files.length ? 'r-hi' : n * 2 >= files.length ? 'r-mid' : 'r-low';
             const total = files.length;
@@ -474,12 +475,24 @@
             const sq = files.map((c, i) => {
                 const coll = c.collection || '';
                 const data = { md5: c.md5, fileId: `${coll}:file:${c.md5}`, name: c.file_name || c.md5, file_name: c.file_name || '', collection: coll };
-                const tip = [c.file_name, c.md5, coll, on[i] ? yes : no].filter(Boolean).join('\n');
-                return `<i class="${on[i] ? 'on' : ''}" title="${escapeAttr(tip)}" data-entity-data='${escapeAttr(JSON.stringify(data))}'
+                const tip = [c.file_name, c.md5, coll, on[i] ? 'function present' : 'function absent', edge && edge[i] ? 'called from the focus function here' : ''].filter(Boolean).join('\n');
+                return `<i class="${on[i] ? 'on' : ''}${edge && edge[i] ? ' edge' : ''}" title="${escapeAttr(tip)}" data-entity-data='${escapeAttr(JSON.stringify(data))}'
                     onclick="event.stopPropagation(); openFileDetails(${escapeAttr(jsString(coll))}, ${escapeAttr(jsString(c.md5))}, ${escapeAttr(jsString(c.file_name || c.md5))}, event)"
                     oncontextmenu='event.stopPropagation(); EntityRenderer.handleContextMenu(event, "file", this)'></i>`;
             }).join('');
             return { html: `<span class="nway-strip ${cls}" style="--sq:${sz}px">${sq}</span>`, n, cls };
+        }
+
+        // Presence: the neighbor's function exists in that file. Edge: the focus function there calls it.
+        _cgMeasures(it, focus, files) {
+            const edge = files.map(c => { const f = focus.cells[c.id]; return !!(f && it.sources[f]); });
+            const present = it.kind === 'row' ? files.map(c => !!it.cells[c.id]) : edge;
+            return { present, edge, np: present.filter(Boolean).length, ne: edge.filter(Boolean).length };
+        }
+
+        _cgChips(m, st, it, files) {
+            const pres = it.kind === 'row' ? `<span class="nway-reach ${st.cls}" title="the function exists in ${m.np} of ${files.length} files"><i class="fa-solid fa-file-code"></i> ${m.np}/${files.length}</span>` : '';
+            return `${pres}<span class="nway-edgecnt" title="called from ${m.ne} of ${Number(it.of)} focus functions"><i class="fa-solid fa-link"></i> ${m.ne}/${Number(it.of)}</span>`;
         }
 
         _cgName(it) {
@@ -489,9 +502,9 @@
         }
 
         _cgReach(it, focus, files) {
-            const on = files.map(c => { const f = focus.cells[c.id]; return !!(f && it.sources[f]); });
-            const st = this._cgStrip(on, files);
-            return `${st.html}<span class="nway-reach ${st.cls}" title="files whose function has this edge">${Number(it.support)}/${Number(it.of)}</span>`;
+            const m = this._cgMeasures(it, focus, files);
+            const st = this._cgStrip(m.present, files, m.edge);
+            return st.html + this._cgChips(m, st, it, files);
         }
 
         // Neighbors of one role under the Code / Library / All scope, keeping their index in the full list.
@@ -514,20 +527,21 @@
             const CAP = 12;
             const st = this._cg;
             const node = (role, { it, i, out }) => {
-                const on = files.map(c => { const f = focus.cells[c.id]; return !!(f && it.sources[f]); });
-                const r = this._cgStrip(on, files);
-                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${i}"` : ''} data-edge="${role}" data-cls="${r.cls}" data-n="${r.n}">
+                const m = this._cgMeasures(it, focus, files);
+                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${i}"` : ''} data-edge="${role}" data-n="${m.ne}">
                     <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div></div>`;
             };
             // Every out-of-scope neighbor of a side as one faded card.
             const merged = (role, list) => {
-                const on = files.map(c => { const f = focus.cells[c.id]; return list.some(({ it }) => !!(f && it.sources[f])); });
-                const r = this._cgStrip(on, files);
+                const ms = list.map(({ it }) => this._cgMeasures(it, focus, files));
+                const present = files.map((_, k) => ms.some(m => m.present[k])), edge = files.map((_, k) => ms.some(m => m.edge[k]));
+                const r = this._cgStrip(present, files, edge);
+                const ne = edge.filter(Boolean).length;
                 const names = list.map(({ it }) => it.name || '?').join(', ');
                 const axis = st.scope === 'library' ? 'code' : 'library';
                 const ax = AXIS[axis];
-                return `<div class="nway-node out merged" tabindex="0" data-cg-expand="1" data-edge="${role}" data-cls="${r.cls}" data-n="${r.n}" style="border-color:${ax.color}" title="${escapeAttr(names)}&#10;click to show each one">
-                    <div class="nway-node-name"><b style="color:${ax.color}"><i class="${ax.icon}"></i> ${list.length} ${axis}</b></div><div class="nway-node-sub">${r.html}<span class="nway-reach ${r.cls}">${r.n}/${files.length}</span></div></div>`;
+                return `<div class="nway-node out merged" tabindex="0" data-cg-expand="1" data-edge="${role}" data-n="${ne}" style="border-color:${ax.color}" title="${escapeAttr(names)}&#10;click to show each one">
+                    <div class="nway-node-name"><b style="color:${ax.color}"><i class="${ax.icon}"></i> ${list.length} ${axis}</b></div><div class="nway-node-sub">${r.html}<span class="nway-edgecnt" title="called from ${ne} of ${files.length} files"><i class="fa-solid fa-link"></i> ${ne}/${files.length}</span></div></div>`;
             };
             const hidden = {};
             const col = role => {
@@ -543,8 +557,7 @@
             };
             const left = col('callers'), right = col('callees');
             const more = ['callers', 'callees'].map(r => hidden[r] ? `${hidden[r]} more ${r} (see the list view)` : '').filter(Boolean).join('; ');
-            return `<div class="dim" style="margin-bottom:6px">Edge width is the number of files that share the edge. Click a node to recenter.</div>
-                <div class="nway-graph"><svg></svg><div class="nway-gcol">${left}</div>
+            return `<div class="nway-graph"><svg></svg><div class="nway-gcol">${left}</div>
                 <div class="nway-gcol"><div class="nway-node center"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div></div></div>
                 <div class="nway-gcol">${right}</div></div>
                 ${more ? `<div class="dim" style="margin-top:6px">${escapeHtml(more)}</div>` : ''}`;
@@ -566,7 +579,7 @@
                 const x1 = (callers ? r.right : c.right) - gr.left, x2 = (callers ? c.left : r.left) - gr.left;
                 const y1 = (callers ? r.top + r.height / 2 : c.top + c.height / 2) - gr.top, y2 = (callers ? c.top + c.height / 2 : r.top + r.height / 2) - gr.top;
                 const mx = (x1 + x2) / 2;
-                return `<path class="nway-edge ${n.dataset.cls}${n.classList.contains('out') ? ' out' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${(1 + Number(n.dataset.n) * 0.8).toFixed(1)}"></path>`;
+                return `<path class="nway-edge${n.classList.contains('out') ? ' out' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${Math.min(1 + Number(n.dataset.n) * 0.8, 8).toFixed(1)}"></path>`;
             }).join('');
         }
 
@@ -578,11 +591,11 @@
             const scopeToggle = [['code', 'Code', AXIS.code.icon, AXIS.code.color], ['library', 'Library', AXIS.library.icon, AXIS.library.color], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']].map(([v, text, icon, color]) => `<span class="bsim-tag-pill" data-cg-scope="${v}" style="${window.binSimPillStyle(st.scope === v, color)} padding:4px 10px; font-size:0.78rem;"><i class="${icon}"></i>${text}</span>`).join('');
             const toggle = ['list', 'graph'].map(v => `<button class="view-btn${st.view === v ? ' active' : ''}" data-cg-view="${v}">${v === 'list' ? 'List' : 'Graph'}</button>`).join('');
             const on = files.map(c => !!focus.cells[c.id]);
-            const fs = this._cgStrip(on, files, 'has this function', 'function missing');
+            const fs = this._cgStrip(on, files);
             let body;
             if (err) body = `<div style="color:#f92672;">${escapeHtml(err)}</div>`;
             else if (!st.nb) body = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Reading call graph...</div>';
-            else body = st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files);
+            else body = `<div class="dim nway-cg-legend"><i class="fa-solid fa-file-code"></i> files that have the function (color: how many) &middot; dot: the focus function there calls it &middot; <i class="fa-solid fa-link"></i> calls from the focus${st.view === 'graph' ? ' (edge width)' : ''}. Click to recenter.</div>` + (st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files));
             this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}<div class="view-toggle" style="margin:0">${toggle}</div><button class="nway-chip" data-cg-close title="close (Esc)">&times;</button></div>
                 <div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>
                 <div class="nway-cg-body">${body}</div>`;

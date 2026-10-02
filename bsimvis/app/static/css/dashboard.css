@@ -2890,13 +2890,13 @@ a.home-card:hover,
 .nway-graph { position: relative; display: grid; grid-template-columns: 230px 1fr 230px; align-items: center; width: 800px; }
 .nway-gcol { display: flex; flex-direction: column; gap: 12px; align-items: center; }
 .nway-graph > svg { position: absolute; inset: 0; pointer-events: none; }
-.nway-edge { fill: none; stroke: var(--rc); opacity: 0.55; }
+.nway-edge { fill: none; stroke: var(--accent); opacity: 0.55; }
 .nway-node { position: relative; box-sizing: border-box; width: 230px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
 .nway-node:hover, .nway-node:focus-visible { border-color: var(--accent); outline: none; }
 .nway-node.center { border-color: var(--accent); cursor: default; }
 .nway-node.static { cursor: default; }
 .nway-node-name { min-width: 0; overflow: hidden; }
-.nway-node-sub { display: flex; align-items: flex-start; gap: 6px; font-size: 0.72rem; min-width: 0; }
+.nway-node-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 0.72rem; min-width: 0; }
 .nway-bar { display: inline-block; width: 80px; height: 8px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
 .nway-bar b { display: block; height: 100%; background: var(--rc); }
 .nway-node .entity-function { width: 100%; }
@@ -2909,3 +2909,8 @@ a.home-card:hover,
 .nway-edge.out { opacity: 0.12; }
 .nway-node.merged { opacity: 0.7; }
 .nway-node.merged:hover, .nway-node.merged:focus-visible { opacity: 1; }
+.nway-strip i { position: relative; }
+.nway-strip i.edge::after { content: ''; position: absolute; left: 50%; top: 50%; width: 40%; height: 40%; transform: translate(-50%, -50%); border-radius: 50%; background: var(--card-bg); }
+.nway-edgecnt { flex-shrink: 0; white-space: nowrap; font-size: 0.74rem; font-variant-numeric: tabular-nums; color: var(--accent); }
+.nway-reach i, .nway-edgecnt i { font-size: 0.85em; margin-right: 2px; }
+.nway-cg-legend { font-size: 0.76rem; margin-bottom: 8px; line-height: 1.5; }

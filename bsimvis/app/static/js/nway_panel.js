@@ -151,6 +151,16 @@
             return `<span class="nway-ctlwrap"><div class="view-toggle"><span class="nway-lbl">${escapeHtml(label)}</span>${btns}</div>${this._tip(tip)}</span>`;
         }
 
+        // Coloured icon pills, the same look as the other Code / Library / Overall
+        // score-axis pickers (`binSimPillStyle`); `data-set` goes through _onClick.
+        _pills(label, key, options, tip) {
+            const cur = String(this.state[key]);
+            const pills = options.map(([v, text, icon, color]) =>
+                `<span class="bsim-tag-pill" data-set="${escapeAttr(`${key}:${v}`)}" style="${window.binSimPillStyle(cur === v, color)} padding:4px 10px; font-size:0.78rem;"><i class="${escapeAttr(icon)}"></i>${escapeHtml(text)}</span>`
+            ).join('');
+            return `<span class="nway-ctlwrap"><div class="nway-pills"><span class="nway-lbl">${escapeHtml(label)}</span>${pills}</div>${this._tip(tip)}</span>`;
+        }
+
         _slider(label, key, value, min, max, step, tip) {
             const shown = key === 'k' ? String(value) : Number(value).toFixed(2);
             return `<span class="nway-ctlwrap"><label class="nway-ctl"><span class="nway-lbl">${escapeHtml(label)}</span><b>${shown}</b><input type="range" min="${min}" max="${max}"${step ? ` step="${step}"` : ''} value="${Number(value)}" data-range="${key}"></label>${this._tip(tip)}</span>`;
@@ -174,7 +184,7 @@
             const filter = [
                 `<input type="text" class="nway-input" data-text="q" placeholder="function name / address" value="${escapeAttr(s.q)}">`,
                 `<input type="text" class="nway-input" data-text="tags" placeholder="tags" value="${escapeAttr(s.tags)}">`,
-                this._seg('Show', 'scope', [['code', 'Code'], ['library', 'Library'], ['all', 'All']], 'Code: functions of the program itself. Library: functions recognised as library code (stdlib, statically linked). All: both.'),
+                this._pills('Show', 'scope', [['code', 'Code', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['library', 'Library', 'fa-solid fa-cubes', 'var(--warning, #d97706)'], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']], 'Code: functions of the program itself. Library: functions recognised as library code (stdlib, statically linked). All: both.'),
                 this._columnChip(),
             ].join('');
             const match = [

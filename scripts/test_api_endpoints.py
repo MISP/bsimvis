@@ -4990,6 +4990,24 @@ def test_nway_cluster_entry():
             == {f1: 0.25, f2: 0.75},
             f"{row.get('medoid')} {row.get('direct_members')}",
         )
+        # The detail view loads its clusters through the slice path.
+        sl = test_endpoint(
+            "GET",
+            "/api/bin_cluster/list",
+            params={
+                "collection": COLLECTION,
+                "algo": "unweighted_cosine",
+                "slice": f"uuid-{nwp}",
+            },
+        )
+        check(
+            "bin_cluster/list slice carries medoid",
+            any(
+                c.get("cluster_uuid") == f"uuid-{nwp}" and c.get("medoid") == f2
+                for c in (sl or {}).get("results", [])
+            ),
+            f"{[(c.get('cluster_uuid'), c.get('medoid')) for c in (sl or {}).get('results', [])]}",
+        )
         mem = test_endpoint(
             "GET",
             "/api/bin_cluster/members",

@@ -212,6 +212,8 @@ def _shape_bin_cluster_result(m, child_to_parent, parent_to_children):
         "function_count_stats": m.get("function_count_stats", {}),
         "has_children": bool(parent_to_children.get(cid)),
         "child_total": len(parent_to_children.get(cid, [])),
+        "medoid": m.get("medoid"),
+        "centrality_exact": m.get("centrality_exact"),
     }
 
 

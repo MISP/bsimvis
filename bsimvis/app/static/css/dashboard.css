@@ -2901,3 +2901,7 @@ a.home-card:hover,
 .nway-cg-box { border: 1px solid var(--border); border-radius: 8px; padding: 0 10px 6px; margin-bottom: 14px; background: rgba(128, 128, 128, 0.05); }
 .nway-cg-box > header { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); padding: 8px 0; margin-bottom: 4px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }
 .nway-cg-none { padding: 4px 0 6px; font-size: 0.8rem; }
+.nway-open { cursor: pointer; }
+.nway-node.out { opacity: 0.25; }
+.nway-node.out:hover, .nway-node.out:focus-visible { opacity: 0.7; }
+.nway-edge.out { opacity: 0.12; }

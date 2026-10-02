@@ -592,7 +592,7 @@
                 r.m.present.forEach((v, k) => { if (v) g.u[k] = true; });
                 r.par.forEach(k => g.par.add(k));
             }
-            const colors = ['#e6a23c', '#a78bfa', '#22d3ee', '#f472b6', '#84cc16'];
+            const colors = ['var(--subtle, #8b949e)'];
             return groups.filter(g => g.m.length > 1).map((g, n) => ({
                 ...g, n, color: colors[n % colors.length], label: `G${n + 1}`,
                 cov: g.u.filter(Boolean).length,
@@ -741,7 +741,7 @@
             svg.setAttribute('viewBox', `0 0 ${gr.width} ${gr.height}`);
             svg.setAttribute('width', gr.width);
             svg.setAttribute('height', gr.height);
-            const paths = [];
+            const paths = [], meta = [];
             for (const n of nodes) {
                 for (const pk of n.dataset.parents.split(' ')) {
                     const parent = pk === 'focus' ? center : byKey[`${n.dataset.side}|${pk}`];
@@ -752,10 +752,41 @@
                     const x1 = a.right - gr.left, x2 = b.left - gr.left;
                     const y1 = a.top + a.height / 2 - gr.top, y2 = b.top + b.height / 2 - gr.top;
                     const mx = (x1 + x2) / 2;
-                    paths.push(`<path class="nway-edge${n.classList.contains('out') ? ' out' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${Math.min(1 + Number(n.dataset.n) * 0.8, 8).toFixed(1)}"></path>`);
+                    meta.push([n, parent]);
+                    paths.push(`<path data-i="${meta.length}" class="nway-edge${n.classList.contains('out') ? ' out' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${Math.min(1 + Number(n.dataset.n) * 0.8, 8).toFixed(1)}"></path>`);
                 }
             }
             svg.innerHTML = paths.join('');
+            this._cgHover(g, center, meta);
+        }
+
+        // Hovering a card lights it, everything it calls further out, and the path back to the focus.
+        _cgHover(g, center, meta) {
+            const kids = new Map(), ups = new Map();
+            for (const [n, par] of meta) {
+                if (!kids.has(par)) kids.set(par, []);
+                kids.get(par).push(n);
+                if (!ups.has(n)) ups.set(n, []);
+                ups.get(n).push(par);
+            }
+            const walk = (n, map, on) => { for (const m of map.get(n) || []) if (!on.has(m)) { on.add(m); walk(m, map, on); } };
+            const paths = [...g.querySelectorAll(':scope > svg path')];
+            const clear = () => {
+                g.classList.remove('hl');
+                g.querySelectorAll('.hl-on').forEach(e => e.classList.remove('hl-on'));
+            };
+            g.onmouseover = e => {
+                const n = e.target.closest('.nway-node');
+                if (!n) return clear();
+                const on = new Set([n]);
+                walk(n, kids, on);
+                walk(n, ups, on);
+                clear();
+                g.classList.add('hl');
+                on.forEach(x => x.classList.add('hl-on'));
+                meta.forEach(([c, par], i) => { if (on.has(c) && on.has(par)) paths[i].classList.add('hl-on'); });
+            };
+            g.onmouseleave = clear;
         }
 
         _cgDraw(err) {

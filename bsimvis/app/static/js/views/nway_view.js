@@ -19,6 +19,7 @@ window.NwayView = {
     async init(params, containerId) {
         this._container = document.getElementById(containerId);
         if (!this._container) return;
+        if (window.location.pathname.endsWith('/nway/graph')) return this._initGraph();
         const q = new URLSearchParams(window.location.search);
         this._set = {
             md5s: (q.get('md5s') || '').split(',').map(t => t.trim()).filter(Boolean),
@@ -32,6 +33,38 @@ window.NwayView = {
         }
         this._collections = null;
         this._render();
+    },
+
+    // /diff/nway/graph?<source>&<controls>&cg_*: a locked call graph. Every change
+    // pushes a history entry; Back/Forward re-runs init, which re-reads the URL.
+    _initGraph() {
+        const q = new URLSearchParams(window.location.search);
+        const CTL = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule'];
+        const source = {}, state = {}, cg = {};
+        for (const [k, v] of q) {
+            if (k.startsWith('cg_')) cg[k.slice(3)] = v;
+            else if (CTL.includes(k)) state[k] = v;
+            else source[k] = v;
+        }
+        let cells = {};
+        try { cells = JSON.parse(cg.cells || '{}'); } catch (e) { /* bad link: the empty graph below says so */ }
+        this.destroy();
+        this._container.innerHTML = '<div id="nway-graph-host" class="nway-cgp" style="height: calc(100vh - 130px);"></div>';
+        if (!Object.keys(cells).length) {
+            this._container.innerHTML = '<div class="nway-state">This link has no function to graph.</div>';
+            return;
+        }
+        let cur = window.location.pathname + window.location.search;
+        this._panel = new NwayPanel(document.getElementById('nway-graph-host'), {
+            source, state,
+            cg: { ...cg, cells },
+            onCg: url => {
+                if (url === cur) return;
+                cur = url;
+                history.pushState(null, '', url);
+            },
+        });
+        this._panel.load();
     },
 
     _source() {

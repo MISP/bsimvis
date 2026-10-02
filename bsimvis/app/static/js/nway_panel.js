@@ -15,6 +15,8 @@
  * `state.column` keeps the rows with a function in one file; `state.focus` (file
  * ids) splits the files into Focus vs Rest, both set from the file header's
  * right-click menu.
+ * `opts.cg` ({name, cells, view, scope, outside, depth}) makes the panel a standalone
+ * call graph on `container` (no table); `onCg(snapshot)` fires on every graph change.
  * Rows are paged
  * server-side (Prev/Next, or appended on scroll -- see paging.js); nothing here
  * loads a full table. Function and file names come off
@@ -62,6 +64,8 @@
             this.state = { ...DEFAULTS, ...(opts.state || {}) };
             this.onState = opts.onState || null;
             this.onOpenCluster = opts.onOpenCluster || null;
+            this.cgInit = opts.cg || null;
+            this.onCg = opts.onCg || null;
             this.data = null;
             this.error = null;
             this._gen = 0;
@@ -89,7 +93,8 @@
             this._gen++;
             clearTimeout(this._debounce);
             if (this._io) this._io.disconnect();
-            this._cgClose();
+            if (this._dw && !this.cgInit) window.clearCallsPanel();
+            this._cg = null;
         }
 
         _set(patch) {
@@ -113,7 +118,7 @@
                 const v = this.state[k];
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
-            qs.set('limit', PAGE);
+            qs.set('limit', this.cgInit ? 1 : PAGE);
             if (scroll) qs.set('offset', append ? this.data.items.length : 0);
             if (!this.data) this.el.innerHTML = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions...</div>';
             try {
@@ -136,6 +141,11 @@
                 if (append) return;
                 this.error = { status: 0, message: String(e) };
                 this.data = null;
+            }
+            if (this.cgInit) {
+                if (this.error) this.el.innerHTML = this._renderError();
+                else this._cgStart(this.cgInit.name, this.cgInit.cells, this.cgInit, this.el);
+                return;
             }
             this.render();
         }
@@ -409,27 +419,42 @@
         _cgOpen(row) {
             const cells = {};
             for (const [k, v] of Object.entries(row.files || row.cells)) if (typeof v === 'string') cells[k] = v;
-            this._cg = { stack: [{ name: row.name, cells }], view: (this._cg && this._cg.view) || 'graph', scope: (this._cg && this._cg.scope) || this.state.scope || 'code', outside: (this._cg && this._cg.outside) || 'merge', depth: (this._cg && this._cg.depth) || 1, nb: null };
-            if (!this._dw) {
-                this._dw = document.createElement('aside');
-                this._dw.className = 'nway-drawer';
-                this._dw.addEventListener('click', e => this._onDrawerClick(e));
-                this._dw.addEventListener('change', e => {
-                    const t = e.target.closest('[data-cg-depth]');
-                    if (t && this._cg) { this._cg.depth = Number(t.value); this._cgShow(); }
-                });
-                document.body.appendChild(this._dw);
-                this._escKey = e => { if (e.key === 'Escape') this._cgClose(); };
-                document.addEventListener('keydown', this._escKey);
-            }
+            this._cgStart(row.name, cells, {}, window.openCallsPanel());
+        }
+
+        // Draws into `host`: the side panel's body, or the standalone page's container.
+        _cgStart(name, cells, init, host) {
+            const prev = this._cg || {};
+            this._cg = {
+                stack: [{ name, cells }],
+                view: init.view || prev.view || 'graph',
+                scope: init.scope || prev.scope || this.state.scope || 'code',
+                outside: init.outside || prev.outside || 'merge',
+                depth: Number(init.depth || prev.depth || 1),
+                nb: null,
+            };
+            this._dw = host;
+            host.onclick = e => this._onDrawerClick(e);
+            host.onchange = e => {
+                const t = e.target.closest('[data-cg-depth]');
+                if (t && this._cg) { this._cg.depth = Number(t.value); this._cgShow(); }
+            };
             this._cgShow();
         }
 
-        _cgClose() {
-            if (this._dw) this._dw.remove();
-            this._dw = null;
-            if (this._escKey) document.removeEventListener('keydown', this._escKey);
-            this._cg = null;
+        // The standalone page's URL: the member source, doc controls, and the focused graph.
+        _cgUrl() {
+            const qs = new URLSearchParams();
+            for (const [k, v] of Object.entries(this.source)) if (v !== null && v !== undefined && v !== '') qs.set(k, v);
+            for (const k of DOC_KEYS) {
+                const v = this.state[k];
+                if (v !== null && v !== undefined && v !== '') qs.set(k, v);
+            }
+            const st = this._cg, f = this._cgFocus();
+            qs.set('cg_name', f.name);
+            qs.set('cg_cells', JSON.stringify(f.cells));
+            for (const k of ['view', 'scope', 'outside', 'depth']) qs.set(`cg_${k}`, st[k]);
+            return `/diff/nway/graph?${qs.toString()}`;
         }
 
         async _cgFetch(focus, role) {
@@ -621,6 +646,7 @@
 
         _cgDraw(err) {
             if (!this._dw || !this._cg) return;
+            if (this.onCg) this.onCg(this._cgUrl());
             const st = this._cg, focus = this._cgFocus(), files = this._cgFiles();
             const crumbs = st.stack.map((f, i) => `<button class="nway-crumb" data-cg-crumb="${i}">${escapeHtml(f.name)}</button>`).join('<span class="dim">/</span>');
             const outsideToggle = st.view === 'graph' && st.scope !== 'all' ? `<span class="nway-lbl" title="Neighbors outside the selected scope: grouped into one card per side, or each listed (faded)">Outside scope</span><div class="view-toggle" style="margin:0">${[['merge', 'Grouped'], ['each', 'Each']].map(([v, l]) => `<button class="view-btn${st.outside === v ? ' active' : ''}" data-cg-outside="${v}">${l}</button>`).join('')}</div>` : '';
@@ -633,16 +659,21 @@
             if (err) body = `<div style="color:#f92672;">${escapeHtml(err)}</div>`;
             else if (!st.nb) body = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Reading call graph...</div>';
             else body = `<div class="dim nway-cg-legend"><i class="fa-solid fa-file-code"></i> files that have the function (color: how many) &middot; dot: the focus function there calls it &middot; <i class="fa-solid fa-link"></i> calls from the focus${st.view === 'graph' ? ' (edge width)' : ''}. Click to recenter.${st.depth > 1 ? (st.view === 'graph' ? ' Further hops show in-scope rows only.' : ' The list shows the first hop; depth applies to the graph.') : ''}</div>` + (st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files));
-            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}${depthCtl}<div class="view-toggle" style="margin:0">${toggle}</div><button class="nway-chip" data-cg-close title="close (Esc)">&times;</button></div>
+            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}${depthCtl}<div class="view-toggle" style="margin:0">${toggle}</div>${this.cgInit ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
                 <div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>
                 <div class="nway-cg-body">${body}</div>`;
             if (!err && st.nb && st.view === 'graph') this._cgEdges();
         }
 
         _onDrawerClick(e) {
-            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close]');
+            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop]');
             if (!t || !this._cg) return;
-            if (t.dataset.cgClose !== undefined) return this._cgClose();
+            if (t.dataset.cgClose !== undefined) return window.closeCallsPanel();
+            if (t.dataset.cgPop !== undefined) {
+                const url = this._cgUrl();
+                window.closeCallsPanel();
+                return window.Nav.openPath(url, e);
+            }
             if (t.dataset.cgView) { this._cg.view = t.dataset.cgView; return this._cgDraw(); }
             if (t.dataset.cgOutside) { this._cg.outside = t.dataset.cgOutside; return this._cgDraw(); }
             if (t.dataset.cgExpand) { this._cg.outside = 'each'; return this._cgDraw(); }

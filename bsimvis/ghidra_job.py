@@ -800,6 +800,13 @@ class GhidraAnalyzer:
                                 k: sorted(v) for k, v in yara_tags_by_addr.items()
                             }
 
+                        from bsimvis.app.services.entrypoint_service import (
+                            entry_address,
+                        )
+
+                        payload["entry_addr"] = entry_address(
+                            temp_path, program.getImageBase().getOffset()
+                        )
                         self._index_streamed_program(program, payload, job_id)
                     finally:
                         # close() releases every program importProgram() registered

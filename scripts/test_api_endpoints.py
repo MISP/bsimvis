@@ -451,6 +451,24 @@ def resolve_ids():
             )
             vprint(f"     func_id2 = {func_id2}")
 
+    # The header entry point is tagged on exactly one function, and the file
+    # metadata names it (the File view's "Entry" button reads entry_point).
+    resp = requests.get(
+        f"{BASE_URL}/api/function/search",
+        params={
+            "collection": COLLECTION,
+            "file_md5": file_md5,
+            "func_tag": "entry:process",
+        },
+        timeout=20,
+    )
+    entry_funcs = resp.json().get("functions", []) if resp.status_code == 200 else []
+    check(
+        "entry:process tags exactly one function",
+        len(entry_funcs) == 1,
+        f"got {len(entry_funcs)}",
+    )
+
     if not func_id1:
         func_id1 = f"{COLLECTION}:func:{file_md5}:00100000"
     if not func_id2:

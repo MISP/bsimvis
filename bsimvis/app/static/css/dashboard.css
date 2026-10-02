@@ -2878,7 +2878,8 @@ a.home-card:hover,
 .nway-grpbox { box-sizing: border-box; width: 230px; display: flex; flex-direction: column; gap: 6px; padding: 6px; border: 1px dashed var(--subtle, #8b949e); border-radius: 8px; }
 .nway-grpbox.deep { width: 170px; }
 .nway-grpbox .nway-node { width: 100%; }
-.nway-grpbox-h { display: flex; }
+.nway-grpbox-h { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.nway-grpbox-h .nway-chip { margin: 0; flex-shrink: 0; white-space: nowrap; }
 .nway-grp { font-size: 0.7rem; font-weight: 600; color: var(--subtle, #8b949e); white-space: nowrap; }
 .nway-graph.hl .nway-node:not(.hl-on) { opacity: 0.12; }
 .nway-graph.hl .nway-node.hl-on { opacity: 1; }
@@ -2918,6 +2919,7 @@ a.home-card:hover,
 .nway-node.out { opacity: 0.25; }
 .nway-node.out:hover, .nway-node.out:focus-visible { opacity: 0.7; }
 .nway-edge.out { opacity: 0.12; }
+.nway-edge.co { stroke-dasharray: 5 4; }
 .nway-node.merged { opacity: 0.7; }
 .nway-node.merged:hover, .nway-node.merged:focus-visible { opacity: 1; }
 .nway-strip i { position: relative; }

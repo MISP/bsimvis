@@ -2578,7 +2578,7 @@ class BinSimNwayNeighbors(Resource):
     @ns_bin_sim.doc(
         params={
             "fids": "Comma-separated function ids of one N-way row (its cells)",
-            "role": "callees (default) or callers",
+            "role": "callees (default), callers, or cocallers (the other callers of the focus's callees)",
             "depth": "How many hops to walk from the row, 1 (default) to 3; later hops are capped (8 per row, 60 nodes) and return in `levels`",
             "scope": "code, library or all (default): only rows in this scope are expanded past the first hop",
             "md5s": "Same file set / scope params as /nway (cluster_uuid, collection, pool, mode, ...)",

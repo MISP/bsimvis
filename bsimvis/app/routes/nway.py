@@ -491,11 +491,76 @@ def _group_neighbors(r, doc, fids, role, row_of):
     return items
 
 
+HUB_CALLERS = 25  # a callee with more callers than this is skipped by `cocallers`
+CALLEE_CAP = 20  # callee rows `cocallers` looks through
+
+
+def _cocallers(r, doc, fids, row_of, scope):
+    """The other callers of the focus's callees: functions that call what it calls.
+
+    Ranked by how many of the focus's callee rows they share. A callee called by
+    more than HUB_CALLERS functions (malloc, csum...) says nothing about similarity
+    and would flood the answer, so it is skipped and reported in `hubs`. Functions
+    outside every row come back too (kind `none`): they may be an unmatched sibling.
+    """
+    fmeta = doc["fmeta"]
+    callees = [
+        i
+        for i in _group_neighbors(r, doc, fids, "callees", row_of)
+        if i["kind"] == "row"
+        and (scope == "all" or (scope == "library") == i["library"])
+    ]
+    focus_keys = {f"row:{row_of[f]}" for f in fids if f in row_of}
+    found, hubs = {}, []
+    for callee in callees[:CALLEE_CAP]:
+        src = [f for f in callee["cells"].values() if isinstance(f, str)]
+        callers = [
+            i
+            for i in _group_neighbors(r, doc, src, "callers", row_of)
+            if i["kind"] in ("row", "none") and i["key"] not in focus_keys
+        ]
+        if len(callers) > HUB_CALLERS:
+            hubs.append(callee["name"])
+            continue
+        for item in callers:
+            if item["key"] in found:
+                found[item["key"]]["parents"].append(callee["key"])
+                found[item["key"]]["sources"].update(item["sources"])
+            else:
+                item["parents"] = [callee["key"]]
+                found[item["key"]] = item
+    items = sorted(
+        found.values(),
+        key=lambda i: (-len(i["parents"]), -i["support"], i["name"] or ""),
+    )
+    truncated = len(items) > MAX_NODES
+    items = items[:MAX_NODES]
+    shown = set(fids)
+    for item in items:
+        item["shared"] = len(item["parents"])
+        shown.update(f for f in item.get("cells", {}).values() if isinstance(f, str))
+        if item["kind"] == "none":
+            shown.add(item["key"].split(":", 1)[1])
+    return {
+        "role": "cocallers",
+        "of": len(fids),
+        "depth": 1,
+        "items": items,
+        "levels": [items],
+        "callees": len(callees),
+        "hubs": hubs,
+        "truncated": truncated,
+        "functions_metadata": {f: fmeta[f] for f in shown if f in fmeta},
+    }
+
+
 def get_nway_neighbors():
     """Call-graph neighbors of one N-way row, regrouped into the doc's rows.
 
     `fids` are the row's functions; each neighbor is mapped to the row that
     holds it, so a callee present in 5 of 6 files reads as one conserved edge.
+    `role=cocallers` is the other direction round a callee: the other functions
+    that call what the focus calls (see `_cocallers`).
     `depth` > 1 keeps walking from each neighbor row (in `scope` only, so library
     code is not expanded): `levels[d]` are the rows first reached at distance d+1,
     each listing its `parents` (keys of the previous level, `focus` for the first).
@@ -503,8 +568,8 @@ def get_nway_neighbors():
     up once, at their shortest distance.
     """
     role = request.args.get("role", "callees")
-    if role not in ("callers", "callees"):
-        abort(400, "role must be callers or callees")
+    if role not in ("callers", "callees", "cocallers"):
+        abort(400, "role must be callers, callees or cocallers")
     fids = [t for t in (request.args.get("fids") or "").split(",") if t]
     if not fids:
         abort(400, "fids is required")
@@ -522,6 +587,9 @@ def get_nway_neighbors():
         return e.args[0]
     fmeta = doc["fmeta"]
     row_of = {f: i for i, row in enumerate(doc["rows"]) for f in _row_fids(row)}
+
+    if role == "cocallers":
+        return _cocallers(r, doc, fids, row_of, scope)
 
     first = _group_neighbors(r, doc, fids, role, row_of)
     for item in first:

@@ -411,7 +411,7 @@
         _cgOpen(row) {
             const cells = {};
             for (const [k, v] of Object.entries(row.files || row.cells)) if (typeof v === 'string') cells[k] = v;
-            this._cg = { stack: [{ name: row.name, cells }], view: (this._cg && this._cg.view) || 'list', nb: null };
+            this._cg = { stack: [{ name: row.name, cells }], view: (this._cg && this._cg.view) || 'list', scope: (this._cg && this._cg.scope) || this.state.scope || 'code', nb: null };
             if (!this._dw) {
                 this._dw = document.createElement('aside');
                 this._dw.className = 'nway-drawer';
@@ -482,30 +482,38 @@
             return `${st.html}<span class="nway-reach ${st.cls}" title="files whose function has this edge">${Number(it.support)}/${Number(it.of)}</span>`;
         }
 
+        // Neighbors of one role under the Code / Library / All scope, keeping their index in the full list.
+        _cgShown(nb, role) {
+            const scope = this._cg.scope;
+            return nb[role].items.map((it, i) => ({ it, i })).filter(({ it }) => scope === 'all' || (scope === 'library') === !!it.library);
+        }
+
         _cgList(nb, focus, files) {
-            const sec = (role, label) => {
-                const items = nb[role].items;
-                const rows = items.map((it, i) => `<div class="nway-cg-item${it.kind === 'row' ? '' : ' static'}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${i}"` : ''}>
+            const box = (role, label, icon) => {
+                const shown = this._cgShown(nb, role);
+                const rows = shown.map(({ it, i }) => `<div class="nway-cg-item${it.kind === 'row' ? '' : ' static'}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${i}"` : ''}>
                     <span class="nway-cg-l">${this._cgName(it)}</span><span class="nway-cg-r">${this._cgReach(it, focus, files)}</span></div>`).join('');
-                return `<div class="nway-cg-h">${label} <span class="dim">(${items.length})</span></div>${rows || '<div class="dim">none</div>'}`;
+                return `<section class="nway-cg-box"><header><i class="fa-solid ${icon}"></i> ${label} <span class="dim">(${shown.length})</span></header>${rows || '<div class="dim nway-cg-none">none in this scope</div>'}</section>`;
             };
-            return sec('callers', 'Callers') + sec('callees', 'Callees');
+            return box('callers', 'Callers', 'fa-right-to-bracket') + box('callees', 'Callees', 'fa-right-from-bracket');
         }
 
         _cgGraph(nb, focus, files) {
-            const W = 600, NW = 186, NH = 58, GAP = 8, CAP = 12;
-            const lists = { callers: nb.callers.items.slice(0, CAP), callees: nb.callees.items.slice(0, CAP) };
-            const H = Math.max(lists.callers.length, lists.callees.length, 1) * (NH + GAP) + GAP;
-            const cx = (W - NW) / 2, cy = (H - NH) / 2;
+            const W = 800, BW = 230, PAD = 0, NW = BW, NH = 104, GAP = 12, CAP = 12, T = 0, CW = 230;
+            const lists = { callers: this._cgShown(nb, 'callers'), callees: this._cgShown(nb, 'callees') };
+            const shown = { callers: lists.callers.slice(0, CAP), callees: lists.callees.slice(0, CAP) };
+            const H = T + Math.max(shown.callers.length, shown.callees.length, 1) * (NH + GAP) + GAP;
+            const cx = (W - CW) / 2, cy = (H - NH) / 2;
             const nodes = [], edges = [];
-            for (const [role, x] of [['callers', 0], ['callees', W - NW]]) {
-                const list = lists[role];
-                const y0 = (H - (list.length * (NH + GAP) - GAP)) / 2;
-                list.forEach((it, i) => {
-                    const y = y0 + i * (NH + GAP);
+            for (const [role, bx] of [['callers', 0], ['callees', W - BW]]) {
+                const list = shown[role];
+                const x = bx + PAD;
+                const y0 = T + (H - T - (list.length * (NH + GAP) - GAP)) / 2;
+                list.forEach(({ it, i }, k) => {
+                    const y = y0 + k * (NH + GAP);
                     const on = files.map(c => { const f = focus.cells[c.id]; return !!(f && it.sources[f]); });
                     const st = this._cgStrip(on, files);
-                    const [x1, x2] = role === 'callers' ? [x + NW, cx] : [cx + NW, x];
+                    const [x1, x2] = role === 'callers' ? [x + NW, cx] : [cx + CW, x];
                     const [y1, y2] = role === 'callers' ? [y + NH / 2, cy + NH / 2] : [cy + NH / 2, y + NH / 2];
                     const mx = (x1 + x2) / 2;
                     edges.push(`<path class="nway-edge ${st.cls}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${(1 + st.n * 0.8).toFixed(1)}"></path>`);
@@ -513,10 +521,10 @@
                         <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div></div>`);
                 });
             }
-            const more = ['callers', 'callees'].map(r => nb[r].items.length > CAP ? `${nb[r].items.length - CAP} more ${r} (see the list view)` : '').filter(Boolean).join('; ');
+            const more = ['callers', 'callees'].map(r => lists[r].length > CAP ? `${lists[r].length - CAP} more ${r} (see the list view)` : '').filter(Boolean).join('; ');
             return `<div class="dim" style="margin-bottom:6px">Edge width is the number of files that share the edge. Click a node to recenter.</div>
                 <div class="nway-graph" style="height:${H}px; width:${W}px"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${edges.join('')}</svg>${nodes.join('')}
-                <div class="nway-node center" style="left:${cx}px; top:${cy}px; width:${NW}px; height:${NH}px"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div></div></div>
+                <div class="nway-node center" style="left:${cx}px; top:${cy}px; width:${CW}px; height:${NH}px"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div></div></div>
                 ${more ? `<div class="dim" style="margin-top:6px">${escapeHtml(more)}</div>` : ''}`;
         }
 
@@ -524,6 +532,7 @@
             if (!this._dw || !this._cg) return;
             const st = this._cg, focus = this._cgFocus(), files = this._cgFiles();
             const crumbs = st.stack.map((f, i) => `<button class="nway-crumb" data-cg-crumb="${i}">${escapeHtml(f.name)}</button>`).join('<span class="dim">/</span>');
+            const scopeToggle = [['code', 'Code', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['library', 'Library', 'fa-solid fa-cubes', 'var(--warning, #d97706)'], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']].map(([v, text, icon, color]) => `<span class="bsim-tag-pill" data-cg-scope="${v}" style="${window.binSimPillStyle(st.scope === v, color)} padding:4px 10px; font-size:0.78rem;"><i class="${icon}"></i>${text}</span>`).join('');
             const toggle = ['list', 'graph'].map(v => `<button class="view-btn${st.view === v ? ' active' : ''}" data-cg-view="${v}">${v === 'list' ? 'List' : 'Graph'}</button>`).join('');
             const on = files.map(c => !!focus.cells[c.id]);
             const fs = this._cgStrip(on, files);
@@ -531,16 +540,17 @@
             if (err) body = `<div style="color:#f92672;">${escapeHtml(err)}</div>`;
             else if (!st.nb) body = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Reading call graph...</div>';
             else body = st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files);
-            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="view-toggle" style="margin:0">${toggle}</div><button class="nway-chip" data-cg-close title="close (Esc)">&times;</button></div>
+            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div><div class="view-toggle" style="margin:0">${toggle}</div><button class="nway-chip" data-cg-close title="close (Esc)">&times;</button></div>
                 <div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>
                 <div class="nway-cg-body">${body}</div>`;
         }
 
         _onDrawerClick(e) {
-            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-crumb],[data-cg-close]');
+            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-crumb],[data-cg-close]');
             if (!t || !this._cg) return;
             if (t.dataset.cgClose !== undefined) return this._cgClose();
             if (t.dataset.cgView) { this._cg.view = t.dataset.cgView; return this._cgDraw(); }
+            if (t.dataset.cgScope) { this._cg.scope = t.dataset.cgScope; return this._cgDraw(); }
             if (t.dataset.cgCrumb) {
                 this._cg.stack = this._cg.stack.slice(0, Number(t.dataset.cgCrumb) + 1);
                 return this._cgShow();

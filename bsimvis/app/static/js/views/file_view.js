@@ -223,6 +223,7 @@ window.FileView = {
                     </div>
                     <div class="card" style="flex:1; min-width:0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
                         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                            <button class="top-action-btn" id="fv-entry-btn" style="display:none; color:#a6e22e; border-color:#a6e22e;"><i class="fa-solid fa-location-dot"></i> Entry</button>
                             <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
                                 <span class="bsim-ctl-label">Group by:</span>
                                 <button class="view-btn active" id="fv-group-btn-auto" onclick="FileView.setGroupBy('auto')" title="Group by tag when more than one tag is in scope">Auto</button>
@@ -422,11 +423,15 @@ window.FileView = {
             }
             const entryUrl = file.entry_point
                 ? `/collections/${encodeURIComponent(collection)}/files/${file.file_md5}/functions/${file.entry_point}` : '';
-            document.getElementById('file-actions-container').innerHTML = (entryUrl ? `
-                <button class="top-action-btn" onclick="Nav.openPath(${escapeAttr(jsString(entryUrl))}, event)"
-                    style="color:#a6e22e; border-color:#a6e22e;"
-                    title="Open the program entry function at ${escapeAttr(file.entry_point)}">
-                    <i class="fa-solid fa-location-dot"></i> Entry</button>` : '') + `
+            const entryBtn = document.getElementById('fv-entry-btn');
+            if (entryBtn) {
+                entryBtn.style.display = entryUrl ? '' : 'none';
+                entryBtn.title = entryUrl ? `Open the program entry function at ${file.entry_point}` : '';
+                entryBtn.onclick = (e) => Nav.openPath(entryUrl, e);
+            }
+            const entryLink = entryUrl
+                ? { html: `<a href="${escapeAttr(entryUrl)}" onclick="Nav.openPath(${escapeAttr(jsString(entryUrl))}, event)" style="color:#a6e22e;">${escapeHtml(file.entry_point)}</a>` } : '';
+            document.getElementById('file-actions-container').innerHTML = `
                 <button class="top-action-btn" onclick="openAnalyzeModal({ scope: 'file', collection: ${escapeAttr(jsString(collection))}, fileMd5: ${escapeAttr(jsString(file.file_md5))} })"
                     style="color:#ae81ff; border-color:#ae81ff;"
                     title="Analyze every candidate function of this file with AI">
@@ -449,6 +454,7 @@ window.FileView = {
             // Render Metadata Table (Reusing comparison table layout and styles)
             const fmt = (v) => {
                 if (v === undefined || v === null || v === '') return '<span style="color:var(--subtle); opacity:0.5;">—</span>';
+                if (v && v.html) return v.html;
                 if (Array.isArray(v)) return v.length ? escapeHtml(v.join(', ')) : '<span style="color:var(--subtle); opacity:0.5;">—</span>';
                 return escapeHtml(String(v));
             };
@@ -465,6 +471,7 @@ window.FileView = {
                 'Batch UUID': 'fa-solid fa-box',
                 'Language': 'fa-solid fa-microchip',
                 'File Type': 'fa-solid fa-file-code',
+                'Entry Point': 'fa-solid fa-location-dot',
                 'Functions': 'fa-solid fa-list-ol',
                 'BSim Features': 'fa-solid fa-dna',
                 'First Seen': 'fa-solid fa-clock',
@@ -489,6 +496,7 @@ window.FileView = {
                 ['Classification', [
                     ['Language', file.language_id || file.language],
                     ['File Type', file.filetype],
+                    ['Entry Point', entryLink],
                 ]],
                 ['Statistics', [
                     ['Functions', file.function_count],

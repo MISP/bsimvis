@@ -136,6 +136,38 @@ def _pairwise_cohesion(
     return total, count
 
 
+MEDOID_MAX_MEMBERS = 120
+
+
+def function_medoid(r, sim_score_key, sid_prefix, clean_members):
+    """(member, centrality): the member with the highest summed stored score
+    to the others, divided by n-1 -- a pair outside BSim's top-K counts as 0,
+    which is what makes a well-connected member beat one lucky 1.0 pair.
+
+    ponytail: computed on read, sampled to MEDOID_MAX_MEMBERS (~14k ZSCOREs);
+    persist it at build time like bin clusters if clicking around gets slow.
+    """
+    from bsimvis.app.services.bin_cluster_service import pick_medoid
+
+    members = sorted(set(clean_members))
+    if len(members) > MEDOID_MAX_MEMBERS:
+        rnd = random.Random(f"{members[0]}:{len(members)}")
+        members = sorted(rnd.sample(members, MEDOID_MAX_MEMBERS))
+    if len(members) < 2:
+        return (members[0], 1.0) if members else (None, None)
+
+    memo = {}
+    _pairwise_cohesion(r, sim_score_key, sid_prefix, members, memo)
+    sums = defaultdict(float)
+    for (a, b), score in memo.items():
+        if score is not None:
+            sums[a] += score
+            sums[b] += score
+    centrality = {m: sums[m] / (len(members) - 1) for m in members}
+    best = pick_medoid(centrality)
+    return best, centrality[best]
+
+
 def _score_cohesion(adj_sim, member_indices, cohesion_cut, scratch, rng):
     sources = None
     if len(member_indices) > COHESION_SAMPLE_SIZE:
@@ -3400,6 +3432,11 @@ def _demo_pairwise_cohesion():
         FakeZ(scores), "zk", prefix, members, {}, max_pairs=cap
     )
     assert (pairs6, round(total6, 9)) == (pairs, round(total, 9))
+
+    # b touches every other member (0.9 + 0.7 + 0.6); a's missing a::d counts as 0.
+    medoid, cen = function_medoid(FakeZ(scores), "zk", prefix, members)
+    assert medoid == "b" and abs(cen - 2.2 / 3) < 1e-9, (medoid, cen)
+    assert function_medoid(FakeZ(scores), "zk", prefix, ["a"]) == ("a", 1.0)
 
     print("_pairwise_cohesion demo OK")
 

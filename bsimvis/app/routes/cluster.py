@@ -446,6 +446,7 @@ def list_clusters():
         show_parents = request.args.get("show_parents", "false").lower() == "true"
         show_children = request.args.get("show_children", "false").lower() == "true"
         show_members = request.args.get("show_members", "false").lower() == "true"
+        with_medoid = request.args.get("with_medoid", "false").lower() == "true"
     except ValueError:
         return {"error": "Invalid numeric parameter"}, 400
 
@@ -873,6 +874,33 @@ def list_clusters():
                 }
                 for mid in mids
             ]
+
+    # Only for an exact-uuid lookup: the medoid is computed on read.
+    if with_medoid and exact_cid and page:
+        from bsimvis.app.services.cluster_service import function_medoid
+
+        base = f"{collection}:cluster:{algo}:{exact_cid}"
+        raw = r.smembers(f"{base}:members") or r.smembers(f"{base}:direct_members")
+        fids = [x.decode() if isinstance(x, bytes) else x for x in raw or ()]
+        if is_pool:
+            sid_prefix = f"{collection}:sim:"
+            score_key = f"{collection}:sim:score"
+            func_prefix = ""
+        else:
+            sid_prefix = f"{collection}:sim:{algo}:"
+            score_key = f"{collection}:sim:score:{algo}"
+            func_prefix = f"{collection}:func:"
+        clean = [
+            f[len(func_prefix) :] if func_prefix and f.startswith(func_prefix) else f
+            for f in fids
+        ]
+        medoid, centrality = function_medoid(r, score_key, sid_prefix, clean)
+        for cluster_res in page:
+            if str(cluster_res["cluster_id"]) == str(exact_cid):
+                cluster_res["medoid"] = (
+                    f"{func_prefix}{medoid}" if medoid is not None else None
+                )
+                cluster_res["medoid_centrality"] = centrality
 
     logging.info(
         f"CLUSTERS | total={total} | TOTAL: {time.perf_counter()-t_start:.3f}s"

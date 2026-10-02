@@ -348,6 +348,7 @@ window.ClusterDetailView = {
                         <button class="bsim-tab active" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
                         <button class="bsim-tab" id="cluster-tab-btn-metadata" onclick="ClusterDetailView.switchTab('metadata')">Metadata</button>
                         ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-functions" onclick="ClusterDetailView.switchTab('functions')">Functions</button>` : ''}
+                        ${this.isBinary ? '' : `<button class="bsim-tab" id="cluster-tab-btn-medoid" onclick="ClusterDetailView.switchTab('medoid')" title="Most central function of this cluster">★ Medoid</button>`}
                     </div>
 
                     <div id="cluster-tab-members" style="display:flex; flex-direction:column; flex:1; min-height:0;">
@@ -382,6 +383,7 @@ window.ClusterDetailView = {
 
                     <div id="cluster-tab-metadata" style="display:none; flex:1; min-height:0; overflow:auto;"></div>
                     <div id="cluster-tab-functions" style="display:none; flex:1; min-height:0; overflow:auto;"></div>
+                    <div id="cluster-tab-medoid" style="display:none; flex:1; min-height:0; flex-direction:column;"></div>
                 </div>
             </div>
         `;
@@ -418,6 +420,7 @@ window.ClusterDetailView = {
 
             if (window.TableSelection) new window.TableSelection('cluster-members-table');
             if (urlParams.get('tab') === 'functions' && this.hasFunctionsTab()) this.switchTab('functions');
+            if (urlParams.get('tab') === 'medoid' && !this.isBinary) this.switchTab('medoid');
         } catch (e) {
             console.error(e);
             container.innerHTML = `<div style="padding:30px; color:#f92672;">
@@ -610,6 +613,7 @@ window.ClusterDetailView = {
         this.renderTable();
         if (this.tab === 'metadata') this.renderMetadataTab();
         if (this.tab === 'functions') this.renderFunctionsTab();
+        if (this.tab === 'medoid') this.renderMedoidTab();
     },
 
     async fetchMembers(uuid) {
@@ -641,19 +645,51 @@ window.ClusterDetailView = {
 
     switchTab(tab) {
         this.tab = tab;
-        ['members', 'metadata', 'functions'].forEach(t => {
+        ['members', 'metadata', 'functions', 'medoid'].forEach(t => {
             const btn = document.getElementById(`cluster-tab-btn-${t}`);
             if (!btn) return;
             btn.classList.toggle('active', t === tab);
             document.getElementById(`cluster-tab-${t}`).style.display =
-                t === tab ? (t === 'members' ? 'flex' : 'block') : 'none';
+                t === tab ? (t === 'members' || t === 'medoid' ? 'flex' : 'block') : 'none';
         });
         const url = new URL(window.location.href);
-        if (tab === 'functions') url.searchParams.set('tab', 'functions');
+        if (tab === 'functions' || tab === 'medoid') url.searchParams.set('tab', tab);
         else url.searchParams.delete('tab');
         window.history.replaceState({ path: url.pathname + url.search }, '', url.pathname + url.search);
         if (tab === 'metadata') this.renderMetadataTab();
         if (tab === 'functions') this.renderFunctionsTab();
+        if (tab === 'medoid') this.renderMedoidTab();
+    },
+
+    /** Function clusters: the medoid's code view, embedded as-is (in-iframe mode hides the app chrome). */
+    async renderMedoidTab() {
+        const el = document.getElementById('cluster-tab-medoid');
+        const uuid = this.selectedClusterUuid;
+        if (!el || !uuid) return;
+        let c = this.clusterMapByUuid[uuid];
+        if (c && c.medoid === undefined) {
+            el.innerHTML = `<div class="dim" style="padding:20px;"><i class="fa-solid fa-spinner fa-spin"></i> Finding the most central function…</div>`;
+            try {
+                this.ingest(await this.fetchClusters({ cluster_uuid: uuid, with_medoid: 'true', limit: '1' }));
+            } catch (e) {
+                console.error('Failed to load medoid', e);
+            }
+            if (this.tab !== 'medoid' || this.selectedClusterUuid !== uuid) return;
+            c = this.clusterMapByUuid[uuid];
+        }
+        if (!c || !c.medoid) {
+            el.innerHTML = `<div class="dim" style="padding:20px;">No medoid for this cluster.</div>`;
+            return;
+        }
+        const f = window.parseFuncId(c.medoid);
+        const url = Nav.buildUIUrl(f.collection, ['function', f.md5, f.address]);
+        const cen = c.medoid_centrality == null ? '---' : Number(c.medoid_centrality).toFixed(3);
+        el.innerHTML = `
+            <div class="dim" style="display:flex; align-items:center; gap:10px; font-size:0.78rem; margin-bottom:8px; flex-shrink:0;">
+                <span title="Mean stored similarity to the other members (a pair BSim never kept counts as 0)">★ Most central function · centrality ${escapeHtml(cen)}</span>
+                <button class="btn-code-action" style="margin-left:auto;" onclick="Nav.openPath(${escapeAttr(jsString(url))}, event, { title: 'Code', type: 'code' })"><i class="fa-solid fa-up-right-from-square"></i> Open in code view</button>
+            </div>
+            <iframe src="${escapeAttr(url)}" style="flex:1; min-height:400px; width:100%; border:1px solid var(--border); border-radius:8px; background:var(--card-bg);"></iframe>`;
     },
 
     /**
@@ -881,19 +917,39 @@ window.ClusterDetailView = {
         this.renderTable();
     },
 
-    /** Main file (medoid) shortcut; the hint shows for clusters built before centrality. */
-    renderMedoidCtl() {
+    /** Main file (medoid): a link plus its essentials; the hint shows for clusters built before centrality. */
+    async renderMedoidCtl() {
         const el = document.getElementById('cluster-medoid-ctl');
         if (!el || !this.isBinary) return;
-        const medoid = (this.clusterMapByUuid[this.selectedClusterUuid] || {}).medoid;
+        const uuid = this.selectedClusterUuid;
+        const medoid = (this.clusterMapByUuid[uuid] || {}).medoid;
         if (!medoid) {
             el.innerHTML = `<span class="dim">rebuild clusters to compute centrality</span>`;
             return;
         }
         const parts = String(medoid).split(':file:');
-        el.innerHTML = `<button class="view-btn" id="cluster-medoid-btn" title="Most central file of this cluster">★ Main file</button>`;
-        document.getElementById('cluster-medoid-btn').onclick = e =>
-            openFileDetails(parts.length > 1 ? parts[0] : this.collection || '', parts[parts.length - 1], parts[parts.length - 1], e);
+        const col = parts.length > 1 ? parts[0] : this.collection || '';
+        const md5 = parts[parts.length - 1];
+        this._medoidFiles = this._medoidFiles || {};
+        if (!this._medoidFiles[medoid]) {
+            try {
+                const qs = new URLSearchParams({ collection: col });
+                if (this.params && this.params.pool) qs.set('pool', this.params.pool);
+                const res = await fetch(`/api/file/details/${encodeURIComponent(md5)}?${qs.toString()}`);
+                this._medoidFiles[medoid] = (res.ok && (await res.json()).file) || {};
+            } catch (e) {
+                this._medoidFiles[medoid] = {};
+            }
+            if (this.selectedClusterUuid !== uuid) return;
+        }
+        const f = this._medoidFiles[medoid];
+        const bits = [f.language_id, f.executable_format, f.function_count != null ? `${Number(f.function_count).toLocaleString()} functions` : null]
+            .filter(Boolean).map(b => `<span>${escapeHtml(String(b))}</span>`).join(' · ');
+        el.innerHTML = `<span title="Most central file of this cluster" style="display:inline-flex; align-items:center; gap:8px;">
+            <span style="color:var(--accent);">★ Main file</span>
+            ${EntityRenderer.renderFileName(f.file_name || md5, md5, col)}
+            ${EntityRenderer.renderMd5(md5, { collection: col })}
+            <span class="dim">${bits}</span></span>`;
     },
 
     async renderFlatMembers(tbody) {

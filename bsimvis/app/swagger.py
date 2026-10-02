@@ -2163,6 +2163,7 @@ class ClusterList(Resource):
             "show_parents": "Also return the matched clusters' ancestors, up to the root (true/false)",
             "show_children": "Also return the matched clusters' whole descendant subtree (true/false)",
             "parent": "Return only the direct children of this cluster ID",
+            "with_medoid": "With cluster_uuid: add the most central member function (medoid, medoid_centrality) (true/false)",
         }
     )
     def get(self):

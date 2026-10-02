@@ -228,7 +228,7 @@ window.FileView = {
                                 <button class="view-btn" id="fv-group-btn-none" onclick="FileView.setGroupBy('none')" title="One flat list">None</button>
                             </div>
                         </div>
-                        <!-- ponytail: viewport-relative instead of a flex chain; 260px is the title strip + tabbar + card padding above it -->
+                        <!-- fitFunctionsScroll() sets max-height to the room left under the controls, so the column names and filters stay put while the list scrolls -->
                         <div id="file-func-scroll" style="overflow-x: auto; max-height: calc(100vh - 260px); min-height: 300px; overflow-y: auto;">
                             <table class="file-func-table" id="file-func-table">
                                 <thead>
@@ -883,6 +883,13 @@ window.FileView = {
         const panel = document.getElementById(`file-panel-${tabId}`);
         if (panel) panel.style.display = 'block';
 
+        if (tabId === 'functions') {
+            this.fitFunctionsScroll();
+            if (!this._fitBound) {
+                this._fitBound = true;
+                window.addEventListener('resize', () => this.fitFunctionsScroll());
+            }
+        }
         if (tabId === 'functions' && !this.functionsLoaded) {
             this.loadFunctionsTable();
         }
@@ -1017,6 +1024,7 @@ window.FileView = {
             this.funcClusters = Object.assign(this.funcClusters || {}, data.clusters || {});
             document.getElementById('functions-count').innerText = this.funcPage.total;
             this.renderFunctionsTable();
+            this.fitFunctionsScroll();
             this.functionsLoaded = true;
         } catch (e) {
             console.error(e);
@@ -1031,6 +1039,19 @@ window.FileView = {
     setFunctionsStatus(html) {
         const el = document.getElementById('file-func-status');
         if (el) el.innerHTML = html;
+    },
+
+    /** The list takes the viewport height left under the controls (measured with
+     * the page scrolled to its top), so only the rows scroll. */
+    fitFunctionsScroll() {
+        const el = document.getElementById('file-func-scroll');
+        if (!el || el.offsetParent === null) return;
+        const page = document.getElementById('file-view-content');
+        const top = el.getBoundingClientRect().top + (page ? page.scrollTop : 0);
+        el.style.maxHeight = `${Math.max(300, window.innerHeight - top - 40)}px`;
+        // whatever sits under the list (status line, card padding) must not push the page into scrolling
+        const over = page ? page.scrollHeight - page.clientHeight : 0;
+        if (over > 0) el.style.maxHeight = `${Math.max(300, el.clientHeight - over)}px`;
     },
 
     // Loads the next page whenever the table is scrolled near the bottom.

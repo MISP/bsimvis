@@ -245,6 +245,10 @@ thead {
     background: var(--bg);
 }
 
+/* Tables with a filter row keep their column names and filters in view. */
+thead:has(> tr.filter-row) { position: sticky; top: 0; z-index: 6; }
+thead:has(> tr.filter-row) > tr:not(.filter-row) > th { background: var(--bg); }
+
 tbody {
     display: table-row-group;
 }

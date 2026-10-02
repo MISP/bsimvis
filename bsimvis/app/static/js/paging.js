@@ -17,7 +17,16 @@ window.Paging = {
         const to = scroll ? shown : Math.min(offset + size, total);
         const badge = `<span class="table-footer-badge">${from}&ndash;${to} of ${total}</span>`;
         if (scroll) return badge;
-        return `<button class="top-action-btn" data-page="-1"${offset <= 0 ? ' disabled' : ''}>Prev</button>${badge}<button class="top-action-btn" data-page="1"${offset + size >= total ? ' disabled' : ''}>Next</button>`;
+        const [prev, next] = this.buttons({ offset, total, size });
+        return prev + badge + next;
+    },
+
+    // [Prev, Next] for views that show the count badge elsewhere.
+    buttons({ offset, total, size }) {
+        return [
+            `<button class="top-action-btn" data-page="-1"${offset <= 0 ? ' disabled' : ''}>Prev</button>`,
+            `<button class="top-action-btn" data-page="1"${offset + size >= total ? ' disabled' : ''}>Next</button>`,
+        ];
     },
 
     // Calls `onNear` whenever the sentinel is (or comes) within reach. Observing

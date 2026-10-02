@@ -2805,15 +2805,21 @@ let _pagingObserver = null;
 function renderPagination(path, total, count, size) {
     const container = document.getElementById('pagination-container');
     if (_pagingObserver) _pagingObserver.disconnect();
+    // Page mode: Prev/Next live in the pinned table footer, next to the "N-M / total" badge.
+    const pager = document.getElementById('view-pager');
+    if (pager) pager.innerHTML = '';
     if (window.Paging.mode() === 'page') {
-        container.innerHTML = total > size ? `<div class="table-footer-left" style="justify-content:center; padding:8px;">${window.Paging.footer({ offset: currentOffset, total, size, shown: count })}</div>` : '';
+        container.innerHTML = '';
         pageSize = size;
-        if (!container._pageBound) {
-            container._pageBound = true;
-            container.addEventListener('click', e => {
-                const b = e.target.closest('[data-page]');
-                if (b) gotoPage(Number(b.dataset.page));
-            });
+        if (pager && total > size) {
+            pager.innerHTML = window.Paging.buttons({ offset: currentOffset, total, size }).join('');
+            if (!pager._pageBound) {
+                pager._pageBound = true;
+                pager.addEventListener('click', e => {
+                    const b = e.target.closest('[data-page]');
+                    if (b) gotoPage(Number(b.dataset.page));
+                });
+            }
         }
         return;
     }

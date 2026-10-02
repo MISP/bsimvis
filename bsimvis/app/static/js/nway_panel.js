@@ -426,7 +426,7 @@
         _cgStart(name, cells, init, host) {
             const prev = this._cg || {};
             this._cg = {
-                stack: [{ name, cells }],
+                stack: [{ name, cells, pieces: init.pieces }],
                 view: init.view || prev.view || 'graph',
                 scope: init.scope || prev.scope || this.state.scope || 'code',
                 outside: init.outside || prev.outside || 'merge',
@@ -474,6 +474,7 @@
             const st = this._cg, f = this._cgFocus();
             qs.set('cg_name', f.name);
             qs.set('cg_cells', JSON.stringify(f.cells));
+            if (f.pieces) qs.set('cg_pieces', JSON.stringify(f.pieces));
             for (const k of ['view', 'scope', 'outside', 'depth']) qs.set(`cg_${k}`, st[k]);
             if (st.co) qs.set('cg_co', '1');
             return `/diff/nway/graph?${qs.toString()}`;
@@ -698,6 +699,16 @@
             return out;
         }
 
+        // A merged focus lists the cards it was made of, each with the files it covers.
+        _cgPieces(focus, files) {
+            if (!focus.pieces || focus.pieces.length < 2) return '';
+            const rows = focus.pieces.map(p => {
+                const st = this._cgStrip(files.map(c => p.files.includes(c.id)), files);
+                return `<div class="nway-piece"><span class="nway-piece-name">${escapeHtml(String(p.name || '?').replace(/\(.*$/, ''))}</span>${st.html}<span class="dim">${st.n}/${files.length}</span></div>`;
+            }).join('');
+            return `<div class="nway-pieces" title="Merged focus: these cards cover different files and were joined into one function"><div class="dim">&asymp; merged from ${focus.pieces.length} cards</div>${rows}</div>`;
+        }
+
         _cgGraph(nb, focus, files) {
             const CAP = 12;
             const st = this._cg, depth = st.depth;
@@ -721,7 +732,8 @@
                             const chip = `<span class="nway-grp" title="Suggested merge: ${g.m.length} cards with complementary files and the same parent.">&asymp; ${g.label} &middot; ${g.cov}/${files.length}</span>`;
                             const cells = {};
                             g.m.forEach(m => Object.entries(m.x.it.cells).forEach(([k, v]) => { if (typeof v === 'string') cells[k] = v; }));
-                            this._cgGrp[g.id] = { name: g.m[0].x.it.name, cells };
+                            const pieces = g.m.map(m => ({ name: m.x.it.name, files: Object.keys(m.x.it.cells).filter(k => typeof m.x.it.cells[k] === 'string') }));
+                            this._cgGrp[g.id] = { name: g.m[0].x.it.name, cells, pieces };
                             const focusBtn = `<button class="nway-chip" data-cg-focusgrp="${escapeAttr(g.id)}" title="Make this merged group the focus: its functions in every file">&#9678; focus</button>`;
                             return `<div class="nway-grpbox${lv ? ' deep' : ''}"><div class="nway-grpbox-h">${chip}${focusBtn}</div>${g.m.map(r => node(role, lv, r.x)).join('')}</div>`;
                         } });
@@ -801,7 +813,7 @@
             const grid = depth > 1 || nb.cocallers ? ` style="grid-template-columns:${cols.join(' ')}; column-gap:56px; width:max-content"` : '';
             const left = [...columns.callers].reverse().map(col).join(''), right = columns.callees.map(col).join('');
             return `<div class="nway-graph" data-mid="${depth}"${nb.cocallers ? ' data-co="1"' : ''}${grid}><svg></svg>${left}
-                <div class="nway-gcol"><div class="nway-node center"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div></div></div>
+                <div class="nway-gcol"><div class="nway-node center${focus.pieces ? ' merged-focus' : ''}"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div>${this._cgPieces(focus, files)}</div></div>
                 ${right}${nb.cocallers ? col(coHtml) : ''}</div>
                 ${notes ? `<div class="dim" style="margin-top:6px">${escapeHtml(notes)}</div>` : ''}`;
         }
@@ -936,7 +948,7 @@
             if (t.dataset.cgFocusgrp) {
                 const g = this._cgGrp && this._cgGrp[t.dataset.cgFocusgrp];
                 if (!g) return;
-                this._cg.stack.push({ name: g.name, cells: g.cells });
+                this._cg.stack.push({ name: g.name, cells: g.cells, pieces: g.pieces });
                 this._cg.more = {};
                 return this._cgShow();
             }

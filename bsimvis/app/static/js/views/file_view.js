@@ -26,6 +26,8 @@ window.FileView = {
         this.clusterFilters = { uuid: '', q: '', minSize: '', minStability: '', minCohesion: '' };
         this.file = null;
         this.funcPage = { total: null, loading: false, reqId: 0 };
+        // Page mode only: a shared link's `offset` opens that page; scroll mode ignores it.
+        this.funcOffset = window.Paging.mode() === 'page' ? Math.max(0, Number(new URLSearchParams(location.search).get('offset')) || 0) : 0;
         this.functionsLoaded = false;
         this.neighborsLoaded = false;
         this.sortState = { col: 'function_name', dir: 1 };
@@ -992,19 +994,23 @@ window.FileView = {
         return p.toString();
     },
 
-    async loadFunctionsTable({ reset = false } = {}) {
+    // `page` (page mode): +1 / -1 steps to the next / previous page.
+    async loadFunctionsTable({ reset = false, page = 0 } = {}) {
+        const paged = window.Paging.mode() === 'page';
         if (this.funcPage.loading && !reset) return;
         // No `functionsLoaded` guard here: this is also the "load the next page"
         // entry point for the infinite scroll. Having everything already is what
         // the total check below covers; callers that only want the first page
         // check functionsLoaded themselves.
-        if (!reset && this.funcPage.total !== null && this.functions.length >= this.funcPage.total) return;
+        if (!paged && !reset && this.funcPage.total !== null && this.functions.length >= this.funcPage.total) return;
 
         const tbody = document.getElementById('file-functions-tbody');
         if (reset) {
             this.functions = [];
             this.funcPage.total = null;
+            this.funcOffset = 0;
         }
+        if (page) this.funcOffset = Math.max(0, this.funcOffset + page * this.FUNC_PAGE_SIZE);
         this.funcPage.loading = true;
         this.setFunctionsStatus('<i class="fa-solid fa-spinner fa-spin"></i> Loading...');
 
@@ -1012,14 +1018,15 @@ window.FileView = {
         const reqId = ++this.funcPage.reqId;
 
         try {
-            const res = await fetch(`/api/function/search?${this.buildFunctionsQuery(this.functions.length)}`);
+            const res = await fetch(`/api/function/search?${this.buildFunctionsQuery(paged ? this.funcOffset : this.functions.length)}`);
             if (!res.ok) throw new Error("Functions load failed");
             const data = await res.json();
             if (reqId !== this.funcPage.reqId) return;
             if (data.error) throw new Error(data.error);
 
-            this.functions = this.functions.concat(data.functions || []);
+            this.functions = paged ? (data.functions || []) : this.functions.concat(data.functions || []);
             this.funcPage.total = data.total || 0;
+            this.syncFunctionsUrl(paged);
             this.functionEmptyMessage = data.message || '';
             this.funcClusters = Object.assign(this.funcClusters || {}, data.clusters || {});
             document.getElementById('functions-count').innerText = this.funcPage.total;
@@ -1034,6 +1041,14 @@ window.FileView = {
         } finally {
             if (reqId === this.funcPage.reqId) this.funcPage.loading = false;
         }
+    },
+
+    // Only page mode puts the offset in the URL, so a page can be shared.
+    syncFunctionsUrl(paged) {
+        const u = new URL(location.href);
+        if (paged && this.funcOffset) u.searchParams.set('offset', this.funcOffset);
+        else u.searchParams.delete('offset');
+        history.replaceState(history.state, '', u.pathname + u.search + u.hash);
     },
 
     setFunctionsStatus(html) {
@@ -1060,7 +1075,7 @@ window.FileView = {
         if (!scroller || scroller._funcScrollBound) return;
         scroller._funcScrollBound = true;
         scroller.addEventListener('scroll', () => {
-            if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 200) {
+            if (window.Paging.mode() === 'scroll' && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 200) {
                 this.loadFunctionsTable();
             }
         });
@@ -1407,7 +1422,22 @@ window.FileView = {
 
         const shown = this.functions.length;
         const total = this.funcPage.total ?? shown;
-        this.setFunctionsStatus(shown < total ? `Showing ${shown} of ${total} — scroll for more` : `${total} function${total === 1 ? '' : 's'}`);
+        if (window.Paging.mode() === 'page') {
+            this.setFunctionsStatus(window.Paging.footer({ offset: this.funcOffset, total, size: this.FUNC_PAGE_SIZE, shown }));
+            const st = document.getElementById('file-func-status');
+            if (!st._pageBound) {
+                st._pageBound = true;
+                st.addEventListener('click', e => {
+                    const b = e.target.closest('[data-page]');
+                    if (!b) return;
+                    this.loadFunctionsTable({ page: Number(b.dataset.page) });
+                    const sc = document.getElementById('file-func-scroll');
+                    if (sc) sc.scrollTop = 0;
+                });
+            }
+        } else {
+            this.setFunctionsStatus(shown < total ? `Showing ${shown} of ${total} — scroll for more` : `${total} function${total === 1 ? '' : 's'}`);
+        }
         this.bindFunctionsScroll();
         this.renderTagTree();
 

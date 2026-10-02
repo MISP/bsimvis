@@ -489,6 +489,63 @@ def resolve_ids():
             vprint(f"     cluster_uuid = {cluster_uuid}")
 
 
+def test_entrypoint_backfill():
+    """Strip the entry tag as a pre-feature file would have it, backfill, expect it back."""
+    from bsimvis.app.services.redis_client import get_redis
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" Entry-point backfill", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    r = get_redis()
+    file_key = f"{COLLECTION}:file:{file_md5}:meta"
+    meta = json.loads(r.get(file_key))
+    addr = meta.get("entry_point")
+    check("upload recorded entry_point on the file", bool(addr), str(addr))
+    if not addr:
+        return
+
+    func_key = f"{COLLECTION}:func:{file_md5}:{addr}:meta"
+    fmeta = json.loads(r.get(func_key))
+    fmeta["tags"] = [t for t in fmeta["tags"] if t != "entry:process"]
+    r.set(func_key, json.dumps(fmeta))
+    r.srem(
+        f"{COLLECTION}:idx:func:tags:entry:process",
+        f"{COLLECTION}:func:{file_md5}:{addr}",
+    )
+    del meta["entry_point"]
+    r.set(file_key, json.dumps(meta))
+
+    from bsimvis.app.services.entrypoint_service import backfill_entrypoints
+    from bsimvis.app.services.redis_client import get_raw_redis
+
+    cursor = "0"
+    while True:
+        cursor, _, _ = backfill_entrypoints(r, get_raw_redis(), COLLECTION, cursor)
+        if cursor == "0":
+            break
+
+    resp = requests.get(
+        f"{BASE_URL}/api/function/search",
+        params={
+            "collection": COLLECTION,
+            "file_md5": file_md5,
+            "func_tag": "entry:process",
+        },
+        timeout=20,
+    )
+    funcs = resp.json().get("functions", []) if resp.status_code == 200 else []
+    check(
+        "backfill restores entry:process on the entry function",
+        [f.get("entrypoint_address") for f in funcs] == [addr],
+        str([f.get("entrypoint_address") for f in funcs]),
+    )
+    check(
+        "backfill restores entry_point on the file",
+        json.loads(r.get(file_key)).get("entry_point") == addr,
+    )
+
+
 def test_cluster_tags():
     """Cluster tags persist once on cluster metadata and remain searchable."""
     from redis import Redis
@@ -7544,6 +7601,7 @@ if __name__ == "__main__":
         test_pool_member_removal,
         test_pool_hierarchical_axis_fanout,
         test_cluster_tags,
+        test_entrypoint_backfill,
         test_incremental_hierarchical_cluster_equivalence,
         test_function_search_unindexed_cluster,
         test_cluster_response_contract,

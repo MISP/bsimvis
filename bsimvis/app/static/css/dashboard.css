@@ -2875,12 +2875,11 @@ a.home-card:hover,
 .nway-cg-body { flex: 1; overflow: auto; padding: 8px 14px 20px; }
 .nway-cg-body:has(.nway-graph) { cursor: grab; }
 .nway-cg-body.panning { cursor: grabbing; user-select: none; }
-.nway-node.folded { border-left: 4px solid var(--gc); }
-.nway-grpbox { box-sizing: border-box; width: 230px; display: flex; flex-direction: column; gap: 6px; padding: 6px; border: 1px dashed var(--gc); border-left: 4px solid var(--gc); border-radius: 8px; }
+.nway-grpbox { box-sizing: border-box; width: 230px; display: flex; flex-direction: column; gap: 6px; padding: 6px; border: 1px dashed var(--subtle, #8b949e); border-radius: 8px; }
 .nway-grpbox.deep { width: 170px; }
 .nway-grpbox .nway-node { width: 100%; }
 .nway-grpbox-h { display: flex; }
-.nway-grp { font-size: 0.7rem; font-weight: 600; color: var(--gc); border: 1px solid var(--gc); border-radius: 10px; padding: 0 6px; cursor: pointer; white-space: nowrap; }
+.nway-grp { font-size: 0.7rem; font-weight: 600; color: var(--subtle, #8b949e); white-space: nowrap; }
 .nway-graph.hl .nway-node:not(.hl-on) { opacity: 0.12; }
 .nway-graph.hl .nway-node.hl-on { opacity: 1; }
 .nway-graph.hl .nway-edge:not(.hl-on) { opacity: 0.04; }
@@ -2909,8 +2908,8 @@ a.home-card:hover,
 .nway-node.static { cursor: default; }
 .nway-node-name { min-width: 0; overflow: hidden; }
 .nway-node-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 0.72rem; min-width: 0; }
-.nway-bar { display: inline-block; width: 80px; height: 8px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
-.nway-bar b { display: block; height: 100%; background: var(--rc); }
+.nway-pbar { display: inline-block; width: 80px; height: 8px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.nway-pbar b { display: block; height: 100%; background: var(--rc); }
 .nway-node .entity-function { width: 100%; }
 .nway-cg-box { border: 1px solid var(--border); border-radius: 8px; padding: 0 10px 6px; margin-bottom: 14px; background: rgba(128, 128, 128, 0.05); }
 .nway-cg-box > header { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); padding: 8px 0; margin-bottom: 4px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }

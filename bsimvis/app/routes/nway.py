@@ -483,10 +483,12 @@ def get_nway_neighbors():
         if kind == "row":
             row = doc["rows"][ref]
             item["cells"] = dict(row.get("files") or row["cells"])
+            item["library"] = bool(row.get("library"))
             first = next(iter(item["cells"].values()))
             item["name"] = (fmeta.get(first) or {}).get("name")
         elif kind == "ext":
             item["name"] = ref[4:]
+            item["library"] = True  # imported symbols are library calls
         else:
             item["name"] = (fmeta.get(ref) or {}).get("name") or ref.rsplit(":", 1)[-1]
         items.append(item)

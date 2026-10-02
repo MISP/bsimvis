@@ -320,7 +320,9 @@ window.ClusterDetailView = {
                 .bsim-grp-row:hover td { background:var(--hover); }
                 .bsim-caret-btn { cursor:pointer; user-select:none; color:var(--subtle); display:inline-block; width:14px; text-align:center; }
 
-                #cluster-members-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+                #cluster-members-table { table-layout:fixed; }
+                #cluster-members-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+                #cluster-members-table td > * { max-width:100%; }
                 #cluster-members-table tr:hover:not(.bsim-grp-row) { background: var(--hover); }
             </style>
 
@@ -369,6 +371,9 @@ window.ClusterDetailView = {
                         <div class="resizable-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; flex:1; min-height:200px; overflow:hidden; margin-top: 10px; background: var(--card-bg);">
                             <div style="flex:1; overflow:auto;" id="cluster-table-scroll">
                                 <table id="cluster-members-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                                    <colgroup>
+                                        <col style="width:${this.isBinary ? '40%' : '50%'};"><col style="width:270px;"><col><col style="width:${this.isBinary ? '100px' : '0'};">
+                                    </colgroup>
                                     <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;">
                                         <tr style="border-bottom:1px solid var(--border); color:var(--dim);">
                                             <th style="padding:8px 12px; text-align:left;">${this.isBinary ? 'File Name' : 'Function'}</th>

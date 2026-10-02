@@ -1046,6 +1046,28 @@ class Worker:
                 self.job_service.enqueue_job(next_job_id, is_continuation=True)
             return True
 
+        elif jtype == JobType.BACKFILL_ENTRYPOINTS.value:
+            from bsimvis.app.services.entrypoint_service import backfill_entrypoints
+
+            cursor = str(payload.get("cursor", "0"))
+            next_cursor, seen, tagged = backfill_entrypoints(
+                self.r_data, self.r_raw, collection, cursor=cursor
+            )
+            if job_id:
+                self.job_service.update_progress(
+                    job_id,
+                    0 if next_cursor != "0" else 100,
+                    f"Tagged entry point on {tagged}/{seen} files (cursor {cursor} -> {next_cursor})",
+                )
+            if next_cursor != "0":
+                next_job_id = self.job_service.create_job(
+                    JobType.BACKFILL_ENTRYPOINTS,
+                    {"collection": collection, "cursor": next_cursor},
+                    enqueue=False,
+                )
+                self.job_service.enqueue_job(next_job_id, is_continuation=True)
+            return True
+
         elif jtype == JobType.INIT_POOL_BUILD.value:
             pool_id = payload.get("pool_id")
             from bsimvis.app.services.pool_service import pool_service

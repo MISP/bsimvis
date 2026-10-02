@@ -420,7 +420,13 @@ window.FileView = {
                     { maxTags: 3, onOverflow: () => FileView.switchTab('tags') }
                 );
             }
-            document.getElementById('file-actions-container').innerHTML = `
+            const entryUrl = file.entry_point
+                ? `/collections/${encodeURIComponent(collection)}/files/${file.file_md5}/functions/${file.entry_point}` : '';
+            document.getElementById('file-actions-container').innerHTML = (entryUrl ? `
+                <button class="top-action-btn" onclick="Nav.openPath(${escapeAttr(jsString(entryUrl))}, event)"
+                    style="color:#a6e22e; border-color:#a6e22e;"
+                    title="Open the program entry function at ${escapeAttr(file.entry_point)}">
+                    <i class="fa-solid fa-location-dot"></i> Entry</button>` : '') + `
                 <button class="top-action-btn" onclick="openAnalyzeModal({ scope: 'file', collection: ${escapeAttr(jsString(collection))}, fileMd5: ${escapeAttr(jsString(file.file_md5))} })"
                     style="color:#ae81ff; border-color:#ae81ff;"
                     title="Analyze every candidate function of this file with AI">

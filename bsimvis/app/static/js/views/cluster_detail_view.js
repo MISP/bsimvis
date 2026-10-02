@@ -54,6 +54,8 @@ window.ClusterDetailView = {
         this.expandedGroups.clear();
         this.treeExpanded.clear();
         this._sliceCenteredOn = null;
+        this.heroCompact = false;
+        this.heroManual = false;
         this.tab = 'members';
         if (this._nway) this._nway.destroy();
         this._nway = null;
@@ -230,6 +232,11 @@ window.ClusterDetailView = {
             return;
         }
         this.loadTreeSettings();
+        try {
+            this.sidebarCollapsed = localStorage.getItem('clusterSidebarCollapsed') === '1';
+        } catch (e) {
+            this.sidebarCollapsed = false;
+        }
 
         container.innerHTML = `
             <style>
@@ -255,6 +262,20 @@ window.ClusterDetailView = {
                     width:34px; padding:1px 3px; font-size:0.72rem; text-align:center;
                     background:var(--bg-alt); color:var(--text); border:1px solid var(--border); border-radius:4px;
                 }
+                #cluster-sidebar { transition:width 0.15s; }
+                #cluster-sidebar.collapsed { width:38px; overflow:hidden; }
+                #cluster-sidebar.collapsed .bsim-tree,
+                #cluster-sidebar.collapsed .bsim-tree-settings,
+                #cluster-sidebar.collapsed .bsim-side-label,
+                #cluster-sidebar.collapsed .bsim-side-collapse { display:none; }
+                #cluster-sidebar.collapsed .bsim-side-title { justify-content:center; padding:4px 0 8px; }
+                .bsim-side-toggle i, .hero-handle i { transition:transform 0.15s; }
+                #cluster-sidebar.collapsed .bsim-side-toggle i { transform:rotate(180deg); }
+                .hero-handle { background:none; border:none; color:var(--dim); cursor:pointer; padding:2px 6px; }
+                .hero-handle:hover { color:var(--accent); }
+                .cluster-hero.compact .hero-handle i { transform:rotate(180deg); }
+                .cluster-hero.compact .hero-extra { display:none !important; }
+                .cluster-hero.compact { padding:8px 20px !important; }
                 .bsim-tree { flex:0 0 auto; }
                 .bsim-node {
                     display:flex; align-items:center; gap:6px; padding:4px 12px; cursor:pointer;
@@ -284,11 +305,12 @@ window.ClusterDetailView = {
             </div>
 
             <div id="cluster-main" style="display:none;">
-                <div id="cluster-sidebar">
+                <div id="cluster-sidebar" class="${this.sidebarCollapsed ? 'collapsed' : ''}">
                     <div class="bsim-side-title">
-                        Cluster Hierarchy
+                        <span class="bsim-side-label">Cluster Hierarchy</span>
                         <span class="bsim-side-actions">
-                            <span onclick="ClusterDetailView.collapseTreeAll()" title="Collapse back to this cluster">collapse</span>
+                            <span class="bsim-side-collapse" onclick="ClusterDetailView.collapseTreeAll()" title="Collapse back to this cluster">collapse</span>
+                            <span class="bsim-side-toggle" onclick="ClusterDetailView.toggleSidebar()" title="Hide / show the cluster hierarchy"><i class="fa-solid fa-angles-left"></i></span>
                         </span>
                     </div>
                     <div class="bsim-tree-settings" title="Ancestors shown / levels below / children per node">
@@ -369,6 +391,7 @@ window.ClusterDetailView = {
 
             document.getElementById('cluster-loader').style.display = 'none';
             document.getElementById('cluster-main').style.display = 'flex';
+            document.getElementById('cluster-detail').addEventListener('scroll', e => this.onDetailScroll(e), true);
 
             this.renderTree();
             await this.selectNode(this.selectedClusterUuid);
@@ -380,6 +403,41 @@ window.ClusterDetailView = {
             container.innerHTML = `<div style="padding:30px; color:#f92672;">
                 <i class="fa-solid fa-circle-exclamation"></i> ${escapeHtml(e.message)}</div>`;
         }
+    },
+
+    toggleSidebar() {
+        this.sidebarCollapsed = !this.sidebarCollapsed;
+        try {
+            localStorage.setItem('clusterSidebarCollapsed', this.sidebarCollapsed ? '1' : '0');
+        } catch (e) {}
+        const el = document.getElementById('cluster-sidebar');
+        if (el) el.classList.toggle('collapsed', this.sidebarCollapsed);
+    },
+
+    setHero(compact) {
+        this.heroCompact = compact;
+        const el = document.getElementById('cluster-hero');
+        if (el) el.classList.toggle('compact', compact);
+    },
+
+    /** The handle: a manual choice wins over the scroll rule. */
+    toggleHero() {
+        this.heroManual = true;
+        this.setHero(!this.heroCompact);
+    },
+
+    /** Scrolling a table down folds the hero card to its title row; back at the
+     * top it unfolds. Only vertical movement counts (a sideways scroll keeps
+     * scrollTop), and the 40px gap keeps the layout shift from re-triggering. */
+    onDetailScroll(e) {
+        const t = e.target;
+        if (this.heroManual || !t || t.id === 'cluster-detail' || typeof t.scrollTop !== 'number') return;
+        this._lastTop = this._lastTop || new WeakMap();
+        const prev = this._lastTop.get(t) || 0;
+        this._lastTop.set(t, t.scrollTop);
+        if (t.scrollTop === prev) return;
+        if (t.scrollTop > 40 && !this.heroCompact) this.setHero(true);
+        else if (t.scrollTop === 0 && this.heroCompact) this.setHero(false);
     },
 
     collapseTreeAll() {
@@ -640,25 +698,25 @@ window.ClusterDetailView = {
             .cluster-axis-score-card > div > div:first-child span:first-of-type { font-size:0.9rem !important; }
             .cluster-axis-score-card > div > div:first-child span:last-of-type { font-size:2rem !important; }
         </style>
-        <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
+        <div id="cluster-hero" class="cluster-hero${this.heroCompact ? ' compact' : ''}" style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
             <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                 <i class="fa-solid fa-bullseye" style="color:var(--accent);"></i>
                 <span style="font-size:1.2rem; font-weight:bold;">${escapeHtml(self.cluster_name || `Cluster #${self.cluster_id}`)}</span>
                 <span class="badge">${this.isBinary ? this.axis : 'function'}</span>
                 ${EntityRenderer.renderTag(this.isBinary ? 'bin_cluster' : 'cluster', self.tag_id || self.cluster_id, [], self.user_tags || [])}
-                <span style="margin-left:auto; display:flex; gap:6px;">${this.renderMemberListLink(self)}${this.renderSimilaritiesLink(self)}</span>
+                <span style="margin-left:auto; display:flex; gap:6px; align-items:center;">${this.renderMemberListLink(self)}${this.renderSimilaritiesLink(self)}<button class="hero-handle" onclick="ClusterDetailView.toggleHero()" title="Fold / unfold the details (folds by itself while you scroll a table)"><i class="fa-solid fa-chevron-up"></i></button></span>
             </div>
-            <div class="mono dim" style="font-size:0.72rem; margin-top:6px;">
+            <div class="mono dim hero-extra" style="font-size:0.72rem; margin-top:6px;">
                 ${escapeHtml(self.cluster_uuid || '')}
                 <button class="btn-copy" title="Copy UUID" onclick="copyToClipboard(${escapeAttr(jsString(self.cluster_uuid || ''))}, this)"><i class="fa-regular fa-copy"></i></button>
             </div>
-            <div style="display:flex; gap:26px; flex-wrap:wrap; margin-top:14px;">
+            <div class="hero-extra" style="display:flex; gap:26px; flex-wrap:wrap; margin-top:14px;">
                 ${stat('Members', Number(self.count || 0).toLocaleString())}
                 ${stat('Stability', Number(self.avg_stability || 0).toFixed(2))}
                 ${stat('Avg features', Number(self.avg_features || 0).toFixed(0))}
                 ${stat('Cluster ID', escapeHtml(String(self.cluster_id)))}
             </div>
-            ${this.isBinary ? `<div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap;">
+            ${this.isBinary ? `<div class="hero-extra" style="display:flex; align-items:center; gap:18px; flex-wrap:wrap;">
                 <div class="cluster-axis-score-card" style="--cluster-score-color:${scoreType.color};">${binSimScoreCards({ [axisKey]: self.cohesion_score }, axisKey)}</div>
                 ${this.renderSecondaryAxes(self)}
             </div>` : ''}

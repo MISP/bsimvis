@@ -2875,6 +2875,10 @@ a.home-card:hover,
 .nway-cg-body { flex: 1; overflow: auto; padding: 8px 14px 20px; }
 .nway-cg-body:has(.nway-graph) { cursor: grab; }
 .nway-cg-body.panning { cursor: grabbing; user-select: none; }
+.nway-node.grouped, .nway-node.folded { border-left: 4px solid var(--gc); }
+.nway-node.folded { border-style: dashed dashed dashed solid; }
+.nway-grp { font-size: 0.7rem; font-weight: 600; color: var(--gc); border: 1px solid var(--gc); border-radius: 10px; padding: 0 6px; cursor: pointer; white-space: nowrap; }
+.nway-grp-names { font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nway-cg-h { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); margin: 12px 0 6px; }
 .nway-cg-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 9px; margin-bottom: 5px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; min-width: 0; }
 .nway-cg-item:hover, .nway-cg-item:focus-visible { border-color: var(--accent); outline: none; }

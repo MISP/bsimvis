@@ -118,7 +118,7 @@ window.UI = {
             };
 
             return `
-                <button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle Sidebar">⟨</button>
+                <button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle Sidebar"><i class="fa-solid fa-chevron-left"></i></button>
                 <nav class="sidebar-nav">
                     <h2 title="BSimVis">
                         <a href="/" id="brand-link" onclick="Nav.openPath('/', event)">

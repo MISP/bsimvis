@@ -2896,3 +2896,4 @@ a.home-card:hover,
 .nway-node.static { cursor: default; }
 .nway-node-name { min-width: 0; overflow: hidden; }
 .nway-node-sub { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; }
+.nway-node .nway-tags, .nway-cg-item .nway-tags { display: none; }

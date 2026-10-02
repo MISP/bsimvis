@@ -2865,9 +2865,9 @@ a.home-card:hover,
 .nway-basket button:hover { color: var(--accent); }
 .nway-basket .nway-basket-open { color: var(--accent); font-weight: 600; }
 
-/* N-way call-graph drawer: list and graph views of a row's callers / callees. */
+/* N-way call-graph (side panel + standalone page): list and graph views of a row's callers / callees. */
 .nway-callbtns { margin-top: 4px; }
-.nway-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(860px, 100vw); z-index: 900; display: flex; flex-direction: column; background: var(--card-bg); border-left: 1px solid var(--border); box-shadow: -8px 0 28px rgba(0, 0, 0, 0.35); }
+.nway-cgp { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; background: var(--card-bg); }
 .nway-cg-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .nway-cg-crumbs { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; font-size: 0.78rem; }
 .nway-crumb { background: none; border: none; padding: 0 2px; color: var(--accent); cursor: pointer; font: inherit; }
@@ -2918,7 +2918,6 @@ a.home-card:hover,
 .nway-node.deep .nway-tags, .nway-node.deep .nway-strip { display: none; }
 
 /* Call-graph drawer, light theme: cards need to stand off the drawer, and the hard-coded ramp colors need contrast on white. */
-html.light-theme .nway-drawer { box-shadow: -8px 0 28px rgba(0, 0, 0, 0.14); }
 html.light-theme .nway-node, html.light-theme .nway-cg-item { background: var(--bg); border-color: #c3c8d0; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
 html.light-theme .nway-node.center { background: #eaf3fc; border-color: var(--accent); }
 html.light-theme .nway-node:hover, html.light-theme .nway-cg-item:hover { border-color: var(--accent); }

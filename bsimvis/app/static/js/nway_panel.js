@@ -440,7 +440,24 @@
                 const t = e.target.closest('[data-cg-depth]');
                 if (t && this._cg) { this._cg.depth = Number(t.value); this._cgShow(); }
             };
+            host.onpointerdown = e => this._cgPan(e);
             this._cgShow();
+        }
+
+        // Drag the graph background to pan; cards, buttons and inputs keep their clicks.
+        _cgPan(e) {
+            const body = e.target.closest('.nway-cg-body');
+            if (!body || e.button !== 0 || e.target.closest('.nway-node, .nway-cg-item, button, a, input, .bsim-tag-pill, .nway-strip')) return;
+            const x = e.clientX, y = e.clientY, l = body.scrollLeft, t = body.scrollTop;
+            body.classList.add('panning');
+            const move = ev => { body.scrollLeft = l - (ev.clientX - x); body.scrollTop = t - (ev.clientY - y); };
+            const up = () => {
+                body.classList.remove('panning');
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+            };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
         }
 
         // The standalone page's URL: the member source, doc controls, and the focused graph.
@@ -666,7 +683,11 @@
             this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}${depthCtl}<div class="view-toggle" style="margin:0">${toggle}</div>${this.cgInit ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
                 <div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>
                 <div class="nway-cg-body">${body}</div>`;
-            if (!err && st.nb && st.view === 'graph') this._cgEdges();
+            if (!err && st.nb && st.view === 'graph') {
+                this._cgEdges();
+                const body = this._dw.querySelector('.nway-cg-body'), c = body.querySelector('.nway-node.center');
+                body.scrollLeft = Math.max(0, c.getBoundingClientRect().left - body.getBoundingClientRect().left + body.scrollLeft + c.offsetWidth / 2 - body.clientWidth / 2);
+            }
         }
 
         _onDrawerClick(e) {

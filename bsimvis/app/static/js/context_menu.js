@@ -428,6 +428,22 @@
                     </div>`;
                 }
             }
+            // N-way diff of the files behind the selected functions or file cells.
+            const nwayFiles = [...new Set([
+                ...window.getSelectedTableIds('file').map(id => `${id.split(':')[0]}:${id.split(':').pop()}`),
+                ...window.getSelectedTableIds('function').map(id => {
+                    const p = window.parseFuncId(id);
+                    return p.md5 ? `${p.collection}:${p.md5}` : '';
+                }),
+            ].filter(Boolean))];
+            if (nwayFiles.length >= 2 && window.NwayPanel) {
+                const nwayUrl = NwayPanel.urlFor(nwayFiles, col);
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(nwayUrl))}, event, { title: 'N-way diff', type: 'bin_sim' })">
+                    <i class="fa-solid fa-table-columns" style="width: 16px; text-align: center; opacity: 0.8; color: #fd971f;"></i>
+                    <span>N-way Diff of ${nwayFiles.length} Files</span>
+                </div>`;
+            }
             // The selected rows, or this function alone when nothing is selected.
             const llmIds = `(window.getSelectedTableIds && window.getSelectedTableIds('function').length ? window.getSelectedTableIds('function') : [${jsString(norm.id)}])`;
             actionsSubmenuHtml += renderLLMSubmenu(`{ funcIds: ${llmIds} }`);

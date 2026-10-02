@@ -554,6 +554,13 @@ class TableSelection {
                 cell.querySelectorAll('[data-etype][data-eid]').forEach(el => {
                     this.selectedEntities.add(`${el.dataset.etype} ${el.dataset.eid}`);
                 });
+                // File name / md5 cells (e.g. in function search) are files too.
+                cell.querySelectorAll('.entity-md5[data-entity-data], .entity-filename[data-entity-data]').forEach(el => {
+                    try {
+                        const fid = JSON.parse(el.dataset.entityData).fileId;
+                        if (fid) this.selectedEntities.add('file\0' + fid);
+                    } catch (e) {}
+                });
             }
         }
     }

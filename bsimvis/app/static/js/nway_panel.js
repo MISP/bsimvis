@@ -396,10 +396,6 @@
         }
 
         // ---- Call-graph drawer: callers / callees of one row, as a list or a graph ----
-        _callBtns(ri) {
-            return `<div class="nway-callbtns"><button class="nway-chip" data-cg-open="${Number(ri)}" title="callers and callees of this row, regrouped by row"><i class="fa-solid fa-diagram-project"></i> call graph</button></div>`;
-        }
-
         _cgFiles() {
             return this.data.file_columns || this.data.columns.filter(c => !c.kind);
         }
@@ -411,7 +407,7 @@
         _cgOpen(row) {
             const cells = {};
             for (const [k, v] of Object.entries(row.files || row.cells)) if (typeof v === 'string') cells[k] = v;
-            this._cg = { stack: [{ name: row.name, cells }], view: (this._cg && this._cg.view) || 'list', scope: (this._cg && this._cg.scope) || this.state.scope || 'code', nb: null };
+            this._cg = { stack: [{ name: row.name, cells }], view: (this._cg && this._cg.view) || 'graph', scope: (this._cg && this._cg.scope) || this.state.scope || 'code', nb: null };
             if (!this._dw) {
                 this._dw = document.createElement('aside');
                 this._dw.className = 'nway-drawer';
@@ -485,12 +481,12 @@
         // Neighbors of one role under the Code / Library / All scope, keeping their index in the full list.
         _cgShown(nb, role) {
             const scope = this._cg.scope;
-            return nb[role].items.map((it, i) => ({ it, i })).filter(({ it }) => scope === 'all' || (scope === 'library') === !!it.library);
+            return nb[role].items.map((it, i) => ({ it, i, out: !(scope === 'all' || (scope === 'library') === !!it.library) }));
         }
 
         _cgList(nb, focus, files) {
             const box = (role, label, icon) => {
-                const shown = this._cgShown(nb, role);
+                const shown = this._cgShown(nb, role).filter(x => !x.out);
                 const rows = shown.map(({ it, i }) => `<div class="nway-cg-item${it.kind === 'row' ? '' : ' static'}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${i}"` : ''}>
                     <span class="nway-cg-l">${this._cgName(it)}</span><span class="nway-cg-r">${this._cgReach(it, focus, files)}</span></div>`).join('');
                 return `<section class="nway-cg-box"><header><i class="fa-solid ${icon}"></i> ${label} <span class="dim">(${shown.length})</span></header>${rows || '<div class="dim nway-cg-none">none in this scope</div>'}</section>`;
@@ -500,7 +496,8 @@
 
         _cgGraph(nb, focus, files) {
             const W = 800, BW = 230, PAD = 0, NW = BW, NH = 104, GAP = 12, CAP = 12, T = 0, CW = 230;
-            const lists = { callers: this._cgShown(nb, 'callers'), callees: this._cgShown(nb, 'callees') };
+            // Out-of-scope neighbors stay in the graph, faded and after the in-scope ones.
+            const lists = { callers: this._cgShown(nb, 'callers').sort((a, b) => a.out - b.out), callees: this._cgShown(nb, 'callees').sort((a, b) => a.out - b.out) };
             const shown = { callers: lists.callers.slice(0, CAP), callees: lists.callees.slice(0, CAP) };
             const H = T + Math.max(shown.callers.length, shown.callees.length, 1) * (NH + GAP) + GAP;
             const cx = (W - CW) / 2, cy = (H - NH) / 2;
@@ -509,15 +506,15 @@
                 const list = shown[role];
                 const x = bx + PAD;
                 const y0 = T + (H - T - (list.length * (NH + GAP) - GAP)) / 2;
-                list.forEach(({ it, i }, k) => {
+                list.forEach(({ it, i, out }, k) => {
                     const y = y0 + k * (NH + GAP);
                     const on = files.map(c => { const f = focus.cells[c.id]; return !!(f && it.sources[f]); });
                     const st = this._cgStrip(on, files);
                     const [x1, x2] = role === 'callers' ? [x + NW, cx] : [cx + CW, x];
                     const [y1, y2] = role === 'callers' ? [y + NH / 2, cy + NH / 2] : [cy + NH / 2, y + NH / 2];
                     const mx = (x1 + x2) / 2;
-                    edges.push(`<path class="nway-edge ${st.cls}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${(1 + st.n * 0.8).toFixed(1)}"></path>`);
-                    nodes.push(`<div class="nway-node${it.kind === 'row' ? '' : ' static'}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${i}"` : ''} style="left:${x}px; top:${y}px; width:${NW}px; height:${NH}px">
+                    edges.push(`<path class="nway-edge ${st.cls}${out ? ' out' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${(1 + st.n * 0.8).toFixed(1)}"></path>`);
+                    nodes.push(`<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${i}"` : ''} style="left:${x}px; top:${y}px; width:${NW}px; height:${NH}px">
                         <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div></div>`);
                 });
             }
@@ -570,7 +567,7 @@
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             return `<tr>
-                <td style="min-width:260px; max-width:420px;">${this._nameSig(row)}${this._callBtns(ri)}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}</span></td>
+                <td class="nway-open" data-cg-open="${Number(ri)}" title="Click for the call graph of this row" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}</span></td>
                 <td class="num">${Number(row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
@@ -654,7 +651,10 @@
         _onClick(e) {
             const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-cg-open]');
             if (!t) return;
-            if (t.dataset.cgOpen !== undefined) return this._cgOpen(this.data.items[Number(t.dataset.cgOpen)]);
+            if (t.dataset.cgOpen !== undefined) {
+                if (e.target.closest('button, a, input, .bsim-tag-pill, .entity-actions')) return;
+                return this._cgOpen(this.data.items[Number(t.dataset.cgOpen)]);
+            }
             if (t.dataset.openCluster) {
                 e.preventDefault();
                 return this.onOpenCluster(t.dataset.openCluster);

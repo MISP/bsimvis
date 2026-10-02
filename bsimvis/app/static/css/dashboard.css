@@ -2665,44 +2665,24 @@ a.home-card:hover,
     -webkit-appearance: none;
     margin: 0;
 }
-/* Shared pager (paging.js): one footer pill holding "‹ Page [n] / N ›". */
-.paging {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1px 4px;
-    font-size: 0.78rem;
-    color: var(--subtle);
-    white-space: nowrap;
-}
-.paging button {
-    background: none;
-    border: none;
-    color: var(--text);
-    cursor: pointer;
-    padding: 0 6px;
-    height: 20px;
-    font-size: 1rem;
-    line-height: 1;
-    border-radius: 4px;
-}
-.paging button:hover:not(:disabled) { color: var(--accent); background: rgba(255,255,255,0.06); }
-.paging button:disabled { opacity: 0.3; cursor: default; }
+/* Shared pager (paging.js): "‹ Page [n] / N ›", the footer-sized variant of .top-action-btn. */
+.paging-page { display: inline-flex; align-items: center; gap: 4px; font-size: 0.78rem; color: var(--dim); white-space: nowrap; }
+.top-action-btn.paging-btn { height: 22px; padding: 0 8px; font-size: 0.9rem; line-height: 1; }
+.top-action-btn.paging-btn:disabled { opacity: 0.4; cursor: default; }
 .paging-input {
-    width: 40px;
-    background: none;
-    border: none;
-    border-bottom: 1px solid var(--border);
-    padding: 0;
+    width: 44px;
+    height: 22px;
+    box-sizing: border-box;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 4px;
     color: var(--accent);
     font: inherit;
     text-align: center;
     -moz-appearance: textfield;
 }
-.paging-input:focus { outline: none; border-bottom-color: var(--accent); }
+.paging-input:focus { outline: none; border-color: var(--accent); }
 .paging-input::-webkit-inner-spin-button,
 .paging-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .table-footer-clear {

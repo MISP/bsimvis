@@ -65,6 +65,9 @@
             this.el.addEventListener('click', e => this._onClick(e));
             this.el.addEventListener('change', e => this._onChange(e));
             this.el.addEventListener('input', e => this._onInput(e));
+            this.el.addEventListener('toggle', e => {
+                if (e.target.matches('details.nway-focus')) this._focusOpen = e.target.open;
+            }, true);
             this.el.addEventListener('contextmenu', e => {
                 const th = e.target.closest('th[data-col]');
                 if (th) this._menu(e, th.dataset.col);
@@ -134,43 +137,57 @@
             return `${c.code} / ${c.library}`;
         }
 
-        // One segmented toggle (the shared .view-toggle); `data-set="key:value"`.
-        _seg(label, key, options, title) {
-            const cur = String(this.state[key]);
-            const btns = options.map(([v, text, tip]) =>
-                `<button class="view-btn${cur === v ? ' active' : ''}" data-set="${escapeAttr(`${key}:${v}`)}"${tip ? ` title="${escapeAttr(tip)}"` : ''}>${escapeHtml(text)}</button>`
-            ).join('');
-            return `<div class="view-toggle"${title ? ` title="${escapeAttr(title)}"` : ''}><span class="nway-lbl">${escapeHtml(label)}</span>${btns}</div>`;
+        // The shared (i) hover hint (`.home-tip`, as on the home page).
+        _tip(text) {
+            return text ? `<span class="home-tip" tabindex="0" data-tip="${escapeAttr(text)}"><i class="fa-solid fa-circle-info"></i></span>` : '';
         }
 
-        _slider(label, key, value, min, max, step, title) {
+        // One segmented toggle (the shared .view-toggle); `data-set="key:value"`.
+        _seg(label, key, options, tip) {
+            const cur = String(this.state[key]);
+            const btns = options.map(([v, text, t]) =>
+                `<button class="view-btn${cur === v ? ' active' : ''}" data-set="${escapeAttr(`${key}:${v}`)}"${t ? ` title="${escapeAttr(t)}"` : ''}>${escapeHtml(text)}</button>`
+            ).join('');
+            return `<div class="view-toggle"><span class="nway-lbl">${escapeHtml(label)}</span>${btns}${this._tip(tip)}</div>`;
+        }
+
+        _slider(label, key, value, min, max, step, tip) {
             const shown = key === 'k' ? String(value) : Number(value).toFixed(2);
-            return `<label class="nway-ctl"${title ? ` title="${escapeAttr(title)}"` : ''}><span class="nway-lbl">${escapeHtml(label)}</span><b>${shown}</b><input type="range" min="${min}" max="${max}"${step ? ` step="${step}"` : ''} value="${Number(value)}" data-range="${key}"></label>`;
+            return `<label class="nway-ctl"><span class="nway-lbl">${escapeHtml(label)}</span><b>${shown}</b><input type="range" min="${min}" max="${max}"${step ? ` step="${step}"` : ''} value="${Number(value)}" data-range="${key}">${this._tip(tip)}</label>`;
+        }
+
+        _group(label, inner) {
+            return `<div class="nway-group"><span class="nway-gl">${escapeHtml(label)}</span>${inner}</div>`;
         }
 
         _controls() {
             const s = this.state, d = this.data;
             const n = d.columns.length;
             const focus = d.columns_mode === 'focus';
+            const isNode = !!this.source.cluster_uuid;
             const tabs = TABS.filter(([key]) => !(focus && key === 'partial')).map(([key, label]) =>
                 `<button class="bsim-tab${s.tab === key ? ' active' : ''}" data-tab="${key}">${label}<span class="nway-count" title="code / library">${this._count(key)}</span></button>`
             ).join('');
-            const isNode = !!this.source.cluster_uuid;
-            const ctl = [
-                this._seg('Show', 'scope', [['code', 'Code'], ['library', 'Library'], ['all', 'All']]),
-                isNode ? this._seg('Columns', 'columns', [['auto', 'Auto'], ['files', 'Files'], ['children', 'Children']], "the node's files, or one column per child cluster") : '',
-                focus ? this._seg('Focus holds', 'focus_rule', [['any', 'Any'], ['all', 'All']], 'a function counts on the focus side when any / all of the focus files have it') : '',
-                focus ? this._slider('Rest presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, 'share of the rest files that must hold the function for the rest side to count as present') : '',
-                focus && s.tab === 'unique' ? this._seg('Side', 'side', [['', 'Both'], ['focus', 'Focus only'], ['rest', 'Rest only']]) : '',
-                isNode && d.columns_mode === 'children'
-                    ? this._slider('Child presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, "share of a child's files that must hold the function for the child to count as present") : '',
-                s.tab === 'partial' && !focus ? this._slider(`In at least (of ${n})`, 'k', s.k, 2, Math.max(2, n), 1) : '',
-                this._slider('Min edge', 'min_edge', Number(d.min_edge), 0, 1, 0.05),
-                this._seg('Mode', 'mode', [['stored', 'Stored', 'reads built pair docs'], ['virtual', 'Virtual', 'recomputes from vectors']]),
+            const tabTip = focus
+                ? 'All: every function. Core: on both the focus and the rest side. Unique: on one side only. Counts are code / library.'
+                : `All: every function group. Core: present in all ${n} columns. Partial: present in at least k columns. Unique: present in exactly one file. Counts are code / library.`;
+            const filter = [
                 `<input type="text" class="nway-input" data-text="q" placeholder="function name / address" value="${escapeAttr(s.q)}">`,
                 `<input type="text" class="nway-input" data-text="tags" placeholder="tags" value="${escapeAttr(s.tags)}">`,
+                this._seg('Show', 'scope', [['code', 'Code'], ['library', 'Library'], ['all', 'All']], 'Code: functions of the program itself. Library: functions recognised as library code (stdlib, statically linked). All: both.'),
+                this._columnChip(),
             ].join('');
-            return `<div class="bsim-tabbar">${tabs}</div>${this._chips()}<div class="nway-controls">${ctl}</div>`;
+            const match = [
+                this._slider('Min edge', 'min_edge', Number(d.min_edge), 0, 1, 0.05, 'Ignore function matches below this similarity. Higher is stricter: fewer functions get grouped together.'),
+                this._seg('Mode', 'mode', [['stored', 'Stored', 'reads built pair docs'], ['virtual', 'Virtual', 'recomputes from vectors']], 'Stored reads the similarity pairs already built. Virtual recomputes the matches from the function vectors, as a fresh collection of just these files would.'),
+                s.tab === 'partial' && !focus ? this._slider(`In at least (of ${n})`, 'k', s.k, 2, Math.max(2, n), 1, 'Partial tab: keep functions present in at least this many columns.') : '',
+                isNode ? this._seg('Columns', 'columns', [['auto', 'Auto'], ['files', 'Files'], ['children', 'Children']], "Files: one column per file of the node. Children: one column per child cluster. Auto switches to Children above 12 files.") : '',
+                isNode && d.columns_mode === 'children'
+                    ? this._slider('Child presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, "Share of a child cluster's files that must hold a function for the child to count as having it.") : '',
+            ].join('');
+            return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}</div>
+                <div class="nway-bar">${this._group('Filter', filter)}${this._group('Match', match)}</div>
+                ${this._focusBox()}`;
         }
 
         _files() {
@@ -181,18 +198,27 @@
             return String(this.state.focus || '').split(',').filter(Boolean);
         }
 
-        // Focus: one toggle chip per file (the file headers are gone while it is
-        // on). Column filter: one chip to drop it.
-        _chips() {
-            const files = this._files(), focus = this._focusIds(), col = this.state.column;
-            let html = '';
-            if (focus.length) {
-                const chips = files.map(f => `<button class="nway-chip${focus.includes(f.id) ? ' on' : ''}" data-focus-toggle="${escapeAttr(f.id)}" title="${escapeAttr(f.collection)}">${escapeHtml(f.file_name || f.md5)}</button>`).join('');
-                html += `<div class="nway-chips"><span class="nway-lbl">Focus</span>${chips}<button class="nway-chip" data-clear="focus" title="back to the plain N-way">&times; clear focus</button></div>`;
-            }
-            const only = col && files.find(f => f.id === col);
-            if (only) html += `<div class="nway-chips"><span class="nway-lbl">Only</span><button class="nway-chip on" data-clear="column" title="drop the file filter">${escapeHtml(only.file_name || only.md5)} &times;</button></div>`;
-            return html;
+        _columnChip() {
+            const only = this.state.column && this._files().find(f => f.id === this.state.column);
+            return only ? `<button class="nway-chip on" data-clear="column" title="drop the file filter">Only ${escapeHtml(only.file_name || only.md5)} &times;</button>` : '';
+        }
+
+        // Focus: pick files to compare against all the others. A collapsible box so
+        // 30 files do not push the table down; opens itself while a focus is set.
+        _focusBox() {
+            const s = this.state, files = this._files(), ids = this._focusIds();
+            const on = this.data.columns_mode === 'focus';
+            const chips = files.map(f => `<button class="nway-chip${ids.includes(f.id) ? ' on' : ''}" data-focus-toggle="${escapeAttr(f.id)}" title="${escapeAttr(f.collection)}">${escapeHtml(f.file_name || f.md5)}</button>`).join('');
+            const ctl = on ? [
+                this._seg('Focus holds', 'focus_rule', [['any', 'Any'], ['all', 'All']], 'Any: a function is on the focus side when at least one focus file has it. All: every focus file must have it.'),
+                this._slider('Rest presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, 'Share of the rest files that must hold a function for it to count on the rest side. Keep it low (a single rest file is enough) for a strict "unique to focus".'),
+                s.tab === 'unique' ? this._seg('Unique to', 'side', [['', 'Both'], ['focus', 'Focus'], ['rest', 'Rest']], 'Unique tab only. Focus: functions in the focus files and in none of the rest. Rest: the reverse. Both: either.') : '',
+                `<button class="nway-chip" data-clear="focus" title="back to the plain N-way">&times; clear focus</button>`,
+            ].join('') : '';
+            const open = on || this._focusOpen ? ' open' : '';
+            const tip = 'Compare the chosen files against all the others. Columns collapse to Focus and Rest: Core is on both sides, Unique on one side. Right-click a file header for the same action.';
+            return `<details class="nway-focus"${open}><summary><i class="fa-solid fa-bullseye"></i> Focus: ${on ? `${ids.length} of ${files.length} files` : 'off'}${this._tip(tip)}</summary>
+                <div class="nway-focus-body"><div class="nway-chips">${chips}</div>${ctl ? `<div class="nway-bar">${ctl}</div>` : ''}</div></details>`;
         }
 
         // Header right-click: the shared file menu, plus this panel's focus / filter

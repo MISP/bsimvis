@@ -2881,7 +2881,7 @@ a.home-card:hover,
 .nway-cg-l { min-width: 0; flex: 1; overflow: hidden; }
 .nway-cg-r { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .nway-strip { display: inline-flex; gap: 2px; vertical-align: middle; }
-.nway-strip i { width: 9px; height: 9px; border-radius: 2px; border: 1px solid var(--border); background: transparent; }
+.nway-strip i { width: 11px; height: 11px; cursor: pointer; border-radius: 2px; border: 1px solid var(--border); background: transparent; }
 .nway-strip i.on { background: var(--rc); border-color: var(--rc); }
 .nway-reach { font-size: 0.74rem; font-variant-numeric: tabular-nums; color: var(--rc); }
 .r-hi { --rc: var(--success); } .r-mid { --rc: #e6db74; } .r-low { --rc: #f92672; }

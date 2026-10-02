@@ -87,6 +87,7 @@
             this._gen++;
             clearTimeout(this._debounce);
             if (this._io) this._io.disconnect();
+            this._cgClose();
         }
 
         _set(patch) {
@@ -382,65 +383,175 @@
             return { ret, params: JSON.parse(params), best };
         }
 
-        _nameSig(row) {
+        _nameSig(row, opts = {}) {
             const sig = this._rowSig(row);
             const name = escapeHtml(row.name);
             if (!sig) return name;
             const f = this._fnData(sig.best.fid, sig.best.col);
             // Same renderer as the function search table, fed the guessed signature.
-            const fn = window.EntityRenderer.renderFunction({ ...f, function_name: row.name, return_type: sig.ret, parameters: sig.params }, { hideNote: true, showActions: false });
+            const fn = window.EntityRenderer.renderFunction({ ...f, function_name: row.name, return_type: sig.ret, parameters: sig.params }, { hideNote: true, showActions: false, ...opts });
             // Tags land on the best candidate, the function the preview shows.
             const tags = window.EntityRenderer.renderTag('function', f.function_id, f.tags, f.user_tags);
             return `${fn}<div class="nway-tags" title="tags apply to the best candidate: ${escapeAttr(f.entrypoint_address)}">${tags}</div>`;
         }
 
-        // Callers / callees of a row's functions, regrouped into rows (see /nway/neighbors).
-        _callBtns(cells) {
-            const fids = Object.values(cells).filter(f => typeof f === 'string');
-            if (!fids.length) return '';
-            const btn = (role, icon) => `<button class="nway-chip" data-calls="${role}" data-fids="${escapeAttr(fids.join(','))}" title="${role} of this row's functions"><i class="fa-solid ${icon}"></i> ${role}</button>`;
-            return `<div class="nway-callbtns">${btn('callers', 'fa-right-to-bracket')}${btn('callees', 'fa-right-from-bracket')}</div>`;
+        // ---- Call-graph drawer: callers / callees of one row, as a list or a graph ----
+        _callBtns(ri) {
+            return `<div class="nway-callbtns"><button class="nway-chip" data-cg-open="${Number(ri)}" title="callers and callees of this row, regrouped by row"><i class="fa-solid fa-diagram-project"></i> call graph</button></div>`;
         }
 
-        _callItems(body) {
-            if (!body.items.length) return '<div class="dim">none</div>';
-            return body.items.map(it => {
-                const name = escapeHtml(it.name || '?');
-                const reach = `<span class="${it.support === it.of ? '' : 'dim'}" title="files whose function calls this: ${it.support} of ${it.of}">${it.support}/${it.of}</span>`;
-                const fids = it.kind === 'row' ? Object.values(it.cells).filter(f => typeof f === 'string') : [];
-                const more = fids.length ? ['callers', 'callees'].map(r => `<button class="nway-chip" data-calls="${r}" data-fids="${escapeAttr(fids.join(','))}" title="${r} of this row">${r === 'callers' ? '&#9664;' : '&#9654;'}</button>`).join('') : '';
-                const tag = it.kind === 'row' ? '' : `<span class="dim"> (${it.kind === 'ext' ? 'external' : 'not in a row'})</span>`;
-                return `<div class="nway-call"><div style="display:flex; gap:8px; align-items:center;"><b>${name}</b>${tag}${reach}${more}</div></div>`;
-            }).join('');
+        _cgFiles() {
+            return this.data.file_columns || this.data.columns.filter(c => !c.kind);
         }
 
-        async _toggleCalls(btn) {
-            const host = btn.closest('.nway-call') || btn.closest('td');
-            const role = btn.dataset.calls;
-            const box = host.querySelector(':scope > .nway-calls-box');
-            if (box && box.dataset.role === role) return box.remove();
-            if (box) box.remove();
-            const el = document.createElement('div');
-            el.className = 'nway-calls-box';
-            el.dataset.role = role;
-            el.style.cssText = 'margin:6px 0 2px 14px; padding-left:8px; border-left:2px solid var(--border); font-size:0.8rem;';
-            el.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
-            host.appendChild(el);
+        _cgFocus() {
+            return this._cg.stack[this._cg.stack.length - 1];
+        }
+
+        _cgOpen(row) {
+            const cells = {};
+            for (const [k, v] of Object.entries(row.files || row.cells)) if (typeof v === 'string') cells[k] = v;
+            this._cg = { stack: [{ name: row.name, cells }], view: (this._cg && this._cg.view) || 'list', nb: null };
+            if (!this._dw) {
+                this._dw = document.createElement('aside');
+                this._dw.className = 'nway-drawer';
+                this._dw.addEventListener('click', e => this._onDrawerClick(e));
+                document.body.appendChild(this._dw);
+                this._escKey = e => { if (e.key === 'Escape') this._cgClose(); };
+                document.addEventListener('keydown', this._escKey);
+            }
+            this._cgShow();
+        }
+
+        _cgClose() {
+            if (this._dw) this._dw.remove();
+            this._dw = null;
+            if (this._escKey) document.removeEventListener('keydown', this._escKey);
+            this._cg = null;
+        }
+
+        async _cgFetch(focus, role) {
             const qs = new URLSearchParams();
             for (const [k, v] of Object.entries(this.source)) if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             for (const k of DOC_KEYS) {
                 const v = this.state[k];
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
-            qs.set('fids', btn.dataset.fids);
+            qs.set('fids', Object.values(focus.cells).join(','));
             qs.set('role', role);
+            const res = await fetch(`/api/bin_sim/nway/neighbors?${qs.toString()}`);
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(body.message || body.error || `HTTP ${res.status}`);
+            return body;
+        }
+
+        async _cgShow() {
+            const focus = this._cgFocus();
+            const tok = this._cgTok = (this._cgTok || 0) + 1;
+            this._cg.nb = null;
+            this._cgDraw();
             try {
-                const res = await fetch(`/api/bin_sim/nway/neighbors?${qs.toString()}`);
-                const body = await res.json();
-                el.innerHTML = res.ok ? this._callItems(body) : `<span style="color:#f92672;">${escapeHtml(body.message || body.error || 'failed')}</span>`;
+                const [callers, callees] = await Promise.all([this._cgFetch(focus, 'callers'), this._cgFetch(focus, 'callees')]);
+                if (tok !== this._cgTok || !this._cg) return;
+                Object.assign(this.data.functions_metadata, callers.functions_metadata, callees.functions_metadata);
+                this._cg.nb = { callers, callees };
+                this._cgDraw();
             } catch (err) {
-                el.innerHTML = `<span style="color:#f92672;">${escapeHtml(String(err))}</span>`;
+                if (tok !== this._cgTok || !this._cg) return;
+                this._cgDraw(String(err.message || err));
             }
+        }
+
+        // One square per file: lit when that file's function has the edge.
+        _cgStrip(on, files) {
+            const n = on.filter(Boolean).length;
+            const cls = n === files.length ? 'r-hi' : n * 2 >= files.length ? 'r-mid' : 'r-low';
+            const sq = files.map((c, i) => `<i class="${on[i] ? 'on' : ''}" title="${escapeAttr(c.file_name || c.md5 || '')}"></i>`).join('');
+            return { html: `<span class="nway-strip ${cls}">${sq}</span>`, n, cls };
+        }
+
+        _cgName(it) {
+            if (it.kind === 'row') return this._nameSig({ name: it.name, cells: it.cells }, { noClick: true });
+            if (it.kind === 'ext') return `<span class="nway-ext" title="imported symbol, matched by name">${escapeHtml(it.name)}<span class="nway-badge">ext</span></span>`;
+            return `<span class="dim" title="not part of any row in this view">${escapeHtml(it.name || '?')} (no row)</span>`;
+        }
+
+        _cgReach(it, focus, files) {
+            const on = files.map(c => { const f = focus.cells[c.id]; return !!(f && it.sources[f]); });
+            const st = this._cgStrip(on, files);
+            return `${st.html}<span class="nway-reach ${st.cls}" title="files whose function has this edge">${Number(it.support)}/${Number(it.of)}</span>`;
+        }
+
+        _cgList(nb, focus, files) {
+            const sec = (role, label) => {
+                const items = nb[role].items;
+                const rows = items.map((it, i) => `<div class="nway-cg-item${it.kind === 'row' ? '' : ' static'}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${i}"` : ''}>
+                    <span class="nway-cg-l">${this._cgName(it)}</span><span class="nway-cg-r">${this._cgReach(it, focus, files)}</span></div>`).join('');
+                return `<div class="nway-cg-h">${label} <span class="dim">(${items.length})</span></div>${rows || '<div class="dim">none</div>'}`;
+            };
+            return sec('callers', 'Callers') + sec('callees', 'Callees');
+        }
+
+        _cgGraph(nb, focus, files) {
+            const W = 600, NW = 186, NH = 58, GAP = 8, CAP = 12;
+            const lists = { callers: nb.callers.items.slice(0, CAP), callees: nb.callees.items.slice(0, CAP) };
+            const H = Math.max(lists.callers.length, lists.callees.length, 1) * (NH + GAP) + GAP;
+            const cx = (W - NW) / 2, cy = (H - NH) / 2;
+            const nodes = [], edges = [];
+            for (const [role, x] of [['callers', 0], ['callees', W - NW]]) {
+                const list = lists[role];
+                const y0 = (H - (list.length * (NH + GAP) - GAP)) / 2;
+                list.forEach((it, i) => {
+                    const y = y0 + i * (NH + GAP);
+                    const on = files.map(c => { const f = focus.cells[c.id]; return !!(f && it.sources[f]); });
+                    const st = this._cgStrip(on, files);
+                    const [x1, x2] = role === 'callers' ? [x + NW, cx] : [cx + NW, x];
+                    const [y1, y2] = role === 'callers' ? [y + NH / 2, cy + NH / 2] : [cy + NH / 2, y + NH / 2];
+                    const mx = (x1 + x2) / 2;
+                    edges.push(`<path class="nway-edge ${st.cls}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${(1 + st.n * 0.8).toFixed(1)}"></path>`);
+                    nodes.push(`<div class="nway-node${it.kind === 'row' ? '' : ' static'}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${i}"` : ''} style="left:${x}px; top:${y}px; width:${NW}px; height:${NH}px">
+                        <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div></div>`);
+                });
+            }
+            const more = ['callers', 'callees'].map(r => nb[r].items.length > CAP ? `${nb[r].items.length - CAP} more ${r} (see the list view)` : '').filter(Boolean).join('; ');
+            return `<div class="dim" style="margin-bottom:6px">Edge width is the number of files that share the edge. Click a node to recenter.</div>
+                <div class="nway-graph" style="height:${H}px; width:${W}px"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${edges.join('')}</svg>${nodes.join('')}
+                <div class="nway-node center" style="left:${cx}px; top:${cy}px; width:${NW}px; height:${NH}px"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div></div></div>
+                ${more ? `<div class="dim" style="margin-top:6px">${escapeHtml(more)}</div>` : ''}`;
+        }
+
+        _cgDraw(err) {
+            if (!this._dw || !this._cg) return;
+            const st = this._cg, focus = this._cgFocus(), files = this._cgFiles();
+            const crumbs = st.stack.map((f, i) => `<button class="nway-crumb" data-cg-crumb="${i}">${escapeHtml(f.name)}</button>`).join('<span class="dim">/</span>');
+            const toggle = ['list', 'graph'].map(v => `<button class="view-btn${st.view === v ? ' active' : ''}" data-cg-view="${v}">${v === 'list' ? 'List' : 'Graph'}</button>`).join('');
+            const on = files.map(c => !!focus.cells[c.id]);
+            const fs = this._cgStrip(on, files);
+            let body;
+            if (err) body = `<div style="color:#f92672;">${escapeHtml(err)}</div>`;
+            else if (!st.nb) body = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Reading call graph...</div>';
+            else body = st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files);
+            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="view-toggle" style="margin:0">${toggle}</div><button class="nway-chip" data-cg-close title="close (Esc)">&times;</button></div>
+                <div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>
+                <div class="nway-cg-body">${body}</div>`;
+        }
+
+        _onDrawerClick(e) {
+            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-crumb],[data-cg-close]');
+            if (!t || !this._cg) return;
+            if (t.dataset.cgClose !== undefined) return this._cgClose();
+            if (t.dataset.cgView) { this._cg.view = t.dataset.cgView; return this._cgDraw(); }
+            if (t.dataset.cgCrumb) {
+                this._cg.stack = this._cg.stack.slice(0, Number(t.dataset.cgCrumb) + 1);
+                return this._cgShow();
+            }
+            const [role, i] = t.dataset.cgGo.split(':');
+            const it = this._cg.nb && this._cg.nb[role].items[Number(i)];
+            if (!it || it.kind !== 'row') return;
+            const cells = {};
+            for (const [k, v] of Object.entries(it.cells)) if (typeof v === 'string') cells[k] = v;
+            this._cg.stack.push({ name: it.name, cells });
+            this._cgShow();
         }
 
         _row(row, ri) {
@@ -449,7 +560,7 @@
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             return `<tr>
-                <td style="min-width:260px; max-width:420px;">${this._nameSig(row)}${this._callBtns(row.files || row.cells)}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}</span></td>
+                <td style="min-width:260px; max-width:420px;">${this._nameSig(row)}${this._callBtns(ri)}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}</span></td>
                 <td class="num">${Number(row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
@@ -531,9 +642,9 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-calls]');
+            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-cg-open]');
             if (!t) return;
-            if (t.dataset.calls) return this._toggleCalls(t);
+            if (t.dataset.cgOpen !== undefined) return this._cgOpen(this.data.items[Number(t.dataset.cgOpen)]);
             if (t.dataset.openCluster) {
                 e.preventDefault();
                 return this.onOpenCluster(t.dataset.openCluster);

@@ -491,4 +491,12 @@ def get_nway_neighbors():
             item["name"] = (fmeta.get(ref) or {}).get("name") or ref.rsplit(":", 1)[-1]
         items.append(item)
     items.sort(key=lambda i: (-i["support"], i["name"] or ""))
-    return {"role": role, "of": len(fids), "items": items}
+    shown = set(fids)
+    for item in items:
+        shown.update(f for f in item.get("cells", {}).values() if isinstance(f, str))
+    return {
+        "role": role,
+        "of": len(fids),
+        "items": items,
+        "functions_metadata": {f: fmeta[f] for f in shown if f in fmeta},
+    }

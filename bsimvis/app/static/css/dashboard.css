@@ -2864,3 +2864,35 @@ a.home-card:hover,
 .nway-basket button { background: none; border: none; padding: 0 2px; cursor: pointer; color: var(--subtle); font-size: inherit; }
 .nway-basket button:hover { color: var(--accent); }
 .nway-basket .nway-basket-open { color: var(--accent); font-weight: 600; }
+
+/* N-way call-graph drawer: list and graph views of a row's callers / callees. */
+.nway-callbtns { margin-top: 4px; }
+.nway-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(660px, 100vw); z-index: 900; display: flex; flex-direction: column; background: var(--card-bg); border-left: 1px solid var(--border); box-shadow: -8px 0 28px rgba(0, 0, 0, 0.35); }
+.nway-cg-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.nway-cg-crumbs { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; font-size: 0.78rem; }
+.nway-crumb { background: none; border: none; padding: 0 2px; color: var(--accent); cursor: pointer; font: inherit; }
+.nway-cg-focus { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.nway-cg-body { flex: 1; overflow: auto; padding: 8px 14px 20px; }
+.nway-cg-h { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); margin: 12px 0 6px; }
+.nway-cg-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 9px; margin-bottom: 5px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; min-width: 0; }
+.nway-cg-item:hover, .nway-cg-item:focus-visible { border-color: var(--accent); outline: none; }
+.nway-cg-item.static { cursor: default; opacity: 0.85; }
+.nway-cg-item.static:hover { border-color: var(--border); }
+.nway-cg-l { min-width: 0; flex: 1; overflow: hidden; }
+.nway-cg-r { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.nway-strip { display: inline-flex; gap: 2px; vertical-align: middle; }
+.nway-strip i { width: 9px; height: 9px; border-radius: 2px; border: 1px solid var(--border); background: transparent; }
+.nway-strip i.on { background: var(--rc); border-color: var(--rc); }
+.nway-reach { font-size: 0.74rem; font-variant-numeric: tabular-nums; color: var(--rc); }
+.r-hi { --rc: var(--success); } .r-mid { --rc: #e6db74; } .r-low { --rc: #f92672; }
+.nway-ext { font-style: italic; font-family: monospace; font-size: 0.8rem; }
+.nway-badge { font-size: 0.66rem; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; color: var(--dim); margin-left: 6px; font-style: normal; }
+.nway-graph { position: relative; }
+.nway-graph svg { position: absolute; inset: 0; pointer-events: none; }
+.nway-edge { fill: none; stroke: var(--rc); opacity: 0.55; }
+.nway-node { position: absolute; box-sizing: border-box; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); overflow: hidden; cursor: pointer; display: flex; flex-direction: column; justify-content: space-between; }
+.nway-node:hover, .nway-node:focus-visible { border-color: var(--accent); outline: none; }
+.nway-node.center { border-color: var(--accent); cursor: default; }
+.nway-node.static { cursor: default; }
+.nway-node-name { min-width: 0; overflow: hidden; }
+.nway-node-sub { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; }

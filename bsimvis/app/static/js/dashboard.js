@@ -743,7 +743,9 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
     if (currentUrlPath !== lastPathName || !append) {
         if (!isSilent) {
-            currentOffset = 0;
+            // Page mode opens a shared link's `offset`; every later navigation is a new filter state.
+            const urlOffset = Number(new URLSearchParams(window.location.search).get('offset')) || 0;
+            currentOffset = (window.Paging.mode() === 'page' && lastPathName === '') ? Math.max(0, urlOffset) : 0;
             isEndOfResults = false;
             // Only clear if switching view types, otherwise just show loader
             if (viewKey !== lastViewPath) {
@@ -1026,7 +1028,8 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
     // Standard pagination for all search routes
     const countLimit = parseInt(params.get('limit')) || (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
-    if (isSilent && currentOffset > 0) {
+    const paged = window.Paging.mode() === 'page';
+    if (isSilent && currentOffset > 0 && !paged) {
         params.set('offset', 0);
         params.set('limit', currentOffset);
     } else {
@@ -1143,25 +1146,28 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
         let count = items.length;
 
+        // Page mode: currentOffset is the first row of the page shown, not a running count.
         if (append) {
             currentOffset += count;
-        } else {
+        } else if (!paged) {
             currentOffset = count;
         }
-        isEndOfResults = currentOffset >= total;
+        isEndOfResults = (paged ? currentOffset + count : currentOffset) >= total;
 
 
         // Update total display with "Shown / Total" format
         if (totalEl) {
             totalEl.style.display = 'inline-block';
-            totalEl.innerText = `${currentOffset.toLocaleString()} / ${total.toLocaleString()}`;
+            const shownTo = paged ? currentOffset + count : currentOffset;
+            totalEl.innerText = `${paged && total ? (currentOffset + 1).toLocaleString() + '\u2013' : ''}${shownTo.toLocaleString()} / ${total.toLocaleString()}`;
         }
         const footerEl = document.getElementById('table-footer');
         if (footerEl) footerEl.style.display = 'flex';
 
         updateFooterMeta(params, data, Math.round(performance.now() - fetchStartedAt));
 
-        renderPagination(viewKey);
+        renderPagination(viewKey, total, count, countLimit);
+        syncOffsetUrl(paged);
     } catch (err) {
         console.error(err);
     } finally {
@@ -2794,10 +2800,49 @@ function handleTagAdd(event, columnId) {
     }
 }
 
-function renderPagination(path) {
+let _pagingObserver = null;
+
+function renderPagination(path, total, count, size) {
     const container = document.getElementById('pagination-container');
+    if (_pagingObserver) _pagingObserver.disconnect();
+    if (window.Paging.mode() === 'page') {
+        container.innerHTML = total > size ? `<div class="table-footer-left" style="justify-content:center; padding:8px;">${window.Paging.footer({ offset: currentOffset, total, size, shown: count })}</div>` : '';
+        pageSize = size;
+        if (!container._pageBound) {
+            container._pageBound = true;
+            container.addEventListener('click', e => {
+                const b = e.target.closest('[data-page]');
+                if (b) gotoPage(Number(b.dataset.page));
+            });
+        }
+        return;
+    }
     container.innerHTML = (!isEndOfResults) ?
         `<button class="btn-primary" onclick="refreshData(true)">Load More Results</button>` : '';
+    // Scroll mode: the button also fires by itself when it comes into view.
+    if (!isEndOfResults) _pagingObserver = window.Paging.observe(container, () => refreshData(true));
+}
+
+let pageSize = DEFAULT_PAGE_LIMIT;
+
+function gotoPage(delta) {
+    currentOffset = Math.max(0, currentOffset + delta * pageSize);
+    document.getElementById('table-body').style.opacity = '0.5';
+    const wrap = document.getElementById('table-body-wrap');
+    if (wrap) wrap.scrollTop = 0;
+    refreshData();
+}
+
+// Only page mode puts the offset in the URL, so a page can be shared. The
+// path is remembered so this edit isn't mistaken for a navigation.
+function syncOffsetUrl(paged) {
+    const u = new URL(window.location.href);
+    if (paged && currentOffset) u.searchParams.set('offset', currentOffset);
+    else u.searchParams.delete('offset');
+    const next = u.pathname + u.search;
+    if (next === window.location.pathname + window.location.search) return;
+    history.replaceState(history.state, '', next + u.hash);
+    lastPathName = next;
 }
 
 function copyToClipboard(text, btn) {

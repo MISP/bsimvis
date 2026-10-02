@@ -131,7 +131,9 @@ window.SearchView = {
 
     async _initDetail(container, searchId) {
         container.innerHTML = `<div style="display:flex; justify-content:center; align-items:center; height:200px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin" style="margin-right:10px;"></i> Loading Search...</div>`;
-        this._resultsOffset = 0;
+        // Page mode opens a shared link's `offset`; scroll mode ignores it.
+        this._resultsOffset = window.Paging.mode() === 'page' ? Math.max(0, Number(new URLSearchParams(location.search).get('offset')) || 0) : 0;
+        this._shown = 0;
         this._currentSearchId = searchId;
         try {
             const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}`);
@@ -214,26 +216,61 @@ window.SearchView = {
         poll();
     },
 
-    async _refreshResults(searchId, collection, offset) {
+    // `append` (scroll mode): fetch the next batch after the rows already shown.
+    async _refreshResults(searchId, collection, offset, append = false) {
         const container = document.getElementById('search-results-container');
         if (!container) return;
+        const scroll = window.Paging.mode() === 'scroll';
+        if (append && this._loadingMore) return;
         if (offset !== undefined) this._resultsOffset = offset;
+        const from = scroll ? (append ? this._shown : 0) : this._resultsOffset;
+        this._loadingMore = append;
         try {
-            const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}/results?limit=${RESULTS_PAGE_SIZE}&offset=${this._resultsOffset}`);
+            const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}/results?limit=${RESULTS_PAGE_SIZE}&offset=${from}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
-            container.innerHTML = this._renderResults(data.results || [], collection);
+            const results = data.results || [];
+            if (append) {
+                container.querySelector('tbody').insertAdjacentHTML('beforeend', this._renderResults(results, collection, true));
+                this._shown += results.length;
+            } else {
+                container.innerHTML = this._renderResults(results, collection);
+                this._shown = results.length;
+            }
             // TableSelection takes an element id, not an element (constructor is idempotent per table)
             if (window.TableSelection) new window.TableSelection('search-results-table');
             const pager = document.getElementById('search-results-pager');
             if (pager) pager.innerHTML = this._renderPager(searchId, collection, data.total || 0);
+            this._syncOffsetUrl(scroll);
+            this._watchMore(searchId, collection, data.total || 0, results.length);
         } catch (e) {
-            container.innerHTML = `<div style="padding:20px; color:#f87171;">${e.message}</div>`;
+            if (!append) container.innerHTML = `<div style="padding:20px; color:#f87171;">${e.message}</div>`;
+        } finally {
+            this._loadingMore = false;
         }
+    },
+
+    // Only page mode puts the offset in the URL, so a page can be shared.
+    _syncOffsetUrl(scroll) {
+        const u = new URL(location.href);
+        if (!scroll && this._resultsOffset) u.searchParams.set('offset', this._resultsOffset);
+        else u.searchParams.delete('offset');
+        history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+    },
+
+    // Scroll mode: load the next batch when the pager line comes into view.
+    _watchMore(searchId, collection, total, got) {
+        if (this._io) this._io.disconnect();
+        const pager = document.getElementById('search-results-pager');
+        if (!pager || window.Paging.mode() !== 'scroll' || !got || this._shown >= total) return;
+        this._io = window.Paging.observe(pager, () => this._refreshResults(searchId, collection, undefined, true));
     },
 
     _renderPager(searchId, collection, total) {
         if (total <= RESULTS_PAGE_SIZE) return '';
+        if (window.Paging.mode() === 'scroll') {
+            return `<div style="text-align:center; padding:6px 0; font-size:0.8rem; color:var(--dim);">${this._shown} / ${total} results</div>`;
+        }
         const page = Math.floor(this._resultsOffset / RESULTS_PAGE_SIZE) + 1;
         const pageCount = Math.ceil(total / RESULTS_PAGE_SIZE);
         const btn = (label, offset, disabled) => `<button ${disabled ? 'disabled' : ''} onclick="window.SearchView._refreshResults(${escapeAttr(jsString(searchId))}, ${escapeAttr(jsString(collection || ''))}, ${offset})" style="background:var(--hover); border:1px solid var(--border); color:var(--text); padding:5px 12px; border-radius:6px; cursor:${disabled ? 'default' : 'pointer'}; opacity:${disabled ? 0.5 : 1};">${label}</button>`;
@@ -245,9 +282,10 @@ window.SearchView = {
         </div>`;
     },
 
-    _renderResults(results, collection) {
-        this._suggestedTags = {};
-        if (!results.length) {
+    // `append`: only the new rows, keeping the suggested tags of the rows above.
+    _renderResults(results, collection, append = false) {
+        if (!append) this._suggestedTags = {};
+        if (!results.length && !append) {
             return `<div style="color:var(--dim); font-size:0.85rem; padding:30px; text-align:center; background:var(--card-bg); border:1px solid var(--border); border-radius:8px;">No results yet.</div>`;
         }
         const rows = results.map(r => {
@@ -293,6 +331,7 @@ window.SearchView = {
                 <td style="padding:8px 15px; white-space:nowrap;">${suggestedHtml}</td>
             </tr>`;
         }).join('');
+        if (append) return rows;
 
         return `
         <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow-x:auto; background:var(--card-bg);">

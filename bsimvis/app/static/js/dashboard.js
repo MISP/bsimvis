@@ -203,6 +203,8 @@ function toggleSidebar() {
     const body = document.body;
     const isCollapsed = body.classList.toggle('sidebar-collapsed');
     localStorage.setItem('sidebarCollapsed', isCollapsed);
+    const btn = document.getElementById('sidebar-toggle');
+    btn.innerHTML = isCollapsed ? '⟩' : '⟨';
 
     // Trigger window resize for D3 plots
     setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
@@ -4351,6 +4353,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Reducible Panels Initialization
     if (localStorage.getItem('sidebarCollapsed') === 'true') {
         document.body.classList.add('sidebar-collapsed');
+        const btn = document.getElementById('sidebar-toggle');
+        if (btn) btn.innerHTML = '⟩';
     }
     if (localStorage.getItem('headerCollapsed') === 'true') {
         document.body.classList.add('header-collapsed');

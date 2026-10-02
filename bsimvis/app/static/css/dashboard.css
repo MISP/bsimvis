@@ -245,10 +245,6 @@ thead {
     background: var(--bg);
 }
 
-/* Tables with a filter row keep their column names and filters in view. */
-thead:has(> tr.filter-row) { position: sticky; top: 0; z-index: 6; }
-thead:has(> tr.filter-row) > tr:not(.filter-row) > th { background: var(--bg); }
-
 tbody {
     display: table-row-group;
 }
@@ -1376,7 +1372,7 @@ body.filters-collapsed .filter-row {
     left: 225px;
     top: 50%;
     transform: translateY(-50%);
-    width: 16px;
+    width: 20px;
     height: 60px;
     background: var(--card-bg);
     border: 1px solid var(--border);
@@ -1389,13 +1385,9 @@ body.filters-collapsed .filter-row {
     justify-content: center;
     border-radius: 0 8px 8px 0;
     transition: all 0.3s ease;
-    font-size: 0.75rem;
+    font-size: 1.2rem;
     padding: 0;
 }
-
-/* The chevron follows the body class, so a reload never shows it the wrong way. */
-#sidebar-toggle i { transition: transform 0.28s ease; }
-body.sidebar-collapsed #sidebar-toggle i { transform: rotate(180deg); }
 
 #sidebar-toggle:hover {
     background: var(--accent);

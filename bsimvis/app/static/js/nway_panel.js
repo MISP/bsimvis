@@ -16,7 +16,8 @@
  * ids) splits the files into Focus vs Rest, both set from the file header's
  * right-click menu.
  * Rows are paged
- * server-side; nothing here loads a full table. Function and file names come off
+ * server-side (Prev/Next, or appended on scroll -- see paging.js); nothing here
+ * loads a full table. Function and file names come off
  * uploaded samples, so every value goes through escapeHtml / escapeAttr.
  */
 (function () {
@@ -62,6 +63,9 @@
             this.error = null;
             this._gen = 0;
             this._debounce = null;
+            this._io = null;
+            this._loading = false;
+            if (window.Paging.mode() === 'scroll') this.state.offset = 0;
             this.el.addEventListener('click', e => this._onClick(e));
             this.el.addEventListener('change', e => this._onChange(e));
             this.el.addEventListener('input', e => this._onInput(e));
@@ -80,16 +84,24 @@
         destroy() {
             this._gen++;
             clearTimeout(this._debounce);
+            if (this._io) this._io.disconnect();
         }
 
         _set(patch) {
             Object.assign(this.state, patch);
-            if (this.onState) this.onState({ ...this.state });
+            const s = { ...this.state };
+            // Scroll mode keeps the offset out of the URL (and out of the state).
+            if (window.Paging.mode() === 'scroll') { this.state.offset = 0; delete s.offset; }
+            if (this.onState) this.onState(s);
             this.load();
         }
 
-        async load() {
+        // `append` (scroll mode): fetch the next batch after the rows already shown.
+        async load(append = false) {
+            const scroll = window.Paging.mode() === 'scroll';
+            if (append && (this._loading || !this.data)) return;
             const gen = ++this._gen;
+            this._loading = append;
             const qs = new URLSearchParams();
             for (const [k, v] of Object.entries(this.source)) if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             for (const k of API_KEYS) {
@@ -97,11 +109,15 @@
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
             qs.set('limit', PAGE);
+            if (scroll) qs.set('offset', append ? this.data.items.length : 0);
             if (!this.data) this.el.innerHTML = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions...</div>';
             try {
                 const res = await fetch(`/api/bin_sim/nway?${qs.toString()}`);
                 const body = await res.json().catch(() => ({}));
                 if (gen !== this._gen) return;
+                this._loading = false;
+                if (append && res.ok) return this._append(body);
+                if (append) return;
                 if (!res.ok) {
                     this.error = { status: res.status, ...body };
                     this.data = null;
@@ -111,6 +127,8 @@
                 }
             } catch (e) {
                 if (gen !== this._gen) return;
+                this._loading = false;
+                if (append) return;
                 this.error = { status: 0, message: String(e) };
                 this.data = null;
             }
@@ -417,20 +435,18 @@
             const d = this.data;
             const rows = d.items.map((r, i) => this._row(r, i)).join('');
             const off = Number(d.offset), total = Number(d.total);
+            const scroll = window.Paging.mode() === 'scroll';
             this.el.innerHTML = `<div class="nway-panel">${this._controls()}${this._notes()}
                 <div class="nway-card table-scope">
                     <div class="nway-scroll">
                         <table id="nway-table" class="nway-table">
                             <thead>${this._head()}</thead>
                             <tbody>${rows || `<tr><td colspan="${d.columns.length + 7}" class="gap">No rows in this tab.</td></tr>`}</tbody>
+                            ${scroll ? `<tfoot><tr><td class="nway-sentinel" colspan="${d.columns.length + 7}"></td></tr></tfoot>` : ''}
                         </table>
                     </div>
                     <div class="table-footer">
-                        <div class="table-footer-left">
-                            <button class="top-action-btn" data-page="-1"${off <= 0 ? ' disabled' : ''}>Prev</button>
-                            <span class="table-footer-badge">${total ? off + 1 : 0}&ndash;${Math.min(off + PAGE, total)} of ${total}</span>
-                            <button class="top-action-btn" data-page="1"${off + PAGE >= total ? ' disabled' : ''}>Next</button>
-                        </div>
+                        <div class="table-footer-left">${window.Paging.footer({ offset: off, total, size: PAGE, shown: d.items.length })}</div>
                         <div class="table-footer-right">
                             <span class="table-footer-sel selection-stats" style="display:none;"></span>
                         </div>
@@ -439,6 +455,28 @@
             // The shared grid selection: it reads the function entities in the
             // selected cells, so the bulk actions of the function menu apply.
             if (window.TableSelection) new window.TableSelection('nway-table');
+            this._watch();
+        }
+
+        // Scroll mode: load the next batch when the sentinel nears the viewport.
+        _watch() {
+            if (this._io) this._io.disconnect();
+            const s = this.el.querySelector('.nway-sentinel');
+            if (!s) return;
+            if (this.data.items.length >= Number(this.data.total)) return s.remove();
+            this._io = window.Paging.observe(s, () => this.load(true));
+        }
+
+        _append(body) {
+            const d = this.data;
+            Object.assign(d.functions_metadata, body.functions_metadata);
+            Object.assign(d.clusters, body.clusters);
+            const at = d.items.length;
+            d.items.push(...body.items);
+            d.total = body.total;
+            this.el.querySelector('#nway-table tbody').insertAdjacentHTML('beforeend', body.items.map((r, i) => this._row(r, at + i)).join(''));
+            this.el.querySelector('.table-footer-left').innerHTML = window.Paging.footer({ offset: 0, total: Number(d.total), size: PAGE, shown: d.items.length });
+            this._watch();
         }
 
         _onClick(e) {

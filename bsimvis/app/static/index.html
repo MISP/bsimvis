@@ -62,7 +62,8 @@
     <script src="/js/views/cluster_detail_view.js?v=3"></script>
     <script src="/js/views/search_view.js?v=5"></script>
     <script src="/js/views/scan_view.js?v=2"></script>
-    <script src="/js/nway_panel.js?v=1"></script>
+    <script src="/js/paging.js?v=1"></script>
+    <script src="/js/nway_panel.js?v=2"></script>
     <script src="/js/nway_basket.js?v=1"></script>
     <script src="/js/views/nway_view.js?v=1"></script>
 </head>
@@ -171,6 +172,16 @@
                 <span style="font-size:0.9rem; flex:1; display:flex; align-items:center; gap:10px;">
                     <i class="fa-solid fa-sun" style="color:var(--accent); width:16px; text-align:center;"></i> Light Theme
                 </span>
+            </label>
+
+            <label style="display:flex; align-items:center; gap:10px; margin-bottom: 20px; padding: 4px 0;">
+                <span style="font-size:0.9rem; flex:1; display:flex; align-items:center; gap:10px;">
+                    <i class="fa-solid fa-list" style="color:var(--accent); width:16px; text-align:center;"></i> Long lists
+                </span>
+                <select id="param-paging-mode" onchange="updateUIParams()" style="cursor:pointer;">
+                    <option value="page">Pages</option>
+                    <option value="scroll">Scroll</option>
+                </select>
             </label>
 
             <div style="border-top: 1px solid var(--border); padding-top: 15px;">

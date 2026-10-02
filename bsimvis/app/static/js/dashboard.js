@@ -3397,7 +3397,8 @@ const UIParams = {
     colorByTag: localStorage.getItem('colorByTag') === 'true',
     includeHeaders: localStorage.getItem('includeHeaders') === 'true',
     useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? false : localStorage.getItem('useFloatingWindows') === 'true',
-    lightTheme: localStorage.getItem('lightTheme') === 'true'
+    lightTheme: localStorage.getItem('lightTheme') === 'true',
+    pagingMode: localStorage.getItem('pagingMode') === 'scroll' ? 'scroll' : 'page'
 };
 window.UIParams = UIParams;
 
@@ -3424,6 +3425,8 @@ function updateUIParams() {
     localStorage.setItem('includeHeaders', UIParams.includeHeaders);
     localStorage.setItem('useFloatingWindows', UIParams.useFloatingWindows);
     localStorage.setItem('lightTheme', UIParams.lightTheme);
+    UIParams.pagingMode = document.getElementById('param-paging-mode').value;
+    localStorage.setItem('pagingMode', UIParams.pagingMode);
 
     // ponytail: light theme toggle action
     if (UIParams.lightTheme) {
@@ -3467,6 +3470,8 @@ function loadUIParams() {
     if (elIncludeHeaders) elIncludeHeaders.checked = UIParams.includeHeaders;
     if (elFloatingWindows) elFloatingWindows.checked = UIParams.useFloatingWindows;
     if (elLightTheme) elLightTheme.checked = UIParams.lightTheme;
+    const elPaging = document.getElementById('param-paging-mode');
+    if (elPaging) elPaging.value = UIParams.pagingMode;
 }
 
 window.addEventListener('load', () => {

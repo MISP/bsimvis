@@ -2774,6 +2774,7 @@ a.home-card:hover,
 .nway-state { padding: 40px 20px; text-align: center; color: var(--dim); }
 .nway-card { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .nway-scroll { overflow: auto; }
+.nway-table td.nway-sentinel { padding: 0; height: 1px; border: 0; }
 .nway-table { width: 100%; table-layout: auto; font-size: 0.82rem; }
 .nway-table th, .nway-table td { padding: 8px 12px; }
 .nway-table th { white-space: nowrap; vertical-align: bottom; }

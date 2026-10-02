@@ -666,7 +666,7 @@ window.ClusterDetailView = {
         if (!el || !this.selectedClusterUuid || !window.NwayPanel) return;
         if (this._nway) this._nway.destroy();
         const url = new URLSearchParams(window.location.search);
-        const keys = ['scope', 'k', 'min_edge', 'mode', 'columns', 'child_presence', 'q', 'tags'];
+        const keys = ['scope', 'k', 'min_edge', 'mode', 'columns', 'child_presence', 'q', 'tags', 'offset'];
         const state = {};
         keys.forEach(k => { if (url.get(k)) state[k] = url.get(k); });
         if (url.get('ntab')) state.tab = url.get('ntab');

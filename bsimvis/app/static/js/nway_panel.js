@@ -459,10 +459,19 @@
         }
 
         // One square per file: lit when that file's function has the edge.
-        _cgStrip(on, files) {
+        // Each square is a file: hover shows its name and md5, click opens the file
+        // details, right-click gives the usual file menu.
+        _cgStrip(on, files, yes = 'has this edge', no = 'no such edge') {
             const n = on.filter(Boolean).length;
             const cls = n === files.length ? 'r-hi' : n * 2 >= files.length ? 'r-mid' : 'r-low';
-            const sq = files.map((c, i) => `<i class="${on[i] ? 'on' : ''}" title="${escapeAttr(c.file_name || c.md5 || '')}"></i>`).join('');
+            const sq = files.map((c, i) => {
+                const coll = c.collection || '';
+                const data = { md5: c.md5, fileId: `${coll}:file:${c.md5}`, name: c.file_name || c.md5, file_name: c.file_name || '', collection: coll };
+                const tip = [c.file_name, c.md5, coll, on[i] ? yes : no].filter(Boolean).join('\n');
+                return `<i class="${on[i] ? 'on' : ''}" title="${escapeAttr(tip)}" data-entity-data='${escapeAttr(JSON.stringify(data))}'
+                    onclick="event.stopPropagation(); openFileDetails(${escapeAttr(jsString(coll))}, ${escapeAttr(jsString(c.md5))}, ${escapeAttr(jsString(c.file_name || c.md5))}, event)"
+                    oncontextmenu='event.stopPropagation(); EntityRenderer.handleContextMenu(event, "file", this)'></i>`;
+            }).join('');
             return { html: `<span class="nway-strip ${cls}">${sq}</span>`, n, cls };
         }
 
@@ -532,7 +541,7 @@
             const scopeToggle = [['code', 'Code', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['library', 'Library', 'fa-solid fa-cubes', 'var(--warning, #d97706)'], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']].map(([v, text, icon, color]) => `<span class="bsim-tag-pill" data-cg-scope="${v}" style="${window.binSimPillStyle(st.scope === v, color)} padding:4px 10px; font-size:0.78rem;"><i class="${icon}"></i>${text}</span>`).join('');
             const toggle = ['list', 'graph'].map(v => `<button class="view-btn${st.view === v ? ' active' : ''}" data-cg-view="${v}">${v === 'list' ? 'List' : 'Graph'}</button>`).join('');
             const on = files.map(c => !!focus.cells[c.id]);
-            const fs = this._cgStrip(on, files);
+            const fs = this._cgStrip(on, files, 'has this function', 'function missing');
             let body;
             if (err) body = `<div style="color:#f92672;">${escapeHtml(err)}</div>`;
             else if (!st.nb) body = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Reading call graph...</div>';

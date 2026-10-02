@@ -69,6 +69,7 @@
             this.el.addEventListener('click', e => this._onClick(e));
             this.el.addEventListener('change', e => this._onChange(e));
             this.el.addEventListener('input', e => this._onInput(e));
+            window.Paging.bind(this.el, () => ({ offset: Number(this.state.offset) || 0, total: Number(this.data && this.data.total) || 0, size: PAGE }), off => this._set({ offset: off }));
             this.el.addEventListener('toggle', e => {
                 if (e.target.matches('details.nway-focus')) this._focusOpen = e.target.open;
             }, true);
@@ -480,7 +481,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-page],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear]');
+            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear]');
             if (!t) return;
             if (t.dataset.openCluster) {
                 e.preventDefault();
@@ -502,7 +503,6 @@
                 const same = this.state.sort_col === t.dataset.sort;
                 return this._set({ sort_col: t.dataset.sort, sort_dir: same && this.state.sort_dir === 'desc' ? 'asc' : 'desc', offset: 0 });
             }
-            if (t.dataset.page) return this._set({ offset: Math.max(0, Number(this.state.offset) + Number(t.dataset.page) * PAGE) });
             if (t.dataset.nav && window.Nav) {
                 e.preventDefault();
                 window.Nav.openPath(t.dataset.nav, e, { title: t.dataset.title || 'Function', type: 'function' });

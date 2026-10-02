@@ -135,10 +135,12 @@ window.SearchView = {
         this._resultsOffset = window.Paging.mode() === 'page' ? Math.max(0, Number(new URLSearchParams(location.search).get('offset')) || 0) : 0;
         this._shown = 0;
         this._currentSearchId = searchId;
+        this._collection = '';
         try {
             const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}`);
             if (!res.ok) throw new Error(res.status === 404 ? 'Search not found' : `HTTP ${res.status}`);
             const meta = await res.json();
+            this._collection = meta.collection;
             container.innerHTML = this._renderDetailShell(meta);
             await this._refreshResults(searchId, meta.collection);
             if (meta.status === 'running' && meta.job_id) {
@@ -268,18 +270,11 @@ window.SearchView = {
 
     _renderPager(searchId, collection, total) {
         if (total <= RESULTS_PAGE_SIZE) return '';
-        if (window.Paging.mode() === 'scroll') {
-            return `<div style="text-align:center; padding:6px 0; font-size:0.8rem; color:var(--dim);">${this._shown} / ${total} results</div>`;
-        }
-        const page = Math.floor(this._resultsOffset / RESULTS_PAGE_SIZE) + 1;
-        const pageCount = Math.ceil(total / RESULTS_PAGE_SIZE);
-        const btn = (label, offset, disabled) => `<button ${disabled ? 'disabled' : ''} onclick="window.SearchView._refreshResults(${escapeAttr(jsString(searchId))}, ${escapeAttr(jsString(collection || ''))}, ${offset})" style="background:var(--hover); border:1px solid var(--border); color:var(--text); padding:5px 12px; border-radius:6px; cursor:${disabled ? 'default' : 'pointer'}; opacity:${disabled ? 0.5 : 1};">${label}</button>`;
-        return `
-        <div style="display:flex; align-items:center; justify-content:center; gap:10px; padding:6px 0; font-size:0.8rem; color:var(--dim);">
-            ${btn('Prev', Math.max(0, this._resultsOffset - RESULTS_PAGE_SIZE), page <= 1)}
-            <span>Page ${page} / ${pageCount} (${total} results)</span>
-            ${btn('Next', this._resultsOffset + RESULTS_PAGE_SIZE, page >= pageCount)}
-        </div>`;
+        this._total = total;
+        window.Paging.bind(document.getElementById('search-results-pager'),
+            () => ({ offset: this._resultsOffset, total: this._total, size: RESULTS_PAGE_SIZE }),
+            off => this._refreshResults(this._currentSearchId, this._collection, off));
+        return `<div style="display:flex; align-items:center; justify-content:center; gap:10px; padding:6px 0; font-size:0.8rem; color:var(--dim);">${window.Paging.footer({ offset: this._resultsOffset, total, size: RESULTS_PAGE_SIZE, shown: this._shown })}</div>`;
     },
 
     // `append`: only the new rows, keeping the suggested tags of the rows above.

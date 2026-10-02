@@ -2805,21 +2805,16 @@ let _pagingObserver = null;
 function renderPagination(path, total, count, size) {
     const container = document.getElementById('pagination-container');
     if (_pagingObserver) _pagingObserver.disconnect();
-    // Page mode: Prev/Next live in the pinned table footer, next to the "N-M / total" badge.
+    // Page mode: the pager lives in the pinned table footer, next to the "N-M / total" badge.
     const pager = document.getElementById('view-pager');
     if (pager) pager.innerHTML = '';
     if (window.Paging.mode() === 'page') {
         container.innerHTML = '';
         pageSize = size;
+        pageTotal = total;
         if (pager && total > size) {
-            pager.innerHTML = window.Paging.buttons({ offset: currentOffset, total, size }).join('');
-            if (!pager._pageBound) {
-                pager._pageBound = true;
-                pager.addEventListener('click', e => {
-                    const b = e.target.closest('[data-page]');
-                    if (b) gotoPage(Number(b.dataset.page));
-                });
-            }
+            pager.innerHTML = window.Paging.controls({ offset: currentOffset, total, size });
+            window.Paging.bind(pager, () => ({ offset: currentOffset, total: pageTotal, size: pageSize }), gotoOffset);
         }
         return;
     }
@@ -2830,9 +2825,10 @@ function renderPagination(path, total, count, size) {
 }
 
 let pageSize = DEFAULT_PAGE_LIMIT;
+let pageTotal = 0;
 
-function gotoPage(delta) {
-    currentOffset = Math.max(0, currentOffset + delta * pageSize);
+function gotoOffset(offset) {
+    currentOffset = offset;
     document.getElementById('table-body').style.opacity = '0.5';
     const wrap = document.getElementById('table-body-wrap');
     if (wrap) wrap.scrollTop = 0;

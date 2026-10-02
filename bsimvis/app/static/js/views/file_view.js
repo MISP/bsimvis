@@ -994,8 +994,8 @@ window.FileView = {
         return p.toString();
     },
 
-    // `page` (page mode): +1 / -1 steps to the next / previous page.
-    async loadFunctionsTable({ reset = false, page = 0 } = {}) {
+    // `at` (page mode): the offset of the page to show.
+    async loadFunctionsTable({ reset = false, at } = {}) {
         const paged = window.Paging.mode() === 'page';
         if (this.funcPage.loading && !reset) return;
         // No `functionsLoaded` guard here: this is also the "load the next page"
@@ -1010,7 +1010,7 @@ window.FileView = {
             this.funcPage.total = null;
             this.funcOffset = 0;
         }
-        if (page) this.funcOffset = Math.max(0, this.funcOffset + page * this.FUNC_PAGE_SIZE);
+        if (at !== undefined) this.funcOffset = at;
         this.funcPage.loading = true;
         this.setFunctionsStatus('<i class="fa-solid fa-spinner fa-spin"></i> Loading...');
 
@@ -1424,17 +1424,13 @@ window.FileView = {
         const total = this.funcPage.total ?? shown;
         if (window.Paging.mode() === 'page') {
             this.setFunctionsStatus(window.Paging.footer({ offset: this.funcOffset, total, size: this.FUNC_PAGE_SIZE, shown }));
-            const st = document.getElementById('file-func-status');
-            if (!st._pageBound) {
-                st._pageBound = true;
-                st.addEventListener('click', e => {
-                    const b = e.target.closest('[data-page]');
-                    if (!b) return;
-                    this.loadFunctionsTable({ page: Number(b.dataset.page) });
+            window.Paging.bind(document.getElementById('file-func-status'),
+                () => ({ offset: this.funcOffset, total: this.funcPage.total || 0, size: this.FUNC_PAGE_SIZE }),
+                off => {
+                    this.loadFunctionsTable({ at: off });
                     const sc = document.getElementById('file-func-scroll');
                     if (sc) sc.scrollTop = 0;
                 });
-            }
         } else {
             this.setFunctionsStatus(shown < total ? `Showing ${shown} of ${total} — scroll for more` : `${total} function${total === 1 ? '' : 's'}`);
         }

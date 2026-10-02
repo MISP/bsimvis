@@ -2665,6 +2665,21 @@ a.home-card:hover,
     -webkit-appearance: none;
     margin: 0;
 }
+/* Shared pager (paging.js): "Page [n] / N" between the arrows, no spinners. */
+.paging-page { display: inline-flex; align-items: center; gap: 4px; font-size: 0.78rem; color: var(--dim); white-space: nowrap; }
+.paging-input {
+    width: 44px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 4px;
+    color: var(--accent);
+    font: inherit;
+    text-align: center;
+    -moz-appearance: textfield;
+}
+.paging-input::-webkit-inner-spin-button,
+.paging-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .table-footer-clear {
     background: none;
     border: none;

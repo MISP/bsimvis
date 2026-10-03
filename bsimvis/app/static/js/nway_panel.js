@@ -723,6 +723,8 @@
                         twin = `<button class="nway-chip" data-cg-mergefocus="${escapeAttr(it.key)}" title="Same callees, other files: merge into the focus (one function in more files)">&asymp; merge with focus</button>`;
                     }
                 }
+                const hub = role === 'callees' && lv === 0 && nb.cocallers && nb.cocallers.hub_keys[it.key];
+                if (hub) twin = `<span class="nway-hub" title="Called by ${hub} functions: too widely called to say anything about similarity, so its other callers are not listed"><i class="fa-solid fa-triangle-exclamation"></i> hub &middot; ${hub} callers not shown</span>`;
                 return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}" data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}">
                     <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div>${twin}</div>`;
             };
@@ -767,6 +769,8 @@
             };
             // columns[role][lv]: the hop-1 column keeps the in-scope / out-of-scope handling,
             // later hops only list rows whose parent is on screen.
+            // A side cut at the server's node cap says so with a card, not a footnote.
+            const capped = role => nb[role] && nb[role].truncated ? `<div class="nway-node static capped" title="The server returns at most 60 nodes per side: the rest of this side is not loaded"><div class="nway-node-name"><b><i class="fa-solid fa-scissors"></i> capped at 60</b></div><div class="nway-node-sub dim">more not loaded</div></div>` : '';
             const columns = { callers: [], callees: [] };
             const canon0 = {}, pos0 = {};
             this._cgGrp = {};
@@ -785,7 +789,7 @@
                     first = c0.html + (c0.rest.length ? merged(role, c0.rest, true) : '');
                     var prev = new Set(c0.kept.map(x => x.it.key));
                 }
-                columns[role].push(first);
+                columns[role].push(first + capped(role));
                 // Later hops are ordered by where their parents sit, so a path stays beside its parent.
                 let prevPos = c0.pos, canon = c0.canon;
                 canon0[role] = c0.canon;
@@ -816,14 +820,13 @@
                     const ps = x.it.parents.map(k => pos0.callees.get(k)).filter(v => v !== undefined);
                     return ps.length ? ps.reduce((a, b) => a + b, 0) / ps.length : Infinity;
                 };
-                const all = this._cgShown(nb, 'cocallers').filter(x => !x.out && x.it.shared >= minShare).sort((a, b) => bary(a) - bary(b));
+                const inScope = this._cgShown(nb, 'cocallers').filter(x => !x.out);
+                const all = inScope.filter(x => st.more.cocallers || x.it.shared >= minShare).sort((a, b) => bary(a) - bary(b));
+                const weak = inScope.length - all.length;
                 const cc = col0('cocallers', 0, all, st.more.cocallers ? Infinity : COCAP, canon0.callees);
-                coHtml = cc.html + (cc.rest.length ? merged('cocallers', cc.rest, true) : '');
+                coHtml = cc.html + (cc.rest.length ? merged('cocallers', cc.rest, true) : '') + (weak ? `<div class="nway-node merged" tabindex="0" data-cg-more="cocallers" title="Callers sharing fewer than ${minShare} callees with the focus: click to show them"><div class="nway-node-name"><b style="color:var(--accent)"><i class="fa-solid fa-ellipsis"></i> +${weak} weaker</b></div><div class="nway-node-sub dim">share &lt; ${minShare} callees</div></div>` : '') + capped('cocallers');
                 if (coHtml) coHtml = `<div class="nway-cg-sibs"><div class="dim nway-cg-sibh">also call these callees</div>${coHtml}</div>`;
             }
-            const co = nb.cocallers;
-            const notes = [...['callers', 'callees', 'cocallers'].filter(r => nb[r]).map(r => nb[r].truncated ? `${r}: capped at 60 nodes` : ''),
-                co && co.hubs.length ? `${co.hubs.length} callee${co.hubs.length > 1 ? 's' : ''} skipped as too widely called: ${co.hubs.join(', ')}` : ''].filter(Boolean).join('; ');
             const widths = lv => (lv ? '170px' : '230px');
             const cols = [...Array(depth).keys()].reverse().map(widths).concat(['230px'], [...Array(depth).keys()].map(widths));
             const col = html => `<div class="nway-gcol">${html}</div>`;
@@ -831,8 +834,7 @@
             const left = [...columns.callers].reverse().map(col).join(''), right = columns.callees.map(col).join('');
             return `<div class="nway-graph" data-mid="${depth}"${grid}><svg></svg>${left}
                 <div class="nway-gcol"><div class="nway-node center${focus.pieces ? ' merged-focus' : ''}"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div>${this._cgPieces(focus, files)}</div>${coHtml}</div>
-                ${right}</div>
-                ${notes ? `<div class="dim" style="margin-top:6px">${escapeHtml(notes)}</div>` : ''}`;
+                ${right}</div>`;
         }
 
         // Cards have the height their tags need, so the edges are drawn from where they landed.

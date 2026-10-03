@@ -511,7 +511,7 @@ def _cocallers(r, doc, fids, row_of, scope):
         and (scope == "all" or (scope == "library") == i["library"])
     ]
     focus_keys = {f"row:{row_of[f]}" for f in fids if f in row_of}
-    found, hubs = {}, []
+    found, hubs, hub_keys = {}, [], {}
     for callee in callees[:CALLEE_CAP]:
         src = [f for f in callee["cells"].values() if isinstance(f, str)]
         callers = [
@@ -521,6 +521,7 @@ def _cocallers(r, doc, fids, row_of, scope):
         ]
         if len(callers) > HUB_CALLERS:
             hubs.append(callee["name"])
+            hub_keys[callee["key"]] = len(callers)
             continue
         for item in callers:
             if item["key"] in found:
@@ -549,6 +550,7 @@ def _cocallers(r, doc, fids, row_of, scope):
         "levels": [items],
         "callees": len(callees),
         "hubs": hubs,
+        "hub_keys": hub_keys,
         "truncated": truncated,
         "functions_metadata": {f: fmeta[f] for f in shown if f in fmeta},
     }

@@ -2954,3 +2954,5 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .nway-stub { pointer-events: all; cursor: default; }
 .nway-stub[data-cg-deeper] { cursor: pointer; }
 .nway-stub text { font-size: 10px; fill: var(--accent); }
+.nway-lane-h { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 2px 6px; margin-top: 10px; border-top: 1px dashed var(--border); font-size: 11px; }
+.nway-lane-focus { z-index: 1; align-self: center; }

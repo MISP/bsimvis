@@ -754,7 +754,7 @@
             // Groups form over all `entries`, then `cap` counts a group as one card; the
             // entries past it come back in `rest` for the "+N more" card.
             const col0 = (role, lv, entries, cap = Infinity, canon = null) => {
-                const gs = st.suggest === 'same' ? this._cgGroupsSame(`${role}${lv}|`, entries, files, focus) : st.suggest ? this._cgGroups(`${role}${lv}|`, entries, files, focus, st.place, canon) : [];
+                const gs = st.suggest === 'lanes' ? [] : st.suggest === 'same' ? this._cgGroupsSame(`${role}${lv}|`, entries, files, focus) : st.suggest ? this._cgGroups(`${role}${lv}|`, entries, files, focus, st.place, canon) : [];
                 const by = new Map(), done = new Set(), pos = new Map(), units = [];
                 gs.forEach(g => g.m.forEach(r => by.set(r.x, g)));
                 for (const x of entries) {
@@ -859,6 +859,54 @@
             const widths = lv => (lv ? '170px' : '230px');
             const cols = [...Array(depth).keys()].reverse().map(widths).concat(['230px'], [...Array(depth).keys()].map(widths));
             const col = html => `<div class="nway-gcol">${html}</div>`;
+            if (st.suggest === 'lanes') {
+                // One horizontal band per file slice (same files); a card sits in the band of its files, in its hop's column.
+                const inScope = it => st.scope === 'all' || (st.scope === 'library') === !!it.library;
+                const placed = [], shownKeys = { callers: [], callees: [] };
+                let outMerged = {};
+                for (const role of ['callers', 'callees']) {
+                    for (let lv = 0; lv < depth; lv++) {
+                        let list = this._cgShown(nb, role, lv).filter(x => lv ? inScope(x.it) && x.it.parents.some(k => shownKeys[role][lv - 1].has(k)) : st.outside === 'merge' ? !x.out : true);
+                        if (lv === 0 && st.outside === 'merge') outMerged[role] = this._cgShown(nb, role).filter(x => x.out);
+                        shownKeys[role].push(new Set(list.map(x => x.it.key)));
+                        list.forEach(x => placed.push({ role, lv, x, m: this._cgMeasures(x.it, focus, files) }));
+                    }
+                }
+                const bySig = new Map();
+                for (const c of placed) {
+                    c.sig = c.m.present.map(v => (v ? 1 : 0)).join('');
+                    if (c.m.np >= 2) bySig.set(c.sig, (bySig.get(c.sig) || 0) + 1);
+                }
+                const lanes = [...bySig].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([sig]) => ({ sig, present: [...sig].map(v => v === '1'), n: 0 }));
+                const laneOf = c => {
+                    let i = lanes.findIndex(l => l.sig === c.sig);
+                    if (i < 0 && c.m.np >= 2) {
+                        // a subset of a slice's files joins the smallest slice that holds it
+                        const sup = lanes.map((l, j) => ({ j, size: l.present.filter(Boolean).length })).filter(({ j }) => c.m.present.every((v, k) => !v || lanes[j].present[k])).sort((a, b) => a.size - b.size);
+                        if (sup.length) i = sup[0].j;
+                    }
+                    return i < 0 ? lanes.length : i;
+                };
+                const cells = new Map();
+                const put = (r, col, html) => { const k = `${r}|${col}`; cells.set(k, (cells.get(k) || '') + html); };
+                const colOf = (role, lv) => role === 'callers' ? depth - lv : depth + 2 + lv;
+                const rowCount = new Array(lanes.length + 1).fill(0);
+                for (const c of placed) { c.lane = laneOf(c); rowCount[c.lane]++; put(2 * c.lane + 2, colOf(c.role, c.lv), node(c.role, c.lv, c.x)); }
+                for (const role of ['callers', 'callees']) {
+                    const out = outMerged[role] || [];
+                    if (out.length) { rowCount[lanes.length]++; put(2 * lanes.length + 2, colOf(role, 0), merged(role, out)); }
+                }
+                const heads = [];
+                [...lanes, { other: true }].forEach((l, i) => {
+                    if (!rowCount[i]) return;
+                    const label = l.other ? '<span class="dim">other cards</span>' : this._cgStrip(l.present, files).html;
+                    heads.push(`<div class="nway-lane-h" style="grid-row:${2 * i + 1}">${label}<span class="dim">${rowCount[i]} card${rowCount[i] > 1 ? 's' : ''}</span></div>`);
+                });
+                const rows = 2 * (lanes.length + 1);
+                const body = [...cells].map(([k, html]) => { const [r, c] = k.split('|'); return `<div class="nway-gcol" style="grid-row:${r};grid-column:${c}">${html}</div>`; }).join('');
+                const fc = `<div class="nway-gcol nway-lane-focus" style="grid-row:1 / span ${rows};grid-column:${depth + 1}"><div class="nway-node center${focus.pieces ? ' merged-focus' : ''}"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div>${this._cgPieces(focus, files)}</div>${coHtml}</div>`;
+                return `<div class="nway-graph" data-mid="${depth}" data-lanes="1" style="grid-template-columns:${cols.join(' ')}; column-gap:56px; width:max-content"><svg></svg>${heads.join('')}${body}${fc}</div>`;
+            }
             const grid = depth > 1 ? ` style="grid-template-columns:${cols.join(' ')}; column-gap:56px; width:max-content"` : '';
             const left = [...columns.callers].reverse().map(col).join(''), right = columns.callees.map(col).join('');
             return `<div class="nway-graph" data-mid="${depth}"${grid}><svg></svg>${left}
@@ -881,7 +929,7 @@
             const mid = Number(g.dataset.mid);
             const midY = r => r.top + r.height / 2;
             const slide = [];
-            for (let k = 1; k < mid; k++) slide.push(cols[mid - 1 - k], cols[mid + 1 + k]);
+            for (let k = 1; k < mid && !g.dataset.lanes; k++) slide.push(cols[mid - 1 - k], cols[mid + 1 + k]);
             {
                 for (const col of slide) {
                     const ns = [...col.querySelectorAll('[data-key]')].filter(n => n.dataset.side !== 'cocallers');
@@ -968,7 +1016,7 @@
             const outsideToggle = st.view === 'graph' && st.scope !== 'all' ? `<span class="nway-lbl" title="Neighbors outside the selected scope: grouped into one card per side, or each listed (faded)">Outside scope</span><div class="view-toggle" style="margin:0">${[['merge', 'Grouped'], ['each', 'Each']].map(([v, l]) => `<button class="view-btn${st.outside === v ? ' active' : ''}" data-cg-outside="${v}">${l}</button>`).join('')}</div>` : '';
             const scopeToggle = [['code', 'Code', AXIS.code.icon, AXIS.code.color], ['library', 'Library', AXIS.library.icon, AXIS.library.color], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']].map(([v, text, icon, color]) => `<span class="bsim-tag-pill" data-cg-scope="${v}" style="${window.binSimPillStyle(st.scope === v, color)} padding:4px 10px; font-size:0.78rem;"><i class="${icon}"></i>${text}</span>`).join('');
             const depthCtl = st.view === 'graph' ? `<label class="nway-ctl" title="How many hops to walk. Beyond the first, only rows in the selected scope are expanded (8 per row, 60 nodes)."><span class="nway-lbl">Depth</span><b>${st.depth}</b><input type="range" min="1" max="5" value="${st.depth}" data-cg-depth></label>` : '';
-            const suggestCtl = st.view === 'graph' ? `<span class="nway-lbl" title="Group cards on one side. Complementary: files that barely overlap and share a parent, probably one function split across files. Same files: cards present in exactly the same files, probably one change or fork.">Group</span><div class="view-toggle" style="margin:0">${[['off', 'Off'], ['comp', 'Complementary'], ['same', 'Same files']].map(([v, t]) => `<button class="view-btn${(st.suggest || 'off') === v ? ' active' : ''}" data-cg-suggest="${v}">${t}</button>`).join('')}</div>` : '';
+            const suggestCtl = st.view === 'graph' ? `<span class="nway-lbl" title="Group cards on one side. Complementary: files that barely overlap and share a parent, probably one function split across files. Same files: cards present in exactly the same files, probably one change or fork. Lanes: one horizontal band per set of files.">Group</span><div class="view-toggle" style="margin:0">${[['off', 'Off'], ['comp', 'Complementary'], ['same', 'Same files'], ['lanes', 'Lanes']].map(([v, t]) => `<button class="view-btn${(st.suggest || 'off') === v ? ' active' : ''}" data-cg-suggest="${v}">${t}</button>`).join('')}</div>` : '';
             const coCtl = st.view === 'graph' ? `<button class="view-btn${st.co ? ' active' : ''}" data-cg-co title="Also show the other functions that call what the focus calls, under the focus (the ones sharing most callees), to find look-alikes and unmatched siblings. Callees called by more than 25 functions are skipped. Off by default: it can add a lot."><i class="fa-solid fa-share-nodes"></i> Also called by</button>` : '';
             const toggle = ['list', 'graph'].map(v => `<button class="view-btn${st.view === v ? ' active' : ''}" data-cg-view="${v}">${v === 'list' ? 'List' : 'Graph'}</button>`).join('');
             const on = files.map(c => !!focus.cells[c.id]);

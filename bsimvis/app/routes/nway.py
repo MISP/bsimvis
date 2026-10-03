@@ -495,60 +495,117 @@ HUB_CALLERS = 25  # a callee with more callers than this is skipped by `cocaller
 CALLEE_CAP = 20  # callee rows `cocallers` looks through
 
 
-def _cocallers(r, doc, fids, row_of, scope):
-    """The other callers of the focus's callees: functions that call what it calls.
+def _walk(r, doc, fids, role, row_of, scope, depth):
+    """Rows reached from `fids` hop by hop: (levels, truncated, visited keys, last frontier)."""
+    first = _group_neighbors(r, doc, fids, role, row_of)
+    for item in first:
+        item["parents"] = ["focus"]
+    levels = [first]
+    visited = {i["key"] for i in first}
+    if fids[0] in row_of:
+        visited.add(f"row:{row_of[fids[0]]}")
 
-    Ranked by how many of the focus's callee rows they share. A callee called by
-    more than HUB_CALLERS functions (malloc, csum...) says nothing about similarity
-    and would flood the answer, so it is skipped and reported in `hubs`. Functions
-    outside every row come back too (kind `none`): they may be an unmatched sibling.
+    def expandable(item):
+        return item["kind"] == "row" and (
+            scope == "all" or (scope == "library") == item["library"]
+        )
+
+    total, truncated = len(first), False
+    frontier = [i for i in first if expandable(i)]
+    for _ in range(depth - 1):
+        nxt = {}
+        for parent in frontier:
+            src = [f for f in parent["cells"].values() if isinstance(f, str)]
+            for item in _group_neighbors(r, doc, src, role, row_of)[:DEEP_CAP]:
+                if item["key"] in visited:
+                    continue
+                if item["key"] in nxt:
+                    nxt[item["key"]]["parents"].append(parent["key"])
+                else:
+                    item["parents"] = [parent["key"]]
+                    nxt[item["key"]] = item
+        level = list(nxt.values())
+        if total + len(level) > MAX_NODES:
+            level = level[: max(0, MAX_NODES - total)]
+            truncated = True
+        if not level:
+            break
+        levels.append(level)
+        total += len(level)
+        visited.update(i["key"] for i in level)
+        frontier = [i for i in level if expandable(i)]
+    return levels, truncated, visited, frontier
+
+
+def _cocallers(r, doc, fids, row_of, scope, depth):
+    """The other callers of the callees, one list per level: functions that call what they call.
+
+    `levels[s]` are the other callers of the callees `s + 1` hops from the focus, so
+    the UI can set them in the column just left of those callees (the focus column
+    for s = 0) and every edge still runs caller -> callee. Ranked by how many of
+    those callee rows they share. A callee called by more than HUB_CALLERS functions
+    (malloc, csum...) says nothing about similarity and would flood the answer, so
+    it is skipped and reported in `hubs`. Functions outside every row come back too
+    (kind `none`): they may be an unmatched sibling.
     """
     fmeta = doc["fmeta"]
-    callees = [
-        i
-        for i in _group_neighbors(r, doc, fids, "callees", row_of)
-        if i["kind"] == "row"
-        and (scope == "all" or (scope == "library") == i["library"])
-    ]
+    walk, _, _, _ = _walk(r, doc, fids, "callees", row_of, scope, depth)
     focus_keys = {f"row:{row_of[f]}" for f in fids if f in row_of}
-    found, hubs, hub_keys = {}, [], {}
-    for callee in callees[:CALLEE_CAP]:
-        src = [f for f in callee["cells"].values() if isinstance(f, str)]
-        callers = [
-            i
-            for i in _group_neighbors(r, doc, src, "callers", row_of)
-            if i["kind"] in ("row", "none") and i["key"] not in focus_keys
-        ]
-        if len(callers) > HUB_CALLERS:
-            hubs.append(callee["name"])
-            hub_keys[callee["key"]] = len(callers)
-            continue
-        for item in callers:
-            if item["key"] in found:
-                found[item["key"]]["parents"].append(callee["key"])
-                found[item["key"]]["sources"].update(item["sources"])
-            else:
-                item["parents"] = [callee["key"]]
-                found[item["key"]] = item
-    items = sorted(
-        found.values(),
-        key=lambda i: (-len(i["parents"]), -i["support"], i["name"] or ""),
-    )
-    truncated = len(items) > MAX_NODES
-    items = items[:MAX_NODES]
+    out, counts, hubs, hub_keys, truncated = [], [], [], {}, False
     shown = set(fids)
-    for item in items:
-        item["shared"] = len(item["parents"])
-        shown.update(f for f in item.get("cells", {}).values() if isinstance(f, str))
-        if item["kind"] == "none":
-            shown.add(item["key"].split(":", 1)[1])
+    for s, level in enumerate(walk):
+        callees = [
+            i
+            for i in level
+            if i["kind"] == "row"
+            and (scope == "all" or (scope == "library") == i["library"])
+        ]
+        counts.append(len(callees))
+        skip = focus_keys | {i["key"] for i in level}
+        if s:
+            skip |= {i["key"] for i in walk[s - 1]}
+        found = {}
+        for callee in callees[:CALLEE_CAP]:
+            src = [f for f in callee["cells"].values() if isinstance(f, str)]
+            callers = [
+                i
+                for i in _group_neighbors(r, doc, src, "callers", row_of)
+                if i["kind"] in ("row", "none") and i["key"] not in skip
+            ]
+            if len(callers) > HUB_CALLERS:
+                hubs.append(callee["name"])
+                hub_keys[callee["key"]] = len(callers)
+                continue
+            for item in callers:
+                if item["key"] in found:
+                    found[item["key"]]["parents"].append(callee["key"])
+                    found[item["key"]]["sources"].update(item["sources"])
+                else:
+                    item["parents"] = [callee["key"]]
+                    found[item["key"]] = item
+        items = sorted(
+            found.values(),
+            key=lambda i: (-len(i["parents"]), -i["support"], i["name"] or ""),
+        )
+        if len(items) > MAX_NODES:
+            truncated = True
+        items = items[:MAX_NODES]
+        for item in items:
+            item["shared"] = len(item["parents"])
+            shown.update(
+                f for f in item.get("cells", {}).values() if isinstance(f, str)
+            )
+            if item["kind"] == "none":
+                shown.add(item["key"].split(":", 1)[1])
+        out.append(items)
     return {
         "role": "cocallers",
         "of": len(fids),
-        "depth": 1,
-        "items": items,
-        "levels": [items],
-        "callees": len(callees),
+        "depth": len(out),
+        "items": out[0] if out else [],
+        "levels": out,
+        "callees": counts[0] if counts else 0,
+        "counts": counts,
         "hubs": hubs,
         "hub_keys": hub_keys,
         "truncated": truncated,
@@ -591,45 +648,11 @@ def get_nway_neighbors():
     row_of = {f: i for i, row in enumerate(doc["rows"]) for f in _row_fids(row)}
 
     if role == "cocallers":
-        return _cocallers(r, doc, fids, row_of, scope)
+        return _cocallers(r, doc, fids, row_of, scope, depth)
 
-    first = _group_neighbors(r, doc, fids, role, row_of)
-    for item in first:
-        item["parents"] = ["focus"]
-    levels = [first]
-    visited = {i["key"] for i in first}
-    if fids[0] in row_of:
-        visited.add(f"row:{row_of[fids[0]]}")
-
-    def expandable(item):
-        return item["kind"] == "row" and (
-            scope == "all" or (scope == "library") == item["library"]
-        )
-
-    total, truncated = len(first), False
-    frontier = [i for i in first if expandable(i)]
-    for _ in range(depth - 1):
-        nxt = {}
-        for parent in frontier:
-            src = [f for f in parent["cells"].values() if isinstance(f, str)]
-            for item in _group_neighbors(r, doc, src, role, row_of)[:DEEP_CAP]:
-                if item["key"] in visited:
-                    continue
-                if item["key"] in nxt:
-                    nxt[item["key"]]["parents"].append(parent["key"])
-                else:
-                    item["parents"] = [parent["key"]]
-                    nxt[item["key"]] = item
-        level = list(nxt.values())
-        if total + len(level) > MAX_NODES:
-            level = level[: max(0, MAX_NODES - total)]
-            truncated = True
-        if not level:
-            break
-        levels.append(level)
-        total += len(level)
-        visited.update(i["key"] for i in level)
-        frontier = [i for i in level if expandable(i)]
+    levels, truncated, visited, frontier = _walk(
+        r, doc, fids, role, row_of, scope, depth
+    )
 
     # The outermost rows say how many neighbors lie past the graph's edge.
     for parent in frontier:

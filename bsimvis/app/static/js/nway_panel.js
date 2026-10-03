@@ -900,7 +900,7 @@
                 [...lanes, { other: true }].forEach((l, i) => {
                     if (!rowCount[i]) return;
                     const label = l.other ? '<span class="dim">other cards</span>' : this._cgStrip(l.present, files).html;
-                    heads.push(`<div class="nway-lane-h" style="grid-row:${2 * i + 1}">${label}<span class="dim">${rowCount[i]} card${rowCount[i] > 1 ? 's' : ''}</span></div>`);
+                    heads.push(`<div class="nway-lane-h" style="grid-row:${2 * i + 1}"><span class="nway-lane-lbl">${label}<span class="dim">${rowCount[i]} card${rowCount[i] > 1 ? 's' : ''}</span></span></div>`);
                 });
                 const rows = 2 * (lanes.length + 1);
                 const body = [...cells].map(([k, html]) => { const [r, c] = k.split('|'); return `<div class="nway-gcol" style="grid-row:${r};grid-column:${c}">${html}</div>`; }).join('');

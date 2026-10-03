@@ -2951,3 +2951,4 @@ html.light-theme .nway-edge.out { opacity: 0.3; }
 html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-visible, html.light-theme .nway-node.merged:hover { opacity: 1; }
 .nway-hub { font-size: 10px; color: var(--warning, #d9a400); }
 .nway-node.capped { border-style: dotted; opacity: 0.7; }
+.nway-beyond { align-self: flex-end; font-size: 10px; color: var(--accent); cursor: pointer; border: 1px dashed var(--accent); border-radius: 8px; padding: 0 5px; }

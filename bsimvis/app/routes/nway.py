@@ -443,7 +443,7 @@ def get_nway():
     return _page(doc, request.args, r, pool_id)
 
 
-NEIGHBOR_MAX_DEPTH = 3
+NEIGHBOR_MAX_DEPTH = 5
 DEEP_CAP = 8  # neighbors kept per expanded row, from depth 2 on
 MAX_NODES = 60  # all levels together
 
@@ -630,6 +630,15 @@ def get_nway_neighbors():
         total += len(level)
         visited.update(i["key"] for i in level)
         frontier = [i for i in level if expandable(i)]
+
+    # The outermost rows say how many neighbors lie past the graph's edge.
+    for parent in frontier:
+        src = [f for f in parent["cells"].values() if isinstance(f, str)]
+        parent["beyond"] = sum(
+            1
+            for i in _group_neighbors(r, doc, src, role, row_of)
+            if i["key"] not in visited
+        )
 
     shown = set(fids)
     for level in levels:

@@ -642,9 +642,9 @@
         }
 
         // Neighbors of one role under the Code / Library / All scope, keeping their index in the full list.
-        _cgShown(nb, role) {
+        _cgShown(nb, role, lv = 0) {
             const scope = this._cg.scope;
-            return nb[role].items.map((it, i) => ({ it, i, out: !(scope === 'all' || (scope === 'library') === !!it.library) }));
+            return (lv ? nb[role].levels[lv] || [] : nb[role].items).map((it, i) => ({ it, i, out: !(scope === 'all' || (scope === 'library') === !!it.library) }));
         }
 
         _cgList(nb, focus, files) {
@@ -715,7 +715,7 @@
             const node = (role, lv, { it, i, out }) => {
                 const m = this._cgMeasures(it, focus, files);
                 let twin = '';
-                if (role === 'cocallers' && it.kind === 'row') {
+                if (role === 'cocallers' && lv === 0 && it.kind === 'row') {
                     // Its files barely overlap the focus's (10% test as _cgGroups): likely the focus split by the match.
                     const both = files.filter((c, k) => m.present[k] && typeof focus.cells[c.id] === 'string').length;
                     if (both <= Math.floor(m.np * 0.1)) {
@@ -724,7 +724,7 @@
                     }
                 }
                 const beyond = it.beyond && lv === depth - 1 && (role === 'callers' || role === 'callees') ? ` data-beyond="${Number(it.beyond)}"` : '';
-                const hub = role === 'callees' && lv === 0 && nb.cocallers && nb.cocallers.hub_keys[it.key];
+                const hub = role === 'callees' && nb.cocallers && nb.cocallers.hub_keys[it.key];
                 if (hub) twin += `<span class="nway-hub" title="Called by ${hub} functions: too widely called to say anything about similarity, so its other callers are not listed"><i class="fa-solid fa-triangle-exclamation"></i> hub &middot; ${hub} callers not shown</span>`;
                 return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}"${beyond} data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}">
                     <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div>${twin}</div>`;
@@ -773,7 +773,7 @@
             // A side cut at the server's node cap says so with a card, not a footnote.
             const capped = role => nb[role] && nb[role].truncated ? `<div class="nway-node static capped" title="The server returns at most 60 nodes per side: the rest of this side is not loaded"><div class="nway-node-name"><b><i class="fa-solid fa-scissors"></i> capped at 60</b></div><div class="nway-node-sub dim">more not loaded</div></div>` : '';
             const columns = { callers: [], callees: [] };
-            const canon0 = {}, pos0 = {};
+            const keysL = { callers: [], callees: [] }, posL = { callees: [] }, canonL = { callees: [] };
             this._cgGrp = {};
             this._cgSib = {};
             for (const role of ['callers', 'callees']) {
@@ -791,12 +791,12 @@
                     var prev = new Set(c0.kept.map(x => x.it.key));
                 }
                 columns[role].push(first + capped(role));
+                keysL[role].push(prev);
                 // Later hops are ordered by where their parents sit, so a path stays beside its parent.
                 let prevPos = c0.pos, canon = c0.canon;
-                canon0[role] = c0.canon;
-                pos0[role] = c0.pos;
                 prevPos.set('more', c0.n);
                 prevPos.set('merged', c0.n);
+                if (role === 'callees') { posL.callees.push(prevPos); canonL.callees.push(canon); }
                 for (let lv = 1; lv < depth; lv++) {
                     const level = (nb[role].levels[lv] || []).map((it, i) => ({ it, i, out: !(st.scope === 'all' || (st.scope === 'library') === !!it.library) }))
                         .filter(x => !x.out && x.it.parents.some(k => prev.has(k)));
@@ -810,23 +810,29 @@
                     prevPos = c.pos;
                     canon = c.canon;
                     prev = new Set(level.map(x => x.it.key));
+                    keysL[role].push(prev);
+                    if (role === 'callees') { posL.callees.push(prevPos); canonL.callees.push(canon); }
                 }
             }
-            // Other callers of the focus's callees sit under the focus, in its column, so every edge
-            // still runs caller -> callee left to right. Few callees: any sharer; else 2+ shared.
+            // The other callers of the callees at hop s + 1 sit in the column left of them (the focus column for
+            // hop 1), so every edge still runs caller -> callee. Few callees: any sharer; else 2+ shared.
             let coHtml = '';
-            if (nb.cocallers) {
-                const minShare = nb.cocallers.callees >= 3 ? 2 : 1;
+            const sibs = sl => {
+                const minShare = (nb.cocallers.counts[sl] || 0) >= 3 ? 2 : 1;
                 const bary = x => {
-                    const ps = x.it.parents.map(k => pos0.callees.get(k)).filter(v => v !== undefined);
+                    const ps = x.it.parents.map(k => posL.callees[sl].get(k)).filter(v => v !== undefined);
                     return ps.length ? ps.reduce((a, b) => a + b, 0) / ps.length : Infinity;
                 };
-                const inScope = this._cgShown(nb, 'cocallers').filter(x => !x.out);
+                const inScope = this._cgShown(nb, 'cocallers', sl).filter(x => !x.out && x.it.parents.some(k => keysL.callees[sl].has(k)));
                 const all = inScope.filter(x => st.more.cocallers || x.it.shared >= minShare).sort((a, b) => bary(a) - bary(b));
                 const weak = inScope.length - all.length;
-                const cc = col0('cocallers', 0, all, st.more.cocallers ? Infinity : COCAP, canon0.callees);
-                coHtml = cc.html + (cc.rest.length ? merged('cocallers', cc.rest, true) : '') + (weak ? `<div class="nway-node merged" tabindex="0" data-cg-more="cocallers" title="Callers sharing fewer than ${minShare} callees with the focus: click to show them"><div class="nway-node-name"><b style="color:var(--accent)"><i class="fa-solid fa-ellipsis"></i> +${weak} weaker</b></div><div class="nway-node-sub dim">share &lt; ${minShare} callees</div></div>` : '') + capped('cocallers');
-                if (coHtml) coHtml = `<div class="nway-cg-sibs"><div class="dim nway-cg-sibh">also call these callees</div>${coHtml}</div>`;
+                const cc = col0('cocallers', sl, all, st.more.cocallers ? Infinity : COCAP, canonL.callees[sl]);
+                const html = cc.html + (cc.rest.length ? merged('cocallers', cc.rest, true) : '') + (weak ? `<div class="nway-node merged" tabindex="0" data-cg-more="cocallers" title="Callers sharing fewer than ${minShare} callees: click to show them"><div class="nway-node-name"><b style="color:var(--accent)"><i class="fa-solid fa-ellipsis"></i> +${weak} weaker</b></div><div class="nway-node-sub dim">share &lt; ${minShare} callees</div></div>` : '') + (sl ? '' : capped('cocallers'));
+                return html ? `<div class="nway-cg-sibs"><div class="dim nway-cg-sibh">also call these callees</div>${html}</div>` : '';
+            };
+            if (nb.cocallers) {
+                coHtml = sibs(0);
+                for (let sl = 1; sl < depth && posL.callees[sl]; sl++) columns.callees[sl - 1] += sibs(sl);
             }
             const widths = lv => (lv ? '170px' : '230px');
             const cols = [...Array(depth).keys()].reverse().map(widths).concat(['230px'], [...Array(depth).keys()].map(widths));
@@ -856,7 +862,7 @@
             for (let k = 1; k < mid; k++) slide.push(cols[mid - 1 - k], cols[mid + 1 + k]);
             {
                 for (const col of slide) {
-                    const ns = [...col.querySelectorAll('[data-key]')];
+                    const ns = [...col.querySelectorAll('[data-key]')].filter(n => n.dataset.side !== 'cocallers');
                     const ys = [], py = [];
                     for (const n of ns) {
                         ys.push(midY(n.getBoundingClientRect()));

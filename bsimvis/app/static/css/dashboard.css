@@ -2957,7 +2957,7 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .nway-lane-h { grid-column: 1 / -1; margin-top: 10px; border-top: 1px dashed var(--border); font-size: 11px; }
 .nway-lane-lbl { position: sticky; left: 14px; display: inline-flex; align-items: center; gap: 8px; padding: 2px 8px; background: var(--card-bg); border-radius: 0 0 6px 6px; }
 .nway-lane-focus { z-index: 1; align-self: center; }
-.nway-lane-tip { display: none; position: fixed; z-index: 1000; width: 300px; max-height: 70vh; overflow: auto; padding: 8px 10px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px #0006; font-size: 11px; }
+.nway-lane-tip { display: none; position: fixed; z-index: 30000; width: 300px; max-height: 70vh; overflow: auto; padding: 8px 10px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px #0006; font-size: 11px; }
 .nway-tip-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .nway-tip-act button { margin-left: 4px; padding: 1px 6px; font-size: 10px; cursor: pointer; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: inherit; }
 .nway-tip-act button:hover { border-color: var(--accent); }

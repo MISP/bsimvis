@@ -451,7 +451,7 @@
 
         _cgTipLater() {
             clearTimeout(this._tipT);
-            this._tipT = setTimeout(() => { if (this._tip) this._tip.style.display = 'none'; }, 250);
+            this._tipT = setTimeout(() => { if (this._laneTipEl) this._laneTipEl.style.display = 'none'; }, 250);
         }
 
         // Hover a lane label: what the lane's files have in common (the bar's tick is the share across all files).
@@ -460,8 +460,8 @@
             const files = this._cgFiles(), mask = (this._cgLaneFiles || [])[Number(lbl.dataset.lane)];
             if (!mask) return;
             const lane = files.filter((_, k) => mask[k]);
-            if (!this._tip) {
-                const t = this._tip = document.createElement('div');
+            if (!this._laneTipEl) {
+                const t = this._laneTipEl = document.createElement('div');
                 t.className = 'nway-lane-tip';
                 t.onmouseenter = () => clearTimeout(this._tipT);
                 t.onmouseleave = () => this._cgTipLater();
@@ -491,8 +491,8 @@
                 const rows = top.map(([v, n]) => `<div class="nway-tip-row" title="${escapeAttr(v)}"><span class="nway-tip-v">${escapeHtml(v)}</span><span class="nway-tip-bar"><i style="width:${(100 * n / lane.length).toFixed(0)}%"></i><b style="left:${(100 * (all.get(v) || 0) / files.length).toFixed(0)}%"></b></span><span class="dim">${n}</span></div>`).join('');
                 return `<div class="nway-tip-h">${escapeHtml(title)}${uniform ? ' <span class="nway-tip-flag" title="Every file of this lane shares it, the other files do not all">only this</span>' : ''}${here.size > top.length ? ` <span class="dim">+${here.size - top.length} more</span>` : ''}</div>${rows}`;
             }).join('');
-            this._tip.innerHTML = `<div class="nway-tip-top"><b>${lane.length} of ${files.length} files</b><span class="nway-tip-act"><button data-tip-copy="md5" data-tip-label="md5s">md5s</button><button data-tip-copy="name" data-tip-label="names">names</button><button data-tip-copy="id" data-tip-label="coll:md5">coll:md5</button></span></div><div class="dim nway-tip-legend">bar: share of the lane's files &middot; tick: share of all files</div>${sections}`;
-            const r = lbl.getBoundingClientRect(), t = this._tip;
+            this._laneTipEl.innerHTML = `<div class="nway-tip-top"><b>${lane.length} of ${files.length} files</b><span class="nway-tip-act"><button data-tip-copy="md5" data-tip-label="md5s">md5s</button><button data-tip-copy="name" data-tip-label="names">names</button><button data-tip-copy="id" data-tip-label="coll:md5">coll:md5</button></span></div><div class="dim nway-tip-legend">bar: share of the lane's files &middot; tick: share of all files</div>${sections}`;
+            const r = lbl.getBoundingClientRect(), t = this._laneTipEl;
             t.style.display = 'block';
             t.style.left = `${Math.min(r.left, window.innerWidth - t.offsetWidth - 8)}px`;
             t.style.top = `${Math.min(r.bottom + 4, window.innerHeight - t.offsetHeight - 8)}px`;

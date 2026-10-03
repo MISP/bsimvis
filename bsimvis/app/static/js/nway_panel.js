@@ -714,8 +714,17 @@
             const st = this._cg, depth = st.depth;
             const node = (role, lv, { it, i, out }) => {
                 const m = this._cgMeasures(it, focus, files);
+                let twin = '';
+                if (role === 'cocallers' && it.kind === 'row') {
+                    // Its files barely overlap the focus's (10% test as _cgGroups): likely the focus split by the match.
+                    const both = files.filter((c, k) => m.present[k] && typeof focus.cells[c.id] === 'string').length;
+                    if (both <= Math.floor(m.np * 0.1)) {
+                        this._cgSib[it.key] = it;
+                        twin = `<button class="nway-chip" data-cg-mergefocus="${escapeAttr(it.key)}" title="Same callees, other files: merge into the focus (one function in more files)">&asymp; merge with focus</button>`;
+                    }
+                }
                 return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}" data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}">
-                    <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div></div>`;
+                    <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div>${twin}</div>`;
             };
             // Groups form over all `entries`, then `cap` counts a group as one card; the
             // entries past it come back in `rest` for the "+N more" card.
@@ -761,6 +770,7 @@
             const columns = { callers: [], callees: [] };
             const canon0 = {}, pos0 = {};
             this._cgGrp = {};
+            this._cgSib = {};
             for (const role of ['callers', 'callees']) {
                 const all = this._cgShown(nb, role);
                 const inn = all.filter(x => !x.out), out = all.filter(x => x.out);
@@ -940,7 +950,7 @@
         }
 
         _onDrawerClick(e) {
-            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-suggest],[data-cg-co],[data-cg-focusgrp]');
+            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-suggest],[data-cg-co],[data-cg-focusgrp],[data-cg-mergefocus]');
             if (!t || !this._cg) return;
             if (t.dataset.cgClose !== undefined) return window.closeCallsPanel();
             if (t.dataset.cgPop !== undefined) {
@@ -955,6 +965,18 @@
                 const g = this._cgGrp && this._cgGrp[t.dataset.cgFocusgrp];
                 if (!g) return;
                 this._cg.stack.push({ name: g.name, cells: g.cells, pieces: g.pieces });
+                this._cg.more = {};
+                return this._cgShow();
+            }
+            if (t.dataset.cgMergefocus) {
+                const it = this._cgSib && this._cgSib[t.dataset.cgMergefocus];
+                if (!it) return;
+                const f = this._cg.stack[this._cg.stack.length - 1];
+                const own = o => Object.keys(o).filter(k => typeof o[k] === 'string');
+                const cells = { ...f.cells };
+                for (const k of own(it.cells)) if (typeof cells[k] !== 'string') cells[k] = it.cells[k];
+                const pieces = (f.pieces || [{ name: f.name, files: own(f.cells) }]).concat([{ name: it.name, files: own(it.cells) }]);
+                this._cg.stack.push({ name: f.name, cells, pieces });
                 this._cg.more = {};
                 return this._cgShow();
             }

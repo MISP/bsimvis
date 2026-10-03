@@ -710,7 +710,7 @@
         }
 
         _cgGraph(nb, focus, files) {
-            const CAP = 12;
+            const CAP = 12, COCAP = 6;
             const st = this._cg, depth = st.depth;
             const node = (role, lv, { it, i, out }) => {
                 const m = this._cgMeasures(it, focus, files);
@@ -759,7 +759,7 @@
             // columns[role][lv]: the hop-1 column keeps the in-scope / out-of-scope handling,
             // later hops only list rows whose parent is on screen.
             const columns = { callers: [], callees: [] };
-            const canon0 = {};
+            const canon0 = {}, pos0 = {};
             this._cgGrp = {};
             for (const role of ['callers', 'callees']) {
                 const all = this._cgShown(nb, role);
@@ -779,6 +779,7 @@
                 // Later hops are ordered by where their parents sit, so a path stays beside its parent.
                 let prevPos = c0.pos, canon = c0.canon;
                 canon0[role] = c0.canon;
+                pos0[role] = c0.pos;
                 prevPos.set('more', c0.n);
                 prevPos.set('merged', c0.n);
                 for (let lv = 1; lv < depth; lv++) {
@@ -796,12 +797,19 @@
                     prev = new Set(level.map(x => x.it.key));
                 }
             }
-            // Other callers of the focus's callees, in one column at the far right; their edges run back to those callees.
+            // Other callers of the focus's callees sit under the focus, in its column, so every edge
+            // still runs caller -> callee left to right. Few callees: any sharer; else 2+ shared.
             let coHtml = '';
             if (nb.cocallers) {
-                const all = this._cgShown(nb, 'cocallers').filter(x => !x.out);
-                const cc = col0('cocallers', 0, all, st.more.cocallers ? Infinity : CAP, canon0.callees);
-                coHtml = cc.html + (cc.rest.length ? merged('cocallers', cc.rest, true) : '') || '<div class="dim nway-cg-none">no other callers in this scope</div>';
+                const minShare = nb.cocallers.callees >= 3 ? 2 : 1;
+                const bary = x => {
+                    const ps = x.it.parents.map(k => pos0.callees.get(k)).filter(v => v !== undefined);
+                    return ps.length ? ps.reduce((a, b) => a + b, 0) / ps.length : Infinity;
+                };
+                const all = this._cgShown(nb, 'cocallers').filter(x => !x.out && x.it.shared >= minShare).sort((a, b) => bary(a) - bary(b));
+                const cc = col0('cocallers', 0, all, st.more.cocallers ? Infinity : COCAP, canon0.callees);
+                coHtml = cc.html + (cc.rest.length ? merged('cocallers', cc.rest, true) : '');
+                if (coHtml) coHtml = `<div class="nway-cg-sibs"><div class="dim nway-cg-sibh">also call these callees</div>${coHtml}</div>`;
             }
             const co = nb.cocallers;
             const notes = [...['callers', 'callees', 'cocallers'].filter(r => nb[r]).map(r => nb[r].truncated ? `${r}: capped at 60 nodes` : ''),
@@ -809,12 +817,11 @@
             const widths = lv => (lv ? '170px' : '230px');
             const cols = [...Array(depth).keys()].reverse().map(widths).concat(['230px'], [...Array(depth).keys()].map(widths));
             const col = html => `<div class="nway-gcol">${html}</div>`;
-            if (nb.cocallers) cols.push('230px');
-            const grid = depth > 1 || nb.cocallers ? ` style="grid-template-columns:${cols.join(' ')}; column-gap:56px; width:max-content"` : '';
+            const grid = depth > 1 ? ` style="grid-template-columns:${cols.join(' ')}; column-gap:56px; width:max-content"` : '';
             const left = [...columns.callers].reverse().map(col).join(''), right = columns.callees.map(col).join('');
-            return `<div class="nway-graph" data-mid="${depth}"${nb.cocallers ? ' data-co="1"' : ''}${grid}><svg></svg>${left}
-                <div class="nway-gcol"><div class="nway-node center${focus.pieces ? ' merged-focus' : ''}"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div>${this._cgPieces(focus, files)}</div></div>
-                ${right}${nb.cocallers ? col(coHtml) : ''}</div>
+            return `<div class="nway-graph" data-mid="${depth}"${grid}><svg></svg>${left}
+                <div class="nway-gcol"><div class="nway-node center${focus.pieces ? ' merged-focus' : ''}"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div>${this._cgPieces(focus, files)}</div>${coHtml}</div>
+                ${right}</div>
                 ${notes ? `<div class="dim" style="margin-top:6px">${escapeHtml(notes)}</div>` : ''}`;
         }
 
@@ -834,7 +841,6 @@
             const midY = r => r.top + r.height / 2;
             const slide = [];
             for (let k = 1; k < mid; k++) slide.push(cols[mid - 1 - k], cols[mid + 1 + k]);
-            if (g.dataset.co) slide.push(cols[cols.length - 1]);
             {
                 for (const col of slide) {
                     const ns = [...col.querySelectorAll('[data-key]')];
@@ -862,7 +868,7 @@
                     const parent = pk === 'focus' ? center : byKey[`${n.dataset.side === 'cocallers' ? 'callees' : n.dataset.side}|${pk}`];
                     if (!parent) continue;
                     // a callee is called by its parent; a caller calls its parent
-                    const [from, to] = n.dataset.side === 'callers' ? [n, parent] : [parent, n];
+                    const [from, to] = n.dataset.side === 'callees' ? [parent, n] : [n, parent];
                     const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
                     const x1 = a.right - gr.left, x2 = b.left - gr.left;
                     const y1 = a.top + a.height / 2 - gr.top, y2 = b.top + b.height / 2 - gr.top;
@@ -913,7 +919,7 @@
             const scopeToggle = [['code', 'Code', AXIS.code.icon, AXIS.code.color], ['library', 'Library', AXIS.library.icon, AXIS.library.color], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']].map(([v, text, icon, color]) => `<span class="bsim-tag-pill" data-cg-scope="${v}" style="${window.binSimPillStyle(st.scope === v, color)} padding:4px 10px; font-size:0.78rem;"><i class="${icon}"></i>${text}</span>`).join('');
             const depthCtl = st.view === 'graph' ? `<label class="nway-ctl" title="How many hops to walk. Beyond the first, only rows in the selected scope are expanded (8 per row, 60 nodes)."><span class="nway-lbl">Depth</span><b>${st.depth}</b><input type="range" min="1" max="3" value="${st.depth}" data-cg-depth></label>` : '';
             const suggestCtl = st.view === 'graph' ? `<button class="view-btn${st.suggest ? ' active' : ''}" data-cg-suggest title="Mark cards that look like one function split across files: complementary file sets, same parent"><i class="fa-solid fa-object-group"></i> Suggest merges</button>` : '';
-            const coCtl = st.view === 'graph' ? `<button class="view-btn${st.co ? ' active' : ''}" data-cg-co title="Also show the other functions that call what the focus calls (ranked by shared callees), to find look-alikes and unmatched siblings. Callees called by more than 25 functions are skipped. Off by default: it can add a lot."><i class="fa-solid fa-share-nodes"></i> Also called by</button>` : '';
+            const coCtl = st.view === 'graph' ? `<button class="view-btn${st.co ? ' active' : ''}" data-cg-co title="Also show the other functions that call what the focus calls, under the focus (the ones sharing most callees), to find look-alikes and unmatched siblings. Callees called by more than 25 functions are skipped. Off by default: it can add a lot."><i class="fa-solid fa-share-nodes"></i> Also called by</button>` : '';
             const toggle = ['list', 'graph'].map(v => `<button class="view-btn${st.view === v ? ' active' : ''}" data-cg-view="${v}">${v === 'list' ? 'List' : 'Graph'}</button>`).join('');
             const on = files.map(c => !!focus.cells[c.id]);
             const fs = this._cgStrip(on, files);

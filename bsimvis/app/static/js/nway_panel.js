@@ -434,7 +434,7 @@
                 more: {},
                 place: {},
                 co: init.co === '1' || init.co === true || (init.co === undefined && !!prev.co),
-                suggest: prev.suggest !== false,
+                suggest: prev.suggest === undefined ? 'comp' : prev.suggest,
                 nb: null,
             };
             this._dw = host;
@@ -533,7 +533,7 @@
         // ponytail: binary cosine over up to 4 functions per group; a BSim-weighted score or a call-set term if this misplaces pieces.
         async _cgPlace(tok) {
             const st = this._cg, nb = st.nb, files = this._cgFiles(), focus = this._cgFocus();
-            if (!st.suggest) return;
+            if (st.suggest !== 'comp') return;
             const place = {};
             // One top-down pass (a level's groups are the parents of the next). `support`, set on
             // the second pass, adds a bonus when a piece's child joined a group whose other
@@ -699,6 +699,28 @@
             return out;
         }
 
+        // Cards present in exactly the same files (two or more of them): one change or fork touched them all.
+        // Same shape as _cgGroups, but members stay separate functions (no merge, no focus).
+        _cgGroupsSame(prefix, entries, files, focus) {
+            const by = new Map();
+            for (const x of entries) {
+                if (x.it.kind !== 'row') continue;
+                const m = this._cgMeasures(x.it, focus, files);
+                if (m.np < 2) continue;
+                const sig = m.present.map(v => (v ? 1 : 0)).join('');
+                if (!by.has(sig)) by.set(sig, []);
+                by.get(sig).push({ x, m, par: new Set(x.it.parents || ['focus']) });
+            }
+            const out = [...by.values()].filter(ms => ms.length > 1).map((ms, n) => ({
+                m: ms, u: ms[0].m.present.slice(), par: new Set(ms.flatMap(r => [...r.par])), same: true, n, label: `S${n + 1}`,
+                cov: ms[0].m.np,
+                id: prefix + 'same:' + ms.map(r => r.x.it.key).sort().join('+'),
+            }));
+            out.pending = [];
+            out.canon = new Map(out.flatMap(g => g.m.map(r => [r.x.it.key, g.m[0].x.it.key])));
+            return out;
+        }
+
         // A merged focus lists the cards it was made of, each with the files it covers.
         _cgPieces(focus, files) {
             if (!focus.pieces || focus.pieces.length < 2) return '';
@@ -732,7 +754,7 @@
             // Groups form over all `entries`, then `cap` counts a group as one card; the
             // entries past it come back in `rest` for the "+N more" card.
             const col0 = (role, lv, entries, cap = Infinity, canon = null) => {
-                const gs = st.suggest ? this._cgGroups(`${role}${lv}|`, entries, files, focus, st.place, canon) : [];
+                const gs = st.suggest === 'same' ? this._cgGroupsSame(`${role}${lv}|`, entries, files, focus) : st.suggest ? this._cgGroups(`${role}${lv}|`, entries, files, focus, st.place, canon) : [];
                 const by = new Map(), done = new Set(), pos = new Map(), units = [];
                 gs.forEach(g => g.m.forEach(r => by.set(r.x, g)));
                 for (const x of entries) {
@@ -741,12 +763,12 @@
                     else if (!done.has(g)) {
                         done.add(g);
                         units.push({ xs: g.m.map(r => r.x), html: () => {
-                            const chip = `<span class="nway-grp" title="Suggested merge: ${g.m.length} cards with complementary files and the same parent.">&asymp; ${g.label} &middot; ${g.cov}/${files.length}</span>`;
+                            const chip = g.same ? `<span class="nway-grp" title="${g.m.length} cards in exactly the same files: likely one change or fork.">&sube; ${g.label} &middot; ${g.cov}/${files.length} files</span>` : `<span class="nway-grp" title="Suggested merge: ${g.m.length} cards with complementary files and the same parent.">&asymp; ${g.label} &middot; ${g.cov}/${files.length}</span>`;
                             const cells = {};
                             g.m.forEach(m => Object.entries(m.x.it.cells).forEach(([k, v]) => { if (typeof v === 'string') cells[k] = v; }));
                             const pieces = g.m.map(m => ({ name: m.x.it.name, files: Object.keys(m.x.it.cells).filter(k => typeof m.x.it.cells[k] === 'string') }));
-                            this._cgGrp[g.id] = { name: g.m[0].x.it.name, cells, pieces };
-                            const focusBtn = `<button class="nway-chip" data-cg-focusgrp="${escapeAttr(g.id)}" title="Make this merged group the focus: its functions in every file">&#9678; focus</button>`;
+                            if (!g.same) this._cgGrp[g.id] = { name: g.m[0].x.it.name, cells, pieces };
+                            const focusBtn = g.same ? '' : `<button class="nway-chip" data-cg-focusgrp="${escapeAttr(g.id)}" title="Make this merged group the focus: its functions in every file">&#9678; focus</button>`;
                             return `<div class="nway-grpbox${lv ? ' deep' : ''}"><div class="nway-grpbox-h">${chip}${focusBtn}</div>${g.m.map(r => node(role, lv, r.x)).join('')}</div>`;
                         } });
                     }
@@ -946,7 +968,7 @@
             const outsideToggle = st.view === 'graph' && st.scope !== 'all' ? `<span class="nway-lbl" title="Neighbors outside the selected scope: grouped into one card per side, or each listed (faded)">Outside scope</span><div class="view-toggle" style="margin:0">${[['merge', 'Grouped'], ['each', 'Each']].map(([v, l]) => `<button class="view-btn${st.outside === v ? ' active' : ''}" data-cg-outside="${v}">${l}</button>`).join('')}</div>` : '';
             const scopeToggle = [['code', 'Code', AXIS.code.icon, AXIS.code.color], ['library', 'Library', AXIS.library.icon, AXIS.library.color], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']].map(([v, text, icon, color]) => `<span class="bsim-tag-pill" data-cg-scope="${v}" style="${window.binSimPillStyle(st.scope === v, color)} padding:4px 10px; font-size:0.78rem;"><i class="${icon}"></i>${text}</span>`).join('');
             const depthCtl = st.view === 'graph' ? `<label class="nway-ctl" title="How many hops to walk. Beyond the first, only rows in the selected scope are expanded (8 per row, 60 nodes)."><span class="nway-lbl">Depth</span><b>${st.depth}</b><input type="range" min="1" max="5" value="${st.depth}" data-cg-depth></label>` : '';
-            const suggestCtl = st.view === 'graph' ? `<button class="view-btn${st.suggest ? ' active' : ''}" data-cg-suggest title="Mark cards that look like one function split across files: complementary file sets, same parent"><i class="fa-solid fa-object-group"></i> Suggest merges</button>` : '';
+            const suggestCtl = st.view === 'graph' ? `<span class="nway-lbl" title="Group cards on one side. Complementary: files that barely overlap and share a parent, probably one function split across files. Same files: cards present in exactly the same files, probably one change or fork.">Group</span><div class="view-toggle" style="margin:0">${[['off', 'Off'], ['comp', 'Complementary'], ['same', 'Same files']].map(([v, t]) => `<button class="view-btn${(st.suggest || 'off') === v ? ' active' : ''}" data-cg-suggest="${v}">${t}</button>`).join('')}</div>` : '';
             const coCtl = st.view === 'graph' ? `<button class="view-btn${st.co ? ' active' : ''}" data-cg-co title="Also show the other functions that call what the focus calls, under the focus (the ones sharing most callees), to find look-alikes and unmatched siblings. Callees called by more than 25 functions are skipped. Off by default: it can add a lot."><i class="fa-solid fa-share-nodes"></i> Also called by</button>` : '';
             const toggle = ['list', 'graph'].map(v => `<button class="view-btn${st.view === v ? ' active' : ''}" data-cg-view="${v}">${v === 'list' ? 'List' : 'Graph'}</button>`).join('');
             const on = files.map(c => !!focus.cells[c.id]);
@@ -1002,7 +1024,11 @@
                 this._cg.more = {};
                 return this._cgShow();
             }
-            if (t.dataset.cgSuggest !== undefined) { this._cg.suggest = !this._cg.suggest; return this._cgDraw(); }
+            if (t.dataset.cgSuggest) {
+                this._cg.suggest = t.dataset.cgSuggest === 'off' ? false : t.dataset.cgSuggest;
+                this._cgDraw();
+                return this._cg.nb ? this._cgPlace(this._cgTok) : undefined;
+            }
             if (t.dataset.cgMore) { this._cg.more[t.dataset.cgMore] = true; return this._cgDraw(); }
             if (t.dataset.cgExpand) { this._cg.outside = 'each'; return this._cgDraw(); }
             if (t.dataset.cgScope) { this._cg.scope = t.dataset.cgScope; return this._cg.depth > 1 || this._cg.co ? this._cgShow() : this._cgDraw(); }

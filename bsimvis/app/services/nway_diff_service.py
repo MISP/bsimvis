@@ -394,6 +394,11 @@ def _load_base(r, scope, members, vparams, labels, warnings):
             "md5": md5,
             "file_name": labels.get(_col_id(coll, md5)) or meta.get("file_name") or md5,
             "functions": len(fids),
+            "language_id": meta.get("language_id"),
+            "file_size": meta.get("file_size"),
+            "format": (meta.get("file_format") or {}).get("Executable Format"),
+            "batch_name": meta.get("batch_name"),
+            "tags": list(meta.get("tags") or [])[:40],
         }
         for (coll, md5), meta, fids in zip(members, file_meta, fid_sets)
     ]

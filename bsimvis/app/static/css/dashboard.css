@@ -2923,7 +2923,9 @@ a.home-card:hover,
 .nway-node.out { opacity: 0.25; }
 .nway-node.out:hover, .nway-node.out:focus-visible { opacity: 0.7; }
 .nway-edge.out { opacity: 0.12; }
-.nway-edge.co { stroke-dasharray: 5 4; }
+.nway-edge.co { stroke-dasharray: 5 4; opacity: 0.3; }
+.nway-cg-sibs { display: flex; flex-direction: column; gap: 12px; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border-color, #8884); }
+.nway-cg-sibs .nway-node { border-style: dashed; }
 .nway-node.merged { opacity: 0.7; }
 .nway-node.merged:hover, .nway-node.merged:focus-visible { opacity: 1; }
 .nway-strip i { position: relative; }

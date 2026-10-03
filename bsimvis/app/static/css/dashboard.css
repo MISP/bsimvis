@@ -2903,7 +2903,7 @@ a.home-card:hover,
 .r-hi { --rc: var(--success); } .r-mid { --rc: #e6db74; } .r-low { --rc: #f92672; }
 .nway-ext { font-style: italic; font-family: monospace; font-size: 0.8rem; }
 .nway-badge { font-size: 0.66rem; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; color: var(--dim); margin-left: 6px; font-style: normal; }
-.nway-graph { position: relative; display: grid; grid-template-columns: 230px 1fr 230px; align-items: center; width: 800px; }
+.nway-graph { padding: 0 52px; position: relative; display: grid; grid-template-columns: 230px 1fr 230px; align-items: center; width: 800px; }
 .nway-gcol { display: flex; flex-direction: column; gap: 12px; align-items: center; }
 .nway-graph > svg { position: absolute; inset: 0; pointer-events: none; }
 .nway-edge { fill: none; stroke: var(--accent); opacity: 0.55; }
@@ -2951,4 +2951,6 @@ html.light-theme .nway-edge.out { opacity: 0.3; }
 html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-visible, html.light-theme .nway-node.merged:hover { opacity: 1; }
 .nway-hub { font-size: 10px; color: var(--warning, #d9a400); }
 .nway-node.capped { border-style: dotted; opacity: 0.7; }
-.nway-beyond { align-self: flex-end; font-size: 10px; color: var(--accent); cursor: pointer; border: 1px dashed var(--accent); border-radius: 8px; padding: 0 5px; }
+.nway-stub { pointer-events: all; cursor: default; }
+.nway-stub[data-cg-deeper] { cursor: pointer; }
+.nway-stub text { font-size: 10px; fill: var(--accent); }

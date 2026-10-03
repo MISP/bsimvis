@@ -2903,9 +2903,9 @@ a.home-card:hover,
 .r-hi { --rc: var(--success); } .r-mid { --rc: #e6db74; } .r-low { --rc: #f92672; }
 .nway-ext { font-style: italic; font-family: monospace; font-size: 0.8rem; }
 .nway-badge { font-size: 0.66rem; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; color: var(--dim); margin-left: 6px; font-style: normal; }
-.nway-graph { padding: 0 52px; position: relative; display: grid; grid-template-columns: 230px 1fr 230px; align-items: center; width: 800px; }
+.nway-graph { margin: 0 52px; position: relative; display: grid; grid-template-columns: 230px 1fr 230px; align-items: center; width: 800px; }
 .nway-gcol { display: flex; flex-direction: column; gap: 12px; align-items: center; }
-.nway-graph > svg { position: absolute; inset: 0; pointer-events: none; }
+.nway-graph > svg { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
 .nway-edge { fill: none; stroke: var(--accent); opacity: 0.55; }
 .nway-node { position: relative; box-sizing: border-box; width: 230px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
 .nway-node:hover, .nway-node:focus-visible { border-color: var(--accent); outline: none; }

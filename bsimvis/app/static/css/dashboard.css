@@ -3002,3 +3002,8 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .nway-cg-selbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 14px; border-bottom: 1px solid var(--border); }
 .nway-cg-selbar[hidden] { display: none; }
 .nway-cg-body.selmode, .nway-cg-body.selmode * { user-select: none; -webkit-user-select: none; }
+.nway-by { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 1.5em; height: 1.5em; border-radius: 50%; font-size: 0.7em; cursor: help; }
+.nway-by.user { color: var(--success, #22c55e); background: color-mix(in srgb, var(--success, #22c55e) 16%, transparent); }
+.nway-by.llm { color: #a78bfa; background: color-mix(in srgb, #a78bfa 18%, transparent); }
+.nway-rename { font-size: 0.7em; opacity: 0.55; }
+.nway-namerow:hover .nway-rename, .nway-rename:focus-visible { opacity: 1; }

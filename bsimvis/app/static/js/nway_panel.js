@@ -567,10 +567,16 @@
         _renameBtn(row) {
             const fids = Object.values(row.files || row.cells || {}).filter(v => typeof v === 'string');
             if (!fids.length) return '';
-            const who = row.user_named === 'llm' ? 'name set by the LLM' : 'name set by an analyst';
+            // Graph cards and drill-down focuses only carry name + cells: read the source off the function metadata.
+            let by = row.user_named;
+            if (!by) {
+                const meta = this.data.functions_metadata || {};
+                const hit = fids.map(f => meta[f]).find(m => m && m.user_name && m.user_name === row.name);
+                by = hit && (hit.user_name_source || 'user');
+            }
             const alias = row.aliases && row.aliases.length ? `; also named: ${row.aliases.join(', ')}` : '';
-            const mark = row.user_named ? `<i class="fa-solid ${row.user_named === 'llm' ? 'fa-robot' : 'fa-user'}" title="${escapeAttr(who + alias)}"></i> ` : '';
-            return `${mark}<button class="nway-rename" data-rename-fids="${escapeAttr(fids.join(','))}" data-rename-name="${escapeAttr(row.name)}" title="Rename this function">&#9998;</button>`;
+            const mark = by ? `<span class="nway-by ${by === 'llm' ? 'llm' : 'user'}" title="${escapeAttr((by === 'llm' ? 'Named by the LLM' : 'Named by an analyst') + alias)}"><i class="fa-solid ${by === 'llm' ? 'fa-robot' : 'fa-user-pen'}"></i></span>` : '';
+            return `${mark}<button class="nway-rename" data-rename-fids="${escapeAttr(fids.join(','))}" data-rename-name="${escapeAttr(row.name)}" title="Rename this function"><i class="fa-solid fa-pen"></i></button>`;
         }
 
         _nameSig(row, opts = {}) {

@@ -66,6 +66,19 @@ if [ ! -f bsimvis_config.toml ] && [ -f bsimvis_config.toml.example ]; then
   cp bsimvis_config.toml.example bsimvis_config.toml
 fi
 
+# --- 1c. inherit the main config's ollama endpoint + model (every run) -----
+if [ -f "$MAIN_ROOT/bsimvis_config.toml" ] && [ -f bsimvis_config.toml ]; then
+  python3 - "$MAIN_ROOT/bsimvis_config.toml" bsimvis_config.toml <<'PY'
+import re, sys, tomllib
+llm = tomllib.load(open(sys.argv[1], "rb")).get("llm", {})
+s = open(sys.argv[2]).read()
+for k in ("ollama_url", "model"):
+    if k in llm:
+        s = re.sub(rf'(\[llm\][^\[]*?^\s*){k}\s*=[^\n]*', lambda m: f'{m.group(1)}{k} = "{llm[k]}"', s, count=1, flags=re.M | re.S)
+open(sys.argv[2], "w").write(s)
+PY
+fi
+
 # --- 2. isolated env file (offset ports so it never collides with main/others) --
 if [ ! -f "$ENV_FILE" ]; then
   # Bands kept clear of main (.env: 5001/6380/6667) and of each other.

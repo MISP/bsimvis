@@ -1079,7 +1079,7 @@
                 // Calls always read left to right: out of the caller's right side, into the callee's left side.
                 const edge = (from, to) => {
                     const f = from.getBoundingClientRect(), g2 = to.getBoundingClientRect();
-                    const x1 = f.right - gr.left, y1 = f.top + f.height / 2 - gr.top, x2 = g2.left - gr.left, y2 = g2.top + g2.height / 2 - gr.top, d = 40;
+                    const x1 = f.right - gr.left, y1 = f.top + f.height / 2 - gr.top, x2 = g2.left - gr.left, y2 = g2.top + g2.height / 2 - gr.top, d = Math.min(120, 40 + Math.abs(x1 - x2) * 0.25);
                     return `<path class="nway-edge back" d="M${x1},${y1} C${x1 + d},${y1} ${x2 - d},${y2} ${x2},${y2}"></path>`;
                 };
                 targets.forEach(t => {

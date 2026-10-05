@@ -2593,7 +2593,8 @@ a.home-card:hover,
    and give it equal gaps on both sides. The view reaches into main's 30px
    padding-bottom so those gaps are 8px, not 30px; the margin goes here rather
    than on the footer because #grid-container clips at its own edge. */
-#dashboard-view-container {
+#dashboard-view-container,
+#module-view-container {
     margin-bottom: -22px;
 }
 #table-footer {

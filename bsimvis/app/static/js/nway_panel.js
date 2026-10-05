@@ -588,19 +588,31 @@
         }
 
         // Placeholder for the BSim score of card `b` against card `a` (up to 3 functions each),
-        // filled once the drawer is in the DOM by _cgFillSims.
-        _cgSim(a, b) {
+        // filled once the drawer is in the DOM by _cgFillSims. Hover shows the function diff of
+        // the best pair, click opens it.
+        _cgSim(a, b, na, nb) {
             if (!a || !a.length || !b || !b.length) return '';
-            return `<span class="nway-sim dim" data-sim-a="${escapeAttr(a.join(','))}" data-sim-b="${escapeAttr(b.join(','))}" title="Best BSim cosine between the first card's functions and this one's"></span>`;
+            return `<span class="nway-sim dim" data-sim-a="${escapeAttr(a.join(','))}" data-sim-b="${escapeAttr(b.join(','))}" data-sim-na="${escapeAttr(na || '')}" data-sim-nb="${escapeAttr(nb || '')}"></span>`;
         }
 
         _cgFillSims() {
             this._dw.querySelectorAll('.nway-sim[data-sim-a]').forEach(async el => {
                 const a = el.dataset.simA.split(','), b = el.dataset.simB.split(',');
-                const s = Math.max(0, ...(await Promise.all(a.flatMap(x => b.map(y => this._cgPair(x, y))))));
-                el.textContent = `${Math.round(s * 100)}%`;
-                el.style.color = window.scoreColor(s);
+                const pairs = await Promise.all(a.flatMap(x => b.map(async y => ({ x, y, s: await this._cgPair(x, y) }))));
+                const best = pairs.reduce((m, p) => (p.s > m.s ? p : m), pairs[0]);
+                el.textContent = `${Math.round(best.s * 100)}%`;
+                el.style.color = window.scoreColor(best.s);
                 el.classList.remove('dim');
+                el.style.cursor = 'pointer';
+                const na = el.dataset.simNa || fnParts(best.x).addr, nb = el.dataset.simNb || fnParts(best.y).addr;
+                el.onmouseenter = e => window.showDiffPreview && window.showDiffPreview(best.x, na, best.y, nb, best.s, e);
+                el.onmousemove = e => window.moveDiffPreview && window.moveDiffPreview(e);
+                el.onmouseleave = e => window.hideDiffPreview && window.hideDiffPreview(e);
+                el.onclick = e => {
+                    e.stopPropagation();
+                    if (window.hideDiffPreview) window.hideDiffPreview(e);
+                    window.Nav.openPath(window.buildDiffUrl(best.x, best.y), e, { title: `Diff: ${na} vs ${nb}`, type: 'diff' });
+                };
             });
         }
 
@@ -803,7 +815,7 @@
             if (!focus.pieces || focus.pieces.length < 2) return '';
             const rows = focus.pieces.map((p, i) => {
                 const st = this._cgStrip(files.map(c => p.files.includes(c.id)), files);
-                const sim = i ? this._cgSim(focus.pieces[0].fids, p.fids) : '';
+                const sim = i ? this._cgSim(focus.pieces[0].fids, p.fids, focus.pieces[0].name, p.name) : '';
                 return `<div class="nway-piece"><span class="nway-piece-name">${escapeHtml(String(p.name || '?').replace(/\(.*$/, ''))}</span>${st.html}<span class="dim">${st.n}/${files.length}</span>${sim}</div>`;
             }).join('');
             return `<div class="nway-pieces" title="Merged focus: these cards cover different files and were joined into one function"><div class="dim">&asymp; merged from ${focus.pieces.length} cards</div>${rows}</div>`;
@@ -847,7 +859,7 @@
                             const pieces = g.m.map(m => ({ name: m.x.it.name, files: Object.keys(m.x.it.cells).filter(k => typeof m.x.it.cells[k] === 'string'), fids: Object.values(m.x.it.cells).filter(v => typeof v === 'string').slice(0, 3) }));
                             if (!g.same) this._cgGrp[g.id] = { name: g.m[0].x.it.name, cells, pieces };
                             const focusBtn = g.same ? '' : `<button class="nway-chip" data-cg-focusgrp="${escapeAttr(g.id)}" title="Make this merged group the focus: its functions in every file">&#9678; focus</button>`;
-                            return `<div class="nway-grpbox${lv ? ' deep' : ''}"><div class="nway-grpbox-h">${chip}${focusBtn}</div>${g.m.map((r, i) => node(role, lv, r.x) + (i && !g.same ? this._cgSim(pieces[0].fids, pieces[i].fids) : '')).join('')}</div>`;
+                            return `<div class="nway-grpbox${lv ? ' deep' : ''}"><div class="nway-grpbox-h">${chip}${focusBtn}</div>${g.m.map((r, i) => node(role, lv, r.x) + (i && !g.same ? this._cgSim(pieces[0].fids, pieces[i].fids, pieces[0].name, pieces[i].name) : '')).join('')}</div>`;
                         } });
                     }
                 }

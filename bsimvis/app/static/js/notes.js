@@ -443,7 +443,8 @@ function updateLayout() {
     const callsPanel = document.getElementById('calls-panel-v2');
     if (isCallsOpen) {
         callsPanel.style.right = totalOffset + 'px';
-        totalOffset += panelWidths.calls;
+        // ponytail: overlay instead of squeezing the page below 900px; the handle still closes it
+        if (window.innerWidth - totalOffset - panelWidths.calls >= 900) totalOffset += panelWidths.calls;
     } else if (callsPanel) {
         callsPanel.style.right = -(panelWidths.calls + 50) + 'px';
     }

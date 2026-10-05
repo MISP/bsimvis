@@ -227,9 +227,18 @@
                 isNode && d.columns_mode === 'children'
                     ? this._slider('Child presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, "Share of a child cluster's files that must hold a function for the child to count as having it.") : '',
             ].join('');
-            return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}</div>
+            return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${this._openDiff()}</div>
                 <div class="nway-bar">${this._group('Filter', filter)}${this._group('Match', match)}</div>
                 ${this._focusBox()}`;
+        }
+
+        // Cluster tab only: the same table on its own page, without the cluster chrome.
+        _openDiff() {
+            if (!this.source.cluster_uuid || window.location.pathname.startsWith('/diff/nway')) return '';
+            const qs = new URLSearchParams(this.source);
+            for (const k of API_KEYS) if (this.state[k] !== '' && this.state[k] != null && k !== 'offset') qs.set(k, this.state[k]);
+            const url = `/diff/nway?${qs.toString()}`;
+            return `<a class="top-action-btn" style="margin-left:auto" href="${escapeAttr(url)}" onclick="Nav.openPath(this.href, event)" title="Open these functions in the N-way diff view, without the cluster metadata"><i class="fa-solid fa-table-columns"></i> Open in N-diff view</a>`;
         }
 
         _files() {

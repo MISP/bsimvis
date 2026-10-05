@@ -7,7 +7,7 @@
  */
 window.NwayView = {
     _panel: null,
-    _set: { md5s: [], batch: '', collection: '', pool: '' },
+    _set: { md5s: [], batch: '', collection: '', pool: '', cluster_uuid: '', axis: '' },
     _state: {},
     _collections: null,
 
@@ -26,9 +26,11 @@ window.NwayView = {
             batch: q.get('batch_uuid') || '',
             collection: q.get('collection') || '',
             pool: q.get('pool') || '',
+            cluster_uuid: q.get('cluster_uuid') || '',
+            axis: q.get('axis') || '',
         };
         this._state = {};
-        for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'column', 'focus', 'focus_rule', 'side']) {
+        for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'column', 'focus', 'focus_rule', 'side', 'columns', 'child_presence']) {
             if (q.has(k)) this._state[k] = q.get(k);
         }
         this._collections = null;
@@ -79,6 +81,8 @@ window.NwayView = {
         if (s.batch) source.batch_uuid = s.batch;
         if (s.collection) source.collection = s.collection;
         if (s.pool) source.pool = s.pool;
+        if (s.cluster_uuid) source.cluster_uuid = s.cluster_uuid;
+        if (s.axis) source.axis = s.axis;
         return source;
     },
 
@@ -89,7 +93,7 @@ window.NwayView = {
     },
 
     _hasSet() {
-        return this._set.batch || this._set.md5s.length >= 2;
+        return this._set.cluster_uuid || this._set.batch || this._set.md5s.length >= 2;
     },
 
     _render() {
@@ -100,7 +104,7 @@ window.NwayView = {
                     <h2><i class="fa-solid fa-table-columns"></i> N-way File Diff</h2>
                     <p>Functions shared across several files, and the ones unique to a single file.</p>
                 </div>
-                <details id="nway-edit" class="nway-edit" ${this._hasSet() ? '' : 'open'}>
+                <details id="nway-edit" class="nway-edit" ${this._set.cluster_uuid ? 'hidden' : this._hasSet() ? '' : 'open'}>
                     <summary>Edit set (${this._set.md5s.length} files${this._set.batch ? ' + 1 batch' : ''})</summary>
                     <div id="nway-set"></div>
                 </details>

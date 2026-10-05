@@ -3055,3 +3055,4 @@ body.sidebar-collapsed .sidebar-nav .nav-flyout-menu a span { display: inline; }
 .more-menu-list button:hover { background: var(--hover); }
 .more-menu-list button.danger { color: #f87171; }
 .more-menu-list hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
+.entity-tab.gap { margin-left: 14px; }

@@ -836,9 +836,10 @@
                     }
                 }
                 const beyond = it.beyond && (role === 'callers' || role === 'callees') ? ` data-beyond="${Number(it.beyond)}"${lv === depth - 1 ? ' data-last="1"' : ''}` : '';
+                const other = it.other && (role === 'callers' || role === 'callees') ? ` data-other="${Number(it.other)}"` : '';
                 const hub = role === 'callees' && nb.cocallers && nb.cocallers.hub_keys[it.key];
                 if (hub) twin += `<span class="nway-hub" title="Called by ${hub} functions: too widely called to say anything about similarity, so its other callers are not listed"><i class="fa-solid fa-triangle-exclamation"></i> hub &middot; ${hub} callers not shown</span>`;
-                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}"${beyond} data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}">
+                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}"${beyond}${other} data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}">
                     <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div>${twin}</div>`;
             };
             // Groups form over all `entries`, then `cap` counts a group as one card; the
@@ -1066,6 +1067,12 @@
                 const deeper = n.dataset.last && Number(g.dataset.mid) < 5, id = `cgfade${i}`;
                 stubs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${x1}" x2="${x2}" y1="0" y2="0"><stop offset="0" style="stop-color:var(--accent)" stop-opacity="0.8"/><stop offset="1" style="stop-color:var(--accent)" stop-opacity="0"/></linearGradient>
                     <g class="nway-stub"${deeper ? ' data-cg-deeper="1"' : ''}><title>${Number(n.dataset.beyond)} more ${left ? 'callers' : 'callees'} ${n.dataset.last ? 'past this depth' : 'not shown (capped)'}${deeper ? ': click to go one hop deeper' : ''}</title><line x1="${x1}" x2="${x2}" y1="${y}" y2="${y}" stroke="url(#${id})" stroke-width="3" stroke-dasharray="6 4"/><text x="${x2 + (left ? 4 : -4)}" y="${y - 5}" text-anchor="${left ? 'end' : 'start'}">+${Number(n.dataset.beyond)}</text><rect x="${Math.min(x1, x2) - 4}" y="${y - 12}" width="54" height="24" fill="transparent"/></g>`);
+            });
+            // What a caller also calls (right of it) or a callee is also called by (left of it): a short angled stub.
+            nodes.filter(n => n.dataset.other).forEach(n => {
+                const a = n.getBoundingClientRect(), left = n.dataset.side === 'callees', k = Number(n.dataset.other);
+                const x1 = (left ? a.left : a.right) - gr.left, x2 = x1 + (left ? -34 : 34), y1 = a.top + a.height / 2 - gr.top + 8, y2 = y1 + 16;
+                stubs.push(`<g class="nway-stub other"><title>${k} other ${left ? 'callers' : 'callees'} (besides the focus): click the card to recenter</title><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/><text x="${x2 + (left ? -3 : 3)}" y="${y2 + 3}" text-anchor="${left ? 'end' : 'start'}">${k}</text></g>`);
             });
             svg.innerHTML = paths.join('') + stubs.join('');
             this._cgHover(g, center, meta);

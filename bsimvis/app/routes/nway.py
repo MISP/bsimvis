@@ -691,15 +691,22 @@ def get_nway_neighbors():
     )
 
     # Every expandable row says how many neighbors are not on screen: past the
-    # depth limit, or dropped by DEEP_CAP / MAX_NODES.
+    # depth limit, or dropped by DEEP_CAP / MAX_NODES. `other` counts the
+    # opposite direction (what a caller also calls, what a callee is also called by).
+    focus_key = f"row:{row_of[fids[0]]}" if fids[0] in row_of else None
+    opposite = "callees" if role == "callers" else "callers"
     for parent in (i for level in levels for i in level if i["kind"] == "row"):
-        if scope != "all" and (scope == "library") != parent["library"]:
-            continue
         src = [f for f in parent["cells"].values() if isinstance(f, str)]
-        parent["beyond"] = sum(
+        if scope == "all" or (scope == "library") == parent["library"]:
+            parent["beyond"] = sum(
+                1
+                for i in _group_neighbors(r, doc, src, role, row_of)
+                if i["key"] not in visited
+            )
+        parent["other"] = sum(
             1
-            for i in _group_neighbors(r, doc, src, role, row_of)
-            if i["key"] not in visited
+            for i in _group_neighbors(r, doc, src, opposite, row_of)
+            if i["key"] != focus_key
         )
 
     shown = set(fids)

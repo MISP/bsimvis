@@ -461,6 +461,22 @@
                     <i class="fa-solid fa-robot" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                     <span>AI Rename (${nwayRows})</span>
                 </div>`;
+            } else {
+                const ids = `[${nwaySel.map(i => escapeAttr(jsString(i))).join(',')}]`;
+                const one = nwaySel.length === 1;
+                const nm = escapeAttr(jsString(norm.name || ''));
+                const act = auto => one && !auto
+                    ? `FunctionRename.open(${ids}, ${nm})`
+                    : `FunctionRename.openBatch(${ids}.map(i => ({ fids: [i], name: i === ${escapeAttr(jsString(norm.id))} ? ${nm} : (window.parseFuncId(i).address || i) })), ${auto})`;
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); ${act(false)}">
+                    <i class="fa-solid fa-pen" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>Rename${one ? '' : ` (${nwaySel.length})`}</span>
+                </div>
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); ${act(true)}">
+                    <i class="fa-solid fa-robot" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>AI Rename${one ? '' : ` (${nwaySel.length})`}</span>
+                </div>`;
             }
         } else if (resolvedType === 'file') {
             const cgUrl = Nav.buildUIUrl(col, ['call_graph', norm.md5]);

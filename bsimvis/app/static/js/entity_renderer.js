@@ -28,7 +28,7 @@ window.EntityRenderer = {
     },
 
     renderFunction: function(f, options = {}) {
-        const name = f['function_name'] || 'Unknown';
+        const name = fnName(f) || 'Unknown';
         const namespace = f['namespace'] || '';
         const parameters = f['parameters'] || [];
         const returnType = f['return_type'] || 'void';

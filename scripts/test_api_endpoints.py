@@ -4743,6 +4743,38 @@ def test_nway_diff():
             str(_hit)[:200],
         )
 
+    # The name is searchable, batch-settable, and every change is kept in history.
+    if _first:
+        _bn = requests.post(
+            f"{BASE_URL}/api/notes/rename",
+            json={"renames": [{"func_ids": _rf, "name": "Analyst_Batch_Fn"}]},
+            timeout=30,
+        )
+        _fsearch = lambda **kw: requests.get(
+            f"{BASE_URL}/api/function/search",
+            params={"collection": COLLECTION, "limit": 50, **kw},
+            timeout=30,
+        ).json()
+        _by_user = _fsearch(user_name="analyst_batch_fn")
+        _by_name = _fsearch(function_name="analyst_batch_fn")
+        _got = lambda b: {f.get("function_id") for f in b.get("functions", [])}
+        check(
+            "function search: user_name and function_name find the analyst name",
+            _bn.status_code == 200
+            and _got(_by_user) >= {f for f in _rf if f.startswith(COLLECTION)}
+            and _got(_by_name) == _got(_by_user),
+            f"HTTP {_bn.status_code} {len(_got(_by_user))}/{len(_got(_by_name))}",
+        )
+        requests.post(
+            f"{BASE_URL}/api/notes/rename",
+            json={"func_ids": _rf, "name": ""},
+            timeout=30,
+        )
+        check(
+            "function search: clearing the name drops it from the index",
+            not _got(_fsearch(user_name="analyst_batch_fn")),
+        )
+
     # Call-graph neighbors of a row come back regrouped into rows.
     if _first:
         _fids = ",".join(f for f in _first["cells"].values() if isinstance(f, str))

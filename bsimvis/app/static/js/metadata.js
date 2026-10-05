@@ -18,7 +18,7 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
     if (!m) return "";
     
     // Core data extraction
-    const label = m['function_name'] || 'unknown_func';
+    const label = fnName(m) || 'unknown_func';
     const returnType = m['return_type'] || 'void';
     const namespace = m['namespace'] || '';
     const parameters = m['parameters'] || [];

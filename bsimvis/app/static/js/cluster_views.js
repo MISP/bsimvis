@@ -47,7 +47,7 @@ function getHierarchyTooltip() {
                     const members = d.data.runtime_members || [];
                     const func = members[idx];
                     if (func && func.function_id) {
-                        const name = func.function_name || 'Unknown';
+                        const name = fnName(func) || 'Unknown';
                         if (typeof showFunctionCodeById === 'function') {
                             showFunctionCodeById(func.function_id, name, '', event);
                         } else {
@@ -1225,14 +1225,14 @@ class ClusterHierarchy extends D3BaseLayout {
                                                 </div>
                                             `;
                                         }
-                                        const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
+                                        const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', fnName(m) || 'Unknown', m.parameters || []);
                                         return `
                                             <div class="hier-function-item" data-index="${i}"
                                                  data-entity-data='${escapeAttr(JSON.stringify(m))}'
                                                  oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                                                 <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                                                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
-                                                    ${sig.ret ? `<span style="color:#ae81ff">${escapeHtml(sig.ret)}</span> ` : ''}${sig.ns ? `<span style="color:white">${escapeHtml(sig.ns)}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${escapeHtml(m.function_name)}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${escapeHtml(t)}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                                                    ${sig.ret ? `<span style="color:#ae81ff">${escapeHtml(sig.ret)}</span> ` : ''}${sig.ns ? `<span style="color:white">${escapeHtml(sig.ns)}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${escapeHtml(fnName(m))}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${escapeHtml(t)}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                                                 </span>
                                             </div>
                                         `;
@@ -1258,14 +1258,14 @@ class ClusterHierarchy extends D3BaseLayout {
             const listScroll = tooltip.querySelector('.hier-function-list-scroll');
             if (listScroll && listScroll.children.length === 0 && members.length > 0) {
                 listScroll.innerHTML = members.map((m, i) => {
-                    const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
+                    const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', fnName(m) || 'Unknown', m.parameters || []);
                     return `
                         <div class="hier-function-item" data-index="${i}"
                              data-entity-data='${escapeAttr(JSON.stringify(m))}'
                              oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                             <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                             <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
-                                ${sig.ret ? `<span style="color:#ae81ff">${escapeHtml(sig.ret)}</span> ` : ''}${sig.ns ? `<span style="color:white">${escapeHtml(sig.ns)}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${escapeHtml(m.function_name)}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${escapeHtml(t)}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                                ${sig.ret ? `<span style="color:#ae81ff">${escapeHtml(sig.ret)}</span> ` : ''}${sig.ns ? `<span style="color:white">${escapeHtml(sig.ns)}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${escapeHtml(fnName(m))}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${escapeHtml(t)}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                             </span>
                         </div>
                     `;
@@ -1347,7 +1347,7 @@ class ClusterHierarchy extends D3BaseLayout {
             <div class="hier-code-snippet" style="height: 100%; display: flex; flex-direction: column;">
                 <div style="padding: 10px 15px; border-bottom: 1px solid var(--meta-header-bg); background: var(--border); flex-shrink: 0;">
                     <div style="font-size: 0.75rem; color: var(--accent); font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                        ${m.return_type || ''} ${m.namespace ? m.namespace + '::' : ''}${func.function_name}
+                        ${m.return_type || ''} ${m.namespace ? m.namespace + '::' : ''}${fnName(func)}
                     </div>
                     <div style="font-size: 0.6rem; color: var(--subtle); font-family: monospace; margin-top: 2px;">
                         Addr: ${func.entrypoint_address} | Feat: ${func.bsim_features_count}
@@ -2266,14 +2266,14 @@ class ClusterPacking {
                                                 </div>
                                             `;
                                         }
-                                        const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
+                                        const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', fnName(m) || 'Unknown', m.parameters || []);
                                         return `
                                             <div class="hier-function-item" data-index="${i}"
                                                  data-entity-data='${escapeAttr(JSON.stringify(m))}'
                                                  oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                                                 <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                                                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
-                                                    ${sig.ret ? `<span style="color:#ae81ff">${escapeHtml(sig.ret)}</span> ` : ''}${sig.ns ? `<span style="color:white">${escapeHtml(sig.ns)}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${escapeHtml(m.function_name)}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${escapeHtml(t)}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                                                    ${sig.ret ? `<span style="color:#ae81ff">${escapeHtml(sig.ret)}</span> ` : ''}${sig.ns ? `<span style="color:white">${escapeHtml(sig.ns)}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${escapeHtml(fnName(m))}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${escapeHtml(t)}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                                                 </span>
                                             </div>
                                         `;
@@ -2299,14 +2299,14 @@ class ClusterPacking {
             const listScroll = tooltip.querySelector('.hier-function-list-scroll');
             if (listScroll && listScroll.children.length === 0 && members.length > 0) {
                 listScroll.innerHTML = members.map((m, i) => {
-                    const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
+                    const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', fnName(m) || 'Unknown', m.parameters || []);
                     return `
                         <div class="hier-function-item" data-index="${i}"
                              data-entity-data='${escapeAttr(JSON.stringify(m))}'
                              oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                             <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                             <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
-                                ${sig.ret ? `<span style="color:#ae81ff">${escapeHtml(sig.ret)}</span> ` : ''}${sig.ns ? `<span style="color:white">${escapeHtml(sig.ns)}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${escapeHtml(m.function_name)}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${escapeHtml(t)}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                                ${sig.ret ? `<span style="color:#ae81ff">${escapeHtml(sig.ret)}</span> ` : ''}${sig.ns ? `<span style="color:white">${escapeHtml(sig.ns)}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${escapeHtml(fnName(m))}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${escapeHtml(t)}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                             </span>
                         </div>
                     `;
@@ -2388,7 +2388,7 @@ class ClusterPacking {
             <div class="hier-code-snippet" style="height: 100%; display: flex; flex-direction: column;">
                 <div style="padding: 10px 15px; border-bottom: 1px solid var(--meta-header-bg); background: var(--border); flex-shrink: 0;">
                     <div style="font-size: 0.75rem; color: var(--accent); font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                        ${m.return_type || ''} ${m.namespace ? m.namespace + '::' : ''}${func.function_name}
+                        ${m.return_type || ''} ${m.namespace ? m.namespace + '::' : ''}${fnName(func)}
                     </div>
                     <div style="font-size: 0.6rem; color: var(--subtle); font-family: monospace; margin-top: 2px;">
                         Addr: ${func.entrypoint_address} | Feat: ${func.bsim_features_count}

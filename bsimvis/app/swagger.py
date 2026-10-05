@@ -2810,9 +2810,13 @@ class NoteList(Resource):
 rename_model = api.model(
     "FunctionRename",
     {
-        "func_ids": fields.List(fields.String, required=True),
-        "name": fields.String(required=True, description="Empty clears the name"),
+        "func_ids": fields.List(fields.String),
+        "name": fields.String(description="Empty clears the name"),
         "owner": fields.String(example="user"),
+        "renames": fields.List(
+            fields.Raw,
+            description="Batch of {func_ids, name, owner}; replaces the above",
+        ),
     },
 )
 

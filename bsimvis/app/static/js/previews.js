@@ -290,7 +290,7 @@
         const displayAddr = addr || m.entrypoint_address || '---';
         const displayBin = file_name || bin || m.file_name || '---';
         const displayFeat = v_size || m.bsim_features_count || 0;
-        const displayName = name || m.function_name || 'Function';
+        const displayName = name || fnName(m) || 'Function';
         const extraHtml = extra > 0 ? `<div class="others-count-card"><span>⚡</span> And ${extra} other functions...</div>` : '';
 
         let html = `

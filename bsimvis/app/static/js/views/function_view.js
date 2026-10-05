@@ -215,7 +215,7 @@ window.FunctionView = {
 
             this.funcRows = data.rows || [];
             this.funcTips = data.tips || {};
-            window.currentFuncName = data.meta?.['function_name'] || 'unknown';
+            window.currentFuncName = fnName(data.meta) || 'unknown';
             if (data.meta && data.meta.file_name && file_md5) {
                 window.filenameCache = window.filenameCache || {};
                 window.filenameCache[file_md5] = data.meta.file_name;

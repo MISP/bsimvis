@@ -57,125 +57,6 @@
         return `${(Number(v || 0) * 100).toFixed(0)}%`;
     }
 
-    // Rename dialog: manual entry or an LLM suggestion the analyst accepts. Empty name resets.
-    function openRename(fids, current) {
-        const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(async r => ({ ok: r.ok, body: await r.json().catch(() => ({})) }));
-        const box = document.createElement('div');
-        box.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center';
-        box.innerHTML = `<div style="background:var(--bg-card,#1e1e1e);padding:16px;border-radius:8px;min-width:340px;display:flex;flex-direction:column;gap:8px">
-            <b>Rename function</b>
-            <input type="text" maxlength="64" value="${escapeAttr(current)}" style="padding:6px">
-            <div class="dim" data-msg style="min-height:1.2em"></div>
-            <div style="display:flex;gap:8px;justify-content:flex-end">
-                <button data-ai title="Ask the LLM for a name">AI suggest</button>
-                <button data-reset title="Back to the derived name">Reset</button>
-                <button data-cancel>Cancel</button>
-                <button data-save>Save</button>
-            </div></div>`;
-        document.body.appendChild(box);
-        const input = box.querySelector('input'), msg = box.querySelector('[data-msg]');
-        let owner = 'user';
-        input.focus();
-        input.select();
-        input.addEventListener('input', () => { owner = 'user'; });
-        const close = () => box.remove();
-        const save = async name => {
-            const { ok, body } = await post('/api/notes/rename', { func_ids: fids, name, owner });
-            if (!ok) { msg.textContent = body.error || 'Rename failed'; return; }
-            close();
-            document.dispatchEvent(new CustomEvent('nway-renamed', { detail: { renames: [{ fids, name }] } }));
-        };
-        box.addEventListener('click', async e => {
-            if (e.target === box || e.target.closest('[data-cancel]')) return close();
-            if (e.target.closest('[data-save]')) return save(input.value.trim());
-            if (e.target.closest('[data-reset]')) return save('');
-            if (e.target.closest('[data-ai]')) {
-                const ai = box.querySelector('[data-ai]');
-                if (ai.disabled) return;
-                ai.disabled = input.disabled = true;
-                msg.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Asking the LLM...';
-                const { ok, body } = await post('/api/notes/rename/suggest', { func_ids: fids });
-                ai.disabled = input.disabled = false;
-                if (!ok) { msg.textContent = body.error || 'No suggestion'; return; }
-                input.value = body.name;
-                owner = 'llm';
-                msg.textContent = 'LLM suggestion: edit it or press Save.';
-            }
-        });
-        input.addEventListener('keydown', e => {
-            if (e.key === 'Enter') save(input.value.trim());
-            if (e.key === 'Escape') close();
-        });
-    }
-
-    // Batch rename: one editable name per row; the LLM fills them in on request and nothing
-    // is saved until Apply. Rows are `{fids, name}`; unchanged and empty names are skipped.
-    function openBatchRename(rows, auto) {
-        const box = document.createElement('div');
-        box.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center';
-        box.innerHTML = `<div style="background:var(--bg-card,#1e1e1e);padding:16px;border-radius:8px;width:min(560px,92vw);max-height:80vh;display:flex;flex-direction:column;gap:8px">
-            <b>Rename ${rows.length} function${rows.length === 1 ? '' : 's'}</b>
-            <div style="overflow:auto;display:flex;flex-direction:column;gap:6px">${rows.map((r, i) => `<label style="display:flex;flex-direction:column;gap:2px"><span class="dim" style="font-size:.8em">${escapeHtml(r.name)} <i class="fa-solid fa-spinner fa-spin" data-spin hidden></i></span><input type="text" maxlength="64" data-i="${i}" value="${escapeAttr(r.name)}" style="padding:4px"></label>`).join('')}</div>
-            <div class="dim" data-msg style="min-height:1.2em"></div>
-            <div style="display:flex;gap:8px;justify-content:flex-end">
-                <button data-ai title="Ask the LLM for a name for every row">AI suggest all</button>
-                <button data-cancel>Cancel</button>
-                <button data-save>Apply</button>
-            </div></div>`;
-        document.body.appendChild(box);
-        const inputs = [...box.querySelectorAll('input')], msg = box.querySelector('[data-msg]');
-        const owners = rows.map(() => 'user');
-        let closed = false;
-        inputs.forEach((inp, i) => inp.addEventListener('input', () => { owners[i] = 'user'; }));
-        const close = () => { closed = true; box.remove(); };
-        const spins = [...box.querySelectorAll('[data-spin]')], ai = box.querySelector('[data-ai]');
-        const suggest = async () => {
-            if (ai.disabled) return;
-            ai.disabled = true;
-            spins.forEach(sp => { sp.hidden = false; });
-            msg.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> LLM: 0/' + rows.length;
-            let next = 0, done = 0, failed = 0;
-            const worker = async () => {
-                while (!closed && next < rows.length) {
-                    const i = next++;
-                    inputs[i].disabled = true;
-                    try {
-                        const res = await fetch('/api/notes/rename/suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ func_ids: rows[i].fids }) });
-                        const body = await res.json().catch(() => ({}));
-                        if (!res.ok || !body.name) throw new Error(body.error || res.status);
-                        inputs[i].value = body.name;
-                        owners[i] = 'llm';
-                    } catch (err) {
-                        failed++;
-                        inputs[i].title = String(err.message || err);
-                    }
-                    inputs[i].disabled = false;
-                    spins[i].hidden = true;
-                    done++;
-                    if (!closed) msg.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> LLM: ${done}/${rows.length}${failed ? `, ${failed} failed` : ''}`;
-                }
-            };
-            await Promise.all([worker(), worker()]);
-            ai.disabled = false;
-            if (!closed) msg.textContent = `LLM: ${done}/${rows.length}${failed ? `, ${failed} failed` : ''} - edit the names, then Apply.`;
-        };
-        const apply = async () => {
-            const jobs = rows.map((r, i) => ({ fids: r.fids, name: inputs[i].value.trim(), owner: owners[i], was: r.name })).filter(j => j.name && j.name !== j.was);
-            const out = await Promise.all(jobs.map(j => fetch('/api/notes/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ func_ids: j.fids, name: j.name, owner: j.owner }) }).then(r => r.ok).catch(() => false)));
-            const bad = out.filter(ok => !ok).length;
-            if (bad) { msg.textContent = `${bad} rename${bad === 1 ? '' : 's'} failed`; }
-            else close();
-            document.dispatchEvent(new CustomEvent('nway-renamed', { detail: { renames: jobs.filter((j, k) => out[k]).map(j => ({ fids: j.fids, name: j.name })) } }));
-        };
-        box.addEventListener('click', e => {
-            if (e.target === box || e.target.closest('[data-cancel]')) return close();
-            if (e.target.closest('[data-save]')) return apply();
-            if (e.target.closest('[data-ai]')) return suggest();
-        });
-        box.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
-        if (auto) suggest();
-    }
-
     // The visible table's rows holding any of these function ids, as `{fids, name}`.
     window.nwayRowsForFids = ids => {
         const cur = NwayPanel.current, want = new Set(ids), out = [];
@@ -188,7 +69,7 @@
     };
     window.nwayRenameSelected = (ids, auto) => {
         const rows = window.nwayRowsForFids(ids);
-        if (rows.length) openBatchRename(rows, auto);
+        if (rows.length) FunctionRename.openBatch(rows, auto);
     };
 
     document.addEventListener('click', e => {
@@ -196,7 +77,7 @@
         if (!b) return;
         e.preventDefault();
         e.stopPropagation();
-        openRename(b.dataset.renameFids.split(','), b.dataset.renameName || '');
+        FunctionRename.open(b.dataset.renameFids.split(','), b.dataset.renameName || '');
     }, true);
 
     class NwayPanel {
@@ -225,7 +106,7 @@
                 if (!this.cgInit) this.load();
                 if (this._cg) this._cgShow();
             };
-            document.addEventListener('nway-renamed', this._onRenamed);
+            document.addEventListener('function-renamed', this._onRenamed);
             this.el.addEventListener('click', e => this._onClick(e));
             this.el.addEventListener('change', e => this._onChange(e));
             this.el.addEventListener('input', e => this._onInput(e));
@@ -248,7 +129,7 @@
 
         destroy() {
             this._gen++;
-            document.removeEventListener('nway-renamed', this._onRenamed);
+            document.removeEventListener('function-renamed', this._onRenamed);
             if (NwayPanel.current === this) NwayPanel.current = null;
             document.removeEventListener('keydown', this._onKey);
             clearTimeout(this._debounce);
@@ -585,7 +466,7 @@
             if (!sig) return `<div class="nway-namerow"><span>${name}</span>${this._renameBtn(row)}</div>`;
             const f = this._fnData(sig.best.fid, sig.best.col);
             // Same renderer as the function search table, fed the guessed signature.
-            const fn = window.EntityRenderer.renderFunction({ ...f, function_name: row.name, return_type: sig.ret, parameters: sig.params }, { hideNote: true, showActions: false, ...opts });
+            const fn = window.EntityRenderer.renderFunction({ ...f, user_name: '', function_name: row.name, return_type: sig.ret, parameters: sig.params }, { hideNote: true, showActions: false, ...opts });
             // Tags land on the best candidate, the function the preview shows.
             const tags = window.EntityRenderer.renderTag('function', f.function_id, row.tags || f.tags, row.tags ? [] : f.user_tags);
             return `<div class="nway-namerow">${fn}${this._renameBtn(row)}</div><div class="nway-tags" title="${row.tags ? 'tags pooled over the row' : 'tags of the best candidate'}: ${escapeAttr(f.entrypoint_address)}">${tags}</div>`;
@@ -798,7 +679,7 @@
             if (act === 'clear') { this._cg.sel.clear(); return this._cgSelSync(); }
             if (!items.length) return;
             if (act === 'copy') return window.copyMetadata(items.map(i => i.name).join('\n'), 'names');
-            if (act === 'rename' || act === 'ai') return openBatchRename(items.map(i => ({ fids: i.fids, name: i.name })), act === 'ai');
+            if (act === 'rename' || act === 'ai') return FunctionRename.openBatch(items.map(i => ({ fids: i.fids, name: i.name })), act === 'ai');
             if (act === 'diff') {
                 const pick = items.length >= 2 ? [items[0].fids[0], items[1].fids[0]] : items[0].fids.slice(0, 2);
                 if (pick.length < 2) return window.showToast && window.showToast('Select two cards, or one present in two files', 'error');

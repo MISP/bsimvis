@@ -192,6 +192,7 @@ def _enrich_with_function_meta(rows):
         row["file_md5"] = md5
         row["entrypoint_address"] = addr
         row["function_name"] = meta.get("function_name")
+        row["user_name"] = meta.get("user_name")
         row["namespace"] = meta.get("namespace")
         row["parameters"] = meta.get("parameters")
         row["return_type"] = meta.get("return_type")

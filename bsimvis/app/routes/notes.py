@@ -138,14 +138,19 @@ def get_notes():
 def rename_functions():
     """
     Sets or clears the analyst name of functions (empty `name` clears).
-    Payload: {"func_ids": [str], "name": str, "owner": "user" | "llm"}
+    Payload: {"func_ids": [str], "name": str, "owner": "user" | "llm"}, or a batch
+    {"renames": [that, ...]} that flushes the N-way cache once.
     """
     data = request.json or {}
-    func_ids = data.get("func_ids") or []
-    if not func_ids or "name" not in data:
-        return {"error": "Missing parameters"}, 400
-    owner = "llm" if data.get("owner") == "llm" else "user"
-    done = [f for f in func_ids if note_service.set_user_name(f, data["name"], owner)]
+    batch = data.get("renames") or [data]
+    todo = []
+    for item in batch:
+        func_ids = item.get("func_ids") or []
+        if not func_ids or "name" not in item:
+            return {"error": "Missing parameters"}, 400
+        owner = "llm" if item.get("owner") == "llm" else "user"
+        todo += [(f, item["name"], owner) for f in func_ids]
+    done = note_service.set_user_names(todo)
     if not done:
         return {"error": "Could not rename"}, 500
     from bsimvis.app.services import nway_diff_service

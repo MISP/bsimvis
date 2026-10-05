@@ -57,6 +57,7 @@ INDEX_CONFIG = {
     },
     "func": {
         "function_name": ["func", "sim"],  # fast sim search by function name
+        "user_name": ["func"],  # analyst/LLM rename, written by note_service
         "tags": ["func", "sim"],  # becomes 'func_tags' when propagated
         "user_tags": ["func", "sim"],
         "namespace": ["func", "sim"],

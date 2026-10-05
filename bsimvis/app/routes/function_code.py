@@ -328,7 +328,7 @@ def get_function_call_graph():
 
         node = {
             "id": f"{collection}:func:{md5}:{addr}",
-            "name": meta.get("function_name"),
+            "name": meta.get("user_name") or meta.get("function_name"),
             "entrypoint": meta.get("entrypoint_address", addr),
             "namespace": meta.get("namespace"),
             "return_type": meta.get("return_type"),
@@ -583,7 +583,9 @@ def get_file_call_graph():
                     meta = json.loads(meta)
 
             func_name = (
-                meta.get("function_name") if meta else f"func_{fid.split(':')[-1]}"
+                (meta.get("user_name") or meta.get("function_name"))
+                if meta
+                else f"func_{fid.split(':')[-1]}"
             )
             addr = fid.split(":")[-1]
 
@@ -637,7 +639,9 @@ def get_file_call_graph():
                         meta = json.loads(meta)
 
                 func_name = (
-                    meta.get("function_name") if meta else f"func_{oid.split(':')[-1]}"
+                    (meta.get("user_name") or meta.get("function_name"))
+                    if meta
+                    else f"func_{oid.split(':')[-1]}"
                 )
                 addr = oid.split(":")[-1]
                 nodes.append(

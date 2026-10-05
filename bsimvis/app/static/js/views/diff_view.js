@@ -408,8 +408,8 @@ window.DiffView = {
                 const collB = p.collection_b.split(':')[0];
                 Breadcrumbs.setFilename(p.md5_a, data.meta1.file_name || 'File');
                 Breadcrumbs.setFilename(p.md5_b, data.meta2.file_name || 'File');
-                Breadcrumbs.setFuncName(collA, p.md5_a, p.addr_a, data.meta1.function_name || 'Function');
-                Breadcrumbs.setFuncName(collB, p.md5_b, p.addr_b, data.meta2.function_name || 'Function');
+                Breadcrumbs.setFuncName(collA, p.md5_a, p.addr_a, fnName(data.meta1) || 'Function');
+                Breadcrumbs.setFuncName(collB, p.md5_b, p.addr_b, fnName(data.meta2) || 'Function');
                 Breadcrumbs.refresh();
             }
 
@@ -1251,7 +1251,7 @@ window.DiffView = {
             (res.functions || []).forEach(f => {
                 const opt = document.createElement('option');
                 opt.value = f['entrypoint_address'];
-                opt.innerText = `${f['function_name']} (${f['entrypoint_address']})`;
+                opt.innerText = `${fnName(f)} (${f['entrypoint_address']})`;
                 funcSel.appendChild(opt);
             });
             funcSel.disabled = false;

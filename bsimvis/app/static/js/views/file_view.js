@@ -1319,7 +1319,7 @@ window.FileView = {
 
         const rowHtml = (f) => {
             const entry = f.entrypoint_address || '';
-            const funcName = f.function_name || 'unknown';
+            const funcName = fnName(f) || 'unknown';
             const featCount = f.bsim_features_count || 0;
             const fColl = f.collection || collection;
             // A container's tab lists its whole subtree, so the owning file is

@@ -292,6 +292,7 @@ window.SearchView = {
             const f = {
                 function_id: r.func_id,
                 function_name: r.function_name,
+                user_name: r.user_name,
                 namespace: r.namespace,
                 parameters: r.parameters,
                 return_type: r.return_type,

@@ -587,6 +587,21 @@
             return cache.get(key);
         }
 
+        // Placeholder for the BSim score of card `b` against card `a` (up to 3 functions each),
+        // filled once the drawer is in the DOM by _cgFillSims.
+        _cgSim(a, b) {
+            if (!a || !a.length || !b || !b.length) return '';
+            return `<span class="nway-sim dim" data-sim-a="${escapeAttr(a.join(','))}" data-sim-b="${escapeAttr(b.join(','))}" title="Best BSim cosine between the first card's functions and this one's"></span>`;
+        }
+
+        _cgFillSims() {
+            this._dw.querySelectorAll('.nway-sim[data-sim-a]').forEach(async el => {
+                const a = el.dataset.simA.split(','), b = el.dataset.simB.split(',');
+                const s = Math.max(0, ...(await Promise.all(a.flatMap(x => b.map(y => this._cgPair(x, y))))));
+                el.textContent = `\u2248 ${s.toFixed(2)} vs first`;
+            });
+        }
+
         // Pieces present in one file that several groups could take: score each against
         // the groups' functions (BSim, cross-file, so it can tell what the greedy match
         // dropped) and give each group's free file slot to the best-scoring piece.
@@ -784,9 +799,10 @@
         // A merged focus lists the cards it was made of, each with the files it covers.
         _cgPieces(focus, files) {
             if (!focus.pieces || focus.pieces.length < 2) return '';
-            const rows = focus.pieces.map(p => {
+            const rows = focus.pieces.map((p, i) => {
                 const st = this._cgStrip(files.map(c => p.files.includes(c.id)), files);
-                return `<div class="nway-piece"><span class="nway-piece-name">${escapeHtml(String(p.name || '?').replace(/\(.*$/, ''))}</span>${st.html}<span class="dim">${st.n}/${files.length}</span></div>`;
+                const sim = i ? this._cgSim(focus.pieces[0].fids, p.fids) : '';
+                return `<div class="nway-piece"><span class="nway-piece-name">${escapeHtml(String(p.name || '?').replace(/\(.*$/, ''))}</span>${st.html}<span class="dim">${st.n}/${files.length}</span>${sim}</div>`;
             }).join('');
             return `<div class="nway-pieces" title="Merged focus: these cards cover different files and were joined into one function"><div class="dim">&asymp; merged from ${focus.pieces.length} cards</div>${rows}</div>`;
         }
@@ -826,10 +842,10 @@
                             const chip = g.same ? `<span class="nway-grp" title="${g.m.length} cards in exactly the same files: likely one change or fork.">&sube; ${g.label} &middot; ${g.cov}/${files.length} files</span>` : `<span class="nway-grp" title="Suggested merge: ${g.m.length} cards with complementary files and the same parent.">&asymp; ${g.label} &middot; ${g.cov}/${files.length}</span>`;
                             const cells = {};
                             g.m.forEach(m => Object.entries(m.x.it.cells).forEach(([k, v]) => { if (typeof v === 'string') cells[k] = v; }));
-                            const pieces = g.m.map(m => ({ name: m.x.it.name, files: Object.keys(m.x.it.cells).filter(k => typeof m.x.it.cells[k] === 'string') }));
+                            const pieces = g.m.map(m => ({ name: m.x.it.name, files: Object.keys(m.x.it.cells).filter(k => typeof m.x.it.cells[k] === 'string'), fids: Object.values(m.x.it.cells).filter(v => typeof v === 'string').slice(0, 3) }));
                             if (!g.same) this._cgGrp[g.id] = { name: g.m[0].x.it.name, cells, pieces };
                             const focusBtn = g.same ? '' : `<button class="nway-chip" data-cg-focusgrp="${escapeAttr(g.id)}" title="Make this merged group the focus: its functions in every file">&#9678; focus</button>`;
-                            return `<div class="nway-grpbox${lv ? ' deep' : ''}"><div class="nway-grpbox-h">${chip}${focusBtn}</div>${g.m.map(r => node(role, lv, r.x)).join('')}</div>`;
+                            return `<div class="nway-grpbox${lv ? ' deep' : ''}"><div class="nway-grpbox-h">${chip}${focusBtn}</div>${g.m.map((r, i) => node(role, lv, r.x) + (i && !g.same ? this._cgSim(pieces[0].fids, pieces[i].fids) : '')).join('')}</div>`;
                         } });
                     }
                 }
@@ -1090,6 +1106,7 @@
             this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}${depthCtl}${suggestCtl}${coCtl}<div class="view-toggle" style="margin:0">${toggle}</div>${this.cgInit ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
                 <div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>
                 <div class="nway-cg-body">${body}</div>`;
+            this._cgFillSims();
             if (!err && st.nb && st.view === 'graph') {
                 this._cgEdges();
                 const body = this._dw.querySelector('.nway-cg-body'), c = body.querySelector('.nway-node.center');
@@ -1129,7 +1146,8 @@
                 const own = o => Object.keys(o).filter(k => typeof o[k] === 'string');
                 const cells = { ...f.cells };
                 for (const k of own(it.cells)) if (typeof cells[k] !== 'string') cells[k] = it.cells[k];
-                const pieces = (f.pieces || [{ name: f.name, files: own(f.cells) }]).concat([{ name: it.name, files: own(it.cells) }]);
+                const fidsOf = o => Object.values(o).filter(v => typeof v === 'string').slice(0, 3);
+                const pieces = (f.pieces || [{ name: f.name, files: own(f.cells), fids: fidsOf(f.cells) }]).concat([{ name: it.name, files: own(it.cells), fids: fidsOf(it.cells) }]);
                 this._cg.stack.push({ name: f.name, cells, pieces });
                 this._cg.more = {};
                 return this._cgShow();

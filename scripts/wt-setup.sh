@@ -8,10 +8,16 @@
 #
 # Tear down with ./scripts/wt-teardown.sh. Used by wt-test.sh.
 #
+# --seed-main: start from a hardlinked checkpoint of the MAIN stack's kvrocks
+# instead of an empty DB (instant, no extra disk; same filesystem only). Only
+# seeds when this worktree has no kvrocks db yet. Needs main kvrocks running.
+#
 # Confidentiality: the main repo's 17G data/kvrocks is NEVER symlinked or
 # read. Each worktree gets its own empty data dir; tests build their own
 # collections from the git-tracked data/test/ binaries.
 set -uo pipefail
+SEED_MAIN=false
+[ "${1:-}" = "--seed-main" ] && SEED_MAIN=true
 
 # --- locate worktree + main repo -------------------------------------------
 WT_ROOT="$(git rev-parse --show-toplevel)"
@@ -86,6 +92,21 @@ fi
 set -a; . "./$ENV_FILE"; set +a
 PROJECT_NAME="${PROJECT_NAME//./_}"
 APP_PORT=${APP_PORT:-5100}
+
+# --- 2b. optional: seed kvrocks from main via hardlinked checkpoint ---------
+if $SEED_MAIN && [ ! -d "$DATA_BASE_DIR/kvrocks/db" ]; then
+  MAIN_KV_PORT=$(grep -E '^KVROCKS_PORT=' "$MAIN_ROOT/.env" | tail -n 1 | cut -d= -f2)
+  MAIN_KV_DIR=$(redis-cli -p "$MAIN_KV_PORT" config get dir | tail -n 1)
+  echo "Checkpointing main kvrocks (:$MAIN_KV_PORT)..."
+  redis-cli -p "$MAIN_KV_PORT" bgsave >/dev/null || { echo "bgsave failed"; exit 1; }
+  for i in $(seq 1 300); do
+    redis-cli -p "$MAIN_KV_PORT" info persistence | grep -q 'bgsave_in_progress:0' && break
+    sleep 1
+  done
+  mkdir -p "$DATA_BASE_DIR/kvrocks"
+  cp -al "$MAIN_KV_DIR/backup" "$DATA_BASE_DIR/kvrocks/db" || { echo "hardlink copy failed"; exit 1; }
+  echo "Seeded $DATA_BASE_DIR/kvrocks/db"
+fi
 
 # --- 3. launch full stack (launch_tmux.sh reads the env file above) ---------
 # Clean up any existing session/services for this worktree+ENV_FILE first.

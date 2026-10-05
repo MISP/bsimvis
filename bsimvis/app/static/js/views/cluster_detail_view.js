@@ -917,7 +917,8 @@ window.ClusterDetailView = {
         return UI.Button.render({
             className: 'btn-code-action',
             icon: 'fa-solid fa-magnifying-glass',
-            label: `Open in ${this.isBinary ? 'file' : 'function'} search`,
+            label: this.isBinary ? 'Files' : 'Functions',
+            tooltip: `Open in ${this.isBinary ? 'file' : 'function'} search`,
             onClick: `Nav.openPath(${jsString(url)}, event)`,
         });
     },
@@ -931,7 +932,8 @@ window.ClusterDetailView = {
         return UI.Button.render({
             className: 'btn-code-action',
             icon: 'fa-solid fa-table-columns',
-            label: 'Open in N-diff view',
+            label: 'Functions',
+            tooltip: 'Open in N-diff view',
             onClick: `Nav.openPath(${jsString(`/diff/nway?${qs}`)}, event)`,
         });
     },
@@ -943,7 +945,7 @@ window.ClusterDetailView = {
         return UI.Button.render({
             className: 'btn-code-action',
             icon: 'fa-solid fa-diagram-project',
-            label: `Open ${this.isBinary ? 'file' : 'function'} similarities`,
+            label: `${this.isBinary ? 'File' : 'Function'} similarities`,
             onClick: `Nav.openPath(${jsString(url)}, event)`,
         });
     },

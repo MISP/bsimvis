@@ -390,12 +390,15 @@
                 if (m) items.push({ fid, col, m, ret: sigOf(m).ret, params: JSON.stringify(sigOf(m).params) });
             }
             if (!items.length) return null;
-            const mode = key => {
+            // Ghidra's undefined/undefined4 return types are placeholders: vote among real ones when any exist.
+            const real = items.filter(i => !/^undefined/.test(i.ret));
+            const mode = (key, pool) => {
                 const n = {};
-                items.forEach(i => { n[i[key]] = (n[i[key]] || 0) + 1; });
+                pool.forEach(i => { n[i[key]] = (n[i[key]] || 0) + 1; });
                 return Object.entries(n).sort((x, y) => y[1] - x[1])[0][0];
             };
-            const ret = mode('ret'), params = mode('params');
+            const ret = mode('ret', real.length ? real : items);
+            const params = mode('params', items.filter(i => i.ret === ret));
             const fits = items.filter(i => i.ret === ret && i.params === params);
             const best = (fits.length ? fits : items).sort((x, y) => (y.m.bsim_features_count || 0) - (x.m.bsim_features_count || 0))[0];
             return { ret, params: JSON.parse(params), best };

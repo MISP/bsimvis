@@ -517,6 +517,8 @@ def _group_neighbors(r, doc, fids, role, row_of):
             item["cells"] = dict(row.get("files") or row["cells"])
             item["library"] = bool(row.get("library"))
             item["name"] = row["name"]
+            if row.get("name_from"):
+                item["name_from"] = row["name_from"]
         elif kind == "ext":
             item["name"] = ref[4:]
             item["library"] = True  # imported symbols are library calls

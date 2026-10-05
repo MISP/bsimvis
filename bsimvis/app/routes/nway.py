@@ -242,6 +242,25 @@ def _row_clusters(r, rows, fmeta, pool_id, args):
     return per_row, cards
 
 
+def _attach_clusters(r, rows, fmeta, pool_id, args):
+    """Set row clusters, rename default-named rows after a cohesive named cluster."""
+    per_row, cards = _row_clusters(r, rows, fmeta, pool_id, args)
+    for row, uuids in zip(rows, per_row):
+        row["clusters"] = uuids
+        if _DEFAULT_NAME.match(row["name"]):
+            for u in uuids:
+                c = cards[u]
+                n = c.get("cluster_name") or ""
+                if (
+                    (c.get("cohesion_score") or 0) >= CLUSTER_NAME_MIN_COHESION
+                    and not _DEFAULT_NAME.match(n)
+                    and not re.fullmatch(r"Cluster \d+", n)
+                ):
+                    row["name"] = n
+                    break
+    return cards
+
+
 def _page(doc, args, r=None, pool_id=None):
     """Tab counts, then filter + sort + slice one tab of the rows."""
     rows, fmeta = doc["rows"], doc["fmeta"]
@@ -295,8 +314,6 @@ def _page(doc, args, r=None, pool_id=None):
         if sup_min is not None and row["support"] < sup_min:
             return False
         fids = list(_row_fids(row))
-        if q and not any(q in _fn_haystack(f, fmeta) for f in fids):
-            return False
         if tag_scope:
             tags = _fids_tags(fids, fmeta)
             if not any(tag_in_scope(t, p) for t in tags for p in tag_scope):
@@ -304,6 +321,20 @@ def _page(doc, args, r=None, pool_id=None):
         return True
 
     filtered = [r for r in rows if keep(r)]
+    page_clusters = True
+    if q:
+        # Full-text over the whole row: name, cluster names, and every function's text/tags.
+        cards = _attach_clusters(r, filtered, fmeta, pool_id, args)
+
+        def hit(row):
+            text = [row["name"]] + [
+                (cards[u].get("cluster_name") or "") for u in row["clusters"]
+            ]
+            text += [_fn_haystack(f, fmeta) for f in _row_fids(row)]
+            return q in " ".join(text).lower()
+
+        filtered = [row for row in filtered if hit(row)]
+        page_clusters = False
 
     sort_col = args.get("sort_col")
     if sort_col in ("span", "weight", "support", "cohesion", "name"):
@@ -322,20 +353,8 @@ def _page(doc, args, r=None, pool_id=None):
         abort(400, "offset and limit must be integers")
     page = filtered[offset : offset + limit] if limit > 0 else filtered[offset:]
     page_fids = {f for row in page for f in _row_fids(row)}
-    per_row, cards = _row_clusters(r, page, fmeta, pool_id, args)
-    for row, uuids in zip(page, per_row):
-        row["clusters"] = uuids
-        if _DEFAULT_NAME.match(row["name"]):
-            for u in uuids:
-                c = cards[u]
-                n = c.get("cluster_name") or ""
-                if (
-                    (c.get("cohesion_score") or 0) >= CLUSTER_NAME_MIN_COHESION
-                    and not _DEFAULT_NAME.match(n)
-                    and not re.fullmatch(r"Cluster \d+", n)
-                ):
-                    row["name"] = n
-                    break
+    if page_clusters:
+        cards = _attach_clusters(r, page, fmeta, pool_id, args)
     return {
         "items": page,
         "clusters": cards,

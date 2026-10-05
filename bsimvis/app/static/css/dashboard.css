@@ -2710,7 +2710,7 @@ a.home-card:hover,
    Built from the shared pieces: .bsim-tabbar, .view-toggle, .table-footer,
    .top-action-btn. Only what those do not cover lives here. */
 .nway-panel { display: flex; flex-direction: column; min-width: 0; }
-.nway-panel .bsim-tabbar { margin-bottom: 12px; }
+.nway-panel .bsim-tabbar { margin-bottom: 8px; }
 .nway-count {
     margin-left: 6px;
     font-size: 0.72rem;
@@ -2740,18 +2740,18 @@ a.home-card:hover,
     margin-right: 6px;
 }
 .nway-ctl .nway-lbl { margin-right: 0; }
-.nway-tabrow { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; position: relative; z-index: 11; }
+.nway-tabrow { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; position: relative; z-index: 11; }
 .nway-tabrow .bsim-tabbar { margin-bottom: 0; }
 .nway-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; position: relative; z-index: 10; }
 .nway-ctlwrap { display: inline-flex; align-items: center; gap: 8px; }
-.nway-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 10px; }
+.nway-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 6px; }
 .nway-group + .nway-group { padding-left: 22px; border-left: 1px solid var(--border); }
 .nway-gl { font-size: 0.68rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); }
 /* Hints open below and above the sticky table header, so nothing covers them. */
 .nway-bar .home-tip::after, .nway-focus .home-tip::after, .nway-tabrow .home-tip::after {
     bottom: auto; top: calc(100% + 8px); left: -8px; transform: none; z-index: 200;
 }
-.nway-focus { position: relative; z-index: 9; margin: 0 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); }
+.nway-focus { position: relative; z-index: 9; margin: 0 0 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); }
 .nway-focus > summary { cursor: pointer; padding: 8px 12px; font-size: 0.8rem; list-style: none; }
 .nway-focus > summary .home-tip { margin-left: 8px; }
 .nway-focus-body { padding: 0 12px 10px; }
@@ -2768,7 +2768,6 @@ a.home-card:hover,
 }
 .nway-chip.on { color: var(--text); border-color: var(--accent); }
 .nway-input[data-text="q"] { width: 190px; }
-.nway-input[data-text="tags"] { width: 130px; }
 .nway-input {
     background: var(--bg);
     color: var(--text);
@@ -2796,7 +2795,7 @@ a.home-card:hover,
 .nway-scroll { overflow: auto; }
 .nway-table td.nway-sentinel { padding: 0; height: 1px; border: 0; }
 .nway-table { width: 100%; table-layout: auto; font-size: 0.82rem; }
-.nway-table th, .nway-table td { padding: 8px 12px; }
+.nway-table th, .nway-table td { padding: 4px 8px; }
 .nway-table th { white-space: nowrap; vertical-align: bottom; }
 .nway-table th.num, .nway-table td.num { text-align: right; }
 .nway-table td.num { font-family: 'Consolas', monospace; }

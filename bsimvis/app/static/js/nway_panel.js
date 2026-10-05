@@ -215,8 +215,7 @@
                 ? 'All: every function. Core: on both the focus and the rest side. Unique: on one side only. Counts are code / library.'
                 : `All: every function group. Core: present in all ${n} columns. Partial: present in at least k columns. Unique: present in exactly one file. Counts are code / library.`;
             const filter = [
-                `<input type="text" class="nway-input" data-text="q" placeholder="function name / address" value="${escapeAttr(s.q)}">`,
-                `<input type="text" class="nway-input" data-text="tags" placeholder="tags" value="${escapeAttr(s.tags)}">`,
+                `<input type="text" class="nway-input" data-text="q" placeholder="search name, address, tags, cluster" value="${escapeAttr(s.q)}">`,
                 this._pills('Show', 'scope', [['code', 'Code', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['library', 'Library', 'fa-solid fa-cubes', 'var(--warning, #d97706)'], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']], 'Code: functions of the program itself. Library: functions recognised as library code (stdlib, statically linked). All: both.'),
                 this._columnChip(),
             ].join('');

@@ -2895,7 +2895,7 @@ a.home-card:hover,
 .nway-graph.hl .nway-node.hl-on { opacity: 1; }
 .nway-graph.hl .nway-edge:not(.hl-on) { opacity: 0.04; }
 .nway-graph.hl .nway-edge.hl-on { opacity: 0.95; }
-.nway-edge.back { opacity: 0; stroke-dasharray: 5 4; }
+.nway-edge.back { opacity: 0; stroke-dasharray: 5 4; stroke-width: 2px; }
 .nway-stub.back text { fill: var(--dim); }
 .nway-node.center.merged-focus { border-style: dashed; }
 .nway-pieces { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 4px; font-size: 0.72rem; }
@@ -2917,7 +2917,7 @@ a.home-card:hover,
 .nway-badge { font-size: 0.66rem; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; color: var(--dim); margin-left: 6px; font-style: normal; }
 .nway-graph { margin: 0 52px; position: relative; display: grid; grid-template-columns: 230px 1fr 230px; align-items: center; width: 800px; }
 .nway-gcol { display: flex; flex-direction: column; gap: 12px; align-items: center; }
-.nway-graph > svg { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+.nway-graph > svg { position: absolute; inset: 0; pointer-events: none; overflow: visible; z-index: 1; }
 .nway-edge { fill: none; stroke: var(--accent); opacity: 0.55; }
 .nway-node { position: relative; box-sizing: border-box; width: 230px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
 .nway-node:hover, .nway-node:focus-visible { border-color: var(--accent); outline: none; }

@@ -690,8 +690,11 @@ def get_nway_neighbors():
         r, doc, fids, role, row_of, scope, depth
     )
 
-    # The outermost rows say how many neighbors lie past the graph's edge.
-    for parent in frontier:
+    # Every expandable row says how many neighbors are not on screen: past the
+    # depth limit, or dropped by DEEP_CAP / MAX_NODES.
+    for parent in (i for level in levels for i in level if i["kind"] == "row"):
+        if scope != "all" and (scope == "library") != parent["library"]:
+            continue
         src = [f for f in parent["cells"].values() if isinstance(f, str)]
         parent["beyond"] = sum(
             1

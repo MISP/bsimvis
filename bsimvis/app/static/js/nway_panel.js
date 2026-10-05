@@ -835,7 +835,7 @@
                         twin = `<button class="nway-chip" data-cg-mergefocus="${escapeAttr(it.key)}" title="Same callees, other files: merge into the focus (one function in more files)">&asymp; merge with focus</button>`;
                     }
                 }
-                const beyond = it.beyond && lv === depth - 1 && (role === 'callers' || role === 'callees') ? ` data-beyond="${Number(it.beyond)}"` : '';
+                const beyond = it.beyond && (role === 'callers' || role === 'callees') ? ` data-beyond="${Number(it.beyond)}"${lv === depth - 1 ? ' data-last="1"' : ''}` : '';
                 const hub = role === 'callees' && nb.cocallers && nb.cocallers.hub_keys[it.key];
                 if (hub) twin += `<span class="nway-hub" title="Called by ${hub} functions: too widely called to say anything about similarity, so its other callers are not listed"><i class="fa-solid fa-triangle-exclamation"></i> hub &middot; ${hub} callers not shown</span>`;
                 return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}"${beyond} data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}">
@@ -1063,9 +1063,9 @@
             nodes.filter(n => n.dataset.beyond).forEach((n, i) => {
                 const a = n.getBoundingClientRect(), left = n.dataset.side === 'callers';
                 const x1 = (left ? a.left : a.right) - gr.left, x2 = x1 + (left ? -46 : 46), y = a.top + a.height / 2 - gr.top;
-                const deeper = Number(g.dataset.mid) < 5, id = `cgfade${i}`;
+                const deeper = n.dataset.last && Number(g.dataset.mid) < 5, id = `cgfade${i}`;
                 stubs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${x1}" x2="${x2}" y1="0" y2="0"><stop offset="0" style="stop-color:var(--accent)" stop-opacity="0.8"/><stop offset="1" style="stop-color:var(--accent)" stop-opacity="0"/></linearGradient>
-                    <g class="nway-stub"${deeper ? ' data-cg-deeper="1"' : ''}><title>${Number(n.dataset.beyond)} more ${left ? 'callers' : 'callees'} past this depth${deeper ? ': click to go one hop deeper' : ''}</title><line x1="${x1}" x2="${x2}" y1="${y}" y2="${y}" stroke="url(#${id})" stroke-width="3" stroke-dasharray="6 4"/><text x="${x2 + (left ? 4 : -4)}" y="${y - 5}" text-anchor="${left ? 'end' : 'start'}">+${Number(n.dataset.beyond)}</text><rect x="${Math.min(x1, x2) - 4}" y="${y - 12}" width="54" height="24" fill="transparent"/></g>`);
+                    <g class="nway-stub"${deeper ? ' data-cg-deeper="1"' : ''}><title>${Number(n.dataset.beyond)} more ${left ? 'callers' : 'callees'} ${n.dataset.last ? 'past this depth' : 'not shown (capped)'}${deeper ? ': click to go one hop deeper' : ''}</title><line x1="${x1}" x2="${x2}" y1="${y}" y2="${y}" stroke="url(#${id})" stroke-width="3" stroke-dasharray="6 4"/><text x="${x2 + (left ? 4 : -4)}" y="${y - 5}" text-anchor="${left ? 'end' : 'start'}">+${Number(n.dataset.beyond)}</text><rect x="${Math.min(x1, x2) - 4}" y="${y - 12}" width="54" height="24" fill="transparent"/></g>`);
             });
             svg.innerHTML = paths.join('') + stubs.join('');
             this._cgHover(g, center, meta);

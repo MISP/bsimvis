@@ -197,6 +197,26 @@ class NoteService:
         except:
             return []
 
+    def set_user_name(self, func_id, name, source="user"):
+        """Sets (or, with an empty name, clears) a function's analyst-chosen name.
+
+        Stored on the origin function doc, so every collection, pool and N-way
+        view over that function sees it.
+        """
+        doc_id = self._resolve_func_id(None, func_id)
+        doc = self._get_doc(doc_id)
+        if not doc:
+            return False
+        name = (name or "").strip()
+        if name:
+            doc["user_name"] = name
+            doc["user_name_source"] = source
+        else:
+            doc.pop("user_name", None)
+            doc.pop("user_name_source", None)
+        self._set_doc(doc_id, doc)
+        return True
+
     # --- File notes ---
 
     def _resolve_file_id(self, collection, file_id):

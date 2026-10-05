@@ -107,6 +107,13 @@ _BASE_CACHE = _LRU(2)
 _DOC_CACHE = _LRU(8)
 
 
+def invalidate():
+    """Drop cached docs: function names are not part of their revision key."""
+    for c in (_BASE_CACHE, _DOC_CACHE):
+        with c.lock:
+            c.data.clear()
+
+
 def default_min_edge():
     """The read-time floor the UI applies to file diffs (`similarity.file_min_score`)."""
     return float(config_service.get("similarity.file_min_score", 0.0))
@@ -374,6 +381,8 @@ def _load_base(r, scope, members, vparams, labels, warnings):
             k: meta[k]
             for k in (
                 "name",
+                "user_name",
+                "user_name_source",
                 "namespace",
                 "entrypoint_address",
                 "tags",
@@ -465,6 +474,18 @@ def _match(base, min_edge):
         if not row["names"] and _DEFAULT_NAME.match(row["name"]):
             row["name"] = next(
                 (n for t in row["tags"] if (n := _tag_name(t))), row["name"]
+            )
+        # An analyst name wins; the heaviest named function decides, others show as aliases.
+        named = sorted(
+            (f for f in fids if (base["fmeta"].get(f) or {}).get("user_name")),
+            key=lambda f: (-weights[f], f),
+        )
+        if named:
+            meta = base["fmeta"][named[0]]
+            row["name"] = meta["user_name"]
+            row["user_named"] = meta.get("user_name_source", "user")
+            row["aliases"] = sorted(
+                {base["fmeta"][f]["user_name"] for f in named} - {row["name"]}
             )
     return rows
 

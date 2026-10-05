@@ -4712,8 +4712,38 @@ def test_nway_diff():
         str(core["columns"]),
     )
 
-    # Call-graph neighbors of a row come back regrouped into rows.
+    # An analyst rename survives re-matching and resets cleanly.
     _first = next(iter(core["items"]), None)
+    if _first:
+        _rf = [f for f in _first["cells"].values() if isinstance(f, str)]
+        _rn = lambda name: requests.post(
+            f"{BASE_URL}/api/notes/rename",
+            json={"func_ids": _rf, "name": name, "owner": "llm"},
+            timeout=30,
+        )
+        _rn_resp = _rn("analyst_renamed_fn")
+        _, _rb = _nway(tab="core", scope="all", limit=1000)
+        _hit = next(
+            (i for i in _rb["items"] if i["cells"] == _first["cells"]),
+            {},
+        )
+        check(
+            "nway rename: row carries the analyst name",
+            _rn_resp.status_code == 200
+            and _hit.get("name") == "analyst_renamed_fn"
+            and _hit.get("user_named") == "llm",
+            f"HTTP {_rn_resp.status_code} {str(_hit)[:200]}",
+        )
+        _rn("")
+        _, _rb = _nway(tab="core", scope="all", limit=1000)
+        _hit = next((i for i in _rb["items"] if i["cells"] == _first["cells"]), {})
+        check(
+            "nway rename: empty name resets to the derived one",
+            _hit.get("name") != "analyst_renamed_fn" and not _hit.get("user_named"),
+            str(_hit)[:200],
+        )
+
+    # Call-graph neighbors of a row come back regrouped into rows.
     if _first:
         _fids = ",".join(f for f in _first["cells"].values() if isinstance(f, str))
         _base = {"collection": COLLECTION, "md5s": f"{file_md5},{file_md5_2}"}

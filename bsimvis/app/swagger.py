@@ -2807,6 +2807,41 @@ class NoteList(Resource):
 # --- File Note Routes ---
 
 
+rename_model = api.model(
+    "FunctionRename",
+    {
+        "func_ids": fields.List(fields.String, required=True),
+        "name": fields.String(required=True, description="Empty clears the name"),
+        "owner": fields.String(example="user"),
+    },
+)
+
+
+@ns_notes.route("/rename")
+class FunctionRename(Resource):
+    @ns_notes.expect(rename_model)
+    def post(self):
+        """Sets or clears the analyst name of functions; shown by the N-way view."""
+        from bsimvis.app.routes.notes import rename_functions
+
+        return rename_functions()
+
+
+@ns_notes.route("/rename/suggest")
+class FunctionRenameSuggest(Resource):
+    @ns_notes.expect(
+        api.model(
+            "FunctionRenameSuggest",
+            {"func_ids": fields.List(fields.String, required=True)},
+        )
+    )
+    def post(self):
+        """Asks the LLM for a function name. Returns it without applying it."""
+        from bsimvis.app.routes.notes import suggest_function_name
+
+        return suggest_function_name()
+
+
 @ns_notes.route("/file/add")
 class FileNoteAdd(Resource):
     @ns_notes.expect(file_note_add_model)

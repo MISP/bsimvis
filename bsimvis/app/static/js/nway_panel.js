@@ -57,6 +57,61 @@
         return `${(Number(v || 0) * 100).toFixed(0)}%`;
     }
 
+    // Rename dialog: manual entry or an LLM suggestion the analyst accepts. Empty name resets.
+    function openRename(fids, current) {
+        const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(async r => ({ ok: r.ok, body: await r.json().catch(() => ({})) }));
+        const box = document.createElement('div');
+        box.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center';
+        box.innerHTML = `<div style="background:var(--bg-card,#1e1e1e);padding:16px;border-radius:8px;min-width:340px;display:flex;flex-direction:column;gap:8px">
+            <b>Rename function</b>
+            <input type="text" maxlength="64" value="${escapeAttr(current)}" style="padding:6px">
+            <div class="dim" data-msg style="min-height:1.2em"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button data-ai title="Ask the LLM for a name">AI suggest</button>
+                <button data-reset title="Back to the derived name">Reset</button>
+                <button data-cancel>Cancel</button>
+                <button data-save>Save</button>
+            </div></div>`;
+        document.body.appendChild(box);
+        const input = box.querySelector('input'), msg = box.querySelector('[data-msg]');
+        let owner = 'user';
+        input.focus();
+        input.select();
+        input.addEventListener('input', () => { owner = 'user'; });
+        const close = () => box.remove();
+        const save = async name => {
+            const { ok, body } = await post('/api/notes/rename', { func_ids: fids, name, owner });
+            if (!ok) { msg.textContent = body.error || 'Rename failed'; return; }
+            close();
+            document.dispatchEvent(new CustomEvent('nway-renamed'));
+        };
+        box.addEventListener('click', async e => {
+            if (e.target === box || e.target.closest('[data-cancel]')) return close();
+            if (e.target.closest('[data-save]')) return save(input.value.trim());
+            if (e.target.closest('[data-reset]')) return save('');
+            if (e.target.closest('[data-ai]')) {
+                msg.textContent = 'Asking the LLM...';
+                const { ok, body } = await post('/api/notes/rename/suggest', { func_ids: fids });
+                if (!ok) { msg.textContent = body.error || 'No suggestion'; return; }
+                input.value = body.name;
+                owner = 'llm';
+                msg.textContent = 'LLM suggestion: edit it or press Save.';
+            }
+        });
+        input.addEventListener('keydown', e => {
+            if (e.key === 'Enter') save(input.value.trim());
+            if (e.key === 'Escape') close();
+        });
+    }
+
+    document.addEventListener('click', e => {
+        const b = e.target.closest('[data-rename-fids]');
+        if (!b) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openRename(b.dataset.renameFids.split(','), b.dataset.renameName || '');
+    }, true);
+
     class NwayPanel {
         constructor(container, opts = {}) {
             this.el = container;
@@ -73,6 +128,8 @@
             this._io = null;
             this._loading = false;
             if (window.Paging.mode() === 'scroll') this.state.offset = 0;
+            this._onRenamed = () => this.load();
+            document.addEventListener('nway-renamed', this._onRenamed);
             this.el.addEventListener('click', e => this._onClick(e));
             this.el.addEventListener('change', e => this._onChange(e));
             this.el.addEventListener('input', e => this._onInput(e));
@@ -92,6 +149,7 @@
 
         destroy() {
             this._gen++;
+            document.removeEventListener('nway-renamed', this._onRenamed);
             clearTimeout(this._debounce);
             if (this._io) this._io.disconnect();
             if (this._dw && !this.cgInit) window.clearCallsPanel();
@@ -404,16 +462,26 @@
             return { ret, params: JSON.parse(params), best };
         }
 
+        // Pencil beside a row's name: opens the rename dialog for every function of the row.
+        _renameBtn(row) {
+            const fids = Object.values(row.files || row.cells || {}).filter(v => typeof v === 'string');
+            if (!fids.length) return '';
+            const who = row.user_named === 'llm' ? 'name set by the LLM' : 'name set by an analyst';
+            const alias = row.aliases && row.aliases.length ? `; also named: ${row.aliases.join(', ')}` : '';
+            const mark = row.user_named ? `<i class="fa-solid ${row.user_named === 'llm' ? 'fa-robot' : 'fa-user'}" title="${escapeAttr(who + alias)}"></i> ` : '';
+            return `${mark}<button class="nway-rename" data-rename-fids="${escapeAttr(fids.join(','))}" data-rename-name="${escapeAttr(row.name)}" title="Rename this function">&#9998;</button>`;
+        }
+
         _nameSig(row, opts = {}) {
             const sig = this._rowSig(row);
             const name = escapeHtml(row.name);
-            if (!sig) return name;
+            if (!sig) return name + this._renameBtn(row);
             const f = this._fnData(sig.best.fid, sig.best.col);
             // Same renderer as the function search table, fed the guessed signature.
             const fn = window.EntityRenderer.renderFunction({ ...f, function_name: row.name, return_type: sig.ret, parameters: sig.params }, { hideNote: true, showActions: false, ...opts });
             // Tags land on the best candidate, the function the preview shows.
             const tags = window.EntityRenderer.renderTag('function', f.function_id, row.tags || f.tags, row.tags ? [] : f.user_tags);
-            return `${fn}<div class="nway-tags" title="${row.tags ? 'tags pooled over the row' : 'tags of the best candidate'}: ${escapeAttr(f.entrypoint_address)}">${tags}</div>`;
+            return `${fn}${this._renameBtn(row)}<div class="nway-tags" title="${row.tags ? 'tags pooled over the row' : 'tags of the best candidate'}: ${escapeAttr(f.entrypoint_address)}">${tags}</div>`;
         }
 
         // ---- Call-graph drawer: callers / callees of one row, as a list or a graph ----

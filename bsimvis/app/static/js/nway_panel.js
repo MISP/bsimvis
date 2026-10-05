@@ -90,8 +90,12 @@
             if (e.target.closest('[data-save]')) return save(input.value.trim());
             if (e.target.closest('[data-reset]')) return save('');
             if (e.target.closest('[data-ai]')) {
-                msg.textContent = 'Asking the LLM...';
+                const ai = box.querySelector('[data-ai]');
+                if (ai.disabled) return;
+                ai.disabled = input.disabled = true;
+                msg.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Asking the LLM...';
                 const { ok, body } = await post('/api/notes/rename/suggest', { func_ids: fids });
+                ai.disabled = input.disabled = false;
                 if (!ok) { msg.textContent = body.error || 'No suggestion'; return; }
                 input.value = body.name;
                 owner = 'llm';
@@ -111,7 +115,7 @@
         box.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center';
         box.innerHTML = `<div style="background:var(--bg-card,#1e1e1e);padding:16px;border-radius:8px;width:min(560px,92vw);max-height:80vh;display:flex;flex-direction:column;gap:8px">
             <b>Rename ${rows.length} function${rows.length === 1 ? '' : 's'}</b>
-            <div style="overflow:auto;display:flex;flex-direction:column;gap:6px">${rows.map((r, i) => `<label style="display:flex;flex-direction:column;gap:2px"><span class="dim" style="font-size:.8em">${escapeHtml(r.name)}</span><input type="text" maxlength="64" data-i="${i}" value="${escapeAttr(r.name)}" style="padding:4px"></label>`).join('')}</div>
+            <div style="overflow:auto;display:flex;flex-direction:column;gap:6px">${rows.map((r, i) => `<label style="display:flex;flex-direction:column;gap:2px"><span class="dim" style="font-size:.8em">${escapeHtml(r.name)} <i class="fa-solid fa-spinner fa-spin" data-spin hidden></i></span><input type="text" maxlength="64" data-i="${i}" value="${escapeAttr(r.name)}" style="padding:4px"></label>`).join('')}</div>
             <div class="dim" data-msg style="min-height:1.2em"></div>
             <div style="display:flex;gap:8px;justify-content:flex-end">
                 <button data-ai title="Ask the LLM for a name for every row">AI suggest all</button>
@@ -124,7 +128,12 @@
         let closed = false;
         inputs.forEach((inp, i) => inp.addEventListener('input', () => { owners[i] = 'user'; }));
         const close = () => { closed = true; box.remove(); };
+        const spins = [...box.querySelectorAll('[data-spin]')], ai = box.querySelector('[data-ai]');
         const suggest = async () => {
+            if (ai.disabled) return;
+            ai.disabled = true;
+            spins.forEach(sp => { sp.hidden = false; });
+            msg.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> LLM: 0/' + rows.length;
             let next = 0, done = 0, failed = 0;
             const worker = async () => {
                 while (!closed && next < rows.length) {
@@ -141,12 +150,14 @@
                         inputs[i].title = String(err.message || err);
                     }
                     inputs[i].disabled = false;
+                    spins[i].hidden = true;
                     done++;
-                    if (!closed) msg.textContent = `LLM: ${done}/${rows.length}${failed ? `, ${failed} failed` : ''}`;
+                    if (!closed) msg.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> LLM: ${done}/${rows.length}${failed ? `, ${failed} failed` : ''}`;
                 }
             };
             await Promise.all([worker(), worker()]);
-            if (!closed) msg.textContent += ' - edit the names, then Apply.';
+            ai.disabled = false;
+            if (!closed) msg.textContent = `LLM: ${done}/${rows.length}${failed ? `, ${failed} failed` : ''} - edit the names, then Apply.`;
         };
         const apply = async () => {
             const jobs = rows.map((r, i) => ({ fids: r.fids, name: inputs[i].value.trim(), owner: owners[i], was: r.name })).filter(j => j.name && j.name !== j.was);

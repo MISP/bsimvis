@@ -79,6 +79,7 @@
             window.Paging.bind(this.el, () => ({ offset: Number(this.state.offset) || 0, total: Number(this.data && this.data.total) || 0, size: PAGE }), off => this._set({ offset: off }));
             this.el.addEventListener('toggle', e => {
                 if (e.target.matches('details.nway-focus')) this._focusOpen = e.target.open;
+                if (e.target.matches('details.nway-match')) this._matchOpen = e.target.open;
             }, true);
             this.el.addEventListener('contextmenu', e => {
                 const th = e.target.closest('th[data-col]');
@@ -228,8 +229,15 @@
                     ? this._slider('Child presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, "Share of a child cluster's files that must hold a function for the child to count as having it.") : '',
             ].join('');
             return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}</div>
-                <div class="nway-bar">${this._group('Filter', filter)}${this._group('Match', match)}</div>
+                <div class="nway-bar">${filter}${this._matchMenu(match)}</div>
                 ${this._focusBox()}`;
+        }
+
+        // Match settings live in a popover; the summary shows what is set, so the bar stays one line.
+        _matchMenu(body) {
+            const d = this.data, s = this.state;
+            const sum = [`edge ${Number(d.min_edge).toFixed(2)}`, d.mode, d.columns_mode === 'children' ? 'children' : '', s.tab === 'partial' && d.columns_mode !== 'focus' ? `k ${s.k}` : ''].filter(Boolean).join(' · ');
+            return `<details class="nway-match"${this._matchOpen ? ' open' : ''}><summary class="nway-chip"><i class="fa-solid fa-sliders"></i> Match <span class="dim">${escapeHtml(sum)}</span></summary><div class="nway-match-body">${body}</div></details>`;
         }
 
         _files() {

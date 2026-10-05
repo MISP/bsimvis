@@ -2744,6 +2744,16 @@ a.home-card:hover,
 .nway-tabrow .bsim-tabbar { margin-bottom: 0; }
 .nway-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; position: relative; z-index: 10; }
 .nway-ctlwrap { display: inline-flex; align-items: center; gap: 8px; }
+.nway-match { position: relative; margin-left: auto; }
+.nway-match > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; }
+.nway-match > summary::-webkit-details-marker { display: none; }
+.nway-match[open] > summary { border-color: var(--accent); color: var(--text); }
+.nway-match-body {
+    position: absolute; right: 0; top: calc(100% + 6px); z-index: 50; min-width: 300px;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 12px;
+    padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
 .nway-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 6px; }
 .nway-group + .nway-group { padding-left: 22px; border-left: 1px solid var(--border); }
 .nway-gl { font-size: 0.68rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); }

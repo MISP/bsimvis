@@ -3039,3 +3039,19 @@ body.sidebar-collapsed .sidebar-nav .nav-flyout-menu a {
     padding: 12px 20px;
 }
 body.sidebar-collapsed .sidebar-nav .nav-flyout-menu a span { display: inline; }
+
+/* Collection tab strip + overflow menu */
+.entity-tabs { display: flex; gap: 2px; overflow-x: auto; border-bottom: 1px solid var(--border); margin: -5px 0 12px; scrollbar-width: none; flex-shrink: 0; }
+.entity-tabs:empty { display: none; }
+.entity-tab { padding: 8px 14px; color: var(--dim); text-decoration: none; font-size: 0.85rem; font-weight: 600; white-space: nowrap; border-bottom: 2px solid transparent; display: inline-flex; align-items: center; gap: 7px; }
+.entity-tab:hover { color: var(--text); background: var(--hover); }
+.entity-tab.current { color: var(--text); border-bottom-color: var(--accent); }
+.entity-tab-count { font-family: monospace; font-size: 0.7rem; background: var(--hover); border-radius: 9px; padding: 1px 7px; color: var(--dim); }
+.more-menu { position: relative; }
+.more-menu > summary { list-style: none; cursor: pointer; height: 36px; padding: 0 12px; display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--card-bg); }
+.more-menu > summary::-webkit-details-marker { display: none; }
+.more-menu-list { position: absolute; right: 0; top: 40px; z-index: 50; min-width: 200px; display: flex; flex-direction: column; padding: 4px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+.more-menu-list button { text-align: left; background: none; border: 0; color: var(--text); padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; cursor: pointer; display: flex; align-items: center; gap: 9px; }
+.more-menu-list button:hover { background: var(--hover); }
+.more-menu-list button.danger { color: #f87171; }
+.more-menu-list hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }

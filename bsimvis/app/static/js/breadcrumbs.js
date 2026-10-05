@@ -514,6 +514,7 @@ window.Breadcrumbs = {
     },
 
     render: function (segments) {
+        if (window.UI && UI.EntityTabs) UI.EntityTabs.render();
         const container = document.getElementById('breadcrumbs-list');
         if (!container) return;
 

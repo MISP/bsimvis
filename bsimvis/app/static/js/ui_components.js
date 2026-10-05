@@ -55,6 +55,61 @@ window.UI = {
     },
 
     /**
+     * Collection tab strip: one header for every collection-scoped page.
+     */
+    EntityTabs: {
+        counts: {},
+        tabs: [
+            { key: 'overview', label: 'Overview', path: '' },
+            { key: 'batches', label: 'Batches', path: '/batches', count: 'total_batches' },
+            { key: 'files', label: 'Files', path: '/files', count: 'total_files' },
+            { key: 'functions', label: 'Functions', path: '/functions', count: 'total_functions' },
+            { key: 'binary-similarity', label: 'File sims', path: '/files/similarities' },
+            { key: 'function-similarity', label: 'Func sims', path: '/functions/similarities' },
+            { key: 'bin-clusters', label: 'File clusters', path: '/files/clusters' },
+            { key: 'clusters', label: 'Func clusters', path: '/functions/clusters' },
+            { key: 'jobs', label: 'Jobs', path: '/jobs' },
+        ],
+        // Detail pages light up the tab of the list they belong to.
+        parent: {
+            'collection-detail': 'overview', dashboard: 'files', file: 'files', function: 'functions', call_graph: 'functions',
+            function_features: 'functions', diff: 'function-similarity', bin_sim: 'binary-similarity',
+            'cluster-detail': 'clusters', 'bin-cluster-detail': 'bin-clusters',
+        },
+
+        render: function() {
+            const el = document.getElementById('entity-tabs');
+            if (!el) return;
+            const { viewKey, collection, pool } = getRoutingState();
+            const active = this.parent[viewKey] || viewKey;
+            if (!collection || pool || !this.tabs.some(t => t.key === active)) {
+                el.innerHTML = '';
+                return;
+            }
+            this.load(collection);
+            const base = `/collections/${encodeURIComponent(collection)}`;
+            const c = this.counts[collection] || {};
+            el.innerHTML = this.tabs.map(t => {
+                const n = t.count && c[t.count] != null ? `<span class="entity-tab-count">${escapeHtml(Number(c[t.count]).toLocaleString())}</span>` : '';
+                return `<a class="entity-tab${t.key === active ? ' current' : ''}" href="${escapeAttr(base + t.path)}" onclick="Nav.openPath(this.href, event)">${escapeHtml(t.label)}${n}</a>`;
+            }).join('');
+        },
+
+        // Counts come from the collection list; fetch once per collection and repaint.
+        load: function(collection) {
+            if (this.counts[collection]) return;
+            this.counts[collection] = {};
+            fetch(`/api/collection/search?q=${encodeURIComponent(collection)}`)
+                .then(r => r.ok ? r.json() : { collections: [] })
+                .then(d => {
+                    const hit = (d.collections || []).find(x => x.name === collection);
+                    if (hit) { this.counts[collection] = hit; this.render(); }
+                })
+                .catch(() => { delete this.counts[collection]; });
+        },
+    },
+
+    /**
      * Sidebar Component
      */
     Sidebar: {

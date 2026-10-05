@@ -214,12 +214,18 @@ window.CollectionDetailView = {
                     </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                    <button onclick="Nav.openPath('/collections/${encodeURIComponent(name)}/jobs')" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-server"></i> View Jobs</button>
-                    <button onclick="Nav.openPath('/collections/${encodeURIComponent(name)}/upload')" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-upload"></i> Upload Binaries</button>
-                    <button onclick="openFileAnalysisModal({ collection: ${escapeAttr(jsString(name))} })" style="background:rgba(174,129,255,0.12); border:1px solid rgba(174,129,255,0.35); color:#ae81ff; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-robot"></i> Analyze Collection</button>
-                    <button onclick="window.collectionDetailCluster(${escapeAttr(jsString(name))}, this)" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-circle-nodes"></i> Cluster</button>
-                    <button onclick="window.collectionDetailClean(${escapeAttr(jsString(name))}, this)" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-broom"></i> Clean</button>
-                    <button onclick="window.collectionDetailDelete(${escapeAttr(jsString(name))}, this)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-trash-can"></i> Delete</button>
+                    <button class="btn-primary" onclick="Nav.openPath('/collections/${encodeURIComponent(name)}/upload')" style="background:var(--accent); border:1px solid var(--accent); color:#fff; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap;"><i class="fa-solid fa-upload"></i> Upload</button>
+                    <button onclick="openFileAnalysisModal({ collection: ${escapeAttr(jsString(name))} })" style="background:var(--card-bg); border:1px solid var(--border); color:var(--text); padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap;"><i class="fa-solid fa-robot"></i> Analyze</button>
+                    <details class="more-menu">
+                        <summary title="More actions"><i class="fa-solid fa-ellipsis"></i></summary>
+                        <div class="more-menu-list" onclick="this.closest('details').removeAttribute('open')">
+                            <button onclick="window.collectionDetailCluster(${escapeAttr(jsString(name))}, this)"><i class="fa-solid fa-circle-nodes"></i> Cluster</button>
+                            <button onclick="window.openMaintenanceWindow(${escapeAttr(jsString(name))})"><i class="fa-solid fa-screwdriver-wrench"></i> Maintenance…</button>
+                            <button onclick="window.collectionDetailClean(${escapeAttr(jsString(name))}, this)"><i class="fa-solid fa-broom"></i> Clean</button>
+                            <hr>
+                            <button class="danger" onclick="window.collectionDetailDelete(${escapeAttr(jsString(name))}, this)"><i class="fa-solid fa-trash-can"></i> Delete collection</button>
+                        </div>
+                    </details>
                 </div>
             </div>
 
@@ -232,7 +238,6 @@ window.CollectionDetailView = {
                 </div>
             </div>
 
-            <button class="maintenance-launch" onclick="window.openMaintenanceWindow(${escapeAttr(jsString(name))})"><i class="fa-solid fa-screwdriver-wrench"></i> Open maintenance</button>
             <!-- MAIN GRID -->
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start;">
 

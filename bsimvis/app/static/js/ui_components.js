@@ -59,15 +59,19 @@ window.UI = {
      */
     Sidebar: {
         render: function() {
-            const { viewKey, collection, pool } = getRoutingState();
-            if (!collection && !pool && viewKey !== 'home' && viewKey !== 'collections' && viewKey !== 'pools' && viewKey !== 'jobs' && viewKey !== 'search' && viewKey !== 'search-detail' && viewKey !== 'scan' && viewKey !== 'scan-detail' && viewKey !== 'nway') {
-                throw new Error("Navigation error: collection context is missing.");
+            const routing = getRoutingState();
+            const { viewKey, pool } = routing;
+            // No collection in the URL: fall back to the last one visited rather than breaking the whole navbar.
+            let collection = routing.collection;
+            if (!collection && !pool) {
+                try { collection = localStorage.getItem('lastCollectionContext') || null; } catch (e) { /* storage blocked */ }
             }
 
             const buildNavUrl = (view) => {
                 if (view === 'home') return '/';
                 if (view === 'collections') return '/collections';
                 if (view === 'pools') return '/pools';
+                if (!collection && !pool && !['jobs', 'nway', 'scan'].includes(view)) return '/collections';
                 if (view === 'nway' || view === 'scan') {
                     const k = pool ? `pool=${encodeURIComponent(pool)}` : collection ? `collection=${encodeURIComponent(collection)}` : '';
                     return `${view === 'nway' ? '/diff/nway' : '/scans'}${k ? `?${k}` : ''}`;

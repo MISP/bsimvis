@@ -127,6 +127,16 @@ window.UI = {
                 return '';
             };
 
+            // Collapsed state survives re-renders in localStorage; the section holding the active page stays open.
+            let closed = [];
+            try { closed = JSON.parse(localStorage.getItem('navClosedSections') || '[]'); } catch (e) { /* storage blocked */ }
+            const section = (key, title, links) => {
+                const body = links.filter(Boolean).join('');
+                const shut = closed.includes(key) && !/class="active"/.test(body);
+                return `<div class="nav-section-title nav-collapsible${shut ? ' is-closed' : ''}" onclick="UI.Sidebar.toggleSection('${key}')"><span>${title}</span><i class="fa-solid fa-chevron-down nav-chevron"></i></div>
+                    <div class="nav-section-content${shut ? ' is-closed' : ''}">${body}</div>`;
+            };
+
             return `
                 <button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle Sidebar">⟨</button>
                 <nav class="sidebar-nav">
@@ -142,27 +152,19 @@ window.UI = {
                         <a href="${buildNavUrl('collections')}" id="nav-collections" title="Collections" class="${isActive('collections')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-layer-group"></i> <span>Collections</span></a>
                         <a href="${buildNavUrl('pools')}" id="nav-pools" title="Pools" class="${isActive('pools')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-diagram-project"></i> <span>Pools</span></a>
                     </div>
-                    <div class="nav-section-title"><span>Binaries</span></div>
-                    <div class="nav-section-content">
-                        <a href="${buildNavUrl('batches')}" id="nav-batches" title="Batches" class="${isActive('batches')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-boxes-stacked"></i> <span>Batches</span></a>
-                        <a href="${buildNavUrl('files')}" id="nav-files" title="Files" class="${isActive('files')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-file-code"></i> <span>Files</span></a>
-                        <a href="${buildNavUrl('binary-similarity')}" id="nav-binary-similarity" title="Similarities" class="${isActive('binary-similarity')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
-                        <a href="${buildNavUrl('bin-clusters')}" id="nav-bin-clusters" title="Clusters" class="${isActive('bin-clusters')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-bullseye"></i> <span>Clusters</span></a>
-                    </div>
-                    <div class="nav-section-title"><span>Functions</span></div>
-                    <div class="nav-section-content">
-                        <a href="${buildNavUrl('functions')}" id="nav-functions" title="Functions" class="${isActive('functions')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-code"></i> <span>Functions</span></a>
-                        <a href="${buildNavUrl('function-similarity')}" id="nav-function-similarity" title="Function Similarities" class="${isActive('function-similarity')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
-                        <a href="${buildNavUrl('clusters')}" id="nav-clusters" title="Clusters" class="${isActive('clusters')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-bullseye"></i> <span>Clusters</span></a>
-                        <a href="${buildNavUrl('features-global')}" id="nav-features-global" title="Features" class="${isActive('features-global')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-fingerprint"></i> <span>Features</span></a>
-                    </div>
-                    <div style="margin-top:auto; padding-top:20px; border-top: 1px solid var(--border);">
-                        ${collection ? `<a href="${buildNavUrl('tags')}" id="nav-tags" title="Tags" class="${isActive('tags')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-tags"></i> <span>Tags</span></a>` : ''}
-                        <a href="${buildNavUrl('upload')}" id="nav-upload" title="Upload" class="${isActive('upload')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-cloud-arrow-up"></i> <span>Upload</span></a>
-                        <a href="${buildNavUrl('jobs')}" id="nav-jobs" title="Jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> <span>Jobs</span></a>
-                        <a href="${buildNavUrl('scan')}" id="nav-scans" title="Scan a file without ingesting it" class="${isActive('scan')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-microscope"></i> <span>Scan</span></a>
-                        <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff (experimental)" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> <span>N-way diff</span></a>
-                        <a href="/searches" id="nav-searches" title="Saved Searches" class="${isActive('search')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-list-check"></i> <span>Searches</span></a>
+                    ${section('binaries', 'Binaries', [
+                        `<a href="${buildNavUrl('batches')}" id="nav-batches" title="Batches" class="${isActive('batches')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-boxes-stacked"></i> <span>Batches</span></a>`, `<a href="${buildNavUrl('files')}" id="nav-files" title="Files" class="${isActive('files')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-file-code"></i> <span>Files</span></a>`, `<a href="${buildNavUrl('binary-similarity')}" id="nav-binary-similarity" title="Similarities" class="${isActive('binary-similarity')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>`, `<a href="${buildNavUrl('bin-clusters')}" id="nav-bin-clusters" title="Clusters" class="${isActive('bin-clusters')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-bullseye"></i> <span>Clusters</span></a>`,
+                    ])}
+                    ${section('functions', 'Functions', [
+                        `<a href="${buildNavUrl('functions')}" id="nav-functions" title="Functions" class="${isActive('functions')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-code"></i> <span>Functions</span></a>`, `<a href="${buildNavUrl('function-similarity')}" id="nav-function-similarity" title="Function Similarities" class="${isActive('function-similarity')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>`, `<a href="${buildNavUrl('clusters')}" id="nav-clusters" title="Clusters" class="${isActive('clusters')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-bullseye"></i> <span>Clusters</span></a>`, `<a href="${buildNavUrl('features-global')}" id="nav-features-global" title="Features" class="${isActive('features-global')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-fingerprint"></i> <span>Features</span></a>`,
+                    ])}
+                    ${section('analyze', 'Analyze', [
+                        `<a href="${buildNavUrl('scan')}" id="nav-scans" title="Scan a file without ingesting it" class="${isActive('scan')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-microscope"></i> <span>Scan</span></a>`, `<a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff (experimental)" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> <span>N-way diff</span></a>`, `<a href="/searches" id="nav-searches" title="Saved Searches" class="${isActive('search')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-list-check"></i> <span>Searches</span></a>`,
+                    ])}
+                    ${section('manage', 'Manage', [
+                        collection ? `<a href="${buildNavUrl('tags')}" id="nav-tags" title="Tags" class="${isActive('tags')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-tags"></i> <span>Tags</span></a>` : '', `<a href="${buildNavUrl('upload')}" id="nav-upload" title="Upload" class="${isActive('upload')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-cloud-arrow-up"></i> <span>Upload</span></a>`, `<a href="${buildNavUrl('jobs')}" id="nav-jobs" title="Jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> <span>Jobs</span></a>`,
+                    ])}
+                    <div class="nav-section-content nav-bottom">
                         <a href="/api/" target="_blank" id="nav-api" title="API"><i class="fa-solid fa-book"></i> <span>API</span></a>
                     </div>
                 </nav>
@@ -174,6 +176,14 @@ window.UI = {
             const container = document.getElementById(containerId);
             if (!container) return;
             container.innerHTML = this.render();
+        },
+
+        toggleSection: function(key) {
+            let closed = [];
+            try { closed = JSON.parse(localStorage.getItem('navClosedSections') || '[]'); } catch (e) { /* storage blocked */ }
+            closed = closed.includes(key) ? closed.filter(k => k !== key) : closed.concat(key);
+            try { localStorage.setItem('navClosedSections', JSON.stringify(closed)); } catch (e) { /* storage blocked */ }
+            this.updateActiveState();
         },
 
         updateActiveState: function() {

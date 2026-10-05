@@ -227,18 +227,9 @@
                 isNode && d.columns_mode === 'children'
                     ? this._slider('Child presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, "Share of a child cluster's files that must hold a function for the child to count as having it.") : '',
             ].join('');
-            return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${this._openDiff()}</div>
+            return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}</div>
                 <div class="nway-bar">${this._group('Filter', filter)}${this._group('Match', match)}</div>
                 ${this._focusBox()}`;
-        }
-
-        // Cluster tab only: the same table on its own page, without the cluster chrome.
-        _openDiff() {
-            if (!this.source.cluster_uuid || window.location.pathname.startsWith('/diff/nway')) return '';
-            const qs = new URLSearchParams(this.source);
-            for (const k of API_KEYS) if (this.state[k] !== '' && this.state[k] != null && k !== 'offset') qs.set(k, this.state[k]);
-            const url = `/diff/nway?${qs.toString()}`;
-            return `<a class="top-action-btn" style="margin-left:auto" href="${escapeAttr(url)}" onclick="Nav.openPath(this.href, event)" title="Open these functions in the N-way diff view, without the cluster metadata"><i class="fa-solid fa-table-columns"></i> Open in N-diff view</a>`;
         }
 
         _files() {
@@ -1163,7 +1154,7 @@
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             return `<tr>
                 <td class="nway-open" data-cg-open="${Number(ri)}" title="Click for the call graph of this row" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}</span></td>
-                <td class="num">${Number(row.span)}</td>
+                <td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
                 <td class="num">${this._score(row.cohesion)}</td>

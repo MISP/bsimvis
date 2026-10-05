@@ -816,7 +816,7 @@ window.ClusterDetailView = {
                 <span class="badge">${this.isBinary ? this.axis : 'function'}</span>
                 <span class="hero-mini"><span>${Number(self.count || 0).toLocaleString()} members</span></span>
                 ${EntityRenderer.renderTag(this.isBinary ? 'bin_cluster' : 'cluster', self.tag_id || self.cluster_id, [], self.user_tags || [])}
-                <span style="margin-left:auto; display:flex; gap:6px; align-items:center;">${this.renderMemberListLink(self)}${this.renderSimilaritiesLink(self)}<button class="hero-handle" onclick="ClusterDetailView.toggleHero()" title="Fold / unfold the details (folds by itself while you scroll a table)"><i class="fa-solid fa-chevron-up"></i></button></span>
+                <span style="margin-left:auto; display:flex; gap:6px; align-items:center;">${this.renderMemberListLink(self)}${this.renderNdiffLink(self)}${this.renderSimilaritiesLink(self)}<button class="hero-handle" onclick="ClusterDetailView.toggleHero()" title="Fold / unfold the details (folds by itself while you scroll a table)"><i class="fa-solid fa-chevron-up"></i></button></span>
             </div>
             <div class="hero-fold"><div class="hero-fold-in">
             <div class="mono dim" style="font-size:0.72rem; margin-top:6px;">
@@ -919,6 +919,20 @@ window.ClusterDetailView = {
             icon: 'fa-solid fa-magnifying-glass',
             label: `Open in ${this.isBinary ? 'file' : 'function'} search`,
             onClick: `Nav.openPath(${jsString(url)}, event)`,
+        });
+    },
+
+    /** The N-way table on its own page, without the cluster chrome (file clusters only). */
+    renderNdiffLink(self) {
+        if (!this.isBinary) return '';
+        const qs = new URLSearchParams({ cluster_uuid: self.cluster_uuid, axis: this.axis });
+        if (this.params && this.params.pool) qs.set('pool', this.params.pool);
+        else qs.set('collection', this.collection || '');
+        return UI.Button.render({
+            className: 'btn-code-action',
+            icon: 'fa-solid fa-table-columns',
+            label: 'Open in N-diff view',
+            onClick: `Nav.openPath(${jsString(`/diff/nway?${qs}`)}, event)`,
         });
     },
 

@@ -341,7 +341,11 @@ def _page(doc, args, r=None, pool_id=None):
         filtered = sorted(
             filtered,
             key=lambda r: (
-                str(r[sort_col]).lower() if sort_col == "name" else r[sort_col]
+                str(r[sort_col]).lower()
+                if sort_col == "name"
+                else (
+                    r.get("file_span", r["span"]) if sort_col == "span" else r[sort_col]
+                )
             ),
             reverse=args.get("sort_dir", "desc") != "asc",
         )

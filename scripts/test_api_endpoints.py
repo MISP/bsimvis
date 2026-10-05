@@ -3050,6 +3050,27 @@ def run_all_tests():
             )
 
     # ── Collection Params ──────────────────────────────────────────────────
+    print(_color("\n  [Collection Counts]", BOLD))
+    counts_body = test_endpoint(
+        "GET",
+        "/api/collection/counts",
+        params={"collection": COLLECTION},
+        label="GET /api/collection/counts",
+    )
+    check(
+        "collection counts has four non-negative integers",
+        all(
+            isinstance((counts_body or {}).get(k), int) and counts_body[k] >= 0
+            for k in (
+                "function_sims",
+                "file_sims",
+                "function_clusters",
+                "file_clusters",
+            )
+        ),
+        f"counts={counts_body}",
+    )
+
     print(_color("\n  [Collection Params]", BOLD))
     params_body = test_endpoint(
         "GET",

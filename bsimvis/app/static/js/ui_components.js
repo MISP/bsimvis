@@ -64,10 +64,10 @@ window.UI = {
             { key: 'batches', label: 'Batches', path: '/batches', count: 'total_batches' },
             { key: 'files', label: 'Files', path: '/files', count: 'total_files' },
             { key: 'functions', label: 'Functions', path: '/functions', count: 'total_functions' },
-            { key: 'binary-similarity', label: 'File sims', path: '/files/similarities' },
-            { key: 'function-similarity', label: 'Func sims', path: '/functions/similarities' },
-            { key: 'bin-clusters', label: 'File clusters', path: '/files/clusters' },
-            { key: 'clusters', label: 'Func clusters', path: '/functions/clusters' },
+            { key: 'binary-similarity', count: 'file_sims', label: 'File sims', path: '/files/similarities' },
+            { key: 'function-similarity', count: 'function_sims', label: 'Func sims', path: '/functions/similarities' },
+            { key: 'bin-clusters', count: 'file_clusters', label: 'File clusters', path: '/files/clusters' },
+            { key: 'clusters', count: 'function_clusters', label: 'Func clusters', path: '/functions/clusters' },
             { key: 'jobs', label: 'Jobs', path: '/jobs' },
         ],
         // Detail pages light up the tab of the list they belong to.
@@ -95,17 +95,20 @@ window.UI = {
             }).join('');
         },
 
-        // Counts come from the collection list; fetch once per collection and repaint.
+        // Counts are cheap cardinality reads; refetch at most every 15s and repaint.
         load: function(collection) {
-            if (this.counts[collection]) return;
-            this.counts[collection] = {};
-            fetch(`/api/collection/search?q=${encodeURIComponent(collection)}`)
-                .then(r => r.ok ? r.json() : { collections: [] })
-                .then(d => {
-                    const hit = (d.collections || []).find(x => x.name === collection);
-                    if (hit) { this.counts[collection] = hit; this.render(); }
-                })
-                .catch(() => { delete this.counts[collection]; });
+            const old = this.counts[collection];
+            if (old && Date.now() - old.__ts < 15000) return;
+            this.counts[collection] = { ...old, __ts: Date.now() };
+            const q = encodeURIComponent(collection);
+            const get = (url, pick) => fetch(url).then(r => r.ok ? r.json() : {}).then(pick).catch(() => ({}));
+            Promise.all([
+                get(`/api/collection/search?q=${q}`, d => (d.collections || []).find(x => x.name === collection) || {}),
+                get(`/api/collection/counts?collection=${q}`, d => d),
+            ]).then(([coll, extra]) => {
+                this.counts[collection] = { ...coll, ...extra, __ts: Date.now() };
+                this.render();
+            });
         },
     },
 

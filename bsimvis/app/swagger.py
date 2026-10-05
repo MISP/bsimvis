@@ -652,6 +652,18 @@ class CollectionDelete(Resource):
         return delete_collection()
 
 
+@ns_collection.route("/counts")
+class CollectionCounts(Resource):
+    @ns_collection.doc(
+        params={"collection": {"description": "Collection name", "required": True}}
+    )
+    def get(self):
+        """Similarity and cluster totals of a collection (cheap cardinality reads)."""
+        from bsimvis.app.routes.search_collection import get_collection_counts
+
+        return get_collection_counts()
+
+
 @ns_collection.route("/params")
 class CollectionParams(Resource):
     @ns_collection.doc(

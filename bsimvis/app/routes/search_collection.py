@@ -305,6 +305,30 @@ def get_collection_config():
     return {"collection": collection, "params": get_collection_params(collection)}
 
 
+def get_collection_counts():
+    """O(1) similarity and cluster totals for the collection tab strip."""
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+    from bsimvis.app.services.config_service import config_service
+
+    collection = request.args.get("collection")
+    if not collection:
+        return {"error": "collection parameter is required"}, 400
+    r = get_redis()
+    algo = resolve_collection_algo(collection)
+    bin_algo = algo
+    if (
+        config_service.get("clustering.bin_engine", "hierarchical_snn")
+        == "hierarchical_snn"
+    ):
+        bin_algo = f"{algo}:snn"
+    return {
+        "function_sims": r.zcard(f"{collection}:sim:score:{algo}"),
+        "file_sims": r.scard(f"{collection}:all_bin_sims"),
+        "function_clusters": r.scard(f"{collection}:cluster:list:{algo}"),
+        "file_clusters": r.scard(f"{collection}:bin_cluster:list:{bin_algo}"),
+    }
+
+
 _PARAM_RANGES = {"min_features": (0, 10000), "min_score": (0.0, 1.0)}
 
 

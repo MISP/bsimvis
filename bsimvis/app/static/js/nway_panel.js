@@ -228,16 +228,14 @@
                 isNode && d.columns_mode === 'children'
                     ? this._slider('Child presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, "Share of a child cluster's files that must hold a function for the child to count as having it.") : '',
             ].join('');
-            return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}</div>
-                <div class="nway-bar">${filter}${this._matchMenu(match)}</div>
-                ${this._focusBox()}`;
+            return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}</span></div>`;
         }
 
         // Match settings live in a popover; the summary shows what is set, so the bar stays one line.
         _matchMenu(body) {
             const d = this.data, s = this.state;
             const sum = [`edge ${Number(d.min_edge).toFixed(2)}`, d.mode, d.columns_mode === 'children' ? 'children' : '', s.tab === 'partial' && d.columns_mode !== 'focus' ? `k ${s.k}` : ''].filter(Boolean).join(' · ');
-            return `<details class="nway-match"${this._matchOpen ? ' open' : ''}><summary class="nway-chip"><i class="fa-solid fa-sliders"></i> Match <span class="dim">${escapeHtml(sum)}</span></summary><div class="nway-match-body">${body}</div></details>`;
+            return `<details class="nway-match nway-pop"${this._matchOpen ? ' open' : ''}><summary class="nway-chip"><i class="fa-solid fa-sliders"></i> Match <span class="dim">${escapeHtml(sum)}</span></summary><div class="nway-match-body">${body}</div></details>`;
         }
 
         _files() {
@@ -265,10 +263,10 @@
                 s.tab === 'unique' ? this._seg('Unique to', 'side', [['', 'Both'], ['focus', 'Focus'], ['rest', 'Rest']], 'Unique tab only. Focus: functions in the focus files and in none of the rest. Rest: the reverse. Both: either.') : '',
                 `<button class="nway-chip" data-clear="focus" title="back to the plain N-way">&times; clear focus</button>`,
             ].join('') : '';
-            const open = on || this._focusOpen ? ' open' : '';
+            const open = this._focusOpen ? ' open' : '';
             const tip = 'Compare the chosen files against all the others. Columns collapse to Focus and Rest: Core is on both sides, Unique on one side. Right-click a file header for the same action.';
-            return `<details class="nway-focus"${open}><summary><i class="fa-solid fa-bullseye"></i> Focus: ${on ? `${ids.length} of ${files.length} files` : 'off'}${this._tip(tip)}</summary>
-                <div class="nway-focus-body"><div class="nway-chips">${chips}</div>${ctl ? `<div class="nway-bar">${ctl}</div>` : ''}</div></details>`;
+            return `<details class="nway-focus nway-pop"${open}><summary class="nway-chip${on ? ' on' : ''}" title="${escapeAttr(tip)}"><i class="fa-solid fa-bullseye"></i> Focus <span class="dim">${on ? `${ids.length}/${files.length} files` : 'off'}</span></summary>
+                <div class="nway-focus-body nway-match-body"><div class="nway-chips">${chips}</div>${ctl}</div></details>`;
         }
 
         // Header right-click: the shared file menu, plus this panel's focus / filter

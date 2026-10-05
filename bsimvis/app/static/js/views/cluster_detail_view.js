@@ -352,7 +352,7 @@ window.ClusterDetailView = {
                 <div id="cluster-detail" style="flex:1; min-width:0; display:flex; flex-direction:column; min-height:0;">
                     <div id="cluster-header"></div>
 
-                    <div class="bsim-tabbar" id="cluster-view-tabs" style="margin:20px 0 16px; flex-shrink:0;">
+                    <div class="bsim-tabbar" id="cluster-view-tabs" style="margin:12px 0 8px; flex-shrink:0;">
                         ${this.isBinary ? '' : `<button class="bsim-tab active" id="cluster-tab-btn-medoid" onclick="ClusterDetailView.switchTab('medoid')" title="Most central function of this cluster">★ Medoid</button>`}
                         <button class="bsim-tab${this.isBinary ? ' active' : ''}" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
                         <button class="bsim-tab" id="cluster-tab-btn-metadata" onclick="ClusterDetailView.switchTab('metadata')">Metadata</button>

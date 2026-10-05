@@ -2740,14 +2740,15 @@ a.home-card:hover,
     margin-right: 6px;
 }
 .nway-ctl .nway-lbl { margin-right: 0; }
-.nway-tabrow { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; position: relative; z-index: 11; }
+.nway-tabrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 8px; position: relative; z-index: 11; }
 .nway-tabrow .bsim-tabbar { margin-bottom: 0; }
 .nway-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; position: relative; z-index: 10; }
 .nway-ctlwrap { display: inline-flex; align-items: center; gap: 8px; }
-.nway-match { position: relative; margin-left: auto; }
-.nway-match > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; }
-.nway-match > summary::-webkit-details-marker { display: none; }
-.nway-match[open] > summary { border-color: var(--accent); color: var(--text); }
+.nway-pops { display: flex; gap: 8px; margin-left: auto; }
+.nway-pop { position: relative; }
+.nway-pop > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; }
+.nway-pop > summary::-webkit-details-marker { display: none; }
+.nway-pop[open] > summary { border-color: var(--accent); color: var(--text); }
 .nway-match-body {
     position: absolute; right: 0; top: calc(100% + 6px); z-index: 50; min-width: 300px;
     display: flex; flex-direction: column; align-items: flex-start; gap: 12px;
@@ -2761,11 +2762,8 @@ a.home-card:hover,
 .nway-bar .home-tip::after, .nway-focus .home-tip::after, .nway-tabrow .home-tip::after {
     bottom: auto; top: calc(100% + 8px); left: -8px; transform: none; z-index: 200;
 }
-.nway-focus { position: relative; z-index: 9; margin: 0 0 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); }
-.nway-focus > summary { cursor: pointer; padding: 8px 12px; font-size: 0.8rem; list-style: none; }
-.nway-focus > summary .home-tip { margin-left: 8px; }
-.nway-focus-body { padding: 0 12px 10px; }
-.nway-focus-body .nway-chips { max-height: 120px; overflow: auto; }
+.nway-focus-body { min-width: 360px; max-width: 520px; }
+.nway-focus-body .nway-chips { max-height: 140px; overflow: auto; margin: 0; }
 .nway-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; }
 .nway-chip {
     background: var(--card-bg);

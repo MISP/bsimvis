@@ -1076,14 +1076,16 @@
                 const targets = n.dataset.back.split(' ').map(k => byKey[`${n.dataset.side}|${k}`]).filter(Boolean);
                 if (!targets.length) return;
                 const a = n.getBoundingClientRect(), id = escapeAttr(n.dataset.side + '|' + n.dataset.key);
-                const x1 = (callees ? a.left : a.right) - gr.left, y1 = a.top + a.height / 2 - gr.top;
+                // The edge leaves the side facing the focus and ends on the arrow of the call: card -> target for a callee, target -> card for a caller.
+                const cx = (callees ? a.left : a.right) - gr.left, cy = a.top + a.height / 2 - gr.top;
                 targets.forEach(t => {
                     const b = t.getBoundingClientRect();
-                    const x2 = (callees ? b.right : b.left) - gr.left, y2 = b.top + b.height / 2 - gr.top, mx = (x1 + x2) / 2;
+                    const tx = (callees ? b.right : b.left) - gr.left, ty = b.top + b.height / 2 - gr.top, mx = (cx + tx) / 2;
                     backs.push([n, t]);
-                    backPaths.push(`<path class="nway-edge back" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"></path>`);
+                    backPaths.push(`<path class="nway-edge back" d="${callees ? `M${cx},${cy} C${mx},${cy} ${mx},${ty} ${tx},${ty}` : `M${tx},${ty} C${mx},${ty} ${mx},${cy} ${cx},${cy}`}"></path>`);
                 });
-                stubs.push(`<g class="nway-stub back" data-node="${id}"><title>${targets.length} call${targets.length > 1 ? 's' : ''} back to cards shown in an earlier hop: hover the card to see them</title><text x="${a.right - gr.left - 6}" y="${a.bottom - gr.top - 4}" text-anchor="end">&#8634; ${targets.length}</text></g>`);
+                const k = targets.length;
+                stubs.push(`<g class="nway-stub back" data-node="${id}"><title>${k} call${k > 1 ? 's' : ''} ${callees ? 'to' : 'from'} cards shown in an earlier hop</title><text x="${cx + (callees ? -4 : 4)}" y="${a.top - gr.top + 11}" text-anchor="${callees ? 'end' : 'start'}">${callees ? '&larr; ' + k : k + ' &rarr;'}</text></g>`);
             });
             // What a caller also calls (right of it) or a callee is also called by (left of it): a short angled stub.
             nodes.filter(n => n.dataset.other).forEach(n => {
@@ -1091,7 +1093,7 @@
                 const d = left ? -1 : 1, x1 = (left ? a.left : a.right) - gr.left, y1 = a.top + a.height / 2 - gr.top + 6;
                 stubs.push(`<g class="nway-stub other" data-node="${escapeAttr(n.dataset.side + '|' + n.dataset.key)}"><title>${k} other ${left ? 'callers' : 'callees'} (besides the focus): click the card to recenter</title><path d="M${x1},${y1} C${x1 + d * 22},${y1} ${x1 + d * 30},${y1 + 6} ${x1 + d * 30},${y1 + 18}"/><text x="${x1 + d * 30}" y="${y1 + 29}" text-anchor="middle">${k}</text></g>`);
             });
-            svg.innerHTML = paths.join('') + backPaths.join('') + stubs.join('');
+            svg.innerHTML = '<defs><marker id="cgarrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="context-stroke" stroke="none"/></marker></defs>' + paths.join('') + backPaths.join('') + stubs.join('');
             this._cgHover(g, center, meta, backs);
         }
 

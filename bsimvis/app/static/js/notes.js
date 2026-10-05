@@ -1271,6 +1271,9 @@ async function ensureChatSession(collection) {
  * every outgoing message (not just at session start) since the same session
  * now spans however many functions/files the analyst pivots through. */
 function currentFocusContextLine() {
+    // A diff shows two functions, so it outranks the single notes focus.
+    const diffCtx = (window.diffFocusContext || window.parent?.diffFocusContext)?.();
+    if (diffCtx) return `(${diffCtx})`;
     if (!currentNotesFuncId) {
         return "(No specific function or file is currently focused -- this is a general question about the collection.)";
     }

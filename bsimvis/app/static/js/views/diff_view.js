@@ -59,6 +59,8 @@ window.DiffView = {
         window.setHighlight = (hashString, state, target) => this.setHighlight(hashString, state, target);
         window.setChunkHighlight = (chunkId, state, target) => this.setChunkHighlight(chunkId, state, target);
         window.switchDiffMode = (mode) => this.switchDiffMode(mode);
+        // Read by notes.js so the AI agent knows which pair is on screen.
+        window.diffFocusContext = () => this.focusContext();
 
         // Build HTML Layout
         this.container.innerHTML = `
@@ -1294,6 +1296,14 @@ window.DiffView = {
         }
     },
 
+    /** One line telling the AI agent which function pair the diff is showing. */
+    focusContext() {
+        const p = this._getCurrentP() || this._parsePathUrl();
+        if (!p || !p.addr_a || !p.addr_b) return null;
+        const id = (c, m, a) => `${c}:func:${m}:${a}`;
+        return `Analyst is viewing a function diff. Side A is ${id(p.collection_a, p.md5_a, p.addr_a)}; side B is ${id(p.collection_b, p.md5_b, p.addr_b)}. Use your function tools on both ids; assume the question is about how these two functions differ unless stated otherwise.`;
+    },
+
     switchDiffMode(mode) {
         const codeBtn = document.getElementById('btn-diff-mode-code');
         const graphBtn = document.getElementById('btn-diff-mode-graph');
@@ -1603,6 +1613,7 @@ window.DiffView = {
         delete window.startComparison;
         delete window.toggleBothDetail;
         delete window.navigateToFunction;
+        delete window.diffFocusContext;
         clearTimeout(this._callSimTimer);
     }
 };

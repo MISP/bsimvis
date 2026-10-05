@@ -549,7 +549,7 @@ window.FunctionView = {
         div.style.cssText = `width:190px; padding:5px 8px; border-radius:8px; border-left:3px solid ${border}; background:var(--card-bg, #222); font:12px/1.35 monospace; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.4);`;
 
         if (!raw || raw.is_external) {
-            div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold;">${name}</div>${raw?.is_external ? `<div style="${lineCss} color:var(--dim,#888); font-size:9px;">EXT</div>` : ''}`;
+            div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold;">${name}${nameBadge(raw)}</div>${raw?.is_external ? `<div style="${lineCss} color:var(--dim,#888); font-size:9px;">EXT</div>` : ''}`;
             return div;
         }
 
@@ -558,7 +558,7 @@ window.FunctionView = {
         const nsHtml = raw.namespace ? `<span style="color:#fff; opacity:0.8;">${escapeHtml(raw.namespace)}::</span>` : '';
         const retHtml = raw.return_type ? `<span style="color:#ae81ff; opacity:0.85; font-size:9.5px;">${escapeHtml(raw.return_type)}</span>` : '';
 
-        div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold; font-size:12px;">${nsHtml}${name}</div>`
+        div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold; font-size:12px;">${nsHtml}${name}${nameBadge(raw)}</div>`
             + `<div style="${lineCss} font-size:9.5px;">${retHtml} <span style="color:#fff; opacity:0.7;">(</span>${paramHtml}<span style="color:#fff; opacity:0.7;">)</span></div>`
             + fileHtml
             + this.callGraphMoreBadgeHtml(more);

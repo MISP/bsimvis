@@ -314,6 +314,8 @@ def _shape_cluster_result(m, child_to_parent, parent_to_children, is_pool, pool_
                     "file_md5": s.get("file_md5"),
                     "function_id": fid,
                     "function_name": s.get("function_name", "Unknown"),
+                    "user_name": s.get("user_name"),
+                    "user_name_source": s.get("user_name_source"),
                 }
             )
         else:
@@ -771,6 +773,8 @@ def list_clusters():
                             "file_md5": s.get("file_md5"),
                             "function_id": fid,
                             "function_name": s.get("function_name", "Unknown"),
+                            "user_name": s.get("user_name"),
+                            "user_name_source": s.get("user_name_source"),
                         }
                     )
                 else:
@@ -868,6 +872,10 @@ def list_clusters():
                         "function_name", "Unknown"
                     ),
                     "addr": member_meta_map.get(mid, {}).get("entrypoint_address"),
+                    "user_name": member_meta_map.get(mid, {}).get("user_name"),
+                    "user_name_source": member_meta_map.get(mid, {}).get(
+                        "user_name_source"
+                    ),
                     "bin": member_meta_map.get(mid, {}).get("file_name"),
                     "file_md5": member_meta_map.get(mid, {}).get("file_md5"),
                     "v_size": member_meta_map.get(mid, {}).get("bsim_features_count"),
@@ -1156,6 +1164,8 @@ def get_cluster_functions():
             {
                 "function_id": m.get("function_id") or fid,
                 "function_name": m.get("function_name", "Unknown"),
+                "user_name": m.get("user_name"),
+                "user_name_source": m.get("user_name_source"),
                 "parameters": m.get("parameters", []),
                 "return_type": m.get("return_type", "void"),
                 "namespace": m.get("namespace", ""),

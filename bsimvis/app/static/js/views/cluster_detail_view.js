@@ -1052,7 +1052,9 @@ window.ClusterDetailView = {
                 } else {
                     return {
                         id: m.function_id || m.id,
-                        name: m.function_name || m.name,
+                        name: m.user_name || m.function_name || m.name,
+                        user_name: m.user_name,
+                        user_name_source: m.user_name_source,
                         addr: m.entrypoint_address || m.addr,
                         file_md5: m.file_md5 || m.md5,
                         bin: m.file_name || m.bin,
@@ -1186,6 +1188,8 @@ window.ClusterDetailView = {
                 const f = {
                     function_id: m.id,
                     function_name: m.name,
+                    user_name: m.user_name,
+                    user_name_source: m.user_name_source,
                     name: m.name,
                     entrypoint_address: m.addr,
                     file_md5: md5,

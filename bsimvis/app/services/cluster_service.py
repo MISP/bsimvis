@@ -844,6 +844,8 @@ class ClusterService:
 
                 all_member_meta[fid] = {
                     "function_name": name,
+                    "user_name": m.get("user_name"),
+                    "user_name_source": m.get("user_name_source"),
                     "bsim_features_count": feat_count,
                     "file_name": file_name,
                     "entrypoint_address": addr,
@@ -916,6 +918,8 @@ class ClusterService:
                     {
                         "function_id": fid,
                         "function_name": m.get("function_name", "Unknown"),
+                        "user_name": m.get("user_name"),
+                        "user_name_source": m.get("user_name_source"),
                         "entrypoint_address": m.get("entrypoint_address"),
                         "file_md5": m.get("file_md5"),
                         "file_name": m.get("file_name"),
@@ -1893,6 +1897,8 @@ class ClusterService:
                     {
                         "function_id": fid,
                         "function_name": m.get("function_name", "Unknown"),
+                        "user_name": m.get("user_name"),
+                        "user_name_source": m.get("user_name_source"),
                         "entrypoint_address": m.get("entrypoint_address"),
                         "file_md5": m.get("file_md5"),
                         "file_name": m.get("file_name"),
@@ -2071,6 +2077,8 @@ class ClusterService:
                         m = {}
                 all_member_meta[fid] = {
                     "function_name": m.get("function_name"),
+                    "user_name": m.get("user_name"),
+                    "user_name_source": m.get("user_name_source"),
                     "bsim_features_count": m.get("bsim_features_count", 0),
                     "file_name": m.get("file_name"),
                     "entrypoint_address": m.get("entrypoint_address"),
@@ -2113,6 +2121,8 @@ class ClusterService:
                     {
                         "function_id": fid,
                         "function_name": m.get("function_name", "Unknown"),
+                        "user_name": m.get("user_name"),
+                        "user_name_source": m.get("user_name_source"),
                         "entrypoint_address": m.get("entrypoint_address"),
                         "file_md5": m.get("file_md5"),
                         "file_name": m.get("file_name"),
@@ -2364,6 +2374,8 @@ class ClusterService:
                         {
                             "function_id": fid,
                             "function_name": m.get("function_name", "Unknown"),
+                            "user_name": m.get("user_name"),
+                            "user_name_source": m.get("user_name_source"),
                             "entrypoint_address": m.get("entrypoint_address"),
                             "file_md5": m.get("file_md5"),
                             "file_name": m.get("file_name"),

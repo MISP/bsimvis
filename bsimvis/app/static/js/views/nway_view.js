@@ -101,7 +101,7 @@ window.NwayView = {
         this._container.innerHTML = `
             <div class="nway-view">
                 <div class="nway-head">
-                    <h2><i class="fa-solid fa-table-columns"></i> N-way File Diff</h2>
+                    <h2><i class="fa-solid fa-table-columns"></i> N-way File Diff <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></h2>
                     <p>Functions shared across several files, and the ones unique to a single file.</p>
                 </div>
                 <details id="nway-edit" class="nway-edit" ${this._set.cluster_uuid ? 'hidden' : this._hasSet() ? '' : 'open'}>

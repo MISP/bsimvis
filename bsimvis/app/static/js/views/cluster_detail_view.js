@@ -356,7 +356,7 @@ window.ClusterDetailView = {
                         ${this.isBinary ? '' : `<button class="bsim-tab active" id="cluster-tab-btn-medoid" onclick="ClusterDetailView.switchTab('medoid')" title="Most central function of this cluster">★ Medoid</button>`}
                         <button class="bsim-tab${this.isBinary ? ' active' : ''}" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
                         <button class="bsim-tab" id="cluster-tab-btn-metadata" onclick="ClusterDetailView.switchTab('metadata')">Metadata</button>
-                        ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-functions" onclick="ClusterDetailView.switchTab('functions')">Functions</button>` : ''}
+                        ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-functions" onclick="ClusterDetailView.switchTab('functions')">Functions <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></button>` : ''}
                     </div>
 
                     <div id="cluster-tab-members" style="display:${this.isBinary ? 'flex' : 'none'}; flex-direction:column; flex:1; min-height:0;">

@@ -68,6 +68,10 @@ window.UI = {
                 if (view === 'home') return '/';
                 if (view === 'collections') return '/collections';
                 if (view === 'pools') return '/pools';
+                if (view === 'nway') {
+                    const k = pool ? `pool=${encodeURIComponent(pool)}` : collection ? `collection=${encodeURIComponent(collection)}` : '';
+                    return `/diff/nway${k ? `?${k}` : ''}`;
+                }
 
                 const prefix = window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools';
                 if (pool) {
@@ -113,6 +117,7 @@ window.UI = {
                 if (view === 'collections' && viewKey === 'collection-detail') return 'active';
                 if (view === 'pools' && viewKey === 'pool-detail') return 'active';
                 if (view === 'search' && viewKey === 'search-detail') return 'active';
+                if (view === 'nway' && viewKey === 'nway') return 'active';
 
                 return '';
             };
@@ -137,6 +142,7 @@ window.UI = {
                         <a href="${buildNavUrl('batches')}" id="nav-batches" title="Batches" class="${isActive('batches')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-boxes-stacked"></i> <span>Batches</span></a>
                         <a href="${buildNavUrl('files')}" id="nav-files" title="Files" class="${isActive('files')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-file-code"></i> <span>Files</span></a>
                         <a href="${buildNavUrl('binary-similarity')}" id="nav-binary-similarity" title="Similarities" class="${isActive('binary-similarity')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
+                        <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff (experimental)" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> <span>N-way diff</span></a>
                         <a href="${buildNavUrl('bin-clusters')}" id="nav-bin-clusters" title="Clusters" class="${isActive('bin-clusters')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-bullseye"></i> <span>Clusters</span></a>
                     </div>
                     <div class="nav-section-title"><span>Functions</span></div>

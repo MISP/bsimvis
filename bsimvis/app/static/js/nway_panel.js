@@ -1582,7 +1582,7 @@
     NwayPanel.urlFor = function (ids, fallbackCollection) {
         const md5s = ids.map(id => `${id.split(':')[0] || fallbackCollection}:${id.split(':').pop()}`).join(',');
         const pool = window.getRoutingState ? window.getRoutingState().pool : null;
-        return `/diff/nway?md5s=${encodeURIComponent(md5s)}${pool ? `&pool=${encodeURIComponent(pool)}` : ''}`;
+        return `/diff/nway?md5s=${encodeURIComponent(md5s)}${pool ? `&pool=${encodeURIComponent(pool)}` : fallbackCollection ? `&collection=${encodeURIComponent(fallbackCollection)}` : ''}`;
     };
 
     window.NwayPanel = NwayPanel;

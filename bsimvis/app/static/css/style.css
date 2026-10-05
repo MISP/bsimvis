@@ -2370,3 +2370,5 @@ html.light-theme .analysis-tag-badge {
 @media (max-width: 760px) { .metadata-axis-body { grid-template-columns:1fr; } .metadata-axis-visual { min-height:120px; } }
 
 .metadata-value-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; flex:none; }
+
+.exp-badge { display:inline-block; margin-left:6px; padding:2px 5px; border-radius:4px; background:color-mix(in srgb, var(--warning, #d97706) 18%, transparent); color:var(--warning, #d97706); font-size:0.62rem; font-weight:bold; letter-spacing:.04em; text-transform:uppercase; vertical-align:middle; }

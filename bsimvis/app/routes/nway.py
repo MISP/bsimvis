@@ -516,8 +516,7 @@ def _group_neighbors(r, doc, fids, role, row_of):
             row = doc["rows"][ref]
             item["cells"] = dict(row.get("files") or row["cells"])
             item["library"] = bool(row.get("library"))
-            first = next(iter(item["cells"].values()))
-            item["name"] = (fmeta.get(first) or {}).get("name")
+            item["name"] = row["name"]
         elif kind == "ext":
             item["name"] = ref[4:]
             item["library"] = True  # imported symbols are library calls

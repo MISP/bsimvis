@@ -438,6 +438,22 @@ def _label(cells, fmeta, weights):
     return meta.get("name") or f"FUN_{addr}", 0
 
 
+def _tag_name(tag):
+    """A function name carried by a tag: `fid:libc:1.2.6#__toread` -> `__toread`,
+    `yara:botnet:generic:Rule` -> `Rule`. Bare `fid:libc` names no function."""
+    if "#" in tag:
+        return tag.rsplit("#", 1)[1] or None
+    parts = tag.split(":")
+    return parts[-1] if len(parts) >= 3 and parts[0] != "user" else None
+
+
+def _row_tags(fids, fmeta, limit=8):
+    """Tags over the row's functions, most shared first, library tags ahead on a tie."""
+    count = Counter(t for f in fids for t in merge_tag_fields(fmeta.get(f)))
+    ranked = sorted(count, key=lambda t: (-count[t], not is_library_tag(t), t))
+    return ranked[:limit]
+
+
 def _match(base, min_edge):
     weights = {f: w for funcs in base["funcs"].values() for f, w in funcs.items()}
     rows = nway_match(base["edges"], base["funcs"], min_edge)
@@ -445,6 +461,11 @@ def _match(base, min_edge):
         fids = list(row["cells"].values())
         row["name"], row["names"] = _label(fids, base["fmeta"], weights)
         row["library"] = any(base["library"].get(f) for f in fids)
+        row["tags"] = _row_tags(fids, base["fmeta"])
+        if not row["names"] and _DEFAULT_NAME.match(row["name"]):
+            row["name"] = next(
+                (n for t in row["tags"] if (n := _tag_name(t))), row["name"]
+            )
     return rows
 
 

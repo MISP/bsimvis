@@ -409,8 +409,8 @@
             // Same renderer as the function search table, fed the guessed signature.
             const fn = window.EntityRenderer.renderFunction({ ...f, function_name: row.name, return_type: sig.ret, parameters: sig.params }, { hideNote: true, showActions: false, ...opts });
             // Tags land on the best candidate, the function the preview shows.
-            const tags = window.EntityRenderer.renderTag('function', f.function_id, f.tags, f.user_tags);
-            return `${fn}<div class="nway-tags" title="tags apply to the best candidate: ${escapeAttr(f.entrypoint_address)}">${tags}</div>`;
+            const tags = window.EntityRenderer.renderTag('function', f.function_id, row.tags || f.tags, row.tags ? [] : f.user_tags);
+            return `${fn}<div class="nway-tags" title="${row.tags ? 'tags pooled over the row' : 'tags of the best candidate'}: ${escapeAttr(f.entrypoint_address)}">${tags}</div>`;
         }
 
         // ---- Call-graph drawer: callers / callees of one row, as a list or a graph ----

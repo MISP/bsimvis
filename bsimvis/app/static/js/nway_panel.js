@@ -683,6 +683,8 @@
         // Box-select: cards the rectangle touches replace the selection (Shift: join it).
         _cgLasso(e, body) {
             const x0 = e.clientX, y0 = e.clientY, add = e.shiftKey;
+            e.preventDefault();
+            window.getSelection().removeAllRanges();
             const box = document.createElement('div');
             box.className = 'nway-sel-rect';
             document.body.appendChild(box);
@@ -1425,6 +1427,7 @@
             const card = e.target.closest('.nway-node[data-sel]');
             if (card && (this._cg.selMode || e.ctrlKey || e.metaKey) && !e.target.closest('button, a, input')) {
                 e.preventDefault();
+                window.getSelection().removeAllRanges();
                 const sel = this._cg.sel || (this._cg.sel = new Set()), k = card.dataset.sel;
                 if (!sel.delete(k)) sel.add(k);
                 return this._cgSelSync();

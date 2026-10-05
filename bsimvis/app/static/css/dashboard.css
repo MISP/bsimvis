@@ -3001,3 +3001,4 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .nway-sel-rect { position: fixed; z-index: 9999; border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); pointer-events: none; }
 .nway-cg-selbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 14px; border-bottom: 1px solid var(--border); }
 .nway-cg-selbar[hidden] { display: none; }
+.nway-cg-body.selmode, .nway-cg-body.selmode * { user-select: none; -webkit-user-select: none; }

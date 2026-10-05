@@ -1285,8 +1285,9 @@ select {
     transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s ease, opacity 0.2s ease;
     position: relative;
     overflow-x: hidden;
-    overflow-y: auto;
+    overflow-y: auto;    scrollbar-width: none;
 }
+.sidebar-nav::-webkit-scrollbar { display: none; }
 
 body.sidebar-collapsed .sidebar-nav {
     width: var(--sidebar-width) !important;

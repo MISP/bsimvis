@@ -1079,8 +1079,10 @@
                 // Calls always read left to right: out of the caller's right side, into the callee's left side.
                 const edge = (from, to) => {
                     const f = from.getBoundingClientRect(), g2 = to.getBoundingClientRect();
-                    const x1 = f.right - gr.left, y1 = f.top + f.height / 2 - gr.top, x2 = g2.left - gr.left, y2 = g2.top + g2.height / 2 - gr.top, d = Math.min(120, 40 + Math.abs(x1 - x2) * 0.25);
-                    return `<path class="nway-edge back" d="M${x1},${y1} C${x1 + d},${y1} ${x2 - d},${y2} ${x2},${y2}"></path>`;
+                    const x1 = f.right - gr.left, y1 = f.top + f.height / 2 - gr.top, x2 = g2.left - gr.left, y2 = g2.top + g2.height / 2 - gr.top;
+                    // a straight run out of the caller and into the callee, so the curve never meets a card at an angle
+                    const m = 28, c = Math.max(30, Math.abs(x1 - x2) * 0.4);
+                    return `<path class="nway-edge back" d="M${x1},${y1} L${x1 + m},${y1} C${x1 + m + c},${y1} ${x2 - m - c},${y2} ${x2 - m},${y2} L${x2},${y2}"></path>`;
                 };
                 targets.forEach(t => {
                     backs.push([n, t]);
@@ -1095,7 +1097,7 @@
                 const d = left ? -1 : 1, x1 = (left ? a.left : a.right) - gr.left, y1 = a.top + a.height / 2 - gr.top + 6;
                 stubs.push(`<g class="nway-stub other" data-node="${escapeAttr(n.dataset.side + '|' + n.dataset.key)}"><title>${k} other ${left ? 'callers' : 'callees'} (besides the focus): click the card to recenter</title><path d="M${x1},${y1} C${x1 + d * 22},${y1} ${x1 + d * 30},${y1 + 6} ${x1 + d * 30},${y1 + 18}"/><text x="${x1 + d * 30}" y="${y1 + 29}" text-anchor="middle">${k}</text></g>`);
             });
-            svg.innerHTML = '<defs><marker id="cgarrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="context-stroke" stroke="none"/></marker></defs>' + paths.join('') + backPaths.join('') + stubs.join('');
+            svg.innerHTML = '<defs><marker id="cgarrow" viewBox="0 0 10 10" refX="8" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto"><path d="M1,1 L8,5 L1,9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>' + paths.join('') + backPaths.join('') + stubs.join('');
             this._cgHover(g, center, meta, backs);
         }
 

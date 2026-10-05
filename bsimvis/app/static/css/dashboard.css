@@ -2965,9 +2965,10 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .nway-stub[data-cg-deeper] { cursor: pointer; }
 .nway-stub text { font-size: 10px; fill: var(--accent); }
 .nway-stub.other { opacity: 0.55; }
-.nway-stub.other line { stroke: var(--dim); stroke-width: 1.5; stroke-dasharray: 2 3; }
+.nway-stub.other path { fill: none; stroke: var(--dim); stroke-width: 1.5; stroke-dasharray: 2 3; }
 .nway-stub.other text { fill: var(--dim); }
-.nway-graph.hl .nway-stub.other { opacity: 0.2; }
+.nway-graph.hl .nway-stub:not(.hl-on) { opacity: 0.1; }
+.nway-graph.hl .nway-stub.hl-on { opacity: 1; }
 .nway-lane-h { grid-column: 1 / -1; margin-top: 10px; border-top: 1px dashed var(--border); font-size: 11px; }
 .nway-lane-lbl { position: sticky; left: 14px; display: inline-flex; align-items: center; gap: 8px; padding: 2px 8px; background: var(--card-bg); border-radius: 0 0 6px 6px; }
 .nway-lane-focus { z-index: 1; align-self: center; }

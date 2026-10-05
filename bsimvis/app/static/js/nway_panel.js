@@ -1066,13 +1066,13 @@
                 const x1 = (left ? a.left : a.right) - gr.left, x2 = x1 + (left ? -46 : 46), y = a.top + a.height / 2 - gr.top;
                 const deeper = n.dataset.last && Number(g.dataset.mid) < 5, id = `cgfade${i}`;
                 stubs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${x1}" x2="${x2}" y1="0" y2="0"><stop offset="0" style="stop-color:var(--accent)" stop-opacity="0.8"/><stop offset="1" style="stop-color:var(--accent)" stop-opacity="0"/></linearGradient>
-                    <g class="nway-stub"${deeper ? ' data-cg-deeper="1"' : ''}><title>${Number(n.dataset.beyond)} more ${left ? 'callers' : 'callees'} ${n.dataset.last ? 'past this depth' : 'not shown (capped)'}${deeper ? ': click to go one hop deeper' : ''}</title><line x1="${x1}" x2="${x2}" y1="${y}" y2="${y}" stroke="url(#${id})" stroke-width="3" stroke-dasharray="6 4"/><text x="${x2 + (left ? 4 : -4)}" y="${y - 5}" text-anchor="${left ? 'end' : 'start'}">+${Number(n.dataset.beyond)}</text><rect x="${Math.min(x1, x2) - 4}" y="${y - 12}" width="54" height="24" fill="transparent"/></g>`);
+                    <g class="nway-stub" data-node="${escapeAttr(n.dataset.side + '|' + n.dataset.key)}"${deeper ? ' data-cg-deeper="1"' : ''}><title>${Number(n.dataset.beyond)} more ${left ? 'callers' : 'callees'} ${n.dataset.last ? 'past this depth' : 'not shown (capped)'}${deeper ? ': click to go one hop deeper' : ''}</title><line x1="${x1}" x2="${x2}" y1="${y}" y2="${y}" stroke="url(#${id})" stroke-width="3" stroke-dasharray="6 4"/><text x="${x2 + (left ? 4 : -4)}" y="${y - 5}" text-anchor="${left ? 'end' : 'start'}">+${Number(n.dataset.beyond)}</text><rect x="${Math.min(x1, x2) - 4}" y="${y - 12}" width="54" height="24" fill="transparent"/></g>`);
             });
             // What a caller also calls (right of it) or a callee is also called by (left of it): a short angled stub.
             nodes.filter(n => n.dataset.other).forEach(n => {
                 const a = n.getBoundingClientRect(), left = n.dataset.side === 'callees', k = Number(n.dataset.other);
-                const x1 = (left ? a.left : a.right) - gr.left, x2 = x1 + (left ? -34 : 34), y1 = a.top + a.height / 2 - gr.top + 8, y2 = y1 + 16;
-                stubs.push(`<g class="nway-stub other"><title>${k} other ${left ? 'callers' : 'callees'} (besides the focus): click the card to recenter</title><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/><text x="${x2 + (left ? -3 : 3)}" y="${y2 + 3}" text-anchor="${left ? 'end' : 'start'}">${k}</text></g>`);
+                const d = left ? -1 : 1, x1 = (left ? a.left : a.right) - gr.left, y1 = a.top + a.height / 2 - gr.top + 6;
+                stubs.push(`<g class="nway-stub other" data-node="${escapeAttr(n.dataset.side + '|' + n.dataset.key)}"><title>${k} other ${left ? 'callers' : 'callees'} (besides the focus): click the card to recenter</title><path d="M${x1},${y1} C${x1 + d * 22},${y1} ${x1 + d * 30},${y1 + 6} ${x1 + d * 30},${y1 + 18}"/><text x="${x1 + d * 30}" y="${y1 + 29}" text-anchor="middle">${k}</text></g>`);
             });
             svg.innerHTML = paths.join('') + stubs.join('');
             this._cgHover(g, center, meta);
@@ -1103,6 +1103,8 @@
                 g.classList.add('hl');
                 on.forEach(x => x.classList.add('hl-on'));
                 meta.forEach(([c, par], i) => { if (on.has(c) && on.has(par)) paths[i].classList.add('hl-on'); });
+                const lit = new Set([...on].map(x => `${x.dataset.side}|${x.dataset.key}`));
+                g.querySelectorAll('.nway-stub').forEach(x => { if (lit.has(x.dataset.node)) x.classList.add('hl-on'); });
             };
             g.onmouseleave = clear;
         }

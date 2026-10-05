@@ -679,7 +679,11 @@ function openAIPanel() {
         // Only worth an automatic summarize call when a specific function or
         // file is actually focused -- opening the dock from a list/dashboard
         // page with nothing selected just shows the empty conversation.
-        if (currentNotesFuncId) generateSummary(currentNotesFuncId);
+        const diffCtx = (window.diffFocusContext || window.parent?.diffFocusContext)?.();
+        if (diffCtx || (currentNotesFuncId && entityMode === 'bin_sim')) {
+            // No streaming summarize route for pairs; ask the agent instead.
+            sendLLMChat("Analyze this comparison: summarize what the two sides share, how they differ, and what stands out.");
+        } else if (currentNotesFuncId) generateSummary(currentNotesFuncId);
     } else if (lastRenderedAIFuncId !== collection) {
         renderChatHistory(collection);
     }
@@ -1287,14 +1291,14 @@ function currentFocusContextLine() {
     return `(Analyst is currently viewing ${kind} ${currentNotesFuncId}. Assume this question refers to it unless stated otherwise.)`;
 }
 
-async function sendLLMChat() {
+async function sendLLMChat(autoText) {
     const inputEl = document.getElementById("llm-input");
-    const text = inputEl.value.trim();
+    const text = typeof autoText === "string" ? autoText : inputEl.value.trim();
     const chatKey = getChatScopeCollection();
     if (!text || !chatKey) return;
     lastChatFocusId[chatKey] = currentNotesFuncId;
     addChatMessage(chatKey, "user", text);
-    inputEl.value = "";
+    if (typeof autoText !== "string") inputEl.value = "";
     const sendBtn = document.getElementById("llm-send-btn");
     const stopBtn = document.getElementById("llm-stop-btn");
     const statusEl = document.getElementById("llm-status");

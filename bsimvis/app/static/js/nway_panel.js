@@ -215,8 +215,8 @@
             const tabTip = focus
                 ? 'All: every function. Core: on both the focus and the rest side. Unique: on one side only. Counts are code / library.'
                 : `All: every function group. Core: present in all ${n} columns. Partial: present in at least k columns. Unique: present in exactly one file. Counts are code / library.`;
+            const search = `<div class="search-input-wrapper nway-search"><i class="fa-solid fa-magnifying-glass"></i><input type="text" data-text="q" placeholder="Search name, address, tags, cluster..." value="${escapeAttr(s.q)}"></div>`;
             const filter = [
-                `<input type="text" class="nway-input" data-text="q" placeholder="search name, address, tags, cluster" value="${escapeAttr(s.q)}">`,
                 this._pills('Show', 'scope', [['code', 'Code', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['library', 'Library', 'fa-solid fa-cubes', 'var(--warning, #d97706)'], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']], 'Code: functions of the program itself. Library: functions recognised as library code (stdlib, statically linked). All: both.'),
                 this._columnChip(),
             ].join('');
@@ -228,7 +228,8 @@
                 isNode && d.columns_mode === 'children'
                     ? this._slider('Child presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, "Share of a child cluster's files that must hold a function for the child to count as having it.") : '',
             ].join('');
-            return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}</span></div>`;
+            return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${search}</div>
+                <div class="nway-bar">${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}</span></div>`;
         }
 
         // Match settings live in a popover; the summary shows what is set, so the bar stays one line.

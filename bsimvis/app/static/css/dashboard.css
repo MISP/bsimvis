@@ -2744,6 +2744,8 @@ a.home-card:hover,
 .nway-tabrow .bsim-tabbar { margin-bottom: 0; }
 .nway-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; position: relative; z-index: 10; }
 .nway-ctlwrap { display: inline-flex; align-items: center; gap: 8px; }
+.nway-search { flex: 1 1 320px; max-width: 560px; }
+.nway-bar { margin-bottom: 8px; }
 .nway-pops { display: flex; gap: 8px; margin-left: auto; }
 .nway-pop { position: relative; }
 .nway-pop > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; }

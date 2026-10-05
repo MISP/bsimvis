@@ -460,7 +460,7 @@ function getRoutingState() {
     if (restful.search_id && !params.has('search_id')) params.set('search_id', restful.search_id);
     if (restful.cluster_uuid && !params.has('cluster_uuid')) params.set('cluster_uuid', restful.cluster_uuid);
 
-    return { viewKey, collection, pool, params, ...restful };
+    return { ...restful, viewKey, collection, pool, params };
 }
 window.getRoutingState = getRoutingState;
 

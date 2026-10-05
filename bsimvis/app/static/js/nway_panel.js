@@ -598,7 +598,7 @@
             this._dw.querySelectorAll('.nway-sim[data-sim-a]').forEach(async el => {
                 const a = el.dataset.simA.split(','), b = el.dataset.simB.split(',');
                 const s = Math.max(0, ...(await Promise.all(a.flatMap(x => b.map(y => this._cgPair(x, y))))));
-                el.textContent = s.toFixed(2);
+                el.textContent = `${Math.round(s * 100)}%`;
                 el.style.color = window.scoreColor(s);
                 el.classList.remove('dim');
             });

@@ -216,6 +216,8 @@
             this._loading = false;
             if (window.Paging.mode() === 'scroll') this.state.offset = 0;
             NwayPanel.current = this;
+            this._onKey = e => this._cgKey(e);
+            document.addEventListener('keydown', this._onKey);
             // Keep open graph focus names in step, then re-read the table / graph names.
             this._onRenamed = e => {
                 const hit = ((e.detail || {}).renames || []);
@@ -248,6 +250,7 @@
             this._gen++;
             document.removeEventListener('nway-renamed', this._onRenamed);
             if (NwayPanel.current === this) NwayPanel.current = null;
+            document.removeEventListener('keydown', this._onKey);
             clearTimeout(this._debounce);
             if (this._io) this._io.disconnect();
             if (this._dw && !this.cgInit) window.clearCallsPanel();
@@ -750,18 +753,40 @@
             const bar = this._dw.querySelector('.nway-cg-selbar');
             if (!bar) return;
             const items = this._cgSelItems();
-            bar.hidden = !items.length;
-            if (!items.length) return;
+            bar.hidden = !items.length && !this._cg.selMode;
             const b = (a, icon, t, title) => `<button class="nway-chip" data-cg-selact="${a}" title="${title}"><i class="${icon}"></i> ${t}</button>`;
-            bar.innerHTML = `<b>${items.length} selected</b>`
+            const pick = b('all', 'fa-solid fa-square-check', 'All', 'Select every card (Ctrl+A)') + b('invert', 'fa-solid fa-right-left', 'Invert', 'Invert the selection (Ctrl+I)');
+            if (!items.length) { bar.innerHTML = `<b>0 selected</b>${pick}`; return; }
+            bar.innerHTML = `<b>${items.length} selected</b>${pick}`
                 + b('diff', 'fa-solid fa-plus-minus', 'Add to diff', 'Queue two functions for the function diff: two cards give one function each, one card gives its first two files')
                 + b('copy', 'fa-solid fa-copy', 'Copy names', 'Copy the names, one per line')
                 + b('rename', 'fa-solid fa-pen', 'Rename', 'Rename the selected cards')
                 + b('ai', 'fa-solid fa-robot', 'AI rename', 'Ask the LLM to name the selected cards')
-                + b('clear', 'fa-solid fa-xmark', 'Clear', 'Clear the selection');
+                + b('clear', 'fa-solid fa-xmark', 'Clear', 'Clear the selection (Esc)');
+        }
+
+        // Select every selectable card, or flip the selection.
+        _cgSelAll(invert) {
+            const sel = this._cg.sel || (this._cg.sel = new Set());
+            this._dw.querySelectorAll('.nway-node[data-sel]').forEach(n => {
+                const k = n.dataset.sel;
+                if (!invert) sel.add(k);
+                else if (!sel.delete(k)) sel.add(k);
+            });
+            this._cgSelSync();
+        }
+
+        // Ctrl+A / Ctrl+I / Esc for the graph; only while the pointer or focus is in the drawer.
+        _cgKey(e) {
+            if (!this._cg || !this._dw || this._cg.view !== 'graph' || e.target.closest('input, textarea, select, [contenteditable]')) return;
+            if (!this._dw.contains(e.target) && !this._dw.matches(':hover')) return;
+            const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
+            if (mod && (k === 'a' || k === 'i')) { e.preventDefault(); this._cgSelAll(k === 'i'); }
+            else if (k === 'escape' && this._cg.sel && this._cg.sel.size) { e.preventDefault(); this._cg.sel.clear(); this._cgSelSync(); }
         }
 
         _cgSelAct(act) {
+            if (act === 'all' || act === 'invert') return this._cgSelAll(act === 'invert');
             const items = this._cgSelItems();
             if (act === 'clear') { this._cg.sel.clear(); return this._cgSelSync(); }
             if (!items.length) return;

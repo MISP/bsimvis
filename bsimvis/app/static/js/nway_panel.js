@@ -83,7 +83,7 @@
             const { ok, body } = await post('/api/notes/rename', { func_ids: fids, name, owner });
             if (!ok) { msg.textContent = body.error || 'Rename failed'; return; }
             close();
-            document.dispatchEvent(new CustomEvent('nway-renamed'));
+            document.dispatchEvent(new CustomEvent('nway-renamed', { detail: { renames: [{ fids, name }] } }));
         };
         box.addEventListener('click', async e => {
             if (e.target === box || e.target.closest('[data-cancel]')) return close();
@@ -103,6 +103,82 @@
             if (e.key === 'Escape') close();
         });
     }
+
+    // Batch rename: one editable name per row; the LLM fills them in on request and nothing
+    // is saved until Apply. Rows are `{fids, name}`; unchanged and empty names are skipped.
+    function openBatchRename(rows, auto) {
+        const box = document.createElement('div');
+        box.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center';
+        box.innerHTML = `<div style="background:var(--bg-card,#1e1e1e);padding:16px;border-radius:8px;width:min(560px,92vw);max-height:80vh;display:flex;flex-direction:column;gap:8px">
+            <b>Rename ${rows.length} function${rows.length === 1 ? '' : 's'}</b>
+            <div style="overflow:auto;display:flex;flex-direction:column;gap:6px">${rows.map((r, i) => `<label style="display:flex;flex-direction:column;gap:2px"><span class="dim" style="font-size:.8em">${escapeHtml(r.name)}</span><input type="text" maxlength="64" data-i="${i}" value="${escapeAttr(r.name)}" style="padding:4px"></label>`).join('')}</div>
+            <div class="dim" data-msg style="min-height:1.2em"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button data-ai title="Ask the LLM for a name for every row">AI suggest all</button>
+                <button data-cancel>Cancel</button>
+                <button data-save>Apply</button>
+            </div></div>`;
+        document.body.appendChild(box);
+        const inputs = [...box.querySelectorAll('input')], msg = box.querySelector('[data-msg]');
+        const owners = rows.map(() => 'user');
+        let closed = false;
+        inputs.forEach((inp, i) => inp.addEventListener('input', () => { owners[i] = 'user'; }));
+        const close = () => { closed = true; box.remove(); };
+        const suggest = async () => {
+            let next = 0, done = 0, failed = 0;
+            const worker = async () => {
+                while (!closed && next < rows.length) {
+                    const i = next++;
+                    inputs[i].disabled = true;
+                    try {
+                        const res = await fetch('/api/notes/rename/suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ func_ids: rows[i].fids }) });
+                        const body = await res.json().catch(() => ({}));
+                        if (!res.ok || !body.name) throw new Error(body.error || res.status);
+                        inputs[i].value = body.name;
+                        owners[i] = 'llm';
+                    } catch (err) {
+                        failed++;
+                        inputs[i].title = String(err.message || err);
+                    }
+                    inputs[i].disabled = false;
+                    done++;
+                    if (!closed) msg.textContent = `LLM: ${done}/${rows.length}${failed ? `, ${failed} failed` : ''}`;
+                }
+            };
+            await Promise.all([worker(), worker()]);
+            if (!closed) msg.textContent += ' - edit the names, then Apply.';
+        };
+        const apply = async () => {
+            const jobs = rows.map((r, i) => ({ fids: r.fids, name: inputs[i].value.trim(), owner: owners[i], was: r.name })).filter(j => j.name && j.name !== j.was);
+            const out = await Promise.all(jobs.map(j => fetch('/api/notes/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ func_ids: j.fids, name: j.name, owner: j.owner }) }).then(r => r.ok).catch(() => false)));
+            const bad = out.filter(ok => !ok).length;
+            if (bad) { msg.textContent = `${bad} rename${bad === 1 ? '' : 's'} failed`; }
+            else close();
+            document.dispatchEvent(new CustomEvent('nway-renamed', { detail: { renames: jobs.filter((j, k) => out[k]).map(j => ({ fids: j.fids, name: j.name })) } }));
+        };
+        box.addEventListener('click', e => {
+            if (e.target === box || e.target.closest('[data-cancel]')) return close();
+            if (e.target.closest('[data-save]')) return apply();
+            if (e.target.closest('[data-ai]')) return suggest();
+        });
+        box.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+        if (auto) suggest();
+    }
+
+    // The visible table's rows holding any of these function ids, as `{fids, name}`.
+    window.nwayRowsForFids = ids => {
+        const cur = NwayPanel.current, want = new Set(ids), out = [];
+        if (!cur || !cur.data) return out;
+        for (const row of cur.data.items || []) {
+            const fids = Object.values(row.files || row.cells || {}).filter(v => typeof v === 'string');
+            if (fids.some(f => want.has(f))) out.push({ fids, name: row.name });
+        }
+        return out;
+    };
+    window.nwayRenameSelected = (ids, auto) => {
+        const rows = window.nwayRowsForFids(ids);
+        if (rows.length) openBatchRename(rows, auto);
+    };
 
     document.addEventListener('click', e => {
         const b = e.target.closest('[data-rename-fids]');
@@ -128,7 +204,14 @@
             this._io = null;
             this._loading = false;
             if (window.Paging.mode() === 'scroll') this.state.offset = 0;
-            this._onRenamed = () => this.load();
+            NwayPanel.current = this;
+            // Keep open graph focus names in step, then re-read the table / graph names.
+            this._onRenamed = e => {
+                const hit = ((e.detail || {}).renames || []);
+                if (this._cg) for (const f of this._cg.stack) for (const r of hit) if (Object.values(f.cells).some(x => r.fids.includes(x))) f.name = r.name;
+                if (!this.cgInit) this.load();
+                if (this._cg) this._cgShow();
+            };
             document.addEventListener('nway-renamed', this._onRenamed);
             this.el.addEventListener('click', e => this._onClick(e));
             this.el.addEventListener('change', e => this._onChange(e));
@@ -150,6 +233,7 @@
         destroy() {
             this._gen++;
             document.removeEventListener('nway-renamed', this._onRenamed);
+            if (NwayPanel.current === this) NwayPanel.current = null;
             clearTimeout(this._debounce);
             if (this._io) this._io.disconnect();
             if (this._dw && !this.cgInit) window.clearCallsPanel();
@@ -580,6 +664,7 @@
         _cgPan(e) {
             const body = e.target.closest('.nway-cg-body');
             if (!body || e.button !== 0 || e.target.closest('.nway-node, .nway-cg-item, button, a, input, .bsim-tag-pill, .nway-strip')) return;
+            if (this._cg && this._cg.selMode) return this._cgLasso(e, body);
             const x = e.clientX, y = e.clientY, l = body.scrollLeft, t = body.scrollTop;
             body.classList.add('panning');
             const move = ev => { body.scrollLeft = l - (ev.clientX - x); body.scrollTop = t - (ev.clientY - y); };
@@ -590,6 +675,88 @@
             };
             window.addEventListener('pointermove', move);
             window.addEventListener('pointerup', up);
+        }
+
+        // Box-select: cards the rectangle touches replace the selection (Shift: join it).
+        _cgLasso(e, body) {
+            const x0 = e.clientX, y0 = e.clientY, add = e.shiftKey;
+            const box = document.createElement('div');
+            box.className = 'nway-sel-rect';
+            document.body.appendChild(box);
+            let moved = false;
+            const rect = ev => ({ l: Math.min(x0, ev.clientX), t: Math.min(y0, ev.clientY), r: Math.max(x0, ev.clientX), b: Math.max(y0, ev.clientY) });
+            const move = ev => {
+                const q = rect(ev);
+                moved = moved || q.r - q.l > 3 || q.b - q.t > 3;
+                Object.assign(box.style, { left: `${q.l}px`, top: `${q.t}px`, width: `${q.r - q.l}px`, height: `${q.b - q.t}px` });
+            };
+            const up = ev => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+                box.remove();
+                const q = rect(ev), sel = this._cg && (this._cg.sel || (this._cg.sel = new Set()));
+                if (!sel) return;
+                if (!add) sel.clear();
+                if (moved) {
+                    this._cgSwallow = true;
+                    setTimeout(() => { this._cgSwallow = false; }, 0);
+                    body.querySelectorAll('.nway-node[data-sel]').forEach(n => {
+                        const r = n.getBoundingClientRect();
+                        if (r.right >= q.l && r.left <= q.r && r.bottom >= q.t && r.top <= q.b) sel.add(n.dataset.sel);
+                    });
+                }
+                this._cgSelSync();
+            };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
+        }
+
+        // Selected cards as `{name, cells}` (cells: file column id -> function id).
+        _cgSelItems() {
+            const sel = (this._cg && this._cg.sel) || new Set(), focus = this._cgFocus();
+            return [...sel].map(k => (k === 'focus' ? { name: focus.name, cells: focus.cells } : this._cgItems && this._cgItems[k])).filter(Boolean).map(it => ({
+                name: it.name,
+                fids: Object.values(it.cells || {}).filter(v => typeof v === 'string'),
+            })).filter(it => it.fids.length);
+        }
+
+        // Re-mark the selected cards after a draw and refresh the action bar.
+        _cgSelSync() {
+            if (!this._dw || !this._cg) return;
+            const sel = this._cg.sel || (this._cg.sel = new Set());
+            const live = new Set();
+            this._dw.querySelectorAll('.nway-node[data-sel]').forEach(n => {
+                live.add(n.dataset.sel);
+                n.classList.toggle('sel', sel.has(n.dataset.sel));
+            });
+            // A card gone after a re-centre is no longer selected.
+            for (const k of [...sel]) if (!live.has(k)) sel.delete(k);
+            const bar = this._dw.querySelector('.nway-cg-selbar');
+            if (!bar) return;
+            const items = this._cgSelItems();
+            bar.hidden = !items.length;
+            if (!items.length) return;
+            const b = (a, icon, t, title) => `<button class="nway-chip" data-cg-selact="${a}" title="${title}"><i class="${icon}"></i> ${t}</button>`;
+            bar.innerHTML = `<b>${items.length} selected</b>`
+                + b('diff', 'fa-solid fa-plus-minus', 'Add to diff', 'Queue two functions for the function diff: two cards give one function each, one card gives its first two files')
+                + b('copy', 'fa-solid fa-copy', 'Copy names', 'Copy the names, one per line')
+                + b('rename', 'fa-solid fa-pen', 'Rename', 'Rename the selected cards')
+                + b('ai', 'fa-solid fa-robot', 'AI rename', 'Ask the LLM to name the selected cards')
+                + b('clear', 'fa-solid fa-xmark', 'Clear', 'Clear the selection');
+        }
+
+        _cgSelAct(act) {
+            const items = this._cgSelItems();
+            if (act === 'clear') { this._cg.sel.clear(); return this._cgSelSync(); }
+            if (!items.length) return;
+            if (act === 'copy') return window.copyMetadata(items.map(i => i.name).join('\n'), 'names');
+            if (act === 'rename' || act === 'ai') return openBatchRename(items.map(i => ({ fids: i.fids, name: i.name })), act === 'ai');
+            if (act === 'diff') {
+                const pick = items.length >= 2 ? [items[0].fids[0], items[1].fids[0]] : items[0].fids.slice(0, 2);
+                if (pick.length < 2) return window.showToast && window.showToast('Select two cards, or one present in two files', 'error');
+                const name = f => (items.find(i => i.fids.includes(f)) || {}).name || '';
+                pick.forEach(f => window.addToDiff(f, name(f)));
+            }
         }
 
         // The standalone page's URL: the member source, doc controls, and the focused graph.
@@ -910,7 +1077,8 @@
                 const back = it.back && it.back.length && (role === 'callers' || role === 'callees') ? ` data-back="${escapeAttr(it.back.join(' '))}"` : '';
                 const hub = role === 'callees' && nb.cocallers && nb.cocallers.hub_keys[it.key];
                 if (hub) twin += `<span class="nway-hub" title="Called by ${hub} functions: too widely called to say anything about similarity, so its other callers are not listed"><i class="fa-solid fa-triangle-exclamation"></i> hub &middot; ${hub} callers not shown</span>`;
-                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}"${beyond}${other}${back} data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}">
+                if (it.kind === 'row') this._cgItems[`${role}|${it.key}`] = it;
+                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-sel="${escapeAttr(role + '|' + it.key)}" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}"${beyond}${other}${back} data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}">
                     <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div>${twin}</div>`;
             };
             // Groups form over all `entries`, then `cap` counts a group as one card; the
@@ -960,6 +1128,7 @@
             const keysL = { callers: [], callees: [] }, posL = { callees: [] }, canonL = { callees: [] };
             this._cgGrp = {};
             this._cgSib = {};
+            this._cgItems = {};
             for (const role of ['callers', 'callees']) {
                 const all = this._cgShown(nb, role);
                 const inn = all.filter(x => !x.out), out = all.filter(x => x.out);
@@ -1068,13 +1237,13 @@
                 });
                 const rows = 2 * (lanes.length + 1);
                 const body = [...cells].map(([k, html]) => { const [r, c] = k.split('|'); return `<div class="nway-gcol" style="grid-row:${r};grid-column:${c}">${html}</div>`; }).join('');
-                const fc = `<div class="nway-gcol nway-lane-focus" style="grid-row:1 / span ${rows};grid-column:${depth + 1}"><div class="nway-node center${focus.pieces ? ' merged-focus' : ''}"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div>${this._cgPieces(focus, files)}</div>${coHtml}</div>`;
+                const fc = `<div class="nway-gcol nway-lane-focus" style="grid-row:1 / span ${rows};grid-column:${depth + 1}"><div class="nway-node center${focus.pieces ? ' merged-focus' : ''}" data-sel="focus"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div>${this._cgPieces(focus, files)}</div>${coHtml}</div>`;
                 return `<div class="nway-graph" data-mid="${depth}" data-lanes="1" style="grid-template-columns:${cols.join(' ')}; column-gap:56px; width:max-content"><svg></svg>${heads.join('')}${body}${fc}</div>`;
             }
             const grid = depth > 1 ? ` style="grid-template-columns:${cols.join(' ')}; column-gap:56px; width:max-content"` : '';
             const left = [...columns.callers].reverse().map(col).join(''), right = columns.callees.map(col).join('');
             return `<div class="nway-graph" data-mid="${depth}"${grid}><svg></svg>${left}
-                <div class="nway-gcol"><div class="nway-node center${focus.pieces ? ' merged-focus' : ''}"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div>${this._cgPieces(focus, files)}</div>${coHtml}</div>
+                <div class="nway-gcol"><div class="nway-node center${focus.pieces ? ' merged-focus' : ''}" data-sel="focus"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}</div><div class="nway-node-sub dim">focus</div>${this._cgPieces(focus, files)}</div>${coHtml}</div>
                 ${right}</div>`;
         }
 
@@ -1218,6 +1387,7 @@
             const suggestCtl = st.view === 'graph' ? `<span class="nway-lbl" title="Group cards on one side. Complementary: files that barely overlap and share a parent, probably one function split across files. Same files: cards present in exactly the same files, probably one change or fork. Lanes: one horizontal band per set of files.">Group</span><div class="view-toggle" style="margin:0">${[['off', 'Off'], ['comp', 'Complementary'], ['same', 'Same files'], ['lanes', 'Lanes']].map(([v, t]) => `<button class="view-btn${(st.suggest || 'off') === v ? ' active' : ''}" data-cg-suggest="${v}">${t}</button>`).join('')}</div>` : '';
             const coCtl = st.view === 'graph' ? `<button class="view-btn${st.co ? ' active' : ''}" data-cg-co title="Also show the other functions that call what the focus calls, under the focus (the ones sharing most callees), to find look-alikes and unmatched siblings. Callees called by more than 25 functions are skipped. Off by default: it can add a lot."><i class="fa-solid fa-share-nodes"></i> Also called by</button>` : '';
             const hintCtl = st.view === 'graph' ? `<button class="view-btn${st.hints ? ' active' : ''}" data-cg-hints title="Off by default. Per card, on hover: the other callers / callees it has beyond the focus (angled counts), and calls back to cards already shown in an earlier hop (dashed arrows)."><i class="fa-solid fa-diagram-project"></i> Hints</button>` : '';
+            const selCtl = st.view === 'graph' ? `<button class="view-btn${st.selMode ? ' active' : ''}" data-cg-select title="Select cards: click to toggle, drag the background to box-select (Shift adds). Ctrl-click works without this mode."><i class="fa-solid fa-object-group"></i> Select</button>` : '';
             const toggle = ['list', 'graph'].map(v => `<button class="view-btn${st.view === v ? ' active' : ''}" data-cg-view="${v}">${v === 'list' ? 'List' : 'Graph'}</button>`).join('');
             const on = files.map(c => !!focus.cells[c.id]);
             const fs = this._cgStrip(on, files);
@@ -1225,10 +1395,12 @@
             if (err) body = `<div style="color:#f92672;">${escapeHtml(err)}</div>`;
             else if (!st.nb) body = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Reading call graph...</div>';
             else body = `<div class="dim nway-cg-legend"><i class="fa-solid fa-file-code"></i> files that have the function (color: how many) &middot; dot: the focus function there calls it &middot; <i class="fa-solid fa-link"></i> calls from the focus${st.view === 'graph' ? ' (edge width)' : ''}. Click to recenter.${st.co ? ' Dashed lines: other callers of the same callee.' : ''}${st.depth > 1 ? (st.view === 'graph' ? ' Further hops show in-scope rows only.' : ' The list shows the first hop; depth applies to the graph.') : ''}</div>` + (st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files));
-            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}${depthCtl}${suggestCtl}${coCtl}${hintCtl}<div class="view-toggle" style="margin:0">${toggle}</div>${this.cgInit ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
+            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}${depthCtl}${suggestCtl}${coCtl}${hintCtl}${selCtl}<div class="view-toggle" style="margin:0">${toggle}</div>${this.cgInit ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
                 <div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>
-                <div class="nway-cg-body">${body}</div>`;
+                <div class="nway-cg-selbar" hidden></div>
+                <div class="nway-cg-body${st.selMode ? ' selmode' : ''}">${body}</div>`;
             this._cgFillSims();
+            this._cgSelSync();
             if (!err && st.nb && st.view === 'graph') {
                 this._cgEdges();
                 const body = this._dw.querySelector('.nway-cg-body'), c = body.querySelector('.nway-node.center');
@@ -1239,6 +1411,21 @@
         }
 
         _onDrawerClick(e) {
+            if (!this._cg) return;
+            if (this._cgSwallow) { this._cgSwallow = false; return; }
+            const act = e.target.closest('[data-cg-selact]');
+            if (act) return this._cgSelAct(act.dataset.cgSelact);
+            if (e.target.closest('[data-cg-select]')) {
+                this._cg.selMode = !this._cg.selMode;
+                return this._cgDraw();
+            }
+            const card = e.target.closest('.nway-node[data-sel]');
+            if (card && (this._cg.selMode || e.ctrlKey || e.metaKey) && !e.target.closest('button, a, input')) {
+                e.preventDefault();
+                const sel = this._cg.sel || (this._cg.sel = new Set()), k = card.dataset.sel;
+                if (!sel.delete(k)) sel.add(k);
+                return this._cgSelSync();
+            }
             const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-suggest],[data-cg-co],[data-cg-hints],[data-cg-focusgrp],[data-cg-mergefocus],[data-cg-deeper]');
             if (!t || !this._cg) return;
             if (t.dataset.cgClose !== undefined) return window.closeCallsPanel();

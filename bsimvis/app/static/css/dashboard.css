@@ -2994,3 +2994,10 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .nway-tip-bar { position: relative; height: 8px; background: var(--border); border-radius: 3px; }
 .nway-tip-bar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 3px; }
 .nway-tip-bar b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text, #fff); opacity: 0.8; }
+
+.nway-node.sel { outline: 2px solid var(--accent); outline-offset: 1px; background: color-mix(in srgb, var(--accent) 10%, var(--card-bg)); }
+.nway-cg-body.selmode:has(.nway-graph) { cursor: crosshair; }
+.nway-cg-body.selmode .nway-node[data-sel] { cursor: copy; }
+.nway-sel-rect { position: fixed; z-index: 9999; border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); pointer-events: none; }
+.nway-cg-selbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 14px; border-bottom: 1px solid var(--border); }
+.nway-cg-selbar[hidden] { display: none; }

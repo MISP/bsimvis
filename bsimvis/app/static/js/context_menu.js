@@ -447,6 +447,21 @@
             // The selected rows, or this function alone when nothing is selected.
             const llmIds = `(window.getSelectedTableIds && window.getSelectedTableIds('function').length ? window.getSelectedTableIds('function') : [${jsString(norm.id)}])`;
             actionsSubmenuHtml += renderLLMSubmenu(`{ funcIds: ${llmIds} }`);
+            // N-way table: rename the rows behind the selected functions (by hand or by the LLM).
+            const nwaySel = window.getSelectedTableIds('function').length ? window.getSelectedTableIds('function') : [norm.id];
+            const nwayRows = window.nwayRowsForFids ? window.nwayRowsForFids(nwaySel).length : 0;
+            if (nwayRows) {
+                const ids = `[${nwaySel.map(i => escapeAttr(jsString(i))).join(',')}]`;
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.nwayRenameSelected(${ids}, false)">
+                    <i class="fa-solid fa-pen" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>Rename (${nwayRows})</span>
+                </div>
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.nwayRenameSelected(${ids}, true)">
+                    <i class="fa-solid fa-robot" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>AI Rename (${nwayRows})</span>
+                </div>`;
+            }
         } else if (resolvedType === 'file') {
             const cgUrl = Nav.buildUIUrl(col, ['call_graph', norm.md5]);
             const funcsUrl = Nav.buildUIUrl(col, ['functions']) + '?file_md5=' + encodeURIComponent(norm.md5);

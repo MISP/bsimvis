@@ -23,6 +23,7 @@ body.sidebar-collapsed {
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 
 /* Sidebar */
@@ -34,6 +35,8 @@ body.sidebar-collapsed {
     flex-direction: column;
     padding: 20px 0;
     flex: 1;
+    min-height: 0;
+    overflow-y: auto;
     box-sizing: border-box;
 }
 
@@ -1281,7 +1284,8 @@ select {
 .sidebar-nav {
     transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s ease, opacity 0.2s ease;
     position: relative;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
 }
 
 body.sidebar-collapsed .sidebar-nav {

@@ -68,9 +68,9 @@ window.UI = {
                 if (view === 'home') return '/';
                 if (view === 'collections') return '/collections';
                 if (view === 'pools') return '/pools';
-                if (view === 'nway') {
+                if (view === 'nway' || view === 'scan') {
                     const k = pool ? `pool=${encodeURIComponent(pool)}` : collection ? `collection=${encodeURIComponent(collection)}` : '';
-                    return `/diff/nway${k ? `?${k}` : ''}`;
+                    return `${view === 'nway' ? '/diff/nway' : '/scans'}${k ? `?${k}` : ''}`;
                 }
 
                 const prefix = window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools';
@@ -118,6 +118,7 @@ window.UI = {
                 if (view === 'pools' && viewKey === 'pool-detail') return 'active';
                 if (view === 'search' && viewKey === 'search-detail') return 'active';
                 if (view === 'nway' && viewKey === 'nway') return 'active';
+                if (view === 'scan' && viewKey === 'scan-detail') return 'active';
 
                 return '';
             };
@@ -142,7 +143,6 @@ window.UI = {
                         <a href="${buildNavUrl('batches')}" id="nav-batches" title="Batches" class="${isActive('batches')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-boxes-stacked"></i> <span>Batches</span></a>
                         <a href="${buildNavUrl('files')}" id="nav-files" title="Files" class="${isActive('files')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-file-code"></i> <span>Files</span></a>
                         <a href="${buildNavUrl('binary-similarity')}" id="nav-binary-similarity" title="Similarities" class="${isActive('binary-similarity')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
-                        <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff (experimental)" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> <span>N-way diff</span></a>
                         <a href="${buildNavUrl('bin-clusters')}" id="nav-bin-clusters" title="Clusters" class="${isActive('bin-clusters')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-bullseye"></i> <span>Clusters</span></a>
                     </div>
                     <div class="nav-section-title"><span>Functions</span></div>
@@ -156,7 +156,8 @@ window.UI = {
                         ${collection ? `<a href="${buildNavUrl('tags')}" id="nav-tags" title="Tags" class="${isActive('tags')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-tags"></i> <span>Tags</span></a>` : ''}
                         <a href="${buildNavUrl('upload')}" id="nav-upload" title="Upload" class="${isActive('upload')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-cloud-arrow-up"></i> <span>Upload</span></a>
                         <a href="${buildNavUrl('jobs')}" id="nav-jobs" title="Jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> <span>Jobs</span></a>
-                        <a href="/scans" id="nav-scans" title="Scan a file without ingesting it" class="${isActive('scan')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-microscope"></i> <span>Scan</span></a>
+                        <a href="${buildNavUrl('scan')}" id="nav-scans" title="Scan a file without ingesting it" class="${isActive('scan')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-microscope"></i> <span>Scan</span></a>
+                        <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff (experimental)" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> <span>N-way diff</span></a>
                         <a href="/searches" id="nav-searches" title="Saved Searches" class="${isActive('search')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-list-check"></i> <span>Searches</span></a>
                         <a href="/api/" target="_blank" id="nav-api" title="API"><i class="fa-solid fa-book"></i> <span>API</span></a>
                     </div>

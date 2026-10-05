@@ -1109,7 +1109,7 @@
                 ups.get(n).push(par);
             }
             const walk = (n, map, on) => { for (const m of map.get(n) || []) if (!on.has(m)) { on.add(m); walk(m, map, on); } };
-            const paths = [...g.querySelectorAll(':scope > svg path')];
+            const paths = [...g.querySelectorAll(':scope > svg > path.nway-edge:not(.back)')];
             const clear = () => {
                 g.classList.remove('hl');
                 g.querySelectorAll('.hl-on').forEach(e => e.classList.remove('hl-on'));
@@ -1126,7 +1126,7 @@
                 g.classList.add('hl');
                 on.forEach(x => x.classList.add('hl-on'));
                 meta.forEach(([c, par], i) => { if (on.has(c) && on.has(par)) paths[i].classList.add('hl-on'); });
-                const bp = g.querySelectorAll(':scope > svg path.back');
+                const bp = g.querySelectorAll(':scope > svg > path.back');
                 backOn.forEach(i => bp[i].classList.add('hl-on'));
                 const lit = new Set([...on].map(x => `${x.dataset.side}|${x.dataset.key}`));
                 g.querySelectorAll('.nway-stub').forEach(x => { if (lit.has(x.dataset.node)) x.classList.add('hl-on'); });

@@ -759,7 +759,7 @@
             if (!items.length) { bar.innerHTML = `<b>0 selected</b>${pick}`; return; }
             bar.innerHTML = `<b>${items.length} selected</b>${pick}`
                 + b('diff', 'fa-solid fa-plus-minus', 'Add to diff', 'Queue two functions for the function diff: two cards give one function each, one card gives its first two files')
-                + b('copy', 'fa-solid fa-copy', 'Copy names', 'Copy the names, one per line')
+                + b('copy', 'fa-solid fa-copy', 'Copy names', 'Copy the names, one per line (Ctrl+C)')
                 + b('rename', 'fa-solid fa-pen', 'Rename', 'Rename the selected cards')
                 + b('ai', 'fa-solid fa-robot', 'AI rename', 'Ask the LLM to name the selected cards')
                 + b('clear', 'fa-solid fa-xmark', 'Clear', 'Clear the selection (Esc)');
@@ -776,12 +776,13 @@
             this._cgSelSync();
         }
 
-        // Ctrl+A / Ctrl+I / Esc for the graph; only while the pointer or focus is in the drawer.
+        // Ctrl+A / Ctrl+I / Ctrl+C / Esc for the graph; only while the pointer or focus is in the drawer.
         _cgKey(e) {
             if (!this._cg || !this._dw || this._cg.view !== 'graph' || e.target.closest('input, textarea, select, [contenteditable]')) return;
             if (!this._dw.contains(e.target) && !this._dw.matches(':hover')) return;
             const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
             if (mod && (k === 'a' || k === 'i')) { e.preventDefault(); this._cgSelAll(k === 'i'); }
+            else if (mod && k === 'c' && this._cg.sel && this._cg.sel.size && !String(window.getSelection())) { e.preventDefault(); this._cgSelAct('copy'); }
             else if (k === 'escape' && this._cg.sel && this._cg.sel.size) { e.preventDefault(); this._cg.sel.clear(); this._cgSelSync(); }
         }
 

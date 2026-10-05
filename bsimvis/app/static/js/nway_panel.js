@@ -837,9 +837,10 @@
                 }
                 const beyond = it.beyond && (role === 'callers' || role === 'callees') ? ` data-beyond="${Number(it.beyond)}"${lv === depth - 1 ? ' data-last="1"' : ''}` : '';
                 const other = it.other && (role === 'callers' || role === 'callees') ? ` data-other="${Number(it.other)}"` : '';
+                const back = it.back && it.back.length && (role === 'callers' || role === 'callees') ? ` data-back="${escapeAttr(it.back.join(' '))}"` : '';
                 const hub = role === 'callees' && nb.cocallers && nb.cocallers.hub_keys[it.key];
                 if (hub) twin += `<span class="nway-hub" title="Called by ${hub} functions: too widely called to say anything about similarity, so its other callers are not listed"><i class="fa-solid fa-triangle-exclamation"></i> hub &middot; ${hub} callers not shown</span>`;
-                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}"${beyond}${other} data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}">
+                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}"${beyond}${other}${back} data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}">
                     <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div>${twin}</div>`;
             };
             // Groups form over all `entries`, then `cap` counts a group as one card; the
@@ -1068,18 +1069,34 @@
                 stubs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${x1}" x2="${x2}" y1="0" y2="0"><stop offset="0" style="stop-color:var(--accent)" stop-opacity="0.8"/><stop offset="1" style="stop-color:var(--accent)" stop-opacity="0"/></linearGradient>
                     <g class="nway-stub" data-node="${escapeAttr(n.dataset.side + '|' + n.dataset.key)}"${deeper ? ' data-cg-deeper="1"' : ''}><title>${Number(n.dataset.beyond)} more ${left ? 'callers' : 'callees'} ${n.dataset.last ? 'past this depth' : 'not shown (capped)'}${deeper ? ': click to go one hop deeper' : ''}</title><line x1="${x1}" x2="${x2}" y1="${y}" y2="${y}" stroke="url(#${id})" stroke-width="3" stroke-dasharray="6 4"/><text x="${x2 + (left ? 4 : -4)}" y="${y - 5}" text-anchor="${left ? 'end' : 'start'}">+${Number(n.dataset.beyond)}</text><rect x="${Math.min(x1, x2) - 4}" y="${y - 12}" width="54" height="24" fill="transparent"/></g>`);
             });
+            // Calls back to a card shown in an earlier hop: a dashed edge, lit on hover, plus a count badge.
+            const backs = [], backPaths = [];
+            nodes.filter(n => n.dataset.back).forEach(n => {
+                const callees = n.dataset.side === 'callees';
+                const targets = n.dataset.back.split(' ').map(k => byKey[`${n.dataset.side}|${k}`]).filter(Boolean);
+                if (!targets.length) return;
+                const a = n.getBoundingClientRect(), id = escapeAttr(n.dataset.side + '|' + n.dataset.key);
+                const x1 = (callees ? a.left : a.right) - gr.left, y1 = a.top + a.height / 2 - gr.top;
+                targets.forEach(t => {
+                    const b = t.getBoundingClientRect();
+                    const x2 = (callees ? b.right : b.left) - gr.left, y2 = b.top + b.height / 2 - gr.top, mx = (x1 + x2) / 2;
+                    backs.push([n, t]);
+                    backPaths.push(`<path class="nway-edge back" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"></path>`);
+                });
+                stubs.push(`<g class="nway-stub back" data-node="${id}"><title>${targets.length} call${targets.length > 1 ? 's' : ''} back to cards shown in an earlier hop: hover the card to see them</title><text x="${a.right - gr.left - 6}" y="${a.bottom - gr.top - 4}" text-anchor="end">&#8634; ${targets.length}</text></g>`);
+            });
             // What a caller also calls (right of it) or a callee is also called by (left of it): a short angled stub.
             nodes.filter(n => n.dataset.other).forEach(n => {
                 const a = n.getBoundingClientRect(), left = n.dataset.side === 'callees', k = Number(n.dataset.other);
                 const d = left ? -1 : 1, x1 = (left ? a.left : a.right) - gr.left, y1 = a.top + a.height / 2 - gr.top + 6;
                 stubs.push(`<g class="nway-stub other" data-node="${escapeAttr(n.dataset.side + '|' + n.dataset.key)}"><title>${k} other ${left ? 'callers' : 'callees'} (besides the focus): click the card to recenter</title><path d="M${x1},${y1} C${x1 + d * 22},${y1} ${x1 + d * 30},${y1 + 6} ${x1 + d * 30},${y1 + 18}"/><text x="${x1 + d * 30}" y="${y1 + 29}" text-anchor="middle">${k}</text></g>`);
             });
-            svg.innerHTML = paths.join('') + stubs.join('');
-            this._cgHover(g, center, meta);
+            svg.innerHTML = paths.join('') + backPaths.join('') + stubs.join('');
+            this._cgHover(g, center, meta, backs);
         }
 
         // Hovering a card lights it, everything it calls further out, and the path back to the focus.
-        _cgHover(g, center, meta) {
+        _cgHover(g, center, meta, backs = []) {
             const kids = new Map(), ups = new Map();
             for (const [n, par] of meta) {
                 if (!kids.has(par)) kids.set(par, []);
@@ -1099,10 +1116,14 @@
                 const on = new Set([n]);
                 walk(n, kids, on);
                 walk(n, ups, on);
+                const backOn = backs.map(([o, t], i) => (o === n || t === n ? i : -1)).filter(i => i >= 0);
+                backOn.forEach(i => { on.add(backs[i][0]); on.add(backs[i][1]); });
                 clear();
                 g.classList.add('hl');
                 on.forEach(x => x.classList.add('hl-on'));
                 meta.forEach(([c, par], i) => { if (on.has(c) && on.has(par)) paths[i].classList.add('hl-on'); });
+                const bp = g.querySelectorAll(':scope > svg path.back');
+                backOn.forEach(i => bp[i].classList.add('hl-on'));
                 const lit = new Set([...on].map(x => `${x.dataset.side}|${x.dataset.key}`));
                 g.querySelectorAll('.nway-stub').forEach(x => { if (lit.has(x.dataset.node)) x.classList.add('hl-on'); });
             };

@@ -695,24 +695,28 @@ def get_nway_neighbors():
     # opposite direction (what a caller also calls, what a callee is also called by).
     focus_key = f"row:{row_of[fids[0]]}" if fids[0] in row_of else None
     opposite = "callees" if role == "callers" else "callers"
-    for parent in (i for level in levels for i in level if i["kind"] != "ext"):
-        if parent["kind"] == "row":
-            src = [f for f in parent["cells"].values() if isinstance(f, str)]
-            expands = scope == "all" or (scope == "library") == parent["library"]
-        else:
-            # a function outside every row is never expanded: all its edges are hidden
-            src, expands = [parent["key"].split(":", 1)[1]], True
-        if expands:
-            parent["beyond"] = sum(
+    # `back`: neighbors already placed in an earlier hop (cycles, shared helpers),
+    # which the walk never draws as a child.
+    lvl = {i["key"]: n for n, level in enumerate(levels) for i in level}
+    for n, level in enumerate(levels):
+        for parent in level:
+            if parent["kind"] == "ext":
+                continue
+            if parent["kind"] == "row":
+                src = [f for f in parent["cells"].values() if isinstance(f, str)]
+                expands = scope == "all" or (scope == "library") == parent["library"]
+            else:
+                # a function outside every row is never expanded: all its edges are hidden
+                src, expands = [parent["key"].split(":", 1)[1]], True
+            if expands:
+                nbrs = _group_neighbors(r, doc, src, role, row_of)
+                parent["beyond"] = sum(1 for i in nbrs if i["key"] not in visited)
+                parent["back"] = [i["key"] for i in nbrs if lvl.get(i["key"], n) < n]
+            parent["other"] = sum(
                 1
-                for i in _group_neighbors(r, doc, src, role, row_of)
-                if i["key"] not in visited
+                for i in _group_neighbors(r, doc, src, opposite, row_of)
+                if i["key"] != focus_key
             )
-        parent["other"] = sum(
-            1
-            for i in _group_neighbors(r, doc, src, opposite, row_of)
-            if i["key"] != focus_key
-        )
 
     shown = set(fids)
     for level in levels:

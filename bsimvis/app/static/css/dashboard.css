@@ -2895,6 +2895,8 @@ a.home-card:hover,
 .nway-graph.hl .nway-node.hl-on { opacity: 1; }
 .nway-graph.hl .nway-edge:not(.hl-on) { opacity: 0.04; }
 .nway-graph.hl .nway-edge.hl-on { opacity: 0.95; }
+.nway-edge.back { opacity: 0; stroke-dasharray: 5 4; }
+.nway-stub.back text { fill: var(--dim); }
 .nway-node.center.merged-focus { border-style: dashed; }
 .nway-pieces { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 4px; font-size: 0.72rem; }
 .nway-piece { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }

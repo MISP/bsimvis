@@ -479,6 +479,7 @@ def _hydrate_diff(r, data_raw, coll_a, md5_a, coll_b, md5_b, pool_id, algo):
                     funcs_metadata[fid] = {
                         "name": meta.get("function_name"),
                         "user_name": meta.get("user_name"),
+                        "user_name_source": meta.get("user_name_source"),
                         "return_type": meta.get("return_type"),
                         "parameters": meta.get("parameters"),
                         "namespace": meta.get("namespace"),

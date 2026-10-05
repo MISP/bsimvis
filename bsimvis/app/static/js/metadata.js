@@ -210,7 +210,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); ${clickJs};
                      oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                     <span class="meta-return-type">${escapeHtml(returnType)}</span>
                     ${namespace ? `<span class="meta-namespace">${escapeHtml(namespace)}::</span>` : ''}
-                    <span class="meta-func-name">${escapeHtml(label)}</span>
+                    <span class="meta-func-name">${escapeHtml(label)}</span>${nameBadge(m)}
                     <span class="meta-params">(</span>${parameters.map(p => `<span class="meta-param-type">${escapeHtml(typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p)}</span>`).join('<span class="meta-comma">, </span>')}<span class="meta-params">)</span>
                     
                     <div class="meta-sig-actions" style="margin-left: 10px;">

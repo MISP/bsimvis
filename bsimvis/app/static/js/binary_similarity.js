@@ -2389,6 +2389,8 @@ function buildFuncObj(fid) {
         ? (Array.isArray(meta.parameters) ? meta.parameters : [meta.parameters]) : [];
     return {
         function_id: fid,
+        user_name: meta && meta.user_name,
+        user_name_source: meta && meta.user_name_source,
         function_name: (meta && (meta.user_name || meta.name)) ? (meta.user_name || meta.name) : ('sub_' + entry),
         return_type: (meta && meta.return_type) ? meta.return_type : 'void',
         parameters: params,

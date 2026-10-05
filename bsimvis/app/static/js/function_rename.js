@@ -128,6 +128,12 @@
     });
 
     // What a function is called on screen: the analyst name when there is one.
+    // Who named it: a small user / robot dot after the name.
+    window.nameBadge = m => {
+        if (!m || !m.user_name) return '';
+        const llm = m.user_name_source === 'llm';
+        return `<span class="nway-by ${llm ? 'llm' : 'user'}" title="${llm ? 'Named by the LLM' : 'Named by an analyst'}"><i class="fa-solid ${llm ? 'fa-robot' : 'fa-user-pen'}"></i></span>`;
+    };
     window.fnName = m => (m && (m.user_name || m.function_name || m.name)) || '';
     window.FunctionRename = { open, openBatch };
 })();

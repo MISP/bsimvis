@@ -70,6 +70,7 @@ window.EntityRenderer = {
                    ${options.noClick ? '' : `onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, '', event)"`}`}>
                     ${fInfo.ret ? `<span style="color:var(--token-address)">${escapeHtml(fInfo.ret)}</span> ` : ''}${fInfo.ns ? `<span style="opacity:0.8; color:var(--text)">${escapeHtml(fInfo.ns)}::</span>` : ''}${escapeHtml(name)}<span style="color:var(--text)">(</span>${fInfo.params.map(t => `<span style="color:var(--token-address)">${escapeHtml(t)}</span>`).join('<span style="color:var(--text)">, </span>')}<span style="color:var(--text)">)</span>
                 </b>
+                ${typeof nameBadge === 'function' ? nameBadge(f) : ''}
                 ${actionsHtml}
             </div>
         `;

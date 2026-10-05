@@ -293,6 +293,7 @@ window.SearchView = {
                 function_id: r.func_id,
                 function_name: r.function_name,
                 user_name: r.user_name,
+                user_name_source: r.user_name_source,
                 namespace: r.namespace,
                 parameters: r.parameters,
                 return_type: r.return_type,

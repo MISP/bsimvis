@@ -29,11 +29,12 @@ window.CollectionDetailView = {
             </div>`;
 
         try {
-            const [collRes, poolsRes, jobsStatsRes, paramsRes] = await Promise.all([
+            const [collRes, poolsRes, jobsStatsRes, paramsRes, countsRes] = await Promise.all([
                 fetch(`/api/collection/search?q=${encodeURIComponent(collName)}`),
                 fetch(`/api/pool?collection=${encodeURIComponent(collName)}`),
                 fetch('/api/jobs/stats').catch(() => null),
-                fetch(`/api/collection/params?collection=${encodeURIComponent(collName)}`).catch(() => null)
+                fetch(`/api/collection/params?collection=${encodeURIComponent(collName)}`).catch(() => null),
+                fetch(`/api/collection/counts?collection=${encodeURIComponent(collName)}`).catch(() => null)
             ]);
 
             if (!collRes.ok) throw new Error('Failed to load collections list');
@@ -52,6 +53,8 @@ window.CollectionDetailView = {
                 params = pj.params || {};
             }
 
+            const counts = countsRes && countsRes.ok ? await countsRes.json() : {};
+
             let collectionActiveJobs = [];
             if (jobsStatsRes && jobsStatsRes.ok) {
                 const stats = await jobsStatsRes.json();
@@ -65,10 +68,11 @@ window.CollectionDetailView = {
                     total_files: 0,
                     total_functions: 0,
                     total_batches: 0,
-                    last_updated: 0
+                    last_updated: 0,
+                    counts
                 }, associatedPools, collectionActiveJobs, params);
             } else {
-                container.innerHTML = this._renderPage(collection, associatedPools, collectionActiveJobs, params);
+                container.innerHTML = this._renderPage({ ...collection, counts }, associatedPools, collectionActiveJobs, params);
             }
 
             if (this.refreshInterval) clearInterval(this.refreshInterval);
@@ -165,6 +169,8 @@ window.CollectionDetailView = {
         const files = coll.total_files !== undefined ? coll.total_files : 0;
         const funcs = coll.total_functions !== undefined ? coll.total_functions : 0;
         const batches = coll.total_batches !== undefined ? coll.total_batches : 0;
+        const counts = coll.counts || {};
+        const num = v => (v === undefined ? '—' : Number(v).toLocaleString());
         const updated = coll.last_updated ? (typeof window.formatDate === 'function' ? formatDate(toEpochMs(coll.last_updated)) : new Date(toEpochMs(coll.last_updated)).toLocaleString()) : '—';
 
         const filesUrl = `/collections/${encodeURIComponent(name)}/files`;
@@ -219,7 +225,6 @@ window.CollectionDetailView = {
                     <details class="more-menu">
                         <summary title="More actions"><i class="fa-solid fa-ellipsis"></i></summary>
                         <div class="more-menu-list" onclick="this.closest('details').removeAttribute('open')">
-                            <button onclick="window.collectionDetailCluster(${escapeAttr(jsString(name))}, this)"><i class="fa-solid fa-circle-nodes"></i> Cluster</button>
                             <button onclick="window.openMaintenanceWindow(${escapeAttr(jsString(name))})"><i class="fa-solid fa-screwdriver-wrench"></i> Maintenance…</button>
                             <button onclick="window.collectionDetailClean(${escapeAttr(jsString(name))}, this)"><i class="fa-solid fa-broom"></i> Clean</button>
                             <hr>
@@ -252,7 +257,7 @@ window.CollectionDetailView = {
                                 <thead>
                                     <tr style="border-bottom:1px solid var(--border); background: var(--hover); color:var(--dim);">
                                         <th style="padding:10px 15px;">Entity Type</th>
-                                        <th style="padding:10px 15px; text-align:right;">Count / Actions</th>
+                                        <th style="padding:10px 15px; text-align:right;">Count</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -269,20 +274,24 @@ window.CollectionDetailView = {
                                         <td style="padding:10px 15px; text-align:right;"><a href="${funcsUrl}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${funcs}</a></td>
                                     </tr>
                                     <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-fingerprint" style="margin-right:8px; width:16px;"></i>Features</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/features" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.features)}</a></td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-code-compare" style="margin-right:8px; width:16px;"></i>Function Similarities</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/functions/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">View Similarities</a></td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/functions/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.function_sims)}</a></td>
                                     </tr>
                                     <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>Function Clusters</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/functions/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">View Clusters</a></td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/functions/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.function_clusters)}</a></td>
                                     </tr>
                                     <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-right-left" style="margin-right:8px; width:16px;"></i>File Similarities</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/files/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">View Similarities</a></td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/files/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.file_sims)}</a></td>
                                     </tr>
                                     <tr style="transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>File Clusters</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/files/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">View Clusters</a></td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/files/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.file_clusters)}</a></td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -387,27 +396,6 @@ window.CollectionDetailView = {
                     No active jobs running for this collection.
                 </div>
                 `}`;
-    }
-};
-
-window.collectionDetailCluster = async function(collName, btn) {
-    if (!confirm(`Rebuild function clusters for "${collName}"? Binary similarities and binary clusters are not rebuilt.`)) return;
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
-    try {
-        const res = await fetch(`/api/maintenance`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection: collName, operation: "rebuild", targets: ["function_cluster"] })
-        });
-        if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
-        const data = await res.json();
-        alert(`Collection re-analysis pipeline enqueued! Job ID: ${data.job_id}`);
-        if (typeof refreshData === 'function') refreshData(false, true);
-        else Nav.openPath(window.location.pathname);
-    } catch(e) {
-        alert(`Failed to enqueue re-analysis: ${e.message}`);
-    } finally {
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-circle-nodes"></i> Cluster'; }
     }
 };
 

@@ -64,6 +64,7 @@ window.UI = {
             { key: 'batches', label: 'Batches', path: '/batches', count: 'total_batches' },
             { key: 'files', label: 'Files', path: '/files', count: 'total_files' },
             { key: 'functions', label: 'Functions', path: '/functions', count: 'total_functions' },
+            { key: 'features-global', label: 'Features', path: '/features', count: 'features' },
             { key: 'binary-similarity', count: 'file_sims', label: 'File sims', path: '/files/similarities' },
             { key: 'function-similarity', count: 'function_sims', label: 'Func sims', path: '/functions/similarities' },
             { key: 'bin-clusters', count: 'file_clusters', label: 'File clusters', path: '/files/clusters' },
@@ -74,7 +75,7 @@ window.UI = {
         parent: {
             'collection-detail': 'overview', dashboard: 'files', file: 'files', function: 'functions', call_graph: 'functions',
             function_features: 'functions', diff: 'function-similarity', bin_sim: 'binary-similarity',
-            'cluster-detail': 'clusters', 'bin-cluster-detail': 'bin-clusters',
+            feature: 'features-global', 'cluster-detail': 'clusters', 'bin-cluster-detail': 'bin-clusters',
         },
 
         render: function() {

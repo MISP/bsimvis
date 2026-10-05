@@ -306,7 +306,7 @@ def get_collection_config():
 
 
 def get_collection_counts():
-    """O(1) similarity and cluster totals for the collection tab strip."""
+    """O(1) feature, similarity and cluster totals for the collection tab strip."""
     from bsimvis.app.services.collection_config import resolve_collection_algo
     from bsimvis.app.services.config_service import config_service
 
@@ -322,6 +322,7 @@ def get_collection_counts():
     ):
         bin_algo = f"{algo}:snn"
     return {
+        "features": r.scard(f"{collection}:all_features"),
         "function_sims": r.zcard(f"{collection}:sim:score:{algo}"),
         "file_sims": r.scard(f"{collection}:all_bin_sims"),
         "function_clusters": r.scard(f"{collection}:cluster:list:{algo}"),

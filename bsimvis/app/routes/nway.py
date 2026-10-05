@@ -695,9 +695,14 @@ def get_nway_neighbors():
     # opposite direction (what a caller also calls, what a callee is also called by).
     focus_key = f"row:{row_of[fids[0]]}" if fids[0] in row_of else None
     opposite = "callees" if role == "callers" else "callers"
-    for parent in (i for level in levels for i in level if i["kind"] == "row"):
-        src = [f for f in parent["cells"].values() if isinstance(f, str)]
-        if scope == "all" or (scope == "library") == parent["library"]:
+    for parent in (i for level in levels for i in level if i["kind"] != "ext"):
+        if parent["kind"] == "row":
+            src = [f for f in parent["cells"].values() if isinstance(f, str)]
+            expands = scope == "all" or (scope == "library") == parent["library"]
+        else:
+            # a function outside every row is never expanded: all its edges are hidden
+            src, expands = [parent["key"].split(":", 1)[1]], True
+        if expands:
             parent["beyond"] = sum(
                 1
                 for i in _group_neighbors(r, doc, src, role, row_of)

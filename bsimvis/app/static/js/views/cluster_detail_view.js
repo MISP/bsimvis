@@ -543,7 +543,7 @@ window.ClusterDetailView = {
             }
 
             let rowHtml = `
-                <div class="bsim-node ${isSelected ? 'selected' : ''}" title="${escapeAttr(c.cluster_name || `Cluster #${c.cluster_id}`)}" style="padding-left: ${12 + depth * 16}px;" onclick="ClusterDetailView.selectNode('${c.cluster_uuid}')">
+                <div class="bsim-node ${isSelected ? 'selected' : ''}" title="${escapeAttr(c.cluster_name || `Cluster #${c.cluster_id}`)}" style="padding-left: ${12 + depth * 16}px;" onclick="ClusterDetailView.openNode('${c.cluster_uuid}', event)">
                     ${icon}
                     <i class="fa-solid fa-bullseye" style="color:var(--accent); font-size:0.75rem;"></i>
                     <span class="bsim-node-label" title="${escapeAttr(c.cluster_name || `Cluster #${c.cluster_id}`)}">
@@ -589,6 +589,19 @@ window.ClusterDetailView = {
         if (typeof Breadcrumbs === 'undefined' || !Breadcrumbs.refresh) return;
         Breadcrumbs.setClusterName(self.cluster_uuid, self.cluster_name || `#${self.cluster_id}`);
         Breadcrumbs.refresh();
+    },
+
+    /** Open a cluster on its own URL so reload and links keep it. */
+    openNode(uuid, event) {
+        if (uuid === this.selectedClusterUuid) return;
+        const nav = window.Nav;
+        if (!nav || !window.getRoutingState) return this.selectNode(uuid);
+        const segs = (this.isBinary ? ['files', 'clusters'] : ['functions', 'clusters']).concat([uuid]);
+        const q = new URLSearchParams();
+        if (this.isBinary && this.axis && this.axis !== 'overall') q.set('axis', this.axis);
+        if (this.isBinary && this.nodeType) q.set('node_type', this.nodeType);
+        const qs = q.toString();
+        nav.openPath(nav.buildUIUrl(window.getRoutingState().collection || '', segs) + (qs ? '?' + qs : ''), event);
     },
 
     async selectNode(uuid) {
@@ -1058,6 +1071,7 @@ window.ClusterDetailView = {
             tr.onclick = () => this.toggleGroup(uuid);
             tr.innerHTML = `
                 <td colspan="4" style="padding-left: ${12 + depth * 20}px;">
+                    <a href="javascript:void(0)" class="btn-action" style="float:right;" title="Open this cluster" onclick="event.stopPropagation(); ClusterDetailView.openNode('${escapeAttr(uuid)}', event)"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
                     <i class="fa-solid fa-chevron-${isExpanded ? 'down' : 'right'} bsim-caret-btn"></i>
                     <i class="fa-solid fa-bullseye" style="color:var(--accent); margin:0 6px;"></i>
                     <b>${escapeHtml(c.cluster_name || `Cluster #${c.cluster_id}`)}</b>

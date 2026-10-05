@@ -472,9 +472,9 @@ def _match(base, min_edge):
         row["library"] = any(base["library"].get(f) for f in fids)
         row["tags"] = _row_tags(fids, base["fmeta"])
         if not row["names"] and _DEFAULT_NAME.match(row["name"]):
-            row["name"] = next(
-                (n for t in row["tags"] if (n := _tag_name(t))), row["name"]
-            )
+            tagged = next((n for t in row["tags"] if (n := _tag_name(t))), None)
+            if tagged:
+                row["name"], row["name_from"] = tagged, "tag"
         # An analyst name wins; the heaviest named function decides, others show as aliases.
         named = sorted(
             (f for f in fids if (base["fmeta"].get(f) or {}).get("user_name")),
@@ -484,6 +484,7 @@ def _match(base, min_edge):
             meta = base["fmeta"][named[0]]
             row["name"] = meta["user_name"]
             row["user_named"] = meta.get("user_name_source", "user")
+            row.pop("name_from", None)
             row["aliases"] = sorted(
                 {base["fmeta"][f]["user_name"] for f in named} - {row["name"]}
             )

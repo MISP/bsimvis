@@ -256,7 +256,7 @@ def _attach_clusters(r, rows, fmeta, pool_id, args):
                     and not _DEFAULT_NAME.match(n)
                     and not re.fullmatch(r"Cluster \d+", n)
                 ):
-                    row["name"] = n
+                    row["name"], row["name_from"] = n, "cluster"
                     break
     return cards
 

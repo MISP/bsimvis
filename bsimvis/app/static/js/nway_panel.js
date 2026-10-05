@@ -1076,16 +1076,18 @@
                 const targets = n.dataset.back.split(' ').map(k => byKey[`${n.dataset.side}|${k}`]).filter(Boolean);
                 if (!targets.length) return;
                 const a = n.getBoundingClientRect(), id = escapeAttr(n.dataset.side + '|' + n.dataset.key);
-                // The edge leaves the side facing the focus and ends on the arrow of the call: card -> target for a callee, target -> card for a caller.
-                const cx = (callees ? a.left : a.right) - gr.left, cy = a.top + a.height / 2 - gr.top;
+                // Calls always read left to right: out of the caller's right side, into the callee's left side.
+                const edge = (from, to) => {
+                    const f = from.getBoundingClientRect(), g2 = to.getBoundingClientRect();
+                    const x1 = f.right - gr.left, y1 = f.top + f.height / 2 - gr.top, x2 = g2.left - gr.left, y2 = g2.top + g2.height / 2 - gr.top, d = 40;
+                    return `<path class="nway-edge back" d="M${x1},${y1} C${x1 + d},${y1} ${x2 - d},${y2} ${x2},${y2}"></path>`;
+                };
                 targets.forEach(t => {
-                    const b = t.getBoundingClientRect();
-                    const tx = (callees ? b.right : b.left) - gr.left, ty = b.top + b.height / 2 - gr.top, mx = (cx + tx) / 2;
                     backs.push([n, t]);
-                    backPaths.push(`<path class="nway-edge back" d="${callees ? `M${cx},${cy} C${mx},${cy} ${mx},${ty} ${tx},${ty}` : `M${tx},${ty} C${mx},${ty} ${mx},${cy} ${cx},${cy}`}"></path>`);
+                    backPaths.push(callees ? edge(n, t) : edge(t, n));
                 });
                 const k = targets.length;
-                stubs.push(`<g class="nway-stub back" data-node="${id}"><title>${k} call${k > 1 ? 's' : ''} ${callees ? 'to' : 'from'} cards shown in an earlier hop</title><text x="${cx + (callees ? -4 : 4)}" y="${a.top - gr.top + 11}" text-anchor="${callees ? 'end' : 'start'}">${callees ? '&larr; ' + k : k + ' &rarr;'}</text></g>`);
+                stubs.push(`<g class="nway-stub back" data-node="${id}"><title>${k} call${k > 1 ? 's' : ''} ${callees ? 'to' : 'from'} cards shown in an earlier hop</title><text x="${callees ? a.right - gr.left + 4 : a.left - gr.left - 4}" y="${a.top - gr.top + 11}" text-anchor="${callees ? 'start' : 'end'}">${callees ? k + ' &rarr;' : '&rarr; ' + k}</text></g>`);
             });
             // What a caller also calls (right of it) or a callee is also called by (left of it): a short angled stub.
             nodes.filter(n => n.dataset.other).forEach(n => {

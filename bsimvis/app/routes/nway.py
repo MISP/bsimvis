@@ -6,10 +6,13 @@ from flask_restx import abort
 from bsimvis.app.routes._list_query import fnum, in_bounds
 from bsimvis.app.routes.bin_sim import _fids_tags, _fn_haystack
 from bsimvis.app.services import nway_diff_service
+from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME
 from bsimvis.app.services.bin_sim_service import _origin_coll
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.tag_taxonomy import tag_in_scope
 
+# A stored cluster only names a row when its members agree this much.
+CLUSTER_NAME_MIN_COHESION = 0.8
 TABS = ("all", "core", "partial", "unique")
 _MD5 = re.compile(r"^[0-9a-f]{32}$")
 
@@ -322,6 +325,17 @@ def _page(doc, args, r=None, pool_id=None):
     per_row, cards = _row_clusters(r, page, fmeta, pool_id, args)
     for row, uuids in zip(page, per_row):
         row["clusters"] = uuids
+        if _DEFAULT_NAME.match(row["name"]):
+            for u in uuids:
+                c = cards[u]
+                n = c.get("cluster_name") or ""
+                if (
+                    (c.get("cohesion_score") or 0) >= CLUSTER_NAME_MIN_COHESION
+                    and not _DEFAULT_NAME.match(n)
+                    and not re.fullmatch(r"Cluster \d+", n)
+                ):
+                    row["name"] = n
+                    break
     return {
         "items": page,
         "clusters": cards,

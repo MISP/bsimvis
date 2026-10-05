@@ -443,6 +443,7 @@
                 more: {},
                 place: {},
                 co: init.co === '1' || init.co === true || (init.co === undefined && !!prev.co),
+                hints: init.hints === '1' || init.hints === true || (init.hints === undefined && !!prev.hints),
                 suggest: prev.suggest === undefined ? 'comp' : prev.suggest,
                 nb: null,
             };
@@ -537,6 +538,7 @@
             if (f.pieces) qs.set('cg_pieces', JSON.stringify(f.pieces));
             for (const k of ['view', 'scope', 'outside', 'depth']) qs.set(`cg_${k}`, st[k]);
             if (st.co) qs.set('cg_co', '1');
+            if (st.hints) qs.set('cg_hints', '1');
             return `/diff/nway/graph?${qs.toString()}`;
         }
 
@@ -1071,7 +1073,8 @@
             });
             // Calls back to a card shown in an earlier hop: a dashed edge, lit on hover, plus a count badge.
             const backs = [], backPaths = [];
-            nodes.filter(n => n.dataset.back).forEach(n => {
+            const hints = !!this._cg.hints;
+            nodes.filter(n => hints && n.dataset.back).forEach(n => {
                 const callees = n.dataset.side === 'callees';
                 const targets = n.dataset.back.split(' ').map(k => byKey[`${n.dataset.side}|${k}`]).filter(Boolean);
                 if (!targets.length) return;
@@ -1092,7 +1095,7 @@
                 stubs.push(`<g class="nway-stub back" data-node="${id}"><title>${k} call${k > 1 ? 's' : ''} ${callees ? 'to' : 'from'} cards shown in an earlier hop</title><text x="${callees ? a.right - gr.left + 4 : a.left - gr.left - 4}" y="${a.top - gr.top + 11}" text-anchor="${callees ? 'start' : 'end'}">${callees ? k + ' &rarr;' : '&rarr; ' + k}</text></g>`);
             });
             // What a caller also calls (right of it) or a callee is also called by (left of it): a short angled stub.
-            nodes.filter(n => n.dataset.other).forEach(n => {
+            nodes.filter(n => hints && n.dataset.other).forEach(n => {
                 const a = n.getBoundingClientRect(), left = n.dataset.side === 'callees', k = Number(n.dataset.other);
                 const d = left ? -1 : 1, x1 = (left ? a.left : a.right) - gr.left, y1 = a.top + a.height / 2 - gr.top + 6;
                 stubs.push(`<g class="nway-stub other" data-node="${escapeAttr(n.dataset.side + '|' + n.dataset.key)}"><title>${k} other ${left ? 'callers' : 'callees'} (besides the focus): click the card to recenter</title><path d="M${x1},${y1} C${x1 + d * 22},${y1} ${x1 + d * 30},${y1 + 6} ${x1 + d * 30},${y1 + 18}"/><text x="${x1 + d * 30}" y="${y1 + 29}" text-anchor="middle">${k}</text></g>`);
@@ -1146,6 +1149,7 @@
             const depthCtl = st.view === 'graph' ? `<label class="nway-ctl" title="How many hops to walk. Beyond the first, only rows in the selected scope are expanded (8 per row, 60 nodes)."><span class="nway-lbl">Depth</span><b>${st.depth}</b><input type="range" min="1" max="5" value="${st.depth}" data-cg-depth></label>` : '';
             const suggestCtl = st.view === 'graph' ? `<span class="nway-lbl" title="Group cards on one side. Complementary: files that barely overlap and share a parent, probably one function split across files. Same files: cards present in exactly the same files, probably one change or fork. Lanes: one horizontal band per set of files.">Group</span><div class="view-toggle" style="margin:0">${[['off', 'Off'], ['comp', 'Complementary'], ['same', 'Same files'], ['lanes', 'Lanes']].map(([v, t]) => `<button class="view-btn${(st.suggest || 'off') === v ? ' active' : ''}" data-cg-suggest="${v}">${t}</button>`).join('')}</div>` : '';
             const coCtl = st.view === 'graph' ? `<button class="view-btn${st.co ? ' active' : ''}" data-cg-co title="Also show the other functions that call what the focus calls, under the focus (the ones sharing most callees), to find look-alikes and unmatched siblings. Callees called by more than 25 functions are skipped. Off by default: it can add a lot."><i class="fa-solid fa-share-nodes"></i> Also called by</button>` : '';
+            const hintCtl = st.view === 'graph' ? `<button class="view-btn${st.hints ? ' active' : ''}" data-cg-hints title="Off by default. Per card, on hover: the other callers / callees it has beyond the focus (angled counts), and calls back to cards already shown in an earlier hop (dashed arrows)."><i class="fa-solid fa-diagram-project"></i> Hints</button>` : '';
             const toggle = ['list', 'graph'].map(v => `<button class="view-btn${st.view === v ? ' active' : ''}" data-cg-view="${v}">${v === 'list' ? 'List' : 'Graph'}</button>`).join('');
             const on = files.map(c => !!focus.cells[c.id]);
             const fs = this._cgStrip(on, files);
@@ -1153,7 +1157,7 @@
             if (err) body = `<div style="color:#f92672;">${escapeHtml(err)}</div>`;
             else if (!st.nb) body = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Reading call graph...</div>';
             else body = `<div class="dim nway-cg-legend"><i class="fa-solid fa-file-code"></i> files that have the function (color: how many) &middot; dot: the focus function there calls it &middot; <i class="fa-solid fa-link"></i> calls from the focus${st.view === 'graph' ? ' (edge width)' : ''}. Click to recenter.${st.co ? ' Dashed lines: other callers of the same callee.' : ''}${st.depth > 1 ? (st.view === 'graph' ? ' Further hops show in-scope rows only.' : ' The list shows the first hop; depth applies to the graph.') : ''}</div>` + (st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files));
-            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}${depthCtl}${suggestCtl}${coCtl}<div class="view-toggle" style="margin:0">${toggle}</div>${this.cgInit ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
+            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}${depthCtl}${suggestCtl}${coCtl}${hintCtl}<div class="view-toggle" style="margin:0">${toggle}</div>${this.cgInit ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
                 <div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>
                 <div class="nway-cg-body">${body}</div>`;
             this._cgFillSims();
@@ -1167,7 +1171,7 @@
         }
 
         _onDrawerClick(e) {
-            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-suggest],[data-cg-co],[data-cg-focusgrp],[data-cg-mergefocus],[data-cg-deeper]');
+            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-suggest],[data-cg-co],[data-cg-hints],[data-cg-focusgrp],[data-cg-mergefocus],[data-cg-deeper]');
             if (!t || !this._cg) return;
             if (t.dataset.cgClose !== undefined) return window.closeCallsPanel();
             if (t.dataset.cgPop !== undefined) {
@@ -1178,6 +1182,7 @@
             if (t.dataset.cgView) { this._cg.view = t.dataset.cgView; return this._cgDraw(); }
             if (t.dataset.cgOutside) { this._cg.outside = t.dataset.cgOutside; return this._cgDraw(); }
             if (t.dataset.cgCo !== undefined) { this._cg.co = !this._cg.co; return this._cgShow(); }
+            if (t.dataset.cgHints !== undefined) { this._cg.hints = !this._cg.hints; return this._cgDraw(); }
             if (t.dataset.cgFocusgrp) {
                 const g = this._cgGrp && this._cgGrp[t.dataset.cgFocusgrp];
                 if (!g) return;

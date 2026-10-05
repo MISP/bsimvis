@@ -223,7 +223,10 @@
             }, true);
             this.el.addEventListener('contextmenu', e => {
                 const th = e.target.closest('th[data-col]');
-                if (th) this._menu(e, th.dataset.col);
+                if (th) return this._menu(e, th.dataset.col);
+                // A right-click on a function cell's empty space opens the function menu, not the plain cell one.
+                const fn = !e.target.closest('[data-entity-data], button, a') && e.target.closest('td.col')?.querySelector('[data-etype="function"]');
+                if (fn) window.EntityRenderer.handleContextMenu(e, 'function', fn);
             }, true);
             this.el.addEventListener('keydown', e => {
                 if (e.key === 'Enter' && e.target.dataset.text) this._set({ [e.target.dataset.text]: e.target.value.trim(), offset: 0 });

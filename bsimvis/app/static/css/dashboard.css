@@ -3015,32 +3015,7 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .nway-rename { font-size: 0.7em; opacity: 0.55; }
 .nway-namerow:hover .nway-rename, .nway-rename:focus-visible { opacity: 1; }
 
-.nav-flyout-head { justify-content: flex-start; }
-.nav-flyout-arrow { margin-left: auto; font-size: 0.6rem; opacity: 0.6; }
-.nav-flyout-menu {
-    display: none;
-    position: fixed;
-    z-index: 20004;
-    min-width: 200px;
-    padding: 6px 0;
-    background: var(--card-bg);
-    backdrop-filter: blur(10px);
-    border: 1px solid var(--border);
-    border-radius: 0 8px 8px 0;
-    box-shadow: 4px 4px 16px rgba(0, 0, 0, 0.4);
-}
-.nav-flyout.is-open > .nav-flyout-menu { display: flex; flex-direction: column; }
-.nav-flyout.is-open > .nav-flyout-head { background: var(--hover); }
 .nav-bottom { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border); }
-body.sidebar-collapsed .nav-flyout-head span, body.sidebar-collapsed .nav-flyout-arrow { display: none; }
-
-/* Flyout menus keep their labels when the sidebar is icon-only */
-body.sidebar-collapsed .sidebar-nav .nav-flyout-menu a {
-    justify-content: flex-start;
-    padding: 12px 20px;
-}
-body.sidebar-collapsed .sidebar-nav .nav-flyout-menu a span { display: inline; }
-
 /* Collection tab strip + overflow menu */
 .entity-tabs { display: flex; gap: 2px; overflow-x: auto; border-bottom: 1px solid var(--border); margin: -5px 0 12px; scrollbar-width: none; flex-shrink: 0; }
 .entity-tabs:empty { display: none; }

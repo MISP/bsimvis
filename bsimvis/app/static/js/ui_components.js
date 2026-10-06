@@ -234,12 +234,6 @@ window.UI = {
                 return '';
             };
 
-            // A category opens a flyout beside the sidebar; the head lights up when the active page is inside.
-            const flyout = (title, icon, links) => `<div class="nav-flyout" onmouseenter="UI.Sidebar.openFlyout(this)" onmouseleave="UI.Sidebar.closeFlyout(this)">
-                    <a href="#" class="nav-flyout-head${/class="active"/.test(links) ? ' active' : ''}" onclick="event.preventDefault(); UI.Sidebar.toggleFlyout(this.parentElement)"><i class="${icon}"></i> <span>${title}</span><i class="fa-solid fa-chevron-right nav-flyout-arrow"></i></a>
-                    <div class="nav-flyout-menu">${links}</div>
-                </div>`;
-
             return `
                 <button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle Sidebar">⟨</button>
                 <nav class="sidebar-nav">
@@ -255,28 +249,12 @@ window.UI = {
                         <a href="${buildNavUrl('collections')}" id="nav-collections" title="Collections" class="${isActive('collections')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-layer-group"></i> <span>Collections</span></a>
                         <a href="${buildNavUrl('pools')}" id="nav-pools" title="Pools" class="${isActive('pools')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-diagram-project"></i> <span>Pools</span></a>
                     </div>
-                    ${flyout('Binaries', 'fa-solid fa-file-code', `
-                            <a href="${buildNavUrl('batches')}" id="nav-batches" title="Batches" class="${isActive('batches')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-boxes-stacked"></i> <span>Batches</span></a>
-                            <a href="${buildNavUrl('files')}" id="nav-files" title="Files" class="${isActive('files')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-file-code"></i> <span>Files</span></a>
-                            <a href="${buildNavUrl('binary-similarity')}" id="nav-binary-similarity" title="Similarities" class="${isActive('binary-similarity')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
-                            <a href="${buildNavUrl('bin-clusters')}" id="nav-bin-clusters" title="Clusters" class="${isActive('bin-clusters')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-bullseye"></i> <span>Clusters</span></a>
-                    `)}
-                    ${flyout('Functions', 'fa-solid fa-code', `
-                            <a href="${buildNavUrl('functions')}" id="nav-functions" title="Functions" class="${isActive('functions')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-code"></i> <span>Functions</span></a>
-                            <a href="${buildNavUrl('function-similarity')}" id="nav-function-similarity" title="Function Similarities" class="${isActive('function-similarity')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
-                            <a href="${buildNavUrl('clusters')}" id="nav-clusters" title="Clusters" class="${isActive('clusters')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-bullseye"></i> <span>Clusters</span></a>
-                            <a href="${buildNavUrl('features-global')}" id="nav-features-global" title="Features" class="${isActive('features-global')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-fingerprint"></i> <span>Features</span></a>
-                    `)}
-                    ${flyout('Analyze', 'fa-solid fa-microscope', `
-                            <a href="${buildNavUrl('scan')}" id="nav-scans" title="Scan a file without ingesting it" class="${isActive('scan')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-microscope"></i> <span>Scan</span></a>
-                            <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff (experimental)" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> <span>N-way diff</span></a>
-                            <a href="/searches" id="nav-searches" title="Saved Searches" class="${isActive('search')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-list-check"></i> <span>Searches</span></a>
-                    `)}
-                    ${flyout('Manage', 'fa-solid fa-sliders', `
-                            ${collection ? `<a href="${buildNavUrl('tags')}" id="nav-tags" title="Tags" class="${isActive('tags')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-tags"></i> <span>Tags</span></a>` : ''}
-                            <a href="${buildNavUrl('upload')}" id="nav-upload" title="Upload" class="${isActive('upload')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-cloud-arrow-up"></i> <span>Upload</span></a>
-                            <a href="${buildNavUrl('jobs')}" id="nav-jobs" title="Jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> <span>Jobs</span></a>
-                    `)}
+                    <div class="nav-section-content">
+                        <a href="${buildNavUrl('scan')}" id="nav-scans" title="Scan a file without ingesting it" class="${isActive('scan')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-microscope"></i> <span>Scan</span></a>
+                        <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff (experimental)" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> <span>N-way diff</span></a>
+                        <a href="/searches" id="nav-searches" title="Saved Searches" class="${isActive('search')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-list-check"></i> <span>Searches</span></a>
+                        <a href="${buildNavUrl('jobs')}" id="nav-jobs" title="Jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> <span>Jobs</span></a>
+                    </div>
                     <div class="nav-section-content nav-bottom">
                         <a href="/api/" target="_blank" id="nav-api" title="API"><i class="fa-solid fa-book"></i> <span>API</span></a>
                     </div>
@@ -290,18 +268,6 @@ window.UI = {
             if (!container) return;
             container.innerHTML = this.render();
         },
-
-        openFlyout: function(el) {
-            const head = el.querySelector('.nav-flyout-head').getBoundingClientRect();
-            const menu = el.querySelector('.nav-flyout-menu');
-            el.classList.add('is-open');
-            menu.style.left = el.closest('.sidebar-nav').getBoundingClientRect().right + 'px';
-            menu.style.top = Math.max(8, Math.min(head.top, window.innerHeight - menu.offsetHeight - 8)) + 'px';
-        },
-
-        closeFlyout: function(el) { el.classList.remove('is-open'); },
-
-        toggleFlyout: function(el) { el.classList.contains('is-open') ? this.closeFlyout(el) : this.openFlyout(el); },
 
         updateActiveState: function() {
             const container = document.getElementById('sidebar-container');

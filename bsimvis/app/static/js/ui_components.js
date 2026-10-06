@@ -91,7 +91,7 @@ window.UI = {
         ],
         // Detail pages light up the tab of the list they belong to.
         parent: {
-            'collection-detail': 'overview', dashboard: 'files', file: 'files', function: 'functions', call_graph: 'functions',
+            'collection-detail': 'overview', 'pool-detail': 'overview', dashboard: 'files', file: 'files', function: 'functions', call_graph: 'functions',
             function_features: 'functions', diff: 'function-similarity', bin_sim: 'binary-similarity',
             feature: 'features-global', 'cluster-detail': 'clusters', 'bin-cluster-detail': 'bin-clusters',
         },
@@ -101,31 +101,40 @@ window.UI = {
             if (!el) return;
             const { viewKey, collection, pool } = getRoutingState();
             const active = this.parent[viewKey] || viewKey;
-            if (!collection || pool || !this.tabs.some(t => t.key === active)) {
+            const id = pool || collection;
+            if (!id || !this.tabs.some(t => t.key === active)) {
                 el.innerHTML = '';
                 return;
             }
-            this.load(collection);
-            const base = `/collections/${encodeURIComponent(collection)}`;
-            const c = this.counts[collection] || {};
-            el.innerHTML = this.tabs.map(t => {
+            const key = (pool ? 'pool:' : 'coll:') + id;
+            this.load(key, id, !!pool);
+            const base = `/${pool ? 'pools' : 'collections'}/${encodeURIComponent(id)}`;
+            const c = this.counts[key] || {};
+            el.innerHTML = this.tabs.filter(t => !(pool && t.collectionOnly)).map(t => {
                 const n = t.count && c[t.count] != null ? `<span class="entity-tab-count">${escapeHtml(Number(c[t.count]).toLocaleString())}</span>` : '';
                 return `<a class="entity-tab${t.key === active ? ' current' : ''}${t.gap ? ' gap' : ''}" href="${escapeAttr(base + t.path)}" onclick="Nav.openPath(this.href, event)">${escapeHtml(t.label)}${n}</a>`;
             }).join('');
         },
 
         // Counts are cheap cardinality reads; refetch at most every 15s and repaint.
-        load: function(collection) {
-            const old = this.counts[collection];
+        load: function(key, id, isPool) {
+            const old = this.counts[key];
             if (old && Date.now() - old.__ts < 15000) return;
-            this.counts[collection] = { ...old, __ts: Date.now() };
-            const q = encodeURIComponent(collection);
+            this.counts[key] = { ...old, __ts: Date.now() };
+            const q = encodeURIComponent(id);
             const get = (url, pick) => fetch(url).then(r => r.ok ? r.json() : {}).then(pick).catch(() => ({}));
-            Promise.all([
-                get(`/api/collection/search?q=${q}`, d => (d.collections || []).find(x => x.name === collection) || {}),
-                get(`/api/collection/counts?collection=${q}`, d => d),
-            ]).then(([coll, extra]) => {
-                this.counts[collection] = { ...coll, ...extra, __ts: Date.now() };
+            const fetched = isPool
+                ? get(`/api/pool/${q}`, d => ({
+                    total_files: d.total_files, total_functions: d.total_functions,
+                    function_sims: d.total_func_similarities, file_sims: d.total_file_similarities,
+                    function_clusters: d.total_func_clusters, file_clusters: d.total_file_clusters,
+                }))
+                : Promise.all([
+                    get(`/api/collection/search?q=${q}`, d => (d.collections || []).find(x => x.name === id) || {}),
+                    get(`/api/collection/counts?collection=${q}`, d => d),
+                ]).then(([coll, extra]) => ({ ...coll, ...extra }));
+            fetched.then(c => {
+                this.counts[key] = { ...c, __ts: Date.now() };
                 this.render();
             });
         },

@@ -157,8 +157,8 @@ window.CollectionDetailView = {
                     <span>These are locked on the first similarity build. Changing them does not rescore existing edges — rebuild the collection to apply.</span>
                 </div>
                 <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
-                    <button onclick="window.collectionDetailSaveParams(${escapeAttr(jsString(name))}, this)" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:7px 16px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px;"><i class="fa-solid fa-floppy-disk"></i> Save</button>
-                    <button onclick="window.collectionDetailRebuildSim(${escapeAttr(jsString(name))}, this)" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:7px 16px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px;"><i class="fa-solid fa-rotate-right"></i> Rebuild Similarity</button>
+                    <button onclick="window.collectionDetailSaveParams(${escapeAttr(jsString(name))}, this)" class="ui-button hdr-btn primary"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+                    <button onclick="window.collectionDetailRebuildSim(${escapeAttr(jsString(name))}, this)" class="ui-button hdr-btn"><i class="fa-solid fa-rotate-right"></i> Rebuild Similarity</button>
                 </div>
             </div>
         </div>`;

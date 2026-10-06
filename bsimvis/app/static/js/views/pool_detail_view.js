@@ -340,7 +340,7 @@ window.PoolDetailView = {
                         ${this._configInput("pool-file-cluster-epsilon-edit", "Epsilon", fic.epsilon, "0.01")}
                         ${this._configSelect("pool-file-cluster-method-edit", "Method", fic.selection_method || "eom", `<option value="eom">EOM</option><option value="leaf">Leaf</option>`)}
                         ${this._configInput('pool-file-cluster-min-sim-edit', 'Min Similarity', fic.min_sim, '0.01')}
-                        <button onclick="window.poolDetailSaveConfig(${escapeAttr(jsString(poolId))}, this)" style="margin-top:14px; padding:8px 14px; border:1px solid rgba(16,185,129,.4); border-radius:6px; background:rgba(16,185,129,.12); color:#10b981; cursor:pointer; display:inline-flex; align-items:center; gap:7px; font-size:.78rem; font-weight:700;"><i class="fa-solid fa-floppy-disk"></i> Save parameters</button>
+                        <button onclick="window.poolDetailSaveConfig(${escapeAttr(jsString(poolId))}, this)" class="ui-button hdr-btn primary"><i class="fa-solid fa-floppy-disk"></i> Save parameters</button>
                     </div>
                 </div>
             </div>

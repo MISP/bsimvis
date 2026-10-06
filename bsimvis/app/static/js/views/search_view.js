@@ -103,7 +103,7 @@ window.SearchView = {
         <div style="flex:1; overflow-y:auto; padding:25px 30px; display:flex; flex-direction:column; gap:20px;">
             <div style="display:flex; align-items:center; justify-content:space-between;">
                 <h1 style="margin:0; font-size:1.5rem; color:var(--text); display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-list-check" style="color:var(--accent);"></i> Searches</h1>
-                <button onclick="window.searchViewOpenNewForm(this)" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px;"><i class="fa-solid fa-plus"></i> New Search</button>
+                <button onclick="window.searchViewOpenNewForm(this)" class="ui-button hdr-btn primary"><i class="fa-solid fa-plus"></i> New Search</button>
             </div>
             <div id="search-new-form-container"></div>
             <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--card-bg);">
@@ -164,7 +164,7 @@ window.SearchView = {
                         <span id="search-detail-duration" title="time the classification job took"><i class="fa-regular fa-clock"></i> ${window.formatDuration ? window.formatDuration(Number(meta.created_at), Number(meta.updated_at), meta.status) : ''}</span>
                     </div>
                 </div>
-                <button onclick="window.searchViewDelete(${escapeAttr(jsString(meta.id))}, this, true)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px;"><i class="fa-solid fa-trash-can"></i> Delete</button>
+                <button onclick="window.searchViewDelete(${escapeAttr(jsString(meta.id))}, this, true)" class="ui-button hdr-btn danger"><i class="fa-solid fa-trash-can"></i> Delete</button>
             </div>
 
             <div id="search-progress-container"></div>
@@ -172,9 +172,9 @@ window.SearchView = {
             <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                 <span style="font-size:0.75rem; color:var(--dim);"><i class="fa-solid fa-arrows-up-down"></i> shift/ctrl-click or drag to select rows, ctrl+A for all, ctrl+C to copy</span>
                 <input id="search-apply-tag-input" type="text" placeholder="tag to apply, e.g. category:persistence:file" style="flex:1; min-width:220px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.8rem;">
-                <button onclick="window.searchViewApplyTag(${escapeAttr(jsString(meta.id))})" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:7px 14px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer;"><i class="fa-solid fa-tag"></i> Apply tag to selected</button>
-                <button onclick="window.searchViewApplySuggestedToSelected(${escapeAttr(jsString(meta.id))})" title="Apply each selected row's own suggested tag" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:7px 14px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer;"><i class="fa-solid fa-wand-sparkles"></i> Apply suggested tags to selected</button>
-                <button onclick="window.searchViewAnalyzeSelected(${escapeAttr(jsString(meta.id))})" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:7px 14px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer;"><i class="fa-solid fa-wand-magic-sparkles"></i> Send selected to deep analysis</button>
+                <button onclick="window.searchViewApplyTag(${escapeAttr(jsString(meta.id))})" class="ui-button hdr-btn"><i class="fa-solid fa-tag"></i> Apply tag to selected</button>
+                <button onclick="window.searchViewApplySuggestedToSelected(${escapeAttr(jsString(meta.id))})" title="Apply each selected row's own suggested tag" class="ui-button hdr-btn"><i class="fa-solid fa-wand-sparkles"></i> Apply suggested tags to selected</button>
+                <button onclick="window.searchViewAnalyzeSelected(${escapeAttr(jsString(meta.id))})" class="ui-button hdr-btn"><i class="fa-solid fa-wand-magic-sparkles"></i> Send selected to deep analysis</button>
             </div>
 
             <div id="search-results-container"></div>
@@ -490,7 +490,7 @@ window.searchViewOpenNewForm = function(btn) {
             </label>
             <div style="display:flex; gap:10px; justify-content:flex-end;">
                 <button onclick="document.getElementById('search-new-form-container').innerHTML=''" style="background:var(--hover); border:1px solid var(--border); color:var(--text); padding:8px 16px; border-radius:6px; cursor:pointer;">Cancel</button>
-                <button onclick="window.searchViewSubmitNew(this)" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-weight:700; cursor:pointer;"><i class="fa-solid fa-magnifying-glass"></i> Start Search</button>
+                <button onclick="window.searchViewSubmitNew(this)" class="ui-button hdr-btn primary"><i class="fa-solid fa-magnifying-glass"></i> Start Search</button>
             </div>
         </div>`;
     window.searchViewScopeChanged(document.getElementById('search-form-scope-type'));

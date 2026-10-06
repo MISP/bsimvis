@@ -573,10 +573,10 @@ window.ScanView = {
                     </div>
                 </div>
                 <div style="display:flex; gap:10px;">
-                    <button onclick="window.ScanViewInstance.openCommit()" ${running || doc.committed || doc.container ? 'disabled' : ''} style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; ${running || doc.committed || doc.container ? 'opacity:0.4; cursor:not-allowed;' : ''}">
+                    <button onclick="window.ScanViewInstance.openCommit()" ${running || doc.committed || doc.container ? 'disabled' : ''} class="ui-button hdr-btn primary">
                         <i class="fa-solid fa-database"></i> Commit
                     </button>
-                    <button onclick="window.ScanViewInstance.discard()" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer;">
+                    <button onclick="window.ScanViewInstance.discard()" class="ui-button hdr-btn danger">
                         <i class="fa-solid fa-trash-can"></i> Discard
                     </button>
                 </div>
@@ -853,7 +853,7 @@ window.ScanView = {
             <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; color:var(--dim); cursor:pointer;" title="A lean scan skipped some tagging modules; Ghidra has to run again to add them">
                 <input type="checkbox" id="scan-commit-topup" checked> Tag top-up
             </label>
-            <button onclick="window.ScanViewInstance.commit()" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer;">
+            <button onclick="window.ScanViewInstance.commit()" class="ui-button hdr-btn primary">
                 <i class="fa-solid fa-database"></i> Ingest, no re-analysis
             </button>
             <div id="scan-commit-error" style="flex-basis:100%; color:#f87171; font-size:0.8rem;"></div>

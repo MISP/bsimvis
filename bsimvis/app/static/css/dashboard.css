@@ -3038,3 +3038,5 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .more-menu-list .ui-button { width: 100%; justify-content: flex-start; border: 0; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; }
 .more-menu-list .ui-button.danger { color: #f87171; }
 .entity-tab.push { margin-left: auto; }
+.ui-button.hdr-btn.danger { color: #f87171; border-color: rgba(248, 113, 113, 0.45); }
+.ui-button.hdr-btn:disabled { opacity: 0.5; cursor: not-allowed; }

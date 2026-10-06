@@ -3057,3 +3057,8 @@ body.sidebar-collapsed .sidebar-nav .nav-flyout-menu a span { display: inline; }
 .more-menu-list button.danger { color: #f87171; }
 .more-menu-list hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
 .entity-tab.gap { margin-left: 14px; }
+.ui-button.hdr-btn { height: 36px; padding: 0 18px; border-radius: 6px; font-weight: 700; font-size: 0.82rem; background: var(--card-bg); gap: 8px; white-space: nowrap; }
+.ui-button.hdr-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.ui-button.hdr-btn.primary:hover { filter: brightness(1.1); }
+.more-menu-list .ui-button { width: 100%; justify-content: flex-start; border: 0; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; }
+.more-menu-list .ui-button.danger { color: #f87171; }

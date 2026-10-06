@@ -220,17 +220,14 @@ window.CollectionDetailView = {
                     </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                    <button class="btn-primary" onclick="Nav.openPath('/collections/${encodeURIComponent(name)}/upload')" style="background:var(--accent); border:1px solid var(--accent); color:#fff; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap;"><i class="fa-solid fa-upload"></i> Upload</button>
-                    <button onclick="openFileAnalysisModal({ collection: ${escapeAttr(jsString(name))} })" style="background:var(--card-bg); border:1px solid var(--border); color:var(--text); padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap;"><i class="fa-solid fa-robot"></i> Analyze</button>
-                    <details class="more-menu">
-                        <summary title="More actions"><i class="fa-solid fa-ellipsis"></i></summary>
-                        <div class="more-menu-list" onclick="this.closest('details').removeAttribute('open')">
-                            <button onclick="window.openMaintenanceWindow(${escapeAttr(jsString(name))})"><i class="fa-solid fa-screwdriver-wrench"></i> Maintenance…</button>
-                            <button onclick="window.collectionDetailClean(${escapeAttr(jsString(name))}, this)"><i class="fa-solid fa-broom"></i> Clean</button>
-                            <hr>
-                            <button class="danger" onclick="window.collectionDetailDelete(${escapeAttr(jsString(name))}, this)"><i class="fa-solid fa-trash-can"></i> Delete collection</button>
-                        </div>
-                    </details>
+                    ${UI.Button.render({ className: 'hdr-btn primary', icon: 'fa-solid fa-upload', label: 'Upload', onClick: `Nav.openPath('/collections/${encodeURIComponent(name)}/upload')` })}
+                    ${UI.Button.render({ className: 'hdr-btn', icon: 'fa-solid fa-robot', label: 'Analyze', onClick: `openFileAnalysisModal({ collection: ${jsString(name)} })` })}
+                    ${UI.MoreMenu.render([
+                        { label: 'Maintenance…', icon: 'fa-solid fa-screwdriver-wrench', onClick: `window.openMaintenanceWindow(${jsString(name)})` },
+                        { label: 'Clean', icon: 'fa-solid fa-broom', onClick: `window.collectionDetailClean(${jsString(name)}, this)` },
+                        '-',
+                        { label: 'Delete collection', icon: 'fa-solid fa-trash-can', danger: true, onClick: `window.collectionDetailDelete(${jsString(name)}, this)` },
+                    ])}
                 </div>
             </div>
 

@@ -55,6 +55,24 @@ window.UI = {
     },
 
     /**
+     * The "⋯" overflow menu of a page header. Items: { label, icon, onClick, danger } or '-' for a rule.
+     * Primary and neutral header buttons use UI.Button with className 'hdr-btn' / 'hdr-btn primary'.
+     */
+    MoreMenu: {
+        render: function(items) {
+            const rows = items.map(it => it === '-' ? '<hr>' : UI.Button.render({
+                className: it.danger ? 'danger' : '',
+                icon: it.icon,
+                label: it.label,
+                tooltip: it.tooltip,
+                onClick: it.onClick,
+            })).join('');
+            return `<details class="more-menu"><summary title="More actions"><i class="fa-solid fa-ellipsis"></i></summary>
+                <div class="more-menu-list" onclick="this.closest('details').removeAttribute('open')">${rows}</div></details>`;
+        },
+    },
+
+    /**
      * Collection tab strip: one header for every collection-scoped page.
      */
     EntityTabs: {
@@ -283,3 +301,6 @@ window.UI = {
         }
     }
 };
+
+// Close any open header overflow menu on an outside click.
+document.addEventListener("click", e => document.querySelectorAll("details.more-menu[open]").forEach(d => d.contains(e.target) || d.removeAttribute("open")));

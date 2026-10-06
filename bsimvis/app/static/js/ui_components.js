@@ -104,6 +104,8 @@ window.UI = {
             const { viewKey, collection, pool } = getRoutingState();
             const active = this.parent[viewKey] || viewKey;
             const id = pool || collection;
+            this.paths = [];
+            document.body.classList.remove('has-entity-tabs');
             if (!id || !this.tabs.some(t => t.key === active)) {
                 el.innerHTML = '';
                 return;
@@ -116,6 +118,10 @@ window.UI = {
                 const n = t.count && c[t.count] != null ? `<span class="entity-tab-count">${escapeHtml(Number(c[t.count]).toLocaleString())}</span>` : '';
                 return `<a class="entity-tab${t.key === active ? ' current' : ''}${t.gap ? ' gap' : ''}" href="${escapeAttr(base + t.path + this.savedQuery(collection, t.key))}" onclick="UI.EntityTabs.go(this, event, ${escapeAttr(jsString(t.key))})">${escapeHtml(t.label)}${n}</a>`;
             };
+            // Crumbs and the page title skip what the strip already shows.
+            const shown = this.tabs.filter(t => !t.hide && t.path);
+            this.paths = shown.map(t => base + t.path);
+            document.body.classList.toggle('has-entity-tabs', shown.some(t => t.key === active));
             // Tabs scroll on narrow screens; the pinned links (Upload) stay in view beside them.
             el.innerHTML = `<div class="entity-tabs-scroll">${this.tabs.filter(t => !t.hide && !t.push).map(link).join('')}</div>${this.tabs.filter(t => t.push).map(link).join('')}`;
         },

@@ -518,6 +518,10 @@ window.Breadcrumbs = {
         const container = document.getElementById('breadcrumbs-list');
         if (!container) return;
 
+        // The tab strip already links to its own sections; keep the scope root and any detail leaf.
+        const stripPaths = (window.UI && UI.EntityTabs && UI.EntityTabs.paths) || [];
+        if (stripPaths.length) segments = segments.filter(sg => !stripPaths.includes(String(sg.url || '').split('?')[0]));
+
         if (segments.length === 0) {
             container.innerHTML = '';
             return;

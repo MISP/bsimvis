@@ -3041,3 +3041,4 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .more-menu-list .ui-button.danger { color: #f87171; }
 .ui-button.hdr-btn.danger { color: #f87171; border-color: rgba(248, 113, 113, 0.45); }
 .ui-button.hdr-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+body.has-entity-tabs .header-top > div:has(> #view-title) { display: none !important; }

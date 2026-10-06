@@ -263,6 +263,14 @@ window.PoolDetailView = {
                                         <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/files" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${totalPoolFiles}</a></td>
                                     </tr>
                                     <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-right-left" style="margin-right:8px; width:16px;"></i>Similarities</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/files/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${fileSims}</a></td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>Clusters</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/files/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${fileClusts}</a></td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-code" style="margin-right:8px; width:16px;"></i>Functions</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/functions" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${totalPoolFunctions}</a></td>
                                     </tr>
@@ -270,17 +278,9 @@ window.PoolDetailView = {
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-code-compare" style="margin-right:8px; width:16px;"></i>Function Similarities</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/functions/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${funcSims}</a></td>
                                     </tr>
-                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                    <tr style="transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>Function Clusters</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/functions/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${funcClusts}</a></td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
-                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-right-left" style="margin-right:8px; width:16px;"></i>File Similarities</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/files/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${fileSims}</a></td>
-                                    </tr>
-                                    <tr style="transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
-                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>File Clusters</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/files/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${fileClusts}</a></td>
                                     </tr>
                                 </tbody>
                             </table>

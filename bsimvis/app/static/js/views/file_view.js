@@ -223,7 +223,7 @@ window.FileView = {
                     </div>
                     <div class="card" style="flex:1; min-width:0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
                         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                            <button class="top-action-btn" id="fv-entry-btn" style="display:none; color:#a6e22e; border-color:#a6e22e;"><i class="fa-solid fa-location-dot"></i> Entry</button>
+                            <button class="top-action-btn" id="fv-entry-btn" style="display:none;"><i class="fa-solid fa-location-dot"></i> Entry</button>
                             <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
                                 <span class="bsim-ctl-label">Group by:</span>
                                 <button class="view-btn active" id="fv-group-btn-auto" onclick="FileView.setGroupBy('auto')" title="Group by tag when more than one tag is in scope">Auto</button>
@@ -431,19 +431,13 @@ window.FileView = {
             }
             const entryLink = entryUrl
                 ? { html: `<a href="${escapeAttr(entryUrl)}" onclick="Nav.openPath(${escapeAttr(jsString(entryUrl))}, event)" style="color:#a6e22e;">${escapeHtml(file.entry_point)}</a>` } : '';
-            document.getElementById('file-actions-container').innerHTML = `
-                <button class="top-action-btn" onclick="openAnalyzeModal({ scope: 'file', collection: ${escapeAttr(jsString(collection))}, fileMd5: ${escapeAttr(jsString(file.file_md5))} })"
-                    style="color:#ae81ff; border-color:#ae81ff;"
-                    title="Analyze every candidate function of this file with AI">
-                    <i class="fa-solid fa-robot"></i> Analyze file</button>
-                <button class="top-action-btn" onclick="openSearchModal({ scope: 'file', collection: ${escapeAttr(jsString(collection))}, fileMd5: ${escapeAttr(jsString(file.file_md5))} })"
-                    style="color:#60a5fa; border-color:#60a5fa;"
-                    title="Ask AI which functions of this file match a description">
-                    <i class="fa-solid fa-magnifying-glass"></i> AI search</button>
-                <button class="top-action-btn" onclick="window.removeFiles(${escapeAttr(jsString(collection))}, [${escapeAttr(jsString(file.file_md5))}])"
-                    style="color:#f87171; border-color:#f87171;"
-                    title="Remove this file from the collection. Raw sample bytes will be retained.">
-                    <i class="fa-solid fa-trash-can"></i> Remove</button>`;
+            const fileScope = `scope: 'file', collection: ${jsString(collection)}, fileMd5: ${jsString(file.file_md5)}`;
+            document.getElementById('file-actions-container').innerHTML = UI.MoreMenu.render([
+                { label: 'Analyze file with AI', icon: 'fa-solid fa-robot', tooltip: 'Analyze every candidate function of this file with AI', onClick: `openAnalyzeModal({ ${fileScope} })` },
+                { label: 'AI search', icon: 'fa-solid fa-magnifying-glass', tooltip: 'Ask AI which functions of this file match a description', onClick: `openSearchModal({ ${fileScope} })` },
+                '-',
+                { label: 'Remove file', icon: 'fa-solid fa-trash-can', danger: true, tooltip: 'Remove this file from the collection. Raw sample bytes will be retained.', onClick: `window.removeFiles(${jsString(collection)}, [${jsString(file.file_md5)}])` },
+            ]);
 
             if (window.EntityRenderer) {
                 document.getElementById('file-note-btn-container').innerHTML = window.EntityRenderer.renderFileNoteButton(

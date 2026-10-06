@@ -175,11 +175,14 @@ window.UI = {
     Sidebar: {
         render: function() {
             const routing = getRoutingState();
-            const { viewKey, pool } = routing;
-            // No collection in the URL: fall back to the last one visited rather than breaking the whole navbar.
-            let collection = routing.collection;
+            const { viewKey } = routing;
+            // No scope in the URL: fall back to the last one visited rather than breaking the whole navbar.
+            let { collection, pool } = routing;
             if (!collection && !pool) {
-                try { collection = localStorage.getItem('lastCollectionContext') || null; } catch (e) { /* storage blocked */ }
+                try {
+                    collection = localStorage.getItem('lastCollectionContext') || null;
+                    pool = localStorage.getItem('lastPoolContext') || null;
+                } catch (e) { /* storage blocked */ }
             }
 
             const buildNavUrl = (view) => {

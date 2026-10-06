@@ -438,11 +438,12 @@ function getRoutingState() {
     }
     const pool = restful.pool || params.get('pool') || null;
 
-    if (collection && viewKey !== 'jobs') {
-        localStorage.setItem('lastCollectionContext', collection);
-    }
-    if (pool && viewKey !== 'jobs') {
-        localStorage.setItem('lastPoolContext', pool);
+    // The last context is the most recent scope: entering a collection must not leave an older pool behind (and vice versa).
+    if ((collection || pool) && viewKey !== 'jobs') {
+        if (collection) localStorage.setItem('lastCollectionContext', collection);
+        else localStorage.removeItem('lastCollectionContext');
+        if (pool) localStorage.setItem('lastPoolContext', pool);
+        else localStorage.removeItem('lastPoolContext');
     }
 
     // Bridge restful params to search params for backward compatibility

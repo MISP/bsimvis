@@ -87,8 +87,8 @@ window.UI = {
             { key: 'features-global', label: 'Features', path: '/features', count: 'features' },
             { key: 'function-similarity', count: 'function_sims', label: 'Func sims', path: '/functions/similarities' },
             { key: 'clusters', count: 'function_clusters', label: 'Func clusters', path: '/functions/clusters' },
-            { key: 'tags', label: 'Tags', path: '/tags' },
-            { key: 'jobs', label: 'Jobs', path: '/jobs' },
+            { key: 'tags', label: 'Tags', path: '/tags', hide: true },
+            { key: 'jobs', label: 'Jobs', path: '/jobs', hide: true },
             { key: 'upload', label: 'Upload', path: '/upload', push: true },
         ],
         // Detail pages light up the tab of the list they belong to.
@@ -112,10 +112,12 @@ window.UI = {
             this.load(key, id, !!pool);
             const base = `/${pool ? 'pools' : 'collections'}/${encodeURIComponent(id)}`;
             const c = this.counts[key] || {};
-            el.innerHTML = this.tabs.filter(t => !(pool && t.collectionOnly)).map(t => {
+            const link = t => {
                 const n = t.count && c[t.count] != null ? `<span class="entity-tab-count">${escapeHtml(Number(c[t.count]).toLocaleString())}</span>` : '';
-                return `<a class="entity-tab${t.key === active ? ' current' : ''}${t.gap ? ' gap' : ''}${t.push ? ' push' : ''}" href="${escapeAttr(base + t.path + this.savedQuery(collection, t.key))}" onclick="UI.EntityTabs.go(this, event, ${escapeAttr(jsString(t.key))})">${escapeHtml(t.label)}${n}</a>`;
-            }).join('');
+                return `<a class="entity-tab${t.key === active ? ' current' : ''}${t.gap ? ' gap' : ''}" href="${escapeAttr(base + t.path + this.savedQuery(collection, t.key))}" onclick="UI.EntityTabs.go(this, event, ${escapeAttr(jsString(t.key))})">${escapeHtml(t.label)}${n}</a>`;
+            };
+            // Tabs scroll on narrow screens; the pinned links (Upload) stay in view beside them.
+            el.innerHTML = `<div class="entity-tabs-scroll">${this.tabs.filter(t => !t.hide && !t.push).map(link).join('')}</div>${this.tabs.filter(t => t.push).map(link).join('')}`;
         },
 
         // Same behaviour the sidebar links had: reopen a view with its last filters, and a click on the current tab clears them.

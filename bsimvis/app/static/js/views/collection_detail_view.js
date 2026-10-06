@@ -283,6 +283,10 @@ window.CollectionDetailView = {
                                         <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/features" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.features)}</a></td>
                                     </tr>
                                     <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-tags" style="margin-right:8px; width:16px;"></i>Tags</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/tags" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">Manage</a></td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-code-compare" style="margin-right:8px; width:16px;"></i>Function Similarities</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/functions/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.function_sims)}</a></td>
                                     </tr>

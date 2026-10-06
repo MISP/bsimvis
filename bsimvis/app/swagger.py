@@ -3558,6 +3558,8 @@ class SearchList(Resource):
         params={
             "offset": {"description": "Pagination offset", "default": 0},
             "limit": {"description": "Max results", "default": 50},
+            "collection": {"description": "Only searches of this collection"},
+            "pool": {"description": "Only searches of this pool"},
         }
     )
     def get(self):

@@ -335,6 +335,13 @@ function parseRestfulPath() {
             params.view = 'feature';
             params.hash = parts[pIdx];
         }
+    } else if (p2 === 'searches') {
+        if (parts[pIdx + 1]) {
+            params.view = 'search-detail';
+            params.search_id = decodeURIComponent(parts[pIdx + 1]);
+        } else {
+            params.view = 'search';
+        }
     } else if (p2 === 'bin_sim') {
         params.view = 'bin_sim';
         params.md5 = parts[pIdx + 1];

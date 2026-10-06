@@ -100,7 +100,13 @@ class SearchService:
         meta["total"] = int(meta.get("total") or 0)
         return meta
 
-    def list_searches(self, limit=50, offset=0):
+    def list_searches(self, limit=50, offset=0, collection=None):
+        if collection:
+            # A pool's searches are stored under its `global:pool:{id}` namespace.
+            ids = [_decode(i) for i in self.r.lrange(SEARCHES_INDEX, 0, -1)]
+            metas = [s for s in (self.get_search(i) for i in ids) if s]
+            metas = [s for s in metas if s.get("collection") == collection]
+            return metas[offset : offset + limit], len(metas)
         ids = [
             _decode(i)
             for i in self.r.lrange(SEARCHES_INDEX, offset, offset + limit - 1)

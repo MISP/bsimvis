@@ -244,14 +244,14 @@ window.Breadcrumbs = {
             case 'search':
                 segments.push({
                     label: 'Searches',
-                    url: '/searches',
+                    url: window.location.pathname,
                     icon: 'fa-solid fa-list-check'
                 });
                 break;
             case 'search-detail':
                 segments.push({
                     label: 'Searches',
-                    url: '/searches',
+                    url: window.location.pathname.replace(/\/[^/]+$/, ''),
                     icon: 'fa-solid fa-list-check'
                 });
                 segments.push({

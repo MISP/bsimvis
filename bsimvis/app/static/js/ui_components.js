@@ -87,13 +87,14 @@ window.UI = {
             { key: 'features-global', label: 'Features', path: '/features', count: 'features' },
             { key: 'function-similarity', count: 'function_sims', label: 'Func sims', path: '/functions/similarities' },
             { key: 'clusters', count: 'function_clusters', label: 'Func clusters', path: '/functions/clusters' },
+            { key: 'search', label: 'Searches', path: '/searches' },
             { key: 'tags', label: 'Tags', path: '/tags', hide: true },
             { key: 'jobs', label: 'Jobs', path: '/jobs', hide: true },
             { key: 'upload', label: 'Upload', path: '/upload', push: true },
         ],
         // Detail pages light up the tab of the list they belong to.
         parent: {
-            'collection-detail': 'overview', 'pool-detail': 'overview', dashboard: 'files', file: 'files', function: 'functions', call_graph: 'functions',
+            'collection-detail': 'overview', 'search-detail': 'search', 'pool-detail': 'overview', dashboard: 'files', file: 'files', function: 'functions', call_graph: 'functions',
             function_features: 'functions', diff: 'function-similarity', bin_sim: 'binary-similarity',
             feature: 'features-global', 'cluster-detail': 'clusters', 'bin-cluster-detail': 'bin-clusters',
         },
@@ -189,6 +190,7 @@ window.UI = {
                 if (view === 'home') return '/';
                 if (view === 'collections') return '/collections';
                 if (view === 'pools') return '/pools';
+                if (!collection && !pool && view === 'searches') return '/searches';
                 if (!collection && !pool && !['jobs', 'nway', 'scan'].includes(view)) return '/collections';
                 if (view === 'nway' || view === 'scan') {
                     const k = pool ? `pool=${encodeURIComponent(pool)}` : collection ? `collection=${encodeURIComponent(collection)}` : '';
@@ -263,7 +265,7 @@ window.UI = {
                     <div class="nav-section-content">
                         <a href="${buildNavUrl('scan')}" id="nav-scans" title="Scan a file without ingesting it" class="${isActive('scan')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-microscope"></i> <span>Scan</span></a>
                         <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff (experimental)" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> <span>N-way diff</span></a>
-                        <a href="/searches" id="nav-searches" title="Saved Searches" class="${isActive('search')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-list-check"></i> <span>Searches</span></a>
+                        <a href="${buildNavUrl('searches')}" id="nav-searches" title="Saved Searches" class="${isActive('search')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-list-check"></i> <span>Searches</span></a>
                         <a href="${buildNavUrl('jobs')}" id="nav-jobs" title="Jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> <span>Jobs</span></a>
                     </div>
                     <div class="nav-section-content nav-bottom">

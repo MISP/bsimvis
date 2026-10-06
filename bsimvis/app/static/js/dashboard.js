@@ -1342,6 +1342,7 @@ function updateNavbarLinks(col) {
     updateNavLink('nav-binary-similarity', 'binary-similarity');
     updateNavLink('nav-upload', 'upload');
     updateNavLink('nav-jobs', 'jobs');
+    updateNavLink('nav-searches', 'searches');
 }
 window.updateNavbarLinks = updateNavbarLinks;
 

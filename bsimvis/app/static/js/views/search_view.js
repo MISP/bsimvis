@@ -41,6 +41,13 @@ window.SearchView = {
     _suggestedTags: {}, // func_id -> suggested_tag, for the current results page
     _currentSearchId: null,
 
+    // `/collections/{c}` or `/pools/{id}` for a search's stored collection (pools are `global:pool:{id}`).
+    _base(collection) {
+        const m = /^global:pool:(.+)$/.exec(collection || '');
+        if (m) return `/pools/${encodeURIComponent(m[1])}`;
+        return collection ? `/collections/${encodeURIComponent(collection)}` : '';
+    },
+
     destroy() {
         this._stopped = true;
         if (this._pollTimer) {
@@ -67,18 +74,20 @@ window.SearchView = {
     async _initList(container) {
         container.innerHTML = `<div style="display:flex; justify-content:center; align-items:center; height:200px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin" style="margin-right:10px;"></i> Loading Searches...</div>`;
         try {
-            const res = await fetch('/api/searches?limit=100');
+            const st = getRoutingState();
+            const scope = st.pool ? `&pool=${encodeURIComponent(st.pool)}` : st.collection ? `&collection=${encodeURIComponent(st.collection)}` : '';
+            const res = await fetch(`/api/searches?limit=100${scope}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
-            container.innerHTML = this._renderList(data.searches || []);
+            container.innerHTML = this._renderList(data.searches || [], !!(st.pool || st.collection));
         } catch (e) {
             container.innerHTML = `<div style="padding:30px; color:#f87171;"><i class="fa-solid fa-triangle-exclamation"></i> ${e.message}</div>`;
         }
     },
 
-    _renderList(searches) {
+    _renderList(searches, scoped) {
         const rows = searches.map(s => {
-            const url = `/searches/${encodeURIComponent(s.id)}`;
+            const url = `${this._base(s.collection)}/searches/${encodeURIComponent(s.id)}`;
             const scopeType = (s.scope && s.scope.type) || '?';
             const counts = s.verdict_counts || { yes: 0, maybe: 0, no: 0 };
             const matched = counts.yes + counts.maybe;
@@ -102,7 +111,7 @@ window.SearchView = {
         return `
         <div style="flex:1; overflow-y:auto; padding:25px 30px; display:flex; flex-direction:column; gap:20px;">
             <div style="display:flex; align-items:center; justify-content:space-between;">
-                <h1 style="margin:0; font-size:1.5rem; color:var(--text); display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-list-check" style="color:var(--accent);"></i> Searches</h1>
+                ${scoped ? '<span></span>' : '<h1 style="margin:0; font-size:1.5rem; color:var(--text); display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-list-check" style="color:var(--accent);"></i> Searches</h1>'}
                 <button onclick="window.searchViewOpenNewForm(this)" class="ui-button hdr-btn primary"><i class="fa-solid fa-plus"></i> New Search</button>
             </div>
             <div id="search-new-form-container"></div>
@@ -141,6 +150,11 @@ window.SearchView = {
             if (!res.ok) throw new Error(res.status === 404 ? 'Search not found' : `HTTP ${res.status}`);
             const meta = await res.json();
             this._collection = meta.collection;
+            const st = getRoutingState();
+            if (!st.collection && !st.pool && meta.collection) {
+                history.replaceState(null, '', `${this._base(meta.collection)}/searches/${encodeURIComponent(searchId)}${location.search}`);
+                if (window.Breadcrumbs) Breadcrumbs.render(Breadcrumbs.generate(getRoutingState(), null));
+            }
             container.innerHTML = this._renderDetailShell(meta);
             await this._refreshResults(searchId, meta.collection);
             if (meta.status === 'running' && meta.job_id) {
@@ -445,7 +459,7 @@ window.searchViewDelete = async function(searchId, btn, redirectToList) {
         const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}`, { method: 'DELETE' });
         if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
         if (redirectToList) {
-            Nav.openPath('/searches');
+            Nav.openPath(location.pathname.replace(/\/[^/]+$/, ''));
         } else if (typeof refreshData === 'function') {
             refreshData(false, true);
         }
@@ -494,12 +508,22 @@ window.searchViewOpenNewForm = function(btn) {
             </div>
         </div>`;
     window.searchViewScopeChanged(document.getElementById('search-form-scope-type'));
-    window.searchViewLoadCollections(currentCollection);
+    const pool = window.getRoutingState && window.getRoutingState().pool;
+    if (pool) {
+        // Pool searches span the whole pool; single-file and pair scopes start from those pages.
+        const sel = document.getElementById('search-form-collection');
+        sel.innerHTML = `<option value="global:pool:${escapeAttr(pool)}">Pool: ${escapeHtml(pool)}</option>`;
+        sel.disabled = true;
+        document.querySelectorAll('#search-form-scope-type option').forEach(o => { if (o.value === 'file' || o.value === 'pair') o.remove(); });
+        window.searchViewScopeChanged(document.getElementById('search-form-scope-type'));
+    } else {
+        window.searchViewLoadCollections(currentCollection, !!currentCollection);
+    }
 };
 
 // Same GET /api/collection/search list diff_view.js's collection picker
 // (initSelectionTool) and upload.js's collection dropdown both fetch from.
-window.searchViewLoadCollections = async function(preselect) {
+window.searchViewLoadCollections = async function(preselect, lock) {
     const sel = document.getElementById('search-form-collection');
     if (!sel) return;
     try {
@@ -508,6 +532,7 @@ window.searchViewLoadCollections = async function(preselect) {
         sel.innerHTML = '<option value="">-- Choose Collection --</option>' +
             collections.map(c => `<option value="${escapeAttr(c.name)}">${escapeHtml(c.name)}</option>`).join('');
         if (preselect && collections.some(c => c.name === preselect)) sel.value = preselect;
+        if (lock && sel.value === preselect) sel.disabled = true;
     } catch (e) {
         sel.innerHTML = '<option value="">-- Failed to load collections --</option>';
     }
@@ -613,7 +638,7 @@ window.searchViewSubmitNew = async function(btn) {
         if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
         const data = await res.json();
         window.closeSearchModal();
-        Nav.openPath(`/searches/${encodeURIComponent(data.search_id)}`);
+        Nav.openPath(`${window.SearchView._base(collection)}/searches/${encodeURIComponent(data.search_id)}`);
     } catch (e) {
         alert(`Failed to start search: ${e.message}`);
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-magnifying-glass"></i> Start Search'; }

@@ -148,7 +148,11 @@ def list_searches():
         offset = int(request.args.get("offset", 0))
     except ValueError:
         return {"error": "limit and offset must be integers"}, 400
-    searches, total = search_service.list_searches(limit, offset)
+    collection = request.args.get("collection")
+    pool = request.args.get("pool")
+    if pool:
+        collection = f"global:pool:{pool}"
+    searches, total = search_service.list_searches(limit, offset, collection)
     for s in searches:
         s["verdict_counts"] = search_service.get_verdict_counts(s["id"])
     return {"searches": searches, "total": total, "limit": limit, "offset": offset}

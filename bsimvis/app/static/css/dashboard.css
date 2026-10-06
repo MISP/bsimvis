@@ -3062,3 +3062,4 @@ body.sidebar-collapsed .sidebar-nav .nav-flyout-menu a span { display: inline; }
 .ui-button.hdr-btn.primary:hover { filter: brightness(1.1); }
 .more-menu-list .ui-button { width: 100%; justify-content: flex-start; border: 0; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; }
 .more-menu-list .ui-button.danger { color: #f87171; }
+.entity-tab.push { margin-left: auto; }

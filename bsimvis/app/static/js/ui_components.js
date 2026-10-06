@@ -87,7 +87,9 @@ window.UI = {
             { key: 'features-global', label: 'Features', path: '/features', count: 'features' },
             { key: 'function-similarity', count: 'function_sims', label: 'Func sims', path: '/functions/similarities' },
             { key: 'clusters', count: 'function_clusters', label: 'Func clusters', path: '/functions/clusters' },
+            { key: 'tags', label: 'Tags', path: '/tags' },
             { key: 'jobs', label: 'Jobs', path: '/jobs' },
+            { key: 'upload', label: 'Upload', path: '/upload', push: true },
         ],
         // Detail pages light up the tab of the list they belong to.
         parent: {
@@ -112,7 +114,7 @@ window.UI = {
             const c = this.counts[key] || {};
             el.innerHTML = this.tabs.filter(t => !(pool && t.collectionOnly)).map(t => {
                 const n = t.count && c[t.count] != null ? `<span class="entity-tab-count">${escapeHtml(Number(c[t.count]).toLocaleString())}</span>` : '';
-                return `<a class="entity-tab${t.key === active ? ' current' : ''}${t.gap ? ' gap' : ''}" href="${escapeAttr(base + t.path)}" onclick="Nav.openPath(this.href, event)">${escapeHtml(t.label)}${n}</a>`;
+                return `<a class="entity-tab${t.key === active ? ' current' : ''}${t.gap ? ' gap' : ''}${t.push ? ' push' : ''}" href="${escapeAttr(base + t.path)}" onclick="Nav.openPath(this.href, event)">${escapeHtml(t.label)}${n}</a>`;
             }).join('');
         },
 

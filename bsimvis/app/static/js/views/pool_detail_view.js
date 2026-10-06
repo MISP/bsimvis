@@ -125,7 +125,7 @@ window.PoolDetailView = {
         const crossOnly = pool.only_cross_collection;
 
         const buildBtnHtml = status === 'outdated'
-            ? `<button onclick="window.poolDetailBuild(${escapeAttr(jsString(poolId))}, this)" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-play"></i> Build</button>`
+            ? UI.Button.render({ className: 'hdr-btn primary', icon: 'fa-solid fa-play', label: 'Build', onClick: `window.poolDetailBuild(${jsString(poolId)}, this)` })
             : '';
 
         let totalPoolBatches = 0;
@@ -208,12 +208,14 @@ window.PoolDetailView = {
                     </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                    <button onclick="window.openPoolMaintenanceWindow(${escapeAttr(jsString(poolId))})" style="background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); color:#f59e0b; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-screwdriver-wrench"></i> Maintenance</button>
-                    <button onclick="Nav.openPath('/pools/${encodeURIComponent(poolId)}/jobs')" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-server"></i> View Jobs</button>
                     ${buildBtnHtml}
-                    <button onclick="window.poolDetailCluster(${escapeAttr(jsString(poolId))}, this)" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-circle-nodes"></i> Cluster</button>
-                    <button onclick="window.poolDetailRebuild(${escapeAttr(jsString(poolId))}, this)" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-rotate"></i> Rebuild</button>
-                    <button onclick="window.poolDetailDelete(${escapeAttr(jsString(poolId))}, this)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-trash-can"></i> Delete</button>
+                    ${UI.MoreMenu.render([
+                        { label: 'Maintenance…', icon: 'fa-solid fa-screwdriver-wrench', onClick: `window.openPoolMaintenanceWindow(${jsString(poolId)})` },
+                        { label: 'Cluster', icon: 'fa-solid fa-circle-nodes', onClick: `window.poolDetailCluster(${jsString(poolId)}, this)` },
+                        { label: 'Rebuild', icon: 'fa-solid fa-rotate-right', onClick: `window.poolDetailRebuild(${jsString(poolId)}, this)` },
+                        '-',
+                        { label: 'Delete pool', icon: 'fa-solid fa-trash-can', danger: true, onClick: `window.poolDetailDelete(${jsString(poolId)}, this)` },
+                    ])}
                 </div>
             </div>
 

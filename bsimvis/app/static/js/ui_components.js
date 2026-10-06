@@ -114,8 +114,27 @@ window.UI = {
             const c = this.counts[key] || {};
             el.innerHTML = this.tabs.filter(t => !(pool && t.collectionOnly)).map(t => {
                 const n = t.count && c[t.count] != null ? `<span class="entity-tab-count">${escapeHtml(Number(c[t.count]).toLocaleString())}</span>` : '';
-                return `<a class="entity-tab${t.key === active ? ' current' : ''}${t.gap ? ' gap' : ''}${t.push ? ' push' : ''}" href="${escapeAttr(base + t.path)}" onclick="Nav.openPath(this.href, event)">${escapeHtml(t.label)}${n}</a>`;
+                return `<a class="entity-tab${t.key === active ? ' current' : ''}${t.gap ? ' gap' : ''}${t.push ? ' push' : ''}" href="${escapeAttr(base + t.path + this.savedQuery(collection, t.key))}" onclick="UI.EntityTabs.go(this, event, ${escapeAttr(jsString(t.key))})">${escapeHtml(t.label)}${n}</a>`;
             }).join('');
+        },
+
+        // Same behaviour the sidebar links had: reopen a view with its last filters, and a click on the current tab clears them.
+        savedQuery: function(collection, view) {
+            if (view === 'jobs') return '';
+            let saved = null;
+            try { saved = localStorage.getItem(`savedFilters:${collection}:${view}`); } catch (e) { /* storage blocked */ }
+            if (!saved) return '';
+            const q = new URLSearchParams(saved);
+            q.delete('collection');
+            q.delete('pool');
+            return q.toString() ? `?${q}` : '';
+        },
+
+        go: function(a, e, view) {
+            if (e.ctrlKey || e.metaKey) return;
+            e.preventDefault();
+            if (getRoutingState().viewKey === view && typeof clearFilters === 'function') clearFilters();
+            else Nav.openPath(a.href, e);
         },
 
         // Counts are cheap cardinality reads; refetch at most every 15s and repaint.

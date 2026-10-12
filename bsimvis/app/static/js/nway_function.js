@@ -2,7 +2,7 @@
  * N-way function view: one function family of the N-way table on its own page
  * (/diff/nway/function?<source>&<controls>&fx_*), backed by
  * GET /api/bin_sim/nway/facets. Header cards + similarity matrix, then
- * Facets / Code blocks / Pair diff tabs.
+ * Simple / Facets / Code blocks / Pair diff tabs.
  *
  *   new NwayFunction(container, { source, doc, fids, state, onState }).load();
  *
@@ -34,6 +34,7 @@
             this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', open: null, gi: 0, fn: null, single: false, ...(o.state || {}) };
             this.titles = {};
             this.data = null;
+            this.simpleCode = null;
             this._dead = false;
             el.addEventListener('click', e => this._click(e));
             el.addEventListener('change', e => this._change(e));
@@ -85,18 +86,45 @@
                     <div><div class="xp-mx" style="--n:${nf}">${this._matrix()}</div>
                     <div class="xp-cap">Function similarity from the matcher; a dash means no match was found. Click a cell to open that pair in the 2-way diff.</div></div></div>
                 <div class="xp-bar"><div class="bsim-tabbar" role="tablist" style="margin:0">
+                    ${this.embedded ? '' : tab('simple', 'Simple')}
                     ${this.embedded ? '' : tab('facets', 'Facets')}
                     ${this.embedded ? '' : tab('code', 'Code blocks', !code ? `Code blocks need at most ${d.limits.code} functions (this row has ${nf})` : '')}
                     ${this.embedded ? '' : tab('pair', 'Pair diff')}</div><span class="xp-sp"></span>
-                    ${s.tab === 'pair' ? '' : `<label class="xp-chk"><input type="checkbox" data-xonly ${s.only ? 'checked' : ''}> Differences only</label>`}</div>
+                    ${s.tab === 'pair' || s.tab === 'simple' ? '' : `<label class="xp-chk"><input type="checkbox" data-xonly ${s.only ? 'checked' : ''}> Differences only</label>`}</div>
                 <div class="xp-body">${this._body()}</div>`;
             if (s.tab === 'pair') this._loadPair();
             if (s.tab === 'code') this._loadTitles();
+            if (s.tab === 'simple') this._loadSimple();
         }
 
         _body() {
             const t = this.s.tab;
-            return t === 'facets' ? this._facets() : t === 'code' ? this._code() : this._pair();
+            return t === 'simple' ? this._simple() : t === 'facets' ? this._facets() : t === 'code' ? this._code() : this._pair();
+        }
+
+        _simple() {
+            const f = this.data.functions[this.data.reference];
+            const url = window.NwayPanel.fnUrl(f.id, this.source.pool || null);
+            return `<p class="xp-hint">★ Most central function: ${escapeHtml(f.file_name || '')} @ ${escapeHtml(f.addr)} · <a href="${escapeAttr(url)}" data-xnav="${escapeAttr(url)}" data-title="${escapeAttr(f.name || f.addr)}">Open function</a></p>
+                <div class="c-code-container" style="overflow:auto">${this.simpleCode || 'Loading code...'}</div>`;
+        }
+
+        async _loadSimple() {
+            if (this.simpleCode || this.simpleLoading) return;
+            this.simpleLoading = true;
+            const id = this.data.functions[this.data.reference].id;
+            try {
+                const res = await fetch(`/api/function/code?id=${encodeURIComponent(id)}`);
+                if (!res.ok) throw new Error(`Function not found (${res.status})`);
+                const data = await res.json();
+                this.simpleCode = (data.rows || []).map(row =>
+                    `<div class="code-line"><div class="gutter" contenteditable="false"><div class="line-num">${Number(row.line_idx)}</div></div><div class="line-content">${row.tokens.map(t => window.renderTokenHtml(t)).join('')}</div></div>`
+                ).join('') || 'No code available.';
+            } catch (e) {
+                this.simpleCode = `<div class="xp-none">${escapeHtml(e.message)}</div>`;
+            }
+            this.simpleLoading = false;
+            if (!this._dead && this.s.tab === 'simple') this._rebody();
         }
 
         _rebody() {

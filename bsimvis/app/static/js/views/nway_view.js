@@ -73,12 +73,12 @@ window.NwayView = {
         this._familySource = source;
         this._familyDoc = doc;
         this._familyState = { tab: fx.tab || 'graph', cv: fx.cv || 'blocks', only: fx.only === '1', single: fx.single === '1' };
-        if (!['graph', 'facets', 'code', 'pair'].includes(this._familyState.tab)) this._familyState.tab = 'graph';
+        if (!['graph', 'simple', 'facets', 'code', 'pair'].includes(this._familyState.tab)) this._familyState.tab = 'graph';
         if (fx.fn !== undefined && fx.fn !== '') this._familyState.fn = Number(fx.fn);
         this._container.innerHTML = `<div class="nway-view nway-function-view">
             <div class="nway-head"><h2 id="nway-family-name"></h2></div>
             <div class="xp-bar"><div id="nway-family-tabs" class="bsim-tabbar" role="tablist" style="margin:0">
-                ${[['graph', 'Graph'], ['facets', 'Facets'], ['code', 'Code blocks'], ['pair', 'Pair diff']].map(([k, label]) => `<button class="bsim-tab" role="tab" data-family-tab="${k}">${label}</button>`).join('')}
+                ${[['graph', 'Graph'], ['simple', 'Simple'], ['facets', 'Facets'], ['code', 'Code blocks'], ['pair', 'Pair diff']].map(([k, label]) => `<button class="bsim-tab" role="tab" data-family-tab="${k}">${label}</button>`).join('')}
             </div></div>
             <div id="nway-graph-host" class="nway-cgp" style="height:calc(100vh - 240px);min-height:400px;"></div>
             <div id="nway-fn-host" hidden></div>

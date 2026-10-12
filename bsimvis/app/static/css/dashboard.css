@@ -3064,18 +3064,15 @@ body.has-entity-tabs .header-top > div:has(> #view-title) { display: none !impor
     #grid-header .has-search-slot > #search-area { position: static; width: 100%; flex-basis: 100%; }
 }
 
-/* ---- N-way inline function diff (nway_xp.js) ---- */
-.nway-xp-btn { float: left; margin: 2px 4px 0 0; background: none; border: 0; color: var(--accent); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
-.nway-xp-btn i { transition: transform 0.12s; }
-.nway-xp-btn[aria-expanded="true"] i { transform: rotate(90deg); }
-.nway-xp-btn:focus-visible, .xp-tab:focus-visible, .xp-btn:focus-visible, .xp-ln:focus-visible, .xp-v:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.nway-table tr.nway-xp-row > td { padding: 0; border-top: 1px solid var(--accent); }
-.nway-table tr.nway-xp-row > td:first-child { position: static; max-width: none; box-shadow: none; }
-.nway-xp { --xp-l: 66%; --xp-warn-bg: color-mix(in srgb, var(--token-warning) 14%, var(--card-bg)); position: sticky; left: 0; box-sizing: border-box; background: var(--bg); border-bottom: 1px solid var(--accent); white-space: normal; font-size: 0.82rem; }
-html.light-theme .nway-xp { --xp-l: 40%; }
-.xp-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; padding: 12px; border-bottom: 1px solid var(--border); }
+/* ---- N-way function view (nway_function.js) ---- */
+.nway-fnlink { float: left; margin: 1px 8px 0 0; padding: 0 8px; border: 1px solid var(--border); border-radius: 5px; color: var(--accent); font-size: 0.74rem; text-decoration: none; }
+.nway-fnlink:hover { background: var(--hover); }
+.nway-fnlink:focus-visible, .xp-chip:focus-visible, .xp-bh:focus-visible, .xp-v:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.nway-fn { --xp-l: 66%; --xp-warn-bg: color-mix(in srgb, var(--token-warning) 14%, var(--card-bg)); }
+html.light-theme .nway-fn { --xp-l: 40%; }
+.xp-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; padding: 16px; margin-bottom: 16px; }
 @media (max-width: 860px) { .xp-head { grid-template-columns: minmax(0, 1fr); } }
-.xp-cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; max-height: 200px; overflow: auto; align-content: start; }
+.xp-cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; max-height: 280px; overflow: auto; align-content: start; }
 .xp-col { border: 1px solid var(--border); border-top: 3px solid var(--cc); border-radius: 6px; padding: 6px 8px; min-width: 0; background: var(--card-bg); }
 .xp-l { display: flex; gap: 6px; align-items: center; font-weight: 600; min-width: 0; }
 .xp-fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3091,21 +3088,17 @@ html.light-theme .nway-xp { --xp-l: 40%; }
 .xp-v.self { background: none; cursor: default; color: var(--dim); }
 .xp-v:hover:not(.self) { outline: 2px solid var(--accent); }
 .xp-cap { font-size: 0.68rem; color: var(--dim); margin-top: 4px; max-width: 240px; }
-.xp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 4px 12px; border-bottom: 1px solid var(--border); }
-.xp-tabs { display: flex; gap: 2px; }
-.xp-tab { background: none; border: 0; padding: 7px 12px; font: inherit; font-weight: 500; color: var(--dim); border-bottom: 2px solid transparent; cursor: pointer; }
-.xp-tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
-.xp-tab:disabled { opacity: 0.45; cursor: not-allowed; }
+.xp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 14px; }
 .xp-sp { flex: 1; }
 .xp-chk { display: flex; gap: 6px; align-items: center; color: var(--dim); cursor: pointer; }
 .xp-btn { font: inherit; font-size: 0.78rem; background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
-.xp-body { padding: 12px; }
-.xp-hint, .xp-foot { font-size: 0.78rem; color: var(--dim); margin: 0 0 10px; max-width: 80ch; }
+.xp-body { padding: 4px 0 24px; }
+.xp-hint, .xp-foot { font-size: 0.82rem; color: var(--dim); margin: 0 0 14px; max-width: 90ch; }
 .xp-none { font-size: 0.78rem; color: var(--dim); padding: 6px 2px; }
 .xp-grp { margin-bottom: 16px; }
 .xp-grp h3 { display: flex; gap: 8px; align-items: baseline; margin: 0 0 6px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--dim); font-weight: 600; }
 .xp-grp h3 .n { font-weight: 400; letter-spacing: 0; text-transform: none; }
-.xp-fx { overflow: auto; max-height: 360px; border: 1px solid var(--border); border-radius: 6px; }
+.xp-fx { overflow: auto; max-height: 520px; border: 1px solid var(--border); border-radius: 6px; }
 .xp-fx table { border-collapse: collapse; width: 100%; }
 .xp-fx td, .xp-fx th { padding: 3px 10px; border-bottom: 1px solid var(--border); font-size: 0.8rem; }
 .xp-fx tr:last-child td { border-bottom: 0; }
@@ -3122,9 +3115,6 @@ html.light-theme .nway-xp { --xp-l: 40%; }
 .xp-cnt { font-size: 0.66rem; margin-left: 6px; padding: 0 5px; border-radius: 8px; background: var(--card-bg); color: var(--dim); }
 .xp-cbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 12px; }
 .xp-naming { font-size: 0.72rem; color: var(--dim); }
-.xp-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-.xp-seg button { background: var(--card-bg); color: var(--dim); border: 0; padding: 4px 12px; font: inherit; font-size: 0.78rem; cursor: pointer; }
-.xp-seg button[aria-pressed="true"] { background: var(--accent); color: var(--bg); }
 .xp-rib { overflow: auto; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; }
 .xp-rib table { border-collapse: collapse; width: 100%; }
 .xp-rib th, .xp-rib td { padding: 4px 6px; border-bottom: 1px solid var(--border); text-align: center; font: 0.74rem 'Consolas', monospace; }

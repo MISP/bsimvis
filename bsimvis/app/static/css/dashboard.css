@@ -3050,3 +3050,9 @@ body.has-entity-tabs .header-top > div:has(> #view-title) { display: none !impor
 .global-menu-list a:hover, .global-menu-list a.active { background: var(--hover); color: var(--accent); }
 .global-menu-list a:hover i, .global-menu-list a.active i { color: var(--accent); }
 .global-menu-list kbd { margin-left: auto; font-size: 0.7rem; color: var(--subtle); }
+
+/* Search box in the filter-card row */
+#grid-header .has-search-slot { flex-wrap: nowrap !important; align-items: center; }
+#grid-header .has-search-slot > .home-card { flex: 0 1 auto; }
+#grid-header .has-search-slot > #search-area { flex: 1 1 280px !important; min-width: 260px; max-width: none; margin-left: 0 !important; }
+.header:not(:has(#search-area)) { display: none; }

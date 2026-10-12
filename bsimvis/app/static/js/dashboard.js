@@ -623,7 +623,24 @@ function addNotIgnoreFilters() {
     if (added > 0) triggerTagSearch();
 }
 
+// The search box joins the filter-card row when the view has one, so it does
+// not cost a line of its own. refreshData parks it back in the header first,
+// because the card row is rebuilt with innerHTML.
+function placeSearchArea(parkOnly) {
+    const sa = document.getElementById('search-area');
+    if (!sa) return;
+    const home = document.querySelector('.header-top');
+    if (home && sa.parentElement !== home) home.appendChild(sa);
+    if (parkOnly) return;
+    const row = document.querySelector('#grid-header .home-card')?.parentElement;
+    if (row) {
+        row.classList.add('has-search-slot');
+        row.appendChild(sa);
+    }
+}
+
 async function refreshData(appendArg = false, force = false, skipHeader = false) {
+    placeSearchArea(true);
     const myGen = ++_refreshGeneration;
     if (window.updateJobStatusIcon) window.updateJobStatusIcon();
     const append = (appendArg === true);
@@ -970,7 +987,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         const gridHeader = document.getElementById('grid-header');
         if (gridHeader) gridHeader.innerHTML = '';
     }
-
+    placeSearchArea();
 
     if (viewKey === 'clusters' || viewKey === 'bin-clusters') {
         const viewMode = params.get('view') || 'table';

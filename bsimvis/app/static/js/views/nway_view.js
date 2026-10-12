@@ -7,6 +7,7 @@
  */
 window.NwayView = {
     _panel: null,
+    _functionPanel: null,
     _set: { md5s: [], batch: '', collection: '', pool: '', cluster_uuid: '', axis: '' },
     _state: {},
     _collections: null,
@@ -14,12 +15,14 @@ window.NwayView = {
     destroy() {
         if (this._panel) this._panel.destroy();
         this._panel = null;
+        if (this._functionPanel) this._functionPanel.destroy();
+        this._functionPanel = null;
     },
 
     async init(params, containerId) {
         this._container = document.getElementById(containerId);
         if (!this._container) return;
-        if (window.location.pathname.endsWith('/nway/graph')) return this._initGraph();
+        if (window.location.pathname.endsWith('/nway/graph')) return this._initFunction();
         if (window.location.pathname.endsWith('/nway/function')) return this._initFunction();
         const q = new URLSearchParams(window.location.search);
         this._set = {
@@ -38,77 +41,137 @@ window.NwayView = {
         this._render();
     },
 
-    // /diff/nway/function?<source>&<controls>&fx_*: one function family on its own page.
-    // View state (tab, blocks / full function, picked function, differences-only) is
-    // written back with replaceState, so the link is shareable and Back leaves the page.
+    // Graph and comparison tabs share the focused family and URL state.
     _initFunction() {
         const q = new URLSearchParams(window.location.search);
         const CTL = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule'];
-        const source = {}, doc = {}, fx = {};
+        const source = {}, doc = {}, fx = {}, cg = {};
         for (const [k, v] of q) {
             if (k.startsWith('fx_')) fx[k.slice(3)] = v;
+            else if (k.startsWith('cg_')) cg[k.slice(3)] = v;
             else if (CTL.includes(k)) doc[k] = v;
             else source[k] = v;
         }
-        this.destroy();
-        const fids = (fx.fids || '').split(',').filter(Boolean);
-        if (fids.length < 2) {
-            this._container.innerHTML = '<div class="nway-state">This link has no functions to compare.</div>';
-            return;
-        }
-        this._container.innerHTML = '<div class="nway-view nway-function-view"><div id="nway-fn-host"></div></div>';
-        const state = { tab: fx.tab || 'facets', cv: fx.cv || 'blocks', only: fx.only !== '0', single: fx.single === '1' };
-        if (fx.fn !== undefined && fx.fn !== '') state.fn = Number(fx.fn);
-        this._panel = new NwayFunction(document.getElementById('nway-fn-host'), {
-            source, doc, fids, name: fx.name, state,
-            onState: st => {
-                const next = new URLSearchParams(window.location.search);
-                next.set('fx_tab', st.tab);
-                next.set('fx_cv', st.cv);
-                next.set('fx_only', st.only ? '1' : '0');
-                if (st.single) next.set('fx_single', '1'); else next.delete('fx_single');
-                if (st.fn !== null && st.fn !== undefined) next.set('fx_fn', st.fn);
-                history.replaceState(null, '', `${window.location.pathname}?${next.toString()}`);
-            },
-        });
-        this._panel.load();
-    },
-
-    // /diff/nway/graph?<source>&<controls>&cg_*: a locked call graph. Every change
-    // pushes a history entry; Back/Forward re-runs init, which re-reads the URL.
-    _initGraph() {
-        const q = new URLSearchParams(window.location.search);
-        const CTL = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule'];
-        const source = {}, state = {}, cg = {};
-        for (const [k, v] of q) {
-            if (k.startsWith('cg_')) cg[k.slice(3)] = v;
-            else if (CTL.includes(k)) state[k] = v;
-            else source[k] = v;
-        }
         let cells = {};
-        try { cells = JSON.parse(cg.cells || '{}'); } catch (e) { /* bad link: the empty graph below says so */ }
+        try { cells = JSON.parse(cg.cells || '{}'); } catch (e) { /* fall back to function ids */ }
         try { cg.pieces = cg.pieces ? JSON.parse(cg.pieces) : undefined; } catch (e) { cg.pieces = undefined; }
-        this.destroy();
-        this._container.innerHTML = '<div id="nway-graph-host" class="nway-cgp" style="height: calc(100vh - 130px);"></div>';
         if (!Object.keys(cells).length) {
+            for (const fid of (fx.fids || '').split(',').filter(Boolean)) {
+                const i = fid.indexOf(':func:');
+                if (i < 0) continue;
+                const md5 = fid.slice(i + 6).split(':')[0];
+                cells[`${fid.slice(0, i)}:${md5}`] = fid;
+            }
+        }
+        this.destroy();
+        this._familyFids = Object.values(cells).filter(v => typeof v === 'string');
+        if (!this._familyFids.length) {
             this._container.innerHTML = '<div class="nway-state">This link has no function to graph.</div>';
             return;
         }
-        let cur = window.location.pathname + window.location.search;
+        this._familyName = cg.name || fx.name || '';
+        this._familySource = source;
+        this._familyDoc = doc;
+        this._familyState = { tab: fx.tab || 'graph', cv: fx.cv || 'blocks', only: fx.only === '1', single: fx.single === '1' };
+        if (!['graph', 'facets', 'code', 'pair'].includes(this._familyState.tab)) this._familyState.tab = 'graph';
+        if (fx.fn !== undefined && fx.fn !== '') this._familyState.fn = Number(fx.fn);
+        this._container.innerHTML = `<div class="nway-view nway-function-view">
+            <div class="nway-head"><h2 id="nway-family-name"></h2></div>
+            <div class="xp-bar"><div id="nway-family-tabs" class="bsim-tabbar" role="tablist" style="margin:0">
+                ${[['graph', 'Graph'], ['facets', 'Facets'], ['code', 'Code blocks'], ['pair', 'Pair diff']].map(([k, label]) => `<button class="bsim-tab" role="tab" data-family-tab="${k}">${label}</button>`).join('')}
+            </div></div>
+            <div id="nway-graph-host" class="nway-cgp" style="height:calc(100vh - 240px);min-height:400px;"></div>
+            <div id="nway-fn-host" hidden></div>
+        </div>`;
+        this._container.querySelector('#nway-family-tabs').onclick = e => {
+            const t = e.target.closest('[data-family-tab]');
+            if (!t || t.disabled) return;
+            this._familyState.tab = t.dataset.familyTab;
+            this._writeFamilyState();
+            this._showFamilyTab();
+        };
+        let graphReady = false;
         this._panel = new NwayPanel(document.getElementById('nway-graph-host'), {
-            source, state,
-            cg: { ...cg, cells },
+            source, state: doc, cg: { ...cg, name: this._familyName, cells },
             onCg: url => {
-                if (url === cur) return;
-                cur = url;
-                history.pushState(null, '', url);
-                if (window.Breadcrumbs && window.getRoutingState) {
-                    const r = window.getRoutingState();
-                    window.Breadcrumbs.render(window.Breadcrumbs.generate({ viewKey: r.viewKey, collection: r.collection, pool: r.pool, params: r.params }, null));
+                const graph = new URLSearchParams(url.split('?')[1]);
+                const fids = Object.values(JSON.parse(graph.get('cg_cells'))).filter(v => typeof v === 'string');
+                if (fids.join(',') !== this._familyFids.join(',')) {
+                    this._familyFids = fids;
+                    this._familyState.fn = null;
+                    if (this._functionPanel) this._functionPanel.destroy();
+                    this._functionPanel = null;
+                    document.getElementById('nway-fn-host').innerHTML = '';
                 }
+                this._familyName = graph.get('cg_name') || '';
+                const next = new URLSearchParams(window.location.search);
+                for (const k of [...next.keys()]) if (k.startsWith('cg_')) next.delete(k);
+                for (const [k, v] of graph) if (k.startsWith('cg_')) next.set(k, v);
+                this._writeFamilyState(next, graphReady);
+                graphReady = true;
+                this._syncFamilyTabs();
             },
         });
+        this._showFamilyTab();
         this._panel.load();
+    },
+
+    _writeFamilyState(next = new URLSearchParams(window.location.search), push = false) {
+        const st = this._familyState;
+        next.set('fx_fids', this._familyFids.join(','));
+        next.set('fx_name', this._familyName);
+        next.set('fx_tab', st.tab);
+        next.set('fx_cv', st.cv);
+        next.set('fx_only', st.only ? '1' : '0');
+        if (st.single) next.set('fx_single', '1'); else next.delete('fx_single');
+        if (st.fn !== null && st.fn !== undefined) next.set('fx_fn', st.fn); else next.delete('fx_fn');
+        const url = `/diff/nway/function?${next.toString()}`;
+        if (url === window.location.pathname + window.location.search) return;
+        history[push ? 'pushState' : 'replaceState'](null, '', url);
+        if (window.Breadcrumbs && window.getRoutingState) {
+            const r = window.getRoutingState();
+            window.Breadcrumbs.render(window.Breadcrumbs.generate({ viewKey: r.viewKey, collection: r.collection, pool: r.pool, params: r.params }, null));
+        }
+    },
+
+    _syncFamilyTabs() {
+        document.getElementById('nway-family-name').textContent = this._familyName || 'Function family';
+        const data = this._functionPanel && this._functionPanel.data;
+        this._container.querySelectorAll('[data-family-tab]').forEach(t => {
+            const tab = t.dataset.familyTab;
+            t.classList.toggle('active', tab === this._familyState.tab);
+            t.setAttribute('aria-selected', String(tab === this._familyState.tab));
+            t.disabled = tab !== 'graph' && (this._familyFids.length < 2 || (tab === 'code' && data && !data.consensus));
+            t.title = this._familyFids.length < 2 && tab !== 'graph' ? 'Comparison needs functions in at least two files' : tab === 'code' && data && !data.consensus ? `Code blocks need at most ${data.limits.code} functions` : '';
+        });
+    },
+
+    _showFamilyTab() {
+        const graph = this._familyState.tab === 'graph';
+        const host = document.getElementById('nway-fn-host');
+        document.getElementById('nway-graph-host').hidden = !graph;
+        host.hidden = graph;
+        if (graph) {
+            if (this._panel && this._panel._cg) this._panel._cgDraw();
+        } else if (this._familyFids.length < 2) {
+            host.innerHTML = '<div class="nway-state">Comparison needs functions in at least two files. Use Graph to explore this function.</div>';
+        } else if (!this._functionPanel) {
+            this._functionPanel = new NwayFunction(host, {
+                source: this._familySource, doc: this._familyDoc, fids: this._familyFids,
+                name: this._familyName, state: this._familyState, embedded: true,
+                onState: st => { this._familyState = st; this._writeFamilyState(); this._syncFamilyTabs(); },
+                onLoad: () => {
+                    if (this._familyState.tab !== 'graph') this._familyState.tab = this._functionPanel.s.tab;
+                    this._writeFamilyState();
+                    this._syncFamilyTabs();
+                },
+            });
+            this._functionPanel.load();
+        } else {
+            this._functionPanel.s.tab = this._familyState.tab;
+            if (this._functionPanel.data) this._functionPanel.render();
+        }
+        this._syncFamilyTabs();
     },
 
     _source() {

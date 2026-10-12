@@ -2884,6 +2884,7 @@ a.home-card:hover,
 /* N-way call-graph (side panel + standalone page): list and graph views of a row's callers / callees. */
 .nway-callbtns { margin-top: 4px; }
 .nway-cgp { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; background: var(--card-bg); }
+.nway-cgp[hidden] { display: none; }
 .nway-cg-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .nway-cg-crumbs { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; font-size: 0.78rem; }
 .nway-crumb { background: none; border: none; padding: 0 2px; color: var(--accent); cursor: pointer; font: inherit; }

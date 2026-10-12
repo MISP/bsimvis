@@ -722,7 +722,7 @@
         // source and doc controls, the row's functions, and this page as the way back.
         _fnUrl(row) {
             const fids = Object.values(row.files || row.cells || {}).filter(v => typeof v === 'string');
-            if (fids.length < 2) return '';
+            if (!fids.length) return '';
             const qs = this._docQs();
             qs.set('fx_fids', fids.join(','));
             qs.set('fx_name', row.name);
@@ -1460,7 +1460,7 @@
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             return `<tr>
-                <td class="nway-open" data-cg-open="${Number(ri)}" title="Click for the call graph of this row" style="min-width:260px; max-width:420px;">${this._fnUrl(row) ? `<a class="nway-fnlink" href="${escapeAttr(this._fnUrl(row))}" data-xp title="Compare this row's functions: strings, APIs, callees, constants and code">Compare</a>` : ''}${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}</span></td>
+                <td class="nway-open" data-fn-open="${Number(ri)}" title="Compare this row's functions: strings, APIs, callees, constants and code" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}</span></td>
                 <td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
@@ -1543,16 +1543,15 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-cg-open],[data-xp]');
+            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open]');
             if (!t) return;
-            if (t.dataset.xp !== undefined) {
+            if (t.dataset.fnOpen !== undefined) {
+                if (e.target.closest('button, a, input, .bsim-tag-pill, .entity-actions')) return;
+                const url = this._fnUrl(this.data.items[Number(t.dataset.fnOpen)]);
+                if (!url) return;
                 e.preventDefault();
                 this._scrollSave();
-                return window.Nav.openPath(t.getAttribute('href'), e);
-            }
-            if (t.dataset.cgOpen !== undefined) {
-                if (e.target.closest('button, a, input, .bsim-tag-pill, .entity-actions')) return;
-                return this._cgOpen(this.data.items[Number(t.dataset.cgOpen)]);
+                return window.Nav.openPath(url, e);
             }
             if (t.dataset.openCluster) {
                 e.preventDefault();

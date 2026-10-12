@@ -29,7 +29,9 @@
             this.fids = o.fids;
             this.name = o.name || '';
             this.onState = o.onState || null;
-            this.s = { tab: 'facets', only: true, pair: null, cv: 'blocks', open: null, gi: 0, fn: null, single: false, ...(o.state || {}) };
+            this.embedded = !!o.embedded;
+            this.onLoad = o.onLoad || null;
+            this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', open: null, gi: 0, fn: null, single: false, ...(o.state || {}) };
             this.titles = {};
             this.data = null;
             this._dead = false;
@@ -67,6 +69,7 @@
                 return;
             }
             this.render();
+            if (this.onLoad) this.onLoad();
         }
 
         render() {
@@ -76,15 +79,15 @@
             const tab = (k, label, off, why) => `<button class="bsim-tab${s.tab === k ? ' active' : ''}" role="tab" data-xtab="${k}"${off ? ` disabled title="${escapeAttr(why)}"` : ''}>${label}</button>`;
             const nf = d.functions.length;
             this.el.innerHTML = `
-                <div class="nway-head"><h2><i class="fa-solid fa-table-columns"></i> ${escapeHtml(this.name || 'Function family')} <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></h2>
-                    <p>${nf} functions, one per file. Strings, calls, constants and code compared across them.</p></div>
+                ${this.embedded ? '' : `<div class="nway-head"><h2><i class="fa-solid fa-table-columns"></i> ${escapeHtml(this.name || 'Function family')} <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></h2>
+                    <p>${nf} functions, one per file. Strings, calls, constants and code compared across them.</p></div>`}
                 <div class="nway-card xp-head"><div class="xp-cols">${d.functions.map((f, j) => this._card(f, j)).join('')}</div>
                     <div><div class="xp-mx" style="--n:${nf}">${this._matrix()}</div>
                     <div class="xp-cap">Function similarity from the matcher; a dash means no match was found. Click a cell to open that pair in the 2-way diff.</div></div></div>
                 <div class="xp-bar"><div class="bsim-tabbar" role="tablist" style="margin:0">
-                    ${tab('facets', 'Facets')}
-                    ${tab('code', 'Code blocks', !code, `Code blocks need at most ${d.limits.code} functions (this row has ${nf})`)}
-                    ${tab('pair', 'Pair diff')}</div><span class="xp-sp"></span>
+                    ${this.embedded ? '' : tab('facets', 'Facets')}
+                    ${this.embedded ? '' : tab('code', 'Code blocks', !code, `Code blocks need at most ${d.limits.code} functions (this row has ${nf})`)}
+                    ${this.embedded ? '' : tab('pair', 'Pair diff')}</div><span class="xp-sp"></span>
                     ${s.tab === 'pair' ? '' : `<label class="xp-chk"><input type="checkbox" data-xonly ${s.only ? 'checked' : ''}> Differences only</label>`}</div>
                 <div class="xp-body">${this._body()}</div>`;
             if (s.tab === 'pair') this._loadPair();

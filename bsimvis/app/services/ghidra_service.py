@@ -533,6 +533,72 @@ class GhidraService:
 
         return list(fid_tags)
 
+    def extract_strings(self, program, options, valid_entries):
+        """Defined strings in the program, as `string_service` records.
+
+        Reads what Ghidra already defined (ASCII/UTF-8/UTF-16/32), longer than
+        `strings.min_length`, up to `strings.max_per_file`. Referencing
+        functions are resolved like the YARA mapper does: refs to the data
+        item's start, limited to functions that will exist (`valid_entries`).
+        `yara_string_tags` / `yara_string_rules` (keyed by string address) are
+        set by the analyze job when a YARA rule hit that string.
+        """
+        from ghidra.program.model.data import StringDataInstance
+        from bsimvis.app.services.config_service import config_service
+        from bsimvis.app.services.string_service import make_record
+
+        min_len = int(config_service.get("strings.min_length", 4))
+        cap = int(config_service.get("strings.max_per_file", 10000))
+        listing = program.getListing()
+        memory = program.getMemory()
+        refs = program.getReferenceManager()
+        funcs = program.getFunctionManager()
+        y_tags = options.get("yara_string_tags") or {}
+        y_rules = options.get("yara_string_rules") or {}
+
+        out = []
+        for data in listing.getDefinedData(True):
+            if len(out) >= cap:
+                logging.warning(f"[!] String cap {cap} reached; the rest are dropped")
+                break
+            try:
+                if not data.hasStringValue():
+                    continue
+                inst = StringDataInstance.getStringDataInstance(data)
+                value = inst.getStringValue()
+                if value is None:
+                    continue
+                value = str(value)
+                if len(value) < min_len or not value.strip():
+                    continue
+                addr = data.getMinAddress()
+                addr_str = str(addr).split(":")[-1]
+                encoding = str(inst.getCharsetName()).lower().replace("us-", "")
+                block = memory.getBlock(addr)
+                entries = set()
+                for ref in refs.getReferencesTo(addr):
+                    func = funcs.getFunctionContaining(ref.getFromAddress())
+                    if func:
+                        entry = str(func.getEntryPoint()).split(":")[-1]
+                        if entry in valid_entries:
+                            entries.add(entry)
+                out.append(
+                    make_record(
+                        value,
+                        addr_str,
+                        encoding,
+                        block.getName() if block else "",
+                        tags=tag_taxonomy.filter_tags(
+                            y_tags.get(addr_str, []), "analysis"
+                        ),
+                        rules=y_rules.get(addr_str, []),
+                        funcs=entries,
+                    )
+                )
+            except Exception as e:
+                logging.debug(f"string at {data.getMinAddress()} skipped: {e}")
+        return out
+
     def stream_bsim_data(
         self, program, options=None, chunk_size=100, job_service=None, job_id=None
     ):
@@ -582,6 +648,26 @@ class GhidraService:
             "file_format": file_format,
         }
 
+        # Count total eligible functions first
+        all_funcs = list(program.getFunctionManager().getFunctions(True))
+        eligible_funcs = [
+            f
+            for f in all_funcs
+            if not (f.isExternal() or f.isThunk())
+            and f.getBody().getNumAddresses() >= min_func_len
+        ]
+        total_funcs = len(eligible_funcs)
+
+        try:
+            # Popped by index_metadata / the scan cache; never stored on the file doc.
+            file_metadata["strings"] = self.extract_strings(
+                program,
+                options,
+                {str(f.getEntryPoint()).split(":")[-1] for f in eligible_funcs},
+            )
+        except Exception as e:
+            logging.warning(f"[!] String extraction failed: {e}")
+
         # Yield file_metadata first as the initial item
         yield file_metadata
 
@@ -600,16 +686,6 @@ class GhidraService:
             return
 
         decompiler_id = f"{decomp_interface.getMajorVersion()}.{decomp_interface.getMinorVersion()}:{decomp_interface.getCompilerSpec().getLanguage()}:{hex(decomp_interface.getSignatureSettings())}"
-
-        # Count total eligible functions first
-        all_funcs = list(program.getFunctionManager().getFunctions(True))
-        eligible_funcs = [
-            f
-            for f in all_funcs
-            if not (f.isExternal() or f.isThunk())
-            and f.getBody().getNumAddresses() >= min_func_len
-        ]
-        total_funcs = len(eligible_funcs)
 
         if job_service and job_id:
             job_service.add_log(

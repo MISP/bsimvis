@@ -107,6 +107,12 @@
         settings = 0x49
         weights = "lshweights_cpool.xml"
 
+[strings]
+    # Ghidra-defined strings stored per file (new analyses only).
+    min_length = 4
+    # Strings kept per file, in address order; the rest are dropped.
+    max_per_file = 10000
+
 [similarity]
     top_k = 1000
     min_score = 0.9

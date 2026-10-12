@@ -196,6 +196,24 @@ class GhidraAnalyzer:
                     out.setdefault(key(f), set()).update(values)
         return out
 
+    def _strings_by_offset(self, hits, program):
+        """`{file offset: set}` -> `{string address: union}` for hits that land
+        inside a defined data item. Keyed like `extract_strings` records."""
+        memory = program.getMemory()
+        listing = program.getListing()
+        out = {}
+        for file_offset, values in hits.items():
+            try:
+                addrs = memory.locateAddressesForFileOffset(file_offset)
+            except Exception:
+                continue
+            for addr in addrs:
+                data = listing.getDataContaining(addr)
+                if data:
+                    key = str(data.getMinAddress()).split(":")[-1]
+                    out.setdefault(key, set()).update(values)
+        return out
+
     def _funcs_referencing(self, addr, program):
         """Functions with a reference to the data item containing `addr`.
 
@@ -291,6 +309,9 @@ class GhidraAnalyzer:
             job_id=job_id,
         )
         file_meta = next(generator)
+        # Same hand-off as an uploaded chunk: index_metadata below writes the
+        # string table; keep it out of the per-function file_meta copies.
+        strings = file_meta.pop("strings", None)
 
         # Merge CLI-provided metadata (upload --metadata) into the file metadata so
         # it gets stored just like the `metadata propagate` path. The raw-upload
@@ -347,7 +368,9 @@ class GhidraAnalyzer:
             None,
             self.job_service,
             job_id,
-            file_meta=file_meta,
+            file_meta=(
+                {**file_meta, "strings": strings} if strings is not None else file_meta
+            ),
             num_functions=num_functions,
             total_features=total_features,
         )
@@ -733,6 +756,7 @@ class GhidraAnalyzer:
                                 from bsimvis.app.services.yara_service import scan_file
                                 from bsimvis.app.services.tag_taxonomy import (
                                     yara_file_tags,
+                                    yara_rule_hits,
                                 )
                                 from bsimvis.app.services import tag_provenance
 
@@ -786,6 +810,20 @@ class GhidraAnalyzer:
                                     tag_provenance.record_hits_bulk(
                                         collection, hits, self.r_data
                                     )
+                                # Which extracted string each rule hit, so
+                                # the strings view can badge it.
+                                payload["yara_string_tags"] = {
+                                    k: sorted(v)
+                                    for k, v in self._strings_by_offset(
+                                        yara_rule_hits(matches, extra_tags), program
+                                    ).items()
+                                }
+                                payload["yara_string_rules"] = {
+                                    k: sorted(v)
+                                    for k, v in self._strings_by_offset(
+                                        tag_provenance.match_offsets(matches), program
+                                    ).items()
+                                }
                                 self.job_service.add_log(
                                     job_id,
                                     f"yara matched {len(file_tags)} rules, "

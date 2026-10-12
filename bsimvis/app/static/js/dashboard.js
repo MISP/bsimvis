@@ -4487,7 +4487,6 @@ window.applySearch = applySearch;
 window.switchSimView = switchSimView;
 window.debouncedSearch = debouncedSearch;
 window.handleFilterKey = handleFilterKey;
-window.toggleSidebar = toggleSidebar;
 window.toggleHeader = toggleHeader;
 window.toggleFilters = toggleFilters;
 window.seeSimilarFromCode = seeSimilarFromCode;

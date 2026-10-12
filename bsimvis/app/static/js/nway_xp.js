@@ -126,14 +126,19 @@
             return `<tr><th></th>${this.data.functions.map((f, j) => `<th ${cc(j)}>${escapeHtml(f.letter)}</th>`).join('')}</tr>`;
         }
 
-        // The one place a string item can link to a string pivot view: return a URL (or null).
-        static stringLink(item) { return null; }
+        // The one place a string item links to the string pivot (functions sharing it):
+        // opens the Strings dialog when that UI is loaded, else the item stays plain text.
+        static stringPivot(item, collection, pool) {
+            if (!window.StringsUI || !window.StringsUI.pivot) return false;
+            window.StringsUI.pivot(collection, pool || '', item.key, item.label);
+            return true;
+        }
 
         _label(facet, item) {
             const text = escapeHtml(item.label);
             if (facet.key !== 'strings') return text;
-            const url = NwayExpand.stringLink(item);
-            return url ? `<a data-xnav="${escapeAttr(url)}" href="${escapeAttr(url)}">${text}</a>` : text;
+            return window.StringsUI && window.StringsUI.pivot
+                ? `<a href="#" data-xstr="${escapeAttr(item.key)}" title="Functions sharing this string">${text}</a>` : text;
         }
 
         _facet(f) {
@@ -399,7 +404,7 @@
         }
 
         _click(e) {
-            const t = e.target.closest('[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xpair],[data-xnav],[data-xclose],[data-xopen]');
+            const t = e.target.closest('[data-xstr],[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xpair],[data-xnav],[data-xclose],[data-xopen]');
             if (!t) return;
             const d = t.dataset;
             if (d.xclose !== undefined) {
@@ -407,6 +412,12 @@
                 this.panel._xpClose(this.tr);
                 if (btn) btn.focus();
                 return;
+            }
+            if (d.xstr) {
+                e.preventDefault();
+                const f = this.data.facets.find(x => x.key === 'strings');
+                const item = f && f.items.find(i => i.key === d.xstr);
+                return item && NwayExpand.stringPivot(item, this.fids[0].split(':func:')[0], this.panel.source.pool);
             }
             if (d.xtab) { this.s.tab = d.xtab; return this.render(); }
             if (d.xpair) { const [a, b] = d.xpair.split(',').map(Number); return this._openDiff(a, b, e); }

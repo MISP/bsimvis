@@ -3068,8 +3068,10 @@ body.has-entity-tabs .header-top > div:has(> #view-title) { display: none !impor
 .nway-fnlink { float: left; margin: 1px 8px 0 0; padding: 0 8px; border: 1px solid var(--border); border-radius: 5px; color: var(--accent); font-size: 0.74rem; text-decoration: none; }
 .nway-fnlink:hover { background: var(--hover); }
 .nway-fnlink:focus-visible, .xp-chip:focus-visible, .xp-bh:focus-visible, .xp-v:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.nway-fn { --xp-l: 66%; --xp-warn-bg: color-mix(in srgb, var(--token-warning) 14%, var(--card-bg)); }
-html.light-theme .nway-fn { --xp-l: 40%; }
+.nway-function-view { min-height: 0; min-width: 0; --xp-l: 66%; --xp-warn-bg: color-mix(in srgb, var(--token-warning) 14%, var(--card-bg)); }
+html.light-theme .nway-function-view { --xp-l: 40%; }
+#nway-fn-host { min-width: 0; width: 100%; }
+.nway-function-view .xp-bar { position: sticky; top: 0; z-index: 3; padding: 8px 0; background: var(--bg); border-bottom: 1px solid var(--border); }
 .xp-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; padding: 16px; margin-bottom: 16px; }
 @media (max-width: 860px) { .xp-head { grid-template-columns: minmax(0, 1fr); } }
 .xp-cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; max-height: 280px; overflow: auto; align-content: start; }
@@ -3115,7 +3117,7 @@ html.light-theme .nway-fn { --xp-l: 40%; }
 .xp-cnt { font-size: 0.66rem; margin-left: 6px; padding: 0 5px; border-radius: 8px; background: var(--card-bg); color: var(--dim); }
 .xp-cbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 12px; }
 .xp-naming { font-size: 0.72rem; color: var(--dim); }
-.xp-rib { overflow: auto; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; }
+.xp-rib { overflow: auto; max-height: min(420px, 60vh); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; }
 .xp-rib table { border-collapse: collapse; width: 100%; }
 .xp-rib th, .xp-rib td { padding: 4px 6px; border-bottom: 1px solid var(--border); text-align: center; font: 0.74rem 'Consolas', monospace; }
 .xp-rib th { background: var(--card-bg); color: var(--dim); font-weight: 500; vertical-align: bottom; position: sticky; top: 0; }
@@ -3151,6 +3153,7 @@ button.xp-cell:hover { outline: 2px solid var(--accent); }
 .xp-pane { border: 1px solid var(--border); border-radius: 6px; min-width: 0; overflow: hidden; }
 .xp-ph { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 5px 10px; background: var(--bg); border-bottom: 1px solid var(--border); font-size: 0.74rem; }
 .xp-pane pre, .xp-fcode { margin: 0; padding: 8px 10px; font: 0.76rem/1.55 'Consolas', monospace; overflow-x: auto; white-space: pre; }
+.xp-pane pre { max-height: min(520px, 60vh); overflow: auto; }
 .xp-pnote { padding: 6px 10px; border-top: 1px solid var(--border); font-size: 0.76rem; color: var(--dim); }
 pre b.chg { background: var(--xp-warn-bg); color: var(--token-warning); font-weight: 500; border-radius: 2px; padding: 0 1px; }
 pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--card-bg)); color: var(--token-instruction); font-weight: 500; text-decoration: line-through; border-radius: 2px; padding: 0 1px; }

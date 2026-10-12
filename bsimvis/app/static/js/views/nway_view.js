@@ -56,7 +56,7 @@ window.NwayView = {
             this._container.innerHTML = '<div class="nway-state">This link has no functions to compare.</div>';
             return;
         }
-        this._container.innerHTML = '<div class="nway-view nway-fn"><div id="nway-fn-host"></div></div>';
+        this._container.innerHTML = '<div class="nway-view nway-function-view"><div id="nway-fn-host"></div></div>';
         const state = { tab: fx.tab || 'facets', cv: fx.cv || 'blocks', only: fx.only !== '0', single: fx.single === '1' };
         if (fx.fn !== undefined && fx.fn !== '') state.fn = Number(fx.fn);
         this._panel = new NwayFunction(document.getElementById('nway-fn-host'), {

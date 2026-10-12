@@ -141,7 +141,7 @@
             const text = escapeHtml(item.label);
             if (facet.key !== 'strings') return text;
             const coll = parts(this.fids[0]).coll;
-            const path = `/collections/${encodeURIComponent(coll)}/functions?strings=${encodeURIComponent(JSON.stringify(item.label))}`;
+            const path = `/collections/${encodeURIComponent(coll)}/functions?strings=${encodeURIComponent(quoteFilterValue(item.label.slice(0, 128)))}`;
             return `<a href="${escapeAttr(path)}" data-xnav="${escapeAttr(path)}" data-title="Functions using this string" title="Functions using this string">${text}</a>`;
         }
 

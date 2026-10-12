@@ -97,6 +97,7 @@ def search_files():
             ("note_owners", "note_owners"),
             # Every file extracted out of one upload, at any depth.
             ("root_md5", "root_md5"),
+            ("strings", "strings"),
         ]:
             val = request.args.get(arg)
             if val:
@@ -524,7 +525,7 @@ def query_files_advanced(r, collection, filters):
             from bsimvis.app.services.index_config import INDEX_CONFIG
 
             for f_name, targets in INDEX_CONFIG.get("file", {}).items():
-                if "file" in targets and f_name != "inferred_tags":
+                if "file" in targets and f_name not in ("inferred_tags", "strings"):
                     # Free-text box: a bare word stays a substring search.
                     q_matches.update(
                         get_field_matches(f_name, val, default_kind="substring")
@@ -565,6 +566,8 @@ def query_files_advanced(r, collection, filters):
             "root_md5",
         ]:
             candidates &= get_field_matches(field, val)
+        elif field == "strings":
+            candidates &= get_field_matches(field, val, default_kind="substring")
 
     # Apply Numeric Range Filters
     for field, val in fields.items():

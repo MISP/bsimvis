@@ -246,10 +246,19 @@ def _hex(s):
         return False
 
 
-def file_strings(
-    r,
-    collection,
-    md5,
+def file_strings(r, collection, md5, **opts):
+    """One file's string table, filtered, sorted and paged (see `page_strings`)."""
+    rows = []
+    for coll in _origins(r, collection):
+        table = r.hgetall(file_key(coll, md5))
+        if table:
+            rows = [x for x in (_loads(v) for v in table.values()) if x]
+            break
+    return page_strings(rows, **opts)
+
+
+def page_strings(
+    rows,
     q=None,
     encoding=None,
     section=None,
@@ -262,18 +271,11 @@ def file_strings(
     offset=0,
     limit=100,
 ):
-    """One file's string table, filtered, sorted and paged server-side.
+    """Filter, sort and page a list of string records server-side.
 
     `q` is a case-insensitive substring (`*` makes it a glob), `tag` matches an
     analyzer or user tag by substring, `yara` keeps only strings a rule hit,
     `referenced` keeps only strings some function references."""
-    rows = []
-    for coll in _origins(r, collection):
-        table = r.hgetall(file_key(coll, md5))
-        if table:
-            rows = [x for x in (_loads(v) for v in table.values()) if x]
-            break
-
     needle = (q or "").lower()
     tag = (tag or "").lower()
 

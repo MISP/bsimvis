@@ -199,6 +199,8 @@ class GhidraAnalyzer:
     def _strings_by_offset(self, hits, program):
         """`{file offset: set}` -> `{string address: union}` for hits that land
         inside a defined data item. Keyed like `extract_strings` records."""
+        from bsimvis.app.services.ghidra_service import string_addr_key
+
         memory = program.getMemory()
         listing = program.getListing()
         out = {}
@@ -210,7 +212,7 @@ class GhidraAnalyzer:
             for addr in addrs:
                 data = listing.getDataContaining(addr)
                 if data:
-                    key = str(data.getMinAddress()).split(":")[-1]
+                    key = string_addr_key(data.getMinAddress())
                     out.setdefault(key, set()).update(values)
         return out
 

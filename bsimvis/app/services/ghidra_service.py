@@ -85,6 +85,14 @@ def fid_tags_from_records(fid_query_service, records):
     ]
 
 
+def string_addr_key(addr):
+    """Key of a string record: the plain offset in the default space, the full
+    `SPACE:offset` elsewhere (e.g. unloaded ELF sections), so keys never collide."""
+    if addr.getAddressSpace().isMemorySpace() and addr.isLoadedMemoryAddress():
+        return str(addr).split(":")[-1]
+    return str(addr)
+
+
 class GhidraService:
     def __init__(self, config=None):
         if config is None:
@@ -572,7 +580,7 @@ class GhidraService:
                 if len(value) < min_len or not value.strip():
                     continue
                 addr = data.getMinAddress()
-                addr_str = str(addr).split(":")[-1]
+                addr_str = string_addr_key(addr)
                 encoding = str(inst.getCharsetName()).lower().replace("us-", "")
                 block = memory.getBlock(addr)
                 entries = set()

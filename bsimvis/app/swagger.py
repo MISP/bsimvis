@@ -59,6 +59,9 @@ ns_searches = Namespace("searches", description="Persisted fast-relevance search
 ns_scan = Namespace(
     "scan", description="Fast scan: compare a file without ingesting it"
 )
+ns_strings = Namespace(
+    "strings", description="Strings extracted by Ghidra: per file, per function, pivot"
+)
 
 api.add_namespace(ns_index)
 api.add_namespace(ns_jobs)
@@ -81,6 +84,7 @@ api.add_namespace(ns_llm)
 api.add_namespace(ns_pool)
 api.add_namespace(ns_searches)
 api.add_namespace(ns_scan)
+api.add_namespace(ns_strings)
 
 # --- Models & Examples ---
 
@@ -3632,6 +3636,28 @@ class ScanCommit(Resource):
         return commit_scan(scan_id)
 
 
+@ns_scan.route("/<string:scan_id>/strings")
+class ScanStrings(Resource):
+    @ns_scan.doc(
+        params={
+            "q": "Substring of the string value (`*` = glob)",
+            "encoding": "ascii | utf-8 | utf-16 | utf-32",
+            "section": "Memory block name, e.g. .rodata",
+            "tag": "Substring of an analyzer tag",
+            "yara": "true keeps only strings a YARA rule matched",
+            "sort_by": "addr | length | value | refs | encoding | section",
+            "sort_order": "asc or desc (default: asc)",
+            "offset": "Row offset (default: 0)",
+            "limit": "Rows per page, max 5000 (default: 100)",
+        }
+    )
+    def get(self, scan_id):
+        """The scanned file's strings (cached; nothing is written to Kvrocks)."""
+        from bsimvis.app.routes.scan import get_scan_strings
+
+        return get_scan_strings(scan_id)
+
+
 @ns_scan.route("/<string:scan_id>/diff")
 class ScanDiff(Resource):
     @ns_scan.doc(
@@ -3650,3 +3676,116 @@ class ScanDiff(Resource):
         from bsimvis.app.routes.scan import get_scan_diff
 
         return get_scan_diff(scan_id)
+
+
+# --- Strings ---
+
+_STRINGS_SCOPE = {
+    "collection": "Collection name",
+    "pool": "Pool id (instead of collection): reads every member collection",
+}
+
+
+@ns_strings.route("/file")
+class StringsFile(Resource):
+    @ns_strings.doc(
+        params={
+            **_STRINGS_SCOPE,
+            "md5": "File md5 (required)",
+            "q": "Substring of the string value (`*` = glob)",
+            "encoding": "ascii | utf-8 | utf-16 | utf-32",
+            "section": "Memory block name, e.g. .rodata",
+            "tag": "Substring of an analyzer or user tag",
+            "yara": "true keeps only strings a YARA rule matched",
+            "referenced": "true keeps only strings a function references",
+            "min_length": "Minimum string length",
+            "sort_by": "addr | length | value | refs | encoding | section",
+            "sort_order": "asc or desc (default: asc)",
+            "offset": "Row offset (default: 0)",
+            "limit": "Rows per page, max 5000 (default: 100)",
+        }
+    )
+    def get(self):
+        """A file's string table, filtered, sorted and paged server-side.
+
+        Each row: id, value, encoding, addr, section, length, tags (analyzer),
+        user_tags, rules (YARA rule ids, described in the response `rules`
+        table) and funcs (entry addresses of referencing functions)."""
+        from bsimvis.app.routes.strings import get_file_strings
+
+        return get_file_strings()
+
+
+@ns_strings.route("/function")
+class StringsFunction(Resource):
+    @ns_strings.doc(
+        params={
+            **_STRINGS_SCOPE,
+            "md5": "File md5 (required)",
+            "addr": "Function entry address (required)",
+        }
+    )
+    def get(self):
+        """Strings one function references."""
+        from bsimvis.app.routes.strings import get_function_strings
+
+        return get_function_strings()
+
+
+@ns_strings.route("/functions")
+class StringsFunctions(Resource):
+    @ns_strings.doc(
+        params={
+            **_STRINGS_SCOPE,
+            "value": "String value (or use id)",
+            "id": "String id from a strings row",
+            "offset": "Row offset (default: 0)",
+            "limit": "Rows per page, max 1000 (default: 100)",
+        }
+    )
+    def get(self):
+        """Pivot: functions (and files) sharing a string, across a collection
+        or pool. Full-text search over function strings is the function search
+        with `strings=<text>`."""
+        from bsimvis.app.routes.strings import get_string_functions
+
+        return get_string_functions()
+
+
+@ns_strings.route("/search")
+class StringsSearch(Resource):
+    @ns_strings.doc(
+        params={
+            **_STRINGS_SCOPE,
+            "q": "Value to find (substring, `*` = glob) (required)",
+            "offset": "Row offset (default: 0)",
+            "limit": "Rows per page, max 500 (default: 50)",
+        }
+    )
+    def get(self):
+        """Distinct string values matching q across all files, with file and
+        function counts."""
+        from bsimvis.app.routes.strings import search_strings
+
+        return search_strings()
+
+
+@ns_strings.route("/tag")
+class StringsTag(Resource):
+    @ns_strings.expect(
+        api.model(
+            "StringTag",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "md5": fields.String(required=True),
+                "addr": fields.String(required=True, example="00102028"),
+                "tag": fields.String(required=True, example="c2"),
+                "action": fields.String(enum=["add", "remove"], default="add"),
+            },
+        )
+    )
+    def post(self):
+        """Adds or removes an analyst tag on one string."""
+        from bsimvis.app.routes.strings import tag_string
+
+        return tag_string()

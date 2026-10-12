@@ -83,6 +83,7 @@
     class NwayPanel {
         constructor(container, opts = {}) {
             this.el = container;
+            this._applyHue();
             this.source = opts.source || {};
             this.state = { ...DEFAULTS, ...(opts.state || {}) };
             this.onState = opts.onState || null;
@@ -512,6 +513,7 @@
                 nb: null,
             };
             this._dw = host;
+            this._applyHue();
             host.onclick = e => this._onDrawerClick(e);
             host.onchange = e => {
                 const t = e.target.closest('[data-cg-depth]');
@@ -897,6 +899,14 @@
         // Each square is a file. Lit (colored by how many files) = the file has the function;
         // a dot inside = the focus function in that file calls it. Hover shows name and md5,
         // click opens the file details, right-click gives the usual file menu.
+        // Optional "color by file" mode (strips + column swatches); neutral ratio colors stay the default.
+        _applyHue() {
+            let on = false;
+            try { on = localStorage.getItem('nway.hue') === '1'; } catch (e) { /* storage blocked */ }
+            this._hueOn = on;
+            for (const el of [this.el, this._dw]) if (el) el.classList.toggle('nway-hue', on);
+        }
+
         _fileHue(i) {
             return Math.round((i * 137.508 + 215) % 360);
         }
@@ -1366,6 +1376,7 @@
             const suggestCtl = st.view === 'graph' ? `<span class="nway-lbl" title="Group cards on one side. Complementary: files that barely overlap and share a parent, probably one function split across files. Same files: cards present in exactly the same files, probably one change or fork. Lanes: one horizontal band per set of files.">Group</span><div class="view-toggle" style="margin:0">${[['off', 'Off'], ['comp', 'Complementary'], ['same', 'Same files'], ['lanes', 'Lanes']].map(([v, t]) => `<button class="view-btn${(st.suggest || 'off') === v ? ' active' : ''}" data-cg-suggest="${v}">${t}</button>`).join('')}</div>` : '';
             const coCtl = st.view === 'graph' ? `<button class="view-btn${st.co ? ' active' : ''}" data-cg-co title="Also show the other functions that call what the focus calls, under the focus (the ones sharing most callees), to find look-alikes and unmatched siblings. Callees called by more than 25 functions are skipped. Off by default: it can add a lot."><i class="fa-solid fa-share-nodes"></i> Also called by</button>` : '';
             const hintCtl = st.view === 'graph' ? `<button class="view-btn${st.hints ? ' active' : ''}" data-cg-hints title="Off by default. Per card, on hover: the other callers / callees it has beyond the focus (angled counts), and calls back to cards already shown in an earlier hop (dashed arrows)."><i class="fa-solid fa-diagram-project"></i> Hints</button>` : '';
+            const hueCtl = `<button class="view-btn${this._hueOn ? ' active' : ''}" data-cg-hue title="Color each file's slot and column header, to match slots to columns. Off by default: the slots then show how many files have the function."><i class="fa-solid fa-palette"></i> Color files</button>`;
             const selCtl = st.view === 'graph' ? `<button class="view-btn${st.selMode ? ' active' : ''}" data-cg-select title="Select cards: click to toggle, drag the background to box-select (Shift adds). Ctrl-click works without this mode."><i class="fa-solid fa-object-group"></i> Select</button>` : '';
             const toggle = ['list', 'graph'].map(v => `<button class="view-btn${st.view === v ? ' active' : ''}" data-cg-view="${v}">${v === 'list' ? 'List' : 'Graph'}</button>`).join('');
             const on = files.map(c => !!focus.cells[c.id]);
@@ -1374,7 +1385,7 @@
             if (err) body = `<div style="color:#f92672;">${escapeHtml(err)}</div>`;
             else if (!st.nb) body = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Reading call graph...</div>';
             else body = `<div class="dim nway-cg-legend"><i class="fa-solid fa-file-code"></i> files that have the function (color: how many) &middot; dot: the focus function there calls it &middot; <i class="fa-solid fa-link"></i> calls from the focus${st.view === 'graph' ? ' (edge width)' : ''}. Click to recenter.${st.co ? ' Dashed lines: other callers of the same callee.' : ''}${st.depth > 1 ? (st.view === 'graph' ? ' Further hops show in-scope rows only.' : ' The list shows the first hop; depth applies to the graph.') : ''}</div>` + (st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files));
-            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}${depthCtl}${suggestCtl}${coCtl}${hintCtl}${selCtl}<div class="view-toggle" style="margin:0">${toggle}</div>${this.cgInit ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
+            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}${depthCtl}${suggestCtl}${coCtl}${hintCtl}${hueCtl}${selCtl}<div class="view-toggle" style="margin:0">${toggle}</div>${this.cgInit ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
                 <div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells, name_from: focus.name_from }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>
                 <div class="nway-cg-selbar" hidden></div>
                 <div class="nway-cg-body${st.selMode ? ' selmode' : ''}">${body}</div>`;
@@ -1406,7 +1417,7 @@
                 if (!sel.delete(k)) sel.add(k);
                 return this._cgSelSync();
             }
-            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-suggest],[data-cg-co],[data-cg-hints],[data-cg-focusgrp],[data-cg-mergefocus],[data-cg-deeper]');
+            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-suggest],[data-cg-co],[data-cg-hints],[data-cg-hue],[data-cg-focusgrp],[data-cg-mergefocus],[data-cg-deeper]');
             if (!t || !this._cg) return;
             if (t.dataset.cgClose !== undefined) return window.closeCallsPanel();
             if (t.dataset.cgPop !== undefined) {
@@ -1417,6 +1428,11 @@
             if (t.dataset.cgView) { this._cg.view = t.dataset.cgView; return this._cgDraw(); }
             if (t.dataset.cgOutside) { this._cg.outside = t.dataset.cgOutside; return this._cgDraw(); }
             if (t.dataset.cgCo !== undefined) { this._cg.co = !this._cg.co; return this._cgShow(); }
+            if (t.dataset.cgHue !== undefined) {
+                try { localStorage.setItem('nway.hue', this._hueOn ? '0' : '1'); } catch (err) { /* storage blocked */ }
+                this._applyHue();
+                return this._cgDraw();
+            }
             if (t.dataset.cgHints !== undefined) { this._cg.hints = !this._cg.hints; return this._cgDraw(); }
             if (t.dataset.cgFocusgrp) {
                 const g = this._cgGrp && this._cgGrp[t.dataset.cgFocusgrp];

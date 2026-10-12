@@ -1929,8 +1929,8 @@ window.FileView = {
 
     openStrings(e) {
         e.preventDefault();
-        const url = Nav.buildUIUrl(this.params.collection, ['file_strings', this.params.md5]);
-        Nav.openPath(url, e, { title: `Strings: ${this.params.md5.substring(0, 8)}`, type: 'strings' });
+        const url = Nav.buildUIUrl(this.params.collection, ['file-strings', this.params.md5]);
+        Nav.openPath(url, e, { title: `Strings: ${this.params.md5.substring(0, 8)}`, type: 'file-strings' });
     },
 
     openCallGraph(e) {

@@ -221,10 +221,13 @@ Strings one function references. **Params:** `collection`/`pool`, `md5`, `addr`.
 Pivot: functions (and files) sharing a string, across the collection or every member of a pool. **Params:** `collection`/`pool`, `id` or `value`, `offset`, `limit`.
 
 ### `GET /api/strings/search`
-Distinct string values matching `q` across all files, with file and function counts. **Params:** `collection`/`pool`, `q`, `offset`, `limit`.
+Collection-wide listing: one row per distinct string, aggregated over all files of the collection (or every member of a pool). Paged, filtered and sorted server-side.
+- **Params:** `collection` or `pool`, `q` (substring, `*` = glob), `encoding`, `section`, `tag` (analyzer tag substring), `yara` (`true`), `referenced` (`true`/`false`), `min_length`, `sort_by` (`files` (default) | `functions` | `length` | `value` | `encoding`), `sort_order` (default `desc`), `offset`, `limit` (max 5000).
+- **Returns:** `{total, offset, limit, items: [{id, value, length, encodings, sections, tags, rules, files, functions}]}`.
+- The UI pivots a row to `/collections/<c>/functions?strings=<value>` and `/collections/<c>/files?strings=<value>`; both are the normal search tables.
 
-### `POST /api/strings/tag`
-Adds or removes an analyst tag on one string. **Body:** `collection`, `md5`, `addr`, `tag`, `action` (`add` | `remove`).
+### Tagging strings
+`POST /api/tags/add` and `/remove` (and `bulk_add` / `bulk_remove`) accept `entity_type: "string"` with `entity_id` = `<collection>:string:<md5>:<addr>`. Analyst tags live on the string's record; YARA rule provenance for a string is recorded under the same entity id.
 
 ### `GET /api/scan/<scan_id>/strings`
 The scanned file's cached strings (same filters as `strings/file`). `POST /api/scan/<id>/commit` writes them into the collection.

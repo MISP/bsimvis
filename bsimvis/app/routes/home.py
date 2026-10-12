@@ -221,6 +221,7 @@ def _search_groups(q, limit, scope):
     from bsimvis.app.routes.search_feature import search_features
     from bsimvis.app.routes.search_file import search_files
     from bsimvis.app.routes.search_function import search_functions
+    from bsimvis.app.routes.strings import search_strings
 
     cols = _call(search_collections, q=q, limit=limit).get("collections", [])
     if cols:
@@ -318,6 +319,16 @@ def _search_groups(q, limit, scope):
                     f"/collections/{quote(f['_collection'])}/files/{f.get('file_md5')}"
                     f"/functions/{f.get('entrypoint_address')}"
                 ),
+            },
+        ),
+        (
+            "strings",
+            search_strings,
+            "items",
+            lambda s: {
+                "title": s["value"][:120],
+                "subtitle": f"{s['_collection']} · {s['files']} files, {s['functions']} functions",
+                "url": f"/collections/{quote(s['_collection'])}/strings?q={quote(s['value'][:120])}",
             },
         ),
         (

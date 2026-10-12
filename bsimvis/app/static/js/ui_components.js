@@ -85,6 +85,7 @@ window.UI = {
             { key: 'bin-clusters', count: 'file_clusters', label: 'Clusters', path: '/files/clusters' },
             { key: 'functions', label: 'Functions', path: '/functions', count: 'total_functions', gap: true },
             { key: 'features-global', label: 'Features', path: '/features', count: 'features' },
+            { key: 'strings', label: 'Strings', path: '/strings' },
             { key: 'function-similarity', count: 'function_sims', label: 'Func sims', path: '/functions/similarities' },
             { key: 'clusters', count: 'function_clusters', label: 'Func clusters', path: '/functions/clusters' },
             { key: 'search', label: 'Searches', path: '/searches' },
@@ -94,7 +95,7 @@ window.UI = {
         ],
         // Detail pages light up the tab of the list they belong to.
         parent: {
-            'collection-detail': 'overview', 'search-detail': 'search', 'pool-detail': 'overview', dashboard: 'files', file: 'files', function: 'functions', call_graph: 'functions',
+            'collection-detail': 'overview', 'search-detail': 'search', 'pool-detail': 'overview', dashboard: 'files', file: 'files', 'file-strings': 'files', function: 'functions', call_graph: 'functions',
             function_features: 'functions', diff: 'function-similarity', bin_sim: 'binary-similarity',
             feature: 'features-global', 'cluster-detail': 'clusters', 'bin-cluster-detail': 'bin-clusters',
         },

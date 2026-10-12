@@ -266,7 +266,7 @@ function parseRestfulPath() {
             if (parts.length === pIdx) {
                 params.view = 'file';
             } else if (parts[pIdx] === 'strings') {
-                params.view = 'file_strings';
+                params.view = 'file-strings';
             } else if (parts[pIdx] === 'vs') {
                 params.view = 'bin_sim';
                 params.coll_b = decodeURIComponent(parts[pIdx + 1] || '');
@@ -329,6 +329,8 @@ function parseRestfulPath() {
                 }
             }
         }
+    } else if (p2 === 'strings') {
+        params.view = 'strings';
     } else if (p2 === 'features' || p2 === 'feature') {
         pIdx++;
         if (parts.length === pIdx) {

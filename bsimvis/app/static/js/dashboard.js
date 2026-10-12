@@ -336,6 +336,33 @@ const routes = {
         ],
         renderer: renderGlobalFeatures
     },
+    'strings': {
+        title: 'Strings',
+        api: '/api/strings/search',
+        headers: [
+            { label: 'Value', width: '40%', sort: 'value' },
+            { label: 'Encoding', width: '9%', sort: 'encoding' },
+            { label: 'Len', width: '6%', sort: 'length' },
+            { label: 'Files', width: '7%', sort: 'files' },
+            { label: 'Funcs', width: '7%', sort: 'functions' },
+            { label: 'Tags', width: '31%' }
+        ],
+        renderer: renderStrings
+    },
+    'file-strings': {
+        title: 'File Strings',
+        api: '/api/strings/file',
+        headers: [
+            { label: 'Address', width: '9%', sort: 'addr' },
+            { label: 'Value', width: '36%', sort: 'value' },
+            { label: 'Encoding', width: '8%', sort: 'encoding' },
+            { label: 'Section', width: '9%', sort: 'section' },
+            { label: 'Len', width: '5%', sort: 'length' },
+            { label: 'Refs', width: '5%', sort: 'refs' },
+            { label: 'Tags', width: '28%' }
+        ],
+        renderer: renderFileStrings
+    },
     'function-similarity': {
         title: 'Function similarities',
         api: '/api/similarity/search',
@@ -493,7 +520,6 @@ window.ModuleLoader = {
             'call_graph': window.CallGraphView,
             'feature': window.FeatureView,
             'function_features': window.FunctionFeaturesView,
-            'file_strings': window.FileStringsView,
             'home': window.HomeView,
             'pool-detail': window.PoolDetailView,
             'collection-detail': window.CollectionDetailView,
@@ -652,7 +678,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
 
     // Check if we should load a module view
-    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'file_strings', 'pool-detail', 'collection-detail', 'search', 'search-detail', 'scan', 'scan-detail', 'nway', 'cluster-detail', 'bin-cluster-detail'].includes(viewKey)) {
+    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail', 'search', 'search-detail', 'scan', 'scan-detail', 'nway', 'cluster-detail', 'bin-cluster-detail'].includes(viewKey)) {
         const stateParams = Object.fromEntries(params);
         stateParams.collection = collection;
         stateParams.pool = pool;
@@ -941,6 +967,9 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
             const content = `<div class="dim" style="font-size:0.72rem; margin:-4px 0 10px;">Filter functions by scoring axis. Content has no function-level score.</div><div style="display:flex; flex-wrap:wrap; gap:8px;">${pills}</div>`;
             gridHeader.innerHTML = `<div style="padding:24px; border-bottom:1px solid var(--border); background:var(--bg); display:flex; flex-direction:column;"><div style="display:flex; gap:24px; flex-wrap:wrap;">${binSimScoreMetricCardHtml(content)}</div></div>`;
         }
+    } else if (viewKey === 'strings' || viewKey === 'file-strings') {
+        const gridHeader = document.getElementById('grid-header');
+        if (gridHeader) gridHeader.innerHTML = stringsBandHtml(new URLSearchParams(params));
     } else if (viewKey === 'function-similarity') {
         const gridHeader = document.getElementById('grid-header');
         if (gridHeader) {
@@ -1008,7 +1037,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     }
 
     // Ensure tag metadata is loaded for views that use it (functions, similarities, and files)
-    if (['functions', 'function-similarity', 'binary-similarity', 'files'].includes(viewKey)) {
+    if (['functions', 'function-similarity', 'binary-similarity', 'files', 'strings', 'file-strings'].includes(viewKey)) {
         await fetchTagMetadata(collection);
         if (myGen !== _refreshGeneration) return;
     }
@@ -1106,7 +1135,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         if (myGen !== _refreshGeneration) return;
 
         // Extract the list of items based on the API response structure
-        const items = data.pools || data.items || data.results || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || (Array.isArray(data) ? data : []);
+        const items = data.pools || data.items || data.results || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || data.strings || (Array.isArray(data) ? data : []);
         const total = data.total !== undefined ? data.total : (data.total_estimated !== undefined ? data.total_estimated : (Array.isArray(data) ? data.length : (items.length || 0)));
 
         const totalEl = document.getElementById('view-total');
@@ -1195,8 +1224,10 @@ const FOOTER_META_SKIP = new Set([
 
 function listFilters(params) {
     const active = [];
+    // A file's strings page carries its md5 in the path, not as a filter.
+    const pathParams = getRoutingState().viewKey === 'file-strings' ? ['md5', 'file_md5', 'md5_a'] : [];
     for (const [k, v] of params.entries()) {
-        if (FOOTER_META_SKIP.has(k) || v === '' || v === null) continue;
+        if (FOOTER_META_SKIP.has(k) || pathParams.includes(k) || v === '' || v === null) continue;
         active.push(`${k} = ${v}`);
     }
     return active;
@@ -1776,8 +1807,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
 
     // Always re-render the settings container (view selector pills + limit inputs)
     // so the active pill is correct even when navigating back to the same path.
-    if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'binary-similarity' || path === 'jobs' || path === 'collections' || path === 'pools') {
-        const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : (path === 'collections' ? 'applyCollectionSearch' : (path === 'pools' ? 'applyPoolSearch' : 'applyJobSearch'))))))));
+    if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'strings' || path === 'file-strings' || path === 'binary-similarity' || path === 'jobs' || path === 'collections' || path === 'pools') {
+        const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'strings' || path === 'file-strings' ? 'applyStringsSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : (path === 'collections' ? 'applyCollectionSearch' : (path === 'pools' ? 'applyPoolSearch' : 'applyJobSearch')))))))));
 
         let settingsHtml = '';
         let limitHtml = '';
@@ -1838,8 +1869,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
     }
 
     if (pathChanged) {
-        if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'binary-similarity' || path === 'jobs' || path === 'collections' || path === 'pools') {
-            const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : (path === 'collections' ? 'applyCollectionSearch' : (path === 'pools' ? 'applyPoolSearch' : 'applyJobSearch'))))))));
+        if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'strings' || path === 'file-strings' || path === 'binary-similarity' || path === 'jobs' || path === 'collections' || path === 'pools') {
+            const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'strings' || path === 'file-strings' ? 'applyStringsSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : (path === 'collections' ? 'applyCollectionSearch' : (path === 'pools' ? 'applyPoolSearch' : 'applyJobSearch')))))))));
 
 
             const p = new URLSearchParams(params);
@@ -1897,7 +1928,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                                 <input type="number" id="flt-file-max-funcs" placeholder="Max..." value="${escapeAttr(p.get('max_function_count') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                             </div>
                         </th>
-                        <th><input type="text" id="flt-file-note-owner" placeholder="Note Owner..." value="${escapeAttr(p.get('note_owner') || '')}" onfocus="attachAutocomplete(this, 'file', 'note_owners', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></th>
+                        <th><div style="display:flex; flex-direction:column; gap:4px;"><input type="text" id="flt-file-note-owner" placeholder="Note Owner..." value="${escapeAttr(p.get('note_owner') || '')}" onfocus="attachAutocomplete(this, 'file', 'note_owners', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"><input type="text" id="flt-file-strings" placeholder="Has string..." value="${escapeAttr(p.get('strings') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></div></th>
                         <th>
                             <div style="display:flex; flex-direction:column; gap:2px;">
                                 <input type="text" id="flt-file-cluster" placeholder="UUID..." value="${escapeAttr(p.get('bin_cluster_uuid') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
@@ -1991,6 +2022,15 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 if (path === 'features-global') {
                     loadFieldCardinalities(col, 'feature', { 'hash': 'flt-feat-hash', 'type': 'flt-feat-type', 'op': 'flt-feat-op' });
                 }
+            } else if (path === 'strings' || path === 'file-strings') {
+                const f = (id, param, ph, type = 'text') => `<th><input type="${type}" id="${id}" placeholder="${ph}" value="${escapeAttr(p.get(param) || '')}" onchange="debouncedSearch(applyStringsSearch)" onkeydown="handleFilterKey(event, applyStringsSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>`;
+                const secF = f('flt-str-section', 'section', 'Section...');
+                const lenF = f('flt-str-minlen', 'min_length', 'Min...', 'number');
+                const tagF = f('flt-str-tag', 'tag', 'Tag...');
+                headHtml += `<tr class="filter-row">${path === 'strings'
+                    ? `<th></th>${secF}${lenF}<th></th><th></th>${tagF}`
+                    : `<th></th><th></th><th></th>${secF}${lenF}<th></th>${tagF}`}</tr>`;
+                thead.innerHTML = headHtml;
             } else if (path === 'clusters') {
                 if (dataTable) dataTable.style.tableLayout = 'fixed';
                 headHtml += `<tr class="filter-row">
@@ -2122,6 +2162,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="func-search-input" placeholder="Search by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFuncSearch()" title="Search"></i></div>${callGraphBtn}</div></div>`;
                 } else if (path === 'features-global') {
                     searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="feature-search-input" placeholder="Search by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFeatureSearch()" title="Search"></i></div></div></div>`;
+                } else if (path === 'strings' || path === 'file-strings') {
+                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="strings-search-input" placeholder="Search strings (use * for glob)..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyStringsSearch)" onkeydown="handleFilterKey(event, applyStringsSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyStringsSearch()" title="Search"></i></div></div>`;
                 } else if (path === 'function-similarity') {
                     searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="sim-search-input" placeholder="Search by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applySimSearch()" title="Search"></i></div></div></div>`;
                 } else if (path === 'clusters') {
@@ -2149,6 +2191,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
         syncInput('file-search-input', 'q');
         syncInput('func-search-input', 'q');
         syncInput('feature-search-input', 'q');
+        syncInput('strings-search-input', 'q');
         syncInput('sim-search-input', 'q');
         syncInput('cluster-search-input', 'q');
         syncInput('bin-cluster-search-input', 'q');
@@ -2165,7 +2208,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
             syncInput('flt-file-name', 'file_name'); syncInput('flt-file-md5', 'file_md5'); syncInput('flt-file-language', 'language_id');
             syncInput('flt-file-inf-tags', 'inferred_tags');
             syncInput('flt-file-batch', 'batch_uuid'); syncInput('flt-file-min-funcs', 'min_function_count'); syncInput('flt-file-max-funcs', 'max_function_count');
-            syncInput('flt-file-note-owner', 'note_owner'); syncInput('flt-file-cluster', 'bin_cluster_uuid'); syncInput('flt-file-cluster-name', 'bin_cluster_name'); syncInput('flt-file-min-cohesion', 'min_cohesion'); syncInput('flt-file-max-cohesion', 'max_cohesion');
+            syncInput('flt-file-note-owner', 'note_owner'); syncInput('flt-file-strings', 'strings'); syncInput('flt-file-cluster', 'bin_cluster_uuid'); syncInput('flt-file-cluster-name', 'bin_cluster_name'); syncInput('flt-file-min-cohesion', 'min_cohesion'); syncInput('flt-file-max-cohesion', 'max_cohesion');
             syncInput('flt-file-min-date', 'min_entry_date'); syncInput('flt-file-max-date', 'max_entry_date');
         } else if (path === 'functions' || path === 'function-similarity') {
             const prefix = path === 'function-similarity' ? 'sim-' : 'flt-func-';
@@ -2181,6 +2224,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
             syncInput('flt-func-min-features', 'min_features'); syncInput('flt-func-min-callers', 'min_callers'); syncInput('flt-func-min-callees', 'min_callees'); syncInput('flt-func-note-owner', 'note_owner'); syncInput('flt-func-strings', 'strings'); syncInput('flt-func-file_name', 'file_name');
             const md5Val = p.get('md5') || p.get('file_md5');
             const md5El = document.getElementById('flt-func-md5'); if (md5El) md5El.value = md5Val || '';
+        } else if (path === 'strings' || path === 'file-strings') {
+            syncInput('flt-str-section', 'section'); syncInput('flt-str-minlen', 'min_length'); syncInput('flt-str-tag', 'tag');
         } else if (path === 'features-global') {
             syncInput('flt-feat-hash', 'hash'); syncInput('flt-feat-type', 'type'); syncInput('flt-feat-op', 'op');
             syncInput('flt-feat-min-tf', 'min_tf_score'); syncInput('flt-feat-max-tf', 'max_tf_score'); syncInput('flt-feat-min-freq', 'min_frequency'); syncInput('flt-feat-max-freq', 'max_frequency');
@@ -2627,6 +2672,8 @@ function applyAdvancedFileSearch() {
 
     const noteOwnerFlt = document.getElementById('flt-file-note-owner')?.value;
     if (noteOwnerFlt) params.set('note_owner', noteOwnerFlt); else params.delete('note_owner');
+    const stringsFlt = document.getElementById('flt-file-strings')?.value;
+    if (stringsFlt) params.set('strings', stringsFlt); else params.delete('strings');
 
     const countLimit = document.getElementById('sim-limit')?.value;
     params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
@@ -2732,6 +2779,57 @@ function triggerTagSearch() {
     else if (viewKey === 'clusters') debouncedSearch(applyClusterSearch);
     else if (viewKey === "bin-clusters") debouncedSearch(applyBinClusterSearch);
 }
+
+function applyStringsSearch() {
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+    const { viewKey, params } = getRoutingState();
+    const set = (name, val) => { if (val && String(val).trim()) params.set(name, String(val).trim()); else params.delete(name); };
+    set('q', document.getElementById('strings-search-input')?.value);
+    set('section', document.getElementById('flt-str-section')?.value);
+    set('min_length', document.getElementById('flt-str-minlen')?.value);
+    set('tag', document.getElementById('flt-str-tag')?.value);
+    params.set('limit', document.getElementById('sim-limit')?.value || DEFAULT_PAGE_LIMIT);
+    currentOffset = 0;
+    isEndOfResults = false;
+    navigate(viewKey, params);
+}
+window.applyStringsSearch = applyStringsSearch;
+
+// Band pills for the strings views: one URL param per card, same pill look as the other bands.
+const StringsBandCards = [
+    { param: 'encoding', title: 'Encoding', tip: 'How Ghidra decoded the string.', options: [
+        { v: '', label: 'Any', icon: 'fa-solid fa-globe' }, { v: 'ascii', label: 'ASCII', icon: 'fa-solid fa-font' },
+        { v: 'utf-8', label: 'UTF-8', icon: 'fa-solid fa-language' }, { v: 'utf-16', label: 'UTF-16', icon: 'fa-solid fa-language' } ] },
+    { param: 'yara', title: 'YARA', tip: 'Keep only strings a YARA rule matched.', options: [
+        { v: '', label: 'All', icon: 'fa-solid fa-layer-group' }, { v: 'true', label: 'Rule hits', icon: 'fa-solid fa-shield-halved' } ] },
+    { param: 'referenced', title: 'References', tip: 'Whether some function references the string.', options: [
+        { v: '', label: 'All', icon: 'fa-solid fa-layer-group' }, { v: 'true', label: 'Referenced', icon: 'fa-solid fa-code' },
+        { v: 'false', label: 'Unreferenced', icon: 'fa-regular fa-circle' } ] },
+];
+
+function stringsBandHtml(p) {
+    const cards = StringsBandCards.map(c => {
+        const cur = p.get(c.param) || '';
+        const pills = c.options.map(o => `<span class="bsim-tag-pill" style="${binSimPillStyle(o.v === cur)}" onclick="setStringsPill(${escapeAttr(jsString(c.param))}, ${escapeAttr(jsString(o.v))})"><i class="${o.icon}"></i>${o.label}</span>`).join('');
+        return `<div class="home-card" style="padding:16px; min-width:220px;">
+            <div style="display:flex; align-items:center; gap:6px; margin-bottom:12px;">
+                <h3 style="margin:0; font-size:0.9rem; color:var(--text);">${c.title}</h3>
+                <span class="home-tip" tabindex="0" data-tip="${escapeAttr(c.tip)}"><i class="fa-solid fa-circle-info"></i></span>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:8px;">${pills}</div>
+        </div>`;
+    }).join('');
+    return `<div style="padding:24px; border-bottom:1px solid var(--border); background:var(--bg); display:flex; flex-direction:column;"><div style="display:flex; gap:24px; flex-wrap:wrap;">${cards}</div></div>`;
+}
+
+function setStringsPill(param, value) {
+    const { viewKey, params } = getRoutingState();
+    if (value) params.set(param, value); else params.delete(param);
+    currentOffset = 0;
+    isEndOfResults = false;
+    navigate(viewKey, params);
+}
+window.setStringsPill = setStringsPill;
 
 function applyAdvancedFeatureSearch() {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
@@ -3312,6 +3410,8 @@ function navigate(viewKey, queryParams = null, collection = null, replace = fals
             url = `/pools/${encodeURIComponent(poolId)}/batches`;
         } else if (viewKey === 'features-global') {
             url = `/pools/${encodeURIComponent(poolId)}/features`;
+        } else if (viewKey === 'file-strings') {
+            url = `/pools/${encodeURIComponent(poolId)}/${col ? `collections/${encodeURIComponent(col)}/` : ''}files/${encodeURIComponent(params.get('md5') || '')}/strings`;
         } else if (viewKey === 'clusters') {
             url = `/pools/${encodeURIComponent(poolId)}/functions/clusters`;
         } else if (viewKey === 'bin-clusters') {
@@ -3337,6 +3437,8 @@ function navigate(viewKey, queryParams = null, collection = null, replace = fals
             url = `/collections/${col}/batches`;
         } else if (viewKey === 'features-global') {
             url = `/collections/${col}/features`;
+        } else if (viewKey === 'file-strings') {
+            url = `/collections/${col}/files/${encodeURIComponent(params.get('md5') || '')}/strings`;
         } else if (viewKey === 'clusters') {
             url = `/collections/${col}/functions/clusters`;
         } else if (viewKey === 'bin-clusters') {
@@ -3433,7 +3535,7 @@ window.addEventListener('hashchange', (e) => {
         const validViewKeys = [
             'collections', 'pools', 'batches', 'files', 'functions', 'features-global',
             'function-similarity', 'clusters', 'upload', 'binary-similarity', 'bin-clusters', 'jobs',
-            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'file_strings', 'pool-detail',
+            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'pool-detail',
             'collection-detail', 'bin_sim'
         ];
         if (validViewKeys.includes(viewKey)) {
@@ -3541,7 +3643,7 @@ window.addEventListener('load', () => {
         const validViewKeys = [
             'collections', 'pools', 'batches', 'files', 'functions', 'features-global',
             'function-similarity', 'clusters', 'upload', 'binary-similarity', 'bin-clusters', 'jobs',
-            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'file_strings', 'pool-detail',
+            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'pool-detail',
             'collection-detail', 'bin_sim'
         ];
         if (validViewKeys.includes(viewKey)) {
@@ -4590,6 +4692,7 @@ const viewMetaData = {
     'files': { name: 'Files', icon: 'fa-file-code' },
     'functions': { name: 'Functions', icon: 'fa-code' },
     'features-global': { name: 'Features', icon: 'fa-fingerprint' },
+    'strings': { name: 'Strings', icon: 'fa-font' },
     'function-similarity': { name: 'Similarities', icon: 'fa-code-compare' },
     'clusters': { name: 'Clusters', icon: 'fa-bullseye' },
     'bin-clusters': { name: 'Bin Clusters', icon: 'fa-bullseye' },
@@ -4663,6 +4766,8 @@ function getFilterSummary(path, params) {
         if (cluster_name) summary.push(`Name: "${cluster_name}"`);
         if (min_count && min_count !== '0') summary.push(`Min Funcs: ${min_count}`);
         if (min_cohesion && min_cohesion !== '0') summary.push(`Cohesion >= ${min_cohesion}`);
+    } else if (path === 'strings') {
+        ['section', 'encoding', 'min_length'].forEach(k => { if (params.get(k)) summary.push(`${k}: ${params.get(k)}`); });
     } else if (path === 'features-global') {
         const hash = params.get('hash');
         const type = params.get('type');

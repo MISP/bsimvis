@@ -70,14 +70,14 @@ window.FunctionFilters = {
         });
         const cells = [
             ...leadingCells,
-            { html: `<div style="display:flex; flex-direction:column; gap:4px;">${input('flt-func-name', 'function_name', 'Name...')}<div style="display:flex; gap:2px;">${input('flt-func-namespace', 'namespace', 'Namespace...', { style: 'width:50%; box-sizing:border-box; font-size:0.6rem;' })}${input('flt-func-ret_type', 'return_type', 'Return type...', { style: 'width:50%; box-sizing:border-box; font-size:0.6rem;' })}</div></div>` },
+            { html: `<div style="display:flex; flex-direction:column; gap:4px;">${input('flt-func-name', 'function_name', 'Name...')}<div style="display:flex; gap:2px;">${input('flt-func-namespace', 'namespace', 'Namespace...', { style: 'width:50%; box-sizing:border-box; font-size:0.6rem;' })}${input('flt-func-ret_type', 'return_type', 'Return type...', { style: 'width:50%; box-sizing:border-box; font-size:0.6rem;' })}</div>${input('flt-func-strings', 'strings', 'Uses string...', { style: 'width:100%; box-sizing:border-box; font-size:0.6rem;' })}</div>` },
             { html: input('flt-func-address', 'entrypoint_address', 'Addr...') },
             { html: tagCell, attrs: '' },
             { html: `<div style="display:flex; flex-direction:column; gap:2px;">${input('flt-func-cluster', 'cluster_uuid', 'UUID...', { style: 'width:100%; box-sizing:border-box; font-size:0.6rem;' })}${input('flt-func-cluster-name', 'cluster_name', 'Cluster name...', { style: 'width:100%; box-sizing:border-box; font-size:0.6rem;' })}${input('flt-func-min-cohesion', 'min_cohesion', 'Min cohesion...', { type: 'number', attrs: 'step="0.05" min="0" max="1"', style: 'width:100%; box-sizing:border-box; font-size:0.6rem;' })}</div>` },
             { html: input('flt-func-min-features', 'min_features', 'Min', { type: 'number', attrs: 'min="0"' }) },
             { html: input('flt-func-min-callers', 'min_callers', 'Min', { type: 'number', attrs: 'min="0"' }) },
             { html: input('flt-func-min-callees', 'min_callees', 'Min', { type: 'number', attrs: 'min="0"' }) },
-            { html: input('flt-func-note-owner', 'note_owner', 'Note owner...') + input('flt-func-strings', 'strings', 'Uses string...') },
+            { html: input('flt-func-note-owner', 'note_owner', 'Note owner...') },
             ...extraCells,
         ];
         return this.filterRow(cells);

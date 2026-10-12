@@ -376,7 +376,14 @@ window.Breadcrumbs = {
                     icon: 'fa-solid fa-code'
                 });
                 break;
-            case 'file_strings': {
+            case 'strings':
+                segments.push({
+                    label: 'Strings',
+                    url: window.location.pathname + window.location.search,
+                    icon: 'fa-solid fa-font'
+                });
+                break;
+            case 'file-strings': {
                 segments.push({
                     label: 'Files',
                     url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['files']),
@@ -390,7 +397,7 @@ window.Breadcrumbs = {
                         icon: 'fa-solid fa-file-code'
                     });
                 }
-                segments.push({ label: 'Strings', url: window.location.pathname, icon: 'fa-solid fa-font' });
+                segments.push({ label: 'Strings', url: window.location.pathname + window.location.search, icon: 'fa-solid fa-font' });
                 break;
             }
             case 'function_features':

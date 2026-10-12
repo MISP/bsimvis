@@ -43,6 +43,7 @@ window.FunctionView = {
         window.currentFuncId = `${collection}:func:${file_md5}:${address}`;
         this.neighborsLoaded = false;
         this.callGraphLoaded = false;
+        this.stringsLoaded = false;
         if (this.graphController) {
             this.graphController.destroy();
             this.graphController = null;
@@ -176,10 +177,14 @@ window.FunctionView = {
                     </div>
 
                     <div id="function-panel-strings" class="function-view-panel" style="display:none; flex:1; overflow-y:auto;">
-                        <table class="file-func-table">
-                            <thead><tr><th>Address</th><th>Value</th><th>Enc</th><th>Section</th><th>Len</th><th>YARA / Tags</th></tr></thead>
-                            <tbody id="fn-str-body"><tr><td colspan="6" class="dim" style="text-align:center; padding:30px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading strings...</td></tr></tbody>
-                        </table>
+                        <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
+                            <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
+                                <table id="fn-str-table">
+                                    <thead><tr><th>Address</th><th>Value</th><th>Encoding</th><th>Section</th><th>Len</th><th>Tags</th></tr></thead>
+                                    <tbody id="fn-str-body"><tr><td colspan="6" style="text-align: center; color: var(--dim); padding: 20px;">Loading strings...</td></tr></tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
 
                     <div id="function-panel-callgraph" class="function-view-panel" style="display:none; flex:1; overflow:hidden;">
@@ -368,48 +373,29 @@ window.FunctionView = {
         if (tabId === 'strings') this.loadStringsPanel();
     },
 
-    strCtx() {
-        return { collection: this.params.collection, pool: this.params.pool, md5: this.params.md5 || this.params.file_md5, viewName: 'FunctionView' };
-    },
-
     async loadStringsPanel() {
+        if (this.stringsLoaded) return;
         const body = document.getElementById('fn-str-body');
-        const qs = new URLSearchParams({
-            collection: this.params.collection,
-            md5: this.params.md5 || this.params.file_md5,
-            addr: this.params.address,
-        });
+        const md5 = this.params.md5 || this.params.file_md5;
+        const qs = new URLSearchParams({ collection: this.params.collection, md5, addr: this.params.address });
         try {
             const res = await fetch(`/api/strings/function?${qs}`);
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Failed to load strings');
-            this.fnStrings = data;
-            const ctx = this.strCtx();
-            const count = document.getElementById('fn-str-count');
-            if (count) { count.textContent = data.strings.length; document.getElementById('fn-str-count-wrap').style.display = ''; }
-            body.innerHTML = data.strings.length ? data.strings.map(s => `<tr>
-                <td class="mono dim">${escapeHtml(s.addr)}</td>
-                <td>${StringsUI.valueCell(s, ctx)}</td>
-                <td><span class="badge">${escapeHtml(s.encoding)}</span></td>
-                <td class="dim">${escapeHtml(s.section || '')}</td>
-                <td>${escapeHtml(s.length)}</td>
-                <td>${StringsUI.tagCell(s, data.rules, ctx)}</td></tr>`).join('')
-                : '<tr><td colspan="6" class="dim" style="text-align:center; padding:30px;">No strings referenced by this function.</td></tr>';
+            this.stringsLoaded = true;
+            this.fillStringsCount(data.strings.length);
+            body.innerHTML = data.strings.length
+                ? TableRenderers.renderFileStrings(data.strings, { collection: this.params.collection, md5, noRefs: true })
+                : '<tr><td colspan="6" style="text-align: center; color: var(--dim); padding: 20px;">No strings referenced by this function.</td></tr>';
+            if (window.TableSelection) new window.TableSelection('fn-str-table');
         } catch (err) {
-            body.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:#f92672;">${escapeHtml(err.message)}</td></tr>`;
+            body.innerHTML = `<tr><td colspan="6" style="text-align: center; color:#f92672; padding: 20px;">${escapeHtml(err.message)}</td></tr>`;
         }
     },
 
-    async tagString(addr, tag, action) {
-        try {
-            await StringsUI.postTag(this.params.collection, this.params.md5 || this.params.file_md5, addr, tag, action);
-            await this.loadStringsPanel();
-        } catch (err) { alert(err.message); }
-    },
-
-    promptTag(addr) {
-        const tag = prompt('Tag for this string:');
-        if (tag && tag.trim()) this.tagString(addr, tag.trim(), 'add');
+    fillStringsCount(n) {
+        const count = document.getElementById('fn-str-count');
+        if (count) { count.textContent = n; document.getElementById('fn-str-count-wrap').style.display = ''; }
     },
 
     async loadCallGraphPanel() {

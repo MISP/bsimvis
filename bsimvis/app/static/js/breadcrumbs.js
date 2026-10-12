@@ -327,6 +327,23 @@ window.Breadcrumbs = {
                     icon: 'fa-solid fa-code'
                 });
                 break;
+            case 'file_strings': {
+                segments.push({
+                    label: 'Files',
+                    url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['files']),
+                    icon: 'fa-solid fa-file-code'
+                });
+                const strMd5 = params.get('md5') || restful.md5;
+                if (strMd5) {
+                    segments.push({
+                        label: this.getFileLabel(strMd5),
+                        url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['file', strMd5]),
+                        icon: 'fa-solid fa-file-code'
+                    });
+                }
+                segments.push({ label: 'Strings', url: window.location.pathname, icon: 'fa-solid fa-font' });
+                break;
+            }
             case 'function_features':
                 segments.push({
                     label: 'Files',

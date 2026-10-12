@@ -507,6 +507,7 @@ window.ModuleLoader = {
             'call_graph': window.CallGraphView,
             'feature': window.FeatureView,
             'function_features': window.FunctionFeaturesView,
+            'file_strings': window.FileStringsView,
             'home': window.HomeView,
             'pool-detail': window.PoolDetailView,
             'collection-detail': window.CollectionDetailView,
@@ -644,7 +645,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
 
     // Check if we should load a module view
-    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail', 'search', 'search-detail', 'scan', 'scan-detail', 'cluster-detail', 'bin-cluster-detail'].includes(viewKey)) {
+    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'file_strings', 'pool-detail', 'collection-detail', 'search', 'search-detail', 'scan', 'scan-detail', 'cluster-detail', 'bin-cluster-detail'].includes(viewKey)) {
         const stateParams = Object.fromEntries(params);
         stateParams.collection = collection;
         stateParams.pool = pool;
@@ -1936,6 +1937,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                         min_cohesion: p.get('min_cohesion') || '0.5',
                         min_features: p.get('min_features') || '0',
                         note_owner: p.get('note_owner') || '',
+                        strings: p.get('strings') || '',
                     };
                     const input = (id, value, placeholder, field) => FunctionFilters.cell(id, {
                         value, placeholder, onInput: `debouncedSearch(${applyFn})`, onKeydown: `handleFilterKey(event, ${applyFn})`,
@@ -2163,7 +2165,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
             }
             syncInput('flt-func-name', nameParam); syncInput('flt-func-namespace', 'namespace'); syncInput('flt-func-ret_type', 'return_type'); syncInput('flt-func-address', addrParam);
             syncInput('flt-func-cluster', 'cluster_uuid'); syncInput('flt-func-cluster-name', 'cluster_name'); syncInput('flt-func-min-cohesion', 'min_cohesion');
-            syncInput('flt-func-min-features', 'min_features'); syncInput('flt-func-min-callers', 'min_callers'); syncInput('flt-func-min-callees', 'min_callees'); syncInput('flt-func-note-owner', 'note_owner'); syncInput('flt-func-file_name', 'file_name');
+            syncInput('flt-func-min-features', 'min_features'); syncInput('flt-func-min-callers', 'min_callers'); syncInput('flt-func-min-callees', 'min_callees'); syncInput('flt-func-note-owner', 'note_owner'); syncInput('flt-func-strings', 'strings'); syncInput('flt-func-file_name', 'file_name');
             const md5Val = p.get('md5') || p.get('file_md5');
             const md5El = document.getElementById('flt-func-md5'); if (md5El) md5El.value = md5Val || '';
         } else if (path === 'features-global') {
@@ -2408,7 +2410,9 @@ function applyAdvancedFuncSearch() {
     const minCallersFlt = document.getElementById('flt-func-min-callers')?.value;
     const minCalleesFlt = document.getElementById('flt-func-min-callees')?.value;
     const noteOwnerFlt = document.getElementById('flt-func-note-owner')?.value;
+    const stringsFlt = document.getElementById('flt-func-strings')?.value;
 
+    if (stringsFlt) params.set('strings', stringsFlt); else params.delete('strings');
     if (clusterFlt) params.set('cluster_uuid', clusterFlt); else params.delete('cluster_uuid');
     if (clusterNameFlt) params.set('cluster_name', clusterNameFlt); else params.delete('cluster_name');
     params.set('min_cohesion', minCohesionFlt || '0.5');
@@ -3375,7 +3379,7 @@ window.addEventListener('hashchange', (e) => {
         const validViewKeys = [
             'collections', 'pools', 'batches', 'files', 'functions', 'features-global',
             'function-similarity', 'clusters', 'upload', 'binary-similarity', 'bin-clusters', 'jobs',
-            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'pool-detail',
+            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'file_strings', 'pool-detail',
             'collection-detail', 'bin_sim'
         ];
         if (validViewKeys.includes(viewKey)) {
@@ -3478,7 +3482,7 @@ window.addEventListener('load', () => {
         const validViewKeys = [
             'collections', 'pools', 'batches', 'files', 'functions', 'features-global',
             'function-similarity', 'clusters', 'upload', 'binary-similarity', 'bin-clusters', 'jobs',
-            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'pool-detail',
+            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'file_strings', 'pool-detail',
             'collection-detail', 'bin_sim'
         ];
         if (validViewKeys.includes(viewKey)) {

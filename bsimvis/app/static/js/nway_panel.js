@@ -707,13 +707,41 @@
             return `/diff/nway/graph?${qs.toString()}`;
         }
 
-        async _cgFetch(focus, role) {
+        // Member source + the controls that change the doc: the query every per-row call repeats.
+        _docQs() {
             const qs = new URLSearchParams();
             for (const [k, v] of Object.entries(this.source)) if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             for (const k of DOC_KEYS) {
                 const v = this.state[k];
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
+            return qs;
+        }
+
+        // Inline function diff (nway_xp.js): expand / collapse the row under its table row.
+        _xpToggle(tr, ri) {
+            if (this._xpClose(tr)) return;
+            const row = this.data.items[ri];
+            const fids = Object.values(row.files || row.cells || {}).filter(v => typeof v === 'string');
+            if (fids.length < 2) return;
+            const xp = new window.NwayExpand(this, tr, fids);
+            (this._xp || (this._xp = new Map())).set(tr, xp);
+            tr.querySelector('[data-xp]').setAttribute('aria-expanded', 'true');
+            xp.open();
+        }
+
+        _xpClose(tr) {
+            const xp = this._xp && this._xp.get(tr);
+            if (!xp) return false;
+            xp.close();
+            this._xp.delete(tr);
+            const b = tr.querySelector('[data-xp]');
+            if (b) b.setAttribute('aria-expanded', 'false');
+            return true;
+        }
+
+        async _cgFetch(focus, role) {
+            const qs = this._docQs();
             qs.set('fids', Object.values(focus.cells).join(','));
             qs.set('role', role);
             qs.set('depth', this._cg.depth);
@@ -1422,7 +1450,7 @@
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             return `<tr>
-                <td class="nway-open" data-cg-open="${Number(ri)}" title="Click for the call graph of this row" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}</span></td>
+                <td class="nway-open" data-cg-open="${Number(ri)}" title="Click for the call graph of this row" style="min-width:260px; max-width:420px;">${(row.files || row.cells) && Object.values(row.files || row.cells).filter(v => typeof v === 'string').length > 1 ? `<button class="nway-xp-btn" data-xp="${Number(ri)}" aria-expanded="false" title="Compare this row's functions inline: strings, APIs, callees, constants and code"><i class="fa-solid fa-chevron-right"></i></button>` : ''}${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}</span></td>
                 <td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
@@ -1457,6 +1485,7 @@
                 return;
             }
             const d = this.data;
+            this._xp = null;
             const rows = d.items.map((r, i) => this._row(r, i)).join('');
             const off = Number(d.offset), total = Number(d.total);
             const scroll = window.Paging.mode() === 'scroll';
@@ -1504,8 +1533,9 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-cg-open]');
+            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-cg-open],[data-xp]');
             if (!t) return;
+            if (t.dataset.xp !== undefined) return this._xpToggle(t.closest('tr'), Number(t.dataset.xp));
             if (t.dataset.cgOpen !== undefined) {
                 if (e.target.closest('button, a, input, .bsim-tag-pill, .entity-actions')) return;
                 return this._cgOpen(this.data.items[Number(t.dataset.cgOpen)]);
@@ -1550,6 +1580,12 @@
             if (label) label.textContent = t.dataset.range === 'k' ? t.value : Number(t.value).toFixed(2);
         }
     }
+
+    // Function page URL from a function id (the inline diff's header cards).
+    NwayPanel.fnUrl = (fid, pool) => {
+        const { md5 } = fnParts(fid);
+        return fnUrl({ collection: fid.slice(0, fid.indexOf(':func:')), md5 }, fid, pool);
+    };
 
     NwayPanel.act = (act, id) => NwayPanel._active && NwayPanel._active._act(act, id);
 

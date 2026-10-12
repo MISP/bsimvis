@@ -1999,7 +1999,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <th><input type="number" id="flt-cluster-min-features" value="${escapeAttr(p.get('min_features') || '0')}" min="0" title="Min Features" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th><input type="number" id="flt-cluster-min-cohesion" value="${escapeAttr(p.get('min_cohesion') || '0')}" step="0.1" min="0" max="1" title="Min Cohesion" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th></th>
-                    <th><div class="tag-filter-container" id="tag-container-cluster"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'cluster')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('cluster', 'cluster_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
+                    <th><div class="tag-filter-container" id="tag-container-cluster"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'cluster')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('cluster', 'cluster_tag', val); this.value=''; triggerTagSearch(); })"><input type="text" class="tag-filter-add" placeholder="+ Inferred" title="Filter on tags inferred from the cluster members" onkeydown="handleTagAdd(event, 'cluster', 'inferred_tag')"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-cluster-func-name" placeholder="Func Name..." value="${escapeAttr(p.get('func_name') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-func-addr" placeholder="Func Addr..." value="${escapeAttr(p.get('func_addr') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
@@ -2049,7 +2049,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <th><input type="number" id="flt-bin-cluster-min-stability" value="${escapeAttr(p.get('min_stability') || '0')}" step="0.1" min="0" title="Min Stability" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-cohesion" value="${escapeAttr(p.get('min_cohesion') || '0')}" step="0.1" min="0" max="1" placeholder="Min" title="Min Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-cohesion" value="${escapeAttr(p.get('max_cohesion') || '')}" step="0.1" min="0" max="1" placeholder="Max" title="Max Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
                     <th></th>
-                    <th><div class="tag-filter-container" id="tag-container-bin-cluster"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'bin-cluster')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bin-cluster', 'cluster_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
+                    <th><div class="tag-filter-container" id="tag-container-bin-cluster"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'bin-cluster')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bin-cluster', 'cluster_tag', val); this.value=''; triggerTagSearch(); })"><input type="text" class="tag-filter-add" placeholder="+ Inferred" title="Filter on tags inferred from the cluster members" onkeydown="handleTagAdd(event, 'bin-cluster', 'inferred_tag')"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-file-md5" placeholder="MD5..." value="${escapeAttr(p.get('file_md5') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
@@ -2259,8 +2259,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
             { key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
             { key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'] },
             { key: 'bin-sim', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
-            { key: "cluster", fields: ["cluster_tag", "exclude_cluster_tag"] },
-            { key: "bin-cluster", fields: ["cluster_tag", "exclude_cluster_tag"] }
+            { key: "cluster", fields: ["cluster_tag", "exclude_cluster_tag", "inferred_tag", "exclude_inferred_tag"] },
+            { key: "bin-cluster", fields: ["cluster_tag", "exclude_cluster_tag", "inferred_tag", "exclude_inferred_tag"] }
         ];
         tagFields.forEach(col => {
             col.fields.forEach(f => {
@@ -2776,7 +2776,7 @@ function createTagCard(columnId, type, value, isExclude = false, literal = true)
 
     card.innerHTML = `
         <span class="btn-card-ex" title="Toggle Exclude" onclick="toggleCardExclude(this)">NOT</span>
-        <span class="tag-text" title="${escapeAttr(value)}">${value}</span>
+        <span class="tag-text" title="${escapeAttr(value)}">${type === 'inferred_tag' ? '≈ ' : ''}${value}</span>
         <span class="btn-card-remove" title="Remove" onclick="this.parentElement.remove(); triggerTagSearch();">×</span>
     `;
 
@@ -2790,13 +2790,13 @@ function toggleCardExclude(btn) {
     triggerTagSearch();
 }
 
-function handleTagAdd(event, columnId) {
+function handleTagAdd(event, columnId, forcedType) {
     if (event.key === 'Enter' || event.key === ',') {
         event.preventDefault();
         const val = event.target.value.replace(',', '').trim();
         if (val) {
             let type = (columnId === "sim" ? "sim_tag" : ((columnId === "cluster" || columnId === "bin-cluster") ? "cluster_tag" : (columnId === "func" ? "func_tag" : "file_tag")));
-            createTagCard(columnId, type, val, false, false);
+            createTagCard(columnId, forcedType || type, val, false, false);
             event.target.value = '';
             triggerTagSearch();
         }
@@ -3925,7 +3925,7 @@ function renderClusters(items) {
                 </div>
             </td>
             <td class="dim">${formatDate(c.created_at)}</td>
-            <td>${EntityRenderer.renderTag('cluster', c.tag_id || c.cluster_id, [], c.user_tags || [], { maxTags: 4 })}</td>
+            <td>${EntityRenderer.renderTag('cluster', c.tag_id || c.cluster_id, [...(c.inferred_tags || []), ...(c.file_inferred_tags || [])], c.user_tags || [], { maxTags: 4 })}</td>
             <td style="min-width: 350px;">
                 <div style="display:flex; flex-direction:column; gap:2px; width: 100%;">
                     ${sampleMembersHtml}
@@ -3967,6 +3967,8 @@ function applyClusterSearch() {
 
     params.delete("cluster_tag");
     params.delete("exclude_cluster_tag");
+    params.delete("inferred_tag");
+    params.delete("exclude_inferred_tag");
     document.querySelectorAll("#tag-container-cluster .tag-filter-card").forEach(card => {
         const key = (card.dataset.exclude === "true" ? "exclude_" : "") + card.dataset.type;
         params.append(key, quoteFilterValue(card.dataset.value, card.dataset.literal !== "false"));
@@ -4129,7 +4131,7 @@ function renderBinClusters(items) {
                 </div>
             </td>
             <td class="dim">${formatDate(c.created_at)}</td>
-            <td>${EntityRenderer.renderTag('bin_cluster', c.tag_id || c.cluster_id, [], c.user_tags || [], { maxTags: 4 })}</td>
+            <td>${EntityRenderer.renderTag('bin_cluster', c.tag_id || c.cluster_id, [...(c.inferred_tags || []), ...(c.file_inferred_tags || [])], c.user_tags || [], { maxTags: 4 })}</td>
             <td style="min-width: 250px;">
                 <div style="display:flex; flex-direction:column; gap:2px; width: 100%;">
                     ${sampleMembersHtml}
@@ -4182,6 +4184,8 @@ function applyBinClusterSearch() {
 
     params.delete("cluster_tag");
     params.delete("exclude_cluster_tag");
+    params.delete("inferred_tag");
+    params.delete("exclude_inferred_tag");
     document.querySelectorAll("#tag-container-bin-cluster .tag-filter-card").forEach(card => {
         const key = (card.dataset.exclude === "true" ? "exclude_" : "") + card.dataset.type;
         params.append(key, quoteFilterValue(card.dataset.value, card.dataset.literal !== "false"));

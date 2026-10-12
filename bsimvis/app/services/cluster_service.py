@@ -11,6 +11,7 @@ from bsimvis.app.services.cluster_utils import (
     cluster_summary,
     collect_member_values,
     default_bin_cluster_name,
+    function_cluster_stats,
     set_tag_distribution_score,
     function_count_stats,
     inferred_tag_values,
@@ -942,6 +943,7 @@ class ClusterService:
                 "sample_functions": samples,
                 "created_at": int(time.time() * 1000),
             }
+            meta.update(self._function_cluster_stats(members, float(cohesion_score)))
 
             # Sanitize metadata to ensure no NaN/inf values (invalid JSON)
             for k, v in meta.items():
@@ -1666,6 +1668,51 @@ class ClusterService:
 
         return True
 
+    def _function_cluster_stats(self, members, cohesion):
+        """Distributions and inferred tags for one function cluster's meta.
+
+        Reads at most `clustering.stats_sample_cap` evenly spaced members, so a
+        root cluster holding a whole collection costs a bounded batch of GETs.
+        """
+        from bsimvis.app.services.config_service import config_service
+
+        cap = config_service.get("clustering.stats_sample_cap", 2000)
+        step = max(1, -(-len(members) // cap))
+        sample = list(members)[::step]
+        pipe = self.r.pipeline(transaction=False)
+        for fid in sample:
+            pipe.get(f"{fid}:meta")
+        func_metas = []
+        file_keys = {}
+        for fid, raw in zip(sample, pipe.execute()):
+            try:
+                func_metas.append(json.loads(raw) if raw else {})
+            except Exception:
+                func_metas.append({})
+            parts = fid.split(":")
+            if len(parts) >= 3:
+                file_keys[f"{parts[0]}:file:{parts[2]}:meta"] = None
+        keys = list(file_keys)
+        pipe = self.r.pipeline(transaction=False)
+        for k in keys:
+            pipe.get(k)
+        file_metas = []
+        for raw in pipe.execute():
+            try:
+                file_metas.append(json.loads(raw) if raw else {})
+            except Exception:
+                file_metas.append({})
+        stats = function_cluster_stats(
+            func_metas,
+            file_metas,
+            cohesion,
+            config_service.get("clustering.inferred_min_cohesion", 0.5),
+            config_service.get("clustering.inferred_min_coverage", 0.5),
+            config_service.get("clustering.inferred_min_members", 3),
+        )
+        stats["stats_sampled"] = len(sample) < len(members)
+        return stats
+
     def _persist_hierarchical_clusters(
         self,
         collection,
@@ -1925,6 +1972,7 @@ class ClusterService:
                 "sample_functions": samples,
                 "created_at": int(time.time() * 1000),
             }
+            meta.update(self._function_cluster_stats(members, float(cohesion_score)))
             for k, v in meta.items():
                 if isinstance(v, float) and not np.isfinite(v):
                     meta[k] = 0.0
@@ -2149,6 +2197,7 @@ class ClusterService:
                 "sample_functions": samples,
                 "created_at": int(time.time() * 1000),
             }
+            meta.update(self._function_cluster_stats(members, float(cohesion_score)))
             for k, v in meta.items():
                 if isinstance(v, float) and not np.isfinite(v):
                     meta[k] = 0.0
@@ -2400,6 +2449,9 @@ class ClusterService:
                     "sample_functions": samples,
                     "created_at": int(time.time() * 1000),
                 }
+                meta.update(
+                    self._function_cluster_stats(members, float(cohesion_score))
+                )
                 for k, v in meta.items():
                     if isinstance(v, float) and not np.isfinite(v):
                         meta[k] = 0.0

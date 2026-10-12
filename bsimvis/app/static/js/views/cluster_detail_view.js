@@ -869,6 +869,9 @@ window.ClusterDetailView = {
         Object.entries(c.tag_distribution || {}).forEach(([axis, dist]) => {
             dists.push(['Tags · ' + axis, 'fa-solid fa-tags', dist, true]);
         });
+        Object.entries(c.file_tag_distribution || {}).forEach(([axis, dist]) => {
+            dists.push(['File tags · ' + axis, 'fa-solid fa-tags', dist, true]);
+        });
         const cards = dists.map(([title, icon, dist, isTags]) => (isTags ? window.renderTagDist(title, icon, dist) : window.renderDist(title, icon, dist))).join('');
 
         panel.innerHTML = `

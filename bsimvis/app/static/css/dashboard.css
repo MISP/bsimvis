@@ -3118,12 +3118,14 @@ html.light-theme .nway-function-view { --xp-l: 40%; }
 .xp-cnt { font-size: 0.66rem; margin-left: 6px; padding: 0 5px; border-radius: 8px; background: var(--card-bg); color: var(--dim); }
 .xp-cbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 12px; }
 .xp-naming { font-size: 0.72rem; color: var(--dim); }
-.xp-rib { overflow: auto; max-height: min(420px, 60vh); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; }
-.xp-rib table { border-collapse: collapse; width: 100%; }
+.xp-rib { min-width: 0; max-width: 100%; overflow: auto; max-height: min(420px, 60vh); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; }
+.xp-rib table { border-collapse: separate; table-layout: auto; width: max-content; min-width: 100%; }
 .xp-rib th, .xp-rib td { padding: 4px 6px; border-bottom: 1px solid var(--border); text-align: center; font: 0.74rem 'Consolas', monospace; }
-.xp-rib th { background: var(--card-bg); color: var(--dim); font-weight: 500; vertical-align: bottom; position: sticky; top: 0; }
+.xp-rib th { min-width: 96px; background: var(--card-bg); color: var(--dim); font-weight: 500; vertical-align: bottom; position: sticky; top: 0; z-index: 1; }
 .xp-rib th small { display: block; font: 0.64rem sans-serif; white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; margin: 0 auto; }
-.xp-rib th.rowh, .xp-rib td.rowh { text-align: left; color: var(--cc); font-weight: 600; white-space: nowrap; }
+.xp-rib th.rowh, .xp-rib td.rowh { min-width: 240px; max-width: 240px; position: sticky; left: 0; z-index: 2; background: var(--card-bg); text-align: left; color: var(--cc, var(--dim)); font-weight: 600; white-space: nowrap; border-right: 1px solid var(--border); }
+.xp-rib th.rowh { z-index: 3; }
+.xp-rfile { display: inline-block; max-width: 205px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 .xp-rib tr:last-child td { border-bottom: 0; }
 .xp-cell { display: inline-flex; gap: 4px; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 6px; border-radius: 5px; border: 1px solid transparent; cursor: pointer; background: none; color: var(--text); font: inherit; }
 button.xp-cell:hover { outline: 2px solid var(--accent); }
@@ -3142,7 +3144,7 @@ button.xp-cell:hover { outline: 2px solid var(--accent); }
 .xp-bh:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .xp-bh .bt { font-weight: 600; }
 .xp-bid { font: 600 0.7rem 'Consolas', monospace; color: var(--dim); }
-.xp-mini { display: flex; gap: 3px; margin-left: auto; }
+.xp-mini { display: flex; flex-wrap: wrap; gap: 3px; margin-left: auto; }
 .xp-mini span { font: 0.66rem 'Consolas', monospace; padding: 1px 5px; border-radius: 4px; }
 .xp-bd { border-top: 1px solid var(--border); padding: 10px 12px 12px; }
 .xp-vchips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; align-items: center; }
@@ -3162,7 +3164,9 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .xp-frow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 10px; margin-bottom: 2px; }
 .xp-frow.one { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 760px) { .xp-frow { grid-template-columns: minmax(0, 1fr); } }
-.xp-fband { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; font: 0.7rem 'Consolas', monospace; color: var(--dim); padding: 6px 0 2px; }
+.xp-fband { grid-column: 1 / -1; min-width: 0; display: flex; flex-wrap: wrap; overflow-wrap: anywhere; gap: 8px; align-items: center; font: 0.7rem 'Consolas', monospace; color: var(--dim); padding: 6px 0 2px; }
+.xp-full-head .xp-fband { grid-column: auto; }
+.xp-full-groups { grid-column: 1 / -1; margin: 4px 0 6px; }
 .xp-fband .xp-cell { min-width: 0; height: 20px; }
 .xp-fband i { flex: 1; height: 1px; background: var(--border); }
 .xp-fcode { border: 1px solid var(--border); border-radius: 6px; min-width: 0; background: var(--card-bg); }

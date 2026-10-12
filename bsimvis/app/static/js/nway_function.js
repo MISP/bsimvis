@@ -220,7 +220,7 @@
                 + blocks.map(b => `<th>${escapeHtml(b.id)}<small data-btitle="${escapeAttr(b.id)}" title="${escapeAttr(this._bt(b))}">${escapeHtml(this._bt(b))}</small></th>`).join('')
                 + extras.map(x => `<th>${escapeHtml(x.id)}<small title="${escapeAttr(x.title)}">${escapeHtml(x.title)}</small></th>`).join('') + '</tr>';
             d.functions.forEach((f, j) => {
-                h += `<tr><td class="rowh" ${cc(j)}><span class="xp-badge">${escapeHtml(f.letter)}</span> ${escapeHtml(f.file_name || '')}</td>`;
+                h += `<tr><td class="rowh" ${cc(j)}><span class="xp-badge">${escapeHtml(f.letter)}</span> <span class="xp-rfile" title="${escapeAttr(f.file_name || '')}">${escapeHtml(f.file_name || '')}</span></td>`;
                 for (const b of blocks) {
                     if (j === c.reference) { h += '<td><span class="st-none">ref</span></td>'; continue; }
                     const cell = this._cell(b, j);
@@ -277,11 +277,32 @@
             return `<div class="xp-fband"><span class="xp-bid">${escapeHtml(id)}</span><span class="xp-cell st-${st}" style="cursor:default">${NwayFunction.GLYPH[st]} ${NwayFunction.SNAME[st]}${st === 'miss' || st === 'same' || st === 'extra' ? '' : ' ' + Math.round(sim * 100) + '%'}</span>${extra}<span class="dim">${escapeHtml(title)}</span><i></i></div>`;
         }
 
+        _fullGroups(b, f) {
+            const same = this._others().filter(j => this._cell(b, j).st === 'same');
+            const groups = [...(same.length ? [{ funcs: same, st: 'same' }] : []), ...b.groups];
+            return `<div class="xp-vchips xp-full-groups"><span class="lab">Variants</span>${groups.map(g => `<button class="xp-chip" aria-pressed="${g.funcs.includes(f)}" data-xfn="${g.funcs.includes(f) ? f : g.funcs[0]}">${g.funcs.map(j => `<span class="xp-badge" ${cc(j)}>${escapeHtml(this.data.functions[j].letter)}</span>`).join('')} ${NwayFunction.GLYPH[g.st]} ${NwayFunction.SNAME[g.st]}</button>`).join('')}</div>`;
+        }
+
+        _functionGroups(single) {
+            const c = this.data.consensus, groups = new Map();
+            this.data.functions.forEach((fn, j) => {
+                if (j === c.reference && !single) return;
+                const text = j === c.reference ? c.blocks.map(b => b.ref_text).join('\n')
+                    : (c.funcs[String(j)] || []).map(seg => seg.text.map(([t]) => t).join('')).join('\n');
+                // Use the matcher's whitespace and generated-address normalization.
+                const normalized = text.trim().replace(/\s+/g, ' ').replace(/\b(FUN|DAT|LAB|PTR|SUB|UNK|switchD|caseD)_[0-9a-fA-F]+/g, '$1_');
+                const key = normalized && !c.truncated ? normalized : j;
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(j);
+            });
+            return [...groups.values()];
+        }
+
         _fullView() {
             const d = this.data, c = d.consensus, s = this.s, single = s.single;
             if (s.fn == null || (!single && s.fn === c.reference)) s.fn = this._others()[0];
             const f = s.fn;
-            const chips = d.functions.map((fn, j) => (j === c.reference && !single) ? '' : `<button class="xp-chip" aria-pressed="${j === f}" data-xfn="${j}"><span class="xp-badge" ${cc(j)}>${escapeHtml(fn.letter)}</span>${escapeHtml(fn.file_name || '')}</button>`).join('');
+            const chips = this._functionGroups(single).map(g => `<button class="xp-chip" aria-pressed="${g.includes(f)}" data-xfn="${g.includes(f) ? f : g[0]}" title="${escapeAttr(g.map(j => `${d.functions[j].letter}: ${d.functions[j].file_name || ''}`).join('\n'))}">${g.map(j => `<span class="xp-badge" ${cc(j)}>${escapeHtml(d.functions[j].letter)}</span>`).join('')}${g.length > 1 ? 'same code' : escapeHtml(d.functions[g[0]].file_name || '')}</button>`).join('');
             let out = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Show</span>${chips}<label class="xp-chk"><input type="checkbox" data-xsingle ${single ? 'checked' : ''}> Function alone, in its own order</label></div>`;
             const tag = t => `<span class="xp-tag hot">${escapeHtml(t)}</span>`;
             if (single) {
@@ -295,8 +316,8 @@
                 }).join('');
             }
             const ref = d.functions[c.reference];
-            out += `<p class="xp-hint">Rows are blocks of ${escapeHtml(ref.letter)}. Left is ${escapeHtml(ref.letter)}, right is ${escapeHtml(d.functions[f].file_name || '')}. Blocks that moved or merged stay on the row of the block they match.</p>`;
-            out += `<div class="xp-frow"><div class="xp-fband" style="grid-column:1"><span class="xp-badge" ${cc(c.reference)}>${escapeHtml(ref.letter)}</span> ${escapeHtml(ref.file_name || '')} (reference)</div><div class="xp-fband" style="grid-column:2"><span class="xp-badge" ${cc(f)}>${escapeHtml(d.functions[f].letter)}</span> ${escapeHtml(d.functions[f].file_name || '')}</div></div>`;
+            out += `<p class="xp-hint">Rows are blocks of ${escapeHtml(ref.letter)}. Left is ${escapeHtml(ref.letter)}, right is ${escapeHtml(d.functions[f].file_name || '')}. Functions sharing a block variant are grouped together; click a group to show its function throughout. Blocks that moved or merged stay on the row of the block they match.</p>`;
+            out += `<div class="xp-frow xp-full-head"><div class="xp-fband"><span class="xp-badge" ${cc(c.reference)}>${escapeHtml(ref.letter)}</span> ${escapeHtml(ref.file_name || '')} (reference)</div><div class="xp-fband"><span class="xp-badge" ${cc(f)}>${escapeHtml(d.functions[f].letter)}</span> ${escapeHtml(d.functions[f].file_name || '')}</div></div>`;
             let hidden = 0;
             for (const b of c.blocks) {
                 const cell = this._cell(b, f);
@@ -306,7 +327,7 @@
                 if (cell.st === 'miss') right = '<pre class="xp-fcode gap">(no matching code)</pre>';
                 else if (cell.into) right = `<pre class="xp-fcode gap">↑ merged into ${escapeHtml(cell.into)} above</pre>`;
                 else right = `<pre class="xp-fcode st-${cell.st}">${this._runs(this._cellRuns(b, f), 'chg')}</pre>`;
-                out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), cell.into ? tag('merged into ' + cell.into) : '')}<pre class="xp-fcode">${g && g.ref_segs ? this._runs(g.ref_segs, 'del') : escapeHtml(b.ref_text)}</pre>${right}</div>`;
+                out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), cell.into ? tag('merged into ' + cell.into) : '')}${this._fullGroups(b, f)}<pre class="xp-fcode">${g && g.ref_segs ? this._runs(g.ref_segs, 'del') : escapeHtml(b.ref_text)}</pre>${right}</div>`;
             }
             for (const seg of (c.funcs[String(f)] || []).filter(x => x.x)) {
                 const x = c.extras.find(e => e.id === seg.x);

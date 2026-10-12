@@ -3116,10 +3116,11 @@ html.light-theme .nway-function-view { --xp-l: 40%; }
 .xp-fx td.xp-plain { font-family: inherit; }
 .xp-fx td.xp-c { text-align: center; font-family: 'Consolas', monospace; }
 .xp-fx td.xp-i a { color: var(--accent); }
-.xp-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--cc); vertical-align: middle; }
+.xp-dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: var(--cc); vertical-align: middle; }
 .xp-dot.no { background: none; border: 1.5px dashed var(--border); }
 .xp-fx tr.diff td.xp-i { box-shadow: inset 3px 0 0 var(--token-warning); }
 .xp-fx td.out { background: var(--xp-warn-bg); color: var(--token-warning); font-weight: 600; }
+.xp-cnt.all { color: var(--accent); }
 .xp-cnt { font-size: 0.66rem; margin-left: 6px; padding: 0 5px; border-radius: 8px; background: var(--card-bg); color: var(--dim); }
 .xp-cbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 12px; }
 .xp-naming { font-size: 0.72rem; color: var(--dim); }
@@ -3150,7 +3151,11 @@ button.xp-cell:hover { outline: 2px solid var(--accent); }
 .xp-bh .bt { font-weight: 600; }
 .xp-bid { font: 600 0.7rem 'Consolas', monospace; color: var(--dim); }
 .xp-mini { display: flex; flex-wrap: wrap; gap: 3px; margin-left: auto; }
-.xp-mini span { font: 0.66rem 'Consolas', monospace; padding: 1px 5px; border-radius: 4px; }
+.xp-mc { display: inline-flex; overflow: hidden; border-radius: 4px; font: 0.66rem 'Consolas', monospace; }
+.xp-mc b { background: var(--cc); color: var(--bg); padding: 1px 4px; }
+.xp-mc i { font-style: normal; padding: 1px 4px; }
+.xp-mc.sl b { display: none; }
+.xp-mc.sl i { box-shadow: inset 0 -2px 0 var(--cc); }
 .xp-bd { border-top: 1px solid var(--border); padding: 10px 12px 12px; }
 .xp-vchips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; align-items: center; }
 .xp-vchips .lab { font-size: 0.72rem; color: var(--dim); }

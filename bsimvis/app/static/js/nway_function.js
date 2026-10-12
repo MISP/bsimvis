@@ -204,7 +204,7 @@
                 return `<div class="xp-grp">${head}<div class="xp-none">${why}</div></div>`;
             }
             if (!items.length) return `<div class="xp-grp">${head}<div class="xp-none">All ${Number(f.total)} are in every function.</div></div>`;
-            return `<div class="xp-grp">${head}<div class="xp-fx"><table>${this._thead()}${items.map(i => `<tr class="${i.count < n ? 'diff' : ''}"><td class="xp-i">${this._label(f, i)}<span class="xp-cnt">${Number(i.count)}/${n}</span></td>${this._dots(i.mask)}</tr>`).join('')}</table></div></div>`;
+            return `<div class="xp-grp">${head}<div class="xp-fx"><table>${this._thead()}${items.map(i => `<tr class="${i.count < n ? 'diff' : ''}"><td class="xp-i">${this._label(f, i)}<span class="xp-cnt${i.count === n ? ' all' : ''}">${i.count === n ? 'all' : `${Number(i.count)}/${n}`}</span></td>${this._dots(i.mask)}</tr>`).join('')}</table></div></div>`;
         }
 
         _facets() {
@@ -377,7 +377,8 @@
                     return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(x.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(x.id)}</span><span class="bt">${escapeHtml(x.title)}</span><span class="xp-mini">${x.funcs.map(j => `<span class="st-extra">${escapeHtml(this.data.functions[j].letter)}+</span>`).join('')}</span></button>${open ? `<div class="xp-bd"><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${x.funcs.map(j => `${this._funcRef(j)}`).join('')} <span class="xp-tag">no counterpart in the reference</span></div><pre>${x.syntax ? this._codeHtml(x.syntax, null, null, x.funcs[0]) : escapeHtml(x.text)}</pre></div></div></div>` : ''}</div>`;
                 }
                 const open = this.s.open === b.id;
-                const mini = this._others().map(j => { const x = this._cell(b, j); return `<span class="st-${x.st}" ${cc(j)} title="${escapeAttr(`${this.data.functions[j].letter}: ${NwayFunction.SNAME[x.st]}`)}">${escapeHtml(this.data.functions[j].letter)}${G[x.st]}</span>`; }).join('');
+                const others = this._others(), slots = others.length > 6;
+                const mini = others.map(j => { const x = this._cell(b, j), l = escapeHtml(this.data.functions[j].letter); return `<span class="xp-mc${slots ? ' sl' : ''}" ${cc(j)} title="${escapeAttr(`${this.data.functions[j].letter}: ${NwayFunction.SNAME[x.st]}`)}"><b>${l}</b><i class="st-${x.st}">${G[x.st]}</i></span>`; }).join('');
                 return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(b.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(b.id)}</span>${this._tspan(b)}<span class="xp-mini">${mini}</span></button>${open ? this._blockBody(b) : ''}</div>`;
             }).join('');
             const hidden = only ? c.blocks.length - ordered.filter(item => item.b).length : 0;

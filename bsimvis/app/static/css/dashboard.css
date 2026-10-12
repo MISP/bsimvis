@@ -3050,3 +3050,6 @@ body.has-entity-tabs .header-top > div:has(> #view-title) { display: none !impor
 .global-menu-list a:hover, .global-menu-list a.active { background: var(--hover); color: var(--accent); }
 .global-menu-list a:hover i, .global-menu-list a.active i { color: var(--accent); }
 .global-menu-list kbd { margin-left: auto; font-size: 0.7rem; color: var(--subtle); }
+
+/* The clearable wrapper JS adds around the input must fill the bar, so the icon sits at the right edge */
+.search-input-wrapper > .filter-clearable { flex: 1; display: flex; min-width: 0; }

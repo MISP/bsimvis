@@ -1350,7 +1350,7 @@ window.DiffView = {
         } catch (err) { /* the URL is a convenience, matching still works without it */ }
     },
 
-    // Partner row of a called function in the current pair, null for NO MATCH,
+    // Partner row of a called function in the current pair, null for no match,
     // undefined when this is not a pair diff or the function is external.
     async _calledHit(funcId) {
         const p = this._getCurrentP() || this._parsePathUrl();
@@ -1367,28 +1367,20 @@ window.DiffView = {
     // Click on a called function: open the diff of its partner on the other side.
     async openCalledPair(funcId, e) {
         const hit = await this._calledHit(funcId);
-        if (hit === undefined) return this.navigateToFunction(funcId, e);
-        if (hit && window.buildDiffUrl) {
-            Nav.openPath(buildDiffUrl(hit.func_a.id, hit.func_b.id), e, { title: `Diff: ${hit.func_a.name || hit.func_a.id} vs ${hit.func_b.name || hit.func_b.id}`, type: 'diff' });
-        } else if (window.showToast) {
-            window.showToast(`NO MATCH (${this._callSimSource}) -- try another match source in the Similarity tab`, 'info');
-        }
+        if (!hit || !window.buildDiffUrl) return this.navigateToFunction(funcId, e);
+        Nav.openPath(buildDiffUrl(hit.func_a.id, hit.func_b.id), e, { title: `Diff: ${hit.func_a.name || hit.func_a.id} vs ${hit.func_b.name || hit.func_b.id}`, type: 'diff' });
     },
 
-    // Hover on a called function: diff preview of the matched pair, or a NO MATCH tooltip.
-    // Returns false when this is not a pair diff, so the caller falls back to the code preview.
+    // Hover on a called function: diff preview of the matched pair.
+    // Returns false when there is no pair to show, so the caller falls back to the code preview.
     async previewCalledPair(funcId, name, event) {
         const token = this._previewToken = (this._previewToken || 0) + 1;
         const hit = await this._calledHit(funcId);
-        if (hit === undefined) return false;
         if (token !== this._previewToken) return true; // pointer already left or moved on
+        if (!hit) return false; // no partner: fall back to the plain code preview
         const pos = { clientX: event.clientX, clientY: event.clientY, target: event.target, currentTarget: event.currentTarget };
-        if (hit) {
-            const show = window.showDiffPreview || (window.parent && window.parent.showDiffPreview);
-            if (show) show(hit.func_a.id, hit.func_a.name || '', hit.func_b.id, hit.func_b.name || '', Number(hit.similarity) || 0, pos);
-        } else {
-            this.showTooltip(`<span style="color:#f92672; font-weight:600;">NO MATCH</span> <span class="dim">${escapeHtml(name || funcId)} (${escapeHtml(this._callSimSource || 'stored')})</span>`, pos.clientX, pos.clientY);
-        }
+        const show = window.showDiffPreview || (window.parent && window.parent.showDiffPreview);
+        if (show) show(hit.func_a.id, hit.func_a.name || '', hit.func_b.id, hit.func_b.name || '', Number(hit.similarity) || 0, pos);
         return true;
     },
 

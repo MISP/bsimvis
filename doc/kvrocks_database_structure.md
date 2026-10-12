@@ -61,6 +61,8 @@ Written once per analysis (new analyses only; there is no backfill), on the orig
 | `{coll}:idx:string:file:{id}` | **Set** | File IDs holding the string. Registry: `{coll}:reg:string:file`. |
 | `{coll}:idx:func:strings:{lowercased value[:128]}` | **Set** | Function IDs, searched by `strings=` on function search. Registry: `{coll}:reg:func:strings`. |
 | `{coll}:idx:file:strings:{lowercased value[:128]}` | **Set** | File IDs, searched by `strings=` on file search. Registry: `{coll}:reg:file:strings`. |
+| `{coll}:idx:string:meta` | **Hash** | id -> JSON `{value, length, encodings, sections, tags, rules}` for the collection-wide listing. The sets only grow while any file still holds the string. |
+| `{coll}:idx:string:file_count` / `{coll}:idx:string:func_count` | **Hash** | id -> number of files / functions referencing the string (`HINCRBY` on index and removal). A string whose last file goes is dropped from all three hashes. |
 
 Removing a file (`maintenance/remove`) and deleting a collection clear all of these; clearing features or similarities does not (strings are analysis output, like `vec:meta`).
 

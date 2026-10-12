@@ -35,7 +35,7 @@ window.Nav = {
             mapped = ['files', mapped[1], 'functions'];
         } else if (mapped[0] === 'file' && mapped[1]) {
             mapped = ['files', mapped[1]];
-        } else if (mapped[0] === 'file_strings' && mapped[1]) {
+        } else if (mapped[0] === 'file-strings' && mapped[1]) {
             mapped = ['files', mapped[1], 'strings'];
         } else if (mapped[0] === 'function' && mapped[1] && mapped[2]) {
             mapped = ['files', mapped[1], 'functions', mapped[2]];

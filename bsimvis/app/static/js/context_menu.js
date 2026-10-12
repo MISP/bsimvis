@@ -179,6 +179,13 @@
             const qualifiedFileId = [data.fileId, data.id].find(v => v && v.includes(':'));
             const fileCol = data.collection || (typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main');
             norm.id = qualifiedFileId || `${fileCol}:file:${norm.md5}`;
+        } else if (type === 'string') {
+            resolvedType = 'string';
+            norm.value = data.value || '';
+            norm.sid = data.id || '';
+            // Only a row of one file's table is a taggable entity.
+            norm.id = data.eid || '';
+            norm.md5 = data.md5 || '';
         } else if (type === 'link' || type === 'similarity') {
             resolvedType = 'similarity';
             norm.id1 = data.id1;
@@ -209,16 +216,17 @@
         let headerTitle = '';
         if (resolvedType === 'function') headerTitle = `Function: ${norm.name}`;
         else if (resolvedType === 'file') headerTitle = `File: ${norm.name}`;
+        else if (resolvedType === 'string') headerTitle = `String: ${norm.value.length > 40 ? norm.value.slice(0, 40) + '\u2026' : norm.value}`;
         else if (resolvedType === 'similarity') headerTitle = `Similarity: ${(parseFloat(norm.score) * 100).toFixed(1)}% Match`;
         else if (resolvedType === 'bin_similarity') headerTitle = `Link: ${norm.name_a.substring(0,10)} ↔ ${norm.name_b.substring(0,10)}`;
         else if (resolvedType === 'cluster') headerTitle = `Cluster: ${norm.name}`;
         else if (resolvedType === 'bin_cluster') headerTitle = `Binary Cluster: ${norm.name}`;
         else if (resolvedType === 'bin_sim') headerTitle = `Pair: ${String(norm.name_a).substring(0,10)} ↔ ${String(norm.name_b).substring(0,10)}`;
 
-        html += `<div class="context-menu-header">${headerTitle}</div>`;
+        html += `<div class="context-menu-header">${escapeHtml(headerTitle)}</div>`;
 
         // -- Bookmark & Ignore (Pinned at the Top) --
-        if (['function', 'file', 'similarity', 'cluster', 'bin_cluster', 'bin_sim'].includes(resolvedType)) {
+        if (['function', 'file', 'similarity', 'cluster', 'bin_cluster', 'bin_sim'].includes(resolvedType) || (resolvedType === 'string' && norm.id)) {
             const etype = resolvedType;
             const eid = (resolvedType === 'similarity' || resolvedType === 'bin_sim')
                 ? norm.sid
@@ -337,6 +345,9 @@
             copySubmenuHtml += renderCopyItem('Name', norm.fileName, 'fa-signature');
             copySubmenuHtml += renderCopyItem('MD5', norm.md5, 'fa-fingerprint');
             copySubmenuHtml += renderCopyItem('File ID', norm.id, 'fa-id-badge');
+        } else if (resolvedType === 'string') {
+            copySubmenuHtml += renderCopyItem('Value', norm.value, 'fa-font');
+            copySubmenuHtml += renderCopyItem('String ID', norm.sid, 'fa-id-badge');
         } else if (resolvedType === 'similarity') {
             copySubmenuHtml += renderCopyItem('Similarity ID', norm.sid, 'fa-id-badge');
             copySubmenuHtml += renderCopyItem('Match Score', norm.score, 'fa-percent');
@@ -541,6 +552,19 @@
                 </div>`;
             }
             actionsSubmenuHtml += renderFileAnalysisSubmenu(norm.md5);
+        } else if (resolvedType === 'string') {
+            const q = '?strings=' + encodeURIComponent(quoteFilterValue(norm.value.slice(0, 128)));
+            const funcsUrl = Nav.buildUIUrl(col, ['functions']) + q;
+            const filesUrl = Nav.buildUIUrl(col, ['files']) + q;
+            actionsSubmenuHtml += `
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(funcsUrl))}, event, { title: 'Functions', type: 'functions' })">
+                <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Functions using this string</span>
+            </div>
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(filesUrl))}, event, { title: 'Files', type: 'files' })">
+                <i class="fa-solid fa-file-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Files containing this string</span>
+            </div>`;
         } else if (resolvedType === 'similarity') {
             actionsSubmenuHtml += `
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly(${escapeAttr(jsString(norm.id1))}, ${escapeAttr(jsString(norm.name1 || ''))}, ${escapeAttr(jsString(norm.id2))}, ${escapeAttr(jsString(norm.name2 || ''))}, event)">

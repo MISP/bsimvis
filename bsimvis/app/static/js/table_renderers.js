@@ -517,6 +517,76 @@ window.TableRenderers = {
         `}).join('');
     },
 
+    // Read-only analysis tag badges (aggregated strings have no single owner to tag).
+    stringTagBadges: function(tags) {
+        return (tags || []).map(t => {
+            const color = window.tagInk(window.getTagMetadata(t).color);
+            return `<span class="analysis-tag-badge" style="border-color:${tagAlpha(color, 40)}; color:${color}; background:${tagAlpha(color, 7)};" title="${escapeAttr(t)}">${escapeHtml(t)}</span>`;
+        }).join('');
+    },
+
+    stringValueCell: function(value) {
+        const shown = value.length > 300 ? value.slice(0, 300) + '…' : value;
+        return `<span class="mono" style="color:var(--accent); white-space:pre-wrap; word-break:break-all;" title="${escapeAttr(value.slice(0, 500))}">${escapeHtml(shown)}</span>`;
+    },
+
+    stringFilterQuery: function(value) {
+        return '?strings=' + encodeURIComponent(quoteFilterValue(value.slice(0, 128)));
+    },
+
+    // Collection-wide strings: one row per distinct value.
+    renderStrings: function(items) {
+        const { collection } = getRoutingState();
+        const count = (n, url, title) => n
+            ? `<a class="clickable-count" href="${escapeAttr(url)}" title="${escapeAttr(title)}" onclick="Nav.openPath(this.getAttribute('href'), event)" style="color:var(--accent); font-weight:bold;">${Number(n).toLocaleString()}</a>`
+            : '<span class="dim">0</span>';
+        return items.map(s => {
+            const q = TableRenderers.stringFilterQuery(s.value);
+            const fnUrl = Nav.buildUIUrl(collection, ['functions']) + q;
+            const flUrl = Nav.buildUIUrl(collection, ['files']) + q;
+            const data = { id: s.id, value: s.value };
+            return `
+            <tr class="sim-row" style="font-size: 0.75rem;" data-id="${escapeAttr(s.id)}"
+                data-entity-data='${escapeAttr(JSON.stringify(data))}'
+                oncontextmenu="EntityRenderer.handleContextMenu(event, 'string', this)">
+                <td class="sim-cell" style="max-width:520px;">${TableRenderers.stringValueCell(s.value)}</td>
+                <td class="sim-cell">${(s.encodings || []).map(e => `<span class="badge">${escapeHtml(e)}</span>`).join(' ')}</td>
+                <td class="sim-cell mono">${escapeHtml(s.length)}</td>
+                <td class="sim-cell" style="text-align:center;">${count(s.files, flUrl, 'Files containing this string')}</td>
+                <td class="sim-cell" style="text-align:center;">${count(s.functions, fnUrl, 'Functions using this string')}</td>
+                <td>${TableRenderers.stringTagBadges(s.tags)}</td>
+            </tr>`;
+        }).join('');
+    },
+
+    // One file's strings: one row per address, taggable like any other entity.
+    renderFileStrings: function(items, ctx) {
+        const state = getRoutingState();
+        const collection = (ctx && ctx.collection) || state.collection;
+        const md5 = (ctx && ctx.md5) || state.params.get('md5');
+        return items.map(s => {
+            const eid = `${collection}:string:${md5}:${s.addr}`;
+            const q = TableRenderers.stringFilterQuery(s.value) + '&file_md5=' + encodeURIComponent(md5);
+            const refs = (s.funcs || []).length;
+            const refCell = refs
+                ? `<a class="clickable-count" href="${escapeAttr(Nav.buildUIUrl(collection, ['functions']) + q)}" title="Functions in this file using the string" onclick="Nav.openPath(this.getAttribute('href'), event)" style="color:var(--accent); font-weight:bold;">${refs}</a>`
+                : '<span class="dim">0</span>';
+            const data = { id: s.id, value: s.value, eid, md5 };
+            return `
+            <tr class="sim-row" style="font-size: 0.75rem;" data-id="${escapeAttr(eid)}"
+                data-entity-data='${escapeAttr(JSON.stringify(data))}'
+                oncontextmenu="EntityRenderer.handleContextMenu(event, 'string', this)">
+                <td class="sim-cell"><span class="mono" style="color:var(--accent);">${escapeHtml(s.addr)}</span></td>
+                <td class="sim-cell" style="max-width:520px;">${TableRenderers.stringValueCell(s.value)}</td>
+                <td class="sim-cell"><span class="badge">${escapeHtml(s.encoding)}</span></td>
+                <td class="sim-cell dim">${escapeHtml(s.section || '')}</td>
+                <td class="sim-cell mono">${escapeHtml(s.length)}</td>
+                ${ctx && ctx.noRefs ? '' : `<td class="sim-cell" style="text-align:center;">${refCell}</td>`}
+                <td>${EntityRenderer.renderTag('string', eid, s.tags || [], s.user_tags || [], { maxTags: 4 })}</td>
+            </tr>`;
+        }).join('');
+    },
+
     renderGlobalFeatures: function(items) {
         const { collection } = getRoutingState();
         const col = collection;
@@ -624,6 +694,8 @@ window.removeFiles = async function(collection, md5s, batchUuid) {
 window.renderFiles = TableRenderers.renderFiles;
 window.renderFunctions = TableRenderers.renderFunctions;
 window.renderGlobalFeatures = TableRenderers.renderGlobalFeatures;
+window.renderStrings = TableRenderers.renderStrings;
+window.renderFileStrings = TableRenderers.renderFileStrings;
 
 window.onTableRowDragStart = function(e) {
     let id = null;

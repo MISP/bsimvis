@@ -3111,7 +3111,7 @@ html.light-theme .nway-function-view { --xp-l: 40%; }
 .xp-fx td, .xp-fx th { padding: 3px 10px; border-bottom: 1px solid var(--border); font-size: 0.8rem; }
 .xp-fx tr:last-child td { border-bottom: 0; }
 .xp-fx th { position: sticky; top: 0; text-align: center; min-width: 34px; font: 600 0.72rem 'Consolas', monospace; color: var(--cc); background: var(--card-bg); }
-.xp-fx th:first-child { text-align: left; }
+.xp-fx th:first-child { text-align: left; width: 35%; min-width: 220px; }
 .xp-fx td.xp-i { font: 0.78rem 'Consolas', monospace; word-break: break-all; }
 .xp-fx td.xp-plain { font-family: inherit; }
 .xp-fx td.xp-c { text-align: center; font-family: 'Consolas', monospace; }

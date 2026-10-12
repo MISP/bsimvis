@@ -26,6 +26,23 @@ def _collection_for(data, etype, entry_id):
     return _collection_of(data)
 
 
+def _tag_strings(ids, tag, add):
+    """Strings keep their analyst tags in their own record (string_service)."""
+    from bsimvis.app.services import string_service
+    from bsimvis.app.services.tag_taxonomy import filter_tags
+
+    if not filter_tags([tag], "user"):
+        return {"error": f"Tag {tag!r} is not allowed for user tagging"}, 400
+    r = get_redis()
+    n = string_service.tag_by_ids(r, ids, tag, add)
+    if not n:
+        return {"status": "failed", "message": "String not found"}, 404
+    if add:
+        for coll in {i.partition(":string:")[0] for i in ids}:
+            tag_service._ensure_tag_metadata(coll, tag)
+    return {"status": "success", "tag": tag, "count": n}
+
+
 def add_tag():
     """
     Adds a user_tag to an entity.
@@ -44,6 +61,9 @@ def add_tag():
 
     if not all([collection, etype, entry_id, tag]):
         return {"error": "Missing parameters"}, 400
+
+    if etype == "string":
+        return _tag_strings([entry_id], tag, True)
 
     if etype not in [
         "file",
@@ -91,6 +111,9 @@ def add_bulk_tags():
     ):
         return {"error": "Missing or invalid parameters"}, 400
 
+    if etype == "string":
+        return _tag_strings(entity_ids, tag, True)
+
     success = tag_service.bulk_add_user_tag(collection, etype, entity_ids, tag)
     if success:
         return {"status": "success", "tag": tag, "count": len(entity_ids)}
@@ -108,6 +131,9 @@ def remove_tag():
 
     if not all([collection, etype, entry_id, tag]):
         return {"error": "Missing parameters"}, 400
+
+    if etype == "string":
+        return _tag_strings([entry_id], tag, False)
 
     if etype not in [
         "file",
@@ -146,6 +172,9 @@ def remove_bulk_tags():
         entity_ids, list
     ):
         return {"error": "Missing or invalid parameters"}, 400
+
+    if etype == "string":
+        return _tag_strings(entity_ids, tag, False)
 
     success = tag_service.bulk_remove_user_tag(collection, etype, entity_ids, tag)
     if success:

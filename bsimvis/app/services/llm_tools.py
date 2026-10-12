@@ -224,6 +224,36 @@ def search_tags(collection, q="", limit=25):
     }
 
 
+def search_strings(collection, q, limit=10):
+    """Functions whose referenced strings contain `q`, plus distinct matching
+    string values with how many files carry each."""
+    from bsimvis.app.routes.search_function import search_functions as route
+    from bsimvis.app.services import string_service
+    from bsimvis.app.services.redis_client import get_redis
+
+    qs = {"collection": collection, "strings": q, "limit": limit}
+    with _context_app().test_request_context("/api/function/search", query_string=qs):
+        result = route()
+    if isinstance(result, tuple):
+        return {"error": (result[0] or {}).get("error", "string search failed")}
+    return {
+        "functions": [
+            {
+                "func_id": f"{collection}:func:{f.get('file_md5')}:{f.get('entrypoint_address')}",
+                "function_name": f.get("function_name"),
+                "file_name": f.get("file_name"),
+            }
+            for f in (result.get("functions") or [])[:limit]
+        ],
+        "strings": [
+            {"value": x["value"], "files": x["files"], "functions": x["functions"]}
+            for x in string_service.list_strings(
+                get_redis(), collection, q=q, limit=limit
+            )["items"]
+        ],
+    }
+
+
 def _expand_tag_filter_values(collection, args):
     """For each tag-axis filter value with no exact vocabulary hit, swaps in
     every real tag it's a prefix of (see `search_tags` docstring for why this
@@ -595,6 +625,31 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "search_strings",
+            "description": (
+                "Find functions that reference a string (case-insensitive "
+                "substring, `*` = glob) -- URLs, file paths, error messages, "
+                "C2 hostnames -- and list the distinct matching string values "
+                "with their file counts. Only analyses run after strings "
+                "extraction was added have strings."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "collection": {"type": "string"},
+                    "q": {
+                        "type": "string",
+                        "description": "e.g. 'http://' or 'cmd.exe'",
+                    },
+                    "limit": {"type": "integer", "default": 10},
+                },
+                "required": ["collection", "q"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_tags",
             "description": (
                 "Substring search over the tag VOCABULARY itself (not "
@@ -730,6 +785,9 @@ DISPATCH = {
         a["collection"], a.get("filters_qs", ""), a.get("limit", 25)
     ),
     "search_tags": lambda a: search_tags(a["collection"], a["q"], a.get("limit", 25)),
+    "search_strings": lambda a: search_strings(
+        a["collection"], a["q"], a.get("limit", 10)
+    ),
     "get_file_info": lambda a: get_file_info(a["collection"], a["file_md5"]),
     "get_cluster_info": lambda a: get_cluster_info(
         a["collection"],
@@ -801,6 +859,16 @@ def describe_api_call(name, args):
                 "q": args.get("q", ""),
                 "sort_by": "total_count",
                 "sort_order": "desc",
+            },
+        }
+    if name == "search_strings":
+        return {
+            "method": "GET",
+            "path": "/api/function/search",
+            "query": {
+                "collection": args.get("collection"),
+                "strings": args.get("q"),
+                "limit": args.get("limit", 10),
             },
         }
     if name == "get_file_info":

@@ -76,6 +76,7 @@ window.FunctionView = {
                         <button class="bsim-tab active" id="function-tab-btn-code" onclick="FunctionView.switchTab('code')">Code</button>
                         <button class="bsim-tab" id="function-tab-btn-neighbors" onclick="FunctionView.switchTab('neighbors')">Similar<span id="fn-nbr-count-wrap" style="display:none;"> (<span id="fn-nbr-count">0</span>)</span></button>
                         <button class="bsim-tab" id="function-tab-btn-callgraph" onclick="FunctionView.switchTab('callgraph')">Call Graph</button>
+                        <button class="bsim-tab" id="function-tab-btn-strings" onclick="FunctionView.switchTab('strings')">Strings<span id="fn-str-count-wrap" style="display:none;"> (<span id="fn-str-count">0</span>)</span></button>
                     </div>
 
                     <div id="function-panel-code" class="function-view-panel" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
@@ -172,6 +173,13 @@ window.FunctionView = {
                                 </table>
                             </div>
                         </div>
+                    </div>
+
+                    <div id="function-panel-strings" class="function-view-panel" style="display:none; flex:1; overflow-y:auto;">
+                        <table class="file-func-table">
+                            <thead><tr><th>Address</th><th>Value</th><th>Enc</th><th>Section</th><th>Len</th><th>YARA / Tags</th></tr></thead>
+                            <tbody id="fn-str-body"><tr><td colspan="6" class="dim" style="text-align:center; padding:30px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading strings...</td></tr></tbody>
+                        </table>
                     </div>
 
                     <div id="function-panel-callgraph" class="function-view-panel" style="display:none; flex:1; overflow:hidden;">
@@ -357,6 +365,51 @@ window.FunctionView = {
         // ponytail: no hash-routing for tabs here -- #L<line> hash is already owned by scrollToLine()
         if (tabId === 'neighbors') this.loadNeighborsPanel();
         if (tabId === 'callgraph') this.loadCallGraphPanel();
+        if (tabId === 'strings') this.loadStringsPanel();
+    },
+
+    strCtx() {
+        return { collection: this.params.collection, pool: this.params.pool, md5: this.params.md5 || this.params.file_md5, viewName: 'FunctionView' };
+    },
+
+    async loadStringsPanel() {
+        const body = document.getElementById('fn-str-body');
+        const qs = new URLSearchParams({
+            collection: this.params.collection,
+            md5: this.params.md5 || this.params.file_md5,
+            addr: this.params.address,
+        });
+        try {
+            const res = await fetch(`/api/strings/function?${qs}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to load strings');
+            this.fnStrings = data;
+            const ctx = this.strCtx();
+            const count = document.getElementById('fn-str-count');
+            if (count) { count.textContent = data.strings.length; document.getElementById('fn-str-count-wrap').style.display = ''; }
+            body.innerHTML = data.strings.length ? data.strings.map(s => `<tr>
+                <td class="mono dim">${escapeHtml(s.addr)}</td>
+                <td>${StringsUI.valueCell(s, ctx)}</td>
+                <td><span class="badge">${escapeHtml(s.encoding)}</span></td>
+                <td class="dim">${escapeHtml(s.section || '')}</td>
+                <td>${escapeHtml(s.length)}</td>
+                <td>${StringsUI.tagCell(s, data.rules, ctx)}</td></tr>`).join('')
+                : '<tr><td colspan="6" class="dim" style="text-align:center; padding:30px;">No strings referenced by this function.</td></tr>';
+        } catch (err) {
+            body.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:#f92672;">${escapeHtml(err.message)}</td></tr>`;
+        }
+    },
+
+    async tagString(addr, tag, action) {
+        try {
+            await StringsUI.postTag(this.params.collection, this.params.md5 || this.params.file_md5, addr, tag, action);
+            await this.loadStringsPanel();
+        } catch (err) { alert(err.message); }
+    },
+
+    promptTag(addr) {
+        const tag = prompt('Tag for this string:');
+        if (tag && tag.trim()) this.tagString(addr, tag.trim(), 'add');
     },
 
     async loadCallGraphPanel() {

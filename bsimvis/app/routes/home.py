@@ -284,10 +284,10 @@ def _search_groups(q, limit, scope):
             limit,
         )
 
-    def fan(kind, fn, key, mapper, **extra):
+    def fan(kind, fn, key, mapper, q_param="q", **extra):
         items = []
         for name in scope:
-            res = _call(fn, q=q, collection=name, limit=limit, **extra)
+            res = _call(fn, **{q_param: q}, collection=name, limit=limit, **extra)
             for it in res.get(key, res.get("items", []))[:limit]:
                 it = dict(it)
                 it["_collection"] = name
@@ -319,6 +319,20 @@ def _search_groups(q, limit, scope):
                     f"/functions/{f.get('entrypoint_address')}"
                 ),
             },
+        ),
+        (
+            "function_strings",
+            search_functions,
+            "functions",
+            lambda f: {
+                "title": f.get("function_name") or f.get("name"),
+                "subtitle": f"{f['_collection']} · uses string \u201c{q}\u201d",
+                "url": (
+                    f"/collections/{quote(f['_collection'])}/files/{f.get('file_md5')}"
+                    f"/functions/{f.get('entrypoint_address')}"
+                ),
+            },
+            "strings",
         ),
         (
             "batches",
@@ -367,8 +381,8 @@ def _search_groups(q, limit, scope):
             },
         ),
     ]
-    for kind, fn, key, mapper in fans:
-        g = fan(kind, fn, key, mapper)
+    for kind, fn, key, mapper, *q_param in fans:
+        g = fan(kind, fn, key, mapper, *q_param)
         if g:
             yield g
 

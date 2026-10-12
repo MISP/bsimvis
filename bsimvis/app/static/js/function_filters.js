@@ -15,6 +15,7 @@ window.FunctionFilters = {
         { param: 'min_callers', label: 'Min callers', type: 'number' },
         { param: 'min_callees', label: 'Min callees', type: 'number' },
         { param: 'note_owner', label: 'Note owner' },
+        { param: 'strings', label: 'Uses string' },
         { param: 'file_name', label: 'File name' },
         { param: 'file_md5', label: 'File MD5' },
         { param: 'file_tag', label: 'File tags', multiple: true },
@@ -76,7 +77,7 @@ window.FunctionFilters = {
             { html: input('flt-func-min-features', 'min_features', 'Min', { type: 'number', attrs: 'min="0"' }) },
             { html: input('flt-func-min-callers', 'min_callers', 'Min', { type: 'number', attrs: 'min="0"' }) },
             { html: input('flt-func-min-callees', 'min_callees', 'Min', { type: 'number', attrs: 'min="0"' }) },
-            { html: input('flt-func-note-owner', 'note_owner', 'Note owner...') },
+            { html: input('flt-func-note-owner', 'note_owner', 'Note owner...') + input('flt-func-strings', 'strings', 'Uses string...') },
             ...extraCells,
         ];
         return this.filterRow(cells);

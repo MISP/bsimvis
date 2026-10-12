@@ -62,7 +62,15 @@ class ProcessingService:
         )
 
         if file_meta is not None:
+            # The string table rides in the file meta from the analyzer; it has
+            # its own keys, so it must not reach the file doc.
+            file_meta = dict(file_meta)
+            strings = file_meta.pop("strings", None)
             file_md5 = file_meta.get("file_md5") or "unknown_md5"
+            if strings is not None:
+                from bsimvis.app.services import string_service
+
+                string_service.index_file_strings(self.r, collection, file_md5, strings)
             batch_uuid = file_meta.get("batch_uuid") or "unknown_batch_uuid"
             batch_name = file_meta.get("batch_name") or "unknown_batch_name"
             num_functions = num_functions or 0

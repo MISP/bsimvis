@@ -180,7 +180,9 @@ def search_functions():
                 allowed_fields = []
                 for src_lvl, fields in INDEX_CONFIG.items():
                     for field, targets in fields.items():
-                        if lvl in targets:
+                        # `strings` is opt-in (`strings=`): a bare `q` word
+                        # would otherwise match every literal in the corpus.
+                        if lvl in targets and field != "strings":
                             from bsimvis.app.services.index_config import (
                                 resolve_target_field,
                             )

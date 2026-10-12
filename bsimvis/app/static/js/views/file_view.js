@@ -152,6 +152,7 @@ window.FileView = {
                     <button class="bsim-tab" id="file-tab-btn-inferred" onclick="FileView.switchTab('inferred')" style="display:none;">Inferred Metadata (<span id="inferred-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-tags" onclick="FileView.switchTab('tags')">Tags</button>
                     <button class="bsim-tab" id="file-tab-btn-functions" onclick="FileView.switchTab('functions')">Functions (<span id="functions-count">0</span>)</button>
+                    <button class="bsim-tab" id="file-tab-btn-strings" onclick="FileView.openStrings(event)">Strings</button>
                     <button class="bsim-tab" id="file-tab-btn-clusters" onclick="FileView.switchTab('clusters')">Clusters (<span id="cluster-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-extracted_from" onclick="FileView.switchTab('extracted_from')" style="display: none;">Extracted From</button>
                     <button class="bsim-tab" id="file-tab-btn-neighbors" onclick="FileView.switchTab('neighbors')">Similar<span id="nbr-count-wrap" style="display:none;"> (<span id="nbr-count">0</span>)</span></button>
@@ -1924,6 +1925,12 @@ window.FileView = {
         e.preventDefault();
         const url = Nav.buildUIUrl(this.params.collection, ['search', 'functions']) + `?file_md5=${encodeURIComponent(this.params.md5)}`;
         Nav.openPath(url, e, { title: 'Functions', type: 'functions' });
+    },
+
+    openStrings(e) {
+        e.preventDefault();
+        const url = Nav.buildUIUrl(this.params.collection, ['file_strings', this.params.md5]);
+        Nav.openPath(url, e, { title: `Strings: ${this.params.md5.substring(0, 8)}`, type: 'strings' });
     },
 
     openCallGraph(e) {

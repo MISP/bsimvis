@@ -82,6 +82,7 @@ class MaintenanceService:
         from bsimvis.app.services.lineage_service import children, parents, forget
         from bsimvis.app.services.bin_sim_service import _unindex_bin_sim_pair
         from bsimvis.app.services.feature_service import FeatureService
+        from bsimvis.app.services import string_service
 
         def txt(value):
             return value.decode() if isinstance(value, bytes) else str(value)
@@ -282,6 +283,8 @@ class MaintenanceService:
                 delete_file(self.r, collection, md5)
             elif not self.r.exists(f"{file_base}:meta"):
                 forget(collection, md5, self.r)
+            # String indexes point at this file from outside its key prefix.
+            string_service.unindex_file_strings(self.r, collection, md5)
             # Preserve raw sample bytes; clear only analyzed file/function keys.
             keys = [
                 txt(k)

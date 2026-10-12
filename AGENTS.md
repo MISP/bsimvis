@@ -100,6 +100,19 @@ drop-zone + multi-file picker like the upload view, recent scans as a filter/sor
 whose columns are `SCAN_LIST_COLS`) and the `scan_file` tool in `llm_tools.py`, which the
 MCP server re-exports for free.
 
+## Strings
+
+`string_service.py` owns the per-file string table (key layout in
+`doc/kvrocks_database_structure.md`). `GhidraService.extract_strings` runs inside
+`stream_bsim_data` and puts the table on the file meta as `strings`; the consumers
+pop it -- `index_metadata` (and `_index_streamed_program`) write it, the scan cache
+keeps it under `scan:{id}:strings`, and scan commit hands it back to INDEX_META.
+Never leave it on the file doc. YARA hits are mapped to strings in
+`GhidraAnalyzer._strings_by_offset` (same file-offset -> address walk as the function
+mapping). Function search takes `strings=` through the `strings` field in
+`index_config`; it is excluded from the bare `q` on purpose. Config: `[strings]` in
+`bsimvis_config.toml`. Ghidra side check: `scripts/test_strings_extract.py`.
+
 ## Pools
 
 A pool (`pool_service.py`, `routes/pools.py`) is a named union of collections with its

@@ -16,6 +16,7 @@ window.SearchPalette = (function () {
         batches: { label: 'Batches', icon: 'fa-boxes-stacked', color: '#60a5fa' },
         files: { label: 'Files', icon: 'fa-file-code', color: '#22c55e' },
         functions: { label: 'Functions', icon: 'fa-code', color: '#38bdf8' },
+        function_strings: { label: 'Functions by string', icon: 'fa-font', color: '#e6db74' },
         features: { label: 'Features', icon: 'fa-fingerprint', color: '#f472b6' },
         function_clusters: { label: 'Function Clusters', icon: 'fa-bullseye', color: '#fb923c' },
         binary_clusters: { label: 'Binary Clusters', icon: 'fa-bullseye', color: '#f87171' },

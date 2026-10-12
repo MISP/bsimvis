@@ -361,6 +361,35 @@ def get_scan(scan_id):
     return doc
 
 
+def get_scan_strings(scan_id):
+    """The scanned file's cached string table, filtered and paged."""
+    from bsimvis.app.services import string_service
+    from bsimvis.app.services.scan_service import _decode
+
+    svc = get_scan_service()
+    if not svc.get(scan_id):
+        return {"error": "Scan not found or expired"}, 404
+    try:
+        offset = max(0, int(request.args.get("offset", 0)))
+        limit = max(1, min(int(request.args.get("limit", 100)), 5000))
+    except ValueError:
+        return {"error": "Invalid numeric parameter"}, 400
+    rows = _decode(svc.q.get(svc.key(scan_id, "strings"))) or []
+    yara = request.args.get("yara")
+    return string_service.page_strings(
+        rows,
+        q=request.args.get("q"),
+        encoding=request.args.get("encoding"),
+        section=request.args.get("section"),
+        tag=request.args.get("tag"),
+        yara=None if yara is None else yara.lower() in ("1", "true", "yes"),
+        sort_by=request.args.get("sort_by", "addr"),
+        sort_order=request.args.get("sort_order", "asc"),
+        offset=offset,
+        limit=limit,
+    )
+
+
 def get_scan_diff(scan_id):
     """One page of a scored pair's function rows, sorted server-side."""
     collection = request.args.get("collection")

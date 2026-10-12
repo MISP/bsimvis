@@ -54,6 +54,9 @@ INDEX_CONFIG = {
         "inferred_md5": ["file"],
         "inferred_tags": ["file"],
         "note_owners": ["file"],
+        # Written by string_service, not from the file doc; listed so the
+        # `strings=` filter, pool merge and registry sweeps know the field.
+        "strings": ["file"],
     },
     "func": {
         "function_name": ["func", "sim"],  # fast sim search by function name
@@ -77,6 +80,7 @@ INDEX_CONFIG = {
         "cluster_name": ["func"],
         "cluster_stability": ["func"],
         "note_owners": ["func"],
+        "strings": ["func"],  # see file.strings
     },
     "sim": {
         "tags": ["sim"],
@@ -192,6 +196,7 @@ EXACT_FIELDS = {
 # 200-char demangled symbol exactly. Every other field defaults to an exact
 # bucket lookup — see query_syntax.parse_filter_value().
 SUBSTRING_FIELDS = {
+    "strings",
     "function_name",
     "file_name",
     "parent_file_name",

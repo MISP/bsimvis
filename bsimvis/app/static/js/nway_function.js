@@ -133,19 +133,13 @@
             return `<tr><th></th>${this.data.functions.map((f, j) => `<th ${cc(j)}>${escapeHtml(f.letter)}</th>`).join('')}</tr>`;
         }
 
-        // The one place a string item links to the string pivot (functions sharing it):
-        // opens the Strings dialog when that UI is loaded, else the item stays plain text.
-        static stringPivot(item, collection, pool) {
-            if (!window.StringsUI || !window.StringsUI.pivot) return false;
-            window.StringsUI.pivot(collection, pool || '', item.key, item.label);
-            return true;
-        }
-
+        // A string item opens the normal functions table filtered by that string.
         _label(facet, item) {
             const text = escapeHtml(item.label);
             if (facet.key !== 'strings') return text;
-            return window.StringsUI && window.StringsUI.pivot
-                ? `<a href="#" data-xstr="${escapeAttr(item.key)}" title="Functions sharing this string">${text}</a>` : text;
+            const coll = parts(this.fids[0]).coll;
+            const path = `/collections/${encodeURIComponent(coll)}/functions?strings=${encodeURIComponent(JSON.stringify(item.label))}`;
+            return `<a href="${escapeAttr(path)}" data-xnav="${escapeAttr(path)}" data-title="Functions using this string" title="Functions using this string">${text}</a>`;
         }
 
         _facet(f) {
@@ -410,7 +404,7 @@
         }
 
         _click(e) {
-            const t = e.target.closest('[data-xstr],[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xpair],[data-xnav],[data-xopen]');
+            const t = e.target.closest('[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xpair],[data-xnav],[data-xopen]');
             if (!t) return;
             const d = t.dataset;
             if (d.xtab) { this.s.tab = d.xtab; this._persist(); return this.render(); }

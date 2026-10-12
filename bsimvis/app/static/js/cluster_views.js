@@ -1190,7 +1190,7 @@ class ClusterHierarchy extends D3BaseLayout {
                     <div class="hier-left-col" style="padding: 12px;">
                         <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
                         <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:6px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
-                        <div style="margin-bottom:10px;">${EntityRenderer.renderTag('cluster', d.data.tag_id || d.data.id, [], d.data.user_tags || [])}</div>
+                        <div style="margin-bottom:10px;">${EntityRenderer.renderTag('cluster', d.data.tag_id || d.data.id, [...(d.data.inferred_tags || []), ...(d.data.file_inferred_tags || [])], d.data.user_tags || [])}</div>
                         
                         <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
                             <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--subtle);">
@@ -2231,7 +2231,7 @@ class ClusterPacking {
                     <div class="hier-left-col" style="padding: 12px;">
                         <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
                         <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:6px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
-                        <div style="margin-bottom:10px;">${EntityRenderer.renderTag('cluster', d.data.tag_id || d.data.id, [], d.data.user_tags || [])}</div>
+                        <div style="margin-bottom:10px;">${EntityRenderer.renderTag('cluster', d.data.tag_id || d.data.id, [...(d.data.inferred_tags || []), ...(d.data.file_inferred_tags || [])], d.data.user_tags || [])}</div>
                         
                         <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
                             <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--subtle);">

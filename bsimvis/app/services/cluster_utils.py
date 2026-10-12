@@ -377,6 +377,54 @@ def inferred_tag_values(summary, cohesion, min_cohesion, min_coverage):
     return out
 
 
+# (distribution field, inferred-tag prefix) for the file-level traits of a
+# function cluster. Family tags (av:/yara:) are deliberately absent: a libc
+# cluster inside mostly-mirai files would otherwise read as "mirai".
+FILE_TRAIT_AXES = (
+    ("architecture", "arch"),
+    ("executable_format", "format"),
+    ("filetype", "filetype"),
+)
+
+
+def function_cluster_stats(
+    func_metas, file_metas, cohesion, min_cohesion, min_coverage, min_members=3
+):
+    """Stats stored on a function cluster's meta.
+
+    `tag_distribution` / `inferred_tags` come from the functions' own tags.
+    The parent files (one meta per distinct file) give the arch / format /
+    filetype / batch distributions, `file_tag_distribution`, and
+    `file_inferred_tags`, which only covers FILE_TRAIT_AXES. Both inferred
+    lists stay empty below `min_members`, where coverage is coincidence.
+    """
+    n = len(func_metas)
+    fsum = cluster_summary(func_metas, n)
+    files = cluster_summary(file_metas, len(file_metas))
+    set_tag_distribution_score(fsum["tag_distribution"], cohesion)
+    set_tag_distribution_score(files["tag_distribution"], cohesion)
+    out = {
+        "tag_distribution": fsum["tag_distribution"],
+        "file_tag_distribution": files["tag_distribution"],
+        "architecture_distribution": files["architecture_distribution"],
+        "executable_format_distribution": files["executable_format_distribution"],
+        "filetype_distribution": files["filetype_distribution"],
+        "batch_uuid_distribution": files["batch_uuid_distribution"],
+        "inferred_tags": [],
+        "file_inferred_tags": [],
+    }
+    if n < min_members or cohesion is None or cohesion < min_cohesion:
+        return out
+    out["inferred_tags"] = inferred_tag_values(
+        fsum, cohesion, min_cohesion, min_coverage
+    )
+    for field, prefix in FILE_TRAIT_AXES:
+        top = files[f"{field}_distribution"][:1]
+        if top and top[0]["count"] / len(file_metas) >= min_coverage:
+            out["file_inferred_tags"].append(f"{prefix}:{top[0]['value']}")
+    return out
+
+
 def resolve_hierarchical_inferred_tags(leaf_to_clusters, idx_to_id, gated_by_label):
     """Per-file inferred tags for a hierarchical tree (Decision 4).
 
@@ -932,6 +980,20 @@ def demo():
         "fileA": ["av:clamav"],
         "fileB": ["av:clamav"],
     }, resolved
+
+    # function_cluster_stats: file traits infer, family tags stay function-only,
+    # and a tiny cluster infers nothing.
+    funcs = [{"tags": ["yara:unknown:unknown#rule_x"]}] * 4
+    files = [{"language_id": "ARM:LE:32:v7", "tags": ["av:clamav:mirai"]}] * 3
+    st = function_cluster_stats(funcs, files, 0.9, 0.5, 0.5)
+    assert st["inferred_tags"] == ["yara:unknown:unknown#rule_x"], st
+    assert st["file_inferred_tags"] == ["arch:ARM:LE:32:v7"], st
+    assert st["architecture_distribution"][0]["count"] == 3, st
+    assert "family" in st["file_tag_distribution"], st
+    tiny = function_cluster_stats(funcs[:2], files[:1], 0.9, 0.5, 0.5)
+    assert tiny["inferred_tags"] == [] and tiny["file_inferred_tags"] == [], tiny
+    low = function_cluster_stats(funcs, files, 0.2, 0.5, 0.5)
+    assert low["inferred_tags"] == [] and low["file_inferred_tags"] == [], low
 
     print("cluster_utils demo OK")
 

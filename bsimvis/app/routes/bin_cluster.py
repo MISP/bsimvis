@@ -207,6 +207,7 @@ def _shape_bin_cluster_result(m, child_to_parent, parent_to_children):
         "architecture_distribution": m.get("architecture_distribution", []),
         "executable_format_distribution": m.get("executable_format_distribution", []),
         "batch_uuid_distribution": m.get("batch_uuid_distribution", []),
+        "inferred_tags": m.get("inferred_tags", []),
         "function_count_stats": m.get("function_count_stats", {}),
         "has_children": bool(parent_to_children.get(cid)),
         "child_total": len(parent_to_children.get(cid, [])),
@@ -314,6 +315,16 @@ def list_bin_clusters():
     exclude_tag_filters = [
         parse_filter_value("user_tags", value)
         for value in request.args.getlist("exclude_cluster_tag")
+        if value.strip()
+    ]
+    inferred_filters = [
+        parse_filter_value("user_tags", value)
+        for value in request.args.getlist("inferred_tag")
+        if value.strip()
+    ]
+    exclude_inferred_filters = [
+        parse_filter_value("user_tags", value)
+        for value in request.args.getlist("exclude_inferred_tag")
         if value.strip()
     ]
     cluster_id_q = request.args.get("cluster_id", "").lower()
@@ -481,6 +492,23 @@ def list_bin_clusters():
                 continue
             if any(
                 spec.matches(tag) for spec in exclude_tag_filters for tag in user_tags
+            ):
+                continue
+
+            inferred = [
+                str(t).lower()
+                for t in (m.get("inferred_tags") or [])
+                + (m.get("file_inferred_tags") or [])
+            ]
+            if any(
+                not any(spec.matches(tag) for tag in inferred)
+                for spec in inferred_filters
+            ):
+                continue
+            if any(
+                spec.matches(tag)
+                for spec in exclude_inferred_filters
+                for tag in inferred
             ):
                 continue
 
@@ -664,6 +692,7 @@ def list_bin_clusters():
                     "executable_format_distribution", []
                 ),
                 "batch_uuid_distribution": m.get("batch_uuid_distribution", []),
+                "inferred_tags": m.get("inferred_tags", []),
                 "function_count_stats": m.get("function_count_stats", {}),
                 "has_children": bool(parent_to_children.get(str(m.get("cluster_id")))),
             }

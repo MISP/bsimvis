@@ -10,6 +10,7 @@ All endpoints are prefixed with `/api`. Unless noted, `collection` defaults to `
 - [Collections & Batches](#collections--batches)
 - [Files](#files)
 - [Functions](#functions)
+- [Strings](#strings)
 - [Features](#features)
 - [Feature Indexing](#feature-indexing)
 - [Search Utilities](#search-utilities)
@@ -176,6 +177,7 @@ Searches functions with rich filtering, sorting, and export. Accepts `pool` to t
 - **Cluster:** `cluster_id`, `cluster_uuid`, `cluster_name`, `cluster_stability`.
 - **Inherited file metadata:** `first_seen`, `last_seen`, `filetype`, `avtype`, `yara`, `cc_ip`, `file_names`, `type`, `entry_date`, `file_date` — indexed at function level and filterable here.
 - **Tags:** `tag`, `static_tag`, `user_tag`, and `func_`/`file_`-scoped variants, each with an `exclude_` counterpart. Repeatable.
+- **Strings:** `strings` — substring (or `*` glob) over the strings the function references; opt-in, a bare `q` never matches strings. `file/search` takes the same param for files.
 - **Filters:** `min_features`, `min_callers`, `min_callees`, `min_cohesion` (default 0.95 — clusters below the threshold are dropped from the response).
 - **Paging/sort:** `sort_by` (`id` (default) or a numeric function-level index: `bsim_features_count` | `instruction_count` | `caller_count` | `callee_count` | `entry_date` | `file_date` | `batch_order` | `cluster_stability`), `sort_order` (default `desc`), `offset`, `limit`, `pool_limit` (default 1000000), `format`.
 
@@ -200,6 +202,32 @@ Call graph for a function: callers and callees with function metadata.
 ### `GET /api/function/relations`
 Bulk relation lookup for a set of function IDs across call and similarity edges.
 - **Params:** `collection`, `id` (repeatable), `algo`.
+
+---
+
+## Strings
+
+Ghidra-defined strings (length >= `strings.min_length`, at most `strings.max_per_file`), stored per file and cross-referenced to the functions that use them. Only analyses run after the feature shipped have strings. `collection` may be replaced by `pool` on every read route.
+
+### `GET /api/strings/file`
+A file's string table, filtered, sorted and paged server-side.
+- **Params:** `collection` or `pool`, `md5`, `q` (substring, `*` = glob), `encoding`, `section`, `tag` (analyzer or user tag substring), `yara` (`true` = a YARA rule hit it), `referenced` (`true`/`false`), `min_length`, `sort_by` (`addr` | `length` | `value` | `refs` | `encoding` | `section`), `sort_order`, `offset`, `limit` (max 5000).
+- **Returns:** `{total, offset, limit, strings: [{id, value, encoding, addr, section, length, tags, rules, user_tags, funcs}], rules}`; `rules` describes each YARA rule id in `strings[].rules`.
+
+### `GET /api/strings/function`
+Strings one function references. **Params:** `collection`/`pool`, `md5`, `addr`.
+
+### `GET /api/strings/functions`
+Pivot: functions (and files) sharing a string, across the collection or every member of a pool. **Params:** `collection`/`pool`, `id` or `value`, `offset`, `limit`.
+
+### `GET /api/strings/search`
+Distinct string values matching `q` across all files, with file and function counts. **Params:** `collection`/`pool`, `q`, `offset`, `limit`.
+
+### `POST /api/strings/tag`
+Adds or removes an analyst tag on one string. **Body:** `collection`, `md5`, `addr`, `tag`, `action` (`add` | `remove`).
+
+### `GET /api/scan/<scan_id>/strings`
+The scanned file's cached strings (same filters as `strings/file`). `POST /api/scan/<id>/commit` writes them into the collection.
 
 ---
 

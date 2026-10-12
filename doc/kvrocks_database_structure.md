@@ -51,6 +51,19 @@ These keys store the actual analysis results and decompiler output.
 | `{coll}:batch:{uuid}` | **Hash** | Ingestion batch metadata. |
 | `{coll}:batch:{uuid}:functions` | **Set** | Function doc keys belonging to a batch (used to list a batch's functions). |
 
+### Strings
+Written once per analysis (new analyses only; there is no backfill), on the origin collection. A pool reads its members' keys.
+| Key Pattern | Type | Description |
+|:--- |:--- |:--- |
+| `{coll}:file:{md5}:strings` | **Hash** | String table: field = string address (`SPACE::addr` outside the loaded image), value = JSON `{id, value, encoding, addr, section, length, tags, rules, user_tags, funcs}`. `id` = sha1(value)[:16]; `tags`/`rules` come from YARA, `user_tags` are analyst tags, `funcs` are referencing function entry addresses. |
+| `{coll}:func:{md5}:{addr}:strings` | **Set** | Addresses (keys of the table above) of the strings the function references. |
+| `{coll}:idx:string:value:{id}` | **Set** | Function IDs referencing the string. Registry: `{coll}:reg:string:value`. |
+| `{coll}:idx:string:file:{id}` | **Set** | File IDs holding the string. Registry: `{coll}:reg:string:file`. |
+| `{coll}:idx:func:strings:{lowercased value[:128]}` | **Set** | Function IDs, searched by `strings=` on function search. Registry: `{coll}:reg:func:strings`. |
+| `{coll}:idx:file:strings:{lowercased value[:128]}` | **Set** | File IDs, searched by `strings=` on file search. Registry: `{coll}:reg:file:strings`. |
+
+Removing a file (`maintenance/remove`) and deleting a collection clear all of these; clearing features or similarities does not (strings are analysis output, like `vec:meta`).
+
 ### Similarities
 | Key Pattern | Type | Description |
 |:--- |:--- |:--- |

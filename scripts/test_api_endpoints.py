@@ -3332,6 +3332,43 @@ def test_strings():
     )
     check("untagged string no longer matches", (after or {}).get("total") == 0)
 
+    # A pool reads its members' string keys; the strings index field merges
+    # into the pool like any other func field. Built through the service so no
+    # async pool pipeline races the checks.
+    from bsimvis.app.services.pool_service import pool_service
+
+    pid = f"strings_{uuid.uuid4().hex[:6]}"
+    ok, msg = pool_service.create_pool(pid, "strings pool", [COLLECTION], {})
+    try:
+        if check("strings test pool created", ok, msg):
+            pool_service.build_pool_indexes(pid)
+            pooled = test_endpoint(
+                "GET",
+                "/api/strings/functions",
+                params={"pool": pid, "id": s["id"]},
+                label="pivot through a pool",
+            )
+            check(
+                "pool pivot finds the referencing function",
+                fid in [f["id"] for f in (pooled or {}).get("functions", [])],
+            )
+            psearch = test_endpoint(
+                "GET",
+                "/api/function/search",
+                params={"pool": pid, "strings": needle},
+                label="function search strings= through a pool",
+            )
+            check(
+                "pool function search by string finds the function",
+                fid
+                in [
+                    f"{COLLECTION}:func:{f['file_md5']}:{f['entrypoint_address']}"
+                    for f in (psearch or {}).get("functions", [])
+                ],
+            )
+    finally:
+        pool_service.delete_pool(pid)
+
 
 def test_maintenance_remove_validation():
     """The remove route requires one valid file selector."""

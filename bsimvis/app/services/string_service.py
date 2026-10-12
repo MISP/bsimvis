@@ -57,7 +57,9 @@ def _origins(r, collection):
     pool_id = get_pool_id(collection)
     if not pool_id:
         return [collection]
-    return sorted(_txt(c) for c in r.smembers(f"global:pool:{pool_id}:collections"))
+    return sorted(
+        _txt(c) for c in r.smembers(f"global:pool:{pool_id}:collections_list")
+    )
 
 
 def _loads(raw):

@@ -3153,6 +3153,186 @@ def test_call_edge_id_dedup():
     )
 
 
+def test_strings():
+    """Ghidra strings flow analyze -> index -> API, pivot, search and tagging.
+
+    Uses the second fixture (v01_linux_x64): it has strings that functions
+    reference, which crypto_test lacks."""
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP – Strings", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+    if not file_md5_2:
+        print(_color("\n[SKIP] No second analysed test binary.", YELLOW))
+        return
+
+    base = {"collection": COLLECTION, "md5": file_md5_2}
+    allp = test_endpoint(
+        "GET", "/api/strings/file", params=base, label="GET /api/strings/file"
+    )
+    rows = (allp or {}).get("strings") or []
+    check("file has extracted strings", bool(rows), str((allp or {}).get("total")))
+    if not rows:
+        return
+    check(
+        "string rows carry the contract fields",
+        all(
+            {"id", "value", "encoding", "addr", "section", "length"} <= set(r)
+            for r in rows
+        ),
+        str(sorted(rows[0])),
+    )
+
+    ref = test_endpoint(
+        "GET",
+        "/api/strings/file",
+        params={**base, "referenced": "true"},
+        label="referenced strings",
+    )
+    ref_rows = (ref or {}).get("strings") or []
+    check(
+        "some strings are referenced by functions",
+        bool(ref_rows),
+        str((ref or {}).get("total")),
+    )
+    if not ref_rows:
+        return
+    check(
+        "referenced filter is server-side",
+        (ref["total"] <= allp["total"]) and all(r["funcs"] for r in ref_rows),
+    )
+    s = ref_rows[0]
+    entry = s["funcs"][0]
+    fid = f"{COLLECTION}:func:{file_md5_2}:{entry}"
+
+    srt = test_endpoint(
+        "GET",
+        "/api/strings/file",
+        params={**base, "sort_by": "length", "sort_order": "desc", "limit": 5},
+        label="sort by length desc, paged",
+    )
+    lens = [r["length"] for r in (srt or {}).get("strings", [])]
+    check(
+        "sort + limit are applied server-side",
+        lens == sorted(lens, reverse=True) and len(lens) <= 5,
+        str(lens),
+    )
+    q = test_endpoint(
+        "GET",
+        "/api/strings/file",
+        params={**base, "q": s["value"][:6].upper()},
+        label="q filter (case-insensitive)",
+    )
+    check(
+        "q filter finds the string",
+        any(r["id"] == s["id"] for r in (q or {}).get("strings", [])),
+    )
+
+    fs = test_endpoint(
+        "GET",
+        "/api/strings/function",
+        params={**base, "addr": entry},
+        label="GET /api/strings/function",
+    )
+    check(
+        "function strings include the referenced string",
+        any(r["id"] == s["id"] for r in (fs or {}).get("strings", [])),
+    )
+
+    pv = test_endpoint(
+        "GET",
+        "/api/strings/functions",
+        params={"collection": COLLECTION, "id": s["id"]},
+        label="pivot by id",
+    )
+    check(
+        "pivot lists the referencing function",
+        fid in [f["id"] for f in (pv or {}).get("functions", [])],
+        str(pv)[:300],
+    )
+    pv2 = test_endpoint(
+        "GET",
+        "/api/strings/functions",
+        params={"collection": COLLECTION, "value": s["value"]},
+        label="pivot by value",
+    )
+    check(
+        "pivot by literal value matches pivot by id",
+        (pv2 or {}).get("total") == (pv or {}).get("total"),
+    )
+
+    needle = s["value"][:10]
+    fsearch = test_endpoint(
+        "GET",
+        "/api/function/search",
+        params={"collection": COLLECTION, "strings": needle},
+        label="function search strings=",
+    )
+    check(
+        "function search by string finds the function",
+        fid
+        in [
+            f"{COLLECTION}:func:{f['file_md5']}:{f['entrypoint_address']}"
+            for f in (fsearch or {}).get("functions", [])
+        ],
+        str(fsearch)[:300],
+    )
+    filesearch = test_endpoint(
+        "GET",
+        "/api/file/search",
+        params={"collection": COLLECTION, "strings": needle},
+        label="file search strings=",
+    )
+    check(
+        "file search by string finds the file",
+        file_md5_2 in [f.get("file_md5") for f in (filesearch or {}).get("files", [])],
+    )
+    ss = test_endpoint(
+        "GET",
+        "/api/strings/search",
+        params={"collection": COLLECTION, "q": needle},
+        label="GET /api/strings/search",
+    )
+    check(
+        "value search lists the string with file counts",
+        any(x["files"] >= 1 for x in (ss or {}).get("strings", [])),
+        str(ss)[:300],
+    )
+
+    tagged = test_endpoint(
+        "POST",
+        "/api/strings/tag",
+        data={**base, "addr": s["addr"], "tag": "strings-test", "action": "add"},
+        label="tag a string",
+    )
+    check(
+        "string gets the user tag",
+        "strings-test" in ((tagged or {}).get("string") or {}).get("user_tags", []),
+    )
+    bytag = test_endpoint(
+        "GET",
+        "/api/strings/file",
+        params={**base, "tag": "strings-test"},
+        label="filter strings by tag",
+    )
+    check(
+        "tag filter returns only the tagged string",
+        [r["id"] for r in (bytag or {}).get("strings", [])] == [s["id"]],
+    )
+    test_endpoint(
+        "POST",
+        "/api/strings/tag",
+        data={**base, "addr": s["addr"], "tag": "strings-test", "action": "remove"},
+        label="untag a string",
+    )
+    after = test_endpoint(
+        "GET",
+        "/api/strings/file",
+        params={**base, "tag": "strings-test"},
+        label="tag removed",
+    )
+    check("untagged string no longer matches", (after or {}).get("total") == 0)
+
+
 def test_maintenance_remove_validation():
     """The remove route requires one valid file selector."""
     test_endpoint(
@@ -3193,6 +3373,11 @@ def test_maintenance_remove_file():
             uploaded.get("pipeline_id"), " STEP – Wait for removal fixture"
         ):
             raise AssertionError("removal fixture pipeline did not complete")
+        had = requests.get(
+            f"{BASE_URL}/api/strings/file",
+            params={"collection": rm_coll, "md5": rm_md5, "limit": 1},
+            timeout=30,
+        ).json()
         queued = test_endpoint(
             "POST",
             "/api/maintenance/remove",
@@ -3213,6 +3398,14 @@ def test_maintenance_remove_file():
             f"{rm_coll}:all_files",
         )
         check("raw sample bytes remain", bool(_check), f"{rm_coll}:file:{rm_md5}:raw")
+        check(
+            "removal clears the string table and its indexes",
+            had.get("total", 0) > 0
+            and not r.exists(f"{rm_coll}:file:{rm_md5}:strings")
+            and not r.scard(f"{rm_coll}:reg:file:strings")
+            and not r.scard(f"{rm_coll}:reg:string:value"),
+            f"had {had.get('total')} strings",
+        )
         check(
             "removed file search returns no hit",
             not requests.get(
@@ -7059,6 +7252,19 @@ def test_scan_mode():
         str(sorted(matched["rows"][0].keys()) if matched.get("rows") else "no rows"),
     )
 
+    scan_strings = test_endpoint(
+        "GET",
+        f"/api/scan/{scan_id}/strings",
+        params={"limit": 5},
+        label="GET /api/scan/{id}/strings",
+    )
+    check(
+        "scan caches the file's strings (and wrote none to Kvrocks)",
+        (scan_strings or {}).get("total", 0) > 0 and after == before,
+        str((scan_strings or {}).get("total")),
+    )
+    doc["_scan_string_total"] = (scan_strings or {}).get("total")
+
     _check_scan_commit(scan_id, doc)
 
     test_endpoint("DELETE", f"/api/scan/{scan_id}", label="DELETE /api/scan/{id}")
@@ -7342,6 +7548,18 @@ def _check_scan_commit(scan_id, doc):
             str(details)[:300],
         )
 
+        committed = test_endpoint(
+            "GET",
+            "/api/strings/file",
+            params={"collection": coll, "md5": doc["file_md5"], "limit": 1},
+            label="GET /api/strings/file (committed scan)",
+        )
+        check(
+            "commit copies the scan's strings",
+            (committed or {}).get("total", -1) == doc.get("_scan_string_total"),
+            f"{(committed or {}).get('total')} vs {doc.get('_scan_string_total')}",
+        )
+
         jobs = (
             test_endpoint(
                 "GET",
@@ -7521,6 +7739,7 @@ if __name__ == "__main__":
     # run_all_tests() stays last: it deletes the collection on its way out.
     STEPS = [
         test_call_edge_id_dedup,
+        test_strings,
         test_maintenance_remove_validation,
         test_maintenance_remove_file,
         test_pool_member_removal,

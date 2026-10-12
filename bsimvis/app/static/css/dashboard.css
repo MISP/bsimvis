@@ -11,7 +11,7 @@ body {
     height: 100vh;
     overflow: hidden;
     box-sizing: border-box;
-    --sidebar-width: 240px;
+    --sidebar-width: 0px;
 }
 
 body.sidebar-collapsed {
@@ -19,10 +19,7 @@ body.sidebar-collapsed {
 }
 
 #sidebar-container {
-    height: 100vh;
     flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
 }
 
 /* Sidebar */
@@ -34,6 +31,8 @@ body.sidebar-collapsed {
     flex-direction: column;
     padding: 20px 0;
     flex: 1;
+    min-height: 0;
+    overflow-y: auto;
     box-sizing: border-box;
 }
 
@@ -244,6 +243,10 @@ table {
 thead {
     background: var(--bg);
 }
+
+/* Tables with a filter row keep their column names and filters in view. */
+thead:has(> tr.filter-row) { position: sticky; top: 0; z-index: 6; }
+thead:has(> tr.filter-row) > tr:not(.filter-row) > th { background: var(--bg); }
 
 tbody {
     display: table-row-group;
@@ -1277,8 +1280,10 @@ select {
 .sidebar-nav {
     transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s ease, opacity 0.2s ease;
     position: relative;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;    scrollbar-width: none;
 }
+.sidebar-nav::-webkit-scrollbar { display: none; }
 
 body.sidebar-collapsed .sidebar-nav {
     width: var(--sidebar-width) !important;
@@ -2584,7 +2589,8 @@ a.home-card:hover,
    and give it equal gaps on both sides. The view reaches into main's 30px
    padding-bottom so those gaps are 8px, not 30px; the margin goes here rather
    than on the footer because #grid-container clips at its own edge. */
-#dashboard-view-container {
+#dashboard-view-container,
+#module-view-container {
     margin-bottom: -22px;
 }
 #table-footer {
@@ -2661,6 +2667,26 @@ a.home-card:hover,
     -webkit-appearance: none;
     margin: 0;
 }
+/* Shared pager (paging.js): "‹ Page [n] / N ›", the footer-sized variant of .top-action-btn. */
+.paging-page { display: inline-flex; align-items: center; gap: 4px; font-size: 0.78rem; color: var(--dim); white-space: nowrap; }
+.top-action-btn.paging-btn { height: 22px; padding: 0 8px; font-size: 0.9rem; line-height: 1; }
+.top-action-btn.paging-btn:disabled { opacity: 0.4; cursor: default; }
+.paging-input {
+    width: 44px;
+    height: 22px;
+    box-sizing: border-box;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 4px;
+    color: var(--accent);
+    font: inherit;
+    text-align: center;
+    -moz-appearance: textfield;
+}
+.paging-input:focus { outline: none; border-color: var(--accent); }
+.paging-input::-webkit-inner-spin-button,
+.paging-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .table-footer-clear {
     background: none;
     border: none;
@@ -2680,4 +2706,360 @@ a.home-card:hover,
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 3px 10px;
+}
+
+/* --- N-way file diff (nway_panel.js, nway_view.js, nway_basket.js) ---
+   Built from the shared pieces: .bsim-tabbar, .view-toggle, .table-footer,
+   .top-action-btn. Only what those do not cover lives here. */
+.nway-panel { display: flex; flex-direction: column; min-width: 0; }
+.nway-panel .bsim-tabbar { margin-bottom: 8px; }
+.nway-count {
+    margin-left: 6px;
+    font-size: 0.72rem;
+    font-weight: 400;
+    color: var(--subtle);
+    font-family: 'Consolas', monospace;
+}
+.nway-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin: 0 0 12px; }
+.nway-controls .view-toggle, .nway-group .view-toggle, .nway-bar .view-toggle { margin: 0; align-items: center; }
+.nway-pills { display: flex; align-items: center; gap: 6px; }
+.nway-ctl { display: inline-flex; align-items: center; gap: 6px; }
+.nway-ctl b {
+    min-width: 2.6em;
+    text-align: right;
+    color: var(--accent);
+    font-family: 'Consolas', monospace;
+    font-size: 0.78rem;
+}
+.nway-ctl input[type="range"] { width: 110px; accent-color: var(--accent); }
+.nway-lbl {
+    font-size: 0.7rem;
+    font-weight: bold;
+    font-family: sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--subtle);
+    margin-right: 6px;
+}
+.nway-ctl .nway-lbl { margin-right: 0; }
+.nway-tabrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 8px; position: relative; z-index: 11; }
+.nway-tabrow .bsim-tabbar { margin-bottom: 0; }
+.nway-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; position: relative; z-index: 10; }
+.nway-ctlwrap { display: inline-flex; align-items: center; gap: 8px; }
+.nway-search { flex: 1 1 320px; max-width: 560px; }
+.nway-bar { margin-bottom: 8px; }
+.nway-pops { display: flex; gap: 8px; margin-left: auto; }
+.nway-pop { position: relative; }
+.nway-pop > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; }
+.nway-pop > summary::-webkit-details-marker { display: none; }
+.nway-pop[open] > summary { border-color: var(--accent); color: var(--text); }
+.nway-match-body {
+    position: absolute; right: 0; top: calc(100% + 6px); z-index: 50; min-width: 300px;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 12px;
+    padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+.nway-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 6px; }
+.nway-group + .nway-group { padding-left: 22px; border-left: 1px solid var(--border); }
+.nway-gl { font-size: 0.68rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); }
+/* Hints open below and above the sticky table header, so nothing covers them. */
+.nway-bar .home-tip::after, .nway-focus .home-tip::after, .nway-tabrow .home-tip::after {
+    bottom: auto; top: calc(100% + 8px); left: -8px; transform: none; z-index: 200;
+}
+.nway-focus-body { min-width: 360px; max-width: 520px; }
+.nway-focus-body .nway-chips { max-height: 140px; overflow: auto; margin: 0; }
+.nway-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; }
+.nway-chip {
+    background: var(--card-bg);
+    color: var(--subtle);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2px 10px;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+.nway-chip.on { color: var(--text); border-color: var(--accent); }
+.nway-input[data-text="q"] { width: 190px; }
+.nway-input {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 0.8rem;
+}
+.nway-input:focus { outline: none; border-color: var(--accent); }
+.nway-note {
+    margin: 0 0 10px;
+    padding: 8px 12px;
+    border: 1px dashed var(--border);
+    border-radius: 7px;
+    background: var(--card-bg);
+    color: var(--subtle);
+    font-size: 0.78rem;
+}
+.nway-note.warn, .nway-note.err { border-style: solid; color: var(--text); }
+.nway-note.warn { border-left: 3px solid var(--token-warning); }
+.nway-note.err { border-left: 3px solid var(--token-instruction); }
+.nway-note ul { margin: 6px 0 0; padding-left: 18px; }
+.nway-state { padding: 40px 20px; text-align: center; color: var(--dim); }
+.nway-card { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.nway-scroll { overflow: auto; }
+.nway-table td.nway-sentinel { padding: 0; height: 1px; border: 0; }
+.nway-table { width: 100%; table-layout: auto; font-size: 0.82rem; }
+.nway-table th, .nway-table td { padding: 4px 8px; }
+.nway-table th { white-space: nowrap; vertical-align: bottom; }
+.nway-table th.num, .nway-table td.num { text-align: right; }
+.nway-table td.num { font-family: 'Consolas', monospace; }
+.nway-table th .entity-filename { text-transform: none; letter-spacing: 0; font-size: 0.8rem; }
+/* One column per file: fixed width so 12-30 columns scroll sideways instead of
+   colliding, with the function-name column pinned on the left. */
+.nway-table th.col, .nway-table td.col { min-width: 150px; max-width: 200px; }
+.nway-colhead { max-width: 190px; }
+.nway-colhead .entity-filename { display: block; max-width: 190px; }
+.nway-colname { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); text-transform: none; letter-spacing: 0; font-size: 0.8rem; }
+.nway-colhead .entity-md5 { font-size: 0.72rem; font-weight: 400; }
+.nway-table th:first-child, .nway-table td:first-child { position: sticky; left: 0; z-index: 1; max-width: 280px; box-shadow: 1px 0 0 var(--border); }
+.nway-table th:first-child { z-index: 3; }
+/* Cluster view, Functions tab: the controls stay put, only the rows scroll under
+   pinned column names (the tab is a flex item with a definite height). */
+#cluster-tab-functions { overflow: hidden !important; }
+#cluster-tab-functions .nway-panel { height: 100%; display: flex; flex-direction: column; }
+#cluster-tab-functions .nway-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#cluster-tab-functions .nway-scroll { flex: 1; min-height: 0; }
+#cluster-tab-functions .nway-table thead th { position: sticky; top: 0; z-index: 4; background: var(--bg); }
+#cluster-tab-functions .nway-table thead th:first-child { z-index: 5; }
+.nway-table td:first-child { background: var(--bg); }
+.nway-table tbody tr:nth-child(even) td:first-child { background: var(--card-bg); }
+.nway-table tbody tr:hover td:first-child { background: var(--hover); }
+.nway-addr { color: var(--accent); cursor: pointer; font-family: 'Consolas', monospace; font-weight: 600; }
+.nway-addr:hover { text-decoration: underline; }
+.nway-sub { display: block; margin-top: 2px; font-size: 0.68rem; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--subtle); }
+.nway-table td.gap { text-align: center; color: var(--dim); }
+.nway-fn { display: flex; align-items: center; gap: 6px; min-width: 170px; }
+.nway-fn .entity-function { min-width: 0; }
+.nway-namerow { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.nway-namerow > :first-child { flex: 1 1 auto; min-width: 0; width: auto !important; }
+.nway-namerow > i { flex: none; }
+.nway-rename { flex: none; width: auto; min-width: 0; margin: 0; padding: 0 4px; line-height: 1.4; font-size: 0.85em; background: none; border: 1px solid transparent; color: var(--text-dim, #888); cursor: pointer; border-radius: 3px; }
+.nway-rename:hover { border-color: var(--border, #555); color: var(--accent); }
+.nway-name { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.nway-warn { color: var(--token-warning); }
+.nway-group-links { margin-top: 3px; font-size: 0.75rem; }
+.nway-group-links a { color: var(--accent); cursor: pointer; margin-right: 6px; }
+.nway-group-links a:hover { text-decoration: underline; }
+
+/* View header, set editor and basket chip */
+.nway-view { flex: 1; width: 100%; overflow-y: auto; padding: 25px 30px; color: var(--text); }
+#nway-set { margin-top: 10px; }
+.nway-chip .entity-md5 { font-size: 0.72rem; }
+.nway-head { margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.nway-head h2 { margin: 0 0 4px; color: var(--accent); font-size: 1.5rem; }
+.nway-head p { margin: 0; color: var(--subtle); font-size: 0.9rem; }
+.nway-edit { margin-bottom: 14px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); }
+.nway-edit summary { cursor: pointer; font-weight: 600; font-size: 0.85rem; color: var(--text); }
+.nway-edit-grid { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; margin-top: 10px; }
+.nway-edit-col { display: flex; flex-direction: column; gap: 6px; min-width: 300px; }
+.nway-edit-row { display: flex; gap: 6px; align-items: center; }
+.nway-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.nway-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg);
+    color: var(--subtle);
+    font-size: 0.72rem;
+}
+.nway-chip button { background: none; border: none; padding: 0; cursor: pointer; color: var(--dim); }
+.nway-chip button:hover { color: var(--token-instruction); }
+.nway-msg { margin-top: 6px; min-height: 1em; font-size: 0.8rem; color: var(--token-instruction); }
+.nway-basket { display: inline-flex; align-items: center; gap: 8px; }
+.nway-basket button { background: none; border: none; padding: 0 2px; cursor: pointer; color: var(--subtle); font-size: inherit; }
+.nway-basket button:hover { color: var(--accent); }
+.nway-basket .nway-basket-open { color: var(--accent); font-weight: 600; }
+
+/* N-way call-graph (side panel + standalone page): list and graph views of a row's callers / callees. */
+.nway-callbtns { margin-top: 4px; }
+.nway-cgp { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; background: var(--card-bg); }
+.nway-cg-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.nway-cg-crumbs { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; font-size: 0.78rem; }
+.nway-crumb { background: none; border: none; padding: 0 2px; color: var(--accent); cursor: pointer; font: inherit; }
+.nway-cg-focus { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.nway-cg-body { flex: 1; overflow: auto; padding: 8px 14px 20px; }
+.nway-cg-body:has(.nway-graph) { cursor: grab; }
+.nway-cg-body.panning { cursor: grabbing; user-select: none; }
+.nway-grpbox { box-sizing: border-box; width: 230px; display: flex; flex-direction: column; gap: 6px; padding: 6px; border: 1px dashed var(--subtle, #8b949e); border-radius: 8px; }
+.nway-grpbox.deep { width: 170px; }
+.nway-grpbox .nway-node { width: 100%; }
+.nway-grpbox-h { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.nway-grpbox-h .nway-chip { margin: 0; flex-shrink: 0; white-space: nowrap; }
+.nway-sim { font-size: 0.7rem; white-space: nowrap; }
+.nway-grp { font-size: 0.7rem; font-weight: 600; color: var(--subtle, #8b949e); white-space: nowrap; }
+.nway-graph.hl .nway-node:not(.hl-on) { opacity: 0.12; }
+.nway-graph.hl .nway-node.hl-on { opacity: 1; }
+.nway-graph.hl .nway-edge:not(.hl-on) { opacity: 0.04; }
+.nway-graph.hl .nway-edge.hl-on { opacity: 0.95; }
+.nway-edge.back:not(.hl-on) { opacity: 0 !important; }
+.nway-edge.back { stroke-dasharray: 5 4; stroke-width: 2px; marker-end: url(#cgarrow); }
+.nway-stub.back:not(.hl-on) { opacity: 0 !important; }
+.nway-stub.back text { fill: var(--accent); font-size: 11px; }
+.nway-graph.hl .nway-stub.back.hl-on { opacity: 1; }
+.nway-node.center.merged-focus { border-style: dashed; }
+.nway-pieces { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 4px; font-size: 0.72rem; }
+.nway-piece { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+.nway-piece-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nway-cg-h { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); margin: 12px 0 6px; }
+.nway-cg-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 9px; margin-bottom: 5px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; min-width: 0; }
+.nway-cg-item:hover, .nway-cg-item:focus-visible { border-color: var(--accent); outline: none; }
+.nway-cg-item.static { cursor: default; opacity: 0.85; }
+.nway-cg-item.static:hover { border-color: var(--border); }
+.nway-cg-l { min-width: 0; flex: 1; overflow: hidden; }
+.nway-cg-r { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 55%; }
+.nway-strip { display: inline-flex; flex-wrap: wrap; gap: calc(var(--sq, 11px) / 6); min-width: 0; max-width: 100%; vertical-align: middle; }
+.nway-strip i { width: var(--sq, 11px); height: var(--sq, 11px); cursor: pointer; border-radius: 2px; border: 1px solid var(--border); background: transparent; }
+.nway-strip i.on { background: var(--rc); border-color: var(--rc); }
+.nway-reach { flex-shrink: 0; white-space: nowrap; font-size: 0.74rem; font-variant-numeric: tabular-nums; color: var(--rc); }
+.r-hi { --rc: var(--success); } .r-mid { --rc: #e6db74; } .r-low { --rc: #f92672; }
+.nway-ext { font-style: italic; font-family: monospace; font-size: 0.8rem; }
+.nway-badge { font-size: 0.66rem; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; color: var(--dim); margin-left: 6px; font-style: normal; }
+.nway-graph { margin: 0 52px; position: relative; display: grid; grid-template-columns: 230px 1fr 230px; align-items: center; width: 800px; }
+.nway-gcol { display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.nway-graph > svg { position: absolute; inset: 0; pointer-events: none; overflow: visible; z-index: 1; }
+.nway-edge { fill: none; stroke: var(--accent); opacity: 0.55; }
+.nway-node { position: relative; box-sizing: border-box; width: 230px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
+.nway-node:hover, .nway-node:focus-visible { border-color: var(--accent); outline: none; }
+.nway-node.center { border-color: var(--accent); cursor: default; }
+.nway-node.static { cursor: default; }
+.nway-node-name { min-width: 0; overflow: hidden; }
+.nway-node-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 0.72rem; min-width: 0; }
+.nway-pbar { display: inline-block; width: 80px; height: 8px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.nway-pbar b { display: block; height: 100%; background: var(--rc); }
+.nway-node .entity-function { width: 100%; }
+.nway-cg-box { border: 1px solid var(--border); border-radius: 8px; padding: 0 10px 6px; margin-bottom: 14px; background: rgba(128, 128, 128, 0.05); }
+.nway-cg-box > header { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); padding: 8px 0; margin-bottom: 4px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }
+.nway-cg-none { padding: 4px 0 6px; font-size: 0.8rem; }
+.nway-open { cursor: pointer; }
+.nway-node.out { opacity: 0.25; }
+.nway-node.out:hover, .nway-node.out:focus-visible { opacity: 0.7; }
+.nway-edge.out { opacity: 0.12; }
+.nway-edge.co { stroke-dasharray: 5 4; opacity: 0.3; }
+.nway-cg-sibs { display: flex; flex-direction: column; gap: 12px; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border-color, #8884); }
+.nway-cg-sibs .nway-node { border-style: dashed; }
+.nway-node.merged { opacity: 0.7; }
+.nway-node.merged:hover, .nway-node.merged:focus-visible { opacity: 1; }
+.nway-strip i { position: relative; }
+.nway-strip i.edge::after { content: ''; position: absolute; left: 50%; top: 50%; width: 40%; height: 40%; transform: translate(-50%, -50%); border-radius: 50%; background: var(--card-bg); }
+.nway-edgecnt { flex-shrink: 0; white-space: nowrap; font-size: 0.74rem; font-variant-numeric: tabular-nums; color: var(--accent); }
+.nway-reach i, .nway-edgecnt i { font-size: 0.85em; margin-right: 2px; }
+.nway-cg-legend { font-size: 0.76rem; margin-bottom: 8px; line-height: 1.5; }
+.nway-node.deep { width: 170px; }
+.nway-node.deep .nway-tags, .nway-node.deep .nway-strip { display: none; }
+
+/* Call-graph drawer, light theme: cards need to stand off the drawer, and the hard-coded ramp colors need contrast on white. */
+html.light-theme .nway-node, html.light-theme .nway-cg-item { background: var(--bg); border-color: #c3c8d0; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+html.light-theme .nway-node.center { background: #eaf3fc; border-color: var(--accent); }
+html.light-theme .nway-node:hover, html.light-theme .nway-cg-item:hover { border-color: var(--accent); }
+html.light-theme .nway-cg-box, html.light-theme .nway-cg-head { border-color: #c3c8d0; }
+html.light-theme .nway-strip i { border-color: #b4bac4; }
+html.light-theme .r-mid { --rc: #b45309; }
+html.light-theme .r-low { --rc: #c62828; }
+html.light-theme .nway-node.out { opacity: 0.45; }
+html.light-theme .nway-node.merged { opacity: 0.85; }
+html.light-theme .nway-edge { opacity: 0.7; }
+html.light-theme .nway-edge.out { opacity: 0.3; }
+html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-visible, html.light-theme .nway-node.merged:hover { opacity: 1; }
+.nway-hub { font-size: 10px; color: var(--warning, #d9a400); }
+.nway-node.capped { border-style: dotted; opacity: 0.7; }
+.nway-stub { pointer-events: all; cursor: default; }
+.nway-stub[data-cg-deeper] { cursor: pointer; }
+.nway-stub text { font-size: 10px; fill: var(--accent); }
+.nway-stub.other { opacity: 0.55; }
+.nway-stub.other path { fill: none; stroke: var(--dim); stroke-width: 1.5; stroke-dasharray: 2 3; }
+.nway-stub.other text { fill: var(--dim); }
+.nway-graph.hl .nway-stub:not(.hl-on) { opacity: 0.1; }
+.nway-graph.hl .nway-stub.hl-on { opacity: 1; }
+.nway-lane-h { grid-column: 1 / -1; margin-top: 10px; border-top: 1px dashed var(--border); font-size: 11px; }
+.nway-lane-lbl { position: sticky; left: 14px; display: inline-flex; align-items: center; gap: 8px; padding: 2px 8px; background: var(--card-bg); border-radius: 0 0 6px 6px; }
+.nway-lane-focus { z-index: 1; align-self: center; }
+.nway-lane-tip { display: none; position: fixed; z-index: 30000; width: 300px; max-height: 70vh; overflow: auto; padding: 8px 10px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px #0006; font-size: 11px; }
+.nway-tip-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.nway-tip-act button { margin-left: 4px; padding: 1px 6px; font-size: 10px; cursor: pointer; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: inherit; }
+.nway-tip-act button:hover { border-color: var(--accent); }
+.nway-tip-legend { margin: 2px 0 4px; font-size: 10px; }
+.nway-tip-h { margin-top: 6px; font-weight: 600; }
+.nway-tip-flag { font-weight: 400; font-size: 9px; padding: 0 4px; border-radius: 6px; background: var(--accent); color: var(--card-bg); }
+.nway-tip-row { display: grid; grid-template-columns: 110px 1fr 24px; gap: 6px; align-items: center; }
+.nway-tip-v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nway-tip-bar { position: relative; height: 8px; background: var(--border); border-radius: 3px; }
+.nway-tip-bar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 3px; }
+.nway-tip-bar b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text, #fff); opacity: 0.8; }
+
+.nway-node.sel { outline: 2px solid var(--accent); outline-offset: 1px; background: color-mix(in srgb, var(--accent) 10%, var(--card-bg)); }
+.nway-cg-body.selmode:has(.nway-graph) { cursor: crosshair; }
+.nway-cg-body.selmode .nway-node[data-sel] { cursor: copy; }
+.nway-sel-rect { position: fixed; z-index: 9999; border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); pointer-events: none; }
+.nway-cg-selbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 14px; border-bottom: 1px solid var(--border); }
+.nway-cg-selbar[hidden] { display: none; }
+.nway-cg-body.selmode, .nway-cg-body.selmode * { user-select: none; -webkit-user-select: none; }
+.nway-by { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 1.5em; height: 1.5em; border-radius: 50%; font-size: 0.7em; cursor: help; }
+.nway-by.user { color: var(--success, #22c55e); background: color-mix(in srgb, var(--success, #22c55e) 16%, transparent); }
+.nway-by.auto { color: var(--accent, #38bdf8); background: color-mix(in srgb, var(--accent, #38bdf8) 16%, transparent); }
+.nway-by.llm { color: #a78bfa; background: color-mix(in srgb, #a78bfa 18%, transparent); }
+.nway-rename { font-size: 0.7em; opacity: 0.55; }
+.nway-namerow:hover .nway-rename, .nway-rename:focus-visible { opacity: 1; }
+
+.nav-bottom { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border); }
+/* Collection tab strip + overflow menu */
+.entity-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin: -5px 0 12px; flex-shrink: 0; }
+.entity-tabs-scroll { display: flex; gap: 2px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.entity-tabs > .entity-tab { flex-shrink: 0; }
+.entity-tabs:empty { display: none; }
+.entity-tab { padding: 8px 14px; color: var(--dim); text-decoration: none; font-size: 0.85rem; font-weight: 600; white-space: nowrap; border-bottom: 2px solid transparent; display: inline-flex; align-items: center; gap: 7px; }
+.entity-tab:hover { color: var(--text); background: var(--hover); }
+.entity-tab.current { color: var(--text); border-bottom-color: var(--accent); }
+.entity-tab-count { font-family: monospace; font-size: 0.7rem; background: var(--hover); border-radius: 9px; padding: 1px 7px; color: var(--dim); }
+.more-menu { position: relative; }
+.more-menu > summary { list-style: none; cursor: pointer; height: 36px; padding: 0 12px; display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--card-bg); }
+.more-menu > summary::-webkit-details-marker { display: none; }
+.more-menu-list { position: absolute; right: 0; top: 40px; z-index: 50; min-width: 200px; display: flex; flex-direction: column; padding: 4px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+.more-menu-list button { text-align: left; background: none; border: 0; color: var(--text); padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; cursor: pointer; display: flex; align-items: center; gap: 9px; }
+.more-menu-list button:hover { background: var(--hover); }
+.more-menu-list button.danger { color: #f87171; }
+.more-menu-list hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
+.entity-tab.gap { margin-left: 14px; }
+.ui-button.hdr-btn { height: 36px; padding: 0 18px; border-radius: 6px; font-weight: 700; font-size: 0.82rem; background: var(--card-bg); gap: 8px; white-space: nowrap; }
+.ui-button.hdr-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.ui-button.hdr-btn.primary:hover { filter: brightness(1.1); }
+.more-menu-list .ui-button { width: 100%; justify-content: flex-start; border: 0; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; }
+.more-menu-list .ui-button.danger { color: #f87171; }
+.ui-button.hdr-btn.danger { color: #f87171; border-color: rgba(248, 113, 113, 0.45); }
+.ui-button.hdr-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+body.has-entity-tabs .header-top > div:has(> #view-title) { display: none !important; }
+
+/* Global menu: the logo button in the breadcrumb row */
+.global-menu > summary { gap: 8px; height: 32px; padding: 0 10px; }
+.global-menu > summary img { height: 20px; width: 20px; }
+.global-menu > summary span { color: var(--accent); font-weight: bold; letter-spacing: 1.5px; text-transform: uppercase; font-size: 0.85rem; }
+.global-menu > summary i { font-size: 0.65rem; color: var(--subtle); }
+.global-menu-list { left: 0; right: auto; top: 36px; min-width: 190px; }
+.global-menu-list a { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 4px; font-size: 0.85rem; color: var(--text); text-decoration: none; }
+.global-menu-list a i { width: 18px; text-align: center; color: var(--subtle); }
+.global-menu-list a:hover, .global-menu-list a.active { background: var(--hover); color: var(--accent); }
+.global-menu-list a:hover i, .global-menu-list a.active i { color: var(--accent); }
+.global-menu-list kbd { margin-left: auto; font-size: 0.7rem; color: var(--subtle); }
+
+/* The clearable wrapper JS adds around the input must fill the bar, so the icon sits at the right edge */
+.search-input-wrapper > .filter-clearable { flex: 1; display: flex; min-width: 0; }
+
+/* Search box shares the filter-card band: fixed to its top-right corner, cards wrap in the space left of it */
+#grid-header .has-search-slot { position: relative; padding-right: 336px; flex-wrap: nowrap !important; gap: 12px !important; }
+#grid-header .has-search-slot > .home-card { flex: 0 1 auto; }
+#grid-header .has-search-slot > #search-area { position: absolute; top: 0; right: 0; width: 320px; max-width: none; margin: 0 !important; }
+.header:not(:has(#search-area)) { display: none; }
+@media (max-width: 1100px) {
+    #grid-header .has-search-slot { padding-right: 0; flex-wrap: wrap !important; }
+    #grid-header .has-search-slot > #search-area { position: static; width: 100%; flex-basis: 100%; }
 }

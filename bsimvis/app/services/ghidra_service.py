@@ -15,7 +15,7 @@ import tomllib
 
 from bsimvis.app.services import tag_taxonomy
 from bsimvis.app.services.boilerplate_tag_service import (
-    boilerplate_tag_for_function_name,
+    boilerplate_tags_for_names,
 )
 from bsimvis.app.services.bsim_profiles import get_signature_settings
 
@@ -695,6 +695,27 @@ class GhidraService:
 
         decompiler_id = f"{decomp_interface.getMajorVersion()}.{decomp_interface.getMinorVersion()}:{decomp_interface.getCompilerSpec().getLanguage()}:{hex(decomp_interface.getSignatureSettings())}"
 
+        # The header entry usually lands on a thunk or a tiny stub that the
+        # filter above dropped; follow the thunk, and only tag what is stored.
+        entry_key = None
+        if options.get("entry_addr") is not None:
+            try:
+                addr = (
+                    program.getAddressFactory()
+                    .getDefaultAddressSpace()
+                    .getAddress(options["entry_addr"])
+                )
+                ef = program.getFunctionManager().getFunctionContaining(addr)
+                if ef and ef.isThunk():
+                    ef = ef.getThunkedFunction(True)
+                if ef and ef in eligible_funcs:
+                    entry_key = ef.getEntryPoint().getOffset()
+                    file_metadata["entry_point"] = str(ef.getEntryPoint()).split(":")[
+                        -1
+                    ]
+            except Exception as e:
+                logging.warning(f"entry point lookup failed: {e}")
+
         if job_service and job_id:
             job_service.add_log(
                 job_id, f"Found {total_funcs} functions to decompile and analyze."
@@ -793,6 +814,12 @@ class GhidraService:
         except Exception as e:
             logging.debug(f"FID service unavailable: {e}")
 
+        boilerplate_tags = (
+            {}
+            if skip_boilerplate
+            else boilerplate_tags_for_names(f.getName() for f in eligible_funcs)
+        )
+
         chunk = []
         decompiled_count = 0
 
@@ -861,10 +888,9 @@ class GhidraService:
                 if ft not in func_tags:
                     func_tags.append(ft)
 
-            if not skip_boilerplate:
-                boilerplate_tag = boilerplate_tag_for_function_name(func_name)
-                if boilerplate_tag:
-                    func_tags.append(boilerplate_tag)
+            boilerplate_tag = boilerplate_tags.get(func_name)
+            if boilerplate_tag:
+                func_tags.append(boilerplate_tag)
 
             # Insert Capa tags based on function address
             addr_hex = hex(func.getEntryPoint().getOffset())
@@ -878,6 +904,9 @@ class GhidraService:
             for ytag in yara_tags.get(addr_hex, []):
                 if ytag not in func_tags:
                     func_tags.append(ytag)
+
+            if entry_key is not None and func.getEntryPoint().getOffset() == entry_key:
+                func_tags.append("entry:process")
 
             func_tags = tag_taxonomy.filter_tags(func_tags, "analysis")
             entry_symbols = symbol_table.getSymbols(entry_point)

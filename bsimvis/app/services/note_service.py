@@ -3,7 +3,12 @@ import time
 import logging
 import json
 from .redis_client import get_redis
-from bsimvis.app.services.index_service import resolve_origin_collection
+from redis.exceptions import WatchError
+from bsimvis.app.services.index_service import (
+    resolve_origin_collection,
+    _index_tag,
+    _unindex_tag,
+)
 
 
 def _normalize_collection(collection, entity_id=None):
@@ -196,6 +201,63 @@ class NoteService:
             return doc.get(json_field, [])
         except:
             return []
+
+    def set_user_name(self, func_id, name, source="user"):
+        """Sets (or, with an empty name, clears) a function's analyst-chosen name.
+
+        Stored on the origin function doc, so every collection, pool and N-way
+        view over that function sees it. The doc write and the `user_name` index
+        move in one WATCH/MULTI, so a concurrent note or rename is retried
+        instead of lost. Each change is appended to `user_name_history`.
+        """
+        doc_id = self._resolve_func_id(None, func_id)
+        base_id = doc_id[:-5]
+        coll = base_id.split(":func:")[0]
+        name = (name or "").strip()
+        pools = [
+            f"global:pool:{p.decode() if isinstance(p, bytes) else p}"
+            for p in self.r.smembers(f"{coll}:pools")
+        ]
+        for _ in range(5):
+            with self.r.pipeline() as pipe:
+                try:
+                    pipe.watch(doc_id)
+                    raw = pipe.get(doc_id)
+                    if not raw:
+                        return False
+                    doc = json.loads(raw)
+                    old = doc.get("user_name")
+                    if name == (old or ""):
+                        return True
+                    if name:
+                        doc["user_name"] = name
+                        doc["user_name_source"] = source
+                    else:
+                        doc.pop("user_name", None)
+                        doc.pop("user_name_source", None)
+                    doc.setdefault("user_name_history", []).append(
+                        {
+                            "name": name,
+                            "source": source,
+                            "timestamp": int(time.time() * 1000),
+                        }
+                    )
+                    pipe.multi()
+                    pipe.set(doc_id, json.dumps(doc))
+                    for c in [coll] + pools:
+                        if old:
+                            _unindex_tag(pipe, c, "func", "user_name", old, base_id)
+                        if name:
+                            _index_tag(pipe, c, "func", "user_name", name, base_id)
+                    pipe.execute()
+                    return True
+                except WatchError:
+                    continue
+        return False
+
+    def set_user_names(self, renames):
+        """Applies `[(func_id, name, source)]`; returns the func ids that took."""
+        return [f for f, n, s in renames if self.set_user_name(f, n, s)]
 
     # --- File notes ---
 

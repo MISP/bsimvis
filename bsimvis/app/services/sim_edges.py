@@ -308,6 +308,32 @@ class SimAdjacency:
                 total += float(sims[member_set[idx]].sum())
         return total / 2.0
 
+    def member_sums(self, member_indices):
+        """Per-member sum of similarities to the other members, in order.
+
+        Same two access patterns as cohesion_sum; an uncompared pair adds 0.
+        """
+        n = len(member_indices)
+        sums = [0.0] * n
+        if n < 2:
+            return sums
+
+        if n < 50:
+            for i in range(n):
+                for j in range(i + 1, n):
+                    s = self.get(member_indices[i], member_indices[j])
+                    sums[i] += s
+                    sums[j] += s
+            return sums
+
+        member_set = np.zeros(self.indptr.size - 1, dtype=bool)
+        member_set[member_indices] = True
+        for i, u in enumerate(member_indices):
+            idx, sims = self.neighbours(u)
+            if idx.size:
+                sums[i] = float(sims[member_set[idx] & (idx != u)].sum())
+        return sums
+
     def cohesion(self, member_indices, member_set=None, sources=None):
         """(sum of similarities, count of pairs with an actual edge) over
         every pair inside member_indices.

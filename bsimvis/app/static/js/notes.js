@@ -61,6 +61,7 @@ function notifyNoteChanged(funcId) {
 let isNotesOpen = false;
 let isAIOpen = false;
 let isGraphOpen = false;
+let isCallsOpen = false;
 let isGraphLocked = false;
 let currentGraphFuncId = null;
 let sideGraphController = null;
@@ -71,8 +72,8 @@ let sideGraphController = null;
 // dimensions or it silently downgrades to the plainer 'viewer' mode --
 // keep its floor comfortably past that so the side panel actually gets it.
 const PANEL_MAX_WIDTH = 1100;
-const PANEL_MIN_WIDTHS = { notes: 320, ai: 360, graph: 620 };
-const PANEL_DEFAULTS = { notes: 500, ai: 600, graph: 640 };
+const PANEL_MIN_WIDTHS = { notes: 320, ai: 360, graph: 620, calls: 480 };
+const PANEL_DEFAULTS = { notes: 500, ai: 600, graph: 640, calls: 860 };
 const panelWidths = { ...PANEL_DEFAULTS };
 for (const key of Object.keys(panelWidths)) {
     const stored = parseInt(localStorage.getItem(`bsimvis-panel-width-${key}`), 10);
@@ -163,6 +164,15 @@ function createPanelsIfMissing() {
     graphHandle.onclick = toggleGraphPanel;
     handleContainer.appendChild(graphHandle);
 
+    // N-way call-graph handle: hidden until a row's graph is first opened
+    const callsHandle = document.createElement('div');
+    callsHandle.id = 'calls-panel-handle';
+    callsHandle.className = 'panel-handle calls';
+    callsHandle.style.display = 'none';
+    callsHandle.innerHTML = '<i class="fa-solid fa-sitemap"></i><span>N-WAY CALLS</span>';
+    callsHandle.onclick = () => { if (isCallsOpen) closeCallsPanel(); else openCallsPanel(); };
+    handleContainer.appendChild(callsHandle);
+
     // Notes Handle
     const notesHandle = document.createElement('div');
     notesHandle.id = 'notes-panel-handle';
@@ -187,6 +197,15 @@ function createPanelsIfMissing() {
     graphPanel.style.right = -(panelWidths.graph + 50) + 'px';
     document.body.appendChild(graphPanel);
 
+    // N-way call-graph panel: NwayPanel draws into #calls-panel-body
+    const callsPanel = document.createElement('div');
+    callsPanel.id = 'calls-panel-v2';
+    callsPanel.className = 'side-panel-v2';
+    callsPanel.style.width = panelWidths.calls + 'px';
+    callsPanel.style.right = -(panelWidths.calls + 50) + 'px';
+    callsPanel.innerHTML = '<div id="calls-panel-body" class="nway-cgp"></div>';
+    document.body.appendChild(callsPanel);
+
     // Notes Panel
     const notesPanel = document.createElement('div');
     notesPanel.id = 'notes-panel-v2';
@@ -208,6 +227,7 @@ function createPanelsIfMissing() {
     renderAIPanelHTML(aiPanel);
 
     setupPanelResize(graphPanel, 'graph');
+    setupPanelResize(callsPanel, 'calls');
     setupPanelResize(notesPanel, 'notes');
     setupPanelResize(aiPanel, 'ai');
 
@@ -419,6 +439,16 @@ function updateLayout() {
         if (graphPanel) graphPanel.style.right = -(panelWidths.graph + 50) + 'px';
     }
     
+    // N-way calls is the leftmost panel
+    const callsPanel = document.getElementById('calls-panel-v2');
+    if (isCallsOpen) {
+        callsPanel.style.right = totalOffset + 'px';
+        // ponytail: overlay instead of squeezing the page below 900px; the handle still closes it
+        if (window.innerWidth - totalOffset - panelWidths.calls >= 900) totalOffset += panelWidths.calls;
+    } else if (callsPanel) {
+        callsPanel.style.right = -(panelWidths.calls + 50) + 'px';
+    }
+
     document.body.style.paddingRight = totalOffset + 'px';
     
     // Move handles container with panels
@@ -432,7 +462,7 @@ function updateLayout() {
         // page -- that's what makes AI Insight reachable globally.
         const hasCollectionContext = !!getChatScopeCollection();
 
-        if (!hasCollectionContext && !isNotesOpen && !isAIOpen && !isGraphOpen) {
+        if (!hasCollectionContext && !isNotesOpen && !isAIOpen && !isGraphOpen && !isCallsOpen) {
             handleContainer.style.opacity = '0';
             handleContainer.style.pointerEvents = 'none';
         } else {
@@ -445,6 +475,8 @@ function updateLayout() {
     const notesHandle = document.getElementById('notes-panel-handle');
     const aiHandle = document.getElementById('ai-panel-handle');
     const graphHandle = document.getElementById('pivotick-panel-handle');
+    const callsHandle = document.getElementById('calls-panel-handle');
+    if (callsHandle) callsHandle.classList.toggle('active', isCallsOpen);
     if (notesHandle) notesHandle.classList.toggle('active', isNotesOpen);
     if (aiHandle) aiHandle.classList.toggle('active', isAIOpen);
     if (graphHandle) {
@@ -466,6 +498,24 @@ function openGraphPanel(funcId) {
     }
 }
 function closeGraphPanel() { isGraphOpen = false; updateLayout(); }
+
+/** N-way call-graph panel. open returns the body element to draw into;
+ * clear (owner navigated away) empties it and hides the handle. */
+function openCallsPanel() {
+    createPanelsIfMissing();
+    isCallsOpen = true;
+    document.getElementById('calls-panel-handle').style.display = '';
+    updateLayout();
+    return document.getElementById('calls-panel-body');
+}
+function closeCallsPanel() { isCallsOpen = false; updateLayout(); }
+function clearCallsPanel() {
+    const body = document.getElementById('calls-panel-body');
+    if (!body) return;
+    body.innerHTML = '';
+    document.getElementById('calls-panel-handle').style.display = 'none';
+    closeCallsPanel();
+}
 
 function toggleGraphLock() {
     isGraphLocked = !isGraphLocked;
@@ -629,7 +679,11 @@ function openAIPanel() {
         // Only worth an automatic summarize call when a specific function or
         // file is actually focused -- opening the dock from a list/dashboard
         // page with nothing selected just shows the empty conversation.
-        if (currentNotesFuncId) generateSummary(currentNotesFuncId);
+        const diffCtx = (window.diffFocusContext || window.parent?.diffFocusContext)?.();
+        if (diffCtx || (currentNotesFuncId && entityMode === 'bin_sim')) {
+            // No streaming summarize route for pairs; ask the agent instead.
+            sendLLMChat("Analyze this comparison: summarize what the two sides share, how they differ, and what stands out.");
+        } else if (currentNotesFuncId) generateSummary(currentNotesFuncId);
     } else if (lastRenderedAIFuncId !== collection) {
         renderChatHistory(collection);
     }
@@ -741,6 +795,7 @@ function injectNotesStyles() {
         }
         .panel-handle:hover { color: var(--text); background: var(--border); }
         .panel-handle.user.active { color: var(--note-accent); border-color: var(--note-accent); background: var(--meta-bg); }
+        .panel-handle.calls.active { color: var(--accent); border-color: var(--accent); background: var(--meta-bg); }
         .panel-handle.ai.active { color: var(--info); border-color: var(--info); background: var(--meta-bg); }
         .panel-handle i { font-size: 0.9rem; transform: rotate(90deg); }
 
@@ -1220,6 +1275,9 @@ async function ensureChatSession(collection) {
  * every outgoing message (not just at session start) since the same session
  * now spans however many functions/files the analyst pivots through. */
 function currentFocusContextLine() {
+    // A diff shows two functions, so it outranks the single notes focus.
+    const diffCtx = (window.diffFocusContext || window.parent?.diffFocusContext)?.();
+    if (diffCtx) return `(${diffCtx})`;
     if (!currentNotesFuncId) {
         return "(No specific function or file is currently focused -- this is a general question about the collection.)";
     }
@@ -1233,14 +1291,14 @@ function currentFocusContextLine() {
     return `(Analyst is currently viewing ${kind} ${currentNotesFuncId}. Assume this question refers to it unless stated otherwise.)`;
 }
 
-async function sendLLMChat() {
+async function sendLLMChat(autoText) {
     const inputEl = document.getElementById("llm-input");
-    const text = inputEl.value.trim();
+    const text = typeof autoText === "string" ? autoText : inputEl.value.trim();
     const chatKey = getChatScopeCollection();
     if (!text || !chatKey) return;
     lastChatFocusId[chatKey] = currentNotesFuncId;
     addChatMessage(chatKey, "user", text);
-    inputEl.value = "";
+    if (typeof autoText !== "string") inputEl.value = "";
     const sendBtn = document.getElementById("llm-send-btn");
     const stopBtn = document.getElementById("llm-stop-btn");
     const statusEl = document.getElementById("llm-status");
@@ -1372,6 +1430,9 @@ window.toggleNotesPanel = toggleNotesPanel;
 window.toggleAIPanel = toggleAIPanel;
 window.toggleGraphPanel = toggleGraphPanel;
 window.toggleGraphLock = toggleGraphLock;
+window.openCallsPanel = openCallsPanel;
+window.closeCallsPanel = closeCallsPanel;
+window.clearCallsPanel = clearCallsPanel;
 window.openGraphPanel = openGraphPanel;
 window.closeGraphPanel = closeGraphPanel;
 window.loadSideGraph = loadSideGraph;

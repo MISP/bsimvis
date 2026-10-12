@@ -26,6 +26,8 @@ window.FileView = {
         this.clusterFilters = { uuid: '', q: '', minSize: '', minStability: '', minCohesion: '' };
         this.file = null;
         this.funcPage = { total: null, loading: false, reqId: 0 };
+        // Page mode only: a shared link's `offset` opens that page; scroll mode ignores it.
+        this.funcOffset = window.Paging.mode() === 'page' ? Math.max(0, Number(new URLSearchParams(location.search).get('offset')) || 0) : 0;
         this.functionsLoaded = false;
         this.neighborsLoaded = false;
         this.sortState = { col: 'function_name', dir: 1 };
@@ -222,6 +224,7 @@ window.FileView = {
                     </div>
                     <div class="card" style="flex:1; min-width:0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
                         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                            <button class="top-action-btn" id="fv-entry-btn" style="display:none;"><i class="fa-solid fa-location-dot"></i> Entry</button>
                             <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
                                 <span class="bsim-ctl-label">Group by:</span>
                                 <button class="view-btn active" id="fv-group-btn-auto" onclick="FileView.setGroupBy('auto')" title="Group by tag when more than one tag is in scope">Auto</button>
@@ -229,7 +232,7 @@ window.FileView = {
                                 <button class="view-btn" id="fv-group-btn-none" onclick="FileView.setGroupBy('none')" title="One flat list">None</button>
                             </div>
                         </div>
-                        <!-- ponytail: viewport-relative instead of a flex chain; 260px is the title strip + tabbar + card padding above it -->
+                        <!-- fitFunctionsScroll() sets max-height to the room left under the controls, so the column names and filters stay put while the list scrolls -->
                         <div id="file-func-scroll" style="overflow-x: auto; max-height: calc(100vh - 260px); min-height: 300px; overflow-y: auto;">
                             <table class="file-func-table" id="file-func-table">
                                 <thead>
@@ -419,19 +422,23 @@ window.FileView = {
                     { maxTags: 3, onOverflow: () => FileView.switchTab('tags') }
                 );
             }
-            document.getElementById('file-actions-container').innerHTML = `
-                <button class="top-action-btn" onclick="openAnalyzeModal({ scope: 'file', collection: ${escapeAttr(jsString(collection))}, fileMd5: ${escapeAttr(jsString(file.file_md5))} })"
-                    style="color:#ae81ff; border-color:#ae81ff;"
-                    title="Analyze every candidate function of this file with AI">
-                    <i class="fa-solid fa-robot"></i> Analyze file</button>
-                <button class="top-action-btn" onclick="openSearchModal({ scope: 'file', collection: ${escapeAttr(jsString(collection))}, fileMd5: ${escapeAttr(jsString(file.file_md5))} })"
-                    style="color:#60a5fa; border-color:#60a5fa;"
-                    title="Ask AI which functions of this file match a description">
-                    <i class="fa-solid fa-magnifying-glass"></i> AI search</button>
-                <button class="top-action-btn" onclick="window.removeFiles(${escapeAttr(jsString(collection))}, [${escapeAttr(jsString(file.file_md5))}])"
-                    style="color:#f87171; border-color:#f87171;"
-                    title="Remove this file from the collection. Raw sample bytes will be retained.">
-                    <i class="fa-solid fa-trash-can"></i> Remove</button>`;
+            const entryUrl = file.entry_point
+                ? `/collections/${encodeURIComponent(collection)}/files/${file.file_md5}/functions/${file.entry_point}` : '';
+            const entryBtn = document.getElementById('fv-entry-btn');
+            if (entryBtn) {
+                entryBtn.style.display = entryUrl ? '' : 'none';
+                entryBtn.title = entryUrl ? `Open the program entry function at ${file.entry_point}` : '';
+                entryBtn.onclick = (e) => Nav.openPath(entryUrl, e);
+            }
+            const entryLink = entryUrl
+                ? { html: `<a href="${escapeAttr(entryUrl)}" onclick="Nav.openPath(${escapeAttr(jsString(entryUrl))}, event)" style="color:#a6e22e;">${escapeHtml(file.entry_point)}</a>` } : '';
+            const fileScope = `scope: 'file', collection: ${jsString(collection)}, fileMd5: ${jsString(file.file_md5)}`;
+            document.getElementById('file-actions-container').innerHTML = UI.MoreMenu.render([
+                { label: 'Analyze file with AI', icon: 'fa-solid fa-robot', tooltip: 'Analyze every candidate function of this file with AI', onClick: `openAnalyzeModal({ ${fileScope} })` },
+                { label: 'AI search', icon: 'fa-solid fa-magnifying-glass', tooltip: 'Ask AI which functions of this file match a description', onClick: `openSearchModal({ ${fileScope} })` },
+                '-',
+                { label: 'Remove file', icon: 'fa-solid fa-trash-can', danger: true, tooltip: 'Remove this file from the collection. Raw sample bytes will be retained.', onClick: `window.removeFiles(${jsString(collection)}, [${jsString(file.file_md5)}])` },
+            ]);
 
             if (window.EntityRenderer) {
                 document.getElementById('file-note-btn-container').innerHTML = window.EntityRenderer.renderFileNoteButton(
@@ -442,6 +449,7 @@ window.FileView = {
             // Render Metadata Table (Reusing comparison table layout and styles)
             const fmt = (v) => {
                 if (v === undefined || v === null || v === '') return '<span style="color:var(--subtle); opacity:0.5;">—</span>';
+                if (v && v.html) return v.html;
                 if (Array.isArray(v)) return v.length ? escapeHtml(v.join(', ')) : '<span style="color:var(--subtle); opacity:0.5;">—</span>';
                 return escapeHtml(String(v));
             };
@@ -458,6 +466,7 @@ window.FileView = {
                 'Batch UUID': 'fa-solid fa-box',
                 'Language': 'fa-solid fa-microchip',
                 'File Type': 'fa-solid fa-file-code',
+                'Entry Point': 'fa-solid fa-location-dot',
                 'Functions': 'fa-solid fa-list-ol',
                 'BSim Features': 'fa-solid fa-dna',
                 'First Seen': 'fa-solid fa-clock',
@@ -482,6 +491,7 @@ window.FileView = {
                 ['Classification', [
                     ['Language', file.language_id || file.language],
                     ['File Type', file.filetype],
+                    ['Entry Point', entryLink],
                 ]],
                 ['Statistics', [
                     ['Functions', file.function_count],
@@ -884,6 +894,13 @@ window.FileView = {
         const panel = document.getElementById(`file-panel-${tabId}`);
         if (panel) panel.style.display = 'block';
 
+        if (tabId === 'functions') {
+            this.fitFunctionsScroll();
+            if (!this._fitBound) {
+                this._fitBound = true;
+                window.addEventListener('resize', () => this.fitFunctionsScroll());
+            }
+        }
         if (tabId === 'functions' && !this.functionsLoaded) {
             this.loadFunctionsTable();
         }
@@ -986,19 +1003,23 @@ window.FileView = {
         return p.toString();
     },
 
-    async loadFunctionsTable({ reset = false } = {}) {
+    // `at` (page mode): the offset of the page to show.
+    async loadFunctionsTable({ reset = false, at } = {}) {
+        const paged = window.Paging.mode() === 'page';
         if (this.funcPage.loading && !reset) return;
         // No `functionsLoaded` guard here: this is also the "load the next page"
         // entry point for the infinite scroll. Having everything already is what
         // the total check below covers; callers that only want the first page
         // check functionsLoaded themselves.
-        if (!reset && this.funcPage.total !== null && this.functions.length >= this.funcPage.total) return;
+        if (!paged && !reset && this.funcPage.total !== null && this.functions.length >= this.funcPage.total) return;
 
         const tbody = document.getElementById('file-functions-tbody');
         if (reset) {
             this.functions = [];
             this.funcPage.total = null;
+            this.funcOffset = 0;
         }
+        if (at !== undefined) this.funcOffset = at;
         this.funcPage.loading = true;
         this.setFunctionsStatus('<i class="fa-solid fa-spinner fa-spin"></i> Loading...');
 
@@ -1006,18 +1027,20 @@ window.FileView = {
         const reqId = ++this.funcPage.reqId;
 
         try {
-            const res = await fetch(`/api/function/search?${this.buildFunctionsQuery(this.functions.length)}`);
+            const res = await fetch(`/api/function/search?${this.buildFunctionsQuery(paged ? this.funcOffset : this.functions.length)}`);
             if (!res.ok) throw new Error("Functions load failed");
             const data = await res.json();
             if (reqId !== this.funcPage.reqId) return;
             if (data.error) throw new Error(data.error);
 
-            this.functions = this.functions.concat(data.functions || []);
+            this.functions = paged ? (data.functions || []) : this.functions.concat(data.functions || []);
             this.funcPage.total = data.total || 0;
+            this.syncFunctionsUrl(paged);
             this.functionEmptyMessage = data.message || '';
             this.funcClusters = Object.assign(this.funcClusters || {}, data.clusters || {});
             document.getElementById('functions-count').innerText = this.funcPage.total;
             this.renderFunctionsTable();
+            this.fitFunctionsScroll();
             this.functionsLoaded = true;
         } catch (e) {
             console.error(e);
@@ -1029,9 +1052,30 @@ window.FileView = {
         }
     },
 
+    // Only page mode puts the offset in the URL, so a page can be shared.
+    syncFunctionsUrl(paged) {
+        const u = new URL(location.href);
+        if (paged && this.funcOffset) u.searchParams.set('offset', this.funcOffset);
+        else u.searchParams.delete('offset');
+        history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+    },
+
     setFunctionsStatus(html) {
         const el = document.getElementById('file-func-status');
         if (el) el.innerHTML = html;
+    },
+
+    /** The list takes the viewport height left under the controls (measured with
+     * the page scrolled to its top), so only the rows scroll. */
+    fitFunctionsScroll() {
+        const el = document.getElementById('file-func-scroll');
+        if (!el || el.offsetParent === null) return;
+        const page = document.getElementById('file-view-content');
+        const top = el.getBoundingClientRect().top + (page ? page.scrollTop : 0);
+        el.style.maxHeight = `${Math.max(300, window.innerHeight - top - 40)}px`;
+        // whatever sits under the list (status line, card padding) must not push the page into scrolling
+        const over = page ? page.scrollHeight - page.clientHeight : 0;
+        if (over > 0) el.style.maxHeight = `${Math.max(300, el.clientHeight - over)}px`;
     },
 
     // Loads the next page whenever the table is scrolled near the bottom.
@@ -1040,7 +1084,7 @@ window.FileView = {
         if (!scroller || scroller._funcScrollBound) return;
         scroller._funcScrollBound = true;
         scroller.addEventListener('scroll', () => {
-            if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 200) {
+            if (window.Paging.mode() === 'scroll' && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 200) {
                 this.loadFunctionsTable();
             }
         });
@@ -1270,7 +1314,7 @@ window.FileView = {
 
         const rowHtml = (f) => {
             const entry = f.entrypoint_address || '';
-            const funcName = f.function_name || 'unknown';
+            const funcName = fnName(f) || 'unknown';
             const featCount = f.bsim_features_count || 0;
             const fColl = f.collection || collection;
             // A container's tab lists its whole subtree, so the owning file is
@@ -1387,7 +1431,18 @@ window.FileView = {
 
         const shown = this.functions.length;
         const total = this.funcPage.total ?? shown;
-        this.setFunctionsStatus(shown < total ? `Showing ${shown} of ${total} — scroll for more` : `${total} function${total === 1 ? '' : 's'}`);
+        if (window.Paging.mode() === 'page') {
+            this.setFunctionsStatus(window.Paging.footer({ offset: this.funcOffset, total, size: this.FUNC_PAGE_SIZE, shown }));
+            window.Paging.bind(document.getElementById('file-func-status'),
+                () => ({ offset: this.funcOffset, total: this.funcPage.total || 0, size: this.FUNC_PAGE_SIZE }),
+                off => {
+                    this.loadFunctionsTable({ at: off });
+                    const sc = document.getElementById('file-func-scroll');
+                    if (sc) sc.scrollTop = 0;
+                });
+        } else {
+            this.setFunctionsStatus(shown < total ? `Showing ${shown} of ${total} — scroll for more` : `${total} function${total === 1 ? '' : 's'}`);
+        }
         this.bindFunctionsScroll();
         this.renderTagTree();
 

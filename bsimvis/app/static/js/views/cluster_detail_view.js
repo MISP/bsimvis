@@ -36,6 +36,7 @@ window.ClusterDetailView = {
     selectedClusterUuid: null,
     expandedGroups: new Set(),
     memberCache: {}, // cluster_uuid -> direct_members array
+    centralitySort: false, // members ranked by centrality, highest first
     groupBy: 'cluster',
     treeExpanded: new Set(), // cluster_id
     tab: 'members',
@@ -53,7 +54,21 @@ window.ClusterDetailView = {
         this.expandedGroups.clear();
         this.treeExpanded.clear();
         this._sliceCenteredOn = null;
+        this.heroCompact = false;
+        this.heroManual = false;
         this.tab = 'members';
+        if (this._nway) this._nway.destroy();
+        this._nway = null;
+    },
+
+    /** Function clusters open on their medoid's code, file clusters on the member list. */
+    defaultTab() {
+        return this.isBinary ? 'members' : 'medoid';
+    },
+
+    /** The Functions tab (N-way diff of the node's files) exists for binary file clusters only. */
+    hasFunctionsTab() {
+        return this.isBinary && this.nodeType !== 'container';
     },
 
     /** up/down/width, remembered per browser -- a per-viewer convenience, never load-bearing. */
@@ -205,6 +220,7 @@ window.ClusterDetailView = {
         this.destroy();
         this.params = params;
         this.isBinary = params.view === 'bin-cluster-detail';
+        this.tab = this.defaultTab();
         this.collection = params.collection || '';
         this.algo = params.algo || 'unweighted_cosine';
 
@@ -222,6 +238,11 @@ window.ClusterDetailView = {
             return;
         }
         this.loadTreeSettings();
+        try {
+            this.sidebarCollapsed = localStorage.getItem('clusterSidebarCollapsed') === '1';
+        } catch (e) {
+            this.sidebarCollapsed = false;
+        }
 
         container.innerHTML = `
             <style>
@@ -247,6 +268,38 @@ window.ClusterDetailView = {
                     width:34px; padding:1px 3px; font-size:0.72rem; text-align:center;
                     background:var(--bg-alt); color:var(--text); border:1px solid var(--border); border-radius:4px;
                 }
+                #cluster-side-wrap { position:relative; display:flex; flex-shrink:0; margin-right:2px; }
+                #cluster-sidebar { transition:width 0.28s ease; }
+                /* Slim: the tree stays, names fold into the row tooltip. */
+                #cluster-sidebar.collapsed { width:96px; }
+                #cluster-sidebar.collapsed .bsim-tree-settings,
+                #cluster-sidebar.collapsed .bsim-node-label,
+                #cluster-sidebar.collapsed .bsim-side-collapse { display:none; }
+                #cluster-sidebar.collapsed .bsim-side-title { padding:4px 8px 8px; }
+                #cluster-sidebar.collapsed .bsim-node { padding-right:6px; gap:4px; }
+                #cluster-sidebar.collapsed .bsim-node-count { margin-left:auto; }
+                .cluster-side-handle {
+                    position:absolute; left:100%; top:50%; transform:translateY(-50%);
+                    width:16px; height:60px; z-index:5; cursor:pointer;
+                    display:flex; align-items:center; justify-content:center;
+                    background:var(--card-bg); color:var(--accent); font-size:0.75rem;
+                    border:1px solid var(--border); border-left:none; border-radius:0 8px 8px 0;
+                    transition:background 0.2s, color 0.2s;
+                }
+                .cluster-side-handle:hover { background:var(--accent); color:var(--window-tray); }
+                .cluster-side-handle i { transition:transform 0.28s ease; }
+                #cluster-sidebar.collapsed + .cluster-side-handle i { transform:rotate(180deg); }
+                .hero-handle i { transition:transform 0.25s ease; }
+                .hero-handle { background:none; border:none; color:var(--dim); cursor:pointer; padding:2px 6px; }
+                .hero-handle:hover { color:var(--accent); }
+                .cluster-hero { transition:padding 0.25s ease; }
+                .hero-fold { display:grid; grid-template-rows:1fr; opacity:1; transition:grid-template-rows 0.25s ease, opacity 0.2s ease; }
+                .hero-fold-in { overflow:hidden; min-height:0; }
+                .hero-mini { display:none; gap:12px; color:var(--dim); font-size:0.78rem; opacity:0; transition:opacity 0.25s ease; }
+                .cluster-hero.compact .hero-handle i { transform:rotate(180deg); }
+                .cluster-hero.compact .hero-fold { grid-template-rows:0fr; opacity:0; }
+                .cluster-hero.compact .hero-mini { display:inline-flex; opacity:1; }
+                .cluster-hero.compact { padding-top:8px !important; padding-bottom:8px !important; }
                 .bsim-tree { flex:0 0 auto; }
                 .bsim-node {
                     display:flex; align-items:center; gap:6px; padding:4px 12px; cursor:pointer;
@@ -267,7 +320,9 @@ window.ClusterDetailView = {
                 .bsim-grp-row:hover td { background:var(--hover); }
                 .bsim-caret-btn { cursor:pointer; user-select:none; color:var(--subtle); display:inline-block; width:14px; text-align:center; }
 
-                #cluster-members-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+                #cluster-members-table { table-layout:fixed; }
+                #cluster-members-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+                #cluster-members-table td > * { max-width:100%; }
                 #cluster-members-table tr:hover:not(.bsim-grp-row) { background: var(--hover); }
             </style>
 
@@ -276,11 +331,12 @@ window.ClusterDetailView = {
             </div>
 
             <div id="cluster-main" style="display:none;">
-                <div id="cluster-sidebar">
+                <div id="cluster-side-wrap">
+                <div id="cluster-sidebar" class="${this.sidebarCollapsed ? 'collapsed' : ''}">
                     <div class="bsim-side-title">
-                        Cluster Hierarchy
+                        <span class="bsim-side-label">Cluster Hierarchy</span>
                         <span class="bsim-side-actions">
-                            <span onclick="ClusterDetailView.collapseTreeAll()" title="Collapse back to this cluster">collapse</span>
+                            <span class="bsim-side-collapse" onclick="ClusterDetailView.collapseTreeAll()" title="Collapse back to this cluster">collapse</span>
                         </span>
                     </div>
                     <div class="bsim-tree-settings" title="Ancestors shown / levels below / children per node">
@@ -290,16 +346,20 @@ window.ClusterDetailView = {
                     </div>
                     <div id="cluster-tree" class="bsim-tree"></div>
                 </div>
+                <div class="cluster-side-handle" onclick="ClusterDetailView.toggleSidebar()" title="Slim down / widen the cluster hierarchy"><i class="fa-solid fa-chevron-left"></i></div>
+                </div>
 
                 <div id="cluster-detail" style="flex:1; min-width:0; display:flex; flex-direction:column; min-height:0;">
                     <div id="cluster-header"></div>
 
-                    <div class="bsim-tabbar" id="cluster-view-tabs" style="margin:20px 0 16px; flex-shrink:0;">
-                        <button class="bsim-tab active" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
+                    <div class="bsim-tabbar" id="cluster-view-tabs" style="margin:12px 0 8px; flex-shrink:0;">
+                        ${this.isBinary ? '' : `<button class="bsim-tab active" id="cluster-tab-btn-medoid" onclick="ClusterDetailView.switchTab('medoid')" title="Most central function of this cluster">★ Medoid</button>`}
+                        <button class="bsim-tab${this.isBinary ? ' active' : ''}" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
                         <button class="bsim-tab" id="cluster-tab-btn-metadata" onclick="ClusterDetailView.switchTab('metadata')">Metadata</button>
+                        ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-functions" onclick="ClusterDetailView.switchTab('functions')">Functions <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></button>` : ''}
                     </div>
 
-                    <div id="cluster-tab-members" style="display:flex; flex-direction:column; flex:1; min-height:0;">
+                    <div id="cluster-tab-members" style="display:${this.isBinary ? 'flex' : 'none'}; flex-direction:column; flex:1; min-height:0;">
                         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; flex-shrink:0;">
                             <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
                                 <span class="bsim-ctl-label">Group by:</span>
@@ -311,11 +371,15 @@ window.ClusterDetailView = {
                         <div class="resizable-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; flex:1; min-height:200px; overflow:hidden; margin-top: 10px; background: var(--card-bg);">
                             <div style="flex:1; overflow:auto;" id="cluster-table-scroll">
                                 <table id="cluster-members-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                                    <colgroup>
+                                        <col style="width:${this.isBinary ? '40%' : '50%'};"><col style="width:270px;"><col><col style="width:${this.isBinary ? '100px' : '0'};">
+                                    </colgroup>
                                     <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;">
                                         <tr style="border-bottom:1px solid var(--border); color:var(--dim);">
                                             <th style="padding:8px 12px; text-align:left;">${this.isBinary ? 'File Name' : 'Function'}</th>
                                             <th style="padding:8px 12px; text-align:left;">MD5</th>
                                             <th style="padding:8px 12px; text-align:left;">${this.isBinary ? 'Arch' : 'File Name'}</th>
+                                            ${this.isBinary ? `<th style="padding:8px 12px; text-align:right; cursor:pointer; user-select:none;" id="cluster-centrality-th" onclick="ClusterDetailView.toggleCentralitySort()" title="Mean similarity to the other files of this cluster">Centrality</th>` : ''}
                                         </tr>
                                     </thead>
                                     <tbody id="cluster-members-tbody"></tbody>
@@ -328,6 +392,8 @@ window.ClusterDetailView = {
                     </div>
 
                     <div id="cluster-tab-metadata" style="display:none; flex:1; min-height:0; overflow:auto;"></div>
+                    <div id="cluster-tab-functions" style="display:none; flex:1; min-height:0; overflow:auto;"></div>
+                    <div id="cluster-tab-medoid" style="display:${this.isBinary ? 'none' : 'flex'}; flex:1; min-height:0; flex-direction:column;"></div>
                 </div>
             </div>
         `;
@@ -357,16 +423,54 @@ window.ClusterDetailView = {
 
             document.getElementById('cluster-loader').style.display = 'none';
             document.getElementById('cluster-main').style.display = 'flex';
+            document.getElementById('cluster-detail').addEventListener('scroll', e => this.onDetailScroll(e), true);
 
             this.renderTree();
             await this.selectNode(this.selectedClusterUuid);
 
             if (window.TableSelection) new window.TableSelection('cluster-members-table');
+            const urlTab = urlParams.get('tab');
+            if (urlTab && urlTab !== this.tab && document.getElementById(`cluster-tab-btn-${urlTab}`)) this.switchTab(urlTab);
         } catch (e) {
             console.error(e);
             container.innerHTML = `<div style="padding:30px; color:#f92672;">
                 <i class="fa-solid fa-circle-exclamation"></i> ${escapeHtml(e.message)}</div>`;
         }
+    },
+
+    toggleSidebar() {
+        this.sidebarCollapsed = !this.sidebarCollapsed;
+        try {
+            localStorage.setItem('clusterSidebarCollapsed', this.sidebarCollapsed ? '1' : '0');
+        } catch (e) {}
+        const el = document.getElementById('cluster-sidebar');
+        if (el) el.classList.toggle('collapsed', this.sidebarCollapsed);
+    },
+
+    setHero(compact) {
+        this.heroCompact = compact;
+        const el = document.getElementById('cluster-hero');
+        if (el) el.classList.toggle('compact', compact);
+    },
+
+    /** The handle: a manual choice wins over the scroll rule. */
+    toggleHero() {
+        this.heroManual = true;
+        this.setHero(!this.heroCompact);
+    },
+
+    /** Scrolling a table down folds the hero card to its title row; back at the
+     * top it unfolds. Only vertical movement counts (a sideways scroll keeps
+     * scrollTop), and the 40px gap keeps the layout shift from re-triggering. */
+    onDetailScroll(e) {
+        const t = e.target;
+        if (this.heroManual || !t || t.id === 'cluster-detail' || typeof t.scrollTop !== 'number') return;
+        this._lastTop = this._lastTop || new WeakMap();
+        const prev = this._lastTop.get(t) || 0;
+        this._lastTop.set(t, t.scrollTop);
+        if (t.scrollTop === prev) return;
+        if (t.scrollTop > 40 && !this.heroCompact) this.setHero(true);
+        else if (t.scrollTop === 0 && this.heroCompact) this.setHero(false);
     },
 
     collapseTreeAll() {
@@ -439,7 +543,7 @@ window.ClusterDetailView = {
             }
 
             let rowHtml = `
-                <div class="bsim-node ${isSelected ? 'selected' : ''}" style="padding-left: ${12 + depth * 16}px;" onclick="ClusterDetailView.selectNode('${c.cluster_uuid}')">
+                <div class="bsim-node ${isSelected ? 'selected' : ''}" title="${escapeAttr(c.cluster_name || `Cluster #${c.cluster_id}`)}" style="padding-left: ${12 + depth * 16}px;" onclick="ClusterDetailView.openNode('${c.cluster_uuid}', event)">
                     ${icon}
                     <i class="fa-solid fa-bullseye" style="color:var(--accent); font-size:0.75rem;"></i>
                     <span class="bsim-node-label" title="${escapeAttr(c.cluster_name || `Cluster #${c.cluster_id}`)}">
@@ -487,6 +591,19 @@ window.ClusterDetailView = {
         Breadcrumbs.refresh();
     },
 
+    /** Open a cluster on its own URL so reload and links keep it. */
+    openNode(uuid, event) {
+        if (uuid === this.selectedClusterUuid) return;
+        const nav = window.Nav;
+        if (!nav || !window.getRoutingState) return this.selectNode(uuid);
+        const segs = (this.isBinary ? ['files', 'clusters'] : ['functions', 'clusters']).concat([uuid]);
+        const q = new URLSearchParams();
+        if (this.isBinary && this.axis && this.axis !== 'overall') q.set('axis', this.axis);
+        if (this.isBinary && this.nodeType) q.set('node_type', this.nodeType);
+        const qs = q.toString();
+        nav.openPath(nav.buildUIUrl(window.getRoutingState().collection || '', segs) + (qs ? '?' + qs : ''), event);
+    },
+
     async selectNode(uuid) {
         // Re-center the tree window on the newly selected node -- unless the
         // caller (init) already loaded a slice centered here.
@@ -510,6 +627,7 @@ window.ClusterDetailView = {
 
         // Render header immediately
         document.getElementById('cluster-header').innerHTML = this.renderHeader(c);
+        this.renderMedoidCtl();
 
         // Fetch members if not cached
         if (!this.memberCache[uuid]) {
@@ -518,6 +636,8 @@ window.ClusterDetailView = {
 
         this.renderTable();
         if (this.tab === 'metadata') this.renderMetadataTab();
+        if (this.tab === 'functions') this.renderFunctionsTab();
+        if (this.tab === 'medoid') this.renderMedoidTab();
     },
 
     async fetchMembers(uuid) {
@@ -549,12 +669,124 @@ window.ClusterDetailView = {
 
     switchTab(tab) {
         this.tab = tab;
-        ['members', 'metadata'].forEach(t => {
-            document.getElementById(`cluster-tab-btn-${t}`).classList.toggle('active', t === tab);
+        ['members', 'metadata', 'functions', 'medoid'].forEach(t => {
+            const btn = document.getElementById(`cluster-tab-btn-${t}`);
+            if (!btn) return;
+            btn.classList.toggle('active', t === tab);
             document.getElementById(`cluster-tab-${t}`).style.display =
-                t === tab ? (t === 'members' ? 'flex' : 'block') : 'none';
+                t === tab ? (t === 'members' || t === 'medoid' ? 'flex' : 'block') : 'none';
         });
+        const url = new URL(window.location.href);
+        if (tab !== this.defaultTab()) url.searchParams.set('tab', tab);
+        else url.searchParams.delete('tab');
+        window.history.replaceState({ path: url.pathname + url.search }, '', url.pathname + url.search);
         if (tab === 'metadata') this.renderMetadataTab();
+        if (tab === 'functions') this.renderFunctionsTab();
+        if (tab === 'medoid') this.renderMedoidTab();
+    },
+
+    /** Function clusters: the medoid's code view, embedded as-is (in-iframe mode hides the app chrome). */
+    async renderMedoidTab() {
+        const el = document.getElementById('cluster-tab-medoid');
+        const uuid = this.selectedClusterUuid;
+        if (!el || !uuid) return;
+        let c = this.clusterMapByUuid[uuid];
+        if (c && c.medoid === undefined) {
+            el.innerHTML = `<div class="dim" style="padding:20px;"><i class="fa-solid fa-spinner fa-spin"></i> Finding the most central function…</div>`;
+            try {
+                this.ingest(await this.fetchClusters({ cluster_uuid: uuid, with_medoid: 'true', limit: '1' }));
+            } catch (e) {
+                console.error('Failed to load medoid', e);
+            }
+            if (this.tab !== 'medoid' || this.selectedClusterUuid !== uuid) return;
+            c = this.clusterMapByUuid[uuid];
+        }
+        if (!c || !c.medoid) {
+            el.innerHTML = `<div class="dim" style="padding:20px;">No medoid for this cluster.</div>`;
+            return;
+        }
+        const f = window.parseFuncId(c.medoid);
+        let data;
+        try {
+            const res = await fetch(`/api/function/code?id=${encodeURIComponent(`idx:${f.collection}:func:${f.md5}:${f.address}`)}`);
+            if (!res.ok) throw new Error(`Function not found (${res.status})`);
+            data = await res.json();
+        } catch (e) {
+            el.innerHTML = `<div style="padding:20px; color:var(--error);">${escapeHtml(e.message)}</div>`;
+            return;
+        }
+        if (this.tab !== 'medoid' || this.selectedClusterUuid !== uuid) return;
+
+        // Same metadata card and line markup as the code view (FunctionView.renderRows),
+        // ponytail: not virtualized -- fine for one function, port FunctionView's scroller if huge ones crawl.
+        const cen = c.medoid_centrality == null ? '---' : Number(c.medoid_centrality).toFixed(3);
+        const lines = (data.rows || []).map(row =>
+            `<div class="code-line"><div class="gutter" contenteditable="false"><div class="line-num">${Number(row.line_idx)}</div></div><div class="line-content">${row.tokens.map(t => window.renderTokenHtml(t)).join('')}</div></div>`
+        ).join('');
+        el.innerHTML = `
+            <div class="dim" style="font-size:0.78rem; margin-bottom:6px; flex-shrink:0;" title="Mean stored similarity to the other members (a pair BSim never kept counts as 0)">★ Most central function · centrality ${escapeHtml(cen)}</div>
+            <div id="cluster-medoid-meta" style="flex-shrink:0;"></div>
+            <div id="cluster-medoid-code" style="flex:1; min-height:300px; overflow:auto; background:var(--card-bg); border:1px solid var(--border); border-radius:8px;">
+                <div class="c-code-container">${lines}</div>
+            </div>`;
+        if (window.renderFunctionMetadata) {
+            window.renderFunctionMetadata('cluster-medoid-meta', data.meta, c.medoid, { showFeaturesBtn: true, showDiffBtn: true, diffBtnFullText: false, showSimilarBtn: true });
+        }
+        const code = document.getElementById('cluster-medoid-code');
+        if (window.applyLocks) window.applyLocks(code);
+        code.onclick = e => {
+            const token = e.target.closest('.token');
+            if (!token) return;
+            const called = token.getAttribute('data-called-func-id');
+            if (called && token.getAttribute('data-is-external') !== 'true') showFunctionCodeById(called, token.getAttribute('data-target-name') || '', '', e);
+            else if (token.getAttribute('data-hashes') && window.toggleLock) window.toggleLock(token.getAttribute('data-hashes'), token);
+        };
+    },
+
+    /**
+     * N-way diff of the selected node (nway_panel.js). Remounted whenever the
+     * node changes; its controls live in the URL (`ntab` is the panel's own tab,
+     * `tab=functions` is this view's).
+     */
+    renderFunctionsTab() {
+        const el = document.getElementById('cluster-tab-functions');
+        if (!el || !this.selectedClusterUuid || !window.NwayPanel) return;
+        if (this._nway) this._nway.destroy();
+        const url = new URLSearchParams(window.location.search);
+        const keys = ['scope', 'k', 'min_edge', 'mode', 'columns', 'child_presence', 'q', 'tags', 'offset'];
+        const state = {};
+        keys.forEach(k => { if (url.get(k)) state[k] = url.get(k); });
+        if (url.get('ntab')) state.tab = url.get('ntab');
+        const source = { cluster_uuid: this.selectedClusterUuid, axis: this.axis };
+        if (this.params && this.params.pool) source.pool = this.params.pool;
+        else source.collection = this.collection;
+        this._nway = new window.NwayPanel(el, {
+            source,
+            state,
+            onState: s => {
+                const u = new URL(window.location.href);
+                u.searchParams.set('tab', 'functions');
+                u.searchParams.set('ntab', s.tab);
+                keys.forEach(k => (s[k] === '' || s[k] == null ? u.searchParams.delete(k) : u.searchParams.set(k, s[k])));
+                window.history.replaceState({ path: u.pathname + u.search }, '', u.pathname + u.search);
+            },
+            onOpenCluster: uuid => this.selectNode(uuid),
+        });
+        this._nway.load();
+    },
+
+    /** Secondary-axis cohesion, outside the main card so its tint doesn't clash. */
+    renderSecondaryAxes(self) {
+        const types = window.BinSimScoreTypes || {};
+        const chips = Object.entries(self.cohesion_axes || {})
+            .filter(([ax]) => types[ax === 'overall' ? 'score' : `score_${ax}`])
+            .sort((a, b) => b[1] - a[1])
+            .map(([ax, v]) => {
+                const t = types[ax === 'overall' ? 'score' : `score_${ax}`];
+                return `<div title="${escapeAttr(t.label)} cohesion" style="display:flex; align-items:center; gap:6px; font-size:0.75rem; font-weight:600; color:${t.color};">
+                    <i class="${t.icon}"></i><span>${escapeHtml(t.label)}</span><span>${(v * 100).toFixed(0)}%</span></div>`;
+            }).join('');
+        return chips ? `<div style="display:flex; flex-direction:column; gap:3px; margin-top:16px;">${chips}</div>` : '';
     },
 
     renderHeader(self) {
@@ -571,16 +803,22 @@ window.ClusterDetailView = {
             .cluster-axis-score-card { width:fit-content; min-width:250px; margin-top:16px; padding:12px 16px; border:1px solid color-mix(in srgb, var(--cluster-score-color) 45%, var(--border)); border-left:4px solid var(--cluster-score-color); border-radius:7px; background:color-mix(in srgb, var(--cluster-score-color) 10%, var(--card-bg)); }
             .cluster-axis-score-card > div > div:first-child { gap:10px !important; }
             .cluster-axis-score-card > div > div:first-child span:first-of-type { font-size:0.9rem !important; }
-            .cluster-axis-score-card > div > div:first-child span:last-of-type { font-size:2rem !important; }
+            .cluster-axis-score-card > div > div:first-child span:last-of-type { font-size:2rem !important; transition:font-size 0.25s ease; }
+            .cluster-axis-score-card { transition:margin 0.25s ease, padding 0.25s ease; }
+            /* Folded: the main score stays, just smaller. */
+            .cluster-hero.compact .cluster-axis-score-card { margin-top:8px; padding:5px 14px; min-width:0; }
+            .cluster-hero.compact .cluster-axis-score-card > div > div:first-child span:last-of-type { font-size:1.3rem !important; }
         </style>
-        <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
+        <div id="cluster-hero" class="cluster-hero${this.heroCompact ? ' compact' : ''}" style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
             <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                 <i class="fa-solid fa-bullseye" style="color:var(--accent);"></i>
                 <span style="font-size:1.2rem; font-weight:bold;">${escapeHtml(self.cluster_name || `Cluster #${self.cluster_id}`)}</span>
                 <span class="badge">${this.isBinary ? this.axis : 'function'}</span>
+                <span class="hero-mini"><span>${Number(self.count || 0).toLocaleString()} members</span></span>
                 ${EntityRenderer.renderTag(this.isBinary ? 'bin_cluster' : 'cluster', self.tag_id || self.cluster_id, [], self.user_tags || [])}
-                <span style="margin-left:auto;">${this.renderMemberListLink(self)}</span>
+                <span style="margin-left:auto; display:flex; gap:6px; align-items:center;">${this.renderMemberListLink(self)}${this.renderNdiffLink(self)}${this.renderSimilaritiesLink(self)}<button class="hero-handle" onclick="ClusterDetailView.toggleHero()" title="Fold / unfold the details (folds by itself while you scroll a table)"><i class="fa-solid fa-chevron-up"></i></button></span>
             </div>
+            <div class="hero-fold"><div class="hero-fold-in">
             <div class="mono dim" style="font-size:0.72rem; margin-top:6px;">
                 ${escapeHtml(self.cluster_uuid || '')}
                 <button class="btn-copy" title="Copy UUID" onclick="copyToClipboard(${escapeAttr(jsString(self.cluster_uuid || ''))}, this)"><i class="fa-regular fa-copy"></i></button>
@@ -591,7 +829,12 @@ window.ClusterDetailView = {
                 ${stat('Avg features', Number(self.avg_features || 0).toFixed(0))}
                 ${stat('Cluster ID', escapeHtml(String(self.cluster_id)))}
             </div>
-            ${this.isBinary ? `<div class="cluster-axis-score-card" style="--cluster-score-color:${scoreType.color};">${binSimScoreCards({ [axisKey]: self.cohesion_score }, axisKey)}</div>` : ''}
+            ${this.isBinary ? `<div id="cluster-medoid-ctl" style="font-size:0.8rem; margin-top:12px;"></div>` : ''}
+            </div></div>
+            ${this.isBinary ? `<div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap;">
+                <div class="cluster-axis-score-card" style="--cluster-score-color:${scoreType.color};">${binSimScoreCards({ [axisKey]: self.cohesion_score }, axisKey)}</div>
+                <div class="hero-fold"><div class="hero-fold-in">${this.renderSecondaryAxes(self)}</div></div>
+            </div>` : ''}
         </div>`;
     },
 
@@ -674,7 +917,35 @@ window.ClusterDetailView = {
         return UI.Button.render({
             className: 'btn-code-action',
             icon: 'fa-solid fa-magnifying-glass',
-            label: `Open in ${this.isBinary ? 'file' : 'function'} search`,
+            label: this.isBinary ? 'Files' : 'Functions',
+            tooltip: `Open in ${this.isBinary ? 'file' : 'function'} search`,
+            onClick: `Nav.openPath(${jsString(url)}, event)`,
+        });
+    },
+
+    /** The N-way table on its own page, without the cluster chrome (file clusters only). */
+    renderNdiffLink(self) {
+        if (!this.isBinary) return '';
+        const qs = new URLSearchParams({ cluster_uuid: self.cluster_uuid, axis: this.axis });
+        if (this.params && this.params.pool) qs.set('pool', this.params.pool);
+        else qs.set('collection', this.collection || '');
+        return UI.Button.render({
+            className: 'btn-code-action',
+            icon: 'fa-solid fa-table-columns',
+            label: 'Functions',
+            tooltip: 'Open in N-diff view',
+            onClick: `Nav.openPath(${jsString(`/diff/nway?${qs}`)}, event)`,
+        });
+    },
+
+    renderSimilaritiesLink(self) {
+        const segs = this.isBinary ? ['files', 'similarities'] : ['functions', 'similarities'];
+        const key = this.isBinary ? 'bin_cluster_uuid' : 'cluster_uuid';
+        const url = `${Nav.buildUIUrl(this.collection || '', segs)}?${key}=${encodeURIComponent(self.cluster_uuid)}`;
+        return UI.Button.render({
+            className: 'btn-code-action',
+            icon: 'fa-solid fa-diagram-project',
+            label: `${this.isBinary ? 'File' : 'Function'} similarities`,
             onClick: `Nav.openPath(${jsString(url)}, event)`,
         });
     },
@@ -706,8 +977,50 @@ window.ClusterDetailView = {
         }
     },
 
+    toggleCentralitySort() {
+        this.centralitySort = !this.centralitySort;
+        const th = document.getElementById('cluster-centrality-th');
+        if (th) th.textContent = this.centralitySort ? 'Centrality ▼' : 'Centrality';
+        this.renderTable();
+    },
+
+    /** Main file (medoid): a link plus its essentials; the hint shows for clusters built before centrality. */
+    async renderMedoidCtl() {
+        const el = document.getElementById('cluster-medoid-ctl');
+        if (!el || !this.isBinary) return;
+        const uuid = this.selectedClusterUuid;
+        const medoid = (this.clusterMapByUuid[uuid] || {}).medoid;
+        if (!medoid) {
+            el.innerHTML = `<span class="dim">rebuild clusters to compute centrality</span>`;
+            return;
+        }
+        const parts = String(medoid).split(':file:');
+        const col = parts.length > 1 ? parts[0] : this.collection || '';
+        const md5 = parts[parts.length - 1];
+        this._medoidFiles = this._medoidFiles || {};
+        if (!this._medoidFiles[medoid]) {
+            try {
+                const qs = new URLSearchParams({ collection: col });
+                if (this.params && this.params.pool) qs.set('pool', this.params.pool);
+                const res = await fetch(`/api/file/details/${encodeURIComponent(md5)}?${qs.toString()}`);
+                this._medoidFiles[medoid] = (res.ok && (await res.json()).file) || {};
+            } catch (e) {
+                this._medoidFiles[medoid] = {};
+            }
+            if (this.selectedClusterUuid !== uuid) return;
+        }
+        const f = this._medoidFiles[medoid];
+        const bits = [f.language_id, f.executable_format, f.function_count != null ? `${Number(f.function_count).toLocaleString()} functions` : null]
+            .filter(Boolean).map(b => `<span>${escapeHtml(String(b))}</span>`).join(' · ');
+        el.innerHTML = `<span title="Most central file of this cluster" style="display:inline-flex; align-items:center; gap:8px;">
+            <span style="color:var(--accent);">★ Main file</span>
+            ${EntityRenderer.renderFileName(f.file_name || md5, md5, col)}
+            ${EntityRenderer.renderMd5(md5, { collection: col })}
+            <span class="dim">${bits}</span></span>`;
+    },
+
     async renderFlatMembers(tbody) {
-        tbody.innerHTML = `<tr><td colspan="3" class="dim" style="padding:20px; text-align:center;"><i class="fa-solid fa-spinner fa-spin"></i> Loading full membership...</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="4" class="dim" style="padding:20px; text-align:center;"><i class="fa-solid fa-spinner fa-spin"></i> Loading full membership...</td></tr>`;
         try {
             const qs = new URLSearchParams();
             if (this.params.pool) qs.set('pool', this.params.pool);
@@ -723,7 +1036,7 @@ window.ClusterDetailView = {
             tbody.innerHTML = '';
             const items = this.isBinary ? data.files : data.functions;
             if (!items || items.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="3" class="dim" style="padding:20px; text-align:center;">No members found in search index.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="4" class="dim" style="padding:20px; text-align:center;">No members found in search index.</td></tr>`;
                 return;
             }
 
@@ -739,7 +1052,9 @@ window.ClusterDetailView = {
                 } else {
                     return {
                         id: m.function_id || m.id,
-                        name: m.function_name || m.name,
+                        name: m.user_name || m.function_name || m.name,
+                        user_name: m.user_name,
+                        user_name_source: m.user_name_source,
                         addr: m.entrypoint_address || m.addr,
                         file_md5: m.file_md5 || m.md5,
                         bin: m.file_name || m.bin,
@@ -752,13 +1067,13 @@ window.ClusterDetailView = {
 
             if (data.total > 1000) {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td colspan="3" class="dim" style="padding:15px; text-align:center; font-style:italic;">Showing first 1000 members out of ${data.total}. ${this.renderMemberListLink(this.clusterMapByUuid[this.selectedClusterUuid])}</td>`;
+                tr.innerHTML = `<td colspan="4" class="dim" style="padding:15px; text-align:center; font-style:italic;">Showing first 1000 members out of ${data.total}. ${this.renderMemberListLink(this.clusterMapByUuid[this.selectedClusterUuid])}</td>`;
                 tbody.appendChild(tr);
             }
 
         } catch (e) {
             console.error(e);
-            tbody.innerHTML = `<tr><td colspan="3" style="padding:20px; text-align:center; color:var(--error);"><i class="fa-solid fa-circle-exclamation"></i> Error loading members: ${e.message}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="4" style="padding:20px; text-align:center; color:var(--error);"><i class="fa-solid fa-circle-exclamation"></i> Error loading members: ${e.message}</td></tr>`;
         }
     },
 
@@ -773,7 +1088,8 @@ window.ClusterDetailView = {
             tr.className = 'bsim-grp-row';
             tr.onclick = () => this.toggleGroup(uuid);
             tr.innerHTML = `
-                <td colspan="3" style="padding-left: ${12 + depth * 20}px;">
+                <td colspan="4" style="padding-left: ${12 + depth * 20}px;">
+                    <a href="javascript:void(0)" class="btn-action" style="float:right;" title="Open this cluster" onclick="event.stopPropagation(); ClusterDetailView.openNode('${escapeAttr(uuid)}', event)"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
                     <i class="fa-solid fa-chevron-${isExpanded ? 'down' : 'right'} bsim-caret-btn"></i>
                     <i class="fa-solid fa-bullseye" style="color:var(--accent); margin:0 6px;"></i>
                     <b>${escapeHtml(c.cluster_name || `Cluster #${c.cluster_id}`)}</b>
@@ -808,7 +1124,7 @@ window.ClusterDetailView = {
                      this.renderTable();
                  };
                  tr.innerHTML = `
-                    <td colspan="3" style="padding-left: ${12 + targetDepth * 20}px; opacity: 0.9;">
+                    <td colspan="4" style="padding-left: ${12 + targetDepth * 20}px; opacity: 0.9;">
                         <i class="fa-solid fa-chevron-${isDmExpanded ? 'down' : 'right'} bsim-caret-btn"></i>
                         <i class="fa-solid fa-users" style="color:var(--dim); margin:0 6px;"></i>
                         <b>Direct Members</b>
@@ -826,7 +1142,7 @@ window.ClusterDetailView = {
         } else if (members.length === 0 && children.length === 0) {
             // Empty leaf
             const tr = document.createElement('tr');
-            tr.innerHTML = `<td colspan="3" class="dim" style="padding-left: ${12 + targetDepth * 20}px; font-style:italic;">No direct members</td>`;
+            tr.innerHTML = `<td colspan="4" class="dim" style="padding-left: ${12 + targetDepth * 20}px; font-style:italic;">No direct members</td>`;
             tbody.appendChild(tr);
         }
 
@@ -842,29 +1158,38 @@ window.ClusterDetailView = {
             const tr = document.createElement('tr');
             tr.className = 'bsim-grp-row';
             tr.onclick = () => this.loadMoreChildren(c.cluster_id);
-            tr.innerHTML = `<td colspan="3" style="padding-left: ${12 + targetDepth * 20}px; color:var(--accent);">+ ${hiddenChildren} more groups…</td>`;
+            tr.innerHTML = `<td colspan="4" style="padding-left: ${12 + targetDepth * 20}px; color:var(--accent);">+ ${hiddenChildren} more groups…</td>`;
             tbody.appendChild(tr);
         }
     },
 
     renderMembersList(tbody, members, depth) {
         const col = this.collection || '';
+        const medoid = (this.clusterMapByUuid[this.selectedClusterUuid] || {}).medoid;
+        if (this.centralitySort) {
+            members = [...members].sort((a, b) => (b.centrality ?? -1) - (a.centrality ?? -1));
+        }
 
         members.forEach(m => {
-            const memberCol = String(m.id || '').split(':')[0] || col;
+            // A bare md5 id (flat file search) has no collection to split out.
+            const qualified = String(m.id || '').includes(':');
+            const memberCol = (qualified && String(m.id).split(':')[0]) || col;
             const md5 = m.file_md5 || '';
             const tr = document.createElement('tr');
-            tr.setAttribute('data-id', escapeAttr(m.id || md5));
+            tr.setAttribute('data-id', escapeAttr(qualified ? m.id : this.isBinary ? `${memberCol}:file:${md5}` : m.id || md5));
 
             let c1, c2, c3;
             if (this.isBinary) {
                 c1 = EntityRenderer.renderFileName(m.name || '', md5, memberCol);
+                if (medoid && m.id === medoid) c1 = `<span title="Main file (medoid)" style="color:var(--accent);">★</span> ${c1}`;
                 c2 = EntityRenderer.renderMd5(md5, { collection: memberCol });
                 c3 = `<span class="dim">${escapeHtml(m.language_id || '---')}</span>`;
             } else {
                 const f = {
                     function_id: m.id,
                     function_name: m.name,
+                    user_name: m.user_name,
+                    user_name_source: m.user_name_source,
                     name: m.name,
                     entrypoint_address: m.addr,
                     file_md5: md5,
@@ -881,6 +1206,7 @@ window.ClusterDetailView = {
                 <td style="padding-left: ${12 + depth * 20}px;">${c1}</td>
                 <td>${c2}</td>
                 <td>${c3}</td>
+                ${this.isBinary ? `<td style="text-align:right;" class="dim">${m.centrality == null ? '---' : escapeHtml(Number(m.centrality).toFixed(3))}</td>` : ''}
             `;
             tbody.appendChild(tr);
         });

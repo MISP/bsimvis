@@ -18,7 +18,7 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
     if (!m) return "";
     
     // Core data extraction
-    const label = m['function_name'] || 'unknown_func';
+    const label = fnName(m) || 'unknown_func';
     const returnType = m['return_type'] || 'void';
     const namespace = m['namespace'] || '';
     const parameters = m['parameters'] || [];
@@ -59,7 +59,8 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                 };
 
                 const renderOptions = {
-                    showActions: false
+                    showActions: false,
+                    noNav: !!options.relationNav
                 };
 
                 const funcHtml = EntityRenderer.renderFunction(funcData, renderOptions);
@@ -91,7 +92,16 @@ window.getNavHandler = () => {
     };
 };
 
-return `<span class="relation-tag" onclick="event.stopPropagation(); window.getNavHandler()(${escapeAttr(jsString(funcData.function_id))}, ${escapeAttr(jsString(funcData.function_name || ''))}, '', event);" style="border-color:${color}; color:${color}; cursor:pointer;">
+// A pair diff routes relation clicks/hovers through its greedy partner lookup.
+const nav = options.relationNav;
+const clickJs = nav
+    ? `${nav}.openCalledPair(${escapeAttr(jsString(funcData.function_id))}, event)`
+    : `window.getNavHandler()(${escapeAttr(jsString(funcData.function_id))}, ${escapeAttr(jsString(funcData.function_name || ''))}, '', event)`;
+const hoverJs = nav && !isExt
+    ? ` onmouseenter="${nav}.previewCalledPair(${escapeAttr(jsString(funcData.function_id))}, ${escapeAttr(jsString(funcData.function_name || ''))}, event)" onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)" onmouseleave="${nav}.hideCalledPreview(event)"`
+    : '';
+
+return `<span class="relation-tag" onclick="event.stopPropagation(); ${clickJs};"${hoverJs} style="border-color:${color}; color:${color}; cursor:pointer;">
     ${funcHtml}
     ${isExt ? '<span class="ext-badge" style="background:${color}; color:white; font-size:0.6rem; padding:1px 3px; border-radius:2px; margin-left:4px;">EXT</span>' : ''}
 </span>`;
@@ -200,7 +210,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
                      oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                     <span class="meta-return-type">${escapeHtml(returnType)}</span>
                     ${namespace ? `<span class="meta-namespace">${escapeHtml(namespace)}::</span>` : ''}
-                    <span class="meta-func-name">${escapeHtml(label)}</span>
+                    <span class="meta-func-name">${escapeHtml(label)}</span>${nameBadge(m)}
                     <span class="meta-params">(</span>${parameters.map(p => `<span class="meta-param-type">${escapeHtml(typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p)}</span>`).join('<span class="meta-comma">, </span>')}<span class="meta-params">)</span>
                     
                     <div class="meta-sig-actions" style="margin-left: 10px;">

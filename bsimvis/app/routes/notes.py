@@ -1,6 +1,7 @@
 from flask import request
 from bsimvis.app.services.note_service import note_service
 import logging
+import re
 
 
 def add_note():
@@ -132,6 +133,58 @@ def get_notes():
 
     notes = note_service.get_notes(collection, func_id)
     return {"status": "success", "notes": notes}
+
+
+def rename_functions():
+    """
+    Sets or clears the analyst name of functions (empty `name` clears).
+    Payload: {"func_ids": [str], "name": str, "owner": "user" | "llm"}, or a batch
+    {"renames": [that, ...]} that flushes the N-way cache once.
+    """
+    data = request.json or {}
+    batch = data.get("renames") or [data]
+    todo = []
+    for item in batch:
+        func_ids = item.get("func_ids") or []
+        if not func_ids or "name" not in item:
+            return {"error": "Missing parameters"}, 400
+        owner = "llm" if item.get("owner") == "llm" else "user"
+        todo += [(f, item["name"], owner) for f in func_ids]
+    done = note_service.set_user_names(todo)
+    if not done:
+        return {"error": "Could not rename"}, 500
+    from bsimvis.app.services import nway_diff_service
+
+    nway_diff_service.invalidate()
+    return {"status": "success", "renamed": done}
+
+
+def suggest_function_name():
+    """
+    Asks the LLM for a name for the functions of one N-way row. Never applies it.
+    Payload: {"func_ids": [str]} (at most 3 are sent to the model)
+    """
+    from bsimvis.app.services.llm_service import llm_service
+    from bsimvis.app.services.llm_tools import get_function
+
+    func_ids = (request.json or {}).get("func_ids") or []
+    parts = []
+    for fid in func_ids[:3]:
+        f = get_function(fid)
+        if f.get("code"):
+            parts.append(f"// {f.get('file_name')}\n{f['code'][:6000]}")
+    if not parts:
+        return {"error": "No code available"}, 404
+    prompt = (
+        "Name this function, which is the same function across several binaries. "
+        "Reply with one C identifier in snake_case, nothing else.\n\n"
+        + "\n\n".join(parts)
+    )
+    reply = llm_service.chat([{"role": "user", "content": prompt}])
+    m = re.search(r"[A-Za-z_][A-Za-z0-9_]*", reply or "")
+    if not m or reply.startswith("Error"):
+        return {"error": reply or "No name returned"}, 502
+    return {"name": m.group(0)[:64]}
 
 
 # --- File notes ---

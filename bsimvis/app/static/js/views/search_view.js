@@ -41,6 +41,13 @@ window.SearchView = {
     _suggestedTags: {}, // func_id -> suggested_tag, for the current results page
     _currentSearchId: null,
 
+    // `/collections/{c}` or `/pools/{id}` for a search's stored collection (pools are `global:pool:{id}`).
+    _base(collection) {
+        const m = /^global:pool:(.+)$/.exec(collection || '');
+        if (m) return `/pools/${encodeURIComponent(m[1])}`;
+        return collection ? `/collections/${encodeURIComponent(collection)}` : '';
+    },
+
     destroy() {
         this._stopped = true;
         if (this._pollTimer) {
@@ -67,18 +74,20 @@ window.SearchView = {
     async _initList(container) {
         container.innerHTML = `<div style="display:flex; justify-content:center; align-items:center; height:200px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin" style="margin-right:10px;"></i> Loading Searches...</div>`;
         try {
-            const res = await fetch('/api/searches?limit=100');
+            const st = getRoutingState();
+            const scope = st.pool ? `&pool=${encodeURIComponent(st.pool)}` : st.collection ? `&collection=${encodeURIComponent(st.collection)}` : '';
+            const res = await fetch(`/api/searches?limit=100${scope}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
-            container.innerHTML = this._renderList(data.searches || []);
+            container.innerHTML = this._renderList(data.searches || [], !!(st.pool || st.collection));
         } catch (e) {
             container.innerHTML = `<div style="padding:30px; color:#f87171;"><i class="fa-solid fa-triangle-exclamation"></i> ${e.message}</div>`;
         }
     },
 
-    _renderList(searches) {
+    _renderList(searches, scoped) {
         const rows = searches.map(s => {
-            const url = `/searches/${encodeURIComponent(s.id)}`;
+            const url = `${this._base(s.collection)}/searches/${encodeURIComponent(s.id)}`;
             const scopeType = (s.scope && s.scope.type) || '?';
             const counts = s.verdict_counts || { yes: 0, maybe: 0, no: 0 };
             const matched = counts.yes + counts.maybe;
@@ -102,8 +111,8 @@ window.SearchView = {
         return `
         <div style="flex:1; overflow-y:auto; padding:25px 30px; display:flex; flex-direction:column; gap:20px;">
             <div style="display:flex; align-items:center; justify-content:space-between;">
-                <h1 style="margin:0; font-size:1.5rem; color:var(--text); display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-list-check" style="color:var(--accent);"></i> Searches</h1>
-                <button onclick="window.searchViewOpenNewForm(this)" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px;"><i class="fa-solid fa-plus"></i> New Search</button>
+                ${scoped ? '<span></span>' : '<h1 style="margin:0; font-size:1.5rem; color:var(--text); display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-list-check" style="color:var(--accent);"></i> Searches</h1>'}
+                <button onclick="window.searchViewOpenNewForm(this)" class="ui-button hdr-btn primary"><i class="fa-solid fa-plus"></i> New Search</button>
             </div>
             <div id="search-new-form-container"></div>
             <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--card-bg);">
@@ -131,12 +140,21 @@ window.SearchView = {
 
     async _initDetail(container, searchId) {
         container.innerHTML = `<div style="display:flex; justify-content:center; align-items:center; height:200px; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin" style="margin-right:10px;"></i> Loading Search...</div>`;
-        this._resultsOffset = 0;
+        // Page mode opens a shared link's `offset`; scroll mode ignores it.
+        this._resultsOffset = window.Paging.mode() === 'page' ? Math.max(0, Number(new URLSearchParams(location.search).get('offset')) || 0) : 0;
+        this._shown = 0;
         this._currentSearchId = searchId;
+        this._collection = '';
         try {
             const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}`);
             if (!res.ok) throw new Error(res.status === 404 ? 'Search not found' : `HTTP ${res.status}`);
             const meta = await res.json();
+            this._collection = meta.collection;
+            const st = getRoutingState();
+            if (!st.collection && !st.pool && meta.collection) {
+                history.replaceState(null, '', `${this._base(meta.collection)}/searches/${encodeURIComponent(searchId)}${location.search}`);
+                if (window.Breadcrumbs) Breadcrumbs.render(Breadcrumbs.generate(getRoutingState(), null));
+            }
             container.innerHTML = this._renderDetailShell(meta);
             await this._refreshResults(searchId, meta.collection);
             if (meta.status === 'running' && meta.job_id) {
@@ -160,7 +178,7 @@ window.SearchView = {
                         <span id="search-detail-duration" title="time the classification job took"><i class="fa-regular fa-clock"></i> ${window.formatDuration ? window.formatDuration(Number(meta.created_at), Number(meta.updated_at), meta.status) : ''}</span>
                     </div>
                 </div>
-                <button onclick="window.searchViewDelete(${escapeAttr(jsString(meta.id))}, this, true)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px;"><i class="fa-solid fa-trash-can"></i> Delete</button>
+                <button onclick="window.searchViewDelete(${escapeAttr(jsString(meta.id))}, this, true)" class="ui-button hdr-btn danger"><i class="fa-solid fa-trash-can"></i> Delete</button>
             </div>
 
             <div id="search-progress-container"></div>
@@ -168,9 +186,9 @@ window.SearchView = {
             <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                 <span style="font-size:0.75rem; color:var(--dim);"><i class="fa-solid fa-arrows-up-down"></i> shift/ctrl-click or drag to select rows, ctrl+A for all, ctrl+C to copy</span>
                 <input id="search-apply-tag-input" type="text" placeholder="tag to apply, e.g. category:persistence:file" style="flex:1; min-width:220px; padding:7px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; font-size:0.8rem;">
-                <button onclick="window.searchViewApplyTag(${escapeAttr(jsString(meta.id))})" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:7px 14px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer;"><i class="fa-solid fa-tag"></i> Apply tag to selected</button>
-                <button onclick="window.searchViewApplySuggestedToSelected(${escapeAttr(jsString(meta.id))})" title="Apply each selected row's own suggested tag" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:7px 14px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer;"><i class="fa-solid fa-wand-sparkles"></i> Apply suggested tags to selected</button>
-                <button onclick="window.searchViewAnalyzeSelected(${escapeAttr(jsString(meta.id))})" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:7px 14px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer;"><i class="fa-solid fa-wand-magic-sparkles"></i> Send selected to deep analysis</button>
+                <button onclick="window.searchViewApplyTag(${escapeAttr(jsString(meta.id))})" class="ui-button hdr-btn"><i class="fa-solid fa-tag"></i> Apply tag to selected</button>
+                <button onclick="window.searchViewApplySuggestedToSelected(${escapeAttr(jsString(meta.id))})" title="Apply each selected row's own suggested tag" class="ui-button hdr-btn"><i class="fa-solid fa-wand-sparkles"></i> Apply suggested tags to selected</button>
+                <button onclick="window.searchViewAnalyzeSelected(${escapeAttr(jsString(meta.id))})" class="ui-button hdr-btn"><i class="fa-solid fa-wand-magic-sparkles"></i> Send selected to deep analysis</button>
             </div>
 
             <div id="search-results-container"></div>
@@ -214,40 +232,69 @@ window.SearchView = {
         poll();
     },
 
-    async _refreshResults(searchId, collection, offset) {
+    // `append` (scroll mode): fetch the next batch after the rows already shown.
+    async _refreshResults(searchId, collection, offset, append = false) {
         const container = document.getElementById('search-results-container');
         if (!container) return;
+        const scroll = window.Paging.mode() === 'scroll';
+        if (append && this._loadingMore) return;
         if (offset !== undefined) this._resultsOffset = offset;
+        const from = scroll ? (append ? this._shown : 0) : this._resultsOffset;
+        this._loadingMore = append;
         try {
-            const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}/results?limit=${RESULTS_PAGE_SIZE}&offset=${this._resultsOffset}`);
+            const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}/results?limit=${RESULTS_PAGE_SIZE}&offset=${from}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
-            container.innerHTML = this._renderResults(data.results || [], collection);
+            const results = data.results || [];
+            if (append) {
+                container.querySelector('tbody').insertAdjacentHTML('beforeend', this._renderResults(results, collection, true));
+                this._shown += results.length;
+            } else {
+                container.innerHTML = this._renderResults(results, collection);
+                this._shown = results.length;
+            }
             // TableSelection takes an element id, not an element (constructor is idempotent per table)
             if (window.TableSelection) new window.TableSelection('search-results-table');
             const pager = document.getElementById('search-results-pager');
             if (pager) pager.innerHTML = this._renderPager(searchId, collection, data.total || 0);
+            this._syncOffsetUrl(scroll);
+            this._watchMore(searchId, collection, data.total || 0, results.length);
         } catch (e) {
-            container.innerHTML = `<div style="padding:20px; color:#f87171;">${e.message}</div>`;
+            if (!append) container.innerHTML = `<div style="padding:20px; color:#f87171;">${e.message}</div>`;
+        } finally {
+            this._loadingMore = false;
         }
+    },
+
+    // Only page mode puts the offset in the URL, so a page can be shared.
+    _syncOffsetUrl(scroll) {
+        const u = new URL(location.href);
+        if (!scroll && this._resultsOffset) u.searchParams.set('offset', this._resultsOffset);
+        else u.searchParams.delete('offset');
+        history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+    },
+
+    // Scroll mode: load the next batch when the pager line comes into view.
+    _watchMore(searchId, collection, total, got) {
+        if (this._io) this._io.disconnect();
+        const pager = document.getElementById('search-results-pager');
+        if (!pager || window.Paging.mode() !== 'scroll' || !got || this._shown >= total) return;
+        this._io = window.Paging.observe(pager, () => this._refreshResults(searchId, collection, undefined, true));
     },
 
     _renderPager(searchId, collection, total) {
         if (total <= RESULTS_PAGE_SIZE) return '';
-        const page = Math.floor(this._resultsOffset / RESULTS_PAGE_SIZE) + 1;
-        const pageCount = Math.ceil(total / RESULTS_PAGE_SIZE);
-        const btn = (label, offset, disabled) => `<button ${disabled ? 'disabled' : ''} onclick="window.SearchView._refreshResults(${escapeAttr(jsString(searchId))}, ${escapeAttr(jsString(collection || ''))}, ${offset})" style="background:var(--hover); border:1px solid var(--border); color:var(--text); padding:5px 12px; border-radius:6px; cursor:${disabled ? 'default' : 'pointer'}; opacity:${disabled ? 0.5 : 1};">${label}</button>`;
-        return `
-        <div style="display:flex; align-items:center; justify-content:center; gap:10px; padding:6px 0; font-size:0.8rem; color:var(--dim);">
-            ${btn('Prev', Math.max(0, this._resultsOffset - RESULTS_PAGE_SIZE), page <= 1)}
-            <span>Page ${page} / ${pageCount} (${total} results)</span>
-            ${btn('Next', this._resultsOffset + RESULTS_PAGE_SIZE, page >= pageCount)}
-        </div>`;
+        this._total = total;
+        window.Paging.bind(document.getElementById('search-results-pager'),
+            () => ({ offset: this._resultsOffset, total: this._total, size: RESULTS_PAGE_SIZE }),
+            off => this._refreshResults(this._currentSearchId, this._collection, off));
+        return `<div style="display:flex; align-items:center; justify-content:center; gap:10px; padding:6px 0; font-size:0.8rem; color:var(--dim);">${window.Paging.footer({ offset: this._resultsOffset, total, size: RESULTS_PAGE_SIZE, shown: this._shown })}</div>`;
     },
 
-    _renderResults(results, collection) {
-        this._suggestedTags = {};
-        if (!results.length) {
+    // `append`: only the new rows, keeping the suggested tags of the rows above.
+    _renderResults(results, collection, append = false) {
+        if (!append) this._suggestedTags = {};
+        if (!results.length && !append) {
             return `<div style="color:var(--dim); font-size:0.85rem; padding:30px; text-align:center; background:var(--card-bg); border:1px solid var(--border); border-radius:8px;">No results yet.</div>`;
         }
         const rows = results.map(r => {
@@ -259,6 +306,8 @@ window.SearchView = {
             const f = {
                 function_id: r.func_id,
                 function_name: r.function_name,
+                user_name: r.user_name,
+                user_name_source: r.user_name_source,
                 namespace: r.namespace,
                 parameters: r.parameters,
                 return_type: r.return_type,
@@ -293,6 +342,7 @@ window.SearchView = {
                 <td style="padding:8px 15px; white-space:nowrap;">${suggestedHtml}</td>
             </tr>`;
         }).join('');
+        if (append) return rows;
 
         return `
         <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow-x:auto; background:var(--card-bg);">
@@ -409,7 +459,7 @@ window.searchViewDelete = async function(searchId, btn, redirectToList) {
         const res = await fetch(`/api/searches/${encodeURIComponent(searchId)}`, { method: 'DELETE' });
         if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
         if (redirectToList) {
-            Nav.openPath('/searches');
+            Nav.openPath(location.pathname.replace(/\/[^/]+$/, ''));
         } else if (typeof refreshData === 'function') {
             refreshData(false, true);
         }
@@ -454,16 +504,26 @@ window.searchViewOpenNewForm = function(btn) {
             </label>
             <div style="display:flex; gap:10px; justify-content:flex-end;">
                 <button onclick="document.getElementById('search-new-form-container').innerHTML=''" style="background:var(--hover); border:1px solid var(--border); color:var(--text); padding:8px 16px; border-radius:6px; cursor:pointer;">Cancel</button>
-                <button onclick="window.searchViewSubmitNew(this)" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-weight:700; cursor:pointer;"><i class="fa-solid fa-magnifying-glass"></i> Start Search</button>
+                <button onclick="window.searchViewSubmitNew(this)" class="ui-button hdr-btn primary"><i class="fa-solid fa-magnifying-glass"></i> Start Search</button>
             </div>
         </div>`;
     window.searchViewScopeChanged(document.getElementById('search-form-scope-type'));
-    window.searchViewLoadCollections(currentCollection);
+    const pool = window.getRoutingState && window.getRoutingState().pool;
+    if (pool) {
+        // Pool searches span the whole pool; single-file and pair scopes start from those pages.
+        const sel = document.getElementById('search-form-collection');
+        sel.innerHTML = `<option value="global:pool:${escapeAttr(pool)}">Pool: ${escapeHtml(pool)}</option>`;
+        sel.disabled = true;
+        document.querySelectorAll('#search-form-scope-type option').forEach(o => { if (o.value === 'file' || o.value === 'pair') o.remove(); });
+        window.searchViewScopeChanged(document.getElementById('search-form-scope-type'));
+    } else {
+        window.searchViewLoadCollections(currentCollection, !!currentCollection);
+    }
 };
 
 // Same GET /api/collection/search list diff_view.js's collection picker
 // (initSelectionTool) and upload.js's collection dropdown both fetch from.
-window.searchViewLoadCollections = async function(preselect) {
+window.searchViewLoadCollections = async function(preselect, lock) {
     const sel = document.getElementById('search-form-collection');
     if (!sel) return;
     try {
@@ -472,6 +532,7 @@ window.searchViewLoadCollections = async function(preselect) {
         sel.innerHTML = '<option value="">-- Choose Collection --</option>' +
             collections.map(c => `<option value="${escapeAttr(c.name)}">${escapeHtml(c.name)}</option>`).join('');
         if (preselect && collections.some(c => c.name === preselect)) sel.value = preselect;
+        if (lock && sel.value === preselect) sel.disabled = true;
     } catch (e) {
         sel.innerHTML = '<option value="">-- Failed to load collections --</option>';
     }
@@ -557,6 +618,16 @@ window.searchViewSubmitNew = async function(btn) {
         if (pool) scope.pool_id = pool;
     }
 
+    // Prefilter fields exist only in the pre-scoped modal; absent = endpoint defaults.
+    if (type === 'file' || type === 'pair') {
+        const skip = document.getElementById('search-form-skip-fid');
+        if (skip) scope.skip_fid_tagged = skip.checked;
+        const min = Number((document.getElementById('search-form-min') || {}).value) || 0;
+        if (min) scope.min_complexity = min;
+        const max = Number((document.getElementById('search-form-max') || {}).value) || 0;
+        if (type === 'pair' && max) scope.max_functions = max;
+    }
+
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
     try {
         const res = await fetch('/api/searches', {
@@ -567,7 +638,7 @@ window.searchViewSubmitNew = async function(btn) {
         if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
         const data = await res.json();
         window.closeSearchModal();
-        Nav.openPath(`/searches/${encodeURIComponent(data.search_id)}`);
+        Nav.openPath(`${window.SearchView._base(collection)}/searches/${encodeURIComponent(data.search_id)}`);
     } catch (e) {
         alert(`Failed to start search: ${e.message}`);
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-magnifying-glass"></i> Start Search'; }
@@ -619,6 +690,18 @@ window.openSearchModal = function (opts = {}) {
                     <option value="matched">Matched only</option>
                     <option value="unique">Unique only</option>
                 </select></label>` : ''}
+            <details style="margin-bottom:16px;">
+                <summary style="cursor:pointer; font-size:.8rem; color:var(--subtle);">Prefilter</summary>
+                <div style="display:grid; grid-template-columns:${isPair ? '1fr 1fr' : '1fr'}; gap:12px; margin:12px 0;">
+                    <label style="font-size:.8rem;">Minimum BSim features
+                        <input id="search-form-min" type="number" min="0" value="0" style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+                    </label>
+                    ${isPair ? `<label style="font-size:.8rem;">Maximum functions
+                        <input id="search-form-max" type="number" min="0" value="0" title="0 = no cap. A number takes a complexity-ranked subset." style="display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+                    </label>` : ''}
+                </div>
+                <label style="font-size:.82rem;"><input id="search-form-skip-fid" type="checkbox" checked> Skip FID-tagged (library) functions</label>
+            </details>
             <div style="display:flex; justify-content:flex-end; gap:10px;">
                 <button type="button" onclick="closeSearchModal()" class="top-action-btn">Cancel</button>
                 <button type="submit" class="top-action-btn" style="color:#60a5fa; border-color:#60a5fa;"><i class="fa-solid fa-magnifying-glass"></i> Start Search</button>

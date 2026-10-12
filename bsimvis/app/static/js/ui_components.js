@@ -55,19 +55,147 @@ window.UI = {
     },
 
     /**
+     * The "⋯" overflow menu of a page header. Items: { label, icon, onClick, danger } or '-' for a rule.
+     * Primary and neutral header buttons use UI.Button with className 'hdr-btn' / 'hdr-btn primary'.
+     */
+    MoreMenu: {
+        render: function(items) {
+            const rows = items.map(it => it === '-' ? '<hr>' : UI.Button.render({
+                className: it.danger ? 'danger' : '',
+                icon: it.icon,
+                label: it.label,
+                tooltip: it.tooltip,
+                onClick: it.onClick,
+            })).join('');
+            return `<details class="more-menu"><summary title="More actions"><i class="fa-solid fa-ellipsis"></i></summary>
+                <div class="more-menu-list" onclick="this.closest('details').removeAttribute('open')">${rows}</div></details>`;
+        },
+    },
+
+    /**
+     * Collection tab strip: one header for every collection-scoped page.
+     */
+    EntityTabs: {
+        counts: {},
+        tabs: [
+            { key: 'overview', label: 'Overview', path: '' },
+            { key: 'batches', label: 'Batches', path: '/batches', count: 'total_batches' },
+            { key: 'files', label: 'Files', path: '/files', count: 'total_files' },
+            { key: 'binary-similarity', count: 'file_sims', label: 'Similarities', path: '/files/similarities' },
+            { key: 'bin-clusters', count: 'file_clusters', label: 'Clusters', path: '/files/clusters' },
+            { key: 'functions', label: 'Functions', path: '/functions', count: 'total_functions', gap: true },
+            { key: 'features-global', label: 'Features', path: '/features', count: 'features' },
+            { key: 'function-similarity', count: 'function_sims', label: 'Func sims', path: '/functions/similarities' },
+            { key: 'clusters', count: 'function_clusters', label: 'Func clusters', path: '/functions/clusters' },
+            { key: 'search', label: 'Searches', path: '/searches' },
+            { key: 'tags', label: 'Tags', path: '/tags', hide: true },
+            { key: 'jobs', label: 'Jobs', path: '/jobs', hide: true },
+            { key: 'upload', label: 'Upload', path: '/upload', push: true },
+        ],
+        // Detail pages light up the tab of the list they belong to.
+        parent: {
+            'collection-detail': 'overview', 'search-detail': 'search', 'pool-detail': 'overview', dashboard: 'files', file: 'files', function: 'functions', call_graph: 'functions',
+            function_features: 'functions', diff: 'function-similarity', bin_sim: 'binary-similarity',
+            feature: 'features-global', 'cluster-detail': 'clusters', 'bin-cluster-detail': 'bin-clusters',
+        },
+
+        render: function() {
+            const el = document.getElementById('entity-tabs');
+            if (!el) return;
+            const { viewKey, collection, pool } = getRoutingState();
+            const active = this.parent[viewKey] || viewKey;
+            const id = pool || collection;
+            this.paths = [];
+            document.body.classList.remove('has-entity-tabs');
+            if (!id || !this.tabs.some(t => t.key === active)) {
+                el.innerHTML = '';
+                return;
+            }
+            const key = (pool ? 'pool:' : 'coll:') + id;
+            this.load(key, id, !!pool);
+            const base = `/${pool ? 'pools' : 'collections'}/${encodeURIComponent(id)}`;
+            const c = this.counts[key] || {};
+            const link = t => {
+                const n = t.count && c[t.count] != null ? `<span class="entity-tab-count">${escapeHtml(Number(c[t.count]).toLocaleString())}</span>` : '';
+                return `<a class="entity-tab${t.key === active ? ' current' : ''}${t.gap ? ' gap' : ''}" href="${escapeAttr(base + t.path + this.savedQuery(collection, t.key))}" onclick="UI.EntityTabs.go(this, event, ${escapeAttr(jsString(t.key))})">${escapeHtml(t.label)}${n}</a>`;
+            };
+            // Crumbs and the page title skip what the strip already shows.
+            const shown = this.tabs.filter(t => !t.hide && t.path);
+            this.paths = shown.map(t => base + t.path);
+            document.body.classList.toggle('has-entity-tabs', shown.some(t => t.key === active));
+            // Tabs scroll on narrow screens; the pinned links (Upload) stay in view beside them.
+            el.innerHTML = `<div class="entity-tabs-scroll">${this.tabs.filter(t => !t.hide && !t.push).map(link).join('')}</div>${this.tabs.filter(t => t.push).map(link).join('')}`;
+        },
+
+        // Same behaviour the sidebar links had: reopen a view with its last filters, and a click on the current tab clears them.
+        savedQuery: function(collection, view) {
+            if (view === 'jobs') return '';
+            let saved = null;
+            try { saved = localStorage.getItem(`savedFilters:${collection}:${view}`); } catch (e) { /* storage blocked */ }
+            if (!saved) return '';
+            const q = new URLSearchParams(saved);
+            q.delete('collection');
+            q.delete('pool');
+            return q.toString() ? `?${q}` : '';
+        },
+
+        go: function(a, e, view) {
+            if (e.ctrlKey || e.metaKey) return;
+            e.preventDefault();
+            if (getRoutingState().viewKey === view && typeof clearFilters === 'function') clearFilters();
+            else Nav.openPath(a.href, e);
+        },
+
+        // Counts are cheap cardinality reads; refetch at most every 15s and repaint.
+        load: function(key, id, isPool) {
+            const old = this.counts[key];
+            if (old && Date.now() - old.__ts < 15000) return;
+            this.counts[key] = { ...old, __ts: Date.now() };
+            const q = encodeURIComponent(id);
+            const get = (url, pick) => fetch(url).then(r => r.ok ? r.json() : {}).then(pick).catch(() => ({}));
+            const fetched = isPool
+                ? get(`/api/pool/${q}`, d => ({
+                    total_files: d.total_files, total_functions: d.total_functions,
+                    function_sims: d.total_func_similarities, file_sims: d.total_file_similarities,
+                    function_clusters: d.total_func_clusters, file_clusters: d.total_file_clusters,
+                }))
+                : Promise.all([
+                    get(`/api/collection/search?q=${q}`, d => (d.collections || []).find(x => x.name === id) || {}),
+                    get(`/api/collection/counts?collection=${q}`, d => d),
+                ]).then(([coll, extra]) => ({ ...coll, ...extra }));
+            fetched.then(c => {
+                this.counts[key] = { ...c, __ts: Date.now() };
+                this.render();
+            });
+        },
+    },
+
+    /**
      * Sidebar Component
      */
     Sidebar: {
         render: function() {
-            const { viewKey, collection, pool } = getRoutingState();
-            if (!collection && !pool && viewKey !== 'home' && viewKey !== 'collections' && viewKey !== 'pools' && viewKey !== 'jobs' && viewKey !== 'search' && viewKey !== 'search-detail' && viewKey !== 'scan' && viewKey !== 'scan-detail') {
-                throw new Error("Navigation error: collection context is missing.");
+            const routing = getRoutingState();
+            const { viewKey } = routing;
+            // No scope in the URL: fall back to the last one visited rather than breaking the whole navbar.
+            let { collection, pool } = routing;
+            if (!collection && !pool) {
+                try {
+                    collection = localStorage.getItem('lastCollectionContext') || null;
+                    pool = localStorage.getItem('lastPoolContext') || null;
+                } catch (e) { /* storage blocked */ }
             }
 
             const buildNavUrl = (view) => {
                 if (view === 'home') return '/';
                 if (view === 'collections') return '/collections';
                 if (view === 'pools') return '/pools';
+                if (!collection && !pool && view === 'searches') return '/searches';
+                if (!collection && !pool && !['jobs', 'nway', 'scan'].includes(view)) return '/collections';
+                if (view === 'nway' || view === 'scan') {
+                    const k = pool ? `pool=${encodeURIComponent(pool)}` : collection ? `collection=${encodeURIComponent(collection)}` : '';
+                    return `${view === 'nway' ? '/diff/nway' : '/scans'}${k ? `?${k}` : ''}`;
+                }
 
                 const prefix = window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools';
                 if (pool) {
@@ -113,48 +241,28 @@ window.UI = {
                 if (view === 'collections' && viewKey === 'collection-detail') return 'active';
                 if (view === 'pools' && viewKey === 'pool-detail') return 'active';
                 if (view === 'search' && viewKey === 'search-detail') return 'active';
+                if (view === 'nway' && viewKey === 'nway') return 'active';
+                if (view === 'scan' && viewKey === 'scan-detail') return 'active';
 
                 return '';
             };
 
             return `
-                <button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle Sidebar">⟨</button>
-                <nav class="sidebar-nav">
-                    <h2 title="BSimVis">
-                        <a href="/" id="brand-link" onclick="Nav.openPath('/', event)">
-                            <img src="/logo.svg" alt="Logo">
-                            <span>BSimVis</span>
-                        </a>
-                    </h2>
-                    <div class="nav-section-content">
-                        <a href="/" id="nav-home" title="Home" class="${isActive('home')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-house"></i> <span>Home</span></a>
-                        <a href="#" id="nav-search" title="Search everything (Ctrl+K)" onclick="event.preventDefault(); SearchPalette.show();"><i class="fa-solid fa-magnifying-glass"></i> <span>Search</span></a>
-                        <a href="${buildNavUrl('collections')}" id="nav-collections" title="Collections" class="${isActive('collections')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-layer-group"></i> <span>Collections</span></a>
-                        <a href="${buildNavUrl('pools')}" id="nav-pools" title="Pools" class="${isActive('pools')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-diagram-project"></i> <span>Pools</span></a>
+                <details class="more-menu global-menu">
+                    <summary title="Menu"><img src="/logo.svg" alt=""><span>BSimVis</span> <i class="fa-solid fa-chevron-down"></i></summary>
+                    <div class="more-menu-list global-menu-list" onclick="this.closest('details').removeAttribute('open')">
+                        <a href="/" id="nav-home" class="${isActive('home')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-house"></i> Home</a>
+                        <a href="${buildNavUrl('collections')}" id="nav-collections" class="${isActive('collections')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-layer-group"></i> Collections</a>
+                        <a href="${buildNavUrl('pools')}" id="nav-pools" class="${isActive('pools')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-diagram-project"></i> Pools</a>
+                        <hr>
+                        <a href="${buildNavUrl('scan')}" id="nav-scans" title="Scan a file without ingesting it" class="${isActive('scan')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-microscope"></i> Scan</a>
+                        <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff (experimental)" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> N-way diff</a>
+                        <a href="${buildNavUrl('jobs')}" id="nav-jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> Jobs</a>
+                        <hr>
+                        <a href="#" id="nav-search" onclick="event.preventDefault(); SearchPalette.show();"><i class="fa-solid fa-magnifying-glass"></i> Search <kbd>Ctrl+K</kbd></a>
+                        <a href="/api/" target="_blank" id="nav-api"><i class="fa-solid fa-book"></i> API</a>
                     </div>
-                    <div class="nav-section-title"><span>Binaries</span></div>
-                    <div class="nav-section-content">
-                        <a href="${buildNavUrl('batches')}" id="nav-batches" title="Batches" class="${isActive('batches')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-boxes-stacked"></i> <span>Batches</span></a>
-                        <a href="${buildNavUrl('files')}" id="nav-files" title="Files" class="${isActive('files')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-file-code"></i> <span>Files</span></a>
-                        <a href="${buildNavUrl('binary-similarity')}" id="nav-binary-similarity" title="Similarities" class="${isActive('binary-similarity')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
-                        <a href="${buildNavUrl('bin-clusters')}" id="nav-bin-clusters" title="Clusters" class="${isActive('bin-clusters')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-bullseye"></i> <span>Clusters</span></a>
-                    </div>
-                    <div class="nav-section-title"><span>Functions</span></div>
-                    <div class="nav-section-content">
-                        <a href="${buildNavUrl('functions')}" id="nav-functions" title="Functions" class="${isActive('functions')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-code"></i> <span>Functions</span></a>
-                        <a href="${buildNavUrl('function-similarity')}" id="nav-function-similarity" title="Function Similarities" class="${isActive('function-similarity')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
-                        <a href="${buildNavUrl('clusters')}" id="nav-clusters" title="Clusters" class="${isActive('clusters')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-bullseye"></i> <span>Clusters</span></a>
-                        <a href="${buildNavUrl('features-global')}" id="nav-features-global" title="Features" class="${isActive('features-global')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-fingerprint"></i> <span>Features</span></a>
-                    </div>
-                    <div style="margin-top:auto; padding-top:20px; border-top: 1px solid var(--border);">
-                        ${collection ? `<a href="${buildNavUrl('tags')}" id="nav-tags" title="Tags" class="${isActive('tags')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-tags"></i> <span>Tags</span></a>` : ''}
-                        <a href="${buildNavUrl('upload')}" id="nav-upload" title="Upload" class="${isActive('upload')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-cloud-arrow-up"></i> <span>Upload</span></a>
-                        <a href="${buildNavUrl('jobs')}" id="nav-jobs" title="Jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> <span>Jobs</span></a>
-                        <a href="/scans" id="nav-scans" title="Scan a file without ingesting it" class="${isActive('scan')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-microscope"></i> <span>Scan</span></a>
-                        <a href="/searches" id="nav-searches" title="Saved Searches" class="${isActive('search')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-list-check"></i> <span>Searches</span></a>
-                        <a href="/api/" target="_blank" id="nav-api" title="API"><i class="fa-solid fa-book"></i> <span>API</span></a>
-                    </div>
-                </nav>
+                </details>
             `;
         },
 
@@ -193,3 +301,6 @@ window.UI = {
         }
     }
 };
+
+// Close any open header overflow menu on an outside click.
+document.addEventListener("click", e => document.querySelectorAll("details.more-menu[open]").forEach(d => d.contains(e.target) || d.removeAttribute("open")));

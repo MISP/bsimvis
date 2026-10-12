@@ -7,14 +7,14 @@
     <title>BSimVis Dashboard</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/vendor/fontawesome/css/all.min.css" />
-    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/style.css?v=exp1">
     <link rel="stylesheet" href="/css/logo.css">
-    <script src="/js/navigation.js?v=4"></script>
-    <script src="/js/ui_components.js?v=3"></script>
+    <script src="/js/navigation.js?v=5"></script>
+    <script src="/js/ui_components.js?v=21"></script>
     <script src="/js/tag_color.js?v=3"></script>
     <script src="/js/tag_tree.js?v=2"></script>
     <script src="/js/tags.js?v=7"></script>
-    <script src="/js/notes.js?v=6"></script>
+    <script src="/js/notes.js?v=8"></script>
     <script src="/vendor/marked/marked.min.js"></script>
     <script src="/vendor/iro/iro.min.js"></script>
     <script src="/js/diff_queue.js?v=7"></script>
@@ -22,9 +22,9 @@
     <script src="/vendor/d3/d3.v7.min.js"></script>
     <script src="/js/d3_layouts.js?v=3"></script>
     <script src="/vendor/d3-sankey/d3-sankey.min.js"></script>
-    <link rel="stylesheet" href="/css/dashboard.css">
-    <script src="/js/utils.js?v=10"></script>
-    <script src="/js/entity_renderer.js?v=4"></script>
+    <link rel="stylesheet" href="/css/dashboard.css?v=21">
+    <script src="/js/utils.js?v=12"></script>
+    <script src="/js/entity_renderer.js?v=5"></script>
     <script src="/js/code_renderer.js?v=3"></script>
     <script src="/js/metadata.js?v=4"></script>
     <script src="/js/lineage.js?v=3"></script>
@@ -44,13 +44,13 @@
     <script src="/js/upload.js?v=4"></script>
     <script src="/js/context_menu.js?v=15"></script>
     <script src="/js/dashboard.js?v=19"></script>
-    <script src="/js/breadcrumbs.js?v=4"></script>
+    <script src="/js/breadcrumbs.js?v=8"></script>
     <script src="/js/jobs.js?v=5"></script>
     <script src="/js/table_selection.js?v=6"></script>
     <script src="/js/strings.js?v=1"></script>
     
     <!-- View Modules -->
-    <script src="/js/views/function_view.js?v=10"></script>
+    <script src="/js/views/function_view.js?v=11"></script>
     <script src="/js/views/file_view.js?v=13"></script>
     <script src="/js/views/diff_view.js?v=9"></script>
     <script src="/js/views/call_graph_view.js?v=3"></script>
@@ -59,20 +59,26 @@
     <script src="/js/views/file_strings_view.js?v=1"></script>
     <script src="/js/search_palette.js?v=2"></script>
     <script src="/js/views/home_view.js?v=2"></script>
-    <script src="/js/views/collection_detail_view.js?v=6"></script>
-    <script src="/js/views/pool_detail_view.js?v=9"></script>
-    <script src="/js/views/cluster_detail_view.js?v=3"></script>
-    <script src="/js/views/search_view.js?v=5"></script>
-    <script src="/js/views/scan_view.js?v=2"></script>
+    <script src="/js/views/collection_detail_view.js?v=12"></script>
+    <script src="/js/views/pool_detail_view.js?v=12"></script>
+    <script src="/js/views/cluster_detail_view.js?v=4"></script>
+    <script src="/js/views/search_view.js?v=8"></script>
+    <script src="/js/views/scan_view.js?v=3"></script>
+    <script src="/js/paging.js?v=5"></script>
+    <script src="/js/function_rename.js?v=2"></script>
+    <script src="/js/nway_panel.js?v=34"></script>
+    <script src="/js/nway_basket.js?v=1"></script>
+    <script src="/js/views/nway_view.js?v=5"></script>
 </head>
 
 <body>
 
-    <div id="sidebar-container"></div>
-
     <main id="main-content">
         <div id="breadcrumbs-container" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; background: rgba(255,255,255,0.02); border-bottom: 1px solid var(--border); margin-bottom: 15px; border-radius: 6px; gap: 15px; flex-wrap: wrap;">
-            <div id="breadcrumbs-list"></div>
+            <div style="display:flex; align-items:center; gap:12px; min-width:0;">
+                <div id="sidebar-container"></div>
+                <div id="breadcrumbs-list"></div>
+            </div>
             <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
                 <div id="search-settings-container" style="display:none; align-items:center; gap:8px;"></div>
                 <div id="header-top-actions" style="display:flex; gap:10px; align-items:center;">
@@ -138,6 +144,8 @@
             </div>
         </div>
 
+        <nav id="entity-tabs" class="entity-tabs" aria-label="Collection sections"></nav>
+
         <!-- UI Settings Panel -->
         <div id="ui-settings-panel"
             style="display:none; position:fixed; right:20px; top:60px; z-index:10000; width:300px; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:20px; ">
@@ -170,6 +178,16 @@
                 <span style="font-size:0.9rem; flex:1; display:flex; align-items:center; gap:10px;">
                     <i class="fa-solid fa-sun" style="color:var(--accent); width:16px; text-align:center;"></i> Light Theme
                 </span>
+            </label>
+
+            <label style="display:flex; align-items:center; gap:10px; margin-bottom: 20px; padding: 4px 0;">
+                <span style="font-size:0.9rem; flex:1; display:flex; align-items:center; gap:10px;">
+                    <i class="fa-solid fa-list" style="color:var(--accent); width:16px; text-align:center;"></i> Long lists
+                </span>
+                <select id="param-paging-mode" onchange="updateUIParams()" style="cursor:pointer;">
+                    <option value="page">Pages</option>
+                    <option value="scroll">Scroll</option>
+                </select>
             </label>
 
             <div style="border-top: 1px solid var(--border); padding-top: 15px;">
@@ -237,6 +255,7 @@
                 <!-- Table footer: results count + selection stats -->
                 <div id="table-footer" class="table-footer" style="display:none;">
                     <div class="table-footer-left">
+                        <span id="view-pager" style="display:inline-flex; gap:6px;"></span>
                         <span id="view-total" class="table-footer-badge" style="display:none;"></span>
                         <span id="view-limit" class="table-footer-badge" style="display:none;"></span>
                         <i id="pool-warn-icon" class="fa-solid fa-triangle-exclamation table-footer-warn" style="display:none;" title="Pool Truncated"></i>
@@ -252,6 +271,7 @@
                         <span id="view-job-status" style="display:none; align-items:center; gap:6px;"></span>
                         <div id="diff-queue-status" class="diff-queue-status"></div>
                         <div id="file-diff-queue-status" class="file-diff-queue-status"></div>
+                        <div id="nway-basket-status"></div>
                         <span id="selection-stats" class="table-footer-sel" style="display:none;"></span>
                     </div>
                 </div>

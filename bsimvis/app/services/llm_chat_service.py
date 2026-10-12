@@ -57,7 +57,11 @@ DEFAULT_SYSTEM_PROMPT = (
     "than re-discovering them through a broad search first -- a search "
     "gap is not evidence the analyst was wrong.\n\n"
     "Cite what you actually checked (function ids, tags, scores) rather than "
-    "asserting conclusions. If a question cannot be answered with the "
+    f"asserting conclusions. You have a hard budget of {MAX_TOOL_ITERATIONS} "
+    "tool rounds per question (several calls in one round count once); after "
+    "that, tools are removed and you must answer. Plan your lookups, batch "
+    "them, and stop investigating early enough to write a real answer from "
+    "what you have found. If a question cannot be answered with the "
     "available tools, say so instead of speculating."
 )
 
@@ -134,13 +138,31 @@ class LLMChatService:
         client = Client(host=self.ollama_url)
         tool_calls_made = []
 
-        for _ in range(MAX_TOOL_ITERATIONS):
+        # One extra round with tools withdrawn, so the budget ends in an answer.
+        for round_no in range(MAX_TOOL_ITERATIONS + 1):
+            final_round = round_no == MAX_TOOL_ITERATIONS
             wire_messages = [{k: v for k, v in m.items() if k != "ts"} for m in history]
+            if final_round:
+                wire_messages.append(
+                    {
+                        "role": "user",
+                        "content": "Tool budget exhausted. Do not call tools. Answer now "
+                        "from what you found, and say what you could not verify.",
+                    }
+                )
+            elif MAX_TOOL_ITERATIONS - round_no <= 2:
+                wire_messages.append(
+                    {
+                        "role": "user",
+                        "content": f"(Note: only {MAX_TOOL_ITERATIONS - round_no} tool "
+                        "round(s) left, then you must answer.)",
+                    }
+                )
             try:
                 response = client.chat(
                     model=self.model,
                     messages=wire_messages,
-                    tools=TOOLS,
+                    tools=None if final_round else TOOLS,
                     stream=False,
                     think=False,
                     options={"num_predict": -1, "temperature": 0.2},
@@ -165,7 +187,7 @@ class LLMChatService:
                 for tc in (msg.get("tool_calls") or [])
             ]
 
-            if not raw_calls:
+            if not raw_calls or final_round:
                 history.append(
                     {"role": "assistant", "content": content, "ts": int(time.time())}
                 )
@@ -173,7 +195,7 @@ class LLMChatService:
                 yield {
                     "type": "done",
                     "session_id": session_id,
-                    "reply": content,
+                    "reply": content or "_(no answer after tool budget)_",
                     "tool_calls": tool_calls_made,
                 }
                 return
@@ -216,17 +238,6 @@ class LLMChatService:
                     }
                 )
                 yield {"type": "tool_call", **call_record}
-
-        # Iteration budget spent without a final answer -- return what the
-        # model has said so far rather than raising, so the analyst still
-        # gets a partial trail instead of an opaque failure.
-        self._save_history(session_id, history)
-        yield {
-            "type": "done",
-            "session_id": session_id,
-            "reply": "(stopped after too many tool calls without a final answer)",
-            "tool_calls": tool_calls_made,
-        }
 
 
 llm_chat_service = LLMChatService()

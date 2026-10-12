@@ -136,6 +136,38 @@ def _pairwise_cohesion(
     return total, count
 
 
+MEDOID_MAX_MEMBERS = 120
+
+
+def function_medoid(r, sim_score_key, sid_prefix, clean_members):
+    """(member, centrality): the member with the highest summed stored score
+    to the others, divided by n-1 -- a pair outside BSim's top-K counts as 0,
+    which is what makes a well-connected member beat one lucky 1.0 pair.
+
+    ponytail: computed on read, sampled to MEDOID_MAX_MEMBERS (~14k ZSCOREs);
+    persist it at build time like bin clusters if clicking around gets slow.
+    """
+    from bsimvis.app.services.bin_cluster_service import pick_medoid
+
+    members = sorted(set(clean_members))
+    if len(members) > MEDOID_MAX_MEMBERS:
+        rnd = random.Random(f"{members[0]}:{len(members)}")
+        members = sorted(rnd.sample(members, MEDOID_MAX_MEMBERS))
+    if len(members) < 2:
+        return (members[0], 1.0) if members else (None, None)
+
+    memo = {}
+    _pairwise_cohesion(r, sim_score_key, sid_prefix, members, memo)
+    sums = defaultdict(float)
+    for (a, b), score in memo.items():
+        if score is not None:
+            sums[a] += score
+            sums[b] += score
+    centrality = {m: sums[m] / (len(members) - 1) for m in members}
+    best = pick_medoid(centrality)
+    return best, centrality[best]
+
+
 def _score_cohesion(adj_sim, member_indices, cohesion_cut, scratch, rng):
     sources = None
     if len(member_indices) > COHESION_SAMPLE_SIZE:
@@ -812,6 +844,8 @@ class ClusterService:
 
                 all_member_meta[fid] = {
                     "function_name": name,
+                    "user_name": m.get("user_name"),
+                    "user_name_source": m.get("user_name_source"),
                     "bsim_features_count": feat_count,
                     "file_name": file_name,
                     "entrypoint_address": addr,
@@ -884,6 +918,8 @@ class ClusterService:
                     {
                         "function_id": fid,
                         "function_name": m.get("function_name", "Unknown"),
+                        "user_name": m.get("user_name"),
+                        "user_name_source": m.get("user_name_source"),
                         "entrypoint_address": m.get("entrypoint_address"),
                         "file_md5": m.get("file_md5"),
                         "file_name": m.get("file_name"),
@@ -1861,6 +1897,8 @@ class ClusterService:
                     {
                         "function_id": fid,
                         "function_name": m.get("function_name", "Unknown"),
+                        "user_name": m.get("user_name"),
+                        "user_name_source": m.get("user_name_source"),
                         "entrypoint_address": m.get("entrypoint_address"),
                         "file_md5": m.get("file_md5"),
                         "file_name": m.get("file_name"),
@@ -2039,6 +2077,8 @@ class ClusterService:
                         m = {}
                 all_member_meta[fid] = {
                     "function_name": m.get("function_name"),
+                    "user_name": m.get("user_name"),
+                    "user_name_source": m.get("user_name_source"),
                     "bsim_features_count": m.get("bsim_features_count", 0),
                     "file_name": m.get("file_name"),
                     "entrypoint_address": m.get("entrypoint_address"),
@@ -2081,6 +2121,8 @@ class ClusterService:
                     {
                         "function_id": fid,
                         "function_name": m.get("function_name", "Unknown"),
+                        "user_name": m.get("user_name"),
+                        "user_name_source": m.get("user_name_source"),
                         "entrypoint_address": m.get("entrypoint_address"),
                         "file_md5": m.get("file_md5"),
                         "file_name": m.get("file_name"),
@@ -2332,6 +2374,8 @@ class ClusterService:
                         {
                             "function_id": fid,
                             "function_name": m.get("function_name", "Unknown"),
+                            "user_name": m.get("user_name"),
+                            "user_name_source": m.get("user_name_source"),
                             "entrypoint_address": m.get("entrypoint_address"),
                             "file_md5": m.get("file_md5"),
                             "file_name": m.get("file_name"),
@@ -3400,6 +3444,11 @@ def _demo_pairwise_cohesion():
         FakeZ(scores), "zk", prefix, members, {}, max_pairs=cap
     )
     assert (pairs6, round(total6, 9)) == (pairs, round(total, 9))
+
+    # b touches every other member (0.9 + 0.7 + 0.6); a's missing a::d counts as 0.
+    medoid, cen = function_medoid(FakeZ(scores), "zk", prefix, members)
+    assert medoid == "b" and abs(cen - 2.2 / 3) < 1e-9, (medoid, cen)
+    assert function_medoid(FakeZ(scores), "zk", prefix, ["a"]) == ("a", 1.0)
 
     print("_pairwise_cohesion demo OK")
 

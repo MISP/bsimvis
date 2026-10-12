@@ -10,7 +10,8 @@ offline -- no kvrocks needed:
 
 import random
 
-from bsimvis.app.services.bin_sim_service import discover_edges
+from bsimvis.app.services import bin_sim_service
+from bsimvis.app.services.bin_sim_service import discover_edges, _discover_edges_py
 from bsimvis.app.services.bin_sim_tags import greedy_match
 
 
@@ -145,8 +146,27 @@ def test_discovery_only_fills_unmatched():
     assert found == [("a:1", "b:1", 1.0)], found
 
 
+def test_sparse_matches_python_fallback():
+    # Tiny row blocks force the block loop; max_df and skip_pairs must agree too.
+    bin_sim_service._BLOCK_ROWS = 4
+    try:
+        for algo in ("unweighted_cosine", "binary_cosine", "jaccard"):
+            for seed in range(5):
+                vectors, fids_a, fids_b = make_corpus(seed)
+                skip = {frozenset(("a:0", "b:0"))}
+                for max_df in (1.0, 0.3):
+                    args = (vectors, fids_a, fids_b, algo, 0.2, skip, max_df)
+                    key = lambda es: sorted((a, b, round(s, 9)) for a, b, s in es)
+                    assert key(discover_edges(*args)) == key(
+                        _discover_edges_py(*args)
+                    ), (algo, seed, max_df)
+    finally:
+        bin_sim_service._BLOCK_ROWS = 1000
+
+
 if __name__ == "__main__":
     test_matches_dense_sweep()
+    test_sparse_matches_python_fallback()
     test_skip_pairs_respected()
     test_max_df_drops_only_common_features()
     test_discovery_only_fills_unmatched()

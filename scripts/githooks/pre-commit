@@ -1,0 +1,9 @@
+#!/bin/sh
+# wt-setup.sh symlinks vendor/ and bin/ into worktrees; they must never be committed.
+bad=$(git diff --cached --name-only --diff-filter=AM -- bsimvis/app/static/vendor bin)
+if [ -n "$bad" ]; then
+  echo "pre-commit: refusing to commit worktree-only paths:" >&2
+  echo "$bad" >&2
+  echo "Fix: git rm --cached <path>" >&2
+  exit 1
+fi

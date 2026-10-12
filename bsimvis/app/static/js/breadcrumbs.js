@@ -244,14 +244,14 @@ window.Breadcrumbs = {
             case 'search':
                 segments.push({
                     label: 'Searches',
-                    url: '/searches',
+                    url: window.location.pathname,
                     icon: 'fa-solid fa-list-check'
                 });
                 break;
             case 'search-detail':
                 segments.push({
                     label: 'Searches',
-                    url: '/searches',
+                    url: window.location.pathname.replace(/\/[^/]+$/, ''),
                     icon: 'fa-solid fa-list-check'
                 });
                 segments.push({
@@ -277,6 +277,40 @@ window.Breadcrumbs = {
                     label: (restful.scan_id || '').slice(0, 8) || 'Scan',
                     url: window.location.pathname,
                     icon: 'fa-solid fa-microscope'
+                });
+                break;
+            case 'nway':
+                if (window.location.pathname.endsWith('/nway/graph') && window.NwayPanel) {
+                    const q = new URLSearchParams(window.location.search);
+                    segments.push({
+                        label: 'N-way diff',
+                        url: window.NwayPanel.backUrl(q),
+                        icon: 'fa-solid fa-code-compare'
+                    });
+                    segments.push({
+                        label: `Call graph: ${q.get('cg_name') || ''}`,
+                        url: window.location.pathname + window.location.search,
+                        icon: 'fa-solid fa-diagram-project'
+                    });
+                    break;
+                }
+                {
+                    // From a cluster the trail runs down the cluster; a bare set sits under Files.
+                    const nav = (window.Nav || window.parent.Nav);
+                    const cuuid = params.get('cluster_uuid');
+                    const base = params.get('pool') ? null : collection;
+                    if (base || cuuid) {
+                        segments.push({ label: 'Files', url: nav.buildUIUrl(collection, ['files']), icon: 'fa-solid fa-file-code' });
+                        if (cuuid) {
+                            segments.push({ label: 'Clusters', url: nav.buildUIUrl(collection, ['files', 'clusters']), icon: 'fa-solid fa-bullseye' });
+                            segments.push({ label: this.getClusterLabel(cuuid), url: nav.buildUIUrl(collection, ['files', 'clusters', cuuid]), icon: 'fa-solid fa-bullseye' });
+                        }
+                    }
+                }
+                segments.push({
+                    label: 'N-way diff',
+                    url: window.location.pathname + window.location.search,
+                    icon: 'fa-solid fa-code-compare'
                 });
                 break;
             case 'upload':
@@ -497,8 +531,13 @@ window.Breadcrumbs = {
     },
 
     render: function (segments) {
+        if (window.UI && UI.EntityTabs) UI.EntityTabs.render();
         const container = document.getElementById('breadcrumbs-list');
         if (!container) return;
+
+        // The tab strip already links to its own sections; keep the scope root and any detail leaf.
+        const stripPaths = (window.UI && UI.EntityTabs && UI.EntityTabs.paths) || [];
+        if (stripPaths.length) segments = segments.filter(sg => !stripPaths.includes(String(sg.url || '').split('?')[0]));
 
         if (segments.length === 0) {
             container.innerHTML = '';

@@ -626,6 +626,14 @@ def _walk(distribution):
             stack.extend(node["children"])
 
 
+def real_links(links):
+    """Drop links to the synthetic global root: it is never a cluster, so it
+    has no meta and every top-level cluster would show it as a nameless parent.
+    Every real cluster is some link's child; the root never is."""
+    children = {l["child"] for l in links}
+    return [l for l in links if l["parent"] in children]
+
+
 def get_tree_links(r, collection, algo, tree_links_prefix="cluster"):
     """child_to_parent / parent_to_children maps from the stored tree_links blob.
 
@@ -637,7 +645,7 @@ def get_tree_links(r, collection, algo, tree_links_prefix="cluster"):
     child_to_parent, parent_to_children = {}, {}
     if links_raw:
         try:
-            links = json.loads(links_raw)
+            links = real_links(json.loads(links_raw))
             for l in links:
                 c, p = str(l["child"]), str(l["parent"])
                 child_to_parent[c] = p

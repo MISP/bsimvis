@@ -428,7 +428,56 @@
                     </div>`;
                 }
             }
-
+            // N-way diff of the files behind the selected functions or file cells.
+            const nwayFiles = [...new Set([
+                ...window.getSelectedTableIds('file').map(id => `${id.split(':')[0]}:${id.split(':').pop()}`),
+                ...window.getSelectedTableIds('function').map(id => {
+                    const p = window.parseFuncId(id);
+                    return p.md5 ? `${p.collection}:${p.md5}` : '';
+                }),
+            ].filter(Boolean))];
+            if (nwayFiles.length >= 2 && window.NwayPanel) {
+                const nwayUrl = NwayPanel.urlFor(nwayFiles, col);
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(nwayUrl))}, event, { title: 'N-way diff', type: 'bin_sim' })">
+                    <i class="fa-solid fa-table-columns" style="width: 16px; text-align: center; opacity: 0.8; color: #fd971f;"></i>
+                    <span>N-way Diff of ${nwayFiles.length} Files</span>
+                </div>`;
+            }
+            // The selected rows, or this function alone when nothing is selected.
+            const llmIds = `(window.getSelectedTableIds && window.getSelectedTableIds('function').length ? window.getSelectedTableIds('function') : [${jsString(norm.id)}])`;
+            actionsSubmenuHtml += renderLLMSubmenu(`{ funcIds: ${llmIds} }`);
+            // N-way table: rename the rows behind the selected functions (by hand or by the LLM).
+            const nwaySel = window.getSelectedTableIds('function').length ? window.getSelectedTableIds('function') : [norm.id];
+            const nwayRows = window.nwayRowsForFids ? window.nwayRowsForFids(nwaySel).length : 0;
+            if (nwayRows) {
+                const ids = `[${nwaySel.map(i => escapeAttr(jsString(i))).join(',')}]`;
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.nwayRenameSelected(${ids}, false)">
+                    <i class="fa-solid fa-pen" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>Rename (${nwayRows})</span>
+                </div>
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.nwayRenameSelected(${ids}, true)">
+                    <i class="fa-solid fa-robot" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>AI Rename (${nwayRows})</span>
+                </div>`;
+            } else {
+                const ids = `[${nwaySel.map(i => escapeAttr(jsString(i))).join(',')}]`;
+                const one = nwaySel.length === 1;
+                const nm = escapeAttr(jsString(norm.name || ''));
+                const act = auto => one && !auto
+                    ? `FunctionRename.open(${ids}, ${nm})`
+                    : `FunctionRename.openBatch(${ids}.map(i => ({ fids: [i], name: i === ${escapeAttr(jsString(norm.id))} ? ${nm} : (window.parseFuncId(i).address || i) })), ${auto})`;
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); ${act(false)}">
+                    <i class="fa-solid fa-pen" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>Rename${one ? '' : ` (${nwaySel.length})`}</span>
+                </div>
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); ${act(true)}">
+                    <i class="fa-solid fa-robot" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>AI Rename${one ? '' : ` (${nwaySel.length})`}</span>
+                </div>`;
+            }
         } else if (resolvedType === 'file') {
             const cgUrl = Nav.buildUIUrl(col, ['call_graph', norm.md5]);
             const funcsUrl = Nav.buildUIUrl(col, ['functions']) + '?file_md5=' + encodeURIComponent(norm.md5);
@@ -459,6 +508,24 @@
                 <span>Similar Files (by container)</span>
             </div>
             `;
+            if (window.getSelectedTableIds && window.getSelectedTableIds('file').length >= 2 && window.NwayPanel) {
+                const nwayFiles = window.getSelectedTableIds('file');
+                const nwayUrl = NwayPanel.urlFor(nwayFiles, col);
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(nwayUrl))}, event, { title: 'N-way diff', type: 'bin_sim' })">
+                    <i class="fa-solid fa-table-columns" style="width: 16px; text-align: center; opacity: 0.8; color: #fd971f;"></i>
+                    <span>Compare ${nwayFiles.length} Files (N-way)</span>
+                </div>`;
+            }
+            if (window.NwayBasket) {
+                const picked = window.getSelectedTableIds ? window.getSelectedTableIds('file') : [];
+                const basketIds = picked.length ? picked : [norm.id];
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); NwayBasket.add(${escapeAttr('[' + basketIds.map(jsString).join(',') + ']')}, ${escapeAttr(jsString(col))})">
+                    <i class="fa-solid fa-table-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>Add ${basketIds.length > 1 ? basketIds.length + ' files ' : ''}to compare set</span>
+                </div>`;
+            }
             if (window.getSelectedTableIds && window.getSelectedTableIds('file').length === 2) {
                 const selFiles = window.getSelectedTableIds('file');
                 const md5a = selFiles[0].split(':').pop();
@@ -521,6 +588,15 @@
                 <span>View Files</span>
             </div>`;
         }
+
+        // A cell selection can hold functions the clicked row is not itself one of
+        // (both function columns of a bin diff row).
+        if (resolvedType !== 'function' && window.getSelectedTableIds && window.getSelectedTableIds('function').length) {
+            // Read back at click time: inlined ids would break the onclick attribute.
+            actionsSubmenuHtml += renderLLMSubmenu("{ funcIds: window.getSelectedTableIds('function') }", ` (${window.getSelectedTableIds('function').length} selected)`);
+        }
+
+        if (resolvedType === 'file' && data.__nway && window.NwayPanel) html += NwayPanel.menuHtml(data.__nway);
 
         if (actionsSubmenuHtml) {
             html += `
@@ -747,6 +823,30 @@
 
         return [];
     }
+    /** "AI ▸" entry: summary / tags / both / both with a custom prompt. */
+    function renderLLMSubmenu(opts, suffix = '') {
+        const items = [
+            { label: 'Summary', icon: 'fa-note-sticky', actions: "['notes']", extra: '' },
+            { label: 'Tags', icon: 'fa-tags', actions: "['tags']", extra: '' },
+            { label: 'Summary + tags', icon: 'fa-wand-magic-sparkles', actions: "['notes','tags']", extra: '' },
+            { label: '… with custom prompt', icon: 'fa-pen-nib', actions: "['notes','tags']", extra: ', askPrompt: true' }
+        ];
+        const entries = items.map(i => `
+            <div class="context-menu-item" onclick="${escapeAttr(`event.stopPropagation(); window.closeGraphContextMenu(); startLLMBatch(${i.actions}, ${opts.replace(/ }$/, i.extra + ' }')})`)}">
+                <i class="fa-solid ${i.icon}" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>${escapeHtml(i.label + (i.extra ? '' : suffix))}</span>
+            </div>`).join('');
+        return `
+            <div class="context-menu-item submenu-trigger" style="position: relative;">
+                <i class="fa-solid fa-robot" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>AI${escapeHtml(suffix)}</span>
+                <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 200px; background: var(--card-bg); border: 1px solid var(--border); z-index: 20006;">
+                    ${entries}
+                </div>
+            </div>`;
+    }
+
     // One item, so a submenu was a level of nesting around a single click.
     function renderFileAnalysisSubmenu(md5) {
         return `

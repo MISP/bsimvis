@@ -8,10 +8,16 @@
 #
 # Tear down with ./scripts/wt-teardown.sh. Used by wt-test.sh.
 #
+# --seed-main: start from a hardlinked checkpoint of the MAIN stack's kvrocks
+# instead of an empty DB (instant, no extra disk; same filesystem only). Only
+# seeds when this worktree has no kvrocks db yet. Needs main kvrocks running.
+#
 # Confidentiality: the main repo's 17G data/kvrocks is NEVER symlinked or
 # read. Each worktree gets its own empty data dir; tests build their own
 # collections from the git-tracked data/test/ binaries.
 set -uo pipefail
+SEED_MAIN=false
+[ "${1:-}" = "--seed-main" ] && SEED_MAIN=true
 
 # --- locate worktree + main repo -------------------------------------------
 WT_ROOT="$(git rev-parse --show-toplevel)"
@@ -52,10 +58,25 @@ if [ ! -L "$VENDOR_DIR" ] || [ "$(readlink -f "$VENDOR_DIR")" != "$MAIN_VENDOR" 
   ln -s "$MAIN_VENDOR" "$VENDOR_DIR"
 fi
 
+git config core.hooksPath scripts/githooks
+
 # --- 1b. config from the example (the upload CLI hard-fails without it) -----
 if [ ! -f bsimvis_config.toml ] && [ -f bsimvis_config.toml.example ]; then
   echo "Seeding bsimvis_config.toml from the example"
   cp bsimvis_config.toml.example bsimvis_config.toml
+fi
+
+# --- 1c. inherit the main config's ollama endpoint + model (every run) -----
+if [ -f "$MAIN_ROOT/bsimvis_config.toml" ] && [ -f bsimvis_config.toml ]; then
+  python3 - "$MAIN_ROOT/bsimvis_config.toml" bsimvis_config.toml <<'PY'
+import re, sys, tomllib
+llm = tomllib.load(open(sys.argv[1], "rb")).get("llm", {})
+s = open(sys.argv[2]).read()
+for k in ("ollama_url", "model"):
+    if k in llm:
+        s = re.sub(rf'(\[llm\][^\[]*?^\s*){k}\s*=[^\n]*', lambda m: f'{m.group(1)}{k} = "{llm[k]}"', s, count=1, flags=re.M | re.S)
+open(sys.argv[2], "w").write(s)
+PY
 fi
 
 # --- 2. isolated env file (offset ports so it never collides with main/others) --
@@ -63,6 +84,8 @@ if [ ! -f "$ENV_FILE" ]; then
   # Bands kept clear of main (.env: 5001/6380/6667) and of each other.
   # Hash only spreads names; the busy-port guard below is what guarantees safety.
   OFF=$(( ( $(cksum <<<"$WT_ID" | cut -d' ' -f1) % 50 ) * 10 ))
+  # Follow the main repo's datastore mode: a Docker-only install has no native kvrocks.
+  DOCKER_MODE=${DOCKER_DATASTORES:-$(grep -E '^DOCKER_DATASTORES=' "$MAIN_ROOT/.env" 2>/dev/null | tail -n 1 | cut -d= -f2)}
   echo "Writing isolated $ENV_FILE (offset $OFF)"
   cat > "$ENV_FILE" <<EOF
 GHIDRA_INSTALL_DIR=$WT_ROOT/bin/ghidra_12.1_PUBLIC
@@ -75,12 +98,28 @@ KVROCKS_PORT=$((7400 + OFF))
 WORKERS_COUNT=5
 PROJECT_NAME=bsimvis-$WT_ID
 DATA_BASE_DIR=$WT_ROOT/data${SESSION_TAG:+-$SESSION_TAG}
+DOCKER_DATASTORES=${DOCKER_MODE:-false}
 EOF
 fi
 # shellcheck disable=SC1091
 set -a; . "./$ENV_FILE"; set +a
 PROJECT_NAME="${PROJECT_NAME//./_}"
 APP_PORT=${APP_PORT:-5100}
+
+# --- 2b. optional: seed kvrocks from main via hardlinked checkpoint ---------
+if $SEED_MAIN && [ ! -d "$DATA_BASE_DIR/kvrocks/db" ]; then
+  MAIN_KV_PORT=$(grep -E '^KVROCKS_PORT=' "$MAIN_ROOT/.env" | tail -n 1 | cut -d= -f2)
+  MAIN_KV_DIR=$(redis-cli -p "$MAIN_KV_PORT" config get dir | tail -n 1)
+  echo "Checkpointing main kvrocks (:$MAIN_KV_PORT)..."
+  redis-cli -p "$MAIN_KV_PORT" bgsave >/dev/null || { echo "bgsave failed"; exit 1; }
+  for i in $(seq 1 300); do
+    redis-cli -p "$MAIN_KV_PORT" info persistence | grep -q 'bgsave_in_progress:0' && break
+    sleep 1
+  done
+  mkdir -p "$DATA_BASE_DIR/kvrocks"
+  cp -al "$MAIN_KV_DIR/backup" "$DATA_BASE_DIR/kvrocks/db" || { echo "hardlink copy failed"; exit 1; }
+  echo "Seeded $DATA_BASE_DIR/kvrocks/db"
+fi
 
 # --- 3. launch full stack (launch_tmux.sh reads the env file above) ---------
 # Clean up any existing session/services for this worktree+ENV_FILE first.

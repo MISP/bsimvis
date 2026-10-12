@@ -83,6 +83,23 @@ function normalizeFuncId(id) {
     return id;
 }
 
+// File-level runtime greedy settings ride along on function diff links, so every
+// caller/callee click keeps resolving partners with the same matching.
+function matchCarryQuery() {
+    const cur = new URLSearchParams(window.location.search);
+    const out = new URLSearchParams();
+    if (cur.get('runtime') === 'greedy') {
+        out.set('match', 'runtime');
+        for (const [from, to] of [['min_score', 'match_min'], ['algo', 'match_algo'], ['unweighted', 'match_unweighted']]) {
+            if (cur.has(from)) out.set(to, cur.get(from));
+        }
+    } else if (cur.get('match') === 'runtime') {
+        for (const k of ['match', 'match_min', 'match_algo', 'match_unweighted']) if (cur.has(k)) out.set(k, cur.get(k));
+    }
+    const qs = out.toString();
+    return qs ? `?${qs}` : '';
+}
+
 function buildDiffUrl(id1, id2) {
     const f1 = stripFuncId(id1) || { collection_a: '', collection_b: '', md5_a: '', addr_a: '', md5_b: '', addr_b: '' };
     const f2 = stripFuncId(id2) || { collection_a: '', collection_b: '', md5_a: '', addr_a: '', md5_b: '', addr_b: '' };
@@ -93,10 +110,10 @@ function buildDiffUrl(id1, id2) {
     const pool = window.getRoutingState ? window.getRoutingState().pool : null;
     if (pool) {
         const prefix = window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools';
-        return `/${prefix}/${encodeURIComponent(pool)}/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(f1.md5_a)}/functions/${encodeURIComponent(f1.addr_a)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(f2.md5_b || f2.md5_a)}/${encodeURIComponent(f2.addr_b || f2.addr_a)}`;
+        return `/${prefix}/${encodeURIComponent(pool)}/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(f1.md5_a)}/functions/${encodeURIComponent(f1.addr_a)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(f2.md5_b || f2.md5_a)}/${encodeURIComponent(f2.addr_b || f2.addr_a)}${matchCarryQuery()}`;
     }
 
-    return `/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(f1.md5_a)}/functions/${encodeURIComponent(f1.addr_a)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(f2.md5_b || f2.md5_a)}/${encodeURIComponent(f2.addr_b || f2.addr_a)}`;
+    return `/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(f1.md5_a)}/functions/${encodeURIComponent(f1.addr_a)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(f2.md5_b || f2.md5_a)}/${encodeURIComponent(f2.addr_b || f2.addr_a)}${matchCarryQuery()}`;
 }
 
 function buildFileDiffUrl(collA, md5A, collB, md5B) {

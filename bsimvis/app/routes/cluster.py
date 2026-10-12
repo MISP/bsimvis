@@ -11,6 +11,7 @@ from bsimvis.app.services.cluster_utils import (
     cluster_tree_slice,
     cluster_children_page,
     get_tree_links,
+    real_links,
     resolve_cluster_id_by_uuid,
 )
 from bsimvis.app.services.index_service import get_pool_id
@@ -313,6 +314,8 @@ def _shape_cluster_result(m, child_to_parent, parent_to_children, is_pool, pool_
                     "file_md5": s.get("file_md5"),
                     "function_id": fid,
                     "function_name": s.get("function_name", "Unknown"),
+                    "user_name": s.get("user_name"),
+                    "user_name_source": s.get("user_name_source"),
                 }
             )
         else:
@@ -445,6 +448,7 @@ def list_clusters():
         show_parents = request.args.get("show_parents", "false").lower() == "true"
         show_children = request.args.get("show_children", "false").lower() == "true"
         show_members = request.args.get("show_members", "false").lower() == "true"
+        with_medoid = request.args.get("with_medoid", "false").lower() == "true"
     except ValueError:
         return {"error": "Invalid numeric parameter"}, 400
 
@@ -520,7 +524,7 @@ def list_clusters():
     parent_to_children = {}
     if links_raw:
         try:
-            links = json.loads(links_raw)
+            links = real_links(json.loads(links_raw))
             child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
             for l in links:
                 p = str(l["parent"])
@@ -529,6 +533,25 @@ def list_clusters():
                 parent_to_children[p].append(str(l["child"]))
         except Exception:
             pass
+
+    # The exact-uuid shortcut loaded one meta; load the relatives it will expand to.
+    if exact_cid and (show_parents or show_children):
+        start = exact_cid.decode() if isinstance(exact_cid, bytes) else str(exact_cid)
+        related = set()
+        if show_parents:
+            curr = start
+            while curr in child_to_parent:
+                curr = child_to_parent[curr]
+                related.add(curr)
+        if show_children:
+            queue = [start]
+            while queue:
+                for child in parent_to_children.get(queue.pop(), []):
+                    if child not in related:
+                        related.add(child)
+                        queue.append(child)
+        related.discard(start)
+        all_meta_keys += [f"{collection}:cluster:{algo}:{cid}:meta" for cid in related]
 
     if all_meta_keys:
         t_fetch = time.perf_counter()
@@ -750,6 +773,8 @@ def list_clusters():
                             "file_md5": s.get("file_md5"),
                             "function_id": fid,
                             "function_name": s.get("function_name", "Unknown"),
+                            "user_name": s.get("user_name"),
+                            "user_name_source": s.get("user_name_source"),
                         }
                     )
                 else:
@@ -847,12 +872,43 @@ def list_clusters():
                         "function_name", "Unknown"
                     ),
                     "addr": member_meta_map.get(mid, {}).get("entrypoint_address"),
+                    "user_name": member_meta_map.get(mid, {}).get("user_name"),
+                    "user_name_source": member_meta_map.get(mid, {}).get(
+                        "user_name_source"
+                    ),
                     "bin": member_meta_map.get(mid, {}).get("file_name"),
                     "file_md5": member_meta_map.get(mid, {}).get("file_md5"),
                     "v_size": member_meta_map.get(mid, {}).get("bsim_features_count"),
                 }
                 for mid in mids
             ]
+
+    # Only for an exact-uuid lookup: the medoid is computed on read.
+    if with_medoid and exact_cid and page:
+        from bsimvis.app.services.cluster_service import function_medoid
+
+        base = f"{collection}:cluster:{algo}:{exact_cid}"
+        raw = r.smembers(f"{base}:members") or r.smembers(f"{base}:direct_members")
+        fids = [x.decode() if isinstance(x, bytes) else x for x in raw or ()]
+        if is_pool:
+            sid_prefix = f"{collection}:sim:"
+            score_key = f"{collection}:sim:score"
+            func_prefix = ""
+        else:
+            sid_prefix = f"{collection}:sim:{algo}:"
+            score_key = f"{collection}:sim:score:{algo}"
+            func_prefix = f"{collection}:func:"
+        clean = [
+            f[len(func_prefix) :] if func_prefix and f.startswith(func_prefix) else f
+            for f in fids
+        ]
+        medoid, centrality = function_medoid(r, score_key, sid_prefix, clean)
+        for cluster_res in page:
+            if str(cluster_res["cluster_id"]) == str(exact_cid):
+                cluster_res["medoid"] = (
+                    f"{func_prefix}{medoid}" if medoid is not None else None
+                )
+                cluster_res["medoid_centrality"] = centrality
 
     logging.info(
         f"CLUSTERS | total={total} | TOTAL: {time.perf_counter()-t_start:.3f}s"
@@ -1108,6 +1164,8 @@ def get_cluster_functions():
             {
                 "function_id": m.get("function_id") or fid,
                 "function_name": m.get("function_name", "Unknown"),
+                "user_name": m.get("user_name"),
+                "user_name_source": m.get("user_name_source"),
                 "parameters": m.get("parameters", []),
                 "return_type": m.get("return_type", "void"),
                 "namespace": m.get("namespace", ""),

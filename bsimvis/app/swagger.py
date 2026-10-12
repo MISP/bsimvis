@@ -656,6 +656,18 @@ class CollectionDelete(Resource):
         return delete_collection()
 
 
+@ns_collection.route("/counts")
+class CollectionCounts(Resource):
+    @ns_collection.doc(
+        params={"collection": {"description": "Collection name", "required": True}}
+    )
+    def get(self):
+        """Similarity and cluster totals of a collection (cheap cardinality reads)."""
+        from bsimvis.app.routes.search_collection import get_collection_counts
+
+        return get_collection_counts()
+
+
 @ns_collection.route("/params")
 class CollectionParams(Resource):
     @ns_collection.doc(
@@ -1086,6 +1098,23 @@ class BulkMetadataPropagate(Resource):
         return bulk_propagate_metadata()
 
 
+@ns_file.route("/backfill_entrypoints")
+class BackfillEntrypoints(Resource):
+    @ns_file.doc(
+        description=(
+            "Tags the program entry function (entry:process) of already-analysed "
+            "files from their stored raw bytes, with no Ghidra run. Chunked "
+            "self-continuing job (BACKFILL_ENTRYPOINTS)."
+        )
+    )
+    @ns_file.expect(backfill_import_tags_model)
+    def post(self):
+        """Enqueues the entry-point backfill job for a collection."""
+        from bsimvis.app.routes.file import backfill_entrypoints
+
+        return backfill_entrypoints()
+
+
 @ns_file.route("/metadata/backfill_import_tags")
 class BackfillImportTags(Resource):
     @ns_file.doc(
@@ -1279,10 +1308,12 @@ class FunctionCallGraphSimilarity(Resource):
             "pool": "Pool ID for cross-collection similarity",
             "algo": "Function similarity algorithm (default: unweighted_cosine)",
             "min_score": "Runtime minimum similarity (0-1)",
+            "unweighted": "runtime source only: count every match as 1.0 (1/true/yes)",
+            "source": "local (default, neighbors only), stored (file pair doc) or runtime (file pair re-matched at min_score)",
         }
     )
     def get(self):
-        """Greedily matches direct callers and callees at request time."""
+        """Matches direct callers and callees, locally or through the file pair's greedy match."""
         from bsimvis.app.routes.function_diff import call_graph_similarity_api
 
         return call_graph_similarity_api()
@@ -2167,6 +2198,7 @@ class ClusterList(Resource):
             "show_parents": "Also return the matched clusters' ancestors, up to the root (true/false)",
             "show_children": "Also return the matched clusters' whole descendant subtree (true/false)",
             "parent": "Return only the direct children of this cluster ID",
+            "with_medoid": "With cluster_uuid: add the most central member function (medoid, medoid_centrality) (true/false)",
         }
     )
     def get(self):
@@ -2380,6 +2412,7 @@ class BinClusterMembers(Resource):
             "axis": "Similarity axis",
             "node_type": "Node type (file/container)",
             "cluster_id": "Target cluster ID",
+            "sort": "Set to 'centrality' to rank members by centrality, highest first",
             "limit": "Max results",
             "offset": "Pagination offset",
         }
@@ -2556,6 +2589,65 @@ class BinSimDiff(Resource):
         return diff_api()
 
 
+@ns_bin_sim.route("/nway/neighbors")
+class BinSimNwayNeighbors(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "fids": "Comma-separated function ids of one N-way row (its cells)",
+            "role": "callees (default), callers, or cocallers (the other callers of the focus's callees)",
+            "depth": "How many hops to walk from the row, 1 (default) to 5; later hops are capped (8 per row, 60 nodes) and return in `levels`",
+            "scope": "code, library or all (default): only rows in this scope are expanded past the first hop",
+            "md5s": "Same file set / scope params as /nway (cluster_uuid, collection, pool, mode, ...)",
+        }
+    )
+    def get(self):
+        """Callers or callees of one N-way row, regrouped by the rows holding them, with how many files reach each."""
+        from bsimvis.app.routes.nway import get_nway_neighbors
+
+        return get_nway_neighbors()
+
+
+@ns_bin_sim.route("/nway")
+class BinSimNway(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "md5s": "Comma-separated files, each `<collection>:<md5>` or a bare md5 with `collection` (2 or more); or use cluster_uuid",
+            "batch_uuid": "Upload batch whose files are added to `md5s` (with `collection`, or searched in every collection); unknown batch -> 404",
+            "cluster_uuid": "Binary cluster (file node) to diff instead of `md5s`; with `collection` or `pool`, optional `axis`/`algo`",
+            "columns": "With cluster_uuid: auto (default), files or children (one column per child cluster + direct files)",
+            "child_presence": "children columns: share of a child's files that must hold a function for it to count as present (default 0.5)",
+            "collection": "Collection for bare md5s",
+            "pool": "Pool ID; members must come from the pool's collections",
+            "mode": "stored (default: stored pair docs) or virtual (rebuild edges as a fresh collection of these files would; always used when files span collections without a pool)",
+            "algo": "virtual mode: similarity algorithm (default: the first file's collection lock)",
+            "min_score": "virtual mode: function min_score (default: locked value)",
+            "min_features": "virtual mode: BSim feature floor (default: locked value)",
+            "min_edge": "Drop function matches below this similarity (default similarity.file_min_score)",
+            "tab": "all, core (in every file), partial (in at least k files) or unique (one file)",
+            "k": "Minimum files for the partial tab (default 2)",
+            "focus": "Comma-separated file column ids (`<collection>:<md5>`) to compare against the rest: two columns, Focus and Rest (core = both, unique = one side); must leave a file out",
+            "focus_rule": "focus: a row is in Focus when any (default) or all of the focus files hold a function; Rest uses child_presence",
+            "side": "focus only: keep rows present on the focus or rest side",
+            "scope": "code (default), library or all",
+            "column": "Only rows that have a function in this file (`<collection>:<md5>`)",
+            "q": "Search function names, addresses and tags",
+            "tags": "Comma-separated tag prefixes to keep",
+            "feat_min": "Minimum row weight",
+            "feat_max": "Maximum row weight",
+            "support_min": "Minimum share of file pairs matched inside a row (0-1)",
+            "sort_col": "span, weight, support, cohesion or name",
+            "sort_dir": "asc or desc",
+            "limit": "Page size",
+            "offset": "Pagination offset",
+        }
+    )
+    def get(self):
+        """Rows of functions shared across N files, with core/partial/unique tabs and per-tab code/library counts."""
+        from bsimvis.app.routes.nway import get_nway
+
+        return get_nway()
+
+
 @ns_bin_sim.route("/list")
 class BinSimList(Resource):
     @ns_bin_sim.doc(
@@ -2729,6 +2821,45 @@ class NoteList(Resource):
 
 
 # --- File Note Routes ---
+
+
+rename_model = api.model(
+    "FunctionRename",
+    {
+        "func_ids": fields.List(fields.String),
+        "name": fields.String(description="Empty clears the name"),
+        "owner": fields.String(example="user"),
+        "renames": fields.List(
+            fields.Raw,
+            description="Batch of {func_ids, name, owner}; replaces the above",
+        ),
+    },
+)
+
+
+@ns_notes.route("/rename")
+class FunctionRename(Resource):
+    @ns_notes.expect(rename_model)
+    def post(self):
+        """Sets or clears the analyst name of functions; shown by the N-way view."""
+        from bsimvis.app.routes.notes import rename_functions
+
+        return rename_functions()
+
+
+@ns_notes.route("/rename/suggest")
+class FunctionRenameSuggest(Resource):
+    @ns_notes.expect(
+        api.model(
+            "FunctionRenameSuggest",
+            {"func_ids": fields.List(fields.String, required=True)},
+        )
+    )
+    def post(self):
+        """Asks the LLM for a function name. Returns it without applying it."""
+        from bsimvis.app.routes.notes import suggest_function_name
+
+        return suggest_function_name()
 
 
 @ns_notes.route("/file/add")
@@ -3431,6 +3562,8 @@ class SearchList(Resource):
         params={
             "offset": {"description": "Pagination offset", "default": 0},
             "limit": {"description": "Max results", "default": 50},
+            "collection": {"description": "Only searches of this collection"},
+            "pool": {"description": "Only searches of this pool"},
         }
     )
     def get(self):

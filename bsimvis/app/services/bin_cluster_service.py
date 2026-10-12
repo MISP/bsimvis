@@ -71,6 +71,13 @@ def _store_inferred_tags(pipe, collection, member_metas_by_id, resolved):
             pipe.execute()
 
 
+def pick_medoid(centrality):
+    """Member id with the highest centrality, ties broken by id; None if empty."""
+    if not centrality:
+        return None
+    return min(centrality, key=lambda m: (-centrality[m], m))
+
+
 class BinClusterService:
     # Pair reads the incremental path spends on cohesion, split over the
     # nodes one upload dirties. Measured against kvrocks (~27k pipelined
@@ -122,6 +129,22 @@ class BinClusterService:
             for u, v, dist in zip(edge_set.src, edge_set.dst, edge_set.dist)
         }
         return [(u, v, raw_sims[(min(u, v), max(u, v))]) for u, v, _ in mst]
+
+    @staticmethod
+    def _bottlenecks(tree_rows, raw_mst):
+        """{tree node: weakest raw MST edge inside it}.
+
+        tree_rows[2i] / [2i+1] are the two child rows of raw_mst[i]'s merge
+        (see cluster_common.stabilise), and merges run strongest first, so
+        both children are already scored when their parent is.
+        """
+        out = {}
+        for i, (_u, _v, sim) in enumerate(raw_mst):
+            a, b = tree_rows[2 * i], tree_rows[2 * i + 1]
+            out[a["parent"]] = min(
+                sim, out.get(a["child"], 1.0), out.get(b["child"], 1.0)
+            )
+        return out
 
     @staticmethod
     def _hierarchical_algo_ns(algo, axis, node_type, use_snn):
@@ -339,6 +362,7 @@ class BinClusterService:
             old_meta = json.loads(old_meta_raw) if old_meta_raw else {}
             pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{stale}:meta")
             pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{stale}:direct_members")
+            pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{stale}:centrality")
             pipe.srem(f"{collection}:bin_cluster:list:{algo_ns}", str(stale))
             pipe.delete(f"{collection}:idx:file:bin_cluster_id:{str(stale).lower()}")
             old_name = old_meta.get("cluster_name")
@@ -572,6 +596,7 @@ class BinClusterService:
         # "{collection}:file:{md5}"; stored bare, downstream id parsing
         # (routes/bin_cluster.py, the context-menu frontend) mistakes the
         # md5 itself for a collection-qualified id.
+        axis_keys = self._secondary_axis_keys(collection, algo, sim_score_key)
         prefix = f"{collection}:file:"
         for label, members in cluster_members.items():
             members = [m if m.startswith(prefix) else f"{prefix}{m}" for m in members]
@@ -612,8 +637,19 @@ class BinClusterService:
             # chain A-B-C with A~C never compared is a valid cluster at any
             # threshold. So this has to be measured, not assumed; the 1.0 that
             # used to sit here reported every cluster as perfectly cohesive.
+            centrality = {}
             cohesion_score, cohesion_exact = self._node_cohesion(
-                label, members, sim_prefix, score_key, min_sim, pair_budget
+                label,
+                members,
+                sim_prefix,
+                score_key,
+                min_sim,
+                pair_budget,
+                centrality_out=centrality,
+            )
+
+            cohesion_axes, cohesion_axes_exact = self._secondary_cohesion(
+                label, members, sim_prefix, axis_keys, min_sim, pair_budget
             )
 
             set_tag_distribution_score(summary["tag_distribution"], cohesion_score)
@@ -642,6 +678,10 @@ class BinClusterService:
                 "cluster_name": default_name,
                 "cohesion_score": float(cohesion_score),
                 "cohesion_exact": bool(cohesion_exact),
+                "medoid": pick_medoid(centrality),
+                "centrality_exact": bool(cohesion_exact),
+                "cohesion_axes": cohesion_axes,
+                "cohesion_axes_exact": bool(cohesion_axes_exact),
                 "inferred_tags": gated_inferred_tags,
                 "avg_stability": 1.0,
                 "cluster_stability": 1.0,
@@ -663,6 +703,7 @@ class BinClusterService:
             pipe.set(
                 f"{collection}:bin_cluster:{algo_ns}:{label}:meta", json.dumps(meta)
             )
+            self._write_centrality(pipe, collection, algo_ns, label, centrality)
 
             # Indexes
             bucket_key = (
@@ -751,8 +792,58 @@ class BinClusterService:
 
         return birth_lambdas, death_lambdas
 
-    def _node_cohesion(self, label, members, prefix, score_key, min_sim, max_pairs):
+    _SECONDARY_AXES = ("overall", "code", "library", "content")
+
+    def _secondary_axis_keys(self, collection, algo, sim_score_key):
+        """{axis: score zset key} for every non-primary axis that has pairs."""
+        keys = {}
+        for ax in self._SECONDARY_AXES:
+            suffix = "" if ax == "overall" else f"_{ax}"
+            key = f"{collection}:bin_sim:score{suffix}:{algo}"
+            if key != sim_score_key and self.r.exists(key):
+                keys[ax] = key
+        return keys
+
+    def _secondary_cohesion(self, label, members, prefix, axis_keys, min_sim, budget):
+        """Cohesion of the same members on each secondary axis.
+
+        Returns ({axis: score}, exact). The pair budget is split across axes
+        so the total reads stay flat.
+        """
+        if not axis_keys:
+            return {}, True
+        per_axis = max(self._COHESION_MIN_PAIRS, budget // len(axis_keys))
+        out, exact = {}, True
+        for ax, key in axis_keys.items():
+            out[ax], ex = self._node_cohesion(
+                label, members, prefix, key, min_sim, per_axis
+            )
+            exact = exact and ex
+        return out, exact
+
+    @staticmethod
+    def _write_centrality(pipe, collection, algo_ns, label, centrality):
+        """Replace the node's member -> centrality hash (read by the member list)."""
+        key = f"{collection}:bin_cluster:{algo_ns}:{label}:centrality"
+        pipe.delete(key)
+        if centrality:
+            pipe.hset(key, mapping={m: round(v, 4) for m, v in centrality.items()})
+
+    def _node_cohesion(
+        self,
+        label,
+        members,
+        prefix,
+        score_key,
+        min_sim,
+        max_pairs,
+        centrality_out=None,
+    ):
         """Mean similarity over the pairs inside one cluster.
+
+        `centrality_out`, when given, receives {member: mean score to the other
+        members} off the very pairs read here, so it costs no extra reads and
+        follows the same sample as the cohesion number.
 
         Cohesion is defined over all n(n-1)/2 pairs, with an unstored pair
         counting as 0 -- the same convention the full rebuild gets from its
@@ -776,14 +867,16 @@ class BinClusterService:
 
         n = len(members)
         if n <= 1:
+            if centrality_out is not None:
+                centrality_out.update({m: 1.0 for m in members})
             return 1.0, True
 
         # The pair key's side is `md5` in a collection but `coll:md5` in a
         # pool, both ordered as (coll, md5) tuples by their writers.
-        md5s = sorted(
-            (m.rsplit(":file:", 1)[-1] for m in members),
-            key=lambda s: tuple(s.split(":")),
+        order = sorted(
+            members, key=lambda m: tuple(m.rsplit(":file:", 1)[-1].split(":"))
         )
+        md5s = [m.rsplit(":file:", 1)[-1] for m in order]
         total_pairs = n * (n - 1) // 2
         exact = total_pairs <= max_pairs
         if exact:
@@ -804,14 +897,23 @@ class BinClusterService:
         # ZSCORE per pair, no second probe for the reversed spelling.
         r = self.r
         total = 0.0
+        sums, counts = [0.0] * n, [0] * n
         for start in range(0, len(pairs), 1000):
             chunk = pairs[start : start + 1000]
             pipe = r.pipeline(transaction=False)
             for i, j in chunk:
                 pipe.zscore(score_key, f"{prefix}{md5s[i]}::{md5s[j]}")
-            for score in pipe.execute():
+            for (i, j), score in zip(chunk, pipe.execute()):
+                counts[i] += 1
+                counts[j] += 1
                 if score is not None and float(score) >= min_sim:
                     total += float(score)
+                    sums[i] += float(score)
+                    sums[j] += float(score)
+        if centrality_out is not None:
+            centrality_out.update(
+                {m: sums[k] / counts[k] for k, m in enumerate(order) if counts[k]}
+            )
         return total / len(pairs), exact
 
     def _incremental_cluster_hierarchical(
@@ -972,7 +1074,8 @@ class BinClusterService:
                     node_meta[c] = json.loads(raw) if raw else {}
 
             cohesion = {
-                c: meta.get("cohesion_score", 1.0) for c, meta in node_meta.items()
+                c: meta.get("cohesion_mean", meta.get("cohesion_score", 1.0))
+                for c, meta in node_meta.items()
             }
             # Every dirty node is recomputed, and `dirty` holds the whole
             # root-path of every new leaf, so the node count grows with the
@@ -980,6 +1083,7 @@ class BinClusterService:
             # read budget over them keeps an upload's cost flat instead of
             # letting it track corpus size.
             cohesion_exact = {}
+            centrality = {}
             budget = max(
                 self._COHESION_MIN_PAIRS,
                 min(
@@ -988,8 +1092,15 @@ class BinClusterService:
                 ),
             )
             for c in dirty:
+                centrality[c] = {}
                 cohesion[c], cohesion_exact[c] = self._node_cohesion(
-                    c, node_members[c], prefix, sim_score_key, min_sim, budget
+                    c,
+                    node_members[c],
+                    prefix,
+                    sim_score_key,
+                    min_sim,
+                    budget,
+                    centrality_out=centrality[c],
                 )
 
             uuids = {
@@ -997,6 +1108,7 @@ class BinClusterService:
                 for c in node_members
             }
             birth_lambdas, _ = self._tree_lambdas(tree_df)
+            bottlenecks = self._bottlenecks(tree_rows, state["mst"])
             results.append(
                 (
                     node_type,
@@ -1013,6 +1125,8 @@ class BinClusterService:
                     affected_fids,
                     retired,
                     algo_ns,
+                    centrality,
+                    bottlenecks,
                 )
             )
 
@@ -1034,6 +1148,8 @@ class BinClusterService:
             affected_fids,
             retired,
             algo_ns,
+            centrality,
+            bottlenecks,
         ) in results:
             persisted = self._persist_hierarchical_binary_clusters(
                 collection,
@@ -1053,6 +1169,8 @@ class BinClusterService:
                 label_to_uuid=uuids,
                 cohesion_by_label=cohesion,
                 cohesion_exact_by_label=cohesion_exact,
+                centrality_by_label=centrality,
+                bottleneck_by_label=bottlenecks,
                 only_nodes=dirty,
                 only_fids=affected_fids,
                 retired_nodes=retired,
@@ -1188,6 +1306,7 @@ class BinClusterService:
                 job_service.add_log(job_id, msg)
 
             birth_lambdas, _ = self._tree_lambdas(tree_df)
+            bottlenecks = self._bottlenecks(tree_rows, hier_state["mst"])
 
             persisted = self._persist_hierarchical_binary_clusters(
                 collection,
@@ -1206,6 +1325,7 @@ class BinClusterService:
                 node_type=node_type,
                 algo=algo,
                 sim_score_key=sim_score_key,
+                bottleneck_by_label=bottlenecks,
             )
             if persisted is False:
                 return False
@@ -1597,6 +1717,8 @@ class BinClusterService:
         label_to_uuid=None,
         cohesion_by_label=None,
         cohesion_exact_by_label=None,
+        centrality_by_label=None,
+        bottleneck_by_label=None,
         only_nodes=None,
         only_fids=None,
         retired_nodes=(),
@@ -1634,6 +1756,7 @@ class BinClusterService:
         )
 
         label_key = (lambda label: f"c{label}") if node_type == "container" else str
+        axis_keys = self._secondary_axis_keys(collection, algo, sim_score_key)
 
         # 4. Extract Condensed Tree for UI
         tree_json = tree_df.to_json(orient="records")
@@ -1784,6 +1907,7 @@ class BinClusterService:
                         pipe.execute()
                 pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:members")
                 pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:direct_members")
+                pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:centrality")
                 pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:meta")
             pipe.execute()
 
@@ -1937,23 +2061,44 @@ class BinClusterService:
             # full rebuilds use the complete edge-set adjacency, which is
             # always exact.
             cohesion_exact = True
+            centrality = {}
             if cohesion_by_label is not None:
                 cohesion_score = cohesion_by_label.get(label, 1.0)
                 if cohesion_exact_by_label is not None:
                     cohesion_exact = cohesion_exact_by_label.get(label, True)
+                centrality = (centrality_by_label or {}).get(label) or {}
             elif len(members) > 1:
                 member_indices = [id_to_idx[file_id] for file_id in members]
                 n_members = len(members)
 
                 total_sim = adj_sim.cohesion_sum(member_indices)
                 cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
+                centrality = {
+                    m: v / (n_members - 1)
+                    for m, v in zip(members, adj_sim.member_sums(member_indices))
+                }
             else:
                 cohesion_score = 1.0
+                centrality = {m: 1.0 for m in members}
+            cohesion_mean = cohesion_score
+            if bottleneck_by_label is not None:
+                cohesion_score = bottleneck_by_label.get(label, 1.0)
             set_tag_distribution_score(summary["tag_distribution"], cohesion_score)
             gated_inferred_tags = inferred_tag_values(
                 summary, cohesion_score, inferred_min_cohesion, inferred_min_coverage
             )
             gated_by_label[label] = gated_inferred_tags
+            cohesion_axes, cohesion_axes_exact = self._secondary_cohesion(
+                label,
+                members,
+                f"{collection}:bin_sim:{algo}:",
+                axis_keys,
+                0.0,
+                max(
+                    self._COHESION_MIN_PAIRS,
+                    self._COHESION_BUDGET // max(1, len(write_nodes)),
+                ),
+            )
 
             sample_members = []
             for file_id in members[:5]:
@@ -1980,9 +2125,16 @@ class BinClusterService:
                 "cluster_uuid": label_to_uuid[label],
                 "cluster_name": default_name,
                 "cohesion_score": float(cohesion_score),
-                # False when cohesion came off a pair sample rather than every
+                # Mean over all pairs (unstored = 0): density, kept off the
+                # headline because chains and mixed families always score low.
+                "cohesion_mean": float(cohesion_mean),
+                # False when the mean came off a pair sample rather than every
                 # pair -- see BinClusterService._node_cohesion.
                 "cohesion_exact": bool(cohesion_exact),
+                "medoid": pick_medoid(centrality),
+                "centrality_exact": bool(cohesion_exact),
+                "cohesion_axes": cohesion_axes,
+                "cohesion_axes_exact": bool(cohesion_axes_exact),
                 "avg_stability": float(stabilities.get(label, 0.0)),
                 "cluster_stability": float(stabilities.get(label, 0.0)),
                 "member_count": len(members),
@@ -2008,6 +2160,7 @@ class BinClusterService:
             pipe.set(
                 f"{collection}:bin_cluster:{algo_ns}:{label}:meta", json.dumps(meta)
             )
+            self._write_centrality(pipe, collection, algo_ns, label, centrality)
 
             if "bin_cluster_name" in file_tag_fields:
                 bucket_key = (
@@ -2174,6 +2327,7 @@ class BinClusterService:
                         pipe.execute()
                 r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:members")
                 r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:direct_members")
+                r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:centrality")
                 r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:meta")
 
                 if job_service and job_id and total_clusters and i % 10 == 0:
@@ -2315,6 +2469,13 @@ def _demo():
     assert exact is True, exact
     assert abs(coh - 2.0 / 3.0) < 1e-9, coh
 
+    # Same chain: the middle file is the medoid (mean 1.0 vs 0.5 at the ends).
+    cen = {}
+    svc._node_cohesion("n1", members, "p:", "sk", 0.0, cap, centrality_out=cen)
+    assert cen == {"c:file:m1": 0.5, "c:file:m2": 1.0, "c:file:m3": 0.5}, cen
+    assert pick_medoid(cen) == "c:file:m2"
+    assert pick_medoid({"b": 0.5, "a": 0.5}) == "a" and pick_medoid({}) is None
+
     # A cluster with no stored pair at all scores 0, not 1.0.
     coh, _ = svc_for({})._node_cohesion("n2", members, "p:", "sk", 0.0, cap)
     assert coh == 0.0, coh
@@ -2345,6 +2506,43 @@ def _demo():
     members = ["global:pool:P:file:a1:m1", "global:pool:P:file:a:m2"]
     coh, _ = pool._node_cohesion("n4", members, "p:", "sk", 0.0, cap)
     assert coh == 0.5, coh
+
+    # Secondary axes: one value per axis key, none when no other axis has pairs.
+    two = svc_for({"p:m1::m2": 1.0, "p:m2::m3": 1.0})
+    members = ["c:file:m1", "c:file:m2", "c:file:m3"]
+    axes, exact = two._secondary_cohesion(
+        "n5", members, "p:", {"library": "k1", "content": "k2"}, 0.0, cap
+    )
+    assert set(axes) == {"library", "content"} and exact, axes
+    assert all(abs(v - 2.0 / 3.0) < 1e-9 for v in axes.values()), axes
+    assert two._secondary_cohesion("n5", members, "p:", {}, 0.0, cap) == ({}, True)
+
+    # Adjacency path: per-member sums add back up to the cohesion sum, on both
+    # the pairwise (<50) and neighbour-sweep (>=50) branches.
+    import numpy as np
+    from types import SimpleNamespace
+
+    for n in (4, 60):
+        src = np.array([i for i in range(n - 1)])
+        edges = SimpleNamespace(src=src, dst=src + 1, dist=np.full(n - 1, 0.5))
+        adj = sim_edges.SimAdjacency(edges, n)
+        idx = list(range(n))
+        sums = adj.member_sums(idx)
+        assert abs(sum(sums) / 2.0 - adj.cohesion_sum(idx)) < 1e-4, n
+        assert abs(sums[0] - 0.5) < 1e-6 and abs(sums[1] - 1.0) < 1e-6, sums[:2]
+
+    # Bottleneck: a tight pair stays 0.9, one loose member drags the parent to 0.2.
+    from bsimvis.app.services.cluster_threshold import build_single_linkage_tree
+
+    edges = SimpleNamespace(
+        src=np.array([0, 1]),
+        dst=np.array([1, 2]),
+        dist=np.array([0.1, 0.8]),
+        idx_to_id=["a", "b", "c"],
+    )
+    rows, _root, _n, mst = build_single_linkage_tree(edges)
+    bn = BinClusterService._bottlenecks(rows, mst)
+    assert sorted(round(v, 3) for v in bn.values()) == [0.2, 0.9], bn
 
     print("incremental cohesion demo OK")
 

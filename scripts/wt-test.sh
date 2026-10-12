@@ -19,6 +19,9 @@ export WT_ENV_FILE=.env.wttest
 
 "$WT_ROOT/scripts/wt-setup.sh" || exit 1
 
+# Tests that spawn their own datastore (the pipeline matrix) need bin/redis-server.
+export PATH="$WT_ROOT/bin:$PATH"
+
 # shellcheck disable=SC1091
 set -a; . "./$WT_ENV_FILE"; set +a
 APP_PORT=${APP_PORT:-5100}
@@ -34,6 +37,9 @@ uv run python scripts/test_default_bin_cluster_name.py || rc=1
 uv run python scripts/test_cluster_meta_freq.py || rc=1
 uv run python scripts/test_bsim_weights.py || rc=1
 uv run python scripts/test_bin_sim_discovery.py || rc=1
+uv run python scripts/test_index_features_batching.py || rc=1
+uv run python scripts/test_enrich_resumable.py || rc=1
+uv run python scripts/test_enrich_stats_parity.py || rc=1
 
 echo "=== algorithm pipeline matrix (disposable Redis) ==="
 uv run python scripts/test_algo_pipeline_matrix.py || rc=1

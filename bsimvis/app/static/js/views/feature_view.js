@@ -307,10 +307,10 @@ window.FeatureView = {
                 const parts = funcId.split(':');
                 const addr = parts.pop();
                 const md5 = parts[2];
-                const funcName = (sourceData && sourceData.meta) ? sourceData.meta['function_name'] : addr;
+                const funcName = (sourceData && sourceData.meta) ? fnName(sourceData.meta) : addr;
 
                 const originHtml = `
-                    <div style="font-weight:bold; color:var(--accent); font-size:1rem; margin-bottom:4px;">${funcName}</div>
+                    <div style="font-weight:bold; color:var(--accent); font-size:1rem; margin-bottom:4px;">${escapeHtml(funcName)}${sourceData && sourceData.meta ? nameBadge(sourceData.meta) : ''}</div>
                     <div class="dim" style="font-size:0.7rem;">Address: ${addr}</div>
                     <div class="dim" style="font-size:0.7rem;">Binary: ${escapeHtml(md5)}</div>
                     <div class="dim" style="font-size:0.7rem; margin-top:2px;">Lines: <span style="color:var(--accent);">${(occ['line_idx'] || []).map(l => l + 1).join(', ')}</span></div>

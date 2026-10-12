@@ -312,7 +312,7 @@ def _search_groups(q, limit, scope):
             search_functions,
             "functions",
             lambda f: {
-                "title": f.get("function_name") or f.get("name"),
+                "title": f.get("user_name") or f.get("function_name") or f.get("name"),
                 "subtitle": f"{f['_collection']} · {f.get('file_name', '')}",
                 "url": (
                     f"/collections/{quote(f['_collection'])}/files/{f.get('file_md5')}"

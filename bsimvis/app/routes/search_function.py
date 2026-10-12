@@ -368,6 +368,9 @@ def search_functions():
 
                     if val:
                         paths = _paths_for_source(src_lvl, field)
+                        if paths and target_field == "function_name":
+                            # analyst names are searchable by the same box
+                            paths = paths + _paths_for_source("func", "user_name")
                         if paths:
                             filter_configs.append((val, target_field, paths))
 

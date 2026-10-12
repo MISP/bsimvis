@@ -90,6 +90,7 @@ NAMESPACE_POLICY = {
         aggregate=True,
         writers=_ANALYSIS,
     ),
+    "entry": Policy("origin", vocabulary=True, writers=_ANALYSIS),
     "severity": Policy("severity", vocabulary=True, aggregate=True, writers=_ANALYSIS),
     "category": Policy("category", vocabulary=True, aggregate=True, writers=_ANALYSIS),
     "capa": Policy("capa", vocabulary=True, aggregate=True, writers=_ANALYSIS),

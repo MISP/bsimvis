@@ -199,20 +199,6 @@ let simSearchRequested = false; // Set to true when user explicitly triggers a s
 let currentFocusId = null;
 let preservedSelection = { start: 0, end: 0 };
 
-function toggleSidebar() {
-    const body = document.body;
-    const isCollapsed = body.classList.toggle('sidebar-collapsed');
-    localStorage.setItem('sidebarCollapsed', isCollapsed);
-    const btn = document.getElementById('sidebar-toggle');
-    btn.innerHTML = isCollapsed ? '⟩' : '⟨';
-
-    // Trigger window resize for D3 plots
-    setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
-
-    // Update header buttons visibility immediately
-    if (window.updateJobStatusIcon) window.updateJobStatusIcon();
-}
-
 function toggleHeader() {
     const body = document.body;
     const isCollapsed = body.classList.toggle('header-collapsed');
@@ -517,6 +503,7 @@ window.ModuleLoader = {
             'search-detail': window.SearchView,
             'scan': window.ScanView,
             'scan-detail': window.ScanView,
+            'nway': window.NwayView,
             'bin_sim': {
                 init: (p) => {
                     if (window.renderBinarySimilarityView) {
@@ -637,15 +624,35 @@ function addNotIgnoreFilters() {
     if (added > 0) triggerTagSearch();
 }
 
+// The search box joins the filter-card row when the view has one, so it does
+// not cost a line of its own. refreshData parks it back in the header first,
+// because the card row is rebuilt with innerHTML.
+function placeSearchArea(parkOnly) {
+    const sa = document.getElementById('search-area');
+    if (!sa) return;
+    const home = document.querySelector('.header-top');
+    if (home && sa.parentElement !== home) home.appendChild(sa);
+    if (parkOnly) return;
+    const row = document.querySelector('#grid-header .home-card')?.parentElement;
+    if (row) {
+        row.classList.add('has-search-slot');
+        row.appendChild(sa);
+    }
+}
+
 async function refreshData(appendArg = false, force = false, skipHeader = false) {
+    placeSearchArea(true);
     const myGen = ++_refreshGeneration;
     if (window.updateJobStatusIcon) window.updateJobStatusIcon();
     const append = (appendArg === true);
+    // A filter input's blur (from clicking a link) arms a debounced search
+    // that would navigate back after the new view opens.
+    if (!append && filterDebounceTimer) clearTimeout(filterDebounceTimer);
     const { viewKey, collection, pool, params } = getRoutingState();
 
 
     // Check if we should load a module view
-    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'file_strings', 'pool-detail', 'collection-detail', 'search', 'search-detail', 'scan', 'scan-detail', 'cluster-detail', 'bin-cluster-detail'].includes(viewKey)) {
+    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'file_strings', 'pool-detail', 'collection-detail', 'search', 'search-detail', 'scan', 'scan-detail', 'nway', 'cluster-detail', 'bin-cluster-detail'].includes(viewKey)) {
         const stateParams = Object.fromEntries(params);
         stateParams.collection = collection;
         stateParams.pool = pool;
@@ -740,7 +747,9 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
     if (currentUrlPath !== lastPathName || !append) {
         if (!isSilent) {
-            currentOffset = 0;
+            // Page mode opens a shared link's `offset`; every later navigation is a new filter state.
+            const urlOffset = Number(new URLSearchParams(window.location.search).get('offset')) || 0;
+            currentOffset = (window.Paging.mode() === 'page' && lastPathName === '') ? Math.max(0, urlOffset) : 0;
             isEndOfResults = false;
             // Only clear if switching view types, otherwise just show loader
             if (viewKey !== lastViewPath) {
@@ -979,7 +988,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         const gridHeader = document.getElementById('grid-header');
         if (gridHeader) gridHeader.innerHTML = '';
     }
-
+    placeSearchArea();
 
     if (viewKey === 'clusters' || viewKey === 'bin-clusters') {
         const viewMode = params.get('view') || 'table';
@@ -1023,7 +1032,8 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
     // Standard pagination for all search routes
     const countLimit = parseInt(params.get('limit')) || (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
-    if (isSilent && currentOffset > 0) {
+    const paged = window.Paging.mode() === 'page';
+    if (isSilent && currentOffset > 0 && !paged) {
         params.set('offset', 0);
         params.set('limit', currentOffset);
     } else {
@@ -1140,25 +1150,28 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
         let count = items.length;
 
+        // Page mode: currentOffset is the first row of the page shown, not a running count.
         if (append) {
             currentOffset += count;
-        } else {
+        } else if (!paged) {
             currentOffset = count;
         }
-        isEndOfResults = currentOffset >= total;
+        isEndOfResults = (paged ? currentOffset + count : currentOffset) >= total;
 
 
         // Update total display with "Shown / Total" format
         if (totalEl) {
             totalEl.style.display = 'inline-block';
-            totalEl.innerText = `${currentOffset.toLocaleString()} / ${total.toLocaleString()}`;
+            const shownTo = paged ? currentOffset + count : currentOffset;
+            totalEl.innerText = `${paged && total ? (currentOffset + 1).toLocaleString() + '\u2013' : ''}${shownTo.toLocaleString()} / ${total.toLocaleString()}`;
         }
         const footerEl = document.getElementById('table-footer');
         if (footerEl) footerEl.style.display = 'flex';
 
         updateFooterMeta(params, data, Math.round(performance.now() - fetchStartedAt));
 
-        renderPagination(viewKey);
+        renderPagination(viewKey, total, count, countLimit);
+        syncOffsetUrl(paged);
     } catch (err) {
         console.error(err);
     } finally {
@@ -2794,10 +2807,51 @@ function handleTagAdd(event, columnId) {
     }
 }
 
-function renderPagination(path) {
+let _pagingObserver = null;
+
+function renderPagination(path, total, count, size) {
     const container = document.getElementById('pagination-container');
+    if (_pagingObserver) _pagingObserver.disconnect();
+    // Page mode: the pager lives in the pinned table footer, next to the "N-M / total" badge.
+    const pager = document.getElementById('view-pager');
+    if (pager) pager.innerHTML = '';
+    if (window.Paging.mode() === 'page') {
+        container.innerHTML = '';
+        pageSize = size;
+        pageTotal = total;
+        if (pager && total > size) {
+            pager.innerHTML = window.Paging.controls({ offset: currentOffset, total, size });
+            window.Paging.bind(pager, () => ({ offset: currentOffset, total: pageTotal, size: pageSize }), gotoOffset);
+        }
+        return;
+    }
     container.innerHTML = (!isEndOfResults) ?
         `<button class="btn-primary" onclick="refreshData(true)">Load More Results</button>` : '';
+    // Scroll mode: the button also fires by itself when it comes into view.
+    if (!isEndOfResults) _pagingObserver = window.Paging.observe(container, () => refreshData(true));
+}
+
+let pageSize = DEFAULT_PAGE_LIMIT;
+let pageTotal = 0;
+
+function gotoOffset(offset) {
+    currentOffset = offset;
+    document.getElementById('table-body').style.opacity = '0.5';
+    const wrap = document.getElementById('table-body-wrap');
+    if (wrap) wrap.scrollTop = 0;
+    refreshData();
+}
+
+// Only page mode puts the offset in the URL, so a page can be shared. The
+// path is remembered so this edit isn't mistaken for a navigation.
+function syncOffsetUrl(paged) {
+    const u = new URL(window.location.href);
+    if (paged && currentOffset) u.searchParams.set('offset', currentOffset);
+    else u.searchParams.delete('offset');
+    const next = u.pathname + u.search;
+    if (next === window.location.pathname + window.location.search) return;
+    history.replaceState(history.state, '', next + u.hash);
+    lastPathName = next;
 }
 
 function copyToClipboard(text, btn) {
@@ -3397,7 +3451,8 @@ const UIParams = {
     colorByTag: localStorage.getItem('colorByTag') === 'true',
     includeHeaders: localStorage.getItem('includeHeaders') === 'true',
     useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? false : localStorage.getItem('useFloatingWindows') === 'true',
-    lightTheme: localStorage.getItem('lightTheme') === 'true'
+    lightTheme: localStorage.getItem('lightTheme') === 'true',
+    pagingMode: localStorage.getItem('pagingMode') === 'scroll' ? 'scroll' : 'page'
 };
 window.UIParams = UIParams;
 
@@ -3424,6 +3479,8 @@ function updateUIParams() {
     localStorage.setItem('includeHeaders', UIParams.includeHeaders);
     localStorage.setItem('useFloatingWindows', UIParams.useFloatingWindows);
     localStorage.setItem('lightTheme', UIParams.lightTheme);
+    UIParams.pagingMode = document.getElementById('param-paging-mode').value;
+    localStorage.setItem('pagingMode', UIParams.pagingMode);
 
     // ponytail: light theme toggle action
     if (UIParams.lightTheme) {
@@ -3467,6 +3524,8 @@ function loadUIParams() {
     if (elIncludeHeaders) elIncludeHeaders.checked = UIParams.includeHeaders;
     if (elFloatingWindows) elFloatingWindows.checked = UIParams.useFloatingWindows;
     if (elLightTheme) elLightTheme.checked = UIParams.lightTheme;
+    const elPaging = document.getElementById('param-paging-mode');
+    if (elPaging) elPaging.value = UIParams.pagingMode;
 }
 
 window.addEventListener('load', () => {
@@ -4351,11 +4410,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // [REMOVED: Now handled in previews.js to prevent double-scroll]
 
     // Reducible Panels Initialization
-    if (localStorage.getItem('sidebarCollapsed') === 'true') {
-        document.body.classList.add('sidebar-collapsed');
-        const btn = document.getElementById('sidebar-toggle');
-        if (btn) btn.innerHTML = '⟩';
-    }
     if (localStorage.getItem('headerCollapsed') === 'true') {
         document.body.classList.add('header-collapsed');
         const btn = document.getElementById('collapse-header-btn');

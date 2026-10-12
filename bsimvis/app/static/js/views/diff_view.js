@@ -59,6 +59,8 @@ window.DiffView = {
         window.setHighlight = (hashString, state, target) => this.setHighlight(hashString, state, target);
         window.setChunkHighlight = (chunkId, state, target) => this.setChunkHighlight(chunkId, state, target);
         window.switchDiffMode = (mode) => this.switchDiffMode(mode);
+        // Read by notes.js so the AI agent knows which pair is on screen.
+        window.diffFocusContext = () => this.focusContext();
 
         // Build HTML Layout
         this.container.innerHTML = `
@@ -406,8 +408,8 @@ window.DiffView = {
                 const collB = p.collection_b.split(':')[0];
                 Breadcrumbs.setFilename(p.md5_a, data.meta1.file_name || 'File');
                 Breadcrumbs.setFilename(p.md5_b, data.meta2.file_name || 'File');
-                Breadcrumbs.setFuncName(collA, p.md5_a, p.addr_a, data.meta1.function_name || 'Function');
-                Breadcrumbs.setFuncName(collB, p.md5_b, p.addr_b, data.meta2.function_name || 'Function');
+                Breadcrumbs.setFuncName(collA, p.md5_a, p.addr_a, fnName(data.meta1) || 'Function');
+                Breadcrumbs.setFuncName(collB, p.md5_b, p.addr_b, fnName(data.meta2) || 'Function');
                 Breadcrumbs.refresh();
             }
 
@@ -443,7 +445,7 @@ window.DiffView = {
                 if (tokenTarget) {
                     const calledFuncId = tokenTarget.getAttribute('data-called-func-id');
                     if (calledFuncId) {
-                        this.navigateToFunction(calledFuncId, event);
+                        this.openCalledPair(calledFuncId, event);
                         return;
                     }
                     if (tokenTarget.classList.contains('feature-highlight')) {
@@ -687,7 +689,7 @@ window.DiffView = {
                     if (els.funcCallToken) {
                         const calledFuncId = els.funcCallToken.getAttribute('data-called-func-id');
                         if (calledFuncId) {
-                            this.navigateToFunction(calledFuncId, e);
+                            this.openCalledPair(calledFuncId, e);
                             return;
                         }
                     }
@@ -905,16 +907,20 @@ window.DiffView = {
                     </div>`, x, y);
                 } else if (calledFuncId && !isExternal) {
                     const fakeEvent = { clientX: x, clientY: y, target: funcCallToken, currentTarget: funcCallToken };
-                    if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
-                        window.parent.showCodePreviewFromIframe(window.name, calledFuncId, targetName, fakeEvent);
-                    } else if (typeof window.showCodePreview === 'function') {
-                        window.showCodePreview(calledFuncId, targetName, null, null, null, fakeEvent);
-                    }
+                    this.previewCalledPair(calledFuncId, targetName, fakeEvent).then(handled => {
+                        if (handled) return;
+                        if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
+                            window.parent.showCodePreviewFromIframe(window.name, calledFuncId, targetName, fakeEvent);
+                        } else if (typeof window.showCodePreview === 'function') {
+                            window.showCodePreview(calledFuncId, targetName, null, null, null, fakeEvent);
+                        }
+                    });
                 }
             } else {
                 if (calledFuncId && isExternal) {
                     this.hideTooltip();
                 } else if (calledFuncId && !isExternal) {
+                    this.hideCalledPreview(event);
                     if (window.parent && window.parent !== window && typeof window.parent.hideCodePreview === 'function') {
                         window.parent.hideCodePreview();
                     } else if (typeof window.hideCodePreview === 'function') {
@@ -1082,6 +1088,7 @@ window.DiffView = {
             const cardHtml = window.renderFunctionMetadata(null, m, fullId, {
                 showDiffBtn: true,
                 showCodeLink: true,
+                relationNav: 'DiffView',
                 side: isLeft ? 'l' : 'r',
                 detailId: `meta-more-${isLeft ? 'l' : 'r'}`,
                 detailsToggleFn: 'toggleBothDetail()',
@@ -1244,7 +1251,7 @@ window.DiffView = {
             (res.functions || []).forEach(f => {
                 const opt = document.createElement('option');
                 opt.value = f['entrypoint_address'];
-                opt.innerText = `${f['function_name']} (${f['entrypoint_address']})`;
+                opt.innerText = `${fnName(f)} (${f['entrypoint_address']})`;
                 funcSel.appendChild(opt);
             });
             funcSel.disabled = false;
@@ -1289,6 +1296,14 @@ window.DiffView = {
         }
     },
 
+    /** One line telling the AI agent which function pair the diff is showing. */
+    focusContext() {
+        const p = this._getCurrentP() || this._parsePathUrl();
+        if (!p || !p.addr_a || !p.addr_b) return null;
+        const id = (c, m, a) => `${c}:func:${m}:${a}`;
+        return `Analyst is viewing a function diff. Side A is ${id(p.collection_a, p.md5_a, p.addr_a)}; side B is ${id(p.collection_b, p.md5_b, p.addr_b)}. Use your function tools on both ids; assume the question is about how these two functions differ unless stated otherwise.`;
+    },
+
     switchDiffMode(mode) {
         const codeBtn = document.getElementById('btn-diff-mode-code');
         const graphBtn = document.getElementById('btn-diff-mode-graph');
@@ -1306,24 +1321,116 @@ window.DiffView = {
         if (mode === 'similarity') this.loadCallGraphSimilarity();
     },
 
-    async loadCallGraphSimilarity(minScore = 0.5, algo = this._callSimAlgo || 'unweighted_cosine') {
+    _callSimPairKey(p) {
+        return `${p.collection_a}${p.md5_a}${p.addr_a}${p.collection_b}${p.md5_b}${p.addr_b}`;
+    },
+
+    // File-level runtime greedy settings arrive in the URL (see matchCarryQuery).
+    _syncCallSimFromUrl() {
+        const q = new URLSearchParams(window.location.search);
+        if (q.get('match') !== 'runtime') return;
+        this._callSimSource = 'runtime';
+        if (q.has('match_min')) this._callSimMin = Number(q.get('match_min'));
+        if (q.has('match_algo')) this._callSimAlgo = q.get('match_algo');
+        this._callSimUnweighted = q.has('match_unweighted') ? q.get('match_unweighted') : null;
+    },
+
+    // Keep the URL in step with the selector so the next clicked diff inherits it.
+    _writeMatchUrl() {
+        try {
+            const u = new URL(window.location.href);
+            for (const k of ['match', 'match_min', 'match_algo', 'match_unweighted']) u.searchParams.delete(k);
+            if (this._callSimSource === 'runtime') {
+                u.searchParams.set('match', 'runtime');
+                u.searchParams.set('match_min', this._callSimMin ?? 0.5);
+                u.searchParams.set('match_algo', this._callSimAlgo || 'unweighted_cosine');
+                if (this._callSimUnweighted != null) u.searchParams.set('match_unweighted', this._callSimUnweighted);
+            }
+            window.history.replaceState(window.history.state, '', u);
+        } catch (err) { /* the URL is a convenience, matching still works without it */ }
+    },
+
+    // Partner row of a called function in the current pair, null for NO MATCH,
+    // undefined when this is not a pair diff or the function is external.
+    async _calledHit(funcId) {
+        const p = this._getCurrentP() || this._parsePathUrl();
+        if (!p || !p.addr_a || !p.addr_b || funcId.startsWith('ext:')) return undefined;
+        if (this._callSimKey !== this._callSimPairKey(p)) {
+            this._callSimLoading = this._callSimLoading || this.loadCallGraphSimilarity(this._callSimMin ?? 0.5, undefined, false).finally(() => { this._callSimLoading = null; });
+            await this._callSimLoading;
+        }
+        const data = this._callSimData;
+        if (!data) return undefined;
+        return ['callers', 'callees'].flatMap(r => data[r].matched).find(m => m.func_a.id === funcId || m.func_b.id === funcId) || null;
+    },
+
+    // Click on a called function: open the diff of its partner on the other side.
+    async openCalledPair(funcId, e) {
+        const hit = await this._calledHit(funcId);
+        if (hit === undefined) return this.navigateToFunction(funcId, e);
+        if (hit && window.buildDiffUrl) {
+            Nav.openPath(buildDiffUrl(hit.func_a.id, hit.func_b.id), e, { title: `Diff: ${hit.func_a.name || hit.func_a.id} vs ${hit.func_b.name || hit.func_b.id}`, type: 'diff' });
+        } else if (window.showToast) {
+            window.showToast(`NO MATCH (${this._callSimSource}) -- try another match source in the Similarity tab`, 'info');
+        }
+    },
+
+    // Hover on a called function: diff preview of the matched pair, or a NO MATCH tooltip.
+    // Returns false when this is not a pair diff, so the caller falls back to the code preview.
+    async previewCalledPair(funcId, name, event) {
+        const token = this._previewToken = (this._previewToken || 0) + 1;
+        const hit = await this._calledHit(funcId);
+        if (hit === undefined) return false;
+        if (token !== this._previewToken) return true; // pointer already left or moved on
+        const pos = { clientX: event.clientX, clientY: event.clientY, target: event.target, currentTarget: event.currentTarget };
+        if (hit) {
+            const show = window.showDiffPreview || (window.parent && window.parent.showDiffPreview);
+            if (show) show(hit.func_a.id, hit.func_a.name || '', hit.func_b.id, hit.func_b.name || '', Number(hit.similarity) || 0, pos);
+        } else {
+            this.showTooltip(`<span style="color:#f92672; font-weight:600;">NO MATCH</span> <span class="dim">${escapeHtml(name || funcId)} (${escapeHtml(this._callSimSource || 'stored')})</span>`, pos.clientX, pos.clientY);
+        }
+        return true;
+    },
+
+    hideCalledPreview(event) {
+        this._previewToken = (this._previewToken || 0) + 1;
+        this.hideTooltip();
+        const hide = window.hideDiffPreview || (window.parent && window.parent.hideDiffPreview);
+        if (hide) hide(event);
+    },
+
+    async loadCallGraphSimilarity(minScore = 0.5, algo = this._callSimAlgo || 'unweighted_cosine', render = true) {
         const wrap = document.getElementById('bsim-call-sim-wrap');
         const p = this._getCurrentP() || this._parsePathUrl();
-        if (!wrap || !p || !p.addr_a || !p.addr_b) return;
+        if (!p || !p.addr_a || !p.addr_b || (render && !wrap)) return;
+        const pairKey = this._callSimPairKey(p);
+        if (this._callSimSynced !== pairKey) {
+            this._callSimSynced = pairKey;
+            this._syncCallSimFromUrl();
+            minScore = this._callSimMin ?? minScore;
+            algo = this._callSimAlgo || algo;
+        }
         this._callSimMin = minScore;
         this._callSimAlgo = algo;
-        wrap.innerHTML = '<div class="dim"><i class="fa-solid fa-spinner fa-spin"></i> Matching direct callers and callees…</div>';
-        const q = new URLSearchParams({ collection_a: p.collection_a, collection_b: p.collection_b, md5_a: p.md5_a, md5_b: p.md5_b, addr_a: p.addr_a, addr_b: p.addr_b, min_score: minScore, algo });
+        this._callSimSource = this._callSimSource || 'stored';
+        if (render) wrap.innerHTML = '<div class="dim"><i class="fa-solid fa-spinner fa-spin"></i> Matching direct callers and callees…</div>';
+        const q = new URLSearchParams({ collection_a: p.collection_a, collection_b: p.collection_b, md5_a: p.md5_a, md5_b: p.md5_b, addr_a: p.addr_a, addr_b: p.addr_b, min_score: minScore, algo, source: this._callSimSource });
+        if (this._callSimSource === 'runtime' && this._callSimUnweighted != null) q.set('unweighted', this._callSimUnweighted);
         if (p.pool) q.set('pool', p.pool);
         try {
             const res = await fetch(`/api/function/call_graph_similarity?${q}`);
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || 'Could not match call graph');
             this._callSimData = data;
+            this._callSimKey = pairKey;
             this._callSimFilter = this._callSimFilter || 'all';
-            this.renderCallGraphSimilarity();
+            if (render) {
+                this._writeMatchUrl();
+                this.renderCallGraphSimilarity();
+            }
         } catch (err) {
-            wrap.innerHTML = `<div style="color:#f92672;">${escapeHtml(err.message)}</div>`;
+            this._callSimData = null;
+            if (render) wrap.innerHTML = `<div style="color:#f92672;">${escapeHtml(err.message)}</div>`;
         }
     },
 
@@ -1389,9 +1496,15 @@ window.DiffView = {
             </tr>`;
         };
         const threshold = Math.round((this._callSimMin ?? 0.5) * 100);
+        const src = this._callSimSource || 'stored';
+        const srcOpt = (v, l) => `<option value="${v}" ${src === v ? 'selected' : ''}>${l}</option>`;
         wrap.innerHTML = `<section class="call-sim-threshold" aria-label="Call graph similarity threshold">
                 <div>
-                    <strong>Algorithm</strong>
+                    <strong>Match</strong>
+                    <select onchange="DiffView.setCallSimSource(this.value)" style="margin-left:8px; background:var(--card-bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 6px;">
+                        ${srcOpt('stored', 'File pair (stored)')}${srcOpt('runtime', 'File pair (runtime greedy)')}${srcOpt('local', 'Neighbors only')}
+                    </select>
+                    <strong style="margin-left:16px;">Algorithm</strong>
                     <select onchange="DiffView.setCallSimAlgorithm(this.value)" style="margin-left:8px; background:var(--card-bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 6px;">
                         ${window.SimAlgos.optionsHtml(this._callSimAlgo || window.SimAlgos.default, { exact: true })}
                     </select>
@@ -1408,6 +1521,11 @@ window.DiffView = {
     },
 
     setCallSimFilter(filter) { this._callSimFilter = filter; this.renderCallGraphSimilarity(); },
+
+    setCallSimSource(source) {
+        this._callSimSource = source;
+        this.loadCallGraphSimilarity(this._callSimMin ?? 0.5);
+    },
 
     setCallSimAlgorithm(algo) {
         this._callSimAlgo = algo;
@@ -1495,6 +1613,7 @@ window.DiffView = {
         delete window.startComparison;
         delete window.toggleBothDetail;
         delete window.navigateToFunction;
+        delete window.diffFocusContext;
         clearTimeout(this._callSimTimer);
     }
 };

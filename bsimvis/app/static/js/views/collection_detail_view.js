@@ -29,11 +29,12 @@ window.CollectionDetailView = {
             </div>`;
 
         try {
-            const [collRes, poolsRes, jobsStatsRes, paramsRes] = await Promise.all([
+            const [collRes, poolsRes, jobsStatsRes, paramsRes, countsRes] = await Promise.all([
                 fetch(`/api/collection/search?q=${encodeURIComponent(collName)}`),
                 fetch(`/api/pool?collection=${encodeURIComponent(collName)}`),
                 fetch('/api/jobs/stats').catch(() => null),
-                fetch(`/api/collection/params?collection=${encodeURIComponent(collName)}`).catch(() => null)
+                fetch(`/api/collection/params?collection=${encodeURIComponent(collName)}`).catch(() => null),
+                fetch(`/api/collection/counts?collection=${encodeURIComponent(collName)}`).catch(() => null)
             ]);
 
             if (!collRes.ok) throw new Error('Failed to load collections list');
@@ -52,6 +53,8 @@ window.CollectionDetailView = {
                 params = pj.params || {};
             }
 
+            const counts = countsRes && countsRes.ok ? await countsRes.json() : {};
+
             let collectionActiveJobs = [];
             if (jobsStatsRes && jobsStatsRes.ok) {
                 const stats = await jobsStatsRes.json();
@@ -65,10 +68,11 @@ window.CollectionDetailView = {
                     total_files: 0,
                     total_functions: 0,
                     total_batches: 0,
-                    last_updated: 0
+                    last_updated: 0,
+                    counts
                 }, associatedPools, collectionActiveJobs, params);
             } else {
-                container.innerHTML = this._renderPage(collection, associatedPools, collectionActiveJobs, params);
+                container.innerHTML = this._renderPage({ ...collection, counts }, associatedPools, collectionActiveJobs, params);
             }
 
             if (this.refreshInterval) clearInterval(this.refreshInterval);
@@ -153,8 +157,8 @@ window.CollectionDetailView = {
                     <span>These are locked on the first similarity build. Changing them does not rescore existing edges — rebuild the collection to apply.</span>
                 </div>
                 <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
-                    <button onclick="window.collectionDetailSaveParams(${escapeAttr(jsString(name))}, this)" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:7px 16px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px;"><i class="fa-solid fa-floppy-disk"></i> Save</button>
-                    <button onclick="window.collectionDetailRebuildSim(${escapeAttr(jsString(name))}, this)" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:7px 16px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px;"><i class="fa-solid fa-rotate-right"></i> Rebuild Similarity</button>
+                    <button onclick="window.collectionDetailSaveParams(${escapeAttr(jsString(name))}, this)" class="ui-button hdr-btn primary"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+                    <button onclick="window.collectionDetailRebuildSim(${escapeAttr(jsString(name))}, this)" class="ui-button hdr-btn"><i class="fa-solid fa-rotate-right"></i> Rebuild Similarity</button>
                 </div>
             </div>
         </div>`;
@@ -165,6 +169,8 @@ window.CollectionDetailView = {
         const files = coll.total_files !== undefined ? coll.total_files : 0;
         const funcs = coll.total_functions !== undefined ? coll.total_functions : 0;
         const batches = coll.total_batches !== undefined ? coll.total_batches : 0;
+        const counts = coll.counts || {};
+        const num = v => (v === undefined ? '—' : Number(v).toLocaleString());
         const updated = coll.last_updated ? (typeof window.formatDate === 'function' ? formatDate(toEpochMs(coll.last_updated)) : new Date(toEpochMs(coll.last_updated)).toLocaleString()) : '—';
 
         const filesUrl = `/collections/${encodeURIComponent(name)}/files`;
@@ -214,12 +220,14 @@ window.CollectionDetailView = {
                     </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                    <button onclick="Nav.openPath('/collections/${encodeURIComponent(name)}/jobs')" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-server"></i> View Jobs</button>
-                    <button onclick="Nav.openPath('/collections/${encodeURIComponent(name)}/upload')" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-upload"></i> Upload Binaries</button>
-                    <button onclick="openFileAnalysisModal({ collection: ${escapeAttr(jsString(name))} })" style="background:rgba(174,129,255,0.12); border:1px solid rgba(174,129,255,0.35); color:#ae81ff; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-robot"></i> Analyze Collection</button>
-                    <button onclick="window.collectionDetailCluster(${escapeAttr(jsString(name))}, this)" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-circle-nodes"></i> Cluster</button>
-                    <button onclick="window.collectionDetailClean(${escapeAttr(jsString(name))}, this)" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-broom"></i> Clean</button>
-                    <button onclick="window.collectionDetailDelete(${escapeAttr(jsString(name))}, this)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-trash-can"></i> Delete</button>
+                    ${UI.Button.render({ className: 'hdr-btn primary', icon: 'fa-solid fa-upload', label: 'Upload', onClick: `Nav.openPath('/collections/${encodeURIComponent(name)}/upload')` })}
+                    ${UI.Button.render({ className: 'hdr-btn', icon: 'fa-solid fa-robot', label: 'Analyze', onClick: `openFileAnalysisModal({ collection: ${jsString(name)} })` })}
+                    ${UI.MoreMenu.render([
+                        { label: 'Maintenance…', icon: 'fa-solid fa-screwdriver-wrench', onClick: `window.openMaintenanceWindow(${jsString(name)})` },
+                        { label: 'Clean', icon: 'fa-solid fa-broom', onClick: `window.collectionDetailClean(${jsString(name)}, this)` },
+                        '-',
+                        { label: 'Delete collection', icon: 'fa-solid fa-trash-can', danger: true, onClick: `window.collectionDetailDelete(${jsString(name)}, this)` },
+                    ])}
                 </div>
             </div>
 
@@ -232,7 +240,6 @@ window.CollectionDetailView = {
                 </div>
             </div>
 
-            <button class="maintenance-launch" onclick="window.openMaintenanceWindow(${escapeAttr(jsString(name))})"><i class="fa-solid fa-screwdriver-wrench"></i> Open maintenance</button>
             <!-- MAIN GRID -->
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start;">
 
@@ -247,7 +254,7 @@ window.CollectionDetailView = {
                                 <thead>
                                     <tr style="border-bottom:1px solid var(--border); background: var(--hover); color:var(--dim);">
                                         <th style="padding:10px 15px;">Entity Type</th>
-                                        <th style="padding:10px 15px; text-align:right;">Count / Actions</th>
+                                        <th style="padding:10px 15px; text-align:right;">Count</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -260,24 +267,32 @@ window.CollectionDetailView = {
                                         <td style="padding:10px 15px; text-align:right;"><a href="${filesUrl}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${files}</a></td>
                                     </tr>
                                     <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-right-left" style="margin-right:8px; width:16px;"></i>Similarities</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/files/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.file_sims)}</a></td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>Clusters</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/files/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.file_clusters)}</a></td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-code" style="margin-right:8px; width:16px;"></i>Functions</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="${funcsUrl}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${funcs}</a></td>
                                     </tr>
                                     <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-fingerprint" style="margin-right:8px; width:16px;"></i>Features</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/features" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.features)}</a></td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-tags" style="margin-right:8px; width:16px;"></i>Tags</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/tags" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">Manage</a></td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-code-compare" style="margin-right:8px; width:16px;"></i>Function Similarities</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/functions/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">View Similarities</a></td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
-                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>Function Clusters</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/functions/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">View Clusters</a></td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
-                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-right-left" style="margin-right:8px; width:16px;"></i>File Similarities</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/files/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">View Similarities</a></td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/functions/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.function_sims)}</a></td>
                                     </tr>
                                     <tr style="transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
-                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>File Clusters</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/files/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">View Clusters</a></td>
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>Function Clusters</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/functions/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.function_clusters)}</a></td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -382,27 +397,6 @@ window.CollectionDetailView = {
                     No active jobs running for this collection.
                 </div>
                 `}`;
-    }
-};
-
-window.collectionDetailCluster = async function(collName, btn) {
-    if (!confirm(`Rebuild function clusters for "${collName}"? Binary similarities and binary clusters are not rebuilt.`)) return;
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
-    try {
-        const res = await fetch(`/api/maintenance`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection: collName, operation: "rebuild", targets: ["function_cluster"] })
-        });
-        if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
-        const data = await res.json();
-        alert(`Collection re-analysis pipeline enqueued! Job ID: ${data.job_id}`);
-        if (typeof refreshData === 'function') refreshData(false, true);
-        else Nav.openPath(window.location.pathname);
-    } catch(e) {
-        alert(`Failed to enqueue re-analysis: ${e.message}`);
-    } finally {
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-circle-nodes"></i> Cluster'; }
     }
 };
 

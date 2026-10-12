@@ -740,6 +740,7 @@ def compute(r, doc, fids):
 # ---- LLM block titles: on demand, cached, never part of the alignment answer ----
 _TITLE_TTL = 30 * 86400
 _TITLE_RETRY = 120  # seconds before a failed naming may be tried again
+_TITLE_PENDING_MAX = 180  # a naming still pending after this is treated as failed
 _TITLE_STATE = {}  # key -> {"status": "pending"|"failed", "at": time}
 _TITLE_LOCK = threading.Lock()
 _TITLE_TEXT_CAP = 800
@@ -791,7 +792,9 @@ def block_titles(consensus):
         if st and st["status"] == "ready":
             return {"status": "ready", "titles": st["titles"]}
         if st and st["status"] == "pending":
-            return {"status": "pending", "titles": {}}
+            if time.time() - st["at"] < _TITLE_PENDING_MAX:
+                return {"status": "pending", "titles": {}}
+            st = _TITLE_STATE[key] = {"status": "failed", "at": time.time()}
         if st and time.time() - st["at"] < _TITLE_RETRY:
             return {"status": "failed", "titles": {}}
         try:

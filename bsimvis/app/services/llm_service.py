@@ -287,7 +287,7 @@ class LLMService:
             "additionalProperties": False,
         }
         try:
-            response = Client(host=self.ollama_url).chat(
+            response = Client(host=self.ollama_url, timeout=150).chat(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 stream=False,

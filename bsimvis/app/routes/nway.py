@@ -760,3 +760,17 @@ def get_nway_facets():
     if unknown:
         return {"error": "unknown_functions", "missing": unknown}, 404
     return nway_facets_service.compute(r, doc, fids)
+
+
+def get_nway_block_titles():
+    """LLM titles for the reference blocks of a row's code tab (same params as `/nway/facets`).
+
+    Never waits for the model: `status` is off (no LLM configured), pending
+    (poll again), ready or failed; `titles` maps block id to title.
+    """
+    out = get_nway_facets()
+    if isinstance(out, tuple):
+        return out
+    if not out.get("consensus"):
+        return {"status": "off", "titles": {}}
+    return nway_facets_service.block_titles(out["consensus"])

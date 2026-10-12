@@ -3120,24 +3120,64 @@ html.light-theme .nway-xp { --xp-l: 40%; }
 .xp-fx tr.diff td.xp-i { box-shadow: inset 3px 0 0 var(--token-warning); }
 .xp-fx td.out { background: var(--xp-warn-bg); color: var(--token-warning); font-weight: 600; }
 .xp-cnt { font-size: 0.66rem; margin-left: 6px; padding: 0 5px; border-radius: 8px; background: var(--card-bg); color: var(--dim); }
-.xp-code { border: 1px solid var(--border); border-radius: 6px; overflow: auto; max-height: 560px; }
-.xp-ln { display: flex; align-items: center; font: 0.78rem/1.55 'Consolas', monospace; cursor: pointer; min-width: max-content; }
-.xp-ln:hover, .xp-ln.open { background: var(--hover); }
-.xp-ln.var { box-shadow: inset 3px 0 0 var(--token-warning); }
-.xp-ln.ins { background: repeating-linear-gradient(135deg, transparent 0 6px, var(--hover) 6px 12px); box-shadow: inset 3px 0 0 var(--token-warning); font-style: italic; }
-.xp-ln .no { width: 40px; text-align: right; padding-right: 8px; color: var(--dim); flex: none; }
-.xp-ln .cs { display: flex; gap: 2px; padding: 0 6px; flex: none; }
-.xp-ln .cs i { width: 8px; height: 12px; border-radius: 2px; background: var(--cc); }
-.xp-ln .cs i.off { background: none; border: 1px dashed var(--border); }
-.xp-ln .ct { width: 44px; color: var(--dim); font-size: 0.7rem; flex: none; }
-.xp-ln.var .ct, .xp-ln.ins .ct { color: var(--token-warning); font-weight: 600; }
-.xp-ln .tx { white-space: pre; padding-right: 12px; }
-.xp-vr { padding: 8px 14px 10px 60px; background: var(--hover); border-bottom: 1px solid var(--border); font: 0.76rem/1.6 'Consolas', monospace; min-width: max-content; }
-.xp-vr > div { display: flex; gap: 10px; align-items: baseline; }
-.xp-vr .same, .xp-vr .gone { color: var(--dim); }
-.xp-vr .gone { font-style: italic; }
-.xp-vr .chg { white-space: pre; }
-.xp-vr .chg b { background: var(--xp-warn-bg); color: var(--token-warning); font-weight: 500; padding: 0 2px; border-radius: 2px; }
+.xp-cbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 12px; }
+.xp-naming { font-size: 0.72rem; color: var(--dim); }
+.xp-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.xp-seg button { background: var(--card-bg); color: var(--dim); border: 0; padding: 4px 12px; font: inherit; font-size: 0.78rem; cursor: pointer; }
+.xp-seg button[aria-pressed="true"] { background: var(--accent); color: var(--bg); }
+.xp-rib { overflow: auto; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; }
+.xp-rib table { border-collapse: collapse; width: 100%; }
+.xp-rib th, .xp-rib td { padding: 4px 6px; border-bottom: 1px solid var(--border); text-align: center; font: 0.74rem 'Consolas', monospace; }
+.xp-rib th { background: var(--card-bg); color: var(--dim); font-weight: 500; vertical-align: bottom; position: sticky; top: 0; }
+.xp-rib th small { display: block; font: 0.64rem sans-serif; white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; margin: 0 auto; }
+.xp-rib th.rowh, .xp-rib td.rowh { text-align: left; color: var(--cc); font-weight: 600; white-space: nowrap; }
+.xp-rib tr:last-child td { border-bottom: 0; }
+.xp-cell { display: inline-flex; gap: 4px; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 6px; border-radius: 5px; border: 1px solid transparent; cursor: pointer; background: none; color: var(--text); font: inherit; }
+button.xp-cell:hover { outline: 2px solid var(--accent); }
+.xp-cell.sel { outline: 2px solid var(--text); }
+.st-same { color: var(--dim); }
+.st-mod { background: var(--xp-warn-bg); color: var(--token-warning); }
+.st-moved { background: color-mix(in srgb, var(--accent) 14%, var(--card-bg)); color: var(--accent); }
+.st-restr { background: color-mix(in srgb, var(--token-instruction) 14%, var(--card-bg)); color: var(--token-instruction); }
+.st-miss { background: color-mix(in srgb, var(--token-instruction) 14%, var(--card-bg)); color: var(--token-instruction); border-style: dashed; border-color: var(--token-instruction); }
+.st-extra { background: color-mix(in srgb, var(--success) 14%, var(--card-bg)); color: var(--success); }
+.st-none { color: var(--border); }
+.xp-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.74rem; color: var(--dim); margin: 0 0 12px; }
+.xp-legend > span { display: inline-flex; gap: 6px; align-items: center; }
+.xp-blk { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; background: var(--card-bg); }
+.xp-bh { all: unset; box-sizing: border-box; width: 100%; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 12px; cursor: pointer; }
+.xp-bh:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.xp-bh .bt { font-weight: 600; }
+.xp-bid { font: 600 0.7rem 'Consolas', monospace; color: var(--dim); }
+.xp-mini { display: flex; gap: 3px; margin-left: auto; }
+.xp-mini span { font: 0.66rem 'Consolas', monospace; padding: 1px 5px; border-radius: 4px; }
+.xp-bd { border-top: 1px solid var(--border); padding: 10px 12px 12px; }
+.xp-vchips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; align-items: center; }
+.xp-vchips .lab { font-size: 0.72rem; color: var(--dim); }
+.xp-chip { display: inline-flex; gap: 6px; align-items: center; padding: 3px 9px 3px 6px; border-radius: 14px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; font-size: 0.76rem; cursor: pointer; }
+.xp-chip[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.xp-panes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 760px) { .xp-panes { grid-template-columns: minmax(0, 1fr); } }
+.xp-pane { border: 1px solid var(--border); border-radius: 6px; min-width: 0; overflow: hidden; }
+.xp-ph { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 5px 10px; background: var(--bg); border-bottom: 1px solid var(--border); font-size: 0.74rem; }
+.xp-pane pre, .xp-fcode { margin: 0; padding: 8px 10px; font: 0.76rem/1.55 'Consolas', monospace; overflow-x: auto; white-space: pre; }
+.xp-pnote { padding: 6px 10px; border-top: 1px solid var(--border); font-size: 0.76rem; color: var(--dim); }
+pre b.chg { background: var(--xp-warn-bg); color: var(--token-warning); font-weight: 500; border-radius: 2px; padding: 0 1px; }
+pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--card-bg)); color: var(--token-instruction); font-weight: 500; text-decoration: line-through; border-radius: 2px; padding: 0 1px; }
+.xp-sec { margin: 18px 0 8px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--dim); font-weight: 600; }
+.xp-frow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 10px; margin-bottom: 2px; }
+.xp-frow.one { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 760px) { .xp-frow { grid-template-columns: minmax(0, 1fr); } }
+.xp-fband { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; font: 0.7rem 'Consolas', monospace; color: var(--dim); padding: 6px 0 2px; }
+.xp-fband .xp-cell { min-width: 0; height: 20px; }
+.xp-fband i { flex: 1; height: 1px; background: var(--border); }
+.xp-fcode { border: 1px solid var(--border); border-radius: 6px; min-width: 0; background: var(--card-bg); }
+.xp-fcode.gap { color: var(--dim); font-style: italic; background: repeating-linear-gradient(135deg, transparent 0 6px, var(--hover) 6px 12px); }
+.xp-fcode.st-mod { border-left: 3px solid var(--token-warning); }
+.xp-fcode.st-moved { border-left: 3px solid var(--accent); }
+.xp-fcode.st-restr { border-left: 3px solid var(--token-instruction); }
+.xp-fcode.st-extra { border-left: 3px solid var(--success); }
+.xp-tag.hot { color: var(--token-warning); border-color: var(--token-warning); }
 .xp-pairbar { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin-bottom: 10px; }
 .xp-pairbar select { background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; max-width: 100%; }
 .xp-drows { border: 1px solid var(--border); border-radius: 6px; max-height: 480px; overflow: auto; font: 0.76rem/1.5 'Consolas', monospace; }

@@ -15,6 +15,9 @@ This release focuses on scan-time triage, function-similarity precision, and mai
 * **Discovery of low similarity functions** : function similarity search only stores high similarity scores. However, during the matching of functions between two binaries, a discovery pass now allows matches below `similarity.min_score` . This can also now be used at runtime with different parameters and algorithms, using **Runtime Greedy Matcher**.
 * **Call graph similarity** : diffing view now provides matching of callers and callees between the two functions, as an extra signal alongside code similarity.
 
+## N-way diff
+* **Inline function diff** : expand a row of the N-way table to compare its functions in place: string / API / callee / constant facets, a function-similarity matrix, block-level code alignment (identical, modified, moved, restructured, missing) with a whole-function side-by-side view, and the existing 2-way diff inline. Block titles are deterministic, with optional LLM titles filled in on demand.
+
 ## Clustering
 * **Code/library axis split for clustering** : Identified shared library don't score and cluster with original malware code anymore. This allows analyst to focus on unidentified code. Standard library and boilerplate code were also a source of low similarity scores between different architectures. This improved similarity scores and clustering of files with different architecture dependent boilerplate code, focusing on the actual malware code for scoring. 
 

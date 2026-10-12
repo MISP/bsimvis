@@ -253,6 +253,63 @@ class LLMService:
         missing = [fid for fid in func_ids if fid not in out]
         return out, missing, None
 
+    def name_blocks(self, blocks):
+        """Short titles for the blocks of one decompiled function, in one call.
+
+        `blocks` is [(block_id, code)]. Returns ({block_id: title}, error).
+        """
+        self._load_config()
+        ids = [b for b, _ in blocks]
+        body = "\n\n".join(f"=== BLOCK {b} ===\n{code}" for b, code in blocks)
+        prompt = (
+            "Give every block of this decompiled function a title of at most "
+            "five words that says what the block does (for example 'open raw "
+            "socket', 'fill packet header'). Describe only what the code shows; "
+            "use its id exactly as given.\n\n" + body
+        )
+        fmt = {
+            "type": "object",
+            "properties": {
+                "titles": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "enum": ids},
+                            "title": {"type": "string"},
+                        },
+                        "required": ["id", "title"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["titles"],
+            "additionalProperties": False,
+        }
+        try:
+            response = Client(host=self.ollama_url).chat(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                stream=False,
+                think=False,
+                format=fmt,
+                options={"num_predict": 24 * len(ids) + 64, "temperature": 0.1},
+            )
+            msg = response.get("message", {})
+            value = json.loads(
+                msg.get("content", "") or msg.get("thinking", "") or "{}"
+            )
+        except Exception as e:
+            logging.error(f"LLMService name_blocks error: {e}")
+            return {}, str(e)
+        out = {}
+        for item in value.get("titles") or []:
+            if isinstance(item, dict) and item.get("id") in ids:
+                title = " ".join(str(item.get("title") or "").split())[:60]
+                if title:
+                    out.setdefault(item["id"], title)
+        return out, None
+
     def classify_relevance_batch(self, members, query, vocabulary=None):
         """Fast relevance triage: for every function, does it plausibly
         relate to the analyst's free-text question? Not a behavioral

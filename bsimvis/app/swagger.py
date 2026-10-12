@@ -2622,6 +2622,21 @@ class BinSimNwayFacets(Resource):
         return get_nway_facets()
 
 
+@ns_bin_sim.route("/nway/facets/titles")
+class BinSimNwayBlockTitles(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "fids": "Comma-separated function ids of one N-way row (at least 2)",
+            "md5s": "Same file set / scope params as /nway/facets",
+        }
+    )
+    def get(self):
+        """LLM titles of the reference blocks of a row: cached, or started in the background (status pending, poll again)."""
+        from bsimvis.app.routes.nway import get_nway_block_titles
+
+        return get_nway_block_titles()
+
+
 @ns_bin_sim.route("/nway")
 class BinSimNway(Resource):
     @ns_bin_sim.doc(

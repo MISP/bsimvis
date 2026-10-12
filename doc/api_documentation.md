@@ -377,6 +377,17 @@ Searches binary similarity pairs with filtering and sorting. Accepts `pool`.
 ### `GET /api/bin_sim/diff`
 Same unified diff behavior as `/api/diff`, plus `algo`. See [Diff](#diff) for filters, `table` paging and `view=sankey`.
 
+### `GET /api/bin_sim/nway/facets`
+Inline function diff of one N-way row (the panel a row of the N-way table expands into). Takes the member params of `/api/bin_sim/nway` (`md5s`/`cluster_uuid`, `collection`/`pool`, `mode`, `min_edge`, `columns`, ...) plus `fids`, the row's function ids (at least 2). Nothing is extracted again: everything comes from stored callees, decompiled tokens and metadata. Cached server-side per row.
+- **Returns:** `functions` (id, letter A..N, file, address, name, instruction count, tags), `similarity` (N x N matcher scores, `null` = no match), `reference` (index of the medoid), `facets` (`strings`, `apis`, `callees`, `consts`: items with a presence `mask` string and `count`, plus `total`/`in_all`; `skipped` when the row is too big), `shape` (per-function counts, `off` flags values >20% from the median), `consensus`, `level` and `limits`.
+- **Strings** come from `string_service.function_strings` when that module exists, otherwise the facet is empty. **APIs** are the `ext:` callees, **callees** are grouped by the N-way row they belong to (else by name), **constants** are numeric literals in the decompiled source.
+- **Levels:** `full` up to `nway.code_max_functions` (16) functions, `facets` up to `nway.facet_max_functions` (64, no code blocks), `light` beyond (call-graph facets and metadata shape only). Code is compared on at most `nway.max_code_lines` lines and `nway.max_code_blocks` blocks per function.
+- **`consensus`:** each function is cut into blocks (signature, compound statements, straight runs) and matched to the reference's blocks by token-bag and BSim-feature similarity, in any order. `blocks[]` has the reference text, a deterministic `title`, `cells[j]` (`st` = same / mod / moved / restr / miss, `sim`, `segs`, `into`) and `groups[]` (functions with an identical variant). `funcs[j]` is the whole of function j as ordered segments (`refs`, token `text` runs with a changed flag, `x` for blocks with no counterpart); `extras[]` are those blocks.
+- **Errors:** 400 (fewer than 2 `fids`), 404 `unknown_functions`.
+
+### `GET /api/bin_sim/nway/facets/titles`
+Short LLM titles for the reference blocks of a row (same params as `/nway/facets`). Never waits for the model: returns `{"status": "off" | "pending" | "ready" | "failed", "titles": {"b1": "..."}}`. The first call after a cache miss starts one batched background call; poll while `pending`. `off` when `llm.ollama_url` is not configured. Cached in Redis (`nway:titles:{sha1 of the reference block texts}`, 30 days) and in process.
+
 ### `POST /api/bin_sim/reindex`
 Rebuilds secondary indexes for existing binary similarity pairs (backfill).
 - **Body:** `collection`, `algo`, `pool_id` (optional — index a pool to enable fast pool search).

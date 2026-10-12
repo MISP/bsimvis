@@ -8,17 +8,23 @@ Everything is derived from stored data, nothing is extracted again:
 | Internal callees | other ids of `{fid}:callees`, grouped by the doc's rows   |
 | Constants        | numeric `variable` tokens of `{fid}:source`               |
 | Shape            | `{fid}:meta` counts, plus keyword counts in the source    |
-| Consensus code   | `{fid}:source` lines aligned like the 2-way diff          |
+| Code blocks      | `{fid}:source` split into blocks, matched by token bag    |
 
-Lines are aligned with the 2-way diff's own line identity (BSim feature hashes,
-else the text), so the arm / mips / x86 builds of a function line up although
-their text differs. Work is capped by function count (`nway.facet_max_functions`
-and `nway.code_max_functions`) and line count (`nway.max_code_lines`).
+Code blocks: each function is cut into blocks (signature, compound statements,
+straight runs) and blocks are matched across functions by multiset Dice over
+normalised tokens plus the BSim feature hashes of their lines, in any order.
+Work is capped by function count (`nway.facet_max_functions` and
+`nway.code_max_functions`), line count (`nway.max_code_lines`) and block count
+(`nway.max_code_blocks`).
 """
 
 import difflib
+import hashlib
 import json
+import threading
+import time
 import re
+from collections import Counter
 from itertools import combinations
 from statistics import median
 
@@ -34,7 +40,6 @@ except ImportError:  # string extraction lives on another branch
 
 
 ITEM_CAP = 400  # items kept per facet, rows that differ first
-EXTRA_CAP = 300  # lines only in other functions
 SHAPE_OFF = 0.2  # shape values this far from the median are flagged
 
 _CACHE = _LRU(16)
@@ -50,6 +55,7 @@ def limits():
         int(config_service.get("nway.facet_max_functions", 64)),
         int(config_service.get("nway.code_max_functions", 16)),
         int(config_service.get("nway.max_code_lines", 1500)),
+        int(config_service.get("nway.max_code_blocks", 60)),
     )
 
 
@@ -186,77 +192,396 @@ def _lines(src, feats, cap):
     return texts[:cap], ids[:cap], len(ids) > cap
 
 
-def _consensus(srcs, feats, ref, cap):
-    """Reference lines with a per-function presence mask and token-level variants."""
+_CTRL = re.compile(r"^(if|for|while|switch|do|else)\b")
+_DECL = re.compile(r"^[A-Za-z_][\w \t\*]*[\w\*]\s*(\[\w*\])?\s*;$")
+_IDENT = re.compile(r"[A-Za-z_]\w*|0[xX][0-9a-fA-F]+|\d+|[^\w\s]")
+# Decompiler-made local names carry no meaning across builds.
+_LOCAL = re.compile(
+    r"^([a-z]{0,2}Var\d+|local_\w+|[a-z]?Stack_\w+|param_\d+|in_\w+|extraout_\w+)$"
+)
+MATCH_MIN = 0.5  # block pairs below this Dice score are not the same block
+COVER_MIN = 0.6  # share of a block's tokens another block must hold to absorb it
+RUN = 10  # longest straight run of statements kept as one block
+DIFF_CAP = 1500  # longer blocks are shown without token highlights
+TEXT_CAP = 4000  # characters of a block kept for display and token diff
+
+
+def split_blocks(texts, run=RUN):
+    """Line spans (start, end) of a function's blocks.
+
+    A block is the signature with its local declarations, a compound statement
+    (if / for / while / switch / do, with its else chain) or a straight run of
+    at most `run` statements. Braces are counted, so nesting stays inside its
+    top-level block.
+    """
+    n, i, depth = len(texts), 0, 0
+    while i < n:
+        s = texts[i].strip()
+        depth += s.count("{") - s.count("}")
+        i += 1
+        if depth >= 1:
+            break
+    while i < n and _DECL.match(texts[i].strip()):
+        i += 1
+    spans = [(0, i)] if i else []
+    run_at, last_comp = None, False
+
+    def close(end):
+        nonlocal run_at
+        if run_at is not None and end > run_at:
+            spans.append((run_at, end))
+        run_at = None
+
+    while i < n:
+        s = texts[i].strip()
+        if not s:
+            i += 1
+            continue
+        if s.startswith("}"):  # the function's own closing brace
+            break
+        is_else = s.startswith("else") and last_comp
+        comp = (
+            is_else
+            or s.count("{") > s.count("}")
+            or (_CTRL.match(s) and not s.endswith(";"))
+        )
+        if not comp:
+            run_at = i if run_at is None else run_at
+            i += 1
+            last_comp = False
+            if i - run_at >= run:
+                close(i)
+            continue
+        close(i)
+        start = spans.pop()[0] if is_else else i
+        d, pending, k = 0, 0, i
+        while k < n:
+            t = texts[k].strip()
+            d += t.count("{") - t.count("}")
+            if t.endswith(";"):
+                pending = 0
+            elif _CTRL.match(t.lstrip("} ")) and "{" not in t:
+                pending += 1
+            k += 1
+            if d <= 0 and pending == 0:
+                break
+        spans.append((start, k))
+        i, last_comp = k, True
+    close(i)
+    return spans
+
+
+def _bag(text, ids):
+    """Token multiset of a block: normalised tokens plus the BSim feature hashes of its lines."""
+    bag = Counter()
+    for t in _IDENT.findall(text):
+        if _LOCAL.match(t):
+            t = "V"
+        elif _ADDR_NAME.match(t):
+            t = _ADDR_NAME.sub(r"\1_", t)
+        bag[t] += 1
+    for ident in ids:
+        if ident.startswith("FEATURES:"):
+            bag.update("#" + h for h in ident[9:].split(","))
+    return bag
+
+
+def _dice(a, b):
+    tot = sum(a.values()) + sum(b.values())
+    return 2 * sum((a & b).values()) / tot if tot else 1.0
+
+
+def _cover(a, b):
+    """Share of the tokens of `a` that `b` holds."""
+    tot = sum(a.values())
+    return sum((a & b).values()) / tot if tot else 0.0
+
+
+def _lis(pairs):
+    """Indices into `pairs` (sorted by ref index) forming a longest increasing run of j."""
+    best, prev = [], []
+    for k, (_, j) in enumerate(pairs):
+        best.append(1)
+        prev.append(-1)
+        for m in range(k):
+            if pairs[m][1] < j and best[m] + 1 > best[k]:
+                best[k], prev[k] = best[m] + 1, m
+    if not pairs:
+        return set()
+    k, keep = max(range(len(pairs)), key=lambda x: best[x]), set()
+    while k >= 0:
+        keep.add(k)
+        k = prev[k]
+    return keep
+
+
+_CALL = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
+_STR = re.compile(r'"((?:[^"\\]|\\.)*)"')
+_NOT_CALL = {"if", "for", "while", "switch", "return", "sizeof", "do", "else"}
+
+
+def _calls(text):
+    return [c for c in _CALL.findall(text) if c not in _NOT_CALL]
+
+
+def _label(text, kind, rarity):
+    """`<kind> . <most distinctive items>`; swap this function for a better namer.
+
+    Kind comes from structure (see `_kind`). Items are the callees called by the
+    fewest blocks of the function (`rarity`), ties by first appearance, default
+    FUN_ names last; a block without calls falls back to its first string
+    literal. At most two items, 24 characters each.
+    """
+    names = list(dict.fromkeys(_calls(text)))
+    names.sort(key=lambda c: (bool(_DEFAULT_NAME.match(c)), rarity.get(c, 0)))
+    items = [c[:24] for c in names[:2]]
+    if not items:
+        items = [m[:24] for m in _STR.findall(text)[:1] if m.strip()]
+    if kind == "signature":
+        head = text.split("{")[0]
+        args = head[head.find("(") + 1 : head.rfind(")")].strip()
+        n = 0 if args in ("", "void") else args.count(",") + 1
+        return f"signature \u00b7 {n} param{'s' if n != 1 else ''}"
+    return kind + (" \u00b7 " + ", ".join(items) if items else "")
+
+
+def _kind(text, i, last):
+    first = text.lstrip().split("(")[0].split()[:1]
+    word = first[0] if first else ""
+    if i == 0:
+        return "signature"
+    if word in ("for", "while", "do"):
+        return "loop"
+    if word in ("if", "switch", "else"):
+        return "branch"
+    stmts = [ln for ln in text.splitlines() if ln.strip().endswith(";")]
+    if stmts and sum(1 for ln in stmts if _calls(ln)) * 2 >= len(stmts):
+        return "call"
+    return "epilogue" if last and "return" in text else "block"
+
+
+def _titles(texts):
+    """One deterministic label per reference block, computed once with the alignment."""
+    rarity = Counter(c for t in texts for c in set(_calls(t)))
+    return [
+        _label(t, _kind(t, i, i == len(texts) - 1), rarity) for i, t in enumerate(texts)
+    ]
+
+
+def _blocks_of(src, feats, cap, max_blocks):
+    texts, ids, cut = _lines(src, feats, cap)
+    out = []
+    for a, b in split_blocks(texts)[:max_blocks]:
+        text = "\n".join(texts[a:b])
+        out.append(
+            {
+                "text": text[:TEXT_CAP],
+                "norm": _norm(text),
+                "bag": _bag(text, ids[a:b]),
+                "span": (a, b),
+            }
+        )
+    return out, cut or len(split_blocks(texts)) > max_blocks
+
+
+def _match_blocks(ref, other):
+    """Per reference block: ('same'|'mod'|'moved'|'restr'|'miss', sim, [other indices], note)."""
+    cand = sorted(
+        (
+            (-_dice(r["bag"], o["bag"]), i, j)
+            for i, r in enumerate(ref)
+            for j, o in enumerate(other)
+        )
+    )
+    taken_r, taken_o, pairs = set(), set(), []
+    for neg, i, j in cand:
+        if -neg < MATCH_MIN:
+            break
+        if i not in taken_r and j not in taken_o:
+            taken_r.add(i)
+            taken_o.add(j)
+            pairs.append((i, j, -neg))
+    pairs.sort()
+    stay = _lis([(i, j) for i, j, _ in pairs])
+    res = {}
+    for k, (i, j, sim) in enumerate(pairs):
+        if k in stay:
+            same = ref[i]["norm"] == other[j]["norm"]
+            res[i] = ("same", 1.0, [j], "") if same else ("mod", sim, [j], "")
+        else:
+            res[i] = (
+                "moved",
+                sim,
+                [j],
+                "Same code in a different place: the block order differs from the reference.",
+            )
+    used = set(taken_o)
+    for i, r in enumerate(ref):
+        if i in res:
+            continue
+        # Merged into one block, or split over a few, of the other function.
+        ranked = sorted(
+            range(len(other)), key=lambda j: -_cover(r["bag"], other[j]["bag"])
+        )
+        best = ranked[0] if ranked else None
+        if best is not None and _cover(r["bag"], other[best]["bag"]) >= COVER_MIN:
+            owner = next((x for x, p in res.items() if p[2] == [best]), None)
+            note = "Merged: one block here holds this code" + (
+                f" together with {_bid(owner)}." if owner is not None else "."
+            )
+            res[i] = ("restr", _cover(r["bag"], other[best]["bag"]), [best], note)
+            used.add(best)
+            continue
+        union, pick = Counter(), []
+        for j in ranked[:3]:
+            if _cover(r["bag"], other[j]["bag"]) >= 0.25:
+                union |= other[j]["bag"]
+                pick.append(j)
+        if len(pick) > 1 and _cover(r["bag"], union) >= COVER_MIN:
+            res[i] = (
+                "restr",
+                _cover(r["bag"], union),
+                sorted(pick),
+                f"Split: the code is spread over {len(pick)} blocks here.",
+            )
+            used.update(pick)
+        else:
+            res[i] = ("miss", 0.0, [], "No matching code in this function.")
+    return res, used
+
+
+def _bid(i):
+    return f"b{i + 1}"
+
+
+def _runs(ref_text, text, changed=False):
+    """`text` as [[token run, changed]]: diffed against the reference block, or all flagged."""
+    if changed:
+        return [[text, True]] if text else []
+    if len(text) > DIFF_CAP or len(ref_text) > DIFF_CAP:
+        return [[text, False]] if text else []
+    return _segments(ref_text, text)
+
+
+def _consensus(srcs, feats, ref, cap, max_blocks=60):
+    """Block-level comparison of the functions against the reference.
+
+    `blocks`: the reference's blocks, each with a state per other function
+    (`cells`) and the functions grouped by identical variant (`groups`).
+    `funcs[j]`: the whole of function j as its blocks in its own order, each
+    with the reference blocks it matches (`refs`) and its text, once. The
+    reference's own code is `blocks[*].ref_text`. `extras` are blocks of other
+    functions with no counterpart in the reference.
+    """
     n = len(srcs)
-    got = [_lines(s, f, cap) for s, f in zip(srcs, feats)]
-    texts, ids = [g[0] for g in got], [g[1] for g in got]
-    mapped = [dict() for _ in texts[ref]]
-    extras, order = {}, []
-
-    def extra(after, j, text):
-        k = (after, _norm(text))
-        if k not in extras:
-            extras[k] = {"ins": True, "after": after + 1, "text": text, "has": set()}
-            order.append(k)
-        extras[k]["has"].add(j)
-
+    got = [_blocks_of(s, f, cap, max_blocks) for s, f in zip(srcs, feats)]
+    blocks = [g[0] for g in got]
+    rb = blocks[ref]
+    titles = _titles([b["text"] for b in rb])
+    out = [
+        {
+            "id": _bid(i),
+            "title": titles[i],
+            "ref_text": b["text"],
+            "lines": [b["span"][0] + 1, b["span"][1]],
+            "cells": {},
+            "groups": [],
+        }
+        for i, b in enumerate(rb)
+    ]
+    funcs, extras = {}, []
+    members = {}  # (block id, state, text) -> group
     for j in range(n):
         if j == ref:
             continue
-        sm = difflib.SequenceMatcher(None, ids[ref], ids[j], autojunk=False)
-        for tag, i1, i2, j1, j2 in sm.get_opcodes():
-            if tag in ("equal", "replace"):
-                m = min(i2 - i1, j2 - j1)
-                for k in range(m):
-                    mapped[i1 + k][j] = texts[j][j1 + k]
-                for k in range(m, j2 - j1):
-                    extra(i2 - 1, j, texts[j][j1 + k])
-            elif tag == "insert":
-                for k in range(j1, j2):
-                    extra(i1 - 1, j, texts[j][k])
-
-    out, dropped = [], 0
-    after = {}
-    for k in order:
-        after.setdefault(k[0], []).append(extras[k])
-
-    def put_extras(i):
-        nonlocal dropped
-        for e in after.get(i, ()):
-            if sum(1 for o in out if o.get("ins")) >= EXTRA_CAP:
-                dropped += 1
-                continue
-            out.append(
-                {k: e[k] for k in ("ins", "after", "text")}
-                | {"mask": "".join("1" if j in e["has"] else "0" for j in range(n))}
-            )
-
-    put_extras(-1)
-    for i, text in enumerate(texts[ref]):
-        mask, var = [], {}
-        for j in range(n):
-            if j == ref:
-                mask.append("1")
-            elif j not in mapped[i]:
-                mask.append("0")
-                var[j] = None
-            elif _norm(mapped[i][j]) == _norm(text):
-                mask.append("1")
+        res, _ = _match_blocks(rb, blocks[j])
+        refs = {}  # j block -> [(ref index, state, sim)]
+        for i, (st, sim, idx, note) in res.items():
+            if st != "miss":
+                for k in idx:
+                    refs.setdefault(k, []).append((i, st, sim))
+        entries = []
+        for k, b in enumerate(blocks[j]):
+            mine = sorted(refs.get(k, []))
+            ent = {
+                "refs": [
+                    {"b": _bid(i), "st": st, "sim": round(sim, 3)}
+                    for i, st, sim in mine
+                ]
+            }
+            if mine:
+                i, st, _ = mine[0]
+                if st == "restr" or len(mine) > 1:
+                    ent["text"] = _runs("", b["text"], True)
+                elif st == "same":
+                    ent["text"] = [[b["text"], False]]
+                else:
+                    ent["text"] = _runs(rb[i]["text"], b["text"])
             else:
-                mask.append("0")
-                var[j] = _segments(text, mapped[i][j])
-        line = {"n": i + 1, "text": text, "mask": "".join(mask)}
-        if var:
-            line["v"] = var
-        out.append(line)
-        put_extras(i)
+                ent["text"] = [[b["text"], False]]
+                if len(_IDENT.findall(b["text"])) >= 3:
+                    for e in extras:
+                        if _dice(e["bag"], b["bag"]) >= 0.8:
+                            e["funcs"].append(j)
+                            ent["x"] = e["id"]
+                            break
+                    else:
+                        if len(extras) >= 40:
+                            entries.append(ent)
+                            continue
+                        ent["x"] = f"x{len(extras) + 1}"
+                        extras.append(
+                            {
+                                "id": ent["x"],
+                                "funcs": [j],
+                                "text": b["text"],
+                                "bag": b["bag"],
+                            }
+                        )
+            entries.append(ent)
+        funcs[str(j)] = entries
+        for i, (st, sim, idx, note) in res.items():
+            cell = {"st": st, "sim": round(sim, 3), "segs": idx}
+            if st == "restr" and len(idx) == 1:
+                owner = min(r[0] for r in refs[idx[0]])
+                if owner != i:
+                    cell["into"] = _bid(owner)
+            out[i]["cells"][str(j)] = cell
+            if st == "same":
+                continue
+            text = "\n".join(blocks[j][k]["text"] for k in idx)
+            g = members.setdefault(
+                (i, st, _norm(text)),
+                {"funcs": [], "sims": {}, "st": st, "note": note, "text": text},
+            )
+            g["funcs"].append(j)
+            g["sims"][str(j)] = round(sim, 3)
+    for (i, st, _), g in members.items():
+        text = g.pop("text")
+        if st in ("mod", "moved"):
+            g["ref_segs"] = (
+                _segments(text, out[i]["ref_text"]) if len(text) <= DIFF_CAP else None
+            )
+        if st == "mod":
+            ch = sum(
+                1
+                for _, c in funcs[str(g["funcs"][0])][
+                    out[i]["cells"][str(g["funcs"][0])]["segs"][0]
+                ]["text"]
+                if c
+            )
+            g["note"] = f"{ch} changed run{'s' if ch != 1 else ''} of tokens."
+        out[i]["groups"].append(g)
     return {
         "reference": ref,
-        "lines": out,
-        "lines_total": len(texts[ref]),
-        "truncated": any(g[2] for g in got),
-        "extras_dropped": dropped,
+        "blocks": out,
+        "funcs": funcs,
+        "extras": [
+            {k: e[k] for k in ("id", "funcs", "text")}
+            | {"title": _label(e["text"], _kind(e["text"], 1, False), {})}
+            for e in extras[:40]
+        ],
+        "truncated": any(g[1] for g in got),
     }
 
 
@@ -300,7 +625,7 @@ def compute(r, doc, fids):
     if hit is not None:
         return hit
     n = len(fids)
-    facet_max, code_max, line_cap = limits()
+    facet_max, code_max, line_cap, block_cap = limits()
     level = "full" if n <= code_max else "facets" if n <= facet_max else "light"
     fmeta, rows = doc["fmeta"], doc["rows"]
     row_of = {
@@ -399,12 +724,89 @@ def compute(r, doc, fids):
         "facets": facets,
         "shape": shape,
         "consensus": None,
-        "limits": {"facets": facet_max, "code": code_max, "lines": line_cap},
+        "limits": {
+            "facets": facet_max,
+            "code": code_max,
+            "lines": line_cap,
+            "blocks": block_cap,
+        },
     }
     if level == "full":
-        out["consensus"] = _consensus(srcs, feats, ref, line_cap)
+        out["consensus"] = _consensus(srcs, feats, ref, line_cap, block_cap)
     _CACHE.put(cache_key, out)
     return out
+
+
+# ---- LLM block titles: on demand, cached, never part of the alignment answer ----
+_TITLE_TTL = 30 * 86400
+_TITLE_RETRY = 120  # seconds before a failed naming may be tried again
+_TITLE_STATE = {}  # key -> {"status": "pending"|"failed", "at": time}
+_TITLE_LOCK = threading.Lock()
+_TITLE_TEXT_CAP = 800
+
+
+def llm_configured():
+    return bool(config_service.get("llm.ollama_url"))
+
+
+def titles_key(consensus):
+    """Content key: the reference function's block texts."""
+    blob = json.dumps([[b["id"], b["ref_text"]] for b in consensus["blocks"]])
+    return hashlib.sha1(blob.encode()).hexdigest()
+
+
+def _name_in_background(key, blocks):
+    from bsimvis.app.services.llm_service import llm_service
+    from bsimvis.app.services.redis_client import get_queue_redis
+
+    titles, err = llm_service.name_blocks(
+        [(b["id"], b["ref_text"][:_TITLE_TEXT_CAP]) for b in blocks]
+    )
+    with _TITLE_LOCK:
+        if titles:
+            try:
+                get_queue_redis().set(
+                    f"nway:titles:{key}", json.dumps(titles), ex=_TITLE_TTL
+                )
+            except Exception:
+                pass
+            _TITLE_STATE[key] = {"status": "ready", "titles": titles}
+        else:
+            _TITLE_STATE[key] = {"status": "failed", "at": time.time()}
+
+
+def block_titles(consensus):
+    """{'status': off|pending|ready|failed, 'titles': {block id: title}} for a consensus.
+
+    The first call after a cache miss starts one background LLM call for all
+    blocks; later calls (any user) read the Redis / in-process cache.
+    """
+    from bsimvis.app.services.redis_client import get_queue_redis
+
+    if not llm_configured():
+        return {"status": "off", "titles": {}}
+    key = titles_key(consensus)
+    with _TITLE_LOCK:
+        st = _TITLE_STATE.get(key)
+        if st and st["status"] == "ready":
+            return {"status": "ready", "titles": st["titles"]}
+        if st and st["status"] == "pending":
+            return {"status": "pending", "titles": {}}
+        if st and time.time() - st["at"] < _TITLE_RETRY:
+            return {"status": "failed", "titles": {}}
+        try:
+            raw = get_queue_redis().get(f"nway:titles:{key}")
+        except Exception:
+            raw = None
+        if raw:
+            titles = json.loads(raw)
+            _TITLE_STATE[key] = {"status": "ready", "titles": titles}
+            return {"status": "ready", "titles": titles}
+        _TITLE_STATE[key] = {"status": "pending", "at": time.time()}
+    threading.Thread(
+        target=_name_in_background, args=(key, consensus["blocks"]), daemon=True
+    ).start()
+    return {"status": "pending", "titles": {}}
 
 
 def demo():
@@ -423,23 +825,57 @@ def demo():
         and f["items"][0]["key"] == "y"
         and f["items"][0]["mask"] == "10"
     )
-    src = lambda lines: {
-        "c_tokens": [{"t": t, "line": i, "type": None} for i, t in enumerate(lines)]
-    }
-    a, b, c = (
-        src(["int f()", "{", "x = 80;", "}"]),
-        src(["int f()", "{", "x = 1;", "extra();", "}"]),
-        src(["int f()", "{", "}"]),
-    )
-    out = _consensus([a, b, c], [[], [], []], 0, 100)
-    lines = {x["n"]: x for x in out["lines"] if "n" in x}
-    assert lines[3]["mask"] == "100" and lines[3]["v"][1] == [
-        ["x = ", False],
-        ["1", True],
-        [";", False],
+    code = lambda *ls: list(ls)
+    ref = [
+        "int f(int a)",
+        "{",
+        "  int i;",
+        "  for (i = 0; i < a; i++) {",
+        "    g(i, 512);",
+        "  }",
+        "  if (a == 0) {",
+        '    puts("nope"); abort();',
+        "  }",
+        "  h(a);",
+        "  return 0;",
+        "}",
     ]
-    assert lines[3]["v"][2] is None and lines[1]["mask"] == "111"
-    assert [x for x in out["lines"] if x.get("ins")][0]["mask"] == "010"
+    mod = [x.replace("512", "1024") for x in ref]
+    moved = ref[:3] + ref[6:9] + ref[3:6] + ref[9:]
+    gone = ref[:6] + ref[9:]
+    spans = split_blocks(ref)
+    assert spans == [(0, 3), (3, 6), (6, 9), (9, 11)], spans
+    mk = lambda ls: [
+        {
+            "text": "\n".join(ls[a:b]),
+            "norm": _norm("\n".join(ls[a:b])),
+            "bag": _bag("\n".join(ls[a:b]), []),
+            "span": (a, b),
+        }
+        for a, b in split_blocks(ls)
+    ]
+    R = mk(ref)
+    st = lambda o: {i: v[0] for i, v in _match_blocks(R, mk(o))[0].items()}
+    assert set(st(ref).values()) == {"same"}
+    assert st(mod)[1] == "mod" and "moved" in st(moved).values()
+    assert st(gone)[2] == "miss"
+    assert _dice(Counter("aab"), Counter("ab")) == 0.8
+    src = lambda ls: {
+        "c_tokens": [{"t": t, "line": i, "type": None} for i, t in enumerate(ls)]
+    }
+    out = _consensus(
+        [src(ref), src(mod), src(moved), src(gone)], [[], [], [], []], 0, 100
+    )
+    assert [b["cells"]["1"]["st"] for b in out["blocks"]] == [
+        "same",
+        "mod",
+        "same",
+        "same",
+    ]
+    assert out["blocks"][2]["cells"]["3"]["st"] == "miss"
+    assert any(c["st"] == "moved" for b in out["blocks"] for c in [b["cells"]["2"]])
+    whole = "\n".join(x["text"][0][0] for x in out["funcs"]["3"])
+    assert whole.count("h(a)") == 1 and out["blocks"][1]["groups"][0]["funcs"] == [1]
     print("nway_facets_service demo ok")
 
 

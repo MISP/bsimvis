@@ -4887,14 +4887,33 @@ def test_nway_diff():
             == {f["key"] for f in _b["facets"]},
             f"HTTP {_r.status_code} {str(_b)[:200]}",
         )
+        _ref = _b.get("reference")
         check(
-            "nway facets: consensus lines carry a presence mask, reference is always present",
+            "nway facets: every reference block has a state for every other function",
             _b.get("level") != "full"
-            or all(
-                len(x["mask"]) == _nf
-                and (x["mask"][_b["reference"]] == "1" or x.get("ins"))
-                for x in _cons.get("lines", [])
+            or (
+                bool(_cons.get("blocks"))
+                and all(
+                    set(blk["cells"]) == {str(j) for j in range(_nf) if j != _ref}
+                    and all(
+                        c["st"] in ("same", "mod", "moved", "restr", "miss")
+                        for c in blk["cells"].values()
+                    )
+                    for blk in _cons["blocks"]
+                )
+                and set(_cons.get("funcs", {}))
+                == {str(j) for j in range(_nf) if j != _ref}
             ),
+            str(_cons)[:200],
+        )
+        _r = requests.get(_fx + "/titles", params={**_base, "fids": _fids}, timeout=60)
+        _t = _r.json() if _r.status_code == 200 else {}
+        check(
+            "nway facets titles: answers at once with a status, never waits for the LLM",
+            _r.status_code == 200
+            and _t.get("status") in ("off", "pending", "ready", "failed")
+            and isinstance(_t.get("titles"), dict),
+            f"HTTP {_r.status_code} {str(_t)[:200]}",
         )
         check(
             "nway facets: shape flags line up with the functions",

@@ -24,7 +24,8 @@
             this.panel = panel;
             this.tr = tr;
             this.fids = fids;
-            this.s = { tab: 'facets', only: true, pair: null };
+            this.s = { tab: 'facets', only: true, pair: null, cv: 'blocks', open: null, gi: 0, fn: null, single: false };
+            this.titles = {};
             this.data = null;
             this.row = null;
         }
@@ -39,9 +40,6 @@
             this.el = this.row.querySelector('.nway-xp');
             this.el.addEventListener('click', e => this._click(e));
             this.el.addEventListener('change', e => this._change(e));
-            this.el.addEventListener('keydown', e => {
-                if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.xp-ln')) { e.preventDefault(); e.target.click(); }
-            });
             const scroller = this.row.closest('.nway-scroll');
             if (scroller && window.ResizeObserver) {
                 this._ro = new ResizeObserver(() => { this.el.style.width = `${scroller.clientWidth - 2}px`; });
@@ -77,12 +75,13 @@
                     <div class="xp-cap">Function similarity from the matcher; a dash means no match was found. Click a cell to open that pair in the 2-way diff.</div></div></div>
                 <div class="xp-bar"><div class="xp-tabs" role="tablist">
                     ${tab('facets', 'Facets')}
-                    ${tab('code', 'Consensus code', !code, `Consensus code needs at most ${d.limits.code} functions (this row has ${d.functions.length})`)}
+                    ${tab('code', 'Code blocks', !code, `Code blocks need at most ${d.limits.code} functions (this row has ${d.functions.length})`)}
                     ${tab('pair', 'Pair diff')}</div><span class="xp-sp"></span>
                     ${s.tab === 'pair' ? '' : `<label class="xp-chk"><input type="checkbox" data-xonly ${s.only ? 'checked' : ''}> Differences only</label>`}
                     <button class="xp-btn" data-xclose title="Collapse this row"><i class="fa-solid fa-chevron-up"></i> Collapse</button></div>
                 <div class="xp-body">${this._body()}</div>`;
             if (s.tab === 'pair') this._loadPair();
+            if (s.tab === 'code') this._loadTitles();
         }
 
         _body() {
@@ -158,44 +157,191 @@
                 <div class="xp-grp"><h3>Shape<span class="n">amber = more than 20% from the median</span></h3><div class="xp-fx"><table>${this._thead()}${shape}</table></div></div>`;
         }
 
-        // ---- Consensus code ----
-        _strip(mask) {
-            return [...mask].map((x, j) => `<i ${cc(j)} class="${x === '1' ? '' : 'off'}"></i>`).join('');
+        // ---- Code blocks ----
+        static GLYPH = { same: '=', mod: '~', moved: '⇄', restr: '◧', miss: '✕', extra: '+' };
+        static SNAME = { same: 'identical', mod: 'modified', moved: 'moved', restr: 'restructured', miss: 'missing', extra: 'only here' };
+
+        _bt(b) { return this.titles[b.id] || b.title; }
+
+        // Title span the LLM titles are swapped into in place; the deterministic label stays as tooltip.
+        _tspan(b) {
+            const t = this.titles[b.id];
+            return `<span class="bt" data-btitle="${escapeAttr(b.id)}" title="${escapeAttr(t ? b.title : '')}">${escapeHtml(t || b.title)}</span>`;
         }
+
+        _runs(runs, cls) {
+            return (runs || []).map(([t, ch]) => (ch ? `<b class="${cls}">${escapeHtml(t)}</b>` : escapeHtml(t))).join('');
+        }
+
+        _cell(b, j) { return b.cells[String(j)] || { st: 'same', sim: 1, segs: [] }; }
+
+        _fseg(j, k) { return (this.data.consensus.funcs[String(j)] || [])[k]; }
+
+        // The text function j holds for reference block b, as token runs.
+        _cellRuns(b, j) {
+            const c = this._cell(b, j);
+            return c.segs.flatMap((k, i) => {
+                const seg = this._fseg(j, k);
+                return seg ? (i ? [['\n', false], ...seg.text] : seg.text) : [];
+            });
+        }
+
+        _group(b, j) { return b.groups.find(g => g.funcs.includes(j)); }
+
+        _glyph(st, sim, miss = true) {
+            const G = NwayExpand.GLYPH;
+            return `${G[st]}${st === 'same' || (st === 'miss' && miss) ? '' : ' ' + Math.round(sim * 100)}`;
+        }
+
+        _others() { return this.data.functions.map((f, j) => j).filter(j => j !== this.data.consensus.reference); }
+
+        _isSame(b) { return Object.values(b.cells).every(c => c.st === 'same'); }
 
         _code() {
-            const c = this.data.consensus, n = this.data.functions.length, only = this.s.only;
-            const ref = this.data.functions[c.reference].letter;
-            let hidden = 0;
-            const lines = c.lines.map((l, i) => {
-                const all = !l.ins && !l.mask.includes('0');
-                if (only && all) { hidden++; return ''; }
-                const cnt = [...l.mask].filter(x => x === '1').length;
-                return `<div class="xp-ln${l.ins ? ' ins' : all ? '' : ' var'}" data-xline="${i}" tabindex="0" role="button" aria-expanded="false">
-                    <span class="no">${l.ins ? '+' : Number(l.n)}</span><span class="cs">${this._strip(l.mask)}</span><span class="ct">${cnt}/${n}</span><span class="tx">${escapeHtml(l.text)}</span></div>`;
-            }).join('');
-            return `<p class="xp-hint">Reference is ${escapeHtml(ref)}, the function most similar to the others. The bar next to each line shows which functions have it unchanged. Click a line to see the other versions. Dashed lines are not in ${escapeHtml(ref)}.</p>
-                <div class="xp-code">${lines || '<div class="xp-none">No differing lines.</div>'}</div>
-                ${hidden ? `<p class="xp-foot">${hidden} lines identical in all ${n} are hidden. Untick "Differences only" to see the full function.</p>` : ''}
-                ${c.truncated ? `<p class="xp-foot">Only the first ${Number(this.data.limits.lines)} lines of each function are compared.</p>` : ''}
-                ${c.extras_dropped ? `<p class="xp-foot">${Number(c.extras_dropped)} more lines that exist only in other functions are not listed.</p>` : ''}`;
+            const s = this.s;
+            const sw = `<div class="xp-cbar"><div class="xp-seg" role="group" aria-label="Code view"><button data-xcv="blocks" aria-pressed="${s.cv === 'blocks'}">Blocks</button><button data-xcv="full" aria-pressed="${s.cv === 'full'}">Full function</button></div>
+                <span class="xp-hint" style="margin:0">${s.cv === 'blocks' ? 'Overview of what changed, block by block.' : 'Read the whole function, aligned to the reference by block.'}</span>
+                <span class="xp-naming" ${this._naming ? '' : 'hidden'}><i class="fa-solid fa-spinner fa-spin"></i> naming blocks&hellip;</span></div>`;
+            return sw + (s.cv === 'blocks' ? this._blocksView() : this._fullView());
         }
 
-        _variants(l) {
-            const c = this.data.consensus, fs = this.data.functions;
-            const rows = fs.map((f, j) => {
-                const has = l.mask[j] === '1';
-                let body;
-                if (j === c.reference) body = l.ins ? '<span class="gone">not in the reference</span>' : '<span class="same">reference</span>';
-                else if (l.ins) body = has ? `<span class="chg"><b>${escapeHtml(l.text.trim())}</b></span>` : '<span class="gone">not present</span>';
-                else if (has) body = `<span class="same">same as ${escapeHtml(fs[c.reference].letter)}</span>`;
-                else {
-                    const v = l.v && l.v[j];
-                    body = v ? `<span class="chg">${v.map(([t, ch], k) => (ch ? `<b>${escapeHtml(k ? t : t.trimStart())}</b>` : escapeHtml(k ? t : t.trimStart()))).join('')}</span>` : '<span class="gone">line removed</span>';
+        _ribbon(blocks, extras) {
+            const d = this.data, c = d.consensus;
+            let h = '<div class="xp-rib"><table><tr><th class="rowh">Block in ' + escapeHtml(d.functions[c.reference].letter) + '</th>'
+                + blocks.map(b => `<th>${escapeHtml(b.id)}<small data-btitle="${escapeAttr(b.id)}" title="${escapeAttr(this._bt(b))}">${escapeHtml(this._bt(b))}</small></th>`).join('')
+                + extras.map(x => `<th>${escapeHtml(x.id)}<small title="${escapeAttr(x.title)}">${escapeHtml(x.title)}</small></th>`).join('') + '</tr>';
+            d.functions.forEach((f, j) => {
+                h += `<tr><td class="rowh" ${cc(j)}><span class="xp-badge">${escapeHtml(f.letter)}</span> ${escapeHtml(f.file_name || '')}</td>`;
+                for (const b of blocks) {
+                    if (j === c.reference) { h += '<td><span class="st-none">ref</span></td>'; continue; }
+                    const cell = this._cell(b, j);
+                    const gsel = b.groups[this.s.gi];
+                    const sel = this.s.open === b.id && !!gsel && gsel.funcs.includes(j);
+                    h += `<td><button class="xp-cell st-${cell.st}${sel ? ' sel' : ''}" data-xb="${escapeAttr(b.id)}" data-xc="${j}" title="${NwayExpand.SNAME[cell.st]}">${this._glyph(cell.st, cell.sim)}</button></td>`;
                 }
-                return `<div><span class="xp-badge" ${cc(j)}>${escapeHtml(f.letter)}</span>${body}</div>`;
+                for (const x of extras) h += x.funcs.includes(j) ? `<td><button class="xp-cell st-extra" data-xx="${escapeAttr(x.id)}" title="only in this function">+</button></td>` : '<td><span class="st-none">&ndash;</span></td>';
+                h += '</tr>';
             });
-            return `<div class="xp-vr">${rows.join('')}</div>`;
+            return h + '</table></div>';
+        }
+
+        _blockBody(b) {
+            const d = this.data, c = d.consensus, ref = d.functions[c.reference];
+            if (!b.groups.length) return `<div class="xp-bd"><p class="xp-hint" style="margin:0">Identical in all ${d.functions.length} functions.</p><div class="xp-panes"><div class="xp-pane"><div class="xp-ph"><span class="xp-badge" ${cc(c.reference)}>${escapeHtml(ref.letter)}</span> all functions</div><pre>${escapeHtml(b.ref_text)}</pre></div></div></div>`;
+            const gi = b.groups[this.s.gi] ? this.s.gi : 0, g = b.groups[gi], G = NwayExpand.GLYPH;
+            const badges = fs => fs.map(j => `<span class="xp-badge" ${cc(j)}>${escapeHtml(d.functions[j].letter)}</span>`).join('');
+            const chips = b.groups.map((x, i) => `<button class="xp-chip" aria-pressed="${i === gi}" data-xb="${escapeAttr(b.id)}" data-xg="${i}">${badges(x.funcs)} ${G[x.st]} ${NwayExpand.SNAME[x.st]}</button>`).join('');
+            const same = this._others().filter(j => this._cell(b, j).st === 'same');
+            const j0 = g.funcs[0], cell = this._cell(b, j0);
+            const runs = this._cellRuns(b, j0);
+            const sim = g.funcs.map(j => Math.round(g.sims[String(j)] * 100)).join('/');
+            return `<div class="xp-bd"><div class="xp-vchips"><span class="lab">Compare ${escapeHtml(ref.letter)} with</span>${chips}${same.length ? `<span class="lab">${same.map(j => escapeHtml(d.functions[j].letter)).join(', ')}: same as ${escapeHtml(ref.letter)}</span>` : ''}</div>
+                <div class="xp-panes">
+                  <div class="xp-pane"><div class="xp-ph"><span class="xp-badge" ${cc(c.reference)}>${escapeHtml(ref.letter)}</span> reference</div><pre>${g.ref_segs ? this._runs(g.ref_segs, 'del') : escapeHtml(b.ref_text)}</pre></div>
+                  <div class="xp-pane"><div class="xp-ph">${badges(g.funcs)} <span class="xp-cell st-${g.st}" style="cursor:default">${G[g.st]} ${NwayExpand.SNAME[g.st]}${g.st === 'miss' ? '' : ' ' + sim + '%'}</span>${cell.into ? `<span class="xp-tag hot">merged into ${escapeHtml(cell.into)}</span>` : ''}</div>
+                    <pre>${runs.length ? this._runs(runs, 'chg') : '(no matching code)'}</pre>${g.note ? `<div class="xp-pnote">${escapeHtml(g.note)}</div>` : ''}</div>
+                </div></div>`;
+        }
+
+        _blocksView() {
+            const c = this.data.consensus, only = this.s.only;
+            const blocks = c.blocks.filter(b => !only || !this._isSame(b));
+            const G = NwayExpand.GLYPH;
+            const head = `<p class="xp-hint">When decompiled code is laid out differently, lines do not match one to one. Functions are cut into blocks (loops, branches, straight runs) and each block is matched by its content, in any order. Each cell shows how that block looks in the other function: how similar it is, or that it moved, was merged into or split from another block, or is gone. Click a cell or a block to compare it with the reference.</p>`;
+            const legend = `<div class="xp-legend">${Object.keys(NwayExpand.SNAME).map(k => `<span><span class="xp-cell st-${k}" style="min-width:0;height:18px;cursor:default">${G[k]}</span>${NwayExpand.SNAME[k]}</span>`).join('')}</div>`;
+            const accordion = blocks.map(b => {
+                const open = this.s.open === b.id;
+                const mini = this._others().map(j => { const x = this._cell(b, j); return `<span class="st-${x.st}" ${cc(j)} title="${escapeAttr(`${this.data.functions[j].letter}: ${NwayExpand.SNAME[x.st]}`)}">${escapeHtml(this.data.functions[j].letter)}${G[x.st]}</span>`; }).join('');
+                return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(b.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(b.id)}</span>${this._tspan(b)}<span class="xp-mini">${mini}</span></button>${open ? this._blockBody(b) : ''}</div>`;
+            }).join('');
+            const extras = c.extras.length ? '<div class="xp-sec">Blocks not in ' + escapeHtml(this.data.functions[c.reference].letter) + '</div>' + c.extras.map(x => {
+                const open = this.s.open === x.id;
+                return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(x.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(x.id)}</span><span class="bt">${escapeHtml(x.title)}</span><span class="xp-mini">${x.funcs.map(j => `<span class="st-extra">${escapeHtml(this.data.functions[j].letter)}+</span>`).join('')}</span></button>${open ? `<div class="xp-bd"><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${x.funcs.map(j => `<span class="xp-badge" ${cc(j)}>${escapeHtml(this.data.functions[j].letter)}</span>`).join('')} <span class="xp-tag">no counterpart in the reference</span></div><pre>${escapeHtml(x.text)}</pre></div></div></div>` : ''}</div>`;
+            }).join('') : '';
+            const hidden = only ? c.blocks.length - blocks.length : 0;
+            return head + this._ribbon(blocks, c.extras) + legend + accordion + extras
+                + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} identical in all ${this.data.functions.length} functions hidden.</p>` : '')
+                + (c.truncated ? `<p class="xp-foot">Large functions are compared on their first ${Number(this.data.limits.lines)} lines and ${Number(this.data.limits.blocks)} blocks.</p>` : '');
+        }
+
+        _band(id, st, sim, title, extra = '') {
+            return `<div class="xp-fband"><span class="xp-bid">${escapeHtml(id)}</span><span class="xp-cell st-${st}" style="cursor:default">${NwayExpand.GLYPH[st]} ${NwayExpand.SNAME[st]}${st === 'miss' || st === 'same' || st === 'extra' ? '' : ' ' + Math.round(sim * 100) + '%'}</span>${extra}<span class="dim">${escapeHtml(title)}</span><i></i></div>`;
+        }
+
+        _fullView() {
+            const d = this.data, c = d.consensus, s = this.s, single = s.single;
+            if (s.fn == null || (!single && s.fn === c.reference)) s.fn = this._others()[0];
+            const f = s.fn;
+            const chips = d.functions.map((fn, j) => (j === c.reference && !single) ? '' : `<button class="xp-chip" aria-pressed="${j === f}" data-xfn="${j}"><span class="xp-badge" ${cc(j)}>${escapeHtml(fn.letter)}</span>${escapeHtml(fn.file_name || '')}</button>`).join('');
+            let out = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Show</span>${chips}<label class="xp-chk"><input type="checkbox" data-xsingle ${single ? 'checked' : ''}> Function alone, in its own order</label></div>`;
+            const tag = t => `<span class="xp-tag hot">${escapeHtml(t)}</span>`;
+            if (single) {
+                out += `<p class="xp-hint">Whole function ${escapeHtml(d.functions[f].file_name || '')}, blocks labelled with their match in the reference.</p>`;
+                if (f === c.reference) return out + c.blocks.map(b => `<div class="xp-frow one">${this._band(b.id, 'same', 1, this._bt(b))}<pre class="xp-fcode">${escapeHtml(b.ref_text)}</pre></div>`).join('');
+                const segs = c.funcs[String(f)] || [];
+                return out + segs.map(seg => {
+                    const r = seg.refs[0], b = r && c.blocks.find(x => x.id === r.b);
+                    const band = r ? this._band(seg.refs.map(x => x.b).join(' + '), r.st, r.sim, this._bt(b)) : seg.x ? this._band(seg.x, 'extra', 1, (c.extras.find(x => x.id === seg.x) || {}).title || '') : this._band('-', 'extra', 1, 'unmatched');
+                    return `<div class="xp-frow one">${band}<pre class="xp-fcode st-${r ? r.st : 'extra'}">${this._runs(seg.text, 'chg')}</pre></div>`;
+                }).join('');
+            }
+            const ref = d.functions[c.reference];
+            out += `<p class="xp-hint">Rows are blocks of ${escapeHtml(ref.letter)}. Left is ${escapeHtml(ref.letter)}, right is ${escapeHtml(d.functions[f].file_name || '')}. Blocks that moved or merged stay on the row of the block they match.</p>`;
+            out += `<div class="xp-frow"><div class="xp-fband" style="grid-column:1"><span class="xp-badge" ${cc(c.reference)}>${escapeHtml(ref.letter)}</span> ${escapeHtml(ref.file_name || '')} (reference)</div><div class="xp-fband" style="grid-column:2"><span class="xp-badge" ${cc(f)}>${escapeHtml(d.functions[f].letter)}</span> ${escapeHtml(d.functions[f].file_name || '')}</div></div>`;
+            let hidden = 0;
+            for (const b of c.blocks) {
+                const cell = this._cell(b, f);
+                if (s.only && cell.st === 'same') { hidden++; continue; }
+                const g = this._group(b, f);
+                let right;
+                if (cell.st === 'miss') right = '<pre class="xp-fcode gap">(no matching code)</pre>';
+                else if (cell.into) right = `<pre class="xp-fcode gap">↑ merged into ${escapeHtml(cell.into)} above</pre>`;
+                else right = `<pre class="xp-fcode st-${cell.st}">${this._runs(this._cellRuns(b, f), 'chg')}</pre>`;
+                out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), cell.into ? tag('merged into ' + cell.into) : '')}<pre class="xp-fcode">${g && g.ref_segs ? this._runs(g.ref_segs, 'del') : escapeHtml(b.ref_text)}</pre>${right}</div>`;
+            }
+            for (const seg of (c.funcs[String(f)] || []).filter(x => x.x)) {
+                const x = c.extras.find(e => e.id === seg.x);
+                out += `<div class="xp-frow">${this._band(seg.x, 'extra', 1, x ? x.title : '')}<pre class="xp-fcode gap">(no counterpart in ${escapeHtml(ref.letter)})</pre><pre class="xp-fcode st-extra">${this._runs(seg.text, 'chg')}</pre></div>`;
+            }
+            return out + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} identical to ${escapeHtml(ref.letter)} hidden. Untick "Differences only" to read the whole function.</p>` : '');
+        }
+
+        // LLM titles: asked once when the code tab first opens, never blocking the render.
+        async _loadTitles() {
+            if (this._titlesAsked) return;
+            this._titlesAsked = true;
+            const qs = this.panel._docQs();
+            qs.set('fids', this.fids.join(','));
+            for (let i = 0; i < 40 && this.row; i++) {
+                let body = null;
+                try {
+                    const res = await fetch(`/api/bin_sim/nway/facets/titles?${qs.toString()}`);
+                    body = res.ok ? await res.json() : null;
+                } catch (e) { body = null; }
+                if (!this.row) return;
+                if (body && body.status === 'pending') {
+                    this._setNaming(true);
+                    await new Promise(r => setTimeout(r, 2500));
+                    continue;
+                }
+                if (body && body.status === 'ready') {
+                    this.titles = body.titles || {};
+                    this.el.querySelectorAll('[data-btitle]').forEach(el => {
+                        const b = this.data.consensus.blocks.find(x => x.id === el.dataset.btitle);
+                        if (!b || !this.titles[b.id]) return;
+                        el.textContent = this.titles[b.id];
+                        el.title = b.title;
+                    });
+                }
+                break;
+            }
+            this._setNaming(false);
+        }
+
+        _setNaming(on) {
+            this._naming = on;
+            const el = this.el && this.el.querySelector('.xp-naming');
+            if (el) el.hidden = !on;
         }
 
         // ---- Pair diff ----
@@ -253,7 +399,7 @@
         }
 
         _click(e) {
-            const t = e.target.closest('[data-xtab],[data-xline],[data-xpair],[data-xnav],[data-xclose],[data-xopen]');
+            const t = e.target.closest('[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xpair],[data-xnav],[data-xclose],[data-xopen]');
             if (!t) return;
             const d = t.dataset;
             if (d.xclose !== undefined) {
@@ -269,17 +415,23 @@
                 e.preventDefault();
                 return window.Nav.openPath(d.xnav, e, { title: d.title || 'Function', type: 'function' });
             }
-            if (d.xline !== undefined) {
-                const next = t.nextElementSibling;
-                const open = next && next.classList.contains('xp-vr');
-                if (open) next.remove(); else t.insertAdjacentHTML('afterend', this._variants(this.data.consensus.lines[Number(d.xline)]));
-                t.classList.toggle('open', !open);
-                t.setAttribute('aria-expanded', String(!open));
+            if (d.xcv) { this.s.cv = d.xcv; return this._rebody(); }
+            if (d.xfn !== undefined) { this.s.fn = Number(d.xfn); return this._rebody(); }
+            if (d.xx) { this.s.open = d.xx; return this._rebody(); }
+            if (d.xb !== undefined) {
+                const b = this.data.consensus.blocks.find(x => x.id === d.xb);
+                if (d.xg !== undefined) { this.s.open = d.xb; this.s.gi = Number(d.xg); }
+                else if (d.xc !== undefined && b) {
+                    this.s.open = d.xb;
+                    this.s.gi = Math.max(0, b.groups.findIndex(g => g.funcs.includes(Number(d.xc))));
+                } else { this.s.open = this.s.open === d.xb ? null : d.xb; this.s.gi = 0; }
+                this._rebody();
             }
         }
 
         _change(e) {
             const t = e.target;
+            if (t.dataset.xsingle !== undefined) { this.s.single = t.checked; return this._rebody(); }
             if (t.dataset.xonly !== undefined) { this.s.only = t.checked; return this._rebody(); }
             if (t.dataset.xsel !== undefined) {
                 this.s.pair[Number(t.dataset.xsel)] = Number(t.value);

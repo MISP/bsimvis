@@ -138,14 +138,14 @@
             if (this.s.tab === 'pair') this._loadPair();
         }
 
-        _funcRef(j, cls = 'xp-badge') {
+        _funcRef(j, cls = 'xp-badge', link = true) {
             const f = this.data.functions[j];
-            return `<span class="${cls} xp-entity-link" ${cc(j)} data-xfnref="${j}" role="link" tabindex="0" title="${escapeAttr(`Open function ${f.name || f.addr}`)}">${escapeHtml(f.letter)}</span>`;
+            return `<span class="${cls}${link ? ' xp-entity-link' : ''}" ${cc(j)}${link ? ` data-xfnref="${j}" role="link" tabindex="0" title="${escapeAttr(`Open function ${f.name || f.addr}`)}"` : ''}>${escapeHtml(f.letter)}</span>`;
         }
 
-        _fileRef(j, cls = 'xp-fn') {
+        _fileRef(j, cls = 'xp-fn', link = true) {
             const f = this.data.functions[j], { md5 } = parts(this.fids[j] || '');
-            return `<span class="${cls} xp-entity-link" data-xfile="${j}" role="link" tabindex="0" title="${escapeAttr(`${f.file_name || md5} (${md5})`)}">${escapeHtml(f.file_name || md5)}</span>`;
+            return `<span class="${cls}${link ? ' xp-entity-link' : ''}"${link ? ` data-xfile="${j}" role="link" tabindex="0" title="${escapeAttr(`${f.file_name || md5} (${md5})`)}"` : ''}>${escapeHtml(f.file_name || md5)}</span>`;
         }
 
         _md5Ref(j) {
@@ -345,8 +345,8 @@
             const d = this.data, c = d.consensus;
             if (!b.groups.length) return `<div class="xp-bd"><p class="xp-hint" style="margin:0">Identical in all ${d.functions.length} functions.</p><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${this._funcRef(c.reference)} all functions</div><pre>${this._codeHtml(b.ref_syntax, null, null, c.reference)}</pre></div></div></div>`;
             const gi = b.groups[this.s.gi] ? this.s.gi : 0, g = b.groups[gi], G = NwayFunction.GLYPH;
-            const badges = fs => fs.map(j => this._funcRef(j)).join('');
-            const chips = b.groups.map((x, i) => `<button class="xp-chip" aria-pressed="${i === gi}" data-xb="${escapeAttr(b.id)}" data-xg="${i}">${badges(x.funcs)} ${G[x.st]} ${NwayFunction.SNAME[x.st]}</button>`).join('');
+            const badges = (fs, link = true) => fs.map(j => this._funcRef(j, 'xp-badge', link)).join('');
+            const chips = b.groups.map((x, i) => `<button class="xp-chip" aria-pressed="${i === gi}" data-xb="${escapeAttr(b.id)}" data-xg="${i}">${badges(x.funcs, false)} ${G[x.st]} ${NwayFunction.SNAME[x.st]}</button>`).join('');
             const same = this._others().filter(j => this._cell(b, j).st === 'same');
             const j0 = g.funcs[0], cell = this._cell(b, j0);
             const runs = this._cellRuns(b, j0);
@@ -374,10 +374,10 @@
             const accordion = ordered.map(({ b, x }) => {
                 if (x) {
                     const open = this.s.open === x.id;
-                    return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(x.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(x.id)}</span><span class="bt">${escapeHtml(x.title)}</span><span class="xp-mini">${x.funcs.map(j => `<span class="st-extra xp-entity-link" data-xfnref="${j}" role="link" tabindex="0">${escapeHtml(this.data.functions[j].letter)}+</span>`).join('')}</span></button>${open ? `<div class="xp-bd"><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${x.funcs.map(j => `${this._funcRef(j)}`).join('')} <span class="xp-tag">no counterpart in the reference</span></div><pre>${x.syntax ? this._codeHtml(x.syntax, null, null, x.funcs[0]) : escapeHtml(x.text)}</pre></div></div></div>` : ''}</div>`;
+                    return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(x.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(x.id)}</span><span class="bt">${escapeHtml(x.title)}</span><span class="xp-mini">${x.funcs.map(j => `<span class="st-extra">${escapeHtml(this.data.functions[j].letter)}+</span>`).join('')}</span></button>${open ? `<div class="xp-bd"><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${x.funcs.map(j => `${this._funcRef(j)}`).join('')} <span class="xp-tag">no counterpart in the reference</span></div><pre>${x.syntax ? this._codeHtml(x.syntax, null, null, x.funcs[0]) : escapeHtml(x.text)}</pre></div></div></div>` : ''}</div>`;
                 }
                 const open = this.s.open === b.id;
-                const mini = this._others().map(j => { const x = this._cell(b, j); return `<span class="st-${x.st} xp-entity-link" ${cc(j)} data-xfnref="${j}" role="link" tabindex="0" title="${escapeAttr(`${this.data.functions[j].letter}: ${NwayFunction.SNAME[x.st]}`)}">${escapeHtml(this.data.functions[j].letter)}${G[x.st]}</span>`; }).join('');
+                const mini = this._others().map(j => { const x = this._cell(b, j); return `<span class="st-${x.st}" ${cc(j)} title="${escapeAttr(`${this.data.functions[j].letter}: ${NwayFunction.SNAME[x.st]}`)}">${escapeHtml(this.data.functions[j].letter)}${G[x.st]}</span>`; }).join('');
                 return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(b.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(b.id)}</span>${this._tspan(b)}<span class="xp-mini">${mini}</span></button>${open ? this._blockBody(b) : ''}</div>`;
             }).join('');
             const hidden = only ? c.blocks.length - ordered.filter(item => item.b).length : 0;
@@ -393,7 +393,7 @@
         _fullGroups(b, f) {
             const same = this._others().filter(j => this._cell(b, j).st === 'same');
             const groups = [...(same.length ? [{ funcs: same, st: 'same' }] : []), ...b.groups];
-            return `<div class="xp-vchips xp-full-groups"><span class="lab">Variants</span>${groups.map(g => `<button class="xp-chip" aria-pressed="${g.funcs.includes(f)}" data-xfn="${g.funcs.includes(f) ? f : g.funcs[0]}">${g.funcs.map(j => this._funcRef(j)).join('')} ${NwayFunction.GLYPH[g.st]} ${NwayFunction.SNAME[g.st]}</button>`).join('')}</div>`;
+            return `<div class="xp-vchips xp-full-groups"><span class="lab">Variants</span>${groups.map(g => `<button class="xp-chip" aria-pressed="${g.funcs.includes(f)}" data-xfn="${g.funcs.includes(f) ? f : g.funcs[0]}">${g.funcs.map(j => this._funcRef(j, 'xp-badge', false)).join('')} ${NwayFunction.GLYPH[g.st]} ${NwayFunction.SNAME[g.st]}</button>`).join('')}</div>`;
         }
 
         _functionGroups(single) {
@@ -415,7 +415,7 @@
             const d = this.data, c = d.consensus, s = this.s, single = s.single;
             if (s.fn == null || (!single && s.fn === c.reference)) s.fn = this._others()[0];
             const f = s.fn;
-            const chips = this._functionGroups(single).map(g => `<button class="xp-chip" aria-pressed="${g.includes(f)}" data-xfn="${g.includes(f) ? f : g[0]}" title="${escapeAttr(g.map(j => `${d.functions[j].letter}: ${d.functions[j].file_name || ''}`).join('\n'))}">${g.map(j => this._funcRef(j)).join('')}${g.length > 1 ? 'same code' : this._fileRef(g[0], 'xp-rfile')}</button>`).join('');
+            const chips = this._functionGroups(single).map(g => `<button class="xp-chip" aria-pressed="${g.includes(f)}" data-xfn="${g.includes(f) ? f : g[0]}" title="${escapeAttr(g.map(j => `${d.functions[j].letter}: ${d.functions[j].file_name || ''}`).join('\n'))}">${g.map(j => this._funcRef(j, 'xp-badge', false)).join('')}${g.length > 1 ? 'same code' : this._fileRef(g[0], 'xp-rfile', false)}</button>`).join('');
             let out = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Show</span>${chips}<label class="xp-chk"><input type="checkbox" data-xsingle ${single ? 'checked' : ''}> Function alone, in its own order</label></div>`;
             const tag = t => `<span class="xp-tag hot">${escapeHtml(t)}</span>`;
             if (single) {

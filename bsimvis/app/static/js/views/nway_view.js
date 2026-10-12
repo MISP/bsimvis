@@ -86,6 +86,11 @@ window.NwayView = {
         this._container.querySelector('#nway-family-tabs').onclick = e => {
             const t = e.target.closest('[data-family-tab]');
             if (!t || t.disabled) return;
+            const data = this._functionPanel && this._functionPanel.data;
+            if (t.dataset.familyTab === 'code' && data && !data.consensus) {
+                showToast(`Code blocks are unavailable for ${data.functions.length} functions. Compare at most ${data.limits.code} functions to view them.`, 'warning');
+                return;
+            }
             this._familyState.tab = t.dataset.familyTab;
             this._writeFamilyState();
             this._showFamilyTab();
@@ -141,7 +146,7 @@ window.NwayView = {
             const tab = t.dataset.familyTab;
             t.classList.toggle('active', tab === this._familyState.tab);
             t.setAttribute('aria-selected', String(tab === this._familyState.tab));
-            t.disabled = tab !== 'graph' && (this._familyFids.length < 2 || (tab === 'code' && data && !data.consensus));
+            t.disabled = tab !== 'graph' && this._familyFids.length < 2;
             t.title = this._familyFids.length < 2 && tab !== 'graph' ? 'Comparison needs functions in at least two files' : tab === 'code' && data && !data.consensus ? `Code blocks need at most ${data.limits.code} functions` : '';
         });
     },
@@ -161,6 +166,10 @@ window.NwayView = {
                 name: this._familyName, state: this._familyState, embedded: true,
                 onState: st => { this._familyState = st; this._writeFamilyState(); this._syncFamilyTabs(); },
                 onLoad: () => {
+                    if (this._familyState.tab === 'code' && !this._functionPanel.data.consensus) {
+                        const data = this._functionPanel.data;
+                        showToast(`Code blocks are unavailable for ${data.functions.length} functions. Compare at most ${data.limits.code} functions to view them.`, 'warning');
+                    }
                     if (this._familyState.tab !== 'graph') this._familyState.tab = this._functionPanel.s.tab;
                     this._writeFamilyState();
                     this._syncFamilyTabs();

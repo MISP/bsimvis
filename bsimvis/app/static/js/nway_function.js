@@ -76,7 +76,7 @@
             const d = this.data, s = this.s;
             const code = d.consensus;
             if (s.tab === 'code' && !code) s.tab = 'facets';
-            const tab = (k, label, off, why) => `<button class="bsim-tab${s.tab === k ? ' active' : ''}" role="tab" data-xtab="${k}"${off ? ` disabled title="${escapeAttr(why)}"` : ''}>${label}</button>`;
+            const tab = (k, label, why) => `<button class="bsim-tab${s.tab === k ? ' active' : ''}" role="tab" data-xtab="${k}"${why ? ` title="${escapeAttr(why)}"` : ''}>${label}</button>`;
             const nf = d.functions.length;
             this.el.innerHTML = `
                 ${this.embedded ? '' : `<div class="nway-head"><h2><i class="fa-solid fa-table-columns"></i> ${escapeHtml(this.name || 'Function family')} <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></h2>
@@ -86,7 +86,7 @@
                     <div class="xp-cap">Function similarity from the matcher; a dash means no match was found. Click a cell to open that pair in the 2-way diff.</div></div></div>
                 <div class="xp-bar"><div class="bsim-tabbar" role="tablist" style="margin:0">
                     ${this.embedded ? '' : tab('facets', 'Facets')}
-                    ${this.embedded ? '' : tab('code', 'Code blocks', !code, `Code blocks need at most ${d.limits.code} functions (this row has ${nf})`)}
+                    ${this.embedded ? '' : tab('code', 'Code blocks', !code ? `Code blocks need at most ${d.limits.code} functions (this row has ${nf})` : '')}
                     ${this.embedded ? '' : tab('pair', 'Pair diff')}</div><span class="xp-sp"></span>
                     ${s.tab === 'pair' ? '' : `<label class="xp-chk"><input type="checkbox" data-xonly ${s.only ? 'checked' : ''}> Differences only</label>`}</div>
                 <div class="xp-body">${this._body()}</div>`;
@@ -431,7 +431,13 @@
             const t = e.target.closest('[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xpair],[data-xnav],[data-xopen]');
             if (!t) return;
             const d = t.dataset;
-            if (d.xtab) { this.s.tab = d.xtab; this._persist(); return this.render(); }
+            if (d.xtab) {
+                if (d.xtab === 'code' && !this.data.consensus) {
+                    showToast(`Code blocks are unavailable for ${this.data.functions.length} functions. Compare at most ${this.data.limits.code} functions to view them.`, 'warning');
+                    return;
+                }
+                this.s.tab = d.xtab; this._persist(); return this.render();
+            }
             if (d.xpair) { const [a, b] = d.xpair.split(',').map(Number); return this._openDiff(a, b, e); }
             if (d.xopen !== undefined) return this._openDiff(...this.s.pair, e);
             if (d.xnav) {

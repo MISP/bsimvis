@@ -53,7 +53,7 @@ _BRANCHES = {"if", "switch", "goto"}
 def limits():
     return (
         int(config_service.get("nway.facet_max_functions", 64)),
-        int(config_service.get("nway.code_max_functions", 16)),
+        int(config_service.get("nway.code_max_functions", 30)),
         int(config_service.get("nway.max_code_lines", 1500)),
         int(config_service.get("nway.max_code_blocks", 60)),
     )

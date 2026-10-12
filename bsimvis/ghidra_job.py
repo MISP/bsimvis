@@ -826,6 +826,19 @@ class GhidraAnalyzer:
                                         tag_provenance.match_offsets(matches), program
                                     ).items()
                                 }
+                                # Same provenance table the function chips read, so
+                                # a string's YARA tag names the rule that hit it.
+                                if file_md5 and payload["yara_string_rules"]:
+                                    tag_provenance.record_hits_bulk(
+                                        collection,
+                                        {
+                                            f"{collection}:string:{file_md5}:{a}": ids
+                                            for a, ids in payload[
+                                                "yara_string_rules"
+                                            ].items()
+                                        },
+                                        self.r_data,
+                                    )
                                 self.job_service.add_log(
                                     job_id,
                                     f"yara matched {len(file_tags)} rules, "

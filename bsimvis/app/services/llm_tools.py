@@ -245,8 +245,11 @@ def search_strings(collection, q, limit=10):
             }
             for f in (result.get("functions") or [])[:limit]
         ],
-        "strings": string_service.search_strings(get_redis(), collection, q, limit)[
-            "strings"
+        "strings": [
+            {"value": x["value"], "files": x["files"], "functions": x["functions"]}
+            for x in string_service.list_strings(
+                get_redis(), collection, q=q, limit=limit
+            )["items"]
         ],
     }
 

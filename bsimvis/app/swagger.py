@@ -3890,35 +3890,24 @@ class StringsSearch(Resource):
     @ns_strings.doc(
         params={
             **_STRINGS_SCOPE,
-            "q": "Value to find (substring, `*` = glob) (required)",
+            "q": "Substring of the value (`*` = glob)",
+            "encoding": "ascii | utf-8 | utf-16 | utf-32",
+            "section": "Memory block name, e.g. .rodata",
+            "tag": "Substring of an analyzer tag",
+            "yara": "true keeps only strings a YARA rule matched",
+            "referenced": "true/false: referenced by some function",
+            "min_length": "Minimum string length",
+            "sort_by": "files | functions | length | value | encoding (default: files)",
+            "sort_order": "asc or desc (default: desc)",
             "offset": "Row offset (default: 0)",
-            "limit": "Rows per page, max 500 (default: 50)",
+            "limit": "Rows per page, max 5000 (default: 100)",
         }
     )
     def get(self):
-        """Distinct string values matching q across all files, with file and
-        function counts."""
+        """Distinct strings across a collection or pool, aggregated.
+
+        Rows: id, value, length, encodings, sections, tags, rules, files,
+        functions. Paged, filtered and sorted server-side."""
         from bsimvis.app.routes.strings import search_strings
 
         return search_strings()
-
-
-@ns_strings.route("/tag")
-class StringsTag(Resource):
-    @ns_strings.expect(
-        api.model(
-            "StringTag",
-            {
-                "collection": fields.String(required=True, example="main"),
-                "md5": fields.String(required=True),
-                "addr": fields.String(required=True, example="00102028"),
-                "tag": fields.String(required=True, example="c2"),
-                "action": fields.String(enum=["add", "remove"], default="add"),
-            },
-        )
-    )
-    def post(self):
-        """Adds or removes an analyst tag on one string."""
-        from bsimvis.app.routes.strings import tag_string
-
-        return tag_string()

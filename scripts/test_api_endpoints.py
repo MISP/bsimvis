@@ -3426,22 +3426,54 @@ def test_strings():
         params={"collection": COLLECTION, "q": needle},
         label="GET /api/strings/search",
     )
+    hit = next((x for x in (ss or {}).get("items", []) if x["id"] == s["id"]), None)
     check(
-        "value search lists the string with file counts",
-        any(x["files"] >= 1 for x in (ss or {}).get("strings", [])),
+        "aggregated search lists the string with file and function counts",
+        bool(hit) and hit["files"] >= 1 and hit["functions"] >= 1,
         str(ss)[:300],
     )
+    page = test_endpoint(
+        "GET",
+        "/api/strings/search",
+        params={
+            "collection": COLLECTION,
+            "sort_by": "length",
+            "sort_order": "desc",
+            "limit": 3,
+            "referenced": "true",
+        },
+        label="aggregated search: sorted, paged, filtered",
+    )
+    lens = [x["length"] for x in (page or {}).get("items", [])]
+    check(
+        "aggregated listing sorts, pages and filters server-side",
+        len(lens) <= 3
+        and lens == sorted(lens, reverse=True)
+        and all(x["functions"] > 0 for x in page["items"])
+        and page["total"] >= len(lens),
+        str(page)[:300],
+    )
+    both = test_endpoint(
+        "GET",
+        "/api/strings/search",
+        params={"collection": COLLECTION, "q": needle, "encoding": "nope"},
+        label="aggregated search: encoding filter",
+    )
+    check("encoding filter excludes non-matching", (both or {}).get("total") == 0)
 
+    eid = f"{COLLECTION}:string:{file_md5_2}:{s['addr']}"
     tagged = test_endpoint(
         "POST",
-        "/api/strings/tag",
-        data={**base, "addr": s["addr"], "tag": "strings-test", "action": "add"},
-        label="tag a string",
+        "/api/tags/add",
+        data={
+            "collection": COLLECTION,
+            "entity_type": "string",
+            "entity_id": eid,
+            "tag": "strings-test",
+        },
+        label="tag a string (tags/add, entity_type=string)",
     )
-    check(
-        "string gets the user tag",
-        "strings-test" in ((tagged or {}).get("string") or {}).get("user_tags", []),
-    )
+    check("string tag accepted", (tagged or {}).get("status") == "success")
     bytag = test_endpoint(
         "GET",
         "/api/strings/file",
@@ -3454,8 +3486,13 @@ def test_strings():
     )
     test_endpoint(
         "POST",
-        "/api/strings/tag",
-        data={**base, "addr": s["addr"], "tag": "strings-test", "action": "remove"},
+        "/api/tags/remove",
+        data={
+            "collection": COLLECTION,
+            "entity_type": "string",
+            "entity_id": eid,
+            "tag": "strings-test",
+        },
         label="untag a string",
     )
     after = test_endpoint(

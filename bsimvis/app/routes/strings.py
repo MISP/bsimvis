@@ -11,8 +11,6 @@ from flask import request
 
 from bsimvis.app.services import string_service, tag_provenance
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.tag_service import tag_service
-from bsimvis.app.services.tag_taxonomy import filter_tags
 
 
 def _collection():
@@ -121,35 +119,29 @@ def get_string_functions():
 
 
 def search_strings():
-    collection, q = _collection(), (request.args.get("q") or "").strip()
-    if not collection or not q:
-        return {"error": "collection and q are required"}, 400
+    """Distinct strings across the collection/pool: aggregated, paged, filtered
+    and sorted server-side."""
+    collection = _collection()
+    if not collection:
+        return {"error": "collection or pool is required"}, 400
     try:
         offset = max(0, int(request.args.get("offset", 0)))
-        limit = max(1, min(int(request.args.get("limit", 50)), 500))
+        limit = max(1, min(int(request.args.get("limit", 100)), 5000))
+        min_length = int(request.args.get("min_length", 0))
     except ValueError:
         return {"error": "Invalid numeric parameter"}, 400
-    return string_service.search_strings(get_redis(), collection, q, limit, offset)
-
-
-def tag_string():
-    """Payload: {collection, md5, addr, tag, action: add|remove}."""
-    data = request.json or {}
-    collection = data.get("collection")
-    if data.get("pool"):
-        collection = f"global:pool:{data['pool']}"
-    md5, addr, tag = data.get("md5"), data.get("addr"), (data.get("tag") or "").strip()
-    action = data.get("action", "add")
-    if not all([collection, md5, addr, tag]) or action not in ("add", "remove"):
-        return {"error": "collection, md5, addr, tag and action are required"}, 400
-    if not filter_tags([tag], "user"):
-        return {"error": f"Tag {tag!r} is not allowed for user tagging"}, 400
-    r = get_redis()
-    # Tags live on the origin collection; a pool names it through its members.
-    for coll in string_service._origins(r, collection):
-        if r.hexists(string_service.file_key(coll, md5), addr):
-            rec = string_service.set_user_tag(r, coll, md5, addr, tag, action == "add")
-            if action == "add":
-                tag_service._ensure_tag_metadata(coll, tag)
-            return {"status": "success", "string": rec}
-    return {"error": "String not found"}, 404
+    return string_service.list_strings(
+        get_redis(),
+        collection,
+        q=request.args.get("q"),
+        encoding=request.args.get("encoding"),
+        section=request.args.get("section"),
+        tag=request.args.get("tag"),
+        yara=_flag("yara"),
+        referenced=_flag("referenced"),
+        min_length=min_length,
+        sort_by=request.args.get("sort_by", "files"),
+        sort_order=request.args.get("sort_order", "desc"),
+        offset=offset,
+        limit=limit,
+    )

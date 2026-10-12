@@ -26,7 +26,6 @@ import hashlib
 import json
 
 from bsimvis.app.services.index_service import get_pool_id
-from bsimvis.app.services.query_syntax import resolve_targets
 
 MAX_VALUE_LEN = 1024  # stored value is cut here; `length` keeps the real size
 MAX_BUCKET_LEN = 128  # search-bucket key is the lowered value cut to this
@@ -119,6 +118,56 @@ def _index_ops(pipe, coll, md5, rec, add):
     return touched
 
 
+def _aggregate(strings):
+    """Group records by string id: the facts a collection-wide listing shows."""
+    groups = {}
+    for rec in strings:
+        g = groups.setdefault(
+            rec["id"],
+            {"value": rec["value"], "length": rec["length"], "funcs": set()}
+            | {k: set() for k in ("encodings", "sections", "tags", "rules")},
+        )
+        g["encodings"].add(rec["encoding"])
+        g["sections"].add(rec.get("section") or "")
+        g["tags"].update(rec.get("tags") or [])
+        g["rules"].update(rec.get("rules") or [])
+        g["funcs"].update(rec.get("funcs") or [])
+    return groups
+
+
+def _bump_aggregate(r, coll, strings, sign):
+    """Keep `idx:string:meta` / `file_count` / `func_count` in step with a file
+    being added (+1) or removed (-1). Tag/section/encoding sets only grow; a
+    string vanishes when its last file does."""
+    groups = _aggregate(strings)
+    if not groups:
+        return
+    ids = list(groups)
+    meta_key = f"{coll}:idx:string:meta"
+    pipe = r.pipeline(transaction=False)
+    if sign > 0:
+        old = r.hmget(meta_key, ids)
+        for sid, raw in zip(ids, old):
+            g, prev = groups[sid], _loads(raw) or {}
+            doc = {"value": g["value"], "length": g["length"]}
+            for k in ("encodings", "sections", "tags", "rules"):
+                doc[k] = sorted(g[k] | set(prev.get(k) or []))
+            pipe.hset(meta_key, sid, json.dumps(doc))
+            pipe.hincrby(f"{coll}:idx:string:file_count", sid, 1)
+            pipe.hincrby(f"{coll}:idx:string:func_count", sid, len(g["funcs"]))
+        pipe.execute()
+        return
+    for sid in ids:
+        pipe.hincrby(f"{coll}:idx:string:file_count", sid, -1)
+        pipe.hincrby(f"{coll}:idx:string:func_count", sid, -len(groups[sid]["funcs"]))
+    left = pipe.execute()[0::2]
+    dead = [sid for sid, n in zip(ids, left) if n <= 0]
+    if dead:
+        r.hdel(meta_key, *dead)
+        r.hdel(f"{coll}:idx:string:file_count", *dead)
+        r.hdel(f"{coll}:idx:string:func_count", *dead)
+
+
 def unindex_file_strings(r, coll, md5):
     """Drop a file's string table and every index entry that points at it."""
     table = r.hgetall(file_key(coll, md5))
@@ -126,8 +175,9 @@ def unindex_file_strings(r, coll, md5):
         return 0
     touched = []
     pipe = r.pipeline(transaction=False)
-    for raw in table.values():
-        rec = _loads(raw)
+    recs = [x for x in (_loads(v) for v in table.values()) if x]
+    _bump_aggregate(r, coll, recs, -1)
+    for rec in recs:
         if rec:
             touched += _index_ops(pipe, coll, md5, rec, add=False)
             for entry in rec.get("funcs", []):
@@ -159,6 +209,7 @@ def index_file_strings(r, coll, md5, strings):
         if n % 500 == 0:
             pipe.execute()
     pipe.execute()
+    _bump_aggregate(r, coll, strings, +1)
     return n
 
 
@@ -173,6 +224,22 @@ def set_user_tag(r, coll, md5, addr, tag, add=True):
     rec["user_tags"] = sorted(tags)
     r.hset(file_key(coll, md5), addr, json.dumps(rec))
     return rec
+
+
+def string_entity_id(coll, md5, addr):
+    return f"{coll}:string:{md5}:{addr}"
+
+
+def tag_by_ids(r, ids, tag, add=True):
+    """Add/remove an analyst tag on strings named by entity id
+    (`{coll}:string:{md5}:{addr}`). Returns how many were found."""
+    n = 0
+    for eid in ids:
+        coll, _, rest = eid.partition(":string:")
+        md5, _, addr = rest.partition(":")
+        if coll and md5 and addr and set_user_tag(r, coll, md5, addr, tag, add):
+            n += 1
+    return n
 
 
 # ---------------------------------------------------------------------- read
@@ -310,22 +377,85 @@ def page_strings(
     return {"total": total, "offset": offset, "limit": limit, "strings": page}
 
 
-def search_strings(r, collection, q, limit=50, offset=0):
-    """Distinct string values matching `q` across all files of a collection or
-    pool, with how many files and functions carry each."""
-    seen = {}
+AGG_SORTS = {
+    "value": lambda s: s["value"].lower(),
+    "length": lambda s: s["length"],
+    "files": lambda s: s["files"],
+    "functions": lambda s: s["functions"],
+    "encoding": lambda s: ",".join(s["encodings"]),
+}
+
+
+def list_strings(
+    r,
+    collection,
+    q=None,
+    encoding=None,
+    section=None,
+    tag=None,
+    yara=None,
+    referenced=None,
+    min_length=0,
+    sort_by="files",
+    sort_order="desc",
+    offset=0,
+    limit=100,
+):
+    """Distinct strings across a collection (or a pool's members), filtered,
+    sorted and paged server-side. Row: {id, value, length, encodings, sections,
+    tags, rules, files, functions}.
+
+    ponytail: loads the three aggregate hashes whole, O(distinct strings) per
+    request. Fine into the hundreds of thousands; past that, add score ZSETs."""
+    rows = {}
     for coll in _origins(r, collection):
-        targets, _, _ = resolve_targets(
-            r, coll, "file", "strings", q, default_kind="substring"
-        )
-        for low in targets:
-            row = seen.setdefault(low, {"value": low, "files": 0, "functions": 0})
-            row["files"] += r.scard(f"{coll}:idx:file:strings:{low}")
-            row["functions"] += r.scard(f"{coll}:idx:func:strings:{low}")
-    rows = sorted(seen.values(), key=lambda x: (-x["files"], x["value"]))
-    return {
-        "total": len(rows),
-        "offset": offset,
-        "limit": limit,
-        "strings": rows[offset : offset + limit],
-    }
+        meta = r.hgetall(f"{coll}:idx:string:meta")
+        files = r.hgetall(f"{coll}:idx:string:file_count")
+        funcs = r.hgetall(f"{coll}:idx:string:func_count")
+        for sid, raw in meta.items():
+            sid, doc = _txt(sid), _loads(raw)
+            if not doc:
+                continue
+            row = rows.setdefault(
+                sid,
+                {"id": sid, "value": doc["value"], "length": doc["length"]}
+                | {k: set() for k in ("encodings", "sections", "tags", "rules")}
+                | {"files": 0, "functions": 0},
+            )
+            for k in ("encodings", "sections", "tags", "rules"):
+                row[k].update(doc.get(k) or [])
+            row["files"] += int(files.get(sid) or files.get(sid.encode()) or 0)
+            row["functions"] += int(funcs.get(sid) or funcs.get(sid.encode()) or 0)
+
+    needle, tag = (q or "").lower(), (tag or "").lower()
+
+    def keep(s):
+        if needle:
+            hay = s["value"].lower()
+            if "*" in needle:
+                if not fnmatch.fnmatchcase(hay, needle):
+                    return False
+            elif needle not in hay:
+                return False
+        if encoding and encoding not in s["encodings"]:
+            return False
+        if section and section not in s["sections"]:
+            return False
+        if tag and not any(tag in t.lower() for t in s["tags"]):
+            return False
+        if yara is not None and bool(s["rules"]) != yara:
+            return False
+        if referenced is not None and bool(s["functions"]) != referenced:
+            return False
+        return s["length"] >= min_length
+
+    out = [s for s in rows.values() if keep(s)]
+    out.sort(
+        key=lambda s: (AGG_SORTS.get(sort_by, AGG_SORTS["files"])(s), s["value"]),
+        reverse=sort_order == "desc",
+    )
+    page = out[offset : offset + limit] if limit else out[offset:]
+    for s in page:
+        for k in ("encodings", "sections", "tags", "rules"):
+            s[k] = sorted(s[k])
+    return {"total": len(out), "offset": offset, "limit": limit, "items": page}

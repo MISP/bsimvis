@@ -280,6 +280,21 @@ window.Breadcrumbs = {
                 });
                 break;
             case 'nway':
+                if (window.location.pathname.endsWith('/nway/function') && window.NwayPanel) {
+                    const q = new URLSearchParams(window.location.search);
+                    const back = q.get('fx_back') || '';
+                    segments.push({
+                        label: 'N-way diff',
+                        url: back.startsWith('/') && !back.startsWith('//') ? back : window.NwayPanel.backUrl(q),
+                        icon: 'fa-solid fa-code-compare'
+                    });
+                    segments.push({
+                        label: `Function: ${q.get('fx_name') || ''}`,
+                        url: window.location.pathname + window.location.search,
+                        icon: 'fa-solid fa-code-compare'
+                    });
+                    break;
+                }
                 if (window.location.pathname.endsWith('/nway/graph') && window.NwayPanel) {
                     const q = new URLSearchParams(window.location.search);
                     segments.push({

@@ -1,13 +1,15 @@
 /**
- * Inline N-way function diff: the panel a row of the N-way table expands into
- * (GET /api/bin_sim/nway/facets). Header cards + similarity matrix, then
- * Facets / Consensus code / Pair diff tabs. The table is not re-rendered, so
- * its filters, scroll and focus stay put.
+ * N-way function view: one function family of the N-way table on its own page
+ * (/diff/nway/function?<source>&<controls>&fx_*), backed by
+ * GET /api/bin_sim/nway/facets. Header cards + similarity matrix, then
+ * Facets / Code blocks / Pair diff tabs.
  *
- *   new NwayExpand(panel, tr, fids).open();   // panel = NwayPanel, tr = the row
+ *   new NwayFunction(container, { source, doc, fids, state, onState }).load();
  *
- * Every value comes off an uploaded sample: it all goes through escapeHtml /
- * escapeAttr.
+ * `source` and `doc` are the member params and doc controls of the table the
+ * row came from; `state` ({tab, cv, fn, only, single}) is the view state the URL
+ * carries and `onState(state)` fires on every change. Every value comes off an
+ * uploaded sample: it all goes through escapeHtml / escapeAttr.
  */
 (function () {
     const PAIR_ROWS = 600;
@@ -19,66 +21,71 @@
         return { coll, md5: rest.slice(0, i), addr: rest.slice(i + 1) };
     };
 
-    class NwayExpand {
-        constructor(panel, tr, fids) {
-            this.panel = panel;
-            this.tr = tr;
-            this.fids = fids;
-            this.s = { tab: 'facets', only: true, pair: null, cv: 'blocks', open: null, gi: 0, fn: null, single: false };
+    class NwayFunction {
+        constructor(el, o) {
+            this.el = el;
+            this.source = o.source || {};
+            this.doc = o.doc || {};
+            this.fids = o.fids;
+            this.name = o.name || '';
+            this.onState = o.onState || null;
+            this.s = { tab: 'facets', only: true, pair: null, cv: 'blocks', open: null, gi: 0, fn: null, single: false, ...(o.state || {}) };
             this.titles = {};
             this.data = null;
-            this.row = null;
+            this._dead = false;
+            el.addEventListener('click', e => this._click(e));
+            el.addEventListener('change', e => this._change(e));
         }
 
-        // Insert the expansion row under `tr` and fetch its data.
-        async open() {
-            const span = this.tr.children.length;
-            this.row = document.createElement('tr');
-            this.row.className = 'nway-xp-row';
-            this.row.innerHTML = `<td colspan="${span}"><div class="nway-xp"><div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Comparing ${this.fids.length} functions...</div></div></td>`;
-            this.tr.after(this.row);
-            this.el = this.row.querySelector('.nway-xp');
-            this.el.addEventListener('click', e => this._click(e));
-            this.el.addEventListener('change', e => this._change(e));
-            const scroller = this.row.closest('.nway-scroll');
-            if (scroller && window.ResizeObserver) {
-                this._ro = new ResizeObserver(() => { this.el.style.width = `${scroller.clientWidth - 2}px`; });
-                this._ro.observe(scroller);
-            }
+        destroy() {
+            this._dead = true;
+        }
+
+        _qs() {
+            const qs = new URLSearchParams();
+            for (const [k, v] of Object.entries({ ...this.source, ...this.doc })) if (v !== null && v !== undefined && v !== '') qs.set(k, v);
+            qs.set('fids', this.fids.join(','));
+            return qs;
+        }
+
+        _persist() {
+            if (!this.onState) return;
+            const { tab, cv, fn, only, single } = this.s;
+            this.onState({ tab, cv, fn, only, single });
+        }
+
+        async load() {
+            this.el.innerHTML = `<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Comparing ${this.fids.length} functions...</div>`;
             try {
-                const qs = this.panel._docQs();
-                qs.set('fids', this.fids.join(','));
-                const res = await fetch(`/api/bin_sim/nway/facets?${qs.toString()}`);
+                const res = await fetch(`/api/bin_sim/nway/facets?${this._qs().toString()}`);
                 const body = await res.json().catch(() => ({}));
                 if (!res.ok) throw new Error(body.message || body.error || body.detail || `HTTP ${res.status}`);
+                if (this._dead) return;
                 this.data = body;
             } catch (e) {
-                this.el.innerHTML = `<div class="nway-state">Could not compare these functions: ${escapeHtml(String(e.message || e))}</div>`;
+                if (!this._dead) this.el.innerHTML = `<div class="nway-state">Could not compare these functions: ${escapeHtml(String(e.message || e))}</div>`;
                 return;
             }
             this.render();
         }
 
-        close() {
-            if (this._ro) this._ro.disconnect();
-            if (this.row) this.row.remove();
-            this.row = null;
-        }
-
         render() {
             const d = this.data, s = this.s;
             const code = d.consensus;
-            const tab = (k, label, off, why) => `<button class="xp-tab" role="tab" data-xtab="${k}" aria-selected="${s.tab === k}"${off ? ` disabled title="${escapeAttr(why)}"` : ''}>${label}</button>`;
+            if (s.tab === 'code' && !code) s.tab = 'facets';
+            const tab = (k, label, off, why) => `<button class="bsim-tab${s.tab === k ? ' active' : ''}" role="tab" data-xtab="${k}"${off ? ` disabled title="${escapeAttr(why)}"` : ''}>${label}</button>`;
+            const nf = d.functions.length;
             this.el.innerHTML = `
-                <div class="xp-head"><div class="xp-cols">${d.functions.map((f, j) => this._card(f, j)).join('')}</div>
-                    <div><div class="xp-mx" style="--n:${d.functions.length}">${this._matrix()}</div>
+                <div class="nway-head"><h2><i class="fa-solid fa-table-columns"></i> ${escapeHtml(this.name || 'Function family')} <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></h2>
+                    <p>${nf} functions, one per file. Strings, calls, constants and code compared across them.</p></div>
+                <div class="nway-card xp-head"><div class="xp-cols">${d.functions.map((f, j) => this._card(f, j)).join('')}</div>
+                    <div><div class="xp-mx" style="--n:${nf}">${this._matrix()}</div>
                     <div class="xp-cap">Function similarity from the matcher; a dash means no match was found. Click a cell to open that pair in the 2-way diff.</div></div></div>
-                <div class="xp-bar"><div class="xp-tabs" role="tablist">
+                <div class="xp-bar"><div class="bsim-tabbar" role="tablist" style="margin:0">
                     ${tab('facets', 'Facets')}
-                    ${tab('code', 'Code blocks', !code, `Code blocks need at most ${d.limits.code} functions (this row has ${d.functions.length})`)}
+                    ${tab('code', 'Code blocks', !code, `Code blocks need at most ${d.limits.code} functions (this row has ${nf})`)}
                     ${tab('pair', 'Pair diff')}</div><span class="xp-sp"></span>
-                    ${s.tab === 'pair' ? '' : `<label class="xp-chk"><input type="checkbox" data-xonly ${s.only ? 'checked' : ''}> Differences only</label>`}
-                    <button class="xp-btn" data-xclose title="Collapse this row"><i class="fa-solid fa-chevron-up"></i> Collapse</button></div>
+                    ${s.tab === 'pair' ? '' : `<label class="xp-chk"><input type="checkbox" data-xonly ${s.only ? 'checked' : ''}> Differences only</label>`}</div>
                 <div class="xp-body">${this._body()}</div>`;
             if (s.tab === 'pair') this._loadPair();
             if (s.tab === 'code') this._loadTitles();
@@ -95,7 +102,7 @@
         }
 
         _card(f, j) {
-            const url = window.NwayPanel.fnUrl(f.id, this.panel.source.pool || null);
+            const url = window.NwayPanel.fnUrl(f.id, this.source.pool || null);
             const ref = j === this.data.reference ? '<span class="xp-ref" title="Reference of the consensus code: the function most similar to the others">ref</span>' : '';
             return `<div class="xp-col" ${cc(j)}>
                 <div class="xp-l"><span class="xp-badge">${escapeHtml(f.letter)}</span><span class="xp-fn" title="${escapeAttr(f.file_name || '')}">${escapeHtml(f.file_name || '')}</span>${ref}</div>
@@ -194,7 +201,7 @@
         _group(b, j) { return b.groups.find(g => g.funcs.includes(j)); }
 
         _glyph(st, sim, miss = true) {
-            const G = NwayExpand.GLYPH;
+            const G = NwayFunction.GLYPH;
             return `${G[st]}${st === 'same' || (st === 'miss' && miss) ? '' : ' ' + Math.round(sim * 100)}`;
         }
 
@@ -204,7 +211,7 @@
 
         _code() {
             const s = this.s;
-            const sw = `<div class="xp-cbar"><div class="xp-seg" role="group" aria-label="Code view"><button data-xcv="blocks" aria-pressed="${s.cv === 'blocks'}">Blocks</button><button data-xcv="full" aria-pressed="${s.cv === 'full'}">Full function</button></div>
+            const sw = `<div class="xp-cbar"><div class="view-toggle" role="group" aria-label="Code view"><button class="view-btn${s.cv === 'blocks' ? ' active' : ''}" data-xcv="blocks">Blocks</button><button class="view-btn${s.cv === 'full' ? ' active' : ''}" data-xcv="full">Full function</button></div>
                 <span class="xp-hint" style="margin:0">${s.cv === 'blocks' ? 'Overview of what changed, block by block.' : 'Read the whole function, aligned to the reference by block.'}</span>
                 <span class="xp-naming" ${this._naming ? '' : 'hidden'}><i class="fa-solid fa-spinner fa-spin"></i> naming blocks&hellip;</span></div>`;
             return sw + (s.cv === 'blocks' ? this._blocksView() : this._fullView());
@@ -222,7 +229,7 @@
                     const cell = this._cell(b, j);
                     const gsel = b.groups[this.s.gi];
                     const sel = this.s.open === b.id && !!gsel && gsel.funcs.includes(j);
-                    h += `<td><button class="xp-cell st-${cell.st}${sel ? ' sel' : ''}" data-xb="${escapeAttr(b.id)}" data-xc="${j}" title="${NwayExpand.SNAME[cell.st]}">${this._glyph(cell.st, cell.sim)}</button></td>`;
+                    h += `<td><button class="xp-cell st-${cell.st}${sel ? ' sel' : ''}" data-xb="${escapeAttr(b.id)}" data-xc="${j}" title="${NwayFunction.SNAME[cell.st]}">${this._glyph(cell.st, cell.sim)}</button></td>`;
                 }
                 for (const x of extras) h += x.funcs.includes(j) ? `<td><button class="xp-cell st-extra" data-xx="${escapeAttr(x.id)}" title="only in this function">+</button></td>` : '<td><span class="st-none">&ndash;</span></td>';
                 h += '</tr>';
@@ -233,9 +240,9 @@
         _blockBody(b) {
             const d = this.data, c = d.consensus, ref = d.functions[c.reference];
             if (!b.groups.length) return `<div class="xp-bd"><p class="xp-hint" style="margin:0">Identical in all ${d.functions.length} functions.</p><div class="xp-panes"><div class="xp-pane"><div class="xp-ph"><span class="xp-badge" ${cc(c.reference)}>${escapeHtml(ref.letter)}</span> all functions</div><pre>${escapeHtml(b.ref_text)}</pre></div></div></div>`;
-            const gi = b.groups[this.s.gi] ? this.s.gi : 0, g = b.groups[gi], G = NwayExpand.GLYPH;
+            const gi = b.groups[this.s.gi] ? this.s.gi : 0, g = b.groups[gi], G = NwayFunction.GLYPH;
             const badges = fs => fs.map(j => `<span class="xp-badge" ${cc(j)}>${escapeHtml(d.functions[j].letter)}</span>`).join('');
-            const chips = b.groups.map((x, i) => `<button class="xp-chip" aria-pressed="${i === gi}" data-xb="${escapeAttr(b.id)}" data-xg="${i}">${badges(x.funcs)} ${G[x.st]} ${NwayExpand.SNAME[x.st]}</button>`).join('');
+            const chips = b.groups.map((x, i) => `<button class="xp-chip" aria-pressed="${i === gi}" data-xb="${escapeAttr(b.id)}" data-xg="${i}">${badges(x.funcs)} ${G[x.st]} ${NwayFunction.SNAME[x.st]}</button>`).join('');
             const same = this._others().filter(j => this._cell(b, j).st === 'same');
             const j0 = g.funcs[0], cell = this._cell(b, j0);
             const runs = this._cellRuns(b, j0);
@@ -243,7 +250,7 @@
             return `<div class="xp-bd"><div class="xp-vchips"><span class="lab">Compare ${escapeHtml(ref.letter)} with</span>${chips}${same.length ? `<span class="lab">${same.map(j => escapeHtml(d.functions[j].letter)).join(', ')}: same as ${escapeHtml(ref.letter)}</span>` : ''}</div>
                 <div class="xp-panes">
                   <div class="xp-pane"><div class="xp-ph"><span class="xp-badge" ${cc(c.reference)}>${escapeHtml(ref.letter)}</span> reference</div><pre>${g.ref_segs ? this._runs(g.ref_segs, 'del') : escapeHtml(b.ref_text)}</pre></div>
-                  <div class="xp-pane"><div class="xp-ph">${badges(g.funcs)} <span class="xp-cell st-${g.st}" style="cursor:default">${G[g.st]} ${NwayExpand.SNAME[g.st]}${g.st === 'miss' ? '' : ' ' + sim + '%'}</span>${cell.into ? `<span class="xp-tag hot">merged into ${escapeHtml(cell.into)}</span>` : ''}</div>
+                  <div class="xp-pane"><div class="xp-ph">${badges(g.funcs)} <span class="xp-cell st-${g.st}" style="cursor:default">${G[g.st]} ${NwayFunction.SNAME[g.st]}${g.st === 'miss' ? '' : ' ' + sim + '%'}</span>${cell.into ? `<span class="xp-tag hot">merged into ${escapeHtml(cell.into)}</span>` : ''}</div>
                     <pre>${runs.length ? this._runs(runs, 'chg') : '(no matching code)'}</pre>${g.note ? `<div class="xp-pnote">${escapeHtml(g.note)}</div>` : ''}</div>
                 </div></div>`;
         }
@@ -251,12 +258,12 @@
         _blocksView() {
             const c = this.data.consensus, only = this.s.only;
             const blocks = c.blocks.filter(b => !only || !this._isSame(b));
-            const G = NwayExpand.GLYPH;
+            const G = NwayFunction.GLYPH;
             const head = `<p class="xp-hint">When decompiled code is laid out differently, lines do not match one to one. Functions are cut into blocks (loops, branches, straight runs) and each block is matched by its content, in any order. Each cell shows how that block looks in the other function: how similar it is, or that it moved, was merged into or split from another block, or is gone. Click a cell or a block to compare it with the reference.</p>`;
-            const legend = `<div class="xp-legend">${Object.keys(NwayExpand.SNAME).map(k => `<span><span class="xp-cell st-${k}" style="min-width:0;height:18px;cursor:default">${G[k]}</span>${NwayExpand.SNAME[k]}</span>`).join('')}</div>`;
+            const legend = `<div class="xp-legend">${Object.keys(NwayFunction.SNAME).map(k => `<span><span class="xp-cell st-${k}" style="min-width:0;height:18px;cursor:default">${G[k]}</span>${NwayFunction.SNAME[k]}</span>`).join('')}</div>`;
             const accordion = blocks.map(b => {
                 const open = this.s.open === b.id;
-                const mini = this._others().map(j => { const x = this._cell(b, j); return `<span class="st-${x.st}" ${cc(j)} title="${escapeAttr(`${this.data.functions[j].letter}: ${NwayExpand.SNAME[x.st]}`)}">${escapeHtml(this.data.functions[j].letter)}${G[x.st]}</span>`; }).join('');
+                const mini = this._others().map(j => { const x = this._cell(b, j); return `<span class="st-${x.st}" ${cc(j)} title="${escapeAttr(`${this.data.functions[j].letter}: ${NwayFunction.SNAME[x.st]}`)}">${escapeHtml(this.data.functions[j].letter)}${G[x.st]}</span>`; }).join('');
                 return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(b.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(b.id)}</span>${this._tspan(b)}<span class="xp-mini">${mini}</span></button>${open ? this._blockBody(b) : ''}</div>`;
             }).join('');
             const extras = c.extras.length ? '<div class="xp-sec">Blocks not in ' + escapeHtml(this.data.functions[c.reference].letter) + '</div>' + c.extras.map(x => {
@@ -270,7 +277,7 @@
         }
 
         _band(id, st, sim, title, extra = '') {
-            return `<div class="xp-fband"><span class="xp-bid">${escapeHtml(id)}</span><span class="xp-cell st-${st}" style="cursor:default">${NwayExpand.GLYPH[st]} ${NwayExpand.SNAME[st]}${st === 'miss' || st === 'same' || st === 'extra' ? '' : ' ' + Math.round(sim * 100) + '%'}</span>${extra}<span class="dim">${escapeHtml(title)}</span><i></i></div>`;
+            return `<div class="xp-fband"><span class="xp-bid">${escapeHtml(id)}</span><span class="xp-cell st-${st}" style="cursor:default">${NwayFunction.GLYPH[st]} ${NwayFunction.SNAME[st]}${st === 'miss' || st === 'same' || st === 'extra' ? '' : ' ' + Math.round(sim * 100) + '%'}</span>${extra}<span class="dim">${escapeHtml(title)}</span><i></i></div>`;
         }
 
         _fullView() {
@@ -315,15 +322,14 @@
         async _loadTitles() {
             if (this._titlesAsked) return;
             this._titlesAsked = true;
-            const qs = this.panel._docQs();
-            qs.set('fids', this.fids.join(','));
-            for (let i = 0; i < 40 && this.row; i++) {
+            const qs = this._qs();
+            for (let i = 0; i < 40 && !this._dead; i++) {
                 let body = null;
                 try {
                     const res = await fetch(`/api/bin_sim/nway/facets/titles?${qs.toString()}`);
                     body = res.ok ? await res.json() : null;
                 } catch (e) { body = null; }
-                if (!this.row) return;
+                if (this._dead) return;
                 if (body && body.status === 'pending') {
                     this._setNaming(true);
                     await new Promise(r => setTimeout(r, 2500));
@@ -361,7 +367,7 @@
             const [a, b] = s.pair;
             return `<p class="xp-hint">Pick any two of the ${n} functions. The existing 2-way diff is loaded here, so you do not leave the table.</p>
                 <div class="xp-pairbar">Compare <select data-xsel="0">${opt(a)}</select> with <select data-xsel="1">${opt(b)}</select>
-                <span class="xp-tag" id="xp-pair-sim"></span><button class="xp-btn" data-xopen>Open full diff</button></div>
+                <span class="xp-tag" id="xp-pair-sim"></span><button class="btn-action" data-xopen>Open full diff</button></div>
                 <div class="xp-pair" id="xp-pair-body"></div>`;
         }
 
@@ -376,7 +382,7 @@
             host.innerHTML = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i></div>';
             const A = parts(this.fids[a]), B = parts(this.fids[b]);
             const qs = new URLSearchParams({ collection_a: A.coll, md5_a: A.md5, addr_a: A.addr, collection_b: B.coll, md5_b: B.md5, addr_b: B.addr });
-            if (this.panel.source.pool) qs.set('pool', this.panel.source.pool);
+            if (this.source.pool) qs.set('pool', this.source.pool);
             let body = null;
             try {
                 const res = await fetch(`/api/diff?${qs.toString()}`);
@@ -404,30 +410,18 @@
         }
 
         _click(e) {
-            const t = e.target.closest('[data-xstr],[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xpair],[data-xnav],[data-xclose],[data-xopen]');
+            const t = e.target.closest('[data-xstr],[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xpair],[data-xnav],[data-xopen]');
             if (!t) return;
             const d = t.dataset;
-            if (d.xclose !== undefined) {
-                const btn = this.tr.querySelector('[data-xp]');
-                this.panel._xpClose(this.tr);
-                if (btn) btn.focus();
-                return;
-            }
-            if (d.xstr) {
-                e.preventDefault();
-                const f = this.data.facets.find(x => x.key === 'strings');
-                const item = f && f.items.find(i => i.key === d.xstr);
-                return item && NwayExpand.stringPivot(item, this.fids[0].split(':func:')[0], this.panel.source.pool);
-            }
-            if (d.xtab) { this.s.tab = d.xtab; return this.render(); }
+            if (d.xtab) { this.s.tab = d.xtab; this._persist(); return this.render(); }
             if (d.xpair) { const [a, b] = d.xpair.split(',').map(Number); return this._openDiff(a, b, e); }
             if (d.xopen !== undefined) return this._openDiff(...this.s.pair, e);
             if (d.xnav) {
                 e.preventDefault();
                 return window.Nav.openPath(d.xnav, e, { title: d.title || 'Function', type: 'function' });
             }
-            if (d.xcv) { this.s.cv = d.xcv; return this._rebody(); }
-            if (d.xfn !== undefined) { this.s.fn = Number(d.xfn); return this._rebody(); }
+            if (d.xcv) { this.s.cv = d.xcv; this._persist(); return this._rebody(); }
+            if (d.xfn !== undefined) { this.s.fn = Number(d.xfn); this._persist(); return this._rebody(); }
             if (d.xx) { this.s.open = d.xx; return this._rebody(); }
             if (d.xb !== undefined) {
                 const b = this.data.consensus.blocks.find(x => x.id === d.xb);
@@ -442,8 +436,8 @@
 
         _change(e) {
             const t = e.target;
-            if (t.dataset.xsingle !== undefined) { this.s.single = t.checked; return this._rebody(); }
-            if (t.dataset.xonly !== undefined) { this.s.only = t.checked; return this._rebody(); }
+            if (t.dataset.xsingle !== undefined) { this.s.single = t.checked; this._persist(); return this._rebody(); }
+            if (t.dataset.xonly !== undefined) { this.s.only = t.checked; this._persist(); return this._rebody(); }
             if (t.dataset.xsel !== undefined) {
                 this.s.pair[Number(t.dataset.xsel)] = Number(t.value);
                 this._loadPair();
@@ -451,5 +445,5 @@
         }
     }
 
-    window.NwayExpand = NwayExpand;
+    window.NwayFunction = NwayFunction;
 })();

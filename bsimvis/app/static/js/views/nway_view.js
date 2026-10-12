@@ -20,6 +20,7 @@ window.NwayView = {
         this._container = document.getElementById(containerId);
         if (!this._container) return;
         if (window.location.pathname.endsWith('/nway/graph')) return this._initGraph();
+        if (window.location.pathname.endsWith('/nway/function')) return this._initFunction();
         const q = new URLSearchParams(window.location.search);
         this._set = {
             md5s: (q.get('md5s') || '').split(',').map(t => t.trim()).filter(Boolean),
@@ -35,6 +36,42 @@ window.NwayView = {
         }
         this._collections = null;
         this._render();
+    },
+
+    // /diff/nway/function?<source>&<controls>&fx_*: one function family on its own page.
+    // View state (tab, blocks / full function, picked function, differences-only) is
+    // written back with replaceState, so the link is shareable and Back leaves the page.
+    _initFunction() {
+        const q = new URLSearchParams(window.location.search);
+        const CTL = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule'];
+        const source = {}, doc = {}, fx = {};
+        for (const [k, v] of q) {
+            if (k.startsWith('fx_')) fx[k.slice(3)] = v;
+            else if (CTL.includes(k)) doc[k] = v;
+            else source[k] = v;
+        }
+        this.destroy();
+        const fids = (fx.fids || '').split(',').filter(Boolean);
+        if (fids.length < 2) {
+            this._container.innerHTML = '<div class="nway-state">This link has no functions to compare.</div>';
+            return;
+        }
+        this._container.innerHTML = '<div class="nway-view nway-fn"><div id="nway-fn-host"></div></div>';
+        const state = { tab: fx.tab || 'facets', cv: fx.cv || 'blocks', only: fx.only !== '0', single: fx.single === '1' };
+        if (fx.fn !== undefined && fx.fn !== '') state.fn = Number(fx.fn);
+        this._panel = new NwayFunction(document.getElementById('nway-fn-host'), {
+            source, doc, fids, name: fx.name, state,
+            onState: st => {
+                const next = new URLSearchParams(window.location.search);
+                next.set('fx_tab', st.tab);
+                next.set('fx_cv', st.cv);
+                next.set('fx_only', st.only ? '1' : '0');
+                if (st.single) next.set('fx_single', '1'); else next.delete('fx_single');
+                if (st.fn !== null && st.fn !== undefined) next.set('fx_fn', st.fn);
+                history.replaceState(null, '', `${window.location.pathname}?${next.toString()}`);
+            },
+        });
+        this._panel.load();
     },
 
     // /diff/nway/graph?<source>&<controls>&cg_*: a locked call graph. Every change

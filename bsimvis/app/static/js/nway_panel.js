@@ -718,26 +718,36 @@
             return qs;
         }
 
-        // Inline function diff (nway_xp.js): expand / collapse the row under its table row.
-        _xpToggle(tr, ri) {
-            if (this._xpClose(tr)) return;
-            const row = this.data.items[ri];
+        // The function-family page of one row (nway_function.js): the table's own
+        // source and doc controls, the row's functions, and this page as the way back.
+        _fnUrl(row) {
             const fids = Object.values(row.files || row.cells || {}).filter(v => typeof v === 'string');
-            if (fids.length < 2) return;
-            const xp = new window.NwayExpand(this, tr, fids);
-            (this._xp || (this._xp = new Map())).set(tr, xp);
-            tr.querySelector('[data-xp]').setAttribute('aria-expanded', 'true');
-            xp.open();
+            if (fids.length < 2) return '';
+            const qs = this._docQs();
+            qs.set('fx_fids', fids.join(','));
+            qs.set('fx_name', row.name);
+            qs.set('fx_back', window.location.pathname + window.location.search);
+            return `/diff/nway/function?${qs.toString()}`;
         }
 
-        _xpClose(tr) {
-            const xp = this._xp && this._xp.get(tr);
-            if (!xp) return false;
-            xp.close();
-            this._xp.delete(tr);
-            const b = tr.querySelector('[data-xp]');
-            if (b) b.setAttribute('aria-expanded', 'false');
-            return true;
+        _scrollBoxes() {
+            return [this.el.querySelector('.nway-scroll'), this.el.closest('.nway-view'), this.el.closest('#cluster-tab-functions')].filter(Boolean);
+        }
+
+        // Scroll offsets ride along in sessionStorage so Back (or the breadcrumb) lands where the row was.
+        _scrollSave() {
+            try {
+                sessionStorage.setItem(`nway:scroll:${window.location.pathname}${window.location.search}`, JSON.stringify(this._scrollBoxes().map(b => b.scrollTop)));
+            } catch (e) { /* storage blocked: the table just opens at the top */ }
+        }
+
+        _scrollRestore() {
+            try {
+                const key = `nway:scroll:${window.location.pathname}${window.location.search}`;
+                const saved = JSON.parse(sessionStorage.getItem(key) || 'null');
+                sessionStorage.removeItem(key);
+                if (saved) this._scrollBoxes().forEach((b, i) => { b.scrollTop = saved[i] || 0; });
+            } catch (e) { /* nothing to restore */ }
         }
 
         async _cgFetch(focus, role) {
@@ -1450,7 +1460,7 @@
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             return `<tr>
-                <td class="nway-open" data-cg-open="${Number(ri)}" title="Click for the call graph of this row" style="min-width:260px; max-width:420px;">${(row.files || row.cells) && Object.values(row.files || row.cells).filter(v => typeof v === 'string').length > 1 ? `<button class="nway-xp-btn" data-xp="${Number(ri)}" aria-expanded="false" title="Compare this row's functions inline: strings, APIs, callees, constants and code"><i class="fa-solid fa-chevron-right"></i></button>` : ''}${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}</span></td>
+                <td class="nway-open" data-cg-open="${Number(ri)}" title="Click for the call graph of this row" style="min-width:260px; max-width:420px;">${this._fnUrl(row) ? `<a class="nway-fnlink" href="${escapeAttr(this._fnUrl(row))}" data-xp title="Compare this row's functions: strings, APIs, callees, constants and code">Compare</a>` : ''}${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}</span></td>
                 <td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
@@ -1485,7 +1495,6 @@
                 return;
             }
             const d = this.data;
-            this._xp = null;
             const rows = d.items.map((r, i) => this._row(r, i)).join('');
             const off = Number(d.offset), total = Number(d.total);
             const scroll = window.Paging.mode() === 'scroll';
@@ -1509,6 +1518,7 @@
             // selected cells, so the bulk actions of the function menu apply.
             if (window.TableSelection) new window.TableSelection('nway-table');
             this._watch();
+            this._scrollRestore();
         }
 
         // Scroll mode: load the next batch when the sentinel nears the viewport.
@@ -1535,7 +1545,11 @@
         _onClick(e) {
             const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-cg-open],[data-xp]');
             if (!t) return;
-            if (t.dataset.xp !== undefined) return this._xpToggle(t.closest('tr'), Number(t.dataset.xp));
+            if (t.dataset.xp !== undefined) {
+                e.preventDefault();
+                this._scrollSave();
+                return window.Nav.openPath(t.getAttribute('href'), e);
+            }
             if (t.dataset.cgOpen !== undefined) {
                 if (e.target.closest('button, a, input, .bsim-tag-pill, .entity-actions')) return;
                 return this._cgOpen(this.data.items[Number(t.dataset.cgOpen)]);
@@ -1604,7 +1618,7 @@
         const uuid = q.get('cluster_uuid');
         if (!uuid) {
             const keep = new URLSearchParams();
-            for (const [k, v] of q) if (!k.startsWith('cg_')) keep.set(k, v);
+            for (const [k, v] of q) if (!k.startsWith('cg_') && !k.startsWith('fx_')) keep.set(k, v);
             return `/diff/nway?${keep.toString()}`;
         }
         const pool = q.get('pool');

@@ -5,7 +5,7 @@ from flask_restx import abort
 
 from bsimvis.app.routes._list_query import fnum, in_bounds
 from bsimvis.app.routes.bin_sim import _fids_tags, _fn_haystack
-from bsimvis.app.services import nway_diff_service
+from bsimvis.app.services import nway_diff_service, nway_facets_service
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME
 from bsimvis.app.services.bin_sim_service import _origin_coll
 from bsimvis.app.services.redis_client import get_redis
@@ -735,3 +735,28 @@ def get_nway_neighbors():
         "truncated": truncated,
         "functions_metadata": {f: fmeta[f] for f in shown if f in fmeta},
     }
+
+
+def get_nway_facets():
+    """Inline function diff of one N-way row: facets, similarity matrix, consensus code.
+
+    Takes the member params of `/nway` plus `fids`, the row's function ids (the
+    `functions_metadata` keys of a row's cells). Over `nway.code_max_functions`
+    functions the consensus code is dropped, over `nway.facet_max_functions` the
+    source-derived facets go too (see `level` in the answer).
+    """
+    fids = list(
+        dict.fromkeys(t for t in (request.args.get("fids") or "").split(",") if t)
+    )
+    if len(fids) < 2:
+        abort(400, "fids needs at least two function ids")
+    if len(fids) > nway_diff_service.caps()[0]:
+        abort(400, "too many fids")
+    try:
+        doc, r, _ = _load_doc()
+    except _Reply as e:
+        return e.args[0]
+    unknown = [f for f in fids if f not in doc["fmeta"]]
+    if unknown:
+        return {"error": "unknown_functions", "missing": unknown}, 404
+    return nway_facets_service.compute(r, doc, fids)

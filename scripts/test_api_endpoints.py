@@ -4865,6 +4865,52 @@ def test_nway_diff():
         )
         check("nway neighbors rejects non-integer depth", _r.status_code == 400)
 
+        # Inline function diff of the row: facets, matrix, consensus code.
+        _fx = f"{BASE_URL}/api/bin_sim/nway/facets"
+        _r = requests.get(_fx, params={**_base, "fids": _fids}, timeout=120)
+        _b = _r.json() if _r.status_code == 200 else {}
+        _nf = len(_fids.split(","))
+        _cons = _b.get("consensus") or {}
+        check(
+            "nway facets: one function entry, matrix row and mask bit per function",
+            _r.status_code == 200
+            and len(_b["functions"]) == _nf
+            and [f["letter"] for f in _b["functions"][:2]] == ["A", "B"][:_nf]
+            and len(_b["similarity"]) == _nf
+            and all(len(x) == _nf for x in _b["similarity"])
+            and all(
+                len(i["mask"]) == _nf and i["count"] == i["mask"].count("1")
+                for f in _b["facets"]
+                for i in f["items"]
+            )
+            and {"strings", "apis", "callees", "consts"}
+            == {f["key"] for f in _b["facets"]},
+            f"HTTP {_r.status_code} {str(_b)[:200]}",
+        )
+        check(
+            "nway facets: consensus lines carry a presence mask, reference is always present",
+            _b.get("level") != "full"
+            or all(
+                len(x["mask"]) == _nf
+                and (x["mask"][_b["reference"]] == "1" or x.get("ins"))
+                for x in _cons.get("lines", [])
+            ),
+        )
+        check(
+            "nway facets: shape flags line up with the functions",
+            all(len(s["values"]) == _nf == len(s["off"]) for s in _b.get("shape", [])),
+        )
+        _r = requests.get(
+            _fx, params={**_base, "fids": _fids.split(",")[0]}, timeout=30
+        )
+        check("nway facets: one function is a 400", _r.status_code == 400)
+        _r = requests.get(
+            _fx,
+            params={**_base, "fids": f"{_fids},{COLLECTION}:func:{'0' * 32}:0x0"},
+            timeout=30,
+        )
+        check("nway facets: unknown function is a 404", _r.status_code == 404)
+
     # With two files the rows must be the pair diff's own matched / unique rows.
     matched = (_diff_page(file_md5, file_md5_2, "matched") or {}).get("total")
     uniq = sum(

@@ -668,6 +668,9 @@ def compute(r, scope, members, params=None):
         "fmeta": base["fmeta"],
         "fallback_pairs": base["fallback_pairs"],
         "warnings": base["warnings"],
+        # Read by nway_facets_service (cache key, pair scores); never sent to clients.
+        "key": hashlib.md5(repr(doc_key).encode()).hexdigest(),
+        "edges": base["edges"],
     }
     _DOC_CACHE.put(doc_key, doc)
     return doc

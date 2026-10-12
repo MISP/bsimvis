@@ -2607,6 +2607,21 @@ class BinSimNwayNeighbors(Resource):
         return get_nway_neighbors()
 
 
+@ns_bin_sim.route("/nway/facets")
+class BinSimNwayFacets(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "fids": "Comma-separated function ids of one N-way row (at least 2)",
+            "md5s": "Same file set / scope params as /nway (cluster_uuid, collection, pool, mode, min_edge, ...)",
+        }
+    )
+    def get(self):
+        """Inline function diff of one row: string / API / callee / constant facets, shape, similarity matrix and consensus code."""
+        from bsimvis.app.routes.nway import get_nway_facets
+
+        return get_nway_facets()
+
+
 @ns_bin_sim.route("/nway")
 class BinSimNway(Resource):
     @ns_bin_sim.doc(

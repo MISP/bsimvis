@@ -199,20 +199,6 @@ let simSearchRequested = false; // Set to true when user explicitly triggers a s
 let currentFocusId = null;
 let preservedSelection = { start: 0, end: 0 };
 
-function toggleSidebar() {
-    const body = document.body;
-    const isCollapsed = body.classList.toggle('sidebar-collapsed');
-    localStorage.setItem('sidebarCollapsed', isCollapsed);
-    const btn = document.getElementById('sidebar-toggle');
-    btn.innerHTML = isCollapsed ? '⟩' : '⟨';
-
-    // Trigger window resize for D3 plots
-    setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
-
-    // Update header buttons visibility immediately
-    if (window.updateJobStatusIcon) window.updateJobStatusIcon();
-}
-
 function toggleHeader() {
     const body = document.body;
     const isCollapsed = body.classList.toggle('header-collapsed');
@@ -1342,7 +1328,6 @@ function updateNavbarLinks(col) {
     updateNavLink('nav-binary-similarity', 'binary-similarity');
     updateNavLink('nav-upload', 'upload');
     updateNavLink('nav-jobs', 'jobs');
-    updateNavLink('nav-searches', 'searches');
 }
 window.updateNavbarLinks = updateNavbarLinks;
 
@@ -4404,11 +4389,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // [REMOVED: Now handled in previews.js to prevent double-scroll]
 
     // Reducible Panels Initialization
-    if (localStorage.getItem('sidebarCollapsed') === 'true') {
-        document.body.classList.add('sidebar-collapsed');
-        const btn = document.getElementById('sidebar-toggle');
-        if (btn) btn.innerHTML = '⟩';
-    }
     if (localStorage.getItem('headerCollapsed') === 'true') {
         document.body.classList.add('header-collapsed');
         const btn = document.getElementById('collapse-header-btn');

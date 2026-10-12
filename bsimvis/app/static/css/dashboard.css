@@ -11,7 +11,7 @@ body {
     height: 100vh;
     overflow: hidden;
     box-sizing: border-box;
-    --sidebar-width: 240px;
+    --sidebar-width: 0px;
 }
 
 body.sidebar-collapsed {
@@ -19,11 +19,7 @@ body.sidebar-collapsed {
 }
 
 #sidebar-container {
-    height: 100vh;
     flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
 }
 
 /* Sidebar */
@@ -3042,3 +3038,15 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .ui-button.hdr-btn.danger { color: #f87171; border-color: rgba(248, 113, 113, 0.45); }
 .ui-button.hdr-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 body.has-entity-tabs .header-top > div:has(> #view-title) { display: none !important; }
+
+/* Global menu: the logo button in the breadcrumb row */
+.global-menu > summary { gap: 8px; height: 32px; padding: 0 10px; }
+.global-menu > summary img { height: 20px; width: 20px; }
+.global-menu > summary span { color: var(--accent); font-weight: bold; letter-spacing: 1.5px; text-transform: uppercase; font-size: 0.85rem; }
+.global-menu > summary i { font-size: 0.65rem; color: var(--subtle); }
+.global-menu-list { left: 0; right: auto; top: 36px; min-width: 190px; }
+.global-menu-list a { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 4px; font-size: 0.85rem; color: var(--text); text-decoration: none; }
+.global-menu-list a i { width: 18px; text-align: center; color: var(--subtle); }
+.global-menu-list a:hover, .global-menu-list a.active { background: var(--hover); color: var(--accent); }
+.global-menu-list a:hover i, .global-menu-list a.active i { color: var(--accent); }
+.global-menu-list kbd { margin-left: auto; font-size: 0.7rem; color: var(--subtle); }

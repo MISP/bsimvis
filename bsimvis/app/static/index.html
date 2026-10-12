@@ -71,11 +71,12 @@
 
 <body>
 
-    <div id="sidebar-container"></div>
-
     <main id="main-content">
         <div id="breadcrumbs-container" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; background: rgba(255,255,255,0.02); border-bottom: 1px solid var(--border); margin-bottom: 15px; border-radius: 6px; gap: 15px; flex-wrap: wrap;">
-            <div id="breadcrumbs-list"></div>
+            <div style="display:flex; align-items:center; gap:12px; min-width:0;">
+                <div id="sidebar-container"></div>
+                <div id="breadcrumbs-list"></div>
+            </div>
             <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
                 <div id="search-settings-container" style="display:none; align-items:center; gap:8px;"></div>
                 <div id="header-top-actions" style="display:flex; gap:10px; align-items:center;">

@@ -248,30 +248,21 @@ window.UI = {
             };
 
             return `
-                <button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle Sidebar">⟨</button>
-                <nav class="sidebar-nav">
-                    <h2 title="BSimVis">
-                        <a href="/" id="brand-link" onclick="Nav.openPath('/', event)">
-                            <img src="/logo.svg" alt="Logo">
-                            <span>BSimVis</span>
-                        </a>
-                    </h2>
-                    <div class="nav-section-content">
-                        <a href="/" id="nav-home" title="Home" class="${isActive('home')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-house"></i> <span>Home</span></a>
-                        <a href="#" id="nav-search" title="Search everything (Ctrl+K)" onclick="event.preventDefault(); SearchPalette.show();"><i class="fa-solid fa-magnifying-glass"></i> <span>Search</span></a>
-                        <a href="${buildNavUrl('collections')}" id="nav-collections" title="Collections" class="${isActive('collections')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-layer-group"></i> <span>Collections</span></a>
-                        <a href="${buildNavUrl('pools')}" id="nav-pools" title="Pools" class="${isActive('pools')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-diagram-project"></i> <span>Pools</span></a>
+                <details class="more-menu global-menu">
+                    <summary title="Menu"><img src="/logo.svg" alt=""><span>BSimVis</span> <i class="fa-solid fa-chevron-down"></i></summary>
+                    <div class="more-menu-list global-menu-list" onclick="this.closest('details').removeAttribute('open')">
+                        <a href="/" id="nav-home" class="${isActive('home')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-house"></i> Home</a>
+                        <a href="${buildNavUrl('collections')}" id="nav-collections" class="${isActive('collections')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-layer-group"></i> Collections</a>
+                        <a href="${buildNavUrl('pools')}" id="nav-pools" class="${isActive('pools')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-diagram-project"></i> Pools</a>
+                        <hr>
+                        <a href="${buildNavUrl('scan')}" id="nav-scans" title="Scan a file without ingesting it" class="${isActive('scan')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-microscope"></i> Scan</a>
+                        <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff (experimental)" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> N-way diff</a>
+                        <a href="${buildNavUrl('jobs')}" id="nav-jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> Jobs</a>
+                        <hr>
+                        <a href="#" id="nav-search" onclick="event.preventDefault(); SearchPalette.show();"><i class="fa-solid fa-magnifying-glass"></i> Search <kbd>Ctrl+K</kbd></a>
+                        <a href="/api/" target="_blank" id="nav-api"><i class="fa-solid fa-book"></i> API</a>
                     </div>
-                    <div class="nav-section-content">
-                        <a href="${buildNavUrl('scan')}" id="nav-scans" title="Scan a file without ingesting it" class="${isActive('scan')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-microscope"></i> <span>Scan</span></a>
-                        <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff (experimental)" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> <span>N-way diff</span></a>
-                        <a href="${buildNavUrl('searches')}" id="nav-searches" title="Saved Searches" class="${isActive('search')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-list-check"></i> <span>Searches</span></a>
-                        <a href="${buildNavUrl('jobs')}" id="nav-jobs" title="Jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> <span>Jobs</span></a>
-                    </div>
-                    <div class="nav-section-content nav-bottom">
-                        <a href="/api/" target="_blank" id="nav-api" title="API"><i class="fa-solid fa-book"></i> <span>API</span></a>
-                    </div>
-                </nav>
+                </details>
             `;
         },
 

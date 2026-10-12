@@ -89,5 +89,22 @@ view.s.single = false;
 view.s.fn = 4;
 view.data.functions[4].file_name = '"><img src=x onerror=alert(1)>';
 assert.ok(!view._fullView().includes('<img'), 'full-function filenames are escaped');
-assert.ok(!view._ribbon(view.data.consensus.blocks, []).includes('<img'), 'matrix filenames and tooltips are escaped');
+assert.ok(!view._ribbon(view.data.consensus.blocks.map(b => ({ b }))).includes('<img'), 'matrix filenames and tooltips are escaped');
+
+view.data.consensus.funcs[4] = [
+    { refs: [{ b: 'b6', st: 'mod', sim: 0.8 }], text: [['changed();', true]] },
+    { refs: [], x: 'x1', text: [['extra();', false]] },
+    { refs: [{ b: 'b7', st: 'mod', sim: 0.8 }], text: [['changed();', true]] },
+];
+view.data.consensus.extras = [{ id: 'x1', funcs: [4], title: 'extra branch', text: 'extra();' }];
+view.s.single = false;
+const blockIds = html => [...html.matchAll(/<span class="xp-bid">(b6|b7|x1)<\/span>/g)].map(m => m[1]);
+assert.deepStrictEqual(blockIds(view._blocksView()), ['b6', 'x1', 'b7'], 'only-here block follows its source position in Blocks');
+assert.deepStrictEqual(blockIds(view._fullView()), ['b6', 'x1', 'b7'], 'only-here block follows its source position in Full function');
+assert.ok(view._blocksView().includes('<th>b6') && view._blocksView().indexOf('<th>x1') < view._blocksView().indexOf('<th>b7'), 'ribbon uses the same order');
+view.s.only = true;
+view.data.consensus.blocks[0].cells[4].st = 'same';
+assert.deepStrictEqual(blockIds(view._fullView()), ['x1', 'b7'], 'extra remains visible when its anchor is hidden');
+view.s.only = false;
+view.data.consensus.blocks[0].cells[4].st = 'mod';
 console.log('N-way full-function variant grouping: OK');

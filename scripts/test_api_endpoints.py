@@ -3426,6 +3426,16 @@ def test_strings():
         params={"collection": COLLECTION, "q": needle},
         label="GET /api/strings/search",
     )
+    all_strings = test_endpoint(
+        "GET", "/api/strings/search", params={"collection": COLLECTION, "limit": 1}
+    )
+    counts = test_endpoint(
+        "GET", "/api/collection/counts", params={"collection": COLLECTION}
+    )
+    check(
+        "navbar string count matches listing",
+        (counts or {}).get("strings") == (all_strings or {}).get("total"),
+    )
     hit = next((x for x in (ss or {}).get("items", []) if x["id"] == s["id"]), None)
     check(
         "aggregated search lists the string with file and function counts",

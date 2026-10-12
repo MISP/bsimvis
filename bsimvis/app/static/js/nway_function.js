@@ -2,7 +2,7 @@
  * N-way function view: one function family of the N-way table on its own page
  * (/diff/nway/function?<source>&<controls>&fx_*), backed by
  * GET /api/bin_sim/nway/facets. Header cards + similarity matrix, then
- * Facets / Code blocks / Pair diff tabs.
+ * Simple / Facets / Code blocks / Pair diff tabs.
  *
  *   new NwayFunction(container, { source, doc, fids, state, onState }).load();
  *
@@ -34,6 +34,7 @@
             this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', open: null, gi: 0, fn: null, single: false, ...(o.state || {}) };
             this.titles = {};
             this.data = null;
+            this.simpleCode = null;
             this._dead = false;
             el.addEventListener('click', e => this._click(e));
             el.addEventListener('change', e => this._change(e));
@@ -85,18 +86,45 @@
                     <div><div class="xp-mx" style="--n:${nf}">${this._matrix()}</div>
                     <div class="xp-cap">Function similarity from the matcher; a dash means no match was found. Click a cell to open that pair in the 2-way diff.</div></div></div>
                 <div class="xp-bar"><div class="bsim-tabbar" role="tablist" style="margin:0">
+                    ${this.embedded ? '' : tab('simple', 'Simple')}
                     ${this.embedded ? '' : tab('facets', 'Facets')}
                     ${this.embedded ? '' : tab('code', 'Code blocks', !code ? `Code blocks need at most ${d.limits.code} functions (this row has ${nf})` : '')}
                     ${this.embedded ? '' : tab('pair', 'Pair diff')}</div><span class="xp-sp"></span>
-                    ${s.tab === 'pair' ? '' : `<label class="xp-chk"><input type="checkbox" data-xonly ${s.only ? 'checked' : ''}> Differences only</label>`}</div>
+                    ${s.tab === 'pair' || s.tab === 'simple' ? '' : `<label class="xp-chk"><input type="checkbox" data-xonly ${s.only ? 'checked' : ''}> Differences only</label>`}</div>
                 <div class="xp-body">${this._body()}</div>`;
             if (s.tab === 'pair') this._loadPair();
             if (s.tab === 'code') this._loadTitles();
+            if (s.tab === 'simple') this._loadSimple();
         }
 
         _body() {
             const t = this.s.tab;
-            return t === 'facets' ? this._facets() : t === 'code' ? this._code() : this._pair();
+            return t === 'simple' ? this._simple() : t === 'facets' ? this._facets() : t === 'code' ? this._code() : this._pair();
+        }
+
+        _simple() {
+            const f = this.data.functions[this.data.reference];
+            const url = window.NwayPanel.fnUrl(f.id, this.source.pool || null);
+            return `<p class="xp-hint">★ Most central function: ${escapeHtml(f.file_name || '')} @ ${escapeHtml(f.addr)} · <a href="${escapeAttr(url)}" data-xnav="${escapeAttr(url)}" data-title="${escapeAttr(f.name || f.addr)}">Open function</a></p>
+                <div class="c-code-container" style="overflow:auto">${this.simpleCode || 'Loading code...'}</div>`;
+        }
+
+        async _loadSimple() {
+            if (this.simpleCode || this.simpleLoading) return;
+            this.simpleLoading = true;
+            const id = this.data.functions[this.data.reference].id;
+            try {
+                const res = await fetch(`/api/function/code?id=${encodeURIComponent(id)}`);
+                if (!res.ok) throw new Error(`Function not found (${res.status})`);
+                const data = await res.json();
+                this.simpleCode = (data.rows || []).map(row =>
+                    `<div class="code-line"><div class="gutter" contenteditable="false"><div class="line-num">${Number(row.line_idx)}</div></div><div class="line-content">${row.tokens.map(t => window.renderTokenHtml(t)).join('')}</div></div>`
+                ).join('') || 'No code available.';
+            } catch (e) {
+                this.simpleCode = `<div class="xp-none">${escapeHtml(e.message)}</div>`;
+            }
+            this.simpleLoading = false;
+            if (!this._dead && this.s.tab === 'simple') this._rebody();
         }
 
         _rebody() {
@@ -214,21 +242,42 @@
             return sw + (s.cv === 'blocks' ? this._blocksView() : this._fullView());
         }
 
-        _ribbon(blocks, extras) {
+        _extraSlots(functions, unique = false) {
+            const c = this.data.consensus, slots = new Map(), seen = new Set();
+            // A shared extra uses its first owner's position in the overview.
+            for (const f of functions) {
+                let after = null;
+                for (const seg of c.funcs[String(f)] || []) {
+                    if (seg.refs.length) after = seg.refs[seg.refs.length - 1].b;
+                    else if (seg.x && (!unique || !seen.has(seg.x))) {
+                        seen.add(seg.x);
+                        if (!slots.has(after)) slots.set(after, []);
+                        slots.get(after).push({ seg, x: c.extras.find(e => e.id === seg.x) });
+                    }
+                }
+            }
+            return slots;
+        }
+
+        _ribbon(items) {
             const d = this.data, c = d.consensus;
             let h = '<div class="xp-rib"><table><tr><th class="rowh">Block in ' + escapeHtml(d.functions[c.reference].letter) + '</th>'
-                + blocks.map(b => `<th>${escapeHtml(b.id)}<small data-btitle="${escapeAttr(b.id)}" title="${escapeAttr(this._bt(b))}">${escapeHtml(this._bt(b))}</small></th>`).join('')
-                + extras.map(x => `<th>${escapeHtml(x.id)}<small title="${escapeAttr(x.title)}">${escapeHtml(x.title)}</small></th>`).join('') + '</tr>';
+                + items.map(({ b, x }) => b
+                    ? `<th>${escapeHtml(b.id)}<small data-btitle="${escapeAttr(b.id)}" title="${escapeAttr(this._bt(b))}">${escapeHtml(this._bt(b))}</small></th>`
+                    : `<th>${escapeHtml(x.id)}<small title="${escapeAttr(x.title)}">${escapeHtml(x.title)}</small></th>`).join('') + '</tr>';
             d.functions.forEach((f, j) => {
                 h += `<tr><td class="rowh" ${cc(j)}><span class="xp-badge">${escapeHtml(f.letter)}</span> <span class="xp-rfile" title="${escapeAttr(f.file_name || '')}">${escapeHtml(f.file_name || '')}</span></td>`;
-                for (const b of blocks) {
+                for (const { b, x } of items) {
+                    if (x) {
+                        h += x.funcs.includes(j) ? `<td><button class="xp-cell st-extra" data-xx="${escapeAttr(x.id)}" title="only in this function">+</button></td>` : '<td><span class="st-none">&ndash;</span></td>';
+                        continue;
+                    }
                     if (j === c.reference) { h += '<td><span class="st-none">ref</span></td>'; continue; }
                     const cell = this._cell(b, j);
                     const gsel = b.groups[this.s.gi];
                     const sel = this.s.open === b.id && !!gsel && gsel.funcs.includes(j);
                     h += `<td><button class="xp-cell st-${cell.st}${sel ? ' sel' : ''}" data-xb="${escapeAttr(b.id)}" data-xc="${j}" title="${NwayFunction.SNAME[cell.st]}">${this._glyph(cell.st, cell.sim)}</button></td>`;
                 }
-                for (const x of extras) h += x.funcs.includes(j) ? `<td><button class="xp-cell st-extra" data-xx="${escapeAttr(x.id)}" title="only in this function">+</button></td>` : '<td><span class="st-none">&ndash;</span></td>';
                 h += '</tr>';
             });
             return h + '</table></div>';
@@ -254,21 +303,27 @@
 
         _blocksView() {
             const c = this.data.consensus, only = this.s.only;
-            const blocks = c.blocks.filter(b => !only || !this._isSame(b));
+            const slots = this._extraSlots(this._others(), true), ordered = [];
+            const addExtras = after => (slots.get(after) || []).forEach(({ x }) => { if (x) ordered.push({ x }); });
+            addExtras(null);
+            for (const b of c.blocks) {
+                if (!only || !this._isSame(b)) ordered.push({ b });
+                addExtras(b.id);
+            }
             const G = NwayFunction.GLYPH;
             const head = `<p class="xp-hint">When decompiled code is laid out differently, lines do not match one to one. Functions are cut into blocks (loops, branches, straight runs) and each block is matched by its content, in any order. Each cell shows how that block looks in the other function: how similar it is, or that it moved, was merged into or split from another block, or is gone. Click a cell or a block to compare it with the reference.</p>`;
             const legend = `<div class="xp-legend">${Object.keys(NwayFunction.SNAME).map(k => `<span><span class="xp-cell st-${k}" style="min-width:0;height:18px;cursor:default">${G[k]}</span>${NwayFunction.SNAME[k]}</span>`).join('')}</div>`;
-            const accordion = blocks.map(b => {
+            const accordion = ordered.map(({ b, x }) => {
+                if (x) {
+                    const open = this.s.open === x.id;
+                    return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(x.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(x.id)}</span><span class="bt">${escapeHtml(x.title)}</span><span class="xp-mini">${x.funcs.map(j => `<span class="st-extra">${escapeHtml(this.data.functions[j].letter)}+</span>`).join('')}</span></button>${open ? `<div class="xp-bd"><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${x.funcs.map(j => `<span class="xp-badge" ${cc(j)}>${escapeHtml(this.data.functions[j].letter)}</span>`).join('')} <span class="xp-tag">no counterpart in the reference</span></div><pre>${escapeHtml(x.text)}</pre></div></div></div>` : ''}</div>`;
+                }
                 const open = this.s.open === b.id;
                 const mini = this._others().map(j => { const x = this._cell(b, j); return `<span class="st-${x.st}" ${cc(j)} title="${escapeAttr(`${this.data.functions[j].letter}: ${NwayFunction.SNAME[x.st]}`)}">${escapeHtml(this.data.functions[j].letter)}${G[x.st]}</span>`; }).join('');
                 return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(b.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(b.id)}</span>${this._tspan(b)}<span class="xp-mini">${mini}</span></button>${open ? this._blockBody(b) : ''}</div>`;
             }).join('');
-            const extras = c.extras.length ? '<div class="xp-sec">Blocks not in ' + escapeHtml(this.data.functions[c.reference].letter) + '</div>' + c.extras.map(x => {
-                const open = this.s.open === x.id;
-                return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(x.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(x.id)}</span><span class="bt">${escapeHtml(x.title)}</span><span class="xp-mini">${x.funcs.map(j => `<span class="st-extra">${escapeHtml(this.data.functions[j].letter)}+</span>`).join('')}</span></button>${open ? `<div class="xp-bd"><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${x.funcs.map(j => `<span class="xp-badge" ${cc(j)}>${escapeHtml(this.data.functions[j].letter)}</span>`).join('')} <span class="xp-tag">no counterpart in the reference</span></div><pre>${escapeHtml(x.text)}</pre></div></div></div>` : ''}</div>`;
-            }).join('') : '';
-            const hidden = only ? c.blocks.length - blocks.length : 0;
-            return head + this._ribbon(blocks, c.extras) + legend + accordion + extras
+            const hidden = only ? c.blocks.length - ordered.filter(item => item.b).length : 0;
+            return head + this._ribbon(ordered) + legend + accordion
                 + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} identical in all ${this.data.functions.length} functions hidden.</p>` : '')
                 + (c.truncated ? `<p class="xp-foot">Large functions are compared on their first ${Number(this.data.limits.lines)} lines and ${Number(this.data.limits.blocks)} blocks.</p>` : '');
         }
@@ -318,20 +373,24 @@
             const ref = d.functions[c.reference];
             out += `<p class="xp-hint">Rows are blocks of ${escapeHtml(ref.letter)}. Left is ${escapeHtml(ref.letter)}, right is ${escapeHtml(d.functions[f].file_name || '')}. Functions sharing a block variant are grouped together; click a group to show its function throughout. Blocks that moved or merged stay on the row of the block they match.</p>`;
             out += `<div class="xp-frow xp-full-head"><div class="xp-fband"><span class="xp-badge" ${cc(c.reference)}>${escapeHtml(ref.letter)}</span> ${escapeHtml(ref.file_name || '')} (reference)</div><div class="xp-fband"><span class="xp-badge" ${cc(f)}>${escapeHtml(d.functions[f].letter)}</span> ${escapeHtml(d.functions[f].file_name || '')}</div></div>`;
+            const slots = this._extraSlots([f]);
+            const extraRows = after => (slots.get(after) || []).map(({ seg, x }) =>
+                `<div class="xp-frow">${this._band(seg.x, 'extra', 1, x ? x.title : '')}<pre class="xp-fcode gap">(no counterpart in ${escapeHtml(ref.letter)})</pre><pre class="xp-fcode st-extra">${this._runs(seg.text, 'chg')}</pre></div>`
+            ).join('');
+            out += extraRows(null);
             let hidden = 0;
             for (const b of c.blocks) {
                 const cell = this._cell(b, f);
-                if (s.only && cell.st === 'same') { hidden++; continue; }
-                const g = this._group(b, f);
-                let right;
-                if (cell.st === 'miss') right = '<pre class="xp-fcode gap">(no matching code)</pre>';
-                else if (cell.into) right = `<pre class="xp-fcode gap">↑ merged into ${escapeHtml(cell.into)} above</pre>`;
-                else right = `<pre class="xp-fcode st-${cell.st}">${this._runs(this._cellRuns(b, f), 'chg')}</pre>`;
-                out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), cell.into ? tag('merged into ' + cell.into) : '')}${this._fullGroups(b, f)}<pre class="xp-fcode">${g && g.ref_segs ? this._runs(g.ref_segs, 'del') : escapeHtml(b.ref_text)}</pre>${right}</div>`;
-            }
-            for (const seg of (c.funcs[String(f)] || []).filter(x => x.x)) {
-                const x = c.extras.find(e => e.id === seg.x);
-                out += `<div class="xp-frow">${this._band(seg.x, 'extra', 1, x ? x.title : '')}<pre class="xp-fcode gap">(no counterpart in ${escapeHtml(ref.letter)})</pre><pre class="xp-fcode st-extra">${this._runs(seg.text, 'chg')}</pre></div>`;
+                if (s.only && cell.st === 'same') hidden++;
+                else {
+                    const g = this._group(b, f);
+                    let right;
+                    if (cell.st === 'miss') right = '<pre class="xp-fcode gap">(no matching code)</pre>';
+                    else if (cell.into) right = `<pre class="xp-fcode gap">↑ merged into ${escapeHtml(cell.into)} above</pre>`;
+                    else right = `<pre class="xp-fcode st-${cell.st}">${this._runs(this._cellRuns(b, f), 'chg')}</pre>`;
+                    out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), cell.into ? tag('merged into ' + cell.into) : '')}${this._fullGroups(b, f)}<pre class="xp-fcode">${g && g.ref_segs ? this._runs(g.ref_segs, 'del') : escapeHtml(b.ref_text)}</pre>${right}</div>`;
+                }
+                out += extraRows(b.id);
             }
             return out + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} identical to ${escapeHtml(ref.letter)} hidden. Untick "Differences only" to read the whole function.</p>` : '');
         }

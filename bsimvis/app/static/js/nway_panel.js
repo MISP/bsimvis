@@ -897,6 +897,10 @@
         // Each square is a file. Lit (colored by how many files) = the file has the function;
         // a dot inside = the focus function in that file calls it. Hover shows name and md5,
         // click opens the file details, right-click gives the usual file menu.
+        _fileHue(i) {
+            return Math.round((i * 137.508 + 215) % 360);
+        }
+
         _cgStrip(on, files, edge) {
             const n = on.filter(Boolean).length;
             const cls = n === files.length ? 'r-hi' : n * 2 >= files.length ? 'r-mid' : 'r-low';
@@ -909,11 +913,11 @@
                 const coll = c.collection || '';
                 const data = { md5: c.md5, fileId: `${coll}:file:${c.md5}`, name: c.file_name || c.md5, file_name: c.file_name || '', collection: coll };
                 const tip = [c.file_name, c.md5, coll, on[i] ? 'function present' : 'function absent', edge && edge[i] ? 'called from the focus function here' : ''].filter(Boolean).join('\n');
-                return `<i class="${on[i] ? 'on' : ''}${edge && edge[i] ? ' edge' : ''}" title="${escapeAttr(tip)}" data-entity-data='${escapeAttr(JSON.stringify(data))}'
+                return `<i class="${on[i] ? 'on' : ''}${edge && edge[i] ? ' edge' : ''}"${total <= 16 ? ` style="--h:${this._fileHue(i)}"` : ''} title="${escapeAttr(tip)}" data-entity-data='${escapeAttr(JSON.stringify(data))}'
                     onclick="event.stopPropagation(); openFileDetails(${escapeAttr(jsString(coll))}, ${escapeAttr(jsString(c.md5))}, ${escapeAttr(jsString(c.file_name || c.md5))}, event)"
                     oncontextmenu='event.stopPropagation(); EntityRenderer.handleContextMenu(event, "file", this)'></i>`;
             }).join('');
-            return { html: `<span class="nway-strip ${cls}" style="--sq:${sz}px">${sq}</span>`, n, cls };
+            return { html: `<span class="nway-strip ${cls}${total <= 16 ? ' hued' : ''}" style="--sq:${sz}px">${sq}</span>`, n, cls };
         }
 
         // Presence: the neighbor's function exists in that file. Edge: the focus function there calls it.
@@ -1487,7 +1491,9 @@
                 const named = c.file_name && c.file_name !== c.md5;
                 const name = named ? window.EntityRenderer.renderFileName(c.file_name, c.md5, c.collection) : '';
                 const coverage = c.coverage == null ? '' : ` &middot; <span title="share of the shared (span >= 2) weight this file holds">${(Number(c.coverage) * 100).toFixed(0)}% shared</span>`;
-                return `<th class="col" data-col="${escapeAttr(c.id)}" title="${escapeAttr(`${c.file_name} (${c.collection}) - right-click: focus / filter`)}"><div class="nway-colhead">${name}${window.EntityRenderer.renderMd5(c.md5, { collection: c.collection })}<span class="nway-sub">${Number(c.functions)} fn${coverage}</span></div></th>`;
+                const fi = this._cgFiles().findIndex(x => x.id === c.id);
+                const sw = fi >= 0 && this._cgFiles().length <= 16 ? `<i class="nway-sw" style="--h:${this._fileHue(fi)}"></i>` : '';
+                return `<th class="col" data-col="${escapeAttr(c.id)}" title="${escapeAttr(`${c.file_name} (${c.collection}) - right-click: focus / filter`)}"><div class="nway-colhead">${sw}${name}${window.EntityRenderer.renderMd5(c.md5, { collection: c.collection })}<span class="nway-sub">${Number(c.functions)} fn${coverage}</span></div></th>`;
             };
             const names = c => (this.data.file_columns || []).filter(f => c.members.includes(f.id)).map(f => f.file_name || f.md5).join(', ');
             const colHead = c => c.kind

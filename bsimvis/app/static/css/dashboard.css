@@ -3080,6 +3080,11 @@ html.light-theme .nway-function-view { --xp-l: 40%; }
 .xp-l { display: flex; gap: 6px; align-items: center; font-weight: 600; min-width: 0; }
 .xp-fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .xp-badge { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 3px; border-radius: 4px; background: var(--cc); color: var(--bg); font: 600 0.7rem 'Consolas', monospace; flex: none; }
+.xp-entity-link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+.nway-file-link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+.nway-file-link:hover { color: var(--accent); }
+.xp-entity-link:hover { outline: 1px solid var(--accent); }
+.xp-md5 { margin-left: 8px; font-size: 0.68rem; color: var(--accent); }
 .xp-ref { font-size: 0.62rem; padding: 0 5px; border-radius: 8px; border: 1px solid var(--accent); color: var(--accent); font-weight: 400; }
 .xp-f { font: 0.72rem 'Consolas', monospace; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .xp-f a { color: var(--accent); }
@@ -3156,6 +3161,11 @@ button.xp-cell:hover { outline: 2px solid var(--accent); }
 .xp-pane { border: 1px solid var(--border); border-radius: 6px; min-width: 0; overflow: hidden; }
 .xp-ph { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 5px 10px; background: var(--bg); border-bottom: 1px solid var(--border); font-size: 0.74rem; }
 .xp-pane pre, .xp-fcode { margin: 0; padding: 8px 10px; font: 0.76rem/1.55 'Consolas', monospace; overflow-x: auto; white-space: pre; }
+.xp-pane pre .token-variable, .xp-fcode .token-variable { color: var(--token-instruction); }
+.xp-pane pre .token-func_call, .xp-fcode .token-func_call { color: var(--token-register); }
+.xp-pane pre .token-type, .xp-fcode .token-type { color: var(--token-address); }
+.xp-pane pre .token-op, .xp-fcode .token-op { color: var(--token-warning); }
+.xp-pane pre .token-field, .xp-fcode .token-field { color: var(--token-symbol); }
 .xp-pane pre { max-height: min(520px, 60vh); overflow: auto; }
 .xp-pnote { padding: 6px 10px; border-top: 1px solid var(--border); font-size: 0.76rem; color: var(--dim); }
 pre b.chg { background: var(--xp-warn-bg); color: var(--token-warning); font-weight: 500; border-radius: 2px; padding: 0 1px; }

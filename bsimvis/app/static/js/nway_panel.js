@@ -116,6 +116,8 @@
                 if (e.target.matches('details.nway-match')) this._matchOpen = e.target.open;
             }, true);
             this.el.addEventListener('contextmenu', e => {
+                const file = e.target.closest('[data-nway-file]');
+                if (file) return this._menu(e, file.dataset.nwayFile);
                 const th = e.target.closest('th[data-col]');
                 if (th) return this._menu(e, th.dataset.col);
                 // A right-click on a function cell's empty space opens the function menu, not the plain cell one.
@@ -123,7 +125,8 @@
                 if (fn) window.EntityRenderer.handleContextMenu(e, 'function', fn);
             }, true);
             this.el.addEventListener('keydown', e => {
-                if (e.key === 'Enter' && e.target.dataset.text) this._set({ [e.target.dataset.text]: e.target.value.trim(), offset: 0 });
+                if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-nway-file]')) this._onClick(e);
+                else if (e.key === 'Enter' && e.target.dataset.text) this._set({ [e.target.dataset.text]: e.target.value.trim(), offset: 0 });
             });
         }
 
@@ -287,9 +290,13 @@
             return String(this.state.focus || '').split(',').filter(Boolean);
         }
 
+        _fileNameLink(f) {
+            return `<span class="nway-file-link" data-nway-file="${escapeAttr(f.id)}" role="link" tabindex="0" title="${escapeAttr(`Open ${f.file_name || f.md5}`)}">${escapeHtml(f.file_name || f.md5)}</span>`;
+        }
+
         _columnChip() {
             const only = this.state.column && this._files().find(f => f.id === this.state.column);
-            return only ? `<button class="nway-chip on" data-clear="column" title="drop the file filter">Only ${escapeHtml(only.file_name || only.md5)} &times;</button>` : '';
+            return only ? `<button class="nway-chip on" data-clear="column" title="drop the file filter">Only ${this._fileNameLink(only)} &times;</button>` : '';
         }
 
         // Focus: pick files to compare against all the others. A collapsible box so
@@ -297,7 +304,7 @@
         _focusBox() {
             const s = this.state, files = this._files(), ids = this._focusIds();
             const on = this.data.columns_mode === 'focus';
-            const chips = files.map(f => `<button class="nway-chip${ids.includes(f.id) ? ' on' : ''}" data-focus-toggle="${escapeAttr(f.id)}" title="${escapeAttr(f.collection)}">${escapeHtml(f.file_name || f.md5)}</button>`).join('');
+            const chips = files.map(f => `<button class="nway-chip${ids.includes(f.id) ? ' on' : ''}" data-focus-toggle="${escapeAttr(f.id)}" title="${escapeAttr(f.collection)}">${this._fileNameLink(f)}</button>`).join('');
             const ctl = on ? [
                 this._seg('Focus holds', 'focus_rule', [['any', 'Any'], ['all', 'All']], 'Any: a function is on the focus side when at least one focus file has it. All: every focus file must have it.'),
                 this._slider('Rest presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, 'Share of the rest files that must hold a function for it to count on the rest side. Keep it low (a single rest file is enough) for a strict "unique to focus".'),
@@ -1543,8 +1550,15 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-set],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open]');
             if (!t) return;
+            if (t.dataset.nwayFile) {
+                e.preventDefault(); e.stopPropagation();
+                const f = this._files().find(x => x.id === t.dataset.nwayFile);
+                if (!f) return;
+                const base = this.source.pool ? `/pools/${encodeURIComponent(this.source.pool)}` : '';
+                return window.Nav.openPath(`${base}/collections/${encodeURIComponent(f.collection)}/files/${encodeURIComponent(f.md5)}`, e, { title: f.file_name || f.md5, type: 'file' });
+            }
             if (t.dataset.fnOpen !== undefined) {
                 if (e.target.closest('button, a, input, .bsim-tag-pill, .entity-actions')) return;
                 const url = this._fnUrl(this.data.items[Number(t.dataset.fnOpen)]);

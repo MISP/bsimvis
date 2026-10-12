@@ -189,7 +189,7 @@ def _lines(src, feats, cap):
 
     by_line, ids = get_lines_data(src or {}, get_feature_map(feats), set())
     texts = ["".join(t["t"] for _, t in by_line[i]).rstrip() for i in range(len(ids))]
-    return texts[:cap], ids[:cap], len(ids) > cap
+    return texts[:cap], ids[:cap], by_line, len(ids) > cap
 
 
 _CTRL = re.compile(r"^(if|for|while|switch|do|else)\b")
@@ -368,14 +368,54 @@ def _titles(texts):
     ]
 
 
-def _blocks_of(src, feats, cap, max_blocks):
-    texts, ids, cut = _lines(src, feats, cap)
+def _blocks_of(src, feats, cap, max_blocks, callees=()):
+    texts, ids, by_line, cut = _lines(src, feats, cap)
+    callees_by_name = {c["name"]: c for c in callees if c.get("name")}
     out = []
     for a, b in split_blocks(texts)[:max_blocks]:
         text = "\n".join(texts[a:b])
+        syntax = []
+        for i in range(a, b):
+            left = len(texts[i])
+            for _, token in by_line[i]:
+                part = token["t"][:left]
+                if part:
+                    typ = token.get("type")
+                    if typ == "func_call":
+                        callee = callees_by_name.get(token["t"], {})
+                        syntax.append(
+                            [
+                                part,
+                                typ,
+                                token.get("target_addr") or callee.get("entrypoint"),
+                                token.get("target_name") or callee.get("name"),
+                                bool(
+                                    token.get("is_external")
+                                    or callee.get("is_external")
+                                ),
+                            ]
+                        )
+                    elif syntax and syntax[-1][1] == typ:
+                        syntax[-1][0] += part
+                    else:
+                        syntax.append([part, typ])
+                    left -= len(part)
+            if i < b - 1:
+                if syntax and syntax[-1][1] is None:
+                    syntax[-1][0] += "\n"
+                else:
+                    syntax.append(["\n", None])
+        remaining = TEXT_CAP
+        clipped = []
+        for part, typ, *call in syntax:
+            if remaining <= 0:
+                break
+            clipped.append([part[:remaining], typ, *call])
+            remaining -= len(part)
         out.append(
             {
                 "text": text[:TEXT_CAP],
+                "syntax": clipped,
                 "norm": _norm(text),
                 "bag": _bag(text, ids[a:b]),
                 "span": (a, b),
@@ -463,7 +503,7 @@ def _runs(ref_text, text, changed=False):
     return _segments(ref_text, text)
 
 
-def _consensus(srcs, feats, ref, cap, max_blocks=60):
+def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None):
     """Block-level comparison of the functions against the reference.
 
     `blocks`: the reference's blocks, each with a state per other function
@@ -474,7 +514,10 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60):
     functions with no counterpart in the reference.
     """
     n = len(srcs)
-    got = [_blocks_of(s, f, cap, max_blocks) for s, f in zip(srcs, feats)]
+    got = [
+        _blocks_of(s, f, cap, max_blocks, cs)
+        for s, f, cs in zip(srcs, feats, callees or [[] for _ in srcs])
+    ]
     blocks = [g[0] for g in got]
     rb = blocks[ref]
     titles = _titles([b["text"] for b in rb])
@@ -483,6 +526,7 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60):
             "id": _bid(i),
             "title": titles[i],
             "ref_text": b["text"],
+            "ref_syntax": b["syntax"],
             "lines": [b["span"][0] + 1, b["span"][1]],
             "cells": {},
             "groups": [],
@@ -504,10 +548,11 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60):
         for k, b in enumerate(blocks[j]):
             mine = sorted(refs.get(k, []))
             ent = {
+                "syntax": b["syntax"],
                 "refs": [
                     {"b": _bid(i), "st": st, "sim": round(sim, 3)}
                     for i, st, sim in mine
-                ]
+                ],
             }
             if mine:
                 i, st, _ = mine[0]
@@ -535,6 +580,7 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60):
                                 "id": ent["x"],
                                 "funcs": [j],
                                 "text": b["text"],
+                                "syntax": b["syntax"],
                                 "bag": b["bag"],
                             }
                         )
@@ -577,7 +623,7 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60):
         "blocks": out,
         "funcs": funcs,
         "extras": [
-            {k: e[k] for k in ("id", "funcs", "text")}
+            {k: e[k] for k in ("id", "funcs", "text", "syntax")}
             | {"title": _label(e["text"], _kind(e["text"], 1, False), {})}
             for e in extras[:40]
         ],
@@ -732,7 +778,14 @@ def compute(r, doc, fids):
         },
     }
     if level == "full":
-        out["consensus"] = _consensus(srcs, feats, ref, line_cap, block_cap)
+        out["consensus"] = _consensus(
+            srcs,
+            feats,
+            ref,
+            line_cap,
+            block_cap,
+            [m.get("callees") or [] for m in metas],
+        )
     _CACHE.put(cache_key, out)
     return out
 
@@ -863,6 +916,22 @@ def demo():
     assert st(mod)[1] == "mod" and "moved" in st(moved).values()
     assert st(gone)[2] == "miss"
     assert _dice(Counter("aab"), Counter("ab")) == 0.8
+    typed = {
+        "c_tokens": [
+            {"t": "void", "line": 0, "type": "type"},
+            {"t": " ", "line": 0, "type": "syntax"},
+            {"t": "f", "line": 0, "type": "func_call"},
+            {"t": "()  ", "line": 0, "type": "syntax"},
+            {"t": "{", "line": 1, "type": "syntax"},
+            {"t": "  return 0;  ", "line": 2, "type": "op"},
+            {"t": "}", "line": 3, "type": "syntax"},
+        ]
+    }
+    for block in _blocks_of(typed, [], 100, 60)[0]:
+        assert "".join(part for part, *_ in block["syntax"]) == block["text"]
+    first = _blocks_of(typed, [], 100, 60, [{"name": "f", "entrypoint": "2000"}])[0][0]
+    assert first["syntax"][0] == ["void", "type"]
+    assert ["f", "func_call", "2000", "f", False] in first["syntax"]
     src = lambda ls: {
         "c_tokens": [{"t": t, "line": i, "type": None} for i, t in enumerate(ls)]
     }

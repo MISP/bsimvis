@@ -38,6 +38,12 @@
             this._dead = false;
             el.addEventListener('click', e => this._click(e));
             el.addEventListener('change', e => this._change(e));
+            el.addEventListener('mouseover', e => this._callHover(e, true));
+            el.addEventListener('mouseout', e => this._callHover(e, false));
+            el.addEventListener('contextmenu', e => this._entityMenu(e));
+            el.addEventListener('keydown', e => {
+                if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-xfnref],[data-xfile],[data-xcall]')) this._click(e);
+            });
         }
 
         destroy() {
@@ -132,20 +138,35 @@
             if (this.s.tab === 'pair') this._loadPair();
         }
 
+        _funcRef(j, cls = 'xp-badge') {
+            const f = this.data.functions[j];
+            return `<span class="${cls} xp-entity-link" ${cc(j)} data-xfnref="${j}" role="link" tabindex="0" title="${escapeAttr(`Open function ${f.name || f.addr}`)}">${escapeHtml(f.letter)}</span>`;
+        }
+
+        _fileRef(j, cls = 'xp-fn') {
+            const f = this.data.functions[j], { md5 } = parts(this.fids[j] || '');
+            return `<span class="${cls} xp-entity-link" data-xfile="${j}" role="link" tabindex="0" title="${escapeAttr(`${f.file_name || md5} (${md5})`)}">${escapeHtml(f.file_name || md5)}</span>`;
+        }
+
+        _md5Ref(j) {
+            const { md5 } = parts(this.fids[j] || '');
+            return md5 ? `<span class="xp-md5 xp-entity-link" data-xfile="${j}" role="link" tabindex="0" title="${escapeAttr(md5)}"># ${escapeHtml(md5.slice(0, 8))}</span>` : '';
+        }
+
         _card(f, j) {
             const url = window.NwayPanel.fnUrl(f.id, this.source.pool || null);
             const ref = j === this.data.reference ? '<span class="xp-ref" title="Reference of the consensus code: the function most similar to the others">ref</span>' : '';
             return `<div class="xp-col" ${cc(j)}>
-                <div class="xp-l"><span class="xp-badge">${escapeHtml(f.letter)}</span><span class="xp-fn" title="${escapeAttr(f.file_name || '')}">${escapeHtml(f.file_name || '')}</span>${ref}</div>
-                <div class="xp-f"><a data-xnav="${escapeAttr(url)}" data-title="${escapeAttr(f.name || f.addr)}" href="${escapeAttr(url)}">@ ${escapeHtml(f.addr)}</a>${f.instr != null ? ` &middot; ${Number(f.instr)} instr` : ''}</div>
+                <div class="xp-l">${this._funcRef(j)}${this._fileRef(j)}${ref}</div>
+                <div class="xp-f"><a data-xnav="${escapeAttr(url)}" data-xfnref="${j}" data-title="${escapeAttr(f.name || f.addr)}" href="${escapeAttr(url)}">@ ${escapeHtml(f.addr)}</a>${this._md5Ref(j)}${f.instr != null ? ` &middot; ${Number(f.instr)} instr` : ''}</div>
                 <div class="xp-t">${(f.tags || []).slice(0, 3).map(t => `<span class="xp-tag">${escapeHtml(t)}</span>`).join('')}</div></div>`;
         }
 
         _matrix() {
             const fs = this.data.functions, sim = this.data.similarity;
-            let h = '<span></span>' + fs.map((f, j) => `<span class="xp-h" ${cc(j)}>${escapeHtml(f.letter)}</span>`).join('');
+            let h = '<span></span>' + fs.map((_, j) => this._funcRef(j, 'xp-h')).join('');
             sim.forEach((row, r) => {
-                h += `<span class="xp-h" ${cc(r)}>${escapeHtml(fs[r].letter)}</span>`;
+                h += this._funcRef(r, 'xp-h');
                 row.forEach((v, c) => {
                     if (r === c) { h += '<span class="xp-v self">&middot;</span>'; return; }
                     const bg = v == null ? '' : ` style="background:color-mix(in srgb, var(--accent) ${Math.round(Math.max(0, (v - 0.5) / 0.5) * 70 + 6)}%, var(--card-bg))"`;
@@ -161,7 +182,7 @@
         }
 
         _thead() {
-            return `<tr><th></th>${this.data.functions.map((f, j) => `<th ${cc(j)}>${escapeHtml(f.letter)}</th>`).join('')}</tr>`;
+            return `<tr><th></th>${this.data.functions.map((f, j) => `<th ${cc(j)}>${this._funcRef(j)}</th>`).join('')}</tr>`;
         }
 
         // A string item opens the normal functions table filtered by that string.
@@ -210,6 +231,36 @@
             return (runs || []).map(([t, ch]) => (ch ? `<b class="${cls}">${escapeHtml(t)}</b>` : escapeHtml(t))).join('');
         }
 
+        _codeHtml(syntax, runs, cls, j) {
+            if (!syntax) return this._runs(runs, cls);
+            const plain = syntax.map(([text]) => text).join('');
+            if (runs && plain !== runs.map(([text]) => text).join('')) return this._runs(runs, cls);
+            const ends = [];
+            let end = 0;
+            for (const [text, changed] of (runs || [])) ends.push({ end: end += text.length, changed });
+            let pos = 0, ri = 0, html = '';
+            const origin = j != null && this.fids[j] ? parts(this.fids[j]) : null;
+            for (const [token, type, addr, name, external] of syntax) {
+                const callId = type === 'func_call' && addr && !external && origin
+                    ? `${origin.coll}:func:${origin.md5}:${addr}` : null;
+                const callAttrs = type === 'func_call' ? (callId
+                    ? ` class="func-call-clickable" data-xcall="${escapeAttr(callId)}" data-xcall-name="${escapeAttr(name || token)}" role="link" tabindex="0"`
+                    : ` title="${escapeAttr(`${external ? 'External' : 'Function'} call: ${name || token}`)}"`) : '';
+                let offset = 0;
+                while (offset < token.length) {
+                    while (ends[ri] && pos >= ends[ri].end) ri++;
+                    const length = Math.min(token.length - offset, ends[ri] ? ends[ri].end - pos : token.length);
+                    const part = escapeHtml(token.slice(offset, offset + length));
+                    const colored = ['variable', 'func_call', 'type', 'op', 'field'].includes(type)
+                        ? `<span class="token-${type}"${callAttrs}>${part}</span>` : part;
+                    html += ends[ri]?.changed ? `<b class="${cls}">${colored}</b>` : colored;
+                    offset += length;
+                    pos += length;
+                }
+            }
+            return html;
+        }
+
         _cell(b, j) { return b.cells[String(j)] || { st: 'same', sim: 1, segs: [] }; }
 
         _fseg(j, k) { return (this.data.consensus.funcs[String(j)] || [])[k]; }
@@ -220,6 +271,13 @@
             return c.segs.flatMap((k, i) => {
                 const seg = this._fseg(j, k);
                 return seg ? (i ? [['\n', false], ...seg.text] : seg.text) : [];
+            });
+        }
+
+        _cellSyntax(b, j) {
+            return this._cell(b, j).segs.flatMap((k, i) => {
+                const seg = this._fseg(j, k);
+                return seg ? (i ? [['\n', null], ...(seg.syntax || [])] : (seg.syntax || [])) : [];
             });
         }
 
@@ -261,12 +319,12 @@
 
         _ribbon(items) {
             const d = this.data, c = d.consensus;
-            let h = '<div class="xp-rib"><table><tr><th class="rowh">Block in ' + escapeHtml(d.functions[c.reference].letter) + '</th>'
+            let h = '<div class="xp-rib"><table><tr><th class="rowh">Block in ' + this._funcRef(c.reference) + '</th>'
                 + items.map(({ b, x }) => b
                     ? `<th>${escapeHtml(b.id)}<small data-btitle="${escapeAttr(b.id)}" title="${escapeAttr(this._bt(b))}">${escapeHtml(this._bt(b))}</small></th>`
                     : `<th>${escapeHtml(x.id)}<small title="${escapeAttr(x.title)}">${escapeHtml(x.title)}</small></th>`).join('') + '</tr>';
             d.functions.forEach((f, j) => {
-                h += `<tr><td class="rowh" ${cc(j)}><span class="xp-badge">${escapeHtml(f.letter)}</span> <span class="xp-rfile" title="${escapeAttr(f.file_name || '')}">${escapeHtml(f.file_name || '')}</span></td>`;
+                h += `<tr><td class="rowh" ${cc(j)}>${this._funcRef(j)} ${this._fileRef(j, 'xp-rfile')}</td>`;
                 for (const { b, x } of items) {
                     if (x) {
                         h += x.funcs.includes(j) ? `<td><button class="xp-cell st-extra" data-xx="${escapeAttr(x.id)}" title="only in this function">+</button></td>` : '<td><span class="st-none">&ndash;</span></td>';
@@ -284,20 +342,20 @@
         }
 
         _blockBody(b) {
-            const d = this.data, c = d.consensus, ref = d.functions[c.reference];
-            if (!b.groups.length) return `<div class="xp-bd"><p class="xp-hint" style="margin:0">Identical in all ${d.functions.length} functions.</p><div class="xp-panes"><div class="xp-pane"><div class="xp-ph"><span class="xp-badge" ${cc(c.reference)}>${escapeHtml(ref.letter)}</span> all functions</div><pre>${escapeHtml(b.ref_text)}</pre></div></div></div>`;
+            const d = this.data, c = d.consensus;
+            if (!b.groups.length) return `<div class="xp-bd"><p class="xp-hint" style="margin:0">Identical in all ${d.functions.length} functions.</p><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${this._funcRef(c.reference)} all functions</div><pre>${this._codeHtml(b.ref_syntax, null, null, c.reference)}</pre></div></div></div>`;
             const gi = b.groups[this.s.gi] ? this.s.gi : 0, g = b.groups[gi], G = NwayFunction.GLYPH;
-            const badges = fs => fs.map(j => `<span class="xp-badge" ${cc(j)}>${escapeHtml(d.functions[j].letter)}</span>`).join('');
+            const badges = fs => fs.map(j => this._funcRef(j)).join('');
             const chips = b.groups.map((x, i) => `<button class="xp-chip" aria-pressed="${i === gi}" data-xb="${escapeAttr(b.id)}" data-xg="${i}">${badges(x.funcs)} ${G[x.st]} ${NwayFunction.SNAME[x.st]}</button>`).join('');
             const same = this._others().filter(j => this._cell(b, j).st === 'same');
             const j0 = g.funcs[0], cell = this._cell(b, j0);
             const runs = this._cellRuns(b, j0);
             const sim = g.funcs.map(j => Math.round(g.sims[String(j)] * 100)).join('/');
-            return `<div class="xp-bd"><div class="xp-vchips"><span class="lab">Compare ${escapeHtml(ref.letter)} with</span>${chips}${same.length ? `<span class="lab">${same.map(j => escapeHtml(d.functions[j].letter)).join(', ')}: same as ${escapeHtml(ref.letter)}</span>` : ''}</div>
+            return `<div class="xp-bd"><div class="xp-vchips"><span class="lab">Compare ${this._funcRef(c.reference)} with</span>${chips}${same.length ? `<span class="lab">${same.map(j => this._funcRef(j)).join(', ')}: same as ${this._funcRef(c.reference)}</span>` : ''}</div>
                 <div class="xp-panes">
-                  <div class="xp-pane"><div class="xp-ph"><span class="xp-badge" ${cc(c.reference)}>${escapeHtml(ref.letter)}</span> reference</div><pre>${g.ref_segs ? this._runs(g.ref_segs, 'del') : escapeHtml(b.ref_text)}</pre></div>
+                  <div class="xp-pane"><div class="xp-ph">${this._funcRef(c.reference)} reference</div><pre>${this._codeHtml(b.ref_syntax, g.ref_segs, 'del', c.reference)}</pre></div>
                   <div class="xp-pane"><div class="xp-ph">${badges(g.funcs)} <span class="xp-cell st-${g.st}" style="cursor:default">${G[g.st]} ${NwayFunction.SNAME[g.st]}${g.st === 'miss' ? '' : ' ' + sim + '%'}</span>${cell.into ? `<span class="xp-tag hot">merged into ${escapeHtml(cell.into)}</span>` : ''}</div>
-                    <pre>${runs.length ? this._runs(runs, 'chg') : '(no matching code)'}</pre>${g.note ? `<div class="xp-pnote">${escapeHtml(g.note)}</div>` : ''}</div>
+                    <pre>${runs.length ? this._codeHtml(this._cellSyntax(b, j0), runs, 'chg', j0) : '(no matching code)'}</pre>${g.note ? `<div class="xp-pnote">${escapeHtml(g.note)}</div>` : ''}</div>
                 </div></div>`;
         }
 
@@ -316,10 +374,10 @@
             const accordion = ordered.map(({ b, x }) => {
                 if (x) {
                     const open = this.s.open === x.id;
-                    return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(x.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(x.id)}</span><span class="bt">${escapeHtml(x.title)}</span><span class="xp-mini">${x.funcs.map(j => `<span class="st-extra">${escapeHtml(this.data.functions[j].letter)}+</span>`).join('')}</span></button>${open ? `<div class="xp-bd"><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${x.funcs.map(j => `<span class="xp-badge" ${cc(j)}>${escapeHtml(this.data.functions[j].letter)}</span>`).join('')} <span class="xp-tag">no counterpart in the reference</span></div><pre>${escapeHtml(x.text)}</pre></div></div></div>` : ''}</div>`;
+                    return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(x.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(x.id)}</span><span class="bt">${escapeHtml(x.title)}</span><span class="xp-mini">${x.funcs.map(j => `<span class="st-extra xp-entity-link" data-xfnref="${j}" role="link" tabindex="0">${escapeHtml(this.data.functions[j].letter)}+</span>`).join('')}</span></button>${open ? `<div class="xp-bd"><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${x.funcs.map(j => `${this._funcRef(j)}`).join('')} <span class="xp-tag">no counterpart in the reference</span></div><pre>${x.syntax ? this._codeHtml(x.syntax, null, null, x.funcs[0]) : escapeHtml(x.text)}</pre></div></div></div>` : ''}</div>`;
                 }
                 const open = this.s.open === b.id;
-                const mini = this._others().map(j => { const x = this._cell(b, j); return `<span class="st-${x.st}" ${cc(j)} title="${escapeAttr(`${this.data.functions[j].letter}: ${NwayFunction.SNAME[x.st]}`)}">${escapeHtml(this.data.functions[j].letter)}${G[x.st]}</span>`; }).join('');
+                const mini = this._others().map(j => { const x = this._cell(b, j); return `<span class="st-${x.st} xp-entity-link" ${cc(j)} data-xfnref="${j}" role="link" tabindex="0" title="${escapeAttr(`${this.data.functions[j].letter}: ${NwayFunction.SNAME[x.st]}`)}">${escapeHtml(this.data.functions[j].letter)}${G[x.st]}</span>`; }).join('');
                 return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(b.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(b.id)}</span>${this._tspan(b)}<span class="xp-mini">${mini}</span></button>${open ? this._blockBody(b) : ''}</div>`;
             }).join('');
             const hidden = only ? c.blocks.length - ordered.filter(item => item.b).length : 0;
@@ -335,7 +393,7 @@
         _fullGroups(b, f) {
             const same = this._others().filter(j => this._cell(b, j).st === 'same');
             const groups = [...(same.length ? [{ funcs: same, st: 'same' }] : []), ...b.groups];
-            return `<div class="xp-vchips xp-full-groups"><span class="lab">Variants</span>${groups.map(g => `<button class="xp-chip" aria-pressed="${g.funcs.includes(f)}" data-xfn="${g.funcs.includes(f) ? f : g.funcs[0]}">${g.funcs.map(j => `<span class="xp-badge" ${cc(j)}>${escapeHtml(this.data.functions[j].letter)}</span>`).join('')} ${NwayFunction.GLYPH[g.st]} ${NwayFunction.SNAME[g.st]}</button>`).join('')}</div>`;
+            return `<div class="xp-vchips xp-full-groups"><span class="lab">Variants</span>${groups.map(g => `<button class="xp-chip" aria-pressed="${g.funcs.includes(f)}" data-xfn="${g.funcs.includes(f) ? f : g.funcs[0]}">${g.funcs.map(j => this._funcRef(j)).join('')} ${NwayFunction.GLYPH[g.st]} ${NwayFunction.SNAME[g.st]}</button>`).join('')}</div>`;
         }
 
         _functionGroups(single) {
@@ -357,25 +415,25 @@
             const d = this.data, c = d.consensus, s = this.s, single = s.single;
             if (s.fn == null || (!single && s.fn === c.reference)) s.fn = this._others()[0];
             const f = s.fn;
-            const chips = this._functionGroups(single).map(g => `<button class="xp-chip" aria-pressed="${g.includes(f)}" data-xfn="${g.includes(f) ? f : g[0]}" title="${escapeAttr(g.map(j => `${d.functions[j].letter}: ${d.functions[j].file_name || ''}`).join('\n'))}">${g.map(j => `<span class="xp-badge" ${cc(j)}>${escapeHtml(d.functions[j].letter)}</span>`).join('')}${g.length > 1 ? 'same code' : escapeHtml(d.functions[g[0]].file_name || '')}</button>`).join('');
+            const chips = this._functionGroups(single).map(g => `<button class="xp-chip" aria-pressed="${g.includes(f)}" data-xfn="${g.includes(f) ? f : g[0]}" title="${escapeAttr(g.map(j => `${d.functions[j].letter}: ${d.functions[j].file_name || ''}`).join('\n'))}">${g.map(j => this._funcRef(j)).join('')}${g.length > 1 ? 'same code' : this._fileRef(g[0], 'xp-rfile')}</button>`).join('');
             let out = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Show</span>${chips}<label class="xp-chk"><input type="checkbox" data-xsingle ${single ? 'checked' : ''}> Function alone, in its own order</label></div>`;
             const tag = t => `<span class="xp-tag hot">${escapeHtml(t)}</span>`;
             if (single) {
-                out += `<p class="xp-hint">Whole function ${escapeHtml(d.functions[f].file_name || '')}, blocks labelled with their match in the reference.</p>`;
-                if (f === c.reference) return out + c.blocks.map(b => `<div class="xp-frow one">${this._band(b.id, 'same', 1, this._bt(b))}<pre class="xp-fcode">${escapeHtml(b.ref_text)}</pre></div>`).join('');
+                out += `<p class="xp-hint">Whole function ${this._fileRef(f, 'xp-rfile')}, blocks labelled with their match in the reference.</p>`;
+                if (f === c.reference) return out + c.blocks.map(b => `<div class="xp-frow one">${this._band(b.id, 'same', 1, this._bt(b))}<pre class="xp-fcode">${this._codeHtml(b.ref_syntax, null, null, c.reference)}</pre></div>`).join('');
                 const segs = c.funcs[String(f)] || [];
                 return out + segs.map(seg => {
                     const r = seg.refs[0], b = r && c.blocks.find(x => x.id === r.b);
                     const band = r ? this._band(seg.refs.map(x => x.b).join(' + '), r.st, r.sim, this._bt(b)) : seg.x ? this._band(seg.x, 'extra', 1, (c.extras.find(x => x.id === seg.x) || {}).title || '') : this._band('-', 'extra', 1, 'unmatched');
-                    return `<div class="xp-frow one">${band}<pre class="xp-fcode st-${r ? r.st : 'extra'}">${this._runs(seg.text, 'chg')}</pre></div>`;
+                    return `<div class="xp-frow one">${band}<pre class="xp-fcode st-${r ? r.st : 'extra'}">${this._codeHtml(seg.syntax, seg.text, 'chg', f)}</pre></div>`;
                 }).join('');
             }
             const ref = d.functions[c.reference];
-            out += `<p class="xp-hint">Rows are blocks of ${escapeHtml(ref.letter)}. Left is ${escapeHtml(ref.letter)}, right is ${escapeHtml(d.functions[f].file_name || '')}. Functions sharing a block variant are grouped together; click a group to show its function throughout. Blocks that moved or merged stay on the row of the block they match.</p>`;
-            out += `<div class="xp-frow xp-full-head"><div class="xp-fband"><span class="xp-badge" ${cc(c.reference)}>${escapeHtml(ref.letter)}</span> ${escapeHtml(ref.file_name || '')} (reference)</div><div class="xp-fband"><span class="xp-badge" ${cc(f)}>${escapeHtml(d.functions[f].letter)}</span> ${escapeHtml(d.functions[f].file_name || '')}</div></div>`;
+            out += `<p class="xp-hint">Rows are blocks of ${this._funcRef(c.reference)}. Left is ${this._funcRef(c.reference)}, right is ${this._fileRef(f, 'xp-rfile')}. Functions sharing a block variant are grouped together; click a group to show its function throughout. Blocks that moved or merged stay on the row of the block they match.</p>`;
+            out += `<div class="xp-frow xp-full-head"><div class="xp-fband">${this._funcRef(c.reference)} ${this._fileRef(c.reference, 'xp-rfile')} (reference)</div><div class="xp-fband">${this._funcRef(f)} ${this._fileRef(f, 'xp-rfile')}</div></div>`;
             const slots = this._extraSlots([f]);
             const extraRows = after => (slots.get(after) || []).map(({ seg, x }) =>
-                `<div class="xp-frow">${this._band(seg.x, 'extra', 1, x ? x.title : '')}<pre class="xp-fcode gap">(no counterpart in ${escapeHtml(ref.letter)})</pre><pre class="xp-fcode st-extra">${this._runs(seg.text, 'chg')}</pre></div>`
+                `<div class="xp-frow">${this._band(seg.x, 'extra', 1, x ? x.title : '')}<pre class="xp-fcode gap">(no counterpart in ${this._funcRef(c.reference)})</pre><pre class="xp-fcode st-extra">${this._codeHtml(seg.syntax, seg.text, 'chg', f)}</pre></div>`
             ).join('');
             out += extraRows(null);
             let hidden = 0;
@@ -387,12 +445,12 @@
                     let right;
                     if (cell.st === 'miss') right = '<pre class="xp-fcode gap">(no matching code)</pre>';
                     else if (cell.into) right = `<pre class="xp-fcode gap">↑ merged into ${escapeHtml(cell.into)} above</pre>`;
-                    else right = `<pre class="xp-fcode st-${cell.st}">${this._runs(this._cellRuns(b, f), 'chg')}</pre>`;
-                    out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), cell.into ? tag('merged into ' + cell.into) : '')}${this._fullGroups(b, f)}<pre class="xp-fcode">${g && g.ref_segs ? this._runs(g.ref_segs, 'del') : escapeHtml(b.ref_text)}</pre>${right}</div>`;
+                    else right = `<pre class="xp-fcode st-${cell.st}">${this._codeHtml(this._cellSyntax(b, f), this._cellRuns(b, f), 'chg', f)}</pre>`;
+                    out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), cell.into ? tag('merged into ' + cell.into) : '')}${this._fullGroups(b, f)}<pre class="xp-fcode">${this._codeHtml(b.ref_syntax, g && g.ref_segs, 'del', c.reference)}</pre>${right}</div>`;
                 }
                 out += extraRows(b.id);
             }
-            return out + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} identical to ${escapeHtml(ref.letter)} hidden. Untick "Differences only" to read the whole function.</p>` : '');
+            return out + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} identical to ${this._funcRef(c.reference)} hidden. Untick "Differences only" to read the whole function.</p>` : '');
         }
 
         // LLM titles: asked once when the code tab first opens, never blocking the render.
@@ -481,15 +539,53 @@
         }
 
         // ---- Events ----
+        _callHover(e, on) {
+            const call = e.target.closest('[data-xcall]');
+            if (!call || !this.el.contains(call) || call.contains(e.relatedTarget)) return;
+            if (on) window.showCodePreview?.(call.dataset.xcall, call.dataset.xcallName, null, null, null,
+                { clientX: e.clientX, clientY: e.clientY, target: call, currentTarget: call });
+            else window.hideCodePreview?.(e);
+        }
+
+        _entityMenu(e) {
+            const target = e.target.closest('[data-xcall],[data-xfnref],[data-xfile]');
+            if (!target || !this.el.contains(target) || !window.showGraphContextMenu) return;
+            e.preventDefault(); e.stopPropagation();
+            const d = target.dataset;
+            if (d.xcall) return window.showGraphContextMenu(e, 'function', { function_id: d.xcall, function_name: d.xcallName });
+            if (d.xfnref !== undefined) {
+                const j = Number(d.xfnref), f = this.data.functions[j];
+                return window.showGraphContextMenu(e, 'function', { function_id: this.fids[j], function_name: f.name || f.addr });
+            }
+            const j = Number(d.xfile), f = this.data.functions[j], { coll, md5 } = parts(this.fids[j]);
+            return window.showGraphContextMenu(e, 'file', { fileId: `${coll}:file:${md5}`, collection: coll, md5, file_name: f.file_name });
+        }
+
         _openDiff(a, b, e) {
             const fs = this.data.functions;
             window.Nav.openPath(window.buildDiffUrl(this.fids[a], this.fids[b]), e, { title: `Diff: ${fs[a].addr} vs ${fs[b].addr}`, type: 'diff' });
         }
 
         _click(e) {
-            const t = e.target.closest('[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xpair],[data-xnav],[data-xopen]');
+            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xpair],[data-xnav],[data-xopen]');
             if (!t) return;
             const d = t.dataset;
+            if (d.xcall) {
+                e.preventDefault(); e.stopPropagation();
+                return window.Nav.openPath(window.NwayPanel.fnUrl(d.xcall, this.source.pool || null), e, { title: d.xcallName || 'Function', type: 'function' });
+            }
+            if (d.xfnref !== undefined) {
+                e.preventDefault(); e.stopPropagation();
+                const j = Number(d.xfnref), f = this.data.functions[j];
+                return window.Nav.openPath(window.NwayPanel.fnUrl(this.fids[j], this.source.pool || null), e, { title: f.name || f.addr, type: 'function' });
+            }
+            if (d.xfile !== undefined) {
+                e.preventDefault(); e.stopPropagation();
+                const j = Number(d.xfile), f = this.data.functions[j], { coll, md5 } = parts(this.fids[j]);
+                const base = this.source.pool ? `/pools/${encodeURIComponent(this.source.pool)}` : '';
+                const url = `${base}/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(md5)}`;
+                return window.Nav.openPath(url, e, { title: f.file_name || md5, type: 'file' });
+            }
             if (d.xtab) {
                 if (d.xtab === 'code' && !this.data.consensus) {
                     showToast(`Code blocks are unavailable for ${this.data.functions.length} functions. Compare at most ${this.data.limits.code} functions to view them.`, 'warning');

@@ -3053,3 +3053,12 @@ body.has-entity-tabs .header-top > div:has(> #view-title) { display: none !impor
 
 /* The clearable wrapper JS adds around the input must fill the bar, so the icon sits at the right edge */
 .search-input-wrapper > .filter-clearable { flex: 1; display: flex; min-width: 0; }
+
+/* Search box shares the filter-card band: fixed to its top-right corner, cards wrap in the space left of it */
+#grid-header .has-search-slot { position: relative; padding-right: 420px; }
+#grid-header .has-search-slot > #search-area { position: absolute; top: 0; right: 0; width: 400px; max-width: none; margin: 0 !important; }
+.header:not(:has(#search-area)) { display: none; }
+@media (max-width: 1100px) {
+    #grid-header .has-search-slot { padding-right: 0; }
+    #grid-header .has-search-slot > #search-area { position: static; width: 100%; flex-basis: 100%; }
+}

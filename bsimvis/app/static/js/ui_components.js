@@ -85,7 +85,7 @@ window.UI = {
             { key: 'bin-clusters', count: 'file_clusters', label: 'Clusters', path: '/files/clusters' },
             { key: 'functions', label: 'Functions', path: '/functions', count: 'total_functions', gap: true },
             { key: 'features-global', label: 'Features', path: '/features', count: 'features' },
-            { key: 'strings', label: 'Strings', path: '/strings' },
+            { key: 'strings', label: 'Strings', path: '/strings', count: 'strings' },
             { key: 'function-similarity', count: 'function_sims', label: 'Func sims', path: '/functions/similarities' },
             { key: 'clusters', count: 'function_clusters', label: 'Func clusters', path: '/functions/clusters' },
             { key: 'search', label: 'Searches', path: '/searches' },

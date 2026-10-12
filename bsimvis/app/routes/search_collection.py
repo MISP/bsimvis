@@ -323,6 +323,7 @@ def get_collection_counts():
         bin_algo = f"{algo}:snn"
     return {
         "features": r.scard(f"{collection}:all_features"),
+        "strings": r.hlen(f"{collection}:idx:string:meta"),
         "function_sims": r.zcard(f"{collection}:sim:score:{algo}"),
         "file_sims": r.scard(f"{collection}:all_bin_sims"),
         "function_clusters": r.scard(f"{collection}:cluster:list:{algo}"),

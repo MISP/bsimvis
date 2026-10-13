@@ -190,7 +190,7 @@ class GhidraService:
             return "syntax"
         return "text"
 
-    def build_semantic_source(self, markup, program=None):
+    def build_semantic_source(self, markup, program=None, stmts=None):
         c_lines = []
         c_tokens = []
         addr_to_line = {}
@@ -218,8 +218,14 @@ class GhidraService:
 
             num_children = node.numChildren() if hasattr(node, "numChildren") else 0
             if num_children > 0:
+                first = token_counter
                 for i in range(num_children):
                     walk_tokens(node.Child(i))
+                if (
+                    stmts is not None
+                    and node.getClass().getSimpleName() == "ClangStatement"
+                ):
+                    stmts.append((first, token_counter))
                 return
 
             clazz = node.getClass().getSimpleName()
@@ -324,6 +330,42 @@ class GhidraService:
             seq_to_token_idx,
         )
 
+    @staticmethod
+    def build_tok_block(c_tokens, stmts, seq_to_block):
+        """Run-length [[token_idx, block_idx], ...]. Tokens without a pcode op take
+        the block of their Clang statement, then of a neighbour on the same line,
+        else -1."""
+        blk = [seq_to_block.get(t.get("seq")) for t in c_tokens]
+        for a, b in stmts:
+            known = next((blk[k] for k in range(a, b) if blk[k] is not None), None)
+            if known is not None:
+                for k in range(a, b):
+                    if blk[k] is None:
+                        blk[k] = known
+        by_line = {}
+        for k, t in enumerate(c_tokens):
+            by_line.setdefault(t.get("line"), []).append(k)
+        for ks in by_line.values():
+            last = None
+            for k in ks:
+                if blk[k] is None:
+                    blk[k] = last
+                else:
+                    last = blk[k]
+            nxt = None
+            for k in reversed(ks):
+                if blk[k] is None:
+                    blk[k] = nxt
+                else:
+                    nxt = blk[k]
+        runs, prev = [], object()
+        for k, b in enumerate(blk):
+            b = -1 if b is None else b
+            if b != prev:
+                runs.append([k, b])
+                prev = b
+        return runs
+
     def extract_bsim_features(
         self,
         decomp_results,
@@ -334,6 +376,7 @@ class GhidraService:
         addr_to_line,
         addr_to_token_idx,
         seq_to_token_idx,
+        block_out=None,
     ):
         from ghidra.app.decompiler.signature import (
             VarnodeSignature,
@@ -355,10 +398,14 @@ class GhidraService:
         addr_to_pcodes = {}
         block_addr_to_pcode_dump = {}
         addr_to_block_start = {}
+        seq_to_block = {}
+        addr_to_blocks = {}
+        cfg_blocks = []
 
         for block in hfunction.getBasicBlocks():
             start_hex = str(block.getStart()).split(":")[-1]
             this_block_ops = {}
+            bidx = block.getIndex()
             op_iter = block.getIterator()
             while op_iter.hasNext():
                 op = op_iter.next()
@@ -368,6 +415,7 @@ class GhidraService:
                 instr_hex = str(s_num.getTarget()).split(":")[-1]
 
                 seq_to_pcode[s_num] = op
+                seq_to_block[s_str] = bidx
                 seq_to_pcode_full[s_str] = op_str
                 this_block_ops[s_str] = op_str
 
@@ -375,8 +423,32 @@ class GhidraService:
                     addr_to_pcodes[instr_hex] = {}
                 addr_to_pcodes[instr_hex][s_str] = op_str
                 addr_to_block_start[instr_hex] = start_hex
+                addr_to_blocks.setdefault(instr_hex, set()).add(bidx)
 
             block_addr_to_pcode_dump[start_hex] = this_block_ops
+            n_out = block.getOutSize()
+            cfg_blocks.append(
+                {
+                    "i": bidx,
+                    "start": start_hex,
+                    "stop": str(block.getStop()).split(":")[-1],
+                    "ops": len(this_block_ops),
+                    "kind": (
+                        "ret"
+                        if n_out == 0
+                        else (
+                            "cond" if n_out == 2 else "switch" if n_out > 2 else "plain"
+                        )
+                    ),
+                    "out": [block.getOut(k).getIndex() for k in range(n_out)],
+                }
+            )
+        if block_out is not None:
+            block_out["seq_to_block"] = seq_to_block
+            block_out["cfg"] = {
+                "entry": cfg_blocks[0]["i"] if cfg_blocks else 0,
+                "blocks": cfg_blocks,
+            }
         times["pcode"] = time.time() - ts_pcode
 
         ts_sigs = time.time()
@@ -385,6 +457,26 @@ class GhidraService:
 
         if not signatures:
             return bsim_meta, bsim_raw, [], times
+
+        starts = {b["start"]: b["i"] for b in cfg_blocks}
+        ranges = sorted(
+            (int(b["start"], 16), int(b["stop"], 16), b["i"]) for b in cfg_blocks
+        )
+
+        def block_for(seq_str, a):
+            # debugSignatures runs its own decompile pass, so most feature seqs
+            # (and every sig.index) are not ops/blocks of this HighFunction: fall
+            # back to the block starting at the address, the instruction's block,
+            # then the one block whose range holds the address.
+            if seq_str in seq_to_block:
+                return seq_to_block[seq_str]
+            if a in starts:
+                return starts[a]
+            hit = addr_to_blocks.get(a)
+            if hit is None:
+                v = int(a, 16)
+                hit = {i for lo, hi, i in ranges if lo <= v <= hi}
+            return next(iter(hit)) if len(hit) == 1 else None
 
         ts_loop = time.time()
         for i in range(signatures.size()):
@@ -447,6 +539,9 @@ class GhidraService:
 
             if hex_addr:
                 feature_data["addr"] = hex_addr
+                bi = block_for(feature_data["seq"], hex_addr)
+                if bi is not None:
+                    feature_data["block_index"] = bi
                 if feature_data["seq"] and feature_data["seq"] in seq_to_pcode_full:
                     feature_data["pcode_block"] = {
                         feature_data["seq"]: seq_to_pcode_full[feature_data["seq"]]
@@ -927,6 +1022,7 @@ class GhidraService:
                 seq_to_token_idx,
             ) = ([], [], {}, {}, {}, {}, {})
             bsim_meta, bsim_raw, bsim_tf = [], [], []
+            stmts, block_out, tok_block = [], {}, None
 
             if decomp_results.decompileCompleted():
                 # The listing signature above is the program DB one, which stays
@@ -952,7 +1048,7 @@ class GhidraService:
                     line_to_token_idx,
                     line_to_addr,
                     seq_to_token_idx,
-                ) = self.build_semantic_source(markup, program)
+                ) = self.build_semantic_source(markup, program, stmts)
                 bsim_meta, bsim_raw, bsim_tf, ext_times = self.extract_bsim_features(
                     decomp_results,
                     decomp_interface,
@@ -962,7 +1058,12 @@ class GhidraService:
                     addr_to_line,
                     addr_to_token_idx,
                     seq_to_token_idx,
+                    block_out,
                 )
+                if block_out.get("cfg", {}).get("blocks"):
+                    tok_block = self.build_tok_block(
+                        c_tokens, stmts, block_out["seq_to_block"]
+                    )
 
             callees_list = callees_graph.get(entry_str, [])
             callers_list = callers_graph.get(entry_str, [])
@@ -1006,6 +1107,11 @@ class GhidraService:
                         "seq_to_token": seq_to_token_idx,
                         "line_to_token": line_to_token_idx,
                         "line_to_addr": line_to_addr,
+                        **(
+                            {"tok_block": tok_block, "cfg": block_out["cfg"]}
+                            if tok_block is not None
+                            else {}
+                        ),
                     },
                     "function_features": {
                         "bsim_features_meta": bsim_meta,

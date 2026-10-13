@@ -406,8 +406,8 @@
                 + (c.truncated ? `<p class="xp-foot">Large functions are compared on their first ${Number(this.data.limits.lines)} lines and ${Number(this.data.limits.blocks)} blocks.</p>` : '');
         }
 
-        _band(id, st, sim, title, extra = '') {
-            return `<div class="xp-fband"><span class="xp-bid">${escapeHtml(id)}</span><span class="xp-cell st-${st}" style="cursor:default">${NwayFunction.GLYPH[st]} ${NwayFunction.SNAME[st]}${st === 'miss' || st === 'same' || st === 'extra' ? '' : ' ' + Math.round(sim * 100) + '%'}</span>${extra}<span class="dim">${escapeHtml(title)}</span><i></i></div>`;
+        _band(id, st, sim, title, extra = '', tail = '') {
+            return `<div class="xp-fband"><span class="xp-bid">${escapeHtml(id)}</span><span class="xp-cell st-${st}" style="cursor:default">${NwayFunction.GLYPH[st]} ${NwayFunction.SNAME[st]}${st === 'miss' || st === 'same' || st === 'extra' ? '' : ' ' + Math.round(sim * 100) + '%'}</span>${extra}<span class="dim">${escapeHtml(title)}</span><i></i>${tail}</div>`;
         }
 
         _fullGroups(b, f) {
@@ -466,7 +466,7 @@
                     if (cell.st === 'miss') right = '<pre class="xp-fcode gap">(no matching code)</pre>';
                     else if (cell.into) right = `<pre class="xp-fcode gap">↑ merged into ${escapeHtml(cell.into)} above</pre>`;
                     else right = `<pre class="xp-fcode st-${cell.st}" data-xfns="${f},${c.reference}">${this._codeHtml(this._cellSyntax(b, f), this._cellRuns(b, f), 'chg', f)}</pre>`;
-                    out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), (cell.into ? tag('merged into ' + cell.into) : '') + this._expl(b.id, f))}${this._fullGroups(b, f)}<pre class="xp-fcode" data-xfns="${c.reference},${f}">${this._codeHtml(b.ref_syntax, g && g.ref_segs, 'del', c.reference)}</pre>${right}</div>`;
+                    out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), cell.into ? tag('merged into ' + cell.into) : '', this._expl(b.id, f))}${this._fullGroups(b, f)}<pre class="xp-fcode" data-xfns="${c.reference},${f}">${this._codeHtml(b.ref_syntax, g && g.ref_segs, 'del', c.reference)}</pre>${right}</div>`;
                 }
                 out += extraRows(b.id);
             }
@@ -530,7 +530,7 @@
             if (e.status === 'pending') inner = '<i class="fa-solid fa-spinner fa-spin"></i> asking the LLM&hellip;';
             else if (e.status === 'ready') inner = `<i class="fa-solid fa-robot"></i> <span class="xp-tag ${e.verdict === 'semantic' ? 'hot' : ''}">${escapeHtml(e.verdict)}</span> ${escapeHtml(e.summary)} <button class="xp-aibtn" data-xsave="${k}" ${e.saved ? 'disabled' : ''} title="Save this explanation as a note on the reference function">${e.saved ? 'saved' : 'Save as note'}</button>`;
             else inner = `<button class="xp-aibtn" data-xexp="${k}" title="Ask the LLM how this block differs from the reference"><i class="fa-solid fa-robot"></i> ${e.status === 'failed' ? 'Failed, retry' : e.status === 'off' ? 'LLM not configured' : 'Explain'}</button>`;
-            return `<span class="xp-ai" data-xexpo="${k}">${inner}</span>`;
+            return `<span class="xp-ai${e.status === 'ready' ? ' done' : ''}" data-xexpo="${k}">${inner}</span>`;
         }
 
         _explPaint(key) {

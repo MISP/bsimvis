@@ -3077,6 +3077,9 @@ body.has-entity-tabs .header-top > div:has(> #view-title) { display: none !impor
 .nway-function-view { min-height: 0; min-width: 0; --xp-l: 66%; --xp-warn-bg: color-mix(in srgb, var(--token-warning) 14%, var(--card-bg)); }
 html.light-theme .nway-function-view { --xp-l: 40%; }
 #nway-fn-host { min-width: 0; width: 100%; }
+/* Sticky offsets are measured inside the scroller's padding: keep the top one on the heading. */
+.nway-function-view { padding-top: 0; }
+.nway-function-view > .nway-head { padding-top: 25px; }
 .nway-function-view .xp-bar { position: sticky; top: 0; z-index: 40; padding: 8px 0; background: var(--bg); border-bottom: 1px solid var(--border); }
 /* The panel's own bar (Differences only) sits under the family tab bar. */
 .nway-function-view #nway-fn-host .xp-bar { top: var(--xp-bar-h, 46px); z-index: 39; }

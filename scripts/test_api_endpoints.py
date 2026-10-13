@@ -5204,14 +5204,6 @@ def test_nway_diff():
             and _t.get("status") in ("off", "pending", "ready", "failed"),
             f"HTTP {_r.status_code} {str(_t)[:200]}",
         )
-        _r = requests.get(_fx + "/read", params={**_base, "fids": _fids}, timeout=60)
-        _t = _r.json() if _r.status_code == 200 else {}
-        check(
-            "nway facets read: answers at once with a status, never waits for the LLM",
-            _r.status_code == 200
-            and _t.get("status") in ("off", "pending", "ready", "failed"),
-            f"HTTP {_r.status_code} {str(_t)[:200]}",
-        )
         _r = requests.get(_fx + "/summaries", params={"fids": _fids}, timeout=60)
         _t = _r.json() if _r.status_code == 200 else {}
         check(

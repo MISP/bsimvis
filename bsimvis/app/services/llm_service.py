@@ -377,53 +377,6 @@ class LLMService:
             return None, "empty answer"
         return {"verdict": value["verdict"], "summary": summary}, None
 
-    def read_row(self, ctx):
-        """Short read of an N-way row: what the functions are and how they diverge.
-
-        `ctx` (see nway_facets_service.read_row) holds the functions, the
-        per-block state table and trimmed block diffs. Returns
-        ({"summary": str}, error).
-        """
-        self._load_config()
-        prompt = (
-            "These decompiled functions were matched as variants of one another "
-            "(A is the reference).\n"
-            f"{ctx['functions']}\n\n"
-            "How every block of A looks in each other function "
-            "(same, mod = modified, moved, restr = restructured, miss = missing):\n"
-            f"{ctx['blocks']}\n\n"
-            f"Differing blocks:\n{ctx['diffs']}\n\n"
-            "In at most five sentences: say what this function does, what all "
-            "variants share, and how they diverge. Name the functions by letter. "
-            "Separate changes that alter behaviour from cosmetic ones (renames, "
-            "reordering, compiler layout), and point at the blocks by id. "
-            "Describe only what the code shows."
-        )
-        fmt = {
-            "type": "object",
-            "properties": {"summary": {"type": "string"}},
-            "required": ["summary"],
-            "additionalProperties": False,
-        }
-        try:
-            response = Client(host=self.ollama_url, timeout=150).chat(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                stream=False,
-                think=False,
-                format=fmt,
-                options={"num_predict": 400, "temperature": 0.1, "num_ctx": 8192},
-            )
-            msg = response.get("message", {})
-            value = json.loads(
-                msg.get("content", "") or msg.get("thinking", "") or "{}"
-            )
-        except Exception as e:
-            logging.error(f"LLMService read_row error: {e}")
-            return None, str(e)
-        summary = " ".join(str(value.get("summary") or "").split())[:900]
-        return ({"summary": summary}, None) if summary else (None, "empty answer")
-
     def classify_relevance_batch(self, members, query, vocabulary=None):
         """Fast relevance triage: for every function, does it plausibly
         relate to the analyst's free-text question? Not a behavioral

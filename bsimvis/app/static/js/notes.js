@@ -1424,6 +1424,17 @@ async function handleDroppedText(funcId, text) {
 }
 
 // Global exposure
+// Focus a function, open AI Insight and ask `text` -- no automatic summary first.
+window.askAIAbout = function (funcId, text) {
+    showNotes(funcId, false);
+    const collection = getChatScopeCollection();
+    if (!collection) return;
+    chatHistories[collection] = chatHistories[collection] || [];
+    isAIOpen = true;
+    updateLayout();
+    if (lastRenderedAIFuncId !== collection) renderChatHistory(collection);
+    sendLLMChat(text);
+};
 window.showNotes = showNotes;
 window.showFileNotes = showFileNotes;
 window.toggleNotesPanel = toggleNotesPanel;

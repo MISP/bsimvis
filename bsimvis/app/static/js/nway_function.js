@@ -34,7 +34,6 @@
             this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', open: {}, fn: null, single: false, ...(o.state || {}) };
             this.titles = {};
             this.expl = {};
-            this.read = {};
             this.sums = {};
             this.data = null;
             this.simpleCode = null;
@@ -313,8 +312,9 @@
             const s = this.s;
             const sw = `<div class="xp-cbar"><div class="view-toggle" role="group" aria-label="Code view"><button class="view-btn${s.cv === 'blocks' ? ' active' : ''}" data-xcv="blocks">Blocks</button><button class="view-btn${s.cv === 'full' ? ' active' : ''}" data-xcv="full">Full function</button></div>
                 <span class="xp-hint" style="margin:0">${s.cv === 'blocks' ? 'Overview of what changed, block by block.' : 'Read the whole function, aligned to the reference by block.'}</span>
+                <button class="xp-aibtn" data-xask title="Open AI Insight and ask it about this whole row"><i class="fa-solid fa-robot"></i> Ask AI about this row</button>
                 <span class="xp-naming" ${this._naming ? '' : 'hidden'}><i class="fa-solid fa-spinner fa-spin"></i> naming blocks&hellip;</span></div>`;
-            return sw + this._read() + (s.cv === 'blocks' ? this._blocksView() : this._fullView());
+            return sw + (s.cv === 'blocks' ? this._blocksView() : this._fullView());
         }
 
         _extraSlots(functions, unique = false) {
@@ -534,48 +534,14 @@
             return `<span class="xp-ai${e.status === 'ready' ? ' done' : ''}" data-xexpo="${k}">${inner}</span>`;
         }
 
-        // Whole-row read: asked on click, shown above the blocks in both code views.
-        _read() {
-            const r = this.read;
-            let inner;
-            if (r.status === 'pending') inner = '<i class="fa-solid fa-spinner fa-spin"></i> reading the row&hellip;';
-            else if (r.status === 'ready') inner = `<i class="fa-solid fa-robot"></i> ${escapeHtml(r.summary)} <button class="xp-aibtn" data-xsaveread ${r.saved ? 'disabled' : ''} title="Save this read as a note on the reference function">${r.saved ? 'saved' : 'Save as note'}</button>`;
-            else inner = `<button class="xp-aibtn" data-xread title="Ask the LLM what these functions are and how they diverge"><i class="fa-solid fa-robot"></i> ${r.status === 'failed' ? 'Failed, retry' : r.status === 'off' ? 'LLM not configured' : 'AI read of this row'}</button>`;
-            return `<div class="xp-airead" data-xreado>${inner}</div>`;
-        }
-
-        _readPaint() {
-            this.el.querySelectorAll('[data-xreado]').forEach(el => { el.outerHTML = this._read(); });
-        }
-
-        async _askRead() {
-            this.read = { status: 'pending' };
-            this._readPaint();
-            for (let i = 0; i < 80 && !this._dead; i++) {
-                let body = null;
-                try {
-                    const res = await fetch(`/api/bin_sim/nway/facets/read?${this._qs().toString()}`);
-                    body = res.ok ? await res.json() : null;
-                } catch (e) { body = null; }
-                if (this._dead) return;
-                if (body && body.status === 'pending') { await new Promise(r => setTimeout(r, 2500)); continue; }
-                this.read = body && body.status === 'ready' ? body : { status: body ? body.status : 'failed' };
-                return this._readPaint();
-            }
-            this.read = { status: 'failed' };
-            this._readPaint();
-        }
-
-        async _saveRead() {
-            const c = this.data.consensus, ref = this.fids[c.reference];
-            const text = `[AI] N-way read of ${this.fids.length} functions (reference ${this.data.functions[c.reference].letter}): ${this.read.summary}`;
-            try {
-                const res = await fetch('/api/notes/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ collection: parts(ref).coll, func_id: ref, text, owner: 'user' }) });
-                if (!res.ok) throw new Error(res.status);
-                this.read.saved = true;
-                showToast('Saved as a note on the reference function', 'success');
-            } catch (err) { showToast('Could not save the note', 'warning'); }
-            this._readPaint();
+        // Row-level questions go to the AI Insight agent: it has tools and takes follow-ups.
+        _askAI() {
+            const host = window.askAIAbout ? window : window.parent;
+            if (!host || !host.askAIAbout) return showToast('AI Insight is not available here', 'warning');
+            const d = this.data, c = d.consensus, others = this._others();
+            const fns = d.functions.map((f, j) => `${f.letter}${j === c.reference ? ' (reference)' : ''}: ${this.fids[j]} (${f.file_name || '?'})`).join('\n');
+            const table = c.blocks.map(b => `${b.id} ${b.title}: ${others.map(j => `${d.functions[j].letter}=${this._cell(b, j).st}`).join(', ')}`).join('\n');
+            host.askAIAbout(this.fids[c.reference], `Analyze this N-way row: ${d.functions.length} functions matched as variants of one another.\n${fns}\n\nHow each block of the reference looks in the others (same, mod = modified, moved, restr = restructured, miss = missing):\n${table}\n\nIn at most five sentences: what does this function do, what do all variants share, and how do they diverge? Separate changes that alter behaviour from cosmetic ones (renames, reordering, compiler layout), cite block ids, and fetch code or callees with your tools where the table is not enough.`);
         }
 
         _explPaint(key) {
@@ -741,12 +707,12 @@
         }
 
         async _click(e) {
-            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xread],[data-xsaveread],[data-xpair],[data-xnav],[data-xopen]');
+            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xask],[data-xpair],[data-xnav],[data-xopen]');
             if (!t) return;
             const d = t.dataset;
-            if (d.xread !== undefined || d.xsaveread !== undefined) {
+            if (d.xask !== undefined) {
                 e.preventDefault(); e.stopPropagation();
-                return d.xread !== undefined ? this._askRead() : this._saveRead();
+                return this._askAI();
             }
             if (d.xexp || d.xsave) {
                 e.preventDefault(); e.stopPropagation();

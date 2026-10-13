@@ -3156,11 +3156,15 @@ button.xp-cell:hover { outline: 2px solid var(--accent); }
 .xp-bh .bt { font-weight: 600; }
 .xp-bid { font: 600 0.7rem 'Consolas', monospace; color: var(--dim); }
 .xp-mini { display: flex; flex-wrap: wrap; gap: 3px; margin-left: auto; }
-.xp-mc { display: inline-flex; overflow: hidden; border-radius: 4px; font: 0.66rem 'Consolas', monospace; }
-.xp-mc b { background: var(--cc); color: var(--bg); padding: 1px 4px; }
-.xp-mc i { font-style: normal; padding: 1px 4px; }
-.xp-mc.sl b { display: none; }
-.xp-mc.sl i { box-shadow: inset 0 -2px 0 var(--cc); }
+.xp-sum { font: 0.7rem 'Consolas', monospace; padding: 1px 8px; border-radius: 10px; border: 1px solid currentColor; white-space: nowrap; }
+.xp-sum.st-same { background: none; }
+.xp-min { font: 600 0.78rem 'Consolas', monospace; font-variant-numeric: tabular-nums; }
+.xp-min small { font-weight: 400; color: var(--dim); }
+.xp-blk { border-left: 4px solid var(--border); }
+.xp-blk.wst-mod { border-left-color: var(--token-warning); }
+.xp-blk.wst-moved { border-left-color: var(--accent); }
+.xp-blk.wst-restr, .xp-blk.wst-miss { border-left-color: var(--token-instruction); }
+.xp-blk.wst-extra { border-left-color: var(--success); }
 .xp-bd { border-top: 1px solid var(--border); padding: 10px 12px 12px; }
 .xp-vchips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; align-items: center; }
 .xp-vchips .lab { font-size: 0.72rem; color: var(--dim); }

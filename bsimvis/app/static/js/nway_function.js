@@ -374,12 +374,15 @@
             const accordion = ordered.map(({ b, x }) => {
                 if (x) {
                     const open = this.s.open === x.id;
-                    return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(x.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(x.id)}</span><span class="bt">${escapeHtml(x.title)}</span><span class="xp-mini">${x.funcs.map(j => `<span class="st-extra">${escapeHtml(this.data.functions[j].letter)}+</span>`).join('')}</span></button>${open ? `<div class="xp-bd"><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${x.funcs.map(j => `${this._funcRef(j)}`).join('')} <span class="xp-tag">no counterpart in the reference</span></div><pre>${x.syntax ? this._codeHtml(x.syntax, null, null, x.funcs[0]) : escapeHtml(x.text)}</pre></div></div></div>` : ''}</div>`;
+                    return `<div class="xp-blk wst-extra"><button class="xp-bh" data-xb="${escapeAttr(x.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(x.id)}</span><span class="bt">${escapeHtml(x.title)}</span><span class="xp-mini"><span class="xp-sum st-extra">+ ${x.funcs.length} of ${this.data.functions.length} only</span></span></button>${open ? `<div class="xp-bd"><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${x.funcs.map(j => `${this._funcRef(j)}`).join('')} <span class="xp-tag">no counterpart in the reference</span></div><pre>${x.syntax ? this._codeHtml(x.syntax, null, null, x.funcs[0]) : escapeHtml(x.text)}</pre></div></div></div>` : ''}</div>`;
                 }
                 const open = this.s.open === b.id;
-                const others = this._others(), slots = others.length > 6;
-                const mini = others.map(j => { const x = this._cell(b, j), l = escapeHtml(this.data.functions[j].letter); return `<span class="xp-mc${slots ? ' sl' : ''}" ${cc(j)} title="${escapeAttr(`${this.data.functions[j].letter}: ${NwayFunction.SNAME[x.st]}`)}"><b>${l}</b><i class="st-${x.st}">${G[x.st]}</i></span>`; }).join('');
-                return `<div class="xp-blk"><button class="xp-bh" data-xb="${escapeAttr(b.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(b.id)}</span>${this._tspan(b)}<span class="xp-mini">${mini}</span></button>${open ? this._blockBody(b) : ''}</div>`;
+                const sts = this._others().map(j => this._cell(b, j)), G2 = NwayFunction.GLYPH;
+                const worst = ['miss', 'restr', 'mod', 'moved'].find(k => sts.some(x => x.st === k)) || 'same';
+                const nSame = sts.filter(x => x.st === 'same').length;
+                const sims = sts.filter(x => x.st === 'mod' || x.st === 'moved').map(x => x.sim);
+                const verdict = `<span class="xp-sum st-${worst}" title="${escapeAttr(Object.keys(NwayFunction.SNAME).filter(k => k !== 'same' && sts.some(x => x.st === k)).map(k => `${sts.filter(x => x.st === k).length} ${NwayFunction.SNAME[k]}`).join(', ') || 'identical in all')}">${worst === 'same' ? G2.same : G2[worst]} ${nSame} of ${sts.length} match</span>${sims.length ? `<span class="xp-min" title="lowest similarity of the modified or moved functions">${Math.round(Math.min(...sims) * 100)}%<small> min</small></span>` : ''}`;
+                return `<div class="xp-blk wst-${worst}"><button class="xp-bh" data-xb="${escapeAttr(b.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(b.id)}</span>${this._tspan(b)}<span class="xp-mini">${verdict}</span></button>${open ? this._blockBody(b) : ''}</div>`;
             }).join('');
             const hidden = only ? c.blocks.length - ordered.filter(item => item.b).length : 0;
             return head + this._ribbon(ordered) + legend + accordion

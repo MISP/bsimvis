@@ -3078,6 +3078,8 @@ body.has-entity-tabs .header-top > div:has(> #view-title) { display: none !impor
 html.light-theme .nway-function-view { --xp-l: 40%; }
 #nway-fn-host { min-width: 0; width: 100%; }
 .nway-function-view .xp-bar { position: sticky; top: 0; z-index: 3; padding: 8px 0; background: var(--bg); border-bottom: 1px solid var(--border); }
+/* The panel's own bar (Differences only) sits under the family tab bar. */
+.nway-function-view #nway-fn-host .xp-bar { top: var(--xp-bar-h, 46px); z-index: 2; }
 .xp-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; padding: 16px; margin-bottom: 16px; }
 @media (max-width: 860px) { .xp-head { grid-template-columns: minmax(0, 1fr); } }
 .xp-cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; max-height: 280px; overflow: auto; align-content: start; }
@@ -3225,7 +3227,7 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 
 /* Whole function: block metadata in a gutter, code columns side by side */
 .xp-gwrap { display: grid; grid-template-columns: minmax(0, 1fr) 12px; gap: 8px; align-items: start; }
-.xp-gscroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; }
+.xp-gscroll { overflow: auto; max-height: calc(100vh - 150px); border: 1px solid var(--border); border-radius: 6px; } /* scrolls in both axes so the column header can stick */
 .xp-ginner { min-width: calc(76px + (var(--n) + 1) * 240px); }
 .xp-frow.xp-g { grid-template-columns: 76px repeat(calc(var(--n) + 1), minmax(0, 1fr)); gap: 0; margin: 0; border-top: 1px solid var(--border); }
 .xp-g .xp-fcode { border: 0; border-left: 1px solid var(--border); border-radius: 0; }

@@ -106,18 +106,32 @@ def _keys(toks, sig=False):
             keys.append("T")
         else:
             keys.append(_ADDR_NAME.sub(r"\1_", t))
+    i = 0
+    while i < len(toks):  # comments carry no code
+        if toks[i] == "/" and toks[i + 1 : i + 2] in (["*"], ["/"]):
+            block = toks[i + 1] == "*"
+            j = i + 2
+            while j < len(toks) and not (
+                toks[j - 1 : j + 1] == ["*", "/"] if block else "\n" in toks[j]
+            ):
+                j += 1
+            keys[i : j + 1] = [None] * (min(j + 1, len(toks)) - i)
+            i = j
+        i += 1
     if sig:
-        seen = False
+        note = False
         for i, t in enumerate(toks):
-            if t.isspace():
-                if seen and "\n" in t:
-                    break
-                continue
-            seen = True
-            nxt = next((u for u in toks[i + 1 :] if not u.isspace()), "")
-            if keys[i] and t.isidentifier() and nxt == "(":
-                keys[i] = "N"
+            if t == "{":
                 break
+            if note:
+                note = not (t == "/" and toks[i - 1] == "*")
+            elif t == "/" and toks[i + 1 : i + 2] == ["*"]:
+                note = True
+            else:
+                nxt = next((u for u in toks[i + 1 :] if not u.isspace()), "")
+                if keys[i] and t.isidentifier() and nxt == "(":
+                    keys[i] = "N"
+                    break
     for i, t in enumerate(toks):
         if t == "(" and keys[i]:
             j, depth = 0, 1
@@ -311,6 +325,10 @@ def _items(toks, keys):
             if k not in ("V", "T", "N", "const"):
                 if near(i, 1) == "(" and t not in _NOT_CALL:
                     out.append((i, i, "c:" + k))
+                elif t.startswith(
+                    "param_"
+                ):  # only compared between different functions
+                    out.append((i, i, "p:" + t))
             i += 1
         else:
             i += 1
@@ -322,16 +340,99 @@ def _content(text, sig=False):
     return Counter(k for _, _, k in _items(toks, _keys(toks, sig)))
 
 
-def _segments(ref, text, sig=False):
-    """`text` as [[token run, changed]]: the items the reference line has no match for."""
+def _calls_differ(ca, cb):
+    """Different call structure: another number of calls, or two different named callees.
+
+    A named callee against a generated name is a stripped build, not a change.
+    """
+    if sum(v for k, v in ca.items() if k[0] == "c") != sum(
+        v for k, v in cb.items() if k[0] == "c"
+    ):
+        return True
+    named = lambda x, y: {k for k in (x - y) if k[0] == "c" and k != "c:FUN_"}
+    return bool(named(ca, cb) and named(cb, ca))
+
+
+def _soft_far(ca, cb):
+    """The rest (operators, constants) is drastically different, not just spelled differently."""
+    soft = lambda c: Counter({k: v for k, v in c.items() if k[0] not in "csp"})
+    sa, sb = soft(ca), soft(cb)
+    return (
+        min(sum(sa.values()), sum(sb.values())) >= SOFT_MIN and _dice(sa, sb) < SOFT_MOD
+    )
+
+
+def _evidence(r, o):
+    """Whether two blocks have content in common besides their place in the CFG.
+
+    Not the token bag: it is mostly punctuation and placeholders, so any two
+    statements overlap.
+    """
+    body = lambda x: Counter(
+        {k: v for k, v in x.get("items", Counter()).items() if k[0] != "p"}
+    )
+    if _dice(body(r), body(o)) >= MATCH_MIN:
+        return True
+    hr, ho = (Counter(x["H"] if "H" in x else x.get("hashes", ())) for x in (r, o))
+    return min(len(hr), len(ho)) >= HASH_MIN and _dice(hr, ho) >= MATCH_MIN
+
+
+def _holds(r, group, strict=False):
+    """The blocks of `group` hold all the content of reference block `r` (merged or split)."""
+    cr = r.get("items")
+    if cr is None:
+        return False
+    co = sum((g.get("items", Counter()) for g in group), Counter())
+    if (
+        strict
+    ):  # between different functions a tiny block is not found just by being small
+        return sum(cr.values()) >= 3 and not cr - co
+    of = lambda c, f: Counter({k: v for k, v in c.items() if f(k)})
+    if of(cr, lambda k: k[0] == "s") - of(co, lambda k: k[0] == "s"):
+        return False
+    calls = lambda c: sum(v for k, v in c.items() if k[0] == "c")
+    named = lambda c: of(c, lambda k: k[0] == "c" and k != "c:FUN_")
+    spare = max(co["c:FUN_"] - cr["c:FUN_"], 0)
+    if calls(cr) > calls(co) or sum((named(cr) - named(co)).values()) > spare:
+        return False
+    sr = of(cr, lambda k: k[0] not in "csp")
+    return (
+        sum(sr.values()) < SOFT_MIN
+        or _cover(sr, of(co, lambda k: k[0] not in "csp")) >= 0.5
+    )
+
+
+def _far(fa, fb):
+    """Two functions whose BSim features disagree as wholes are not builds of one code."""
+    return min(sum(fa.values()), sum(fb.values())) >= FN_MIN and _dice(fa, fb) < FN_FAR
+
+
+def _hard_differ(ca, cb):
+    sa = {k: v for k, v in ca.items() if k[0] == "s"}
+    sb = {k: v for k, v in cb.items() if k[0] == "s"}
+    return sa != sb or _calls_differ(ca, cb)
+
+
+def _segments(ref, text, sig=False, strict=False):
+    """`text` as [[token run, changed]]: the changes the reference line has no match for.
+
+    Strings are marked when they differ, callees when the call structure does,
+    operators and constants only when the code is drastically different.
+    """
     a, b = _TOK.findall(ref), _TOK.findall(text)
-    kb = _keys(b, sig)
-    need = Counter(k for _, _, k in _items(a, _keys(a, sig)))
+    ia, ib = _items(a, _keys(a, sig)), _items(b, _keys(b, sig))
+    ca, cb = Counter(k for *_, k in ia), Counter(k for *_, k in ib)
+    show = {"s"}
+    if strict or _calls_differ(ca, cb):
+        show.add("c")
+    if strict or _soft_far(ca, cb):
+        show |= {"n", "o", "p"} if strict else {"n", "o"}
+    need = Counter(ca)
     flag = [False] * len(b)
-    for first, last, k in _items(b, kb):
+    for first, last, k in ib:
         if need[k] > 0:
             need[k] -= 1
-        else:
+        elif ("o" if k[1:2] != ":" else k[0]) in show:
             flag[first : last + 1] = [True] * (last + 1 - first)
     # layout between two changed tokens reads as changed
     for i in range(1, len(b) - 1):
@@ -358,6 +459,7 @@ def _lines(src, feats, cap):
 
 _CTRL = re.compile(r"^(if|for|while|switch|do|else)\b")
 _DECL = re.compile(r"^[A-Za-z_][\w \t\*]*(\(\*\w+\))?[\w\*]?\s*(\[\w*\])?\s*;$")
+_COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
 _IDENT = re.compile(r"[A-Za-z_]\w*|0[xX][0-9a-fA-F]+|\d+|[^\w\s]")
 # Decompiler-made local names carry no meaning across builds.
 _LOCAL = re.compile(
@@ -371,6 +473,10 @@ DIFF_CAP = 1500  # longer blocks are shown without token highlights
 TEXT_CAP = 4000  # characters of a block kept for display and token diff
 SEED_MIN = 0.6  # feature-hash Dice for two blocks to seed the CFG alignment
 HASH_MIN = 4  # fewer features than this say nothing about a block
+FN_FAR = 0.4  # function-level feature Dice below which the functions are not builds of one code
+FN_MIN = 8  # features each function needs before that can be said
+SOFT_MIN = 4  # operators and constants each side must have before they can differ
+SOFT_MOD = 0.25  # Dice of those below which the code is drastically different
 HASH_SAME = 0.9  # feature Dice from which two blocks have the same dataflow
 PROP_MIN = 0.3  # token-bag Dice for a CFG neighbour of a matched pair to match
 
@@ -648,7 +754,7 @@ def _cfg_align(ref, other):
 def _bag(text, ids):
     """Token multiset of a block: normalised tokens plus the BSim feature hashes of its lines."""
     bag = Counter()
-    for t in _IDENT.findall(text):
+    for t in _IDENT.findall(_COMMENT.sub(" ", text)):
         if _LOCAL.match(t):
             t = "V"
         elif _ADDR_NAME.match(t):
@@ -660,28 +766,36 @@ def _bag(text, ids):
     return bag
 
 
-def _same(r, o):
-    """Same code up to build noise.
+def _same(r, o, strict=False):
+    """Not a change an analyst needs to see.
 
-    Equal text once names and types are normalised, or equal content (see
-    `_items`), or BSim features that agree (sees through reordered operands
-    and temporaries) with equal constants, strings and callees, which the
-    features do not encode.
+    Compiler and architecture details (constants, operator spelling, casts,
+    names, layout) are not changes. A block differs when its strings or call
+    structure do, or when the rest is drastically different, unless the BSim
+    features agree that the dataflow is the same. When the two functions are
+    not builds of one code (`strict`), any difference in content counts.
     """
     if r["norm"] == o["norm"]:
         return True
     cr, co = r.get("items"), o.get("items")
     if cr is None or co is None:
         return False
-    if cr == co:
+    if strict:
+        if cr == co:
+            return bool(cr)  # no content to compare: the text has to agree
+        hr, ho = (Counter(x["H"] if "H" in x else x.get("hashes", ())) for x in (r, o))
+        lit = lambda c: {k: v for k, v in c.items() if k[0] in "nsc"}
+        return (
+            min(len(hr), len(ho)) >= HASH_MIN
+            and _dice(hr, ho) >= HASH_SAME
+            and lit(cr) == lit(co)
+        )
+    if _hard_differ(cr, co):
+        return False
+    if not _soft_far(cr, co):
         return True
     hr, ho = (Counter(x["H"] if "H" in x else x.get("hashes", ())) for x in (r, o))
-    lit = lambda c: {k: v for k, v in c.items() if k[0] in "nsc"}
-    return (
-        min(len(hr), len(ho)) >= HASH_MIN
-        and _dice(hr, ho) >= HASH_SAME
-        and lit(cr) == lit(co)
-    )
+    return min(len(hr), len(ho)) >= HASH_MIN and _dice(hr, ho) >= HASH_SAME
 
 
 def _dice(a, b):
@@ -853,12 +967,15 @@ def _blocks_of(src, feats, cap, max_blocks, callees=(), cfg=False):
     return out, cut or len(spans) > max_blocks
 
 
-def _match_blocks(ref, other, seeds=(), cfg_ok=()):
+def _match_blocks(ref, other, seeds=(), cfg_ok=(), strict=False):
     """Per reference block: ('same'|'mod'|'moved'|'restr'|'miss', sim, [other indices], note).
 
     `seeds` are block pairs already fixed by the CFG alignment; those in `cfg_ok`
     sit at the same place in both CFGs, so a different block order is not a move.
     """
+    # the signatures of two functions always correspond
+    if ref and other and ref[0]["span"][0] == other[0]["span"][0] == 0:
+        seeds = [*seeds, (0, 0)] if (0, 0) not in seeds else seeds
     taken_r = {i for i, _ in seeds}
     taken_o = {j for _, j in seeds}
     pairs = [(i, j, _dice(ref[i]["bag"], other[j]["bag"])) for i, j in seeds]
@@ -878,6 +995,18 @@ def _match_blocks(ref, other, seeds=(), cfg_ok=()):
             taken_r.add(i)
             taken_o.add(j)
             pairs.append((i, j, -neg))
+    # Pairs placed only by CFG position, with nothing in common, are not a match.
+    # Between different functions the evidence is the blocks' own content.
+    if strict:
+        pairs = [pr for pr in pairs if _evidence(ref[pr[0]], other[pr[1]])]
+    else:  # build variants: a short block can be a near-identical edit of its partner
+        pairs = [
+            pr
+            for pr in pairs
+            if pr[2] >= MATCH_MIN
+            or _same(ref[pr[0]], other[pr[1]])
+            or _evidence(ref[pr[0]], other[pr[1]])
+        ]
     pairs.sort()
     free = [k for k, (i, j, _) in enumerate(pairs) if (i, j) not in cfg_ok]
     stay = {free[k] for k in _lis([(pairs[k][0], pairs[k][1]) for k in free])}
@@ -885,8 +1014,10 @@ def _match_blocks(ref, other, seeds=(), cfg_ok=()):
     res = {}
     for k, (i, j, sim) in enumerate(pairs):
         if k in stay:
-            same = _same(ref[i], other[j])
+            same = _same(ref[i], other[j], strict)
             res[i] = ("same", 1.0, [j], "") if same else ("mod", sim, [j], "")
+        elif _same(ref[i], other[j], strict):  # a different block order is layout
+            res[i] = ("same", 1.0, [j], "")
         else:
             res[i] = (
                 "moved",
@@ -906,12 +1037,12 @@ def _match_blocks(ref, other, seeds=(), cfg_ok=()):
         )
         best = ranked[0] if ranked else None
         if best is not None and _cover(r["bag"], other[best]["bag"]) >= COVER_MIN:
-            owner = next((x for x, p in res.items() if p[2] == [best]), None)
-            note = "Merged: one block here holds this code" + (
-                f" together with {_bid(owner)}." if owner is not None else "."
-            )
-            res[i] = ("restr", _cover(r["bag"], other[best]["bag"]), [best], note)
-            used.add(best)
+            # only the block boundaries differ, or the code is not here at all
+            if _holds(r, [other[best]], strict):
+                res[i] = ("same", 1.0, [best], "")
+                used.add(best)
+            else:
+                res[i] = ("miss", 0.0, [], "No matching code in this function.")
             continue
         union, pick = Counter(), []
         for j in ranked[:3]:
@@ -924,15 +1055,23 @@ def _match_blocks(ref, other, seeds=(), cfg_ok=()):
             and sum(r["bag"].values()) >= SPLIT_MIN
             and _cover(r["bag"], union) >= COVER_MIN
         ):
-            res[i] = (
-                "restr",
-                _cover(r["bag"], union),
-                sorted(pick),
-                f"Split: the code is spread over {len(pick)} blocks here.",
-            )
-            used.update(pick)
+            if _holds(r, [other[j] for j in pick], strict):
+                res[i] = ("same", 1.0, sorted(pick), "")
+                used.update(pick)
+            else:
+                res[i] = ("miss", 0.0, [], "No matching code in this function.")
         else:
             res[i] = ("miss", 0.0, [], "No matching code in this function.")
+    # one block claimed by several reference blocks holds more than any of them
+    claims = Counter(k for st, _, idx, _ in res.values() if st != "miss" for k in idx)
+    for i, (st, sim, idx, note) in list(res.items()):
+        if (
+            st in ("mod", "moved")
+            and len(idx) == 1
+            and claims[idx[0]] > 1
+            and _holds(ref[i], [other[idx[0]]], strict)
+        ):
+            res[i] = ("same", 1.0, idx, "")
     return res, used
 
 
@@ -940,13 +1079,13 @@ def _bid(i):
     return f"b{i + 1}"
 
 
-def _runs(ref_text, text, changed=False, sig=False):
+def _runs(ref_text, text, changed=False, sig=False, strict=False):
     """`text` as [[token run, changed]]: diffed against the reference block, or all flagged."""
     if changed:
         return [[text, True]] if text else []
     if len(text) > DIFF_CAP or len(ref_text) > DIFF_CAP:
         return [[text, False]] if text else []
-    return _segments(ref_text, text, sig)
+    return _segments(ref_text, text, sig, strict)
 
 
 def _confirm(runs, locals_, other):
@@ -995,6 +1134,7 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"
     ]
     blocks = [g[0] for g in got]
     rb = blocks[ref]
+    fh = [Counter(x["hash"] for x in (f or ())) for f in feats]
     titles = _titles([b["text"] for b in rb])
     out = [
         {
@@ -1017,7 +1157,10 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"
             continue
         cfg_pair = "succ" in rb[0] and blocks[j] and "succ" in blocks[j][0]
         res, _ = _match_blocks(
-            rb, blocks[j], *(_cfg_align(rb, blocks[j]) if cfg_pair else ())
+            rb,
+            blocks[j],
+            *(_cfg_align(rb, blocks[j]) if cfg_pair else ((), ())),
+            strict=_far(fh[ref], fh[j]),
         )
         # Local declarations differ with register allocation: never a change.
         for i, (st, sim, idx, note) in res.items():
@@ -1026,7 +1169,11 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"
         # A block claimed by two reference blocks is shown once, on the first.
         first = {}
         for i, (st, sim, idx, note) in sorted(res.items()):
-            if st != "miss" and len(idx) == 1 and first.setdefault(idx[0], i) != i:
+            if (
+                st not in ("miss", "same")
+                and len(idx) == 1
+                and first.setdefault(idx[0], i) != i
+            ):
                 note = f"Merged: one block here holds this code together with {_bid(first[idx[0]])}."
                 res[i] = ("restr", sim, idx, note)
         refs = {}  # j block -> [(ref index, state, sim)]
@@ -1053,7 +1200,12 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"
                     # merged or split: diff against every reference block it maps to
                     ref_text = "\n".join(rb[m[0]]["text"] for m in mine)
                     ent["text"] = _confirm(
-                        _runs(ref_text, b["text"], sig=b["span"][0] == 0),
+                        _runs(
+                            ref_text,
+                            b["text"],
+                            sig=b["span"][0] == 0,
+                            strict=_far(fh[ref], fh[j]),
+                        ),
                         b["locals"],
                         set().union(*(rb[m[0]]["hashes"] for m in mine)),
                     )
@@ -1104,7 +1256,12 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"
             idx = out[i]["cells"][str(j0)]["segs"]
             g["ref_segs"] = (
                 _confirm(
-                    _segments(text, out[i]["ref_text"], rb[i]["span"][0] == 0),
+                    _segments(
+                        text,
+                        out[i]["ref_text"],
+                        rb[i]["span"][0] == 0,
+                        _far(fh[ref], fh[j0]),
+                    ),
                     rb[i]["locals"],
                     set().union(*(blocks[j0][k]["hashes"] for k in idx)),
                 )
@@ -1142,18 +1299,30 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"
                 "edges": [[u, v] for u, b in enumerate(blocks[j]) for v in b["succ"]],
                 "match": match,
             }
-    # whole-function key: functions with equal keys have the same code
-    keys = {
-        str(j): _norm(
-            (
-                "\n".join(b["text"] for b in rb)
-                if j == ref
-                else "\n".join("".join(t for t, _ in e["text"]) for e in funcs[str(j)])
-            ),
-            True,
+    # whole-function key: functions with the same key have the same code, by the
+    # block rule (`_same`), each compared with the first of its group
+    keys, reps = {}, []
+    for j in range(n):
+        text = (
+            "\n".join(b["text"] for b in rb)
+            if j == ref
+            else "\n".join("".join(t for t, _ in e["text"]) for e in funcs[str(j)])
         )
-        for j in range(n)
-    }
+        cell = {"norm": _norm(text, True), "items": _content(text, True)}
+        if not cell["norm"]:
+            keys[str(j)] = ""
+            continue
+        k = next(
+            (
+                k
+                for k, rep in enumerate(reps)
+                if _same(rep, cell) and not _far(fh[rep["j"]], fh[j])
+            ),
+            len(reps),
+        )
+        if k == len(reps):
+            reps.append({**cell, "j": j})
+        keys[str(j)] = str(k)
     return {
         "reference": ref,
         "cfg": cfg,
@@ -1533,6 +1702,8 @@ def demo():
     assert _norm("iVar20 = FUN_ram_0001d6fa();") == _norm("local_60 = FUN_00419abc();")
     assert _norm("x = (long)iVar2 + 1;") == _norm("x = (uint)uVar9 + 1;")
     assert _norm("undefined4 a;") == _norm("int a;")
+    assert _norm("/* mips32 */ f();") == _norm("/* mips32el\n x */\nf(); // note")
+    assert _bag("a = b; /* WARNING: x */", []) == _bag("a = b;", [])
     # real changes survive: constant, callee, string, positional param, operator
     for old, new in [
         ("a = b * 7;", "a = b * 9;"),
@@ -1554,40 +1725,83 @@ def demo():
         ["g2", True],
         ["(5);", False],
     ]
-    # BSim features agree but a constant moved: the literals break the tie
+    # Policy: strings and call structure are changes. Constants, operators, casts,
+    # field offsets and names are compiler / architecture detail.
     blk = lambda text, hs: {
         "norm": _norm(text),
         "items": _content(text),
         "hashes": hs,
     }
     hs = {"a", "b", "c", "d"}
-    assert _same(blk("x = y * 7;", hs), blk("x = (long)y * 7L;", hs) | {"norm": "z"})
-    assert not _same(blk("x = y * 7;", hs), blk("x = y * 9;", hs))
-    assert not _same(blk("x = y * 7;", hs), blk("x = y * 7 + 0;", {"a"}))
-    # order-insensitive content: reordered operands, temporaries, -1 spelled 0xffffffff
-    same = lambda a, b: _content(a) == _content(b)
-    assert same(
-        "if ((u - 9 < 5) || (u == 0x20)) {", "if ((v == 0x20) || ((int)v - 9U < 5)) {"
-    )
-    assert same("return -1;", "iVar3 = 0xffffffff;") and same(
-        "x = -1;", "y = 0xffffffffffffffff;"
-    )
-    assert same("a = *(int *)(p + 0x74);", "b = *(long *)(q + 0x70);")  # field offsets
-    assert same("a += b;", "a = a + b;") and same("/* WARNING: x */ a = b;", "a = b;")
-    assert not same("a = b + c;", "a = b - c;") and not same("a = b + 4;", "a = b * 4;")
-    assert same("f(param_1, 2);", "f(in_a1, 2);") and same("x = y + -6;", "x = y - 6;")
-    assert not same('puts("a");', 'puts("b");')
-    assert not same("x = g1(y);", "x = g2(y);") and not same(
-        "if (a == 5)", "if (a == 6)"
-    )
-    assert same("p = (undefined1 (*) [16])q;", "p = q;") and same(
-        "p = (double *)q;", "p = q;"
-    )
-    assert _segments("a = 80;", "a = 1024;") == [
-        ["a = ", False],
-        ["1024", True],
-        [";", False],
+    diff = lambda x, y, h=hs: not _same(blk(x, hs), blk(y, h))
+    for x, y in [
+        ("x = y * 7;", "x = y * 9;"),
+        ("a = b + c;", "a = b - c;"),
+        ("if (a == 5) {", "if (a == 6) {"),
+        ("a = *(int *)(p + 0x74);", "b = *(long *)(q + 0x70);"),
+        (
+            "if ((u - 9 < 5) || (u == 0x20)) {",
+            "if ((v == 0x20) || ((int)v - 9U < 5)) {",
+        ),
+        ("return -1;", "iVar3 = 0xffffffff;"),
+        ("a += b;", "a = a + b;"),
+        ("/* WARNING: x */ a = b;", "a = b;"),
+        ("f(param_1, 2);", "f(in_a1, 2);"),
+        ("x = y + -6;", "x = y - 6;"),
+        ("x = strlen(y);", "x = FUN_0041(y);"),
+    ]:
+        assert not diff(x, y), (x, y)
+    for x, y in [
+        ('puts("a");', 'puts("b");'),
+        ("x = g1(y);", "x = g2(y);"),
+        ("f(a); g(b);", "f(a);"),
+    ]:
+        assert diff(x, y), (x, y)
+    far = ("r = a + 1 * 2 - 3;", "p = q & 7 | 8 ^ 9 >> 6;")
+    assert diff(*far, h={"w", "x", "y", "z"})  # drastically different code
+    assert not diff(*far)  # unless the features say the dataflow is the same
+    assert _segments("a = 80;", "a = 1024;") == [["a = 1024;", False]]
+    assert _segments('puts("a");', 'puts("b");') == [
+        ["puts(", False],
+        ['"b"', True],
+        [");", False],
     ]
+    assert _segments("a = g1(5);", "a = (int)g2(5);") == [
+        ["a = (int)", False],
+        ["g2", True],
+        ["(5);", False],
+    ]
+    # Between different functions (features disagree as wholes) any content difference counts
+    sdiff = lambda x, y, h=hs: not _same(blk(x, hs), blk(y, h), strict=True)
+    assert sdiff("x = y * 7;", "x = y * 9;")  # features cannot see a constant
+    assert sdiff("a = b + c;", "a = b - c;", h={"w", "x", "y", "z"})
+    assert not sdiff("x = y * 7;", "x = (long)z * 7L;")  # names and casts never count
+    assert sdiff("f(param_1);", "f(param_1, param_2);", h={"w", "x", "y", "z"})
+    far = lambda n: Counter({f"h{i}": 1 for i in range(n)})
+    assert _far(far(10), Counter({f"g{i}": 1 for i in range(10)}))
+    assert not _far(far(10), far(10)) and not _far(
+        far(3), Counter({"z": 1})
+    )  # too few to tell
+    assert not _holds(
+        blk("x = 1;", hs), [blk("y = 1; z = 2;", hs)], strict=True
+    )  # tiny
+    # a pair placed only by CFG position, with nothing in common, is no match
+    one = lambda t: {
+        "text": t,
+        "norm": _norm(t),
+        "bag": _bag(t, []),
+        "span": (1, 2),
+        "decl": False,
+        "items": _content(t),
+    }
+    weak = _match_blocks(
+        [one("return arr[1] / 3;")], [one("memcpy(dst, src, 99 << 7);")], [(0, 0)]
+    )[0]
+    assert weak[0][0] != "mod", weak
+    near = _match_blocks(
+        [one("if (a != 0x6e) {")], [one("if (b != 0x68) {")], [(0, 0)]
+    )[0]
+    assert near[0][0] == "same", near
     f = _facet("k", "K", [{"x": "x", "y": "y"}, {"x": "x"}])
     assert (
         f["in_all"] == 1
@@ -1609,7 +1823,7 @@ def demo():
         "  return 0;",
         "}",
     ]
-    mod = [x.replace("512", "1024") for x in ref]
+    mod = [x.replace("g(i, 512)", "k(i, 512)") for x in ref]
     moved = ref[:3] + ref[6:9] + ref[3:6] + ref[9:]
     gone = ref[:6] + ref[9:]
     spans = split_blocks(ref)
@@ -1627,7 +1841,7 @@ def demo():
     R = mk(ref)
     st = lambda o: {i: v[0] for i, v in _match_blocks(R, mk(o))[0].items()}
     assert set(st(ref).values()) == {"same"}
-    assert st(mod)[2] == "mod" and "moved" in st(moved).values()
+    assert st(mod)[2] == "mod" and set(st(moved).values()) == {"same"}  # layout only
     assert st(gone)[3] == "miss"
     assert _dice(Counter("aab"), Counter("ab")) == 0.8
     typed = {
@@ -1660,7 +1874,12 @@ def demo():
         "same",
     ]
     assert out["blocks"][3]["cells"]["3"]["st"] == "miss"
-    assert any(c["st"] == "moved" for b in out["blocks"] for c in [b["cells"]["2"]])
+    # same-code groups follow the block rule: a reorder is the same code, a missing block is not
+    assert out["keys"]["0"] == out["keys"]["2"] != out["keys"]["3"]
+    assert out["keys"]["0"] != out["keys"]["1"]  # another callee
+    assert all(
+        b["cells"]["2"]["st"] == "same" for b in out["blocks"]
+    )  # a reorder is layout
     whole = "\n".join(x["text"][0][0] for x in out["funcs"]["3"])
     assert whole.count("h(a)") == 1 and out["blocks"][2]["groups"][0]["funcs"] == [1]
     toks = lambda name: {

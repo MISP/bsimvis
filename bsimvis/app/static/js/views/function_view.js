@@ -424,7 +424,7 @@ window.FunctionView = {
             const cls = `k-${escapeAttr(b.kind)}${b.i === this.cfg.entry ? ' k-entry' : ''}`;
             nodes += `<button class="xp-cell xp-cfn ${cls}" style="left:${p.x}px;top:${p.y}px" data-cfb="${Number(b.i)}" title="${escapeAttr(`block ${b.i} · ${b.kind} · ${n} lines · ${b.ops} ops · ${b.start}`)}">${Number(b.i)}</button>`;
         });
-        el.innerHTML = `<p class="xp-hint">${blocks.length} Ghidra high-pcode blocks. Green outline: entry. Blue: conditional, red: return, amber: switch. Dashed arcs are back edges. Hover for the code, click to open it in the Code tab. Click a line number in the code to mark its blocks here.</p>
+        el.innerHTML = `<p class="xp-hint">${blocks.length} Ghidra high-pcode blocks. Green outline: entry; tint by kind (conditional, red return, amber switch). Dashed arcs are back edges. Hover for the code, click to open it in the Code tab. Click a line number in the code to mark its blocks here.</p>
             <div class="xp-cfgw" style="width:${Math.round(W * sc)}px;height:${Math.round(H * sc)}px"><div class="xp-cfg" id="fn-cfg-graph" style="width:${W}px;height:${H}px;transform:scale(${sc})"><svg width="${W}" height="${H}">${svg}</svg>${nodes}</div></div>`;
         el.addEventListener('mouseover', e => this.cfgHover(e, true));
         el.addEventListener('mouseout', e => this.cfgHover(e, false));

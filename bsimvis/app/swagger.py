@@ -2641,6 +2641,33 @@ class BinSimNwayBlockTitles(Resource):
         return get_nway_block_titles()
 
 
+@ns_bin_sim.route("/nway/facets/explain")
+class BinSimNwayBlockExplain(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "fids": "Comma-separated function ids of one N-way row (at least 2)",
+            "block": "Reference block id, e.g. B3",
+            "fn": "Index in fids of the function to compare with the reference",
+            "md5s": "Same file set / scope params as /nway/facets",
+        }
+    )
+    def get(self):
+        """LLM explanation of how one function's block differs from the reference: cached, or started in the background (status pending, poll again)."""
+        from bsimvis.app.routes.nway import get_nway_block_explain
+
+        return get_nway_block_explain()
+
+
+@ns_bin_sim.route("/nway/facets/summaries")
+class BinSimNwaySummaries(Resource):
+    @ns_bin_sim.doc(params={"fids": "Comma-separated function ids"})
+    def get(self):
+        """One-line LLM summaries of functions that already have an LLM note (no model call)."""
+        from bsimvis.app.routes.nway import get_nway_summaries
+
+        return get_nway_summaries()
+
+
 @ns_bin_sim.route("/nway")
 class BinSimNway(Resource):
     @ns_bin_sim.doc(

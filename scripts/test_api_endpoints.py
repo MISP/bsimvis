@@ -5192,6 +5192,25 @@ def test_nway_diff():
             and isinstance(_t.get("titles"), dict),
             f"HTTP {_r.status_code} {str(_t)[:200]}",
         )
+        _r = requests.get(
+            _fx + "/explain",
+            params={**_base, "fids": _fids, "block": "B1", "fn": 0},
+            timeout=60,
+        )
+        _t = _r.json() if _r.status_code == 200 else {}
+        check(
+            "nway facets explain: answers at once with a status, never waits for the LLM",
+            _r.status_code == 200
+            and _t.get("status") in ("off", "pending", "ready", "failed"),
+            f"HTTP {_r.status_code} {str(_t)[:200]}",
+        )
+        _r = requests.get(_fx + "/summaries", params={"fids": _fids}, timeout=60)
+        _t = _r.json() if _r.status_code == 200 else {}
+        check(
+            "nway facets summaries: map of function id to one line",
+            _r.status_code == 200 and isinstance(_t.get("summaries"), dict),
+            f"HTTP {_r.status_code} {str(_t)[:200]}",
+        )
         check(
             "nway facets: shape flags line up with the functions",
             all(len(s["values"]) == _nf == len(s["off"]) for s in _b.get("shape", [])),

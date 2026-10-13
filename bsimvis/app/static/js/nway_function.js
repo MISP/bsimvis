@@ -33,6 +33,8 @@
             this.onLoad = o.onLoad || null;
             this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', open: {}, fn: null, single: false, ...(o.state || {}) };
             this.titles = {};
+            this.expl = {};
+            this.sums = {};
             this.data = null;
             this.simpleCode = null;
             this._dead = false;
@@ -108,6 +110,7 @@
                     ${this.embedded ? '' : tab('pair', 'Pair diff')}</div><span class="xp-sp"></span>
                     ${s.tab === 'pair' || s.tab === 'simple' ? '' : `<label class="xp-chk"><input type="checkbox" data-xonly ${s.only ? 'checked' : ''}> Differences only</label>`}</div>
                 <div class="xp-body">${this._body()}</div>`;
+            this._loadSummaries();
             if (s.tab === 'pair') this._loadPair();
             if (s.tab === 'code') this._loadTitles();
             if (s.tab === 'simple') this._loadSimple();
@@ -172,7 +175,7 @@
             return `<div class="xp-col" ${cc(j)}>
                 <div class="xp-l">${this._funcRef(j)}${this._fileRef(j)}${ref}</div>
                 <div class="xp-f"><a data-xnav="${escapeAttr(url)}" data-xfnref="${j}" data-title="${escapeAttr(f.name || f.addr)}" href="${escapeAttr(url)}">@ ${escapeHtml(f.addr)}</a>${this._md5Ref(j)}${f.instr != null ? ` &middot; ${Number(f.instr)} instr` : ''}</div>
-                <div class="xp-t">${(f.tags || []).slice(0, 3).map(t => `<span class="xp-tag">${escapeHtml(t)}</span>`).join('')}</div></div>`;
+                <div class="xp-t">${(f.tags || []).slice(0, 3).map(t => `<span class="xp-tag">${escapeHtml(t)}</span>`).join('')}</div>${this._sumHtml(j)}</div>`;
         }
 
         _matrix() {
@@ -367,7 +370,7 @@
             return `<div class="xp-bd"><div class="xp-vchips"><span class="lab">Compare ${this._funcRef(c.reference)} with</span>${chips}${same.length ? `<span class="lab">${same.map(j => this._funcRef(j)).join(', ')}: same as ${this._funcRef(c.reference)}</span>` : ''}</div>
                 <div class="xp-panes">
                   <div class="xp-pane"><div class="xp-ph">${this._funcRef(c.reference)} reference</div><pre data-xfns="${c.reference},${j0}">${this._codeHtml(b.ref_syntax, g.ref_segs, 'del', c.reference)}</pre></div>
-                  <div class="xp-pane"><div class="xp-ph">${badges(g.funcs)} <span class="xp-cell st-${g.st}" style="cursor:default">${G[g.st]} ${NwayFunction.SNAME[g.st]}${g.st === 'miss' ? '' : ' ' + sim + '%'}</span>${cell.into ? `<span class="xp-tag hot">merged into ${escapeHtml(cell.into)}</span>` : ''}</div>
+                  <div class="xp-pane"><div class="xp-ph">${badges(g.funcs)} <span class="xp-cell st-${g.st}" style="cursor:default">${G[g.st]} ${NwayFunction.SNAME[g.st]}${g.st === 'miss' ? '' : ' ' + sim + '%'}</span>${cell.into ? `<span class="xp-tag hot">merged into ${escapeHtml(cell.into)}</span>` : ''}${this._expl(b.id, j0)}</div>
                     <pre data-xfns="${j0},${c.reference}">${runs.length ? this._codeHtml(this._cellSyntax(b, j0), runs, 'chg', j0) : '(no matching code)'}</pre>${g.note ? `<div class="xp-pnote">${escapeHtml(g.note)}</div>` : ''}</div>
                 </div></div>`;
         }
@@ -463,7 +466,7 @@
                     if (cell.st === 'miss') right = '<pre class="xp-fcode gap">(no matching code)</pre>';
                     else if (cell.into) right = `<pre class="xp-fcode gap">↑ merged into ${escapeHtml(cell.into)} above</pre>`;
                     else right = `<pre class="xp-fcode st-${cell.st}" data-xfns="${f},${c.reference}">${this._codeHtml(this._cellSyntax(b, f), this._cellRuns(b, f), 'chg', f)}</pre>`;
-                    out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), cell.into ? tag('merged into ' + cell.into) : '')}${this._fullGroups(b, f)}<pre class="xp-fcode" data-xfns="${c.reference},${f}">${this._codeHtml(b.ref_syntax, g && g.ref_segs, 'del', c.reference)}</pre>${right}</div>`;
+                    out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), (cell.into ? tag('merged into ' + cell.into) : '') + this._expl(b.id, f))}${this._fullGroups(b, f)}<pre class="xp-fcode" data-xfns="${c.reference},${f}">${this._codeHtml(b.ref_syntax, g && g.ref_segs, 'del', c.reference)}</pre>${right}</div>`;
                 }
                 out += extraRows(b.id);
             }
@@ -499,6 +502,75 @@
                 break;
             }
             this._setNaming(false);
+        }
+
+        // ---- AI insight: stored one-liners, and per-block explanations asked on click ----
+        _sumHtml(j) {
+            const t = this.sums[this.fids[j]];
+            return `<div class="xp-aisum" data-xsum="${j}"${t ? '' : ' hidden'}>${t ? `<i class="fa-solid fa-robot" title="From the LLM note on this function"></i> ${escapeHtml(t)}` : ''}</div>`;
+        }
+
+        async _loadSummaries() {
+            if (this._sumsAsked) return;
+            this._sumsAsked = true;
+            try {
+                const res = await fetch(`/api/bin_sim/nway/facets/summaries?fids=${encodeURIComponent(this.fids.join(','))}`);
+                this.sums = res.ok ? (await res.json()).summaries || {} : {};
+            } catch (e) { return; }
+            if (this._dead) return;
+            this.el.querySelectorAll('[data-xsum]').forEach(el => { el.outerHTML = this._sumHtml(Number(el.dataset.xsum)); });
+        }
+
+        // The Explain control of block `bid` in function `j`; only where the block differs from the reference.
+        _expl(bid, j) {
+            const b = this.data.consensus.blocks.find(x => x.id === bid), st = this._cell(b, j).st;
+            if (st === 'same' || st === 'miss') return '';
+            const key = `${bid}:${j}`, e = this.expl[key] || {}, k = escapeAttr(key);
+            let inner;
+            if (e.status === 'pending') inner = '<i class="fa-solid fa-spinner fa-spin"></i> asking the LLM&hellip;';
+            else if (e.status === 'ready') inner = `<i class="fa-solid fa-robot"></i> <span class="xp-tag ${e.verdict === 'semantic' ? 'hot' : ''}">${escapeHtml(e.verdict)}</span> ${escapeHtml(e.summary)} <button class="xp-aibtn" data-xsave="${k}" ${e.saved ? 'disabled' : ''} title="Save this explanation as a note on the reference function">${e.saved ? 'saved' : 'Save as note'}</button>`;
+            else inner = `<button class="xp-aibtn" data-xexp="${k}" title="Ask the LLM how this block differs from the reference"><i class="fa-solid fa-robot"></i> ${e.status === 'failed' ? 'Failed, retry' : e.status === 'off' ? 'LLM not configured' : 'Explain'}</button>`;
+            return `<span class="xp-ai" data-xexpo="${k}">${inner}</span>`;
+        }
+
+        _explPaint(key) {
+            const [bid, j] = key.split(':');
+            this.el.querySelectorAll(`[data-xexpo="${CSS.escape(key)}"]`).forEach(el => { el.outerHTML = this._expl(bid, Number(j)); });
+        }
+
+        async _explain(key) {
+            const [bid, j] = key.split(':');
+            const qs = this._qs();
+            qs.set('block', bid);
+            qs.set('fn', j);
+            this.expl[key] = { status: 'pending' };
+            this._explPaint(key);
+            for (let i = 0; i < 80 && !this._dead; i++) {
+                let body = null;
+                try {
+                    const res = await fetch(`/api/bin_sim/nway/facets/explain?${qs.toString()}`);
+                    body = res.ok ? await res.json() : null;
+                } catch (e) { body = null; }
+                if (this._dead) return;
+                if (body && body.status === 'pending') { await new Promise(r => setTimeout(r, 2500)); continue; }
+                this.expl[key] = body && body.status === 'ready' ? body : { status: body ? body.status : 'failed' };
+                return this._explPaint(key);
+            }
+            this.expl[key] = { status: 'failed' };
+            this._explPaint(key);
+        }
+
+        async _saveExplain(key) {
+            const e = this.expl[key], [bid, j] = key.split(':'), c = this.data.consensus;
+            const b = c.blocks.find(x => x.id === bid), f = this.data.functions[Number(j)], ref = this.fids[c.reference];
+            const text = `[AI] N-way block ${bid} (${this._bt(b)}), ${this.data.functions[c.reference].letter} vs ${f.letter} (${f.file_name || f.addr}): ${e.verdict}. ${e.summary}`;
+            try {
+                const res = await fetch('/api/notes/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ collection: parts(ref).coll, func_id: ref, text, owner: 'user' }) });
+                if (!res.ok) throw new Error(res.status);
+                e.saved = true;
+                showToast('Saved as a note on the reference function', 'success');
+            } catch (err) { showToast('Could not save the note', 'warning'); }
+            this._explPaint(key);
         }
 
         _setNaming(on) {
@@ -624,9 +696,13 @@
         }
 
         async _click(e) {
-            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xpair],[data-xnav],[data-xopen]');
+            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xpair],[data-xnav],[data-xopen]');
             if (!t) return;
             const d = t.dataset;
+            if (d.xexp || d.xsave) {
+                e.preventDefault(); e.stopPropagation();
+                return d.xexp ? this._explain(d.xexp) : this._saveExplain(d.xsave);
+            }
             if (d.xcall) {
                 e.preventDefault(); e.stopPropagation();
                 const fns = t.closest('pre[data-xfns]')?.dataset.xfns.split(',').map(Number);

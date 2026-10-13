@@ -310,6 +310,58 @@ class LLMService:
                     out.setdefault(item["id"], title)
         return out, None
 
+    def explain_block_change(self, ref_code, other_code, state):
+        """How one block differs between two decompiled functions.
+
+        Returns ({"verdict": cosmetic|semantic|unclear, "summary": str}, error).
+        """
+        self._load_config()
+        prompt = (
+            "Two decompiled versions of the same code block follow (the matcher "
+            f"calls the change '{state}'). Say in at most two sentences how "
+            "VERSION B differs from VERSION A. Verdict: 'cosmetic' if the "
+            "behaviour is the same (renames, reordering, different compiler "
+            "layout), 'semantic' if behaviour changes (added or removed checks, "
+            "different calls, constants or algorithm), else 'unclear'. Describe "
+            "only what the code shows.\n\n"
+            f"=== VERSION A ===\n{ref_code}\n\n=== VERSION B ===\n{other_code or '(no matching code)'}"
+        )
+        fmt = {
+            "type": "object",
+            "properties": {
+                "verdict": {
+                    "type": "string",
+                    "enum": ["cosmetic", "semantic", "unclear"],
+                },
+                "summary": {"type": "string"},
+            },
+            "required": ["verdict", "summary"],
+            "additionalProperties": False,
+        }
+        try:
+            response = Client(host=self.ollama_url, timeout=150).chat(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                stream=False,
+                think=False,
+                format=fmt,
+                options={"num_predict": 200, "temperature": 0.1},
+            )
+            msg = response.get("message", {})
+            value = json.loads(
+                msg.get("content", "") or msg.get("thinking", "") or "{}"
+            )
+        except Exception as e:
+            logging.error(f"LLMService explain_block_change error: {e}")
+            return None, str(e)
+        summary = " ".join(str(value.get("summary") or "").split())[:400]
+        if (
+            not summary
+            or value.get("verdict") not in fmt["properties"]["verdict"]["enum"]
+        ):
+            return None, "empty answer"
+        return {"verdict": value["verdict"], "summary": summary}, None
+
     def classify_relevance_batch(self, members, query, vocabulary=None):
         """Fast relevance triage: for every function, does it plausibly
         relate to the analyst's free-text question? Not a behavioral

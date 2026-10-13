@@ -840,60 +840,123 @@ def titles_key(consensus):
     return hashlib.sha1(blob.encode()).hexdigest()
 
 
-def _name_in_background(key, blocks):
-    from bsimvis.app.services.llm_service import llm_service
-    from bsimvis.app.services.redis_client import get_queue_redis
+def _cached_llm(prefix, key, work):
+    """{'status': off|pending|ready|failed, 'value': ...} for one LLM answer.
 
-    titles, err = llm_service.name_blocks(
-        [(b["id"], b["ref_text"][:_TITLE_TEXT_CAP]) for b in blocks]
-    )
-    with _TITLE_LOCK:
-        if titles:
-            try:
-                get_queue_redis().set(
-                    f"nway:titles:{key}", json.dumps(titles), ex=_TITLE_TTL
-                )
-            except Exception:
-                pass
-            _TITLE_STATE[key] = {"status": "ready", "titles": titles}
-        else:
-            _TITLE_STATE[key] = {"status": "failed", "at": time.time()}
-
-
-def block_titles(consensus):
-    """{'status': off|pending|ready|failed, 'titles': {block id: title}} for a consensus.
-
-    The first call after a cache miss starts one background LLM call for all
-    blocks; later calls (any user) read the Redis / in-process cache.
+    The first call after a cache miss runs `work()` (returns a JSON-able value
+    or None) in a background thread; later calls (any user) read the Redis /
+    in-process cache. Never waits for the model.
     """
     from bsimvis.app.services.redis_client import get_queue_redis
 
     if not llm_configured():
-        return {"status": "off", "titles": {}}
-    key = titles_key(consensus)
+        return {"status": "off"}
+    skey = (prefix, key)
+
+    def run():
+        value = work()
+        with _TITLE_LOCK:
+            if value:
+                try:
+                    get_queue_redis().set(
+                        f"{prefix}:{key}", json.dumps(value), ex=_TITLE_TTL
+                    )
+                except Exception:
+                    pass
+                _TITLE_STATE[skey] = {"status": "ready", "value": value}
+            else:
+                _TITLE_STATE[skey] = {"status": "failed", "at": time.time()}
+
     with _TITLE_LOCK:
-        st = _TITLE_STATE.get(key)
+        st = _TITLE_STATE.get(skey)
         if st and st["status"] == "ready":
-            return {"status": "ready", "titles": st["titles"]}
+            return st
         if st and st["status"] == "pending":
             if time.time() - st["at"] < _TITLE_PENDING_MAX:
-                return {"status": "pending", "titles": {}}
-            st = _TITLE_STATE[key] = {"status": "failed", "at": time.time()}
+                return {"status": "pending"}
+            st = _TITLE_STATE[skey] = {"status": "failed", "at": time.time()}
         if st and time.time() - st["at"] < _TITLE_RETRY:
-            return {"status": "failed", "titles": {}}
+            return {"status": "failed"}
         try:
-            raw = get_queue_redis().get(f"nway:titles:{key}")
+            raw = get_queue_redis().get(f"{prefix}:{key}")
         except Exception:
             raw = None
         if raw:
-            titles = json.loads(raw)
-            _TITLE_STATE[key] = {"status": "ready", "titles": titles}
-            return {"status": "ready", "titles": titles}
-        _TITLE_STATE[key] = {"status": "pending", "at": time.time()}
-    threading.Thread(
-        target=_name_in_background, args=(key, consensus["blocks"]), daemon=True
-    ).start()
-    return {"status": "pending", "titles": {}}
+            st = _TITLE_STATE[skey] = {"status": "ready", "value": json.loads(raw)}
+            return st
+        _TITLE_STATE[skey] = {"status": "pending", "at": time.time()}
+    threading.Thread(target=run, daemon=True).start()
+    return {"status": "pending"}
+
+
+def block_titles(consensus):
+    """{'status': off|pending|ready|failed, 'titles': {block id: title}} for a consensus."""
+    from bsimvis.app.services.llm_service import llm_service
+
+    blocks = consensus["blocks"]
+
+    def work():
+        titles, _ = llm_service.name_blocks(
+            [(b["id"], b["ref_text"][:_TITLE_TEXT_CAP]) for b in blocks]
+        )
+        return titles
+
+    out = _cached_llm("nway:titles", titles_key(consensus), work)
+    return {"status": out["status"], "titles": out.get("value") or {}}
+
+
+def _variant_text(consensus, block, j):
+    """Text function j holds for a reference block, or '' when it has none."""
+    cell = block["cells"].get(str(j))
+    if not cell:
+        return ""
+    segs = consensus["funcs"].get(str(j)) or []
+    return "\n".join(
+        "".join(t for t, _ in segs[k]["text"]) for k in cell["segs"] if k < len(segs)
+    )
+
+
+def explain_block(consensus, block_id, j):
+    """{'status': ..., 'verdict': cosmetic|semantic|unclear, 'summary': str}.
+
+    Explains how function `j` differs from the reference in one block; cached
+    by the two texts.
+    """
+    from bsimvis.app.services.llm_service import llm_service
+
+    block = next((b for b in consensus["blocks"] if b["id"] == block_id), None)
+    cell = block and block["cells"].get(str(j))
+    if not cell or cell["st"] == "same":
+        return {"status": "off"}
+    ref = block["ref_text"][: _TITLE_TEXT_CAP * 2]
+    other = _variant_text(consensus, block, j)[: _TITLE_TEXT_CAP * 2]
+    key = hashlib.sha1(json.dumps([ref, other, cell["st"]]).encode()).hexdigest()
+
+    def work():
+        value, _ = llm_service.explain_block_change(ref, other, cell["st"])
+        return value
+
+    out = _cached_llm("nway:explain", key, work)
+    return {"status": out["status"], **(out.get("value") or {})}
+
+
+def function_summaries(fids):
+    """{function id: first line of its newest LLM note}; only functions that have one."""
+    from bsimvis.app.services.llm_batch_service import LLM_NOTE_OWNER
+    from bsimvis.app.services.note_service import note_service
+
+    out = {}
+    for f in fids:
+        coll = split_fid(f)[0]
+        notes = [
+            n
+            for n in note_service.get_notes(coll, f) or []
+            if n.get("owner") == LLM_NOTE_OWNER and (n.get("text") or "").strip()
+        ]
+        if notes:
+            newest = max(notes, key=lambda n: n.get("timestamp", 0))
+            out[f] = newest["text"].strip().splitlines()[0][:240]
+    return out
 
 
 def demo():

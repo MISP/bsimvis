@@ -774,3 +774,30 @@ def get_nway_block_titles():
     if not out.get("consensus"):
         return {"status": "off", "titles": {}}
     return nway_facets_service.block_titles(out["consensus"])
+
+
+def get_nway_block_explain():
+    """LLM explanation of one block's change in one function (`/nway/facets` params plus `block` and `fn`).
+
+    `fn` is the function's index in `fids`. Never waits for the model: `status`
+    is off, pending (poll again), ready (with `verdict`, `summary`) or failed.
+    """
+    out = get_nway_facets()
+    if isinstance(out, tuple):
+        return out
+    j = request.args.get("fn", type=int)
+    if not out.get("consensus") or j is None:
+        return {"status": "off"}
+    return nway_facets_service.explain_block(
+        out["consensus"], request.args.get("block", ""), j
+    )
+
+
+def get_nway_summaries():
+    """One-line LLM summaries (from LLM-owned function notes) for `fids`; no model call."""
+    fids = list(
+        dict.fromkeys(t for t in (request.args.get("fids") or "").split(",") if t)
+    )
+    if len(fids) > nway_diff_service.caps()[0]:
+        abort(400, "too many fids")
+    return {"summaries": nway_facets_service.function_summaries(fids)}

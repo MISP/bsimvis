@@ -507,6 +507,7 @@ window.FunctionView = {
         let busy = null;
         const follow = (src, dst, from, to) => src.addEventListener('scroll', () => {
             if (busy === src) { busy = null; return; }
+            if (src === g && Date.now() < (this._cfgMute || 0)) { this._cfgMute = Date.now() + 150; return; }
             const t = lerp(src.scrollTop, anchors(), from, to);
             if (Math.abs(dst.scrollTop - t) > 1) { busy = dst; dst.scrollTop = t; }
         });
@@ -561,8 +562,19 @@ window.FunctionView = {
         const chip = e.target.closest('[data-lo]');
         if (chip) { this.cfgSelect([Number(chip.dataset.lo)]); this.cfgScroll(Number(chip.dataset.lo)); return; }
         const line = e.target.closest('.cl-line');
-        if (line) this.cfgSelect(this.cfgLineSet(Number(line.dataset.ln)));
-        else if (e.target.closest('[data-lb]')) this.cfgSelect([Number(e.target.closest('[data-lb]').dataset.lb)]);
+        const set = line ? this.cfgLineSet(Number(line.dataset.ln)) : e.target.closest('[data-lb]') ? [Number(e.target.closest('[data-lb]').dataset.lb)] : null;
+        if (!set) return;
+        this.cfgSelect(set);
+        this.cfgReveal(set[0]);
+    },
+
+    // Bring a block's node to the middle of the graph pane without dragging the code column along.
+    cfgReveal(b) {
+        const g = document.getElementById('fn-cfg-gscroll'), nd = g?.querySelector(`[data-cfb="${b}"]`);
+        if (!nd) return;
+        const gr = g.getBoundingClientRect(), nr = nd.getBoundingClientRect();
+        this._cfgMute = Date.now() + 600;
+        g.scrollTo({ top: nr.top - gr.top + g.scrollTop - g.clientHeight / 2, left: nr.left - gr.left + g.scrollLeft - g.clientWidth / 2, behavior: 'smooth' });
     },
 
     cfgLineSet(ln) {

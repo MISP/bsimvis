@@ -422,13 +422,11 @@ def _agentic_summarize(collection, func_name, code_with_context, custom_prompt):
     `llm_service.summarize_and_tag`, but the model may call `llm_tools` first --
     a standalone loop rather than `llm_chat_service`'s, since there is no chat
     session to persist here, just one verdict."""
-    from ollama import Client
-
     from bsimvis.app.services.llm_tools import TOOLS, call_tool
 
     base_prompt = custom_prompt or llm_service.default_prompt
     tag_rule = tag_taxonomy.prompt_rules() + (
-        "\nExample: TAGS: severity:medium, category:crypto:cipher."
+        "\nTag format: TAGS: severity:<level>, category:<group>:<leaf>."
     )
     system = (
         f"{base_prompt}\n\n{tag_rule}\n\n"
@@ -441,28 +439,22 @@ def _agentic_summarize(collection, func_name, code_with_context, custom_prompt):
         {"role": "system", "content": system},
         {
             "role": "user",
-            "content": f"Function Name: {func_name}\n\nCode:\n{code_with_context}",
+            "content": (
+                f"Function Name: {func_name}\n\nCode:\n{code_with_context}\n\n"
+                "If your summary establishes what the function does, TAGS must "
+                "include its category, even at severity none."
+            ),
         },
     ]
 
-    client = Client(host=config_service.get("llm.ollama_url", "http://localhost:11434"))
-    model = config_service.get("llm.model", "qwen3.6:35b")
-
     for _ in range(MAX_AGENTIC_ITERATIONS):
         try:
-            response = client.chat(
-                model=model,
-                messages=messages,
-                tools=TOOLS,
-                stream=False,
-                think=False,
-                options={"num_predict": 512, "temperature": 0.1},
-            )
+            response = llm_service._chat("agentic", messages, tools=TOOLS)
+            content = llm_service._content(response)
         except Exception as e:
             return None, [], str(e)
 
         msg = response.get("message", {})
-        content = msg.get("content", "") or ""
         raw_calls = [
             tc.model_dump() if hasattr(tc, "model_dump") else tc
             for tc in (msg.get("tool_calls") or [])

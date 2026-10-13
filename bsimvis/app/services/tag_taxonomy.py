@@ -1170,6 +1170,9 @@ def prompt_rules():
         "line starting with 'TAGS:' when no structured format is supplied). "
         "If the visible evidence does not establish the function's purpose, emit no "
         "tags. Otherwise emit exactly one severity tag and at most 2 category tags. "
+        "Severity says how malicious the code is; a category says what it does, so "
+        "a function whose purpose you established still gets its category at "
+        "`severity:none`. "
         "Put tag IDs only in the structured tags field or TAGS line, never in summary "
         "prose.\n"
         f"Severity -- format `severity:<level>`, <level> MUST be one of: "
@@ -1941,6 +1944,7 @@ def demo():
     assert "None observed" in rules and "remove any claim" in rules
     assert "does not establish the function's purpose, emit no tags" in rules
     assert "does not mean unknown" in rules
+    assert "still gets its category" in rules
     print("tag_taxonomy demo OK")
 
 

@@ -1,9 +1,72 @@
 import json
 import logging
 import re
+import threading
+import time
 from ollama import Client
 from bsimvis.app.services import tag_taxonomy
 from bsimvis.app.services.config_service import config_service
+
+# Generation settings per task, overridable under [llm.tasks.<task>] in
+# bsimvis_config.toml. Ollama counts thinking tokens against num_predict, so
+# `think_budget` is added on top of it whenever thinking is on -- otherwise the
+# model runs out mid-thought and returns an empty answer.
+BASE_TASK = {"think": False, "temperature": 0.1, "think_budget": 2048}
+TASK_DEFAULTS = {
+    "summary": {"num_predict": -1},
+    "tag": {"num_predict": 256},
+    "tag_batch": {"num_predict": 256},  # per function in the batch
+    "triage": {"num_predict": 80},  # per function in the batch
+    "agentic": {"num_predict": 512},
+    "report": {"num_predict": -1},
+    "chat": {"num_predict": -1, "temperature": 0.2},
+}
+SAMPLING_KEYS = ("top_p", "top_k", "min_p", "repeat_penalty")
+
+_stats = threading.local()
+
+
+def last_stats():
+    """Token counts and timings of this thread's last completed LLM call."""
+    return getattr(_stats, "last", None)
+
+
+_FENCE_RE = re.compile(r"^\s*```[a-zA-Z]*\s*\n(.*?)\n?\s*```\s*$", re.DOTALL)
+
+
+def _unfence(text):
+    """Unconstrained models wrap their JSON in a ```json fence."""
+    m = _FENCE_RE.match(text or "")
+    return m.group(1) if m else text
+
+
+def _schema_sketch(schema):
+    t = schema.get("type")
+    if t == "object":
+        props = schema.get("properties", {})
+        return (
+            "{"
+            + ", ".join(f'"{k}": {_schema_sketch(v)}' for k, v in props.items())
+            + "}"
+        )
+    if t == "array":
+        return f"[{_schema_sketch(schema.get('items', {}))}, ...]"
+    enum = schema.get("enum")
+    if enum and len(enum) <= 8:
+        return "|".join(json.dumps(v) for v in enum)
+    return {"integer": "int", "number": "number", "boolean": "bool"}.get(t, "string")
+
+
+def _with_schema_hint(messages, schema):
+    """Some model/Ollama pairs (gemma4 on 0.21) drop `format` when thinking is
+    off; spelling the shape out in the prompt keeps the answer parseable."""
+    hint = f"\n\nAnswer with only a JSON object shaped like: {_schema_sketch(schema)}"
+    out = list(messages)
+    for i in range(len(out) - 1, -1, -1):
+        if out[i].get("role") == "user":
+            out[i] = {**out[i], "content": out[i]["content"] + hint}
+            break
+    return out
 
 
 class LLMService:
@@ -13,10 +76,101 @@ class LLMService:
     def _load_config(self):
         self.ollama_url = config_service.get("llm.ollama_url", "http://localhost:11434")
         self.model = config_service.get("llm.model", "qwen3.6:35b")
+        # Ollama's own default window is 4096 tokens and silently drops the
+        # start of a longer prompt -- the analysis rules alone are ~1.5k.
+        self.num_ctx = config_service.get("llm.num_ctx", 8192)
         self.default_prompt = config_service.get(
             "llm.prompt",
             "Act as a senior malware reverse engineer. In at most two sentences, state the function's observed purpose and the decisive code evidence. If its purpose cannot be established, say so without suggesting possibilities. Do not discuss vulnerabilities or hypothetical impact.",
         )
+
+    def task_options(self, task):
+        cfg = {**BASE_TASK, **TASK_DEFAULTS.get(task, {})}
+        cfg.update(config_service.get(f"llm.tasks.{task}", {}) or {})
+        return cfg
+
+    def _chat(self, task, messages, stream=False, scale=1, **kwargs):
+        """The one place a model is called. `scale` multiplies the task's
+        num_predict for batched calls. Returns the raw Ollama response (or
+        chunk iterator when streaming); read it with `_content`/`_stream`."""
+        self._load_config()
+        cfg = self.task_options(task)
+        num_predict = cfg["num_predict"]
+        if num_predict > 0:
+            num_predict *= scale
+            if cfg["think"]:
+                num_predict += cfg["think_budget"]
+        options = {
+            "num_predict": num_predict,
+            "temperature": cfg["temperature"],
+            "num_ctx": self.num_ctx,
+        }
+        options.update({k: cfg[k] for k in SAMPLING_KEYS if k in cfg})
+        fmt = kwargs.get("format")
+        if isinstance(fmt, dict) and not cfg["think"]:
+            messages = _with_schema_hint(messages, fmt)
+        _stats.last = None  # a failed call must not report the previous one
+        _stats.started = time.time()
+        _stats.task = task
+        return Client(host=self.ollama_url).chat(
+            model=self.model,
+            messages=messages,
+            stream=stream,
+            think=cfg["think"],
+            options=options,
+            **kwargs,
+        )
+
+    def _record(self, response):
+        get = response.get
+        stats = {
+            "task": getattr(_stats, "task", None),
+            "model": self.model,
+            "done_reason": get("done_reason"),
+            "prompt_tokens": get("prompt_eval_count"),
+            "output_tokens": get("eval_count"),
+            "wall_s": round(time.time() - getattr(_stats, "started", time.time()), 2),
+        }
+        _stats.last = stats
+        used = (stats["prompt_tokens"] or 0) + (stats["output_tokens"] or 0)
+        if used >= self.num_ctx * 0.95:
+            logging.warning(
+                f"LLM {stats['task']}: {used} tokens used of num_ctx={self.num_ctx}; "
+                "the prompt was probably truncated (raise llm.num_ctx)"
+            )
+        return stats
+
+    def _content(self, response):
+        """The answer only -- never the thinking trace. An empty answer cut off
+        by the token limit is an error, not a blank summary."""
+        msg = response.get("message", {}) or {}
+        content = msg.get("content", "") or ""
+        stats = self._record(response)
+        if not content.strip() and stats["done_reason"] == "length":
+            raise RuntimeError(
+                f"token budget exhausted before an answer (task {stats['task']}); "
+                "raise num_predict/think_budget"
+            )
+        return content
+
+    def _stream(self, chunks):
+        """Yields answer text only; thinking chunks are dropped."""
+        for chunk in chunks:
+            msg = (
+                chunk.get("message", {})
+                if isinstance(chunk, dict)
+                else getattr(chunk, "message", None)
+            )
+            if msg:
+                content = (
+                    msg.get("content", "")
+                    if isinstance(msg, dict)
+                    else getattr(msg, "content", "")
+                )
+                if content:
+                    yield content
+            if chunk.get("done"):
+                self._record(chunk)
 
     def summarize_function(self, function_name, code, custom_prompt=None):
         self._load_config()
@@ -24,19 +178,14 @@ class LLMService:
         full_prompt = f"{prompt}\n\nFunction Name: {function_name}\n\nCode:\n{code}"
 
         try:
-            client = Client(host=self.ollama_url)
-            response = client.chat(
-                model=self.model,
-                messages=[
+            response = self._chat(
+                "summary",
+                [
                     {"role": "system", "content": tag_taxonomy.analysis_rules()},
                     {"role": "user", "content": full_prompt},
                 ],
-                stream=False,
-                think=False,
-                options={"num_predict": -1, "temperature": 0.1},
             )
-            msg = response.get("message", {})
-            return msg.get("content", "") or msg.get("thinking", "")
+            return self._content(response)
         except Exception as e:
             logging.error(f"LLMService error: {e}")
             return f"Error: Could not get summary from LLM. {e}"
@@ -57,18 +206,20 @@ class LLMService:
             tag_rule = (
                 f"{base_rule}\n"
                 f"Additionally, you MAY include these specific custom tags if highly relevant: {', '.join(vocabulary)}. "
-                "Example tags: severity:medium, category:crypto:cipher, custom_tag_name."
+                "Tag format: severity:<level>, category:<group>:<leaf>, custom_tag_name."
             )
         else:
             tag_rule = (
                 f"{base_rule}\n"
-                "Example tags: severity:medium, category:crypto:cipher, category:network:c2."
+                "Tag format: severity:<level>, category:<group>:<leaf>."
             )
 
         full_prompt = (
             f"{prompt}\n\nFunction Name: {function_name}\n\nCode:\n{code}\n\n"
             "Return the required severity verdict and put category/custom tags only in "
-            "the tags field, never inside summary. Keep summary under 90 words and "
+            "the tags field, never inside summary. If your summary establishes what the "
+            "function does, tags must include its category, even at severity none. "
+            "Keep summary under 90 words and "
             "include only observed behavior and decisive evidence."
         )
         custom_tags = [
@@ -103,20 +254,15 @@ class LLMService:
         }
 
         try:
-            client = Client(host=self.ollama_url)
-            response = client.chat(
-                model=self.model,
-                messages=[
+            response = self._chat(
+                "tag",
+                [
                     {"role": "system", "content": tag_rule},
                     {"role": "user", "content": full_prompt},
                 ],
-                stream=False,
-                think=False,
                 format=response_format,
-                options={"num_predict": 256, "temperature": 0.1},
             )
-            msg = response.get("message", {})
-            text = msg.get("content", "") or msg.get("thinking", "")
+            text = self._content(response)
         except Exception as e:
             logging.error(f"LLMService summarize_and_tag error: {e}")
             return None, [], str(e)
@@ -145,12 +291,12 @@ class LLMService:
             tag_rule = (
                 f"{base_rule}\n"
                 f"Additionally, you MAY include these specific custom tags if highly relevant: {', '.join(vocabulary)}. "
-                "Example tags: severity:medium, category:crypto:cipher, custom_tag_name."
+                "Tag format: severity:<level>, category:<group>:<leaf>, custom_tag_name."
             )
         else:
             tag_rule = (
                 f"{base_rule}\n"
-                "Example tags: severity:medium, category:crypto:cipher, category:network:c2."
+                "Tag format: severity:<level>, category:<group>:<leaf>."
             )
 
         func_ids = [fid for fid, _, _ in members]
@@ -203,20 +349,16 @@ class LLMService:
         }
 
         try:
-            client = Client(host=self.ollama_url)
-            response = client.chat(
-                model=self.model,
-                messages=[
+            response = self._chat(
+                "tag_batch",
+                [
                     {"role": "system", "content": tag_rule},
                     {"role": "user", "content": full_prompt},
                 ],
-                stream=False,
-                think=False,
+                scale=len(members),
                 format=response_format,
-                options={"num_predict": 256 * len(members), "temperature": 0.1},
             )
-            msg = response.get("message", {})
-            text = msg.get("content", "") or msg.get("thinking", "")
+            text = self._content(response)
         except Exception as e:
             logging.error(f"LLMService summarize_batch error: {e}")
             return {}, func_ids, str(e)
@@ -231,7 +373,7 @@ class LLMService:
         grounding/tag rules apply as the single-function path."""
         out = {}
         try:
-            value = json.loads(text) if text else {}
+            value = json.loads(_unfence(text)) if text else {}
             items = value.get("results") if isinstance(value, dict) else None
         except (TypeError, ValueError):
             items = None
@@ -337,10 +479,9 @@ class LLMService:
         }
 
         try:
-            client = Client(host=self.ollama_url)
-            response = client.chat(
-                model=self.model,
-                messages=[
+            response = self._chat(
+                "triage",
+                [
                     {
                         "role": "system",
                         "content": (
@@ -352,13 +493,10 @@ class LLMService:
                     },
                     {"role": "user", "content": full_prompt},
                 ],
-                stream=False,
-                think=False,
+                scale=len(members),
                 format=response_format,
-                options={"num_predict": 80 * len(members), "temperature": 0.1},
             )
-            msg = response.get("message", {})
-            text = msg.get("content", "") or msg.get("thinking", "")
+            text = self._content(response)
         except Exception as e:
             logging.error(f"LLMService classify_relevance_batch error: {e}")
             return {}, func_ids, str(e)
@@ -375,7 +513,7 @@ class LLMService:
         allowed = set(allowed_tags)
         out = {}
         try:
-            value = json.loads(text) if text else {}
+            value = json.loads(_unfence(text)) if text else {}
             items = value.get("results") if isinstance(value, dict) else None
         except (TypeError, ValueError):
             items = None
@@ -457,7 +595,7 @@ class LLMService:
             return "", []
 
         try:
-            value = json.loads(text)
+            value = json.loads(_unfence(text))
             if isinstance(value, dict) and isinstance(value.get("summary"), str):
                 raw_tags = value.get("tags")
                 if isinstance(raw_tags, list):
@@ -525,6 +663,18 @@ class LLMService:
             tags.append(t)
 
         allowed = {v.lower(): v for v in vocabulary or []}
+
+        # Small models drop the namespace: `network:socket` for
+        # `category:network:socket`. Restore it when the rest is an exact
+        # taxonomy leaf and the collection has no custom tag of that name.
+        tags = [
+            (
+                f"category:{t}"
+                if t not in allowed and f"category:{t}" in tag_taxonomy.CATEGORY_TAGS
+                else t
+            )
+            for t in tags
+        ]
 
         def is_allowed(t):
             # Always allow a tag from the fixed taxonomy, otherwise the tag
@@ -597,77 +747,31 @@ class LLMService:
         full_prompt = f"{prompt}\n\nFunction Name: {function_name}\n\nCode:\n{code}"
 
         try:
-            client = Client(host=self.ollama_url)
-            response = client.chat(
-                model=self.model,
-                messages=[
+            response = self._chat(
+                "summary",
+                [
                     {"role": "system", "content": tag_taxonomy.analysis_rules()},
                     {"role": "user", "content": full_prompt},
                 ],
                 stream=True,
-                think=False,
-                options={"num_predict": -1, "temperature": 0.1},
             )
-            for chunk in response:
-                msg = (
-                    chunk.get("message", {})
-                    if isinstance(chunk, dict)
-                    else getattr(chunk, "message", None)
-                )
-                if msg:
-                    content = (
-                        getattr(msg, "content", "") or getattr(msg, "thinking", "")
-                        if not isinstance(msg, dict)
-                        else msg.get("content", "") or msg.get("thinking", "")
-                    )
-                    if content:
-                        yield content
+            yield from self._stream(response)
         except Exception as e:
             logging.error(f"LLMService streaming error: {e}")
             yield f"Error: {e}"
 
-    def chat(self, history):
-        self._load_config()
+    def chat(self, history, task="report"):
+        """One stateless completion. Used by the pair/file report writers,
+        hence the `report` task settings by default."""
         try:
-            client = Client(host=self.ollama_url)
-            response = client.chat(
-                model=self.model,
-                messages=history,
-                stream=False,
-                think=False,
-                options={"num_predict": -1, "temperature": 0.1},
-            )
-            msg = response.get("message", {})
-            return msg.get("content", "") or msg.get("thinking", "")
+            return self._content(self._chat(task, history))
         except Exception as e:
             logging.error(f"LLMService chat error: {e}")
             return f"Error: Could not chat with LLM. {e}"
 
     def stream_chat(self, history):
-        self._load_config()
         try:
-            client = Client(host=self.ollama_url)
-            response = client.chat(
-                model=self.model,
-                messages=history,
-                stream=True,
-                think=False,
-                options={"num_predict": -1, "temperature": 0.1},
-            )
-            for chunk in response:
-                msg = (
-                    chunk.get("message", {})
-                    if isinstance(chunk, dict)
-                    else getattr(chunk, "message", None)
-                )
-                if msg:
-                    content = (
-                        getattr(msg, "content", "") or getattr(msg, "thinking", "")
-                        if not isinstance(msg, dict)
-                        else msg.get("content", "") or msg.get("thinking", "")
-                    )
-                    if content:
-                        yield content
+            yield from self._stream(self._chat("chat", history, stream=True))
         except Exception as e:
             logging.error(f"LLMService streaming chat error: {e}")
             yield f"Error: {e}"
@@ -781,28 +885,10 @@ class LLMService:
         prompt = "\n".join(lines)
 
         try:
-            client = Client(host=self.ollama_url)
-            response = client.chat(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                stream=True,
-                think=False,
-                options={"num_predict": -1, "temperature": 0.1},
+            response = self._chat(
+                "report", [{"role": "user", "content": prompt}], stream=True
             )
-            for chunk in response:
-                msg = (
-                    chunk.get("message", {})
-                    if isinstance(chunk, dict)
-                    else getattr(chunk, "message", None)
-                )
-                if msg:
-                    content = (
-                        getattr(msg, "content", "") or getattr(msg, "thinking", "")
-                        if not isinstance(msg, dict)
-                        else msg.get("content", "") or msg.get("thinking", "")
-                    )
-                    if content:
-                        yield content
+            yield from self._stream(response)
         except Exception as e:
             logging.error(f"LLMService file summary error: {e}")
             yield f"Error: {e}"
@@ -827,6 +913,22 @@ def _selfcheck():
 
     # 'none' and decorations are dropped; duplicates collapse.
     assert split("x\nTAGS: none")[1] == []
+
+    # A tag missing its `category:` namespace is restored only for a real leaf.
+    assert split("x\nTAGS: network:socket, network:telepathy")[1] == [
+        "category:network:socket"
+    ]
+    assert split("x\nTAGS: network:socket", ["network:socket"])[1] == ["network:socket"]
+
+    # A fenced JSON answer (format ignored) is still parsed as JSON.
+    fenced = (
+        "```json\n"
+        + json.dumps(
+            {"severity": "low", "tags": ["category:util:math"], "summary": "Adds."}
+        )
+        + "\n```"
+    )
+    assert split(fenced) == ("Adds.", ["severity:low", "category:util:math"])
     assert split(
         "x\n**TAGS:** `category:crypto:cipher`, category:crypto:cipher, [category:util:parser]"
     )[1] == ["category:crypto:cipher", "category:util:parser"]

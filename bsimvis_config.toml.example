@@ -147,6 +147,18 @@
     ollama_url = "http://localhost:11434"
     model = "qwen3.6:35b"
     prompt = "Act as a senior malware reverse engineer. In at most two sentences, state the function's observed purpose and the decisive code evidence. If its purpose cannot be established, say so without suggesting possibilities. Do not discuss vulnerabilities or hypothetical impact."
+    # Ollama defaults to a 4096-token window and silently truncates past it;
+    # the analysis rules alone are ~1.5k tokens.
+    num_ctx = 8192
+
+# Per-task generation settings; anything unset keeps the built-in default
+# (think = false, temperature = 0.1). Tasks: summary, tag, tag_batch, triage,
+# agentic, report, chat. Ollama counts thinking tokens against num_predict, so
+# think_budget is added on top of it when think is on.
+# [llm.tasks.report]
+#     think = true
+#     temperature = 0.6
+#     think_budget = 2048
 
 [ghidra]
     # Absolute JVM heap cap per worker. Each worker runs its own JVM, so keep

@@ -16,8 +16,6 @@ import logging
 import time
 import uuid
 
-from ollama import Client
-
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.llm_service import llm_service
 from bsimvis.app.services.llm_tools import TOOLS, call_tool, describe_api_call
@@ -131,20 +129,13 @@ class LLMChatService:
             {"role": "user", "content": user_message, "ts": int(time.time())}
         )
 
-        client = Client(host=self.ollama_url)
         tool_calls_made = []
 
         for _ in range(MAX_TOOL_ITERATIONS):
             wire_messages = [{k: v for k, v in m.items() if k != "ts"} for m in history]
             try:
-                response = client.chat(
-                    model=self.model,
-                    messages=wire_messages,
-                    tools=TOOLS,
-                    stream=False,
-                    think=False,
-                    options={"num_predict": -1, "temperature": 0.2},
-                )
+                response = llm_service._chat("chat", wire_messages, tools=TOOLS)
+                content = llm_service._content(response)
             except Exception as e:
                 logger.error(f"LLMChatService: chat call failed: {e}")
                 yield {"type": "error", "error": str(e)}
@@ -155,7 +146,6 @@ class LLMChatService:
             # llm_service.py uses rather than guarding with `isinstance(dict)`,
             # which is always false for it and silently drops every reply.
             msg = response.get("message", {})
-            content = msg.get("content", "") or ""
             # Ollama returns tool calls as pydantic ToolCall objects, not plain
             # dicts -- json.dumps (in _save_history, on the very next line that
             # stores one) would raise on them, so normalise once here rather

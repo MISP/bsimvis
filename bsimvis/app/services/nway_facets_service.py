@@ -837,6 +837,12 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"
         for i, (st, sim, idx, note) in res.items():
             if st == "mod" and rb[i]["decl"] and all(blocks[j][k]["decl"] for k in idx):
                 res[i] = ("same", 1.0, idx, "")
+        # A block claimed by two reference blocks is shown once, on the first.
+        first = {}
+        for i, (st, sim, idx, note) in sorted(res.items()):
+            if st != "miss" and len(idx) == 1 and first.setdefault(idx[0], i) != i:
+                note = f"Merged: one block here holds this code together with {_bid(first[idx[0]])}."
+                res[i] = ("restr", sim, idx, note)
         refs = {}  # j block -> [(ref index, state, sim)]
         for i, (st, sim, idx, note) in res.items():
             if st != "miss":

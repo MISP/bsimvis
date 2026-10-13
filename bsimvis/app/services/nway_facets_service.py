@@ -187,9 +187,10 @@ def _lines(src, feats, cap):
     from bsimvis.app.routes.function_diff import get_lines_data
     from bsimvis.app.services.function_service import get_feature_map
 
-    by_line, ids = get_lines_data(src or {}, get_feature_map(feats), set())
+    f_map = get_feature_map(feats)
+    by_line, ids = get_lines_data(src or {}, f_map, set())
     texts = ["".join(t["t"] for _, t in by_line[i]).rstrip() for i in range(len(ids))]
-    return texts[:cap], ids[:cap], by_line, len(ids) > cap
+    return texts[:cap], ids[:cap], by_line, len(ids) > cap, f_map
 
 
 _CTRL = re.compile(r"^(if|for|while|switch|do|else)\b")
@@ -400,17 +401,28 @@ def _titles(texts):
 
 
 def _blocks_of(src, feats, cap, max_blocks, callees=()):
-    texts, ids, by_line, cut = _lines(src, feats, cap)
+    texts, ids, by_line, cut, f_map = _lines(src, feats, cap)
     callees_by_name = {c["name"]: c for c in callees if c.get("name")}
     out = []
     for a, b in split_blocks(texts)[:max_blocks]:
         text = "\n".join(texts[a:b])
         syntax = []
+        hashes, locals_ = (
+            set(),
+            [],
+        )  # feature hashes of the block; (start, end, hashes) of local names
+        base = 0
         for i in range(a, b):
             left = len(texts[i])
-            for _, token in by_line[i]:
+            col = 0
+            for idx, token in by_line[i]:
                 part = token["t"][:left]
                 if part:
+                    hs = {f["hash"] for f in f_map.get(idx, ())}
+                    hashes |= hs
+                    if hs and _LOCAL.match(part):
+                        locals_.append((base + col, base + col + len(part), hs))
+                    col += len(part)
                     typ = token.get("type")
                     if typ == "func_call":
                         callee = callees_by_name.get(token["t"], {})
@@ -431,6 +443,7 @@ def _blocks_of(src, feats, cap, max_blocks, callees=()):
                     else:
                         syntax.append([part, typ])
                     left -= len(part)
+            base += len(texts[i]) + 1
             if i < b - 1:
                 if syntax and syntax[-1][1] is None:
                     syntax[-1][0] += "\n"
@@ -449,6 +462,8 @@ def _blocks_of(src, feats, cap, max_blocks, callees=()):
                 "syntax": clipped,
                 "norm": _norm(text),
                 "bag": _bag(text, ids[a:b]),
+                "hashes": hashes,
+                "locals": locals_,
                 "span": (a, b),
             }
         )
@@ -534,6 +549,31 @@ def _runs(ref_text, text, changed=False):
     return _segments(ref_text, text)
 
 
+def _confirm(runs, locals_, other):
+    """Clear the change flag on decompiler-named locals whose feature hash `other` also holds.
+
+    A renamed local (`iVar3` vs `param_2`) that BSim saw in the same role on
+    both sides is not a change. Other tokens keep the spelling diff.
+    """
+    if not runs or not locals_:
+        return runs
+    flags = [c for t, c in runs for _ in t]
+    for s, e, hs in locals_:
+        if hs & other:
+            e = min(e, len(flags))
+            flags[s:e] = [False] * max(e - s, 0)
+    out, pos = [], 0
+    for t, _ in runs:
+        for k, ch in enumerate(t):
+            c = flags[pos + k]
+            if out and out[-1][1] == c:
+                out[-1][0] += ch
+            else:
+                out.append([ch, c])
+        pos += len(t)
+    return out
+
+
 def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None):
     """Block-level comparison of the functions against the reference.
 
@@ -592,7 +632,11 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None):
                 else:
                     # merged or split: diff against every reference block it maps to
                     ref_text = "\n".join(rb[m[0]]["text"] for m in mine)
-                    ent["text"] = _runs(ref_text, b["text"])
+                    ent["text"] = _confirm(
+                        _runs(ref_text, b["text"]),
+                        b["locals"],
+                        set().union(*(rb[m[0]]["hashes"] for m in mine)),
+                    )
             else:
                 ent["text"] = [[b["text"], False]]
                 if len(_IDENT.findall(b["text"])) >= 3:
@@ -636,8 +680,16 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None):
     for (i, st, _), g in members.items():
         text = g.pop("text")
         if st in ("mod", "moved"):
+            j0 = g["funcs"][0]
+            idx = out[i]["cells"][str(j0)]["segs"]
             g["ref_segs"] = (
-                _segments(text, out[i]["ref_text"]) if len(text) <= DIFF_CAP else None
+                _confirm(
+                    _segments(text, out[i]["ref_text"]),
+                    rb[i]["locals"],
+                    set().union(*(blocks[j0][k]["hashes"] for k in idx)),
+                )
+                if len(text) <= DIFF_CAP
+                else None
             )
         if st == "mod":
             ch = sum(
@@ -647,7 +699,11 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None):
                 ]["text"]
                 if c
             )
-            g["note"] = f"{ch} changed run{'s' if ch != 1 else ''} of tokens."
+            g["note"] = (
+                f"{ch} changed run{'s' if ch != 1 else ''} of tokens."
+                if ch
+                else "Only renamed locals differ."
+            )
         out[i]["groups"].append(g)
     return {
         "reference": ref,
@@ -1084,6 +1140,22 @@ def demo():
     assert any(c["st"] == "moved" for b in out["blocks"] for c in [b["cells"]["2"]])
     whole = "\n".join(x["text"][0][0] for x in out["funcs"]["3"])
     assert whole.count("h(a)") == 1 and out["blocks"][1]["groups"][0]["funcs"] == [1]
+    toks = lambda name: {
+        "c_tokens": [
+            {"t": "{", "line": 0, "type": "syntax"},
+            {"t": "  r = ", "line": 1, "type": None},
+            {"t": name, "line": 1, "type": "variable"},
+            {"t": " + 1;", "line": 1, "type": None},
+            {"t": "}", "line": 2, "type": "syntax"},
+        ]
+    }
+    feat = lambda h: [{"hash": h, "addr_to_token_idx": [2]}]
+    changed = lambda o: any(c for e in o["funcs"]["1"] for t, c in e["text"])
+    run = lambda h1, h2: _consensus(
+        [toks("param_2"), toks("iVar3")], [feat(h1), feat(h2)], 0, 100
+    )
+    assert changed(run("a1", "b2"))  # hashes differ: the spelling diff stands
+    assert not changed(run("a1", "a1"))  # same hash: a renamed local, not a change
     print("nway_facets_service demo ok")
 
 

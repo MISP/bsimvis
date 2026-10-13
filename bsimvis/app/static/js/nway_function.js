@@ -41,6 +41,16 @@
             el.addEventListener('mouseover', e => this._callHover(e, true));
             el.addEventListener('mouseout', e => this._callHover(e, false));
             el.addEventListener('contextmenu', e => this._entityMenu(e));
+            // Side-by-side code panes scroll together (scroll does not bubble, so capture it).
+            el.addEventListener('scroll', e => {
+                const pre = e.target;
+                if (!pre.matches || !pre.matches('pre') || this._syncing) return;
+                const box = pre.closest('.xp-panes, .xp-frow');
+                if (!box) return;
+                this._syncing = true;
+                box.querySelectorAll('pre').forEach(o => { if (o !== pre) { o.scrollTop = pre.scrollTop; o.scrollLeft = pre.scrollLeft; } });
+                requestAnimationFrame(() => { this._syncing = false; });
+            }, true);
             el.addEventListener('keydown', e => {
                 if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-xfnref],[data-xfile],[data-xcall]')) this._click(e);
             });

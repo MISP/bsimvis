@@ -3149,6 +3149,7 @@ button.xp-cell:hover { outline: 2px solid var(--accent); }
 .xp-cfg path.e { stroke: var(--dim); stroke-width: 1; }
 .xp-cfg path.e.back { stroke-dasharray: 2 3; }
 .xp-cfg path.m { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.55; }
+.xp-cfg path.m.x { stroke-dasharray: 1 3; opacity: 0.45; }
 .xp-cfn:disabled { cursor: default; opacity: 0.8; }
 .xp-cfn.xp-cfpair { outline: 2px solid var(--accent); z-index: 2; }
 .xp-cfgtip { position: fixed; z-index: 10000; display: flex; gap: 8px; max-width: min(760px, 94vw); padding: 6px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,.35); pointer-events: none; }

@@ -507,16 +507,28 @@
                 const a = at(0, 'r' + i), b = at(1, 'r' + i);
                 svg += `<path class="m" d="M${a.x + NW},${a.y + NH / 2} L${b.x},${b.y + NH / 2}"/>`;
             }
+            // Every reference block each function block holds code of (merged and split cases), primary pair first.
+            const relF = new Map(), relR = new Map();
+            entries.forEach((ent, k) => (ent.refs || []).forEach(r => {
+                const i = c.blocks.findIndex(b => b.id === r.b);
+                if (i < 0 || k >= F.nodes.length) return;
+                const front = (m, a, v) => { const l = m.get(a) || m.set(a, []).get(a); if (pairOf.get(k) === i) l.unshift(v); else l.push(v); };
+                front(relF, k, `r:${i}`);
+                front(relR, i, `f:${j}:${k}`);
+                if (pairOf.get(k) !== i) {
+                    const a = at(0, 'r' + i), b = at(1, g.fid(k)), h = (b.x - a.x - NW) / 2;
+                    svg += `<path class="m x" d="M${a.x + NW},${a.y + NH / 2} C${a.x + NW + h},${a.y + NH / 2} ${b.x - h},${b.y + NH / 2} ${b.x},${b.y + NH / 2}"/>`;
+                }
+            }));
             let nodes = '';
-            const partner = new Map([...pairOf].map(([k, i]) => [i, k]));
             R.nodes.forEach((nd, i) => {
-                const b = c.blocks[i], st = this._cell(b, j).st, p = at(0, 'r' + i), k = partner.get(i);
-                nodes += `<button class="xp-cell xp-cfn st-${st}" style="left:${p.x}px;top:${p.y}px" data-xb="${escapeAttr(b.id)}" data-xc="${j}" data-cfn="r:${i}"${k === undefined ? '' : ` data-cfp="f:${j}:${k}"`}>${escapeHtml(b.id)}</button>`;
+                const b = c.blocks[i], st = this._cell(b, j).st, p = at(0, 'r' + i);
+                nodes += `<button class="xp-cell xp-cfn st-${st}" style="left:${p.x}px;top:${p.y}px" data-xb="${escapeAttr(b.id)}" data-xc="${j}" data-cfn="r:${i}"${relR.has(i) ? ` data-cfp="${relR.get(i).join(' ')}"` : ''}>${escapeHtml(b.id)}</button>`;
             });
             F.nodes.forEach((nd, k) => {
                 const ent = entries[k], ref = ent?.refs?.[0], p = at(1, g.fid(k)), st = ref ? ref.st : 'extra';
                 const attrs = ref ? `data-xb="${escapeAttr(ref.b)}" data-xc="${j}"` : ent?.x ? `data-xx="${escapeAttr(ent.x)}"` : 'disabled';
-                nodes += `<button class="xp-cell xp-cfn st-${st}" style="left:${p.x}px;top:${p.y}px" ${attrs} data-cfn="f:${j}:${k}"${pairOf.has(k) ? ` data-cfp="r:${pairOf.get(k)}"` : ''}>${ref ? escapeHtml(ref.b) : '+'}</button>`;
+                nodes += `<button class="xp-cell xp-cfn st-${st}" style="left:${p.x}px;top:${p.y}px" ${attrs} data-cfn="f:${j}:${k}"${relF.has(k) ? ` data-cfp="${relF.get(k).join(' ')}"` : ''}>${ref ? escapeHtml(ref.b) : '+'}</button>`;
             });
             return `<div class="xp-cfgp"><div class="xp-ph">${this._funcRef(c.reference)} reference (${R.nodes.length} blocks) &harr; ${this._funcRef(j)} ${escapeHtml(this.data.functions[j].file_name || '')} (${F.nodes.length} blocks)</div>
                 <div class="xp-cfg" style="width:${W}px;height:${H}px"><svg width="${W}" height="${H}">${svg}</svg>${nodes}</div></div>`;
@@ -540,11 +552,11 @@
             this.el.querySelectorAll('.xp-cfpair').forEach(x => x.classList.remove('xp-cfpair'));
             document.querySelectorAll('.xp-cfgtip').forEach(x => x.remove());
             if (!on) return;
-            const key = n.dataset.cfn, other = n.dataset.cfp || null, side = key[0];
+            const key = n.dataset.cfn, rel = (n.dataset.cfp || '').split(' ').filter(Boolean), other = rel[0] || null, side = key[0];
             const mine = this._cfgSnip(key), theirs = other && this._cfgSnip(other);
             if (!mine) return;
             n.classList.add('xp-cfpair');
-            if (other) n.closest('.xp-cfg').querySelector(`[data-cfn="${other}"]`)?.classList.add('xp-cfpair');
+            rel.forEach(o => n.closest('.xp-cfg').querySelector(`[data-cfn="${o}"]`)?.classList.add('xp-cfpair'));
             const pane = ([h, code]) => `<div class="xp-cfgpane"><div class="xp-ph">${escapeHtml(h)}</div><pre>${code}</pre></div>`;
             const tip = document.createElement('div');
             tip.className = 'xp-cfgtip';

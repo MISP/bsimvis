@@ -29,6 +29,8 @@ view.data = {
     functions: ['A', 'B', 'C', 'D', 'E'].map(letter => ({ letter, file_name: `sample-${letter}.exe` })),
     consensus: {
         reference: 0,
+        // the backend's whole-function keys (build noise already removed); 3 has no code
+        keys: { 0: 'original ( ) ;', 1: 'original ( ) ;', 2: 'changed ( ) ;', 4: 'changed ( ) ;' },
         blocks: [block('b6', 'mod'), block('b7', 'mod')],
         funcs: {
             1: [{ refs: [{ b: 'b6', st: 'same', sim: 1 }], text: [['original();', false]], syntax: [['original', 'func_call'], ['();', 'syntax']] }],
@@ -53,12 +55,11 @@ const showChips = () => view._fullView().split('<label class="xp-chk">')[0].matc
 let show = showChips();
 assert.strictEqual(show.length, 3, 'Show groups identical C/E into one choice alongside B and D');
 assert.ok(show.some(chip => chip.includes('>C</span>') && chip.includes('>E</span>') && chip.includes('data-xfn="4"') && chip.includes('aria-pressed="true"')));
-view.data.consensus.funcs[2][0].text = [['FUN_001234();', false]];
-view.data.consensus.funcs[4][0].text = [['  FUN_005678();  ', true]];
-assert.strictEqual(showChips().length, 3, 'generated addresses, whitespace and diff highlights do not split equal code');
 view.data.consensus.funcs[4].push({ refs: [], text: [['extra();', false]], syntax: [['extra', 'func_call'], ['();', 'syntax']] });
+view.data.consensus.keys[4] = 'changed ( ) ; extra ( ) ;';
 assert.strictEqual(showChips().length, 4, 'extra code splits otherwise identical functions');
 view.data.consensus.funcs[4].pop();
+view.data.consensus.keys[4] = 'changed ( ) ;';
 view.data.consensus.funcs[2][0].text = [['changed();', true]];
 view.data.consensus.funcs[4][0].text = [['changed();', true]];
 view.data.consensus.truncated = true;

@@ -563,11 +563,8 @@ ${this._info(s.cv === 'blocks' ? 'Overview of what changed, block by block.' : '
             const c = this.data.consensus, groups = new Map();
             this.data.functions.forEach((fn, j) => {
                 if (j === c.reference && !single) return;
-                const text = j === c.reference ? c.blocks.map(b => b.ref_text).join('\n')
-                    : (c.funcs[String(j)] || []).map(seg => seg.text.map(([t]) => t).join('')).join('\n');
-                // Use the matcher's whitespace and generated-address normalization.
-                const normalized = text.trim().replace(/\s+/g, ' ').replace(/\b(FUN|DAT|LAB|PTR|SUB|UNK|switchD|caseD)_[0-9a-fA-F]+/g, '$1_');
-                const key = normalized && !c.truncated ? normalized : j;
+                // The matcher's own key: build noise (locals, types, generated names) is already removed.
+                const key = c.keys && c.keys[j] && !c.truncated ? c.keys[j] : j;
                 if (!groups.has(key)) groups.set(key, []);
                 groups.get(key).push(j);
             });

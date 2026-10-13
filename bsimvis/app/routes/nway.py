@@ -744,6 +744,9 @@ def get_nway_facets():
     `functions_metadata` keys of a row's cells). Over `nway.code_max_functions`
     functions the consensus code is dropped, over `nway.facet_max_functions` the
     source-derived facets go too (see `level` in the answer).
+
+    `scope=functions` takes no file set: `fids` alone (any collections) are scored
+    pairwise from their feature vectors, and the reference is the medoid.
     """
     fids = list(
         dict.fromkeys(t for t in (request.args.get("fids") or "").split(",") if t)
@@ -752,10 +755,30 @@ def get_nway_facets():
         abort(400, "fids needs at least two function ids")
     if len(fids) > nway_diff_service.caps()[0]:
         abort(400, "too many fids")
-    try:
-        doc, r, _ = _load_doc()
-    except _Reply as e:
-        return e.args[0]
+    scope = request.args.get("scope", "files")
+    if scope not in ("files", "functions"):
+        abort(400, "scope must be files or functions")
+    if scope == "functions":
+        r = get_redis()
+        try:
+            doc = nway_diff_service.compute_functions(
+                r,
+                fids,
+                {
+                    "algo": request.args.get("algo"),
+                    "min_score": request.args.get("min_score", type=float),
+                    "min_features": request.args.get("min_features", type=int),
+                },
+            )
+        except nway_diff_service.BadParams as e:
+            abort(400, str(e))
+        except nway_diff_service.MemberMissing as e:
+            return {"error": "unknown_functions", "missing": e.missing}, 404
+    else:
+        try:
+            doc, r, _ = _load_doc()
+        except _Reply as e:
+            return e.args[0]
     unknown = [f for f in fids if f not in doc["fmeta"]]
     if unknown:
         return {"error": "unknown_functions", "missing": unknown}, 404

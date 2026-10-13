@@ -407,10 +407,8 @@ def _blocks_of(src, feats, cap, max_blocks, callees=()):
     for a, b in split_blocks(texts)[:max_blocks]:
         text = "\n".join(texts[a:b])
         syntax = []
-        hashes, locals_ = (
-            set(),
-            [],
-        )  # feature hashes of the block; (start, end, hashes) of local names
+        # feature hashes of the block; (start, end, hashes) of its local names
+        hashes, locals_ = set(), []
         base = 0
         for i in range(a, b):
             left = len(texts[i])
@@ -419,6 +417,8 @@ def _blocks_of(src, feats, cap, max_blocks, callees=()):
                 part = token["t"][:left]
                 if part:
                     hs = {f["hash"] for f in f_map.get(idx, ())}
+                    # ponytail: first 6 hashes per token keep the payload small
+                    shown = sorted(hs)[:6]
                     hashes |= hs
                     if hs and _LOCAL.match(part):
                         locals_.append((base + col, base + col + len(part), hs))
@@ -436,16 +436,19 @@ def _blocks_of(src, feats, cap, max_blocks, callees=()):
                                     token.get("is_external")
                                     or callee.get("is_external")
                                 ),
+                                *([shown] if shown else []),
                             ]
                         )
-                    elif syntax and syntax[-1][1] == typ:
+                    elif shown:
+                        syntax.append([part, typ, None, None, False, shown])
+                    elif syntax and syntax[-1][1] == typ and len(syntax[-1]) < 6:
                         syntax[-1][0] += part
                     else:
                         syntax.append([part, typ])
                     left -= len(part)
             base += len(texts[i]) + 1
             if i < b - 1:
-                if syntax and syntax[-1][1] is None:
+                if syntax and syntax[-1][1] is None and len(syntax[-1]) < 6:
                     syntax[-1][0] += "\n"
                 else:
                     syntax.append(["\n", None])
@@ -1154,6 +1157,12 @@ def demo():
     run = lambda h1, h2: _consensus(
         [toks("param_2"), toks("iVar3")], [feat(h1), feat(h2)], 0, 100
     )
+    got = [
+        e
+        for b in _blocks_of(toks("param_2"), feat("a1"), 100, 60)[0]
+        for e in b["syntax"]
+    ]
+    assert ["param_2", "variable", None, None, False, ["a1"]] in got
     assert changed(run("a1", "b2"))  # hashes differ: the spelling diff stands
     assert not changed(run("a1", "a1"))  # same hash: a renamed local, not a change
     print("nway_facets_service demo ok")

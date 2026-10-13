@@ -42,6 +42,10 @@
             el.addEventListener('change', e => this._change(e));
             el.addEventListener('mouseover', e => this._callHover(e, true));
             el.addEventListener('mouseout', e => this._callHover(e, false));
+            // Feature tokens light up their twins in both panes; a click locks them (same helpers as the function diff).
+            el.addEventListener('mouseover', e => this._featHover(e, true));
+            el.addEventListener('mouseout', e => this._featHover(e, false));
+            el.addEventListener('click', e => { const t = e.target.closest('.feature-highlight'); if (t && !e.target.closest('[data-xcall]') && this.el.contains(t)) window.toggleLock?.(t.dataset.hashes, t); });
             el.addEventListener('contextmenu', e => this._entityMenu(e));
             // Side-by-side code panes scroll together (scroll does not bubble, so capture it).
             el.addEventListener('scroll', e => {
@@ -247,7 +251,12 @@
             return (runs || []).map(([t, ch]) => (ch ? `<b class="${cls}">${escapeHtml(t)}</b>` : escapeHtml(t))).join('');
         }
 
-        _codeHtml(syntax, runs, cls, j) {
+        // BSim feature hashes of a syntax list; the other pane's set decides shared (green) or unique (red).
+        _hashSet(syntax) {
+            return new Set((syntax || []).flatMap(e => e[5] || []));
+        }
+
+        _codeHtml(syntax, runs, cls, j, other) {
             if (!syntax) return this._runs(runs, cls);
             const plain = syntax.map(([text]) => text).join('');
             if (runs && plain !== runs.map(([text]) => text).join('')) return this._runs(runs, cls);
@@ -256,7 +265,7 @@
             for (const [text, changed] of (runs || [])) ends.push({ end: end += text.length, changed });
             let pos = 0, ri = 0, html = '';
             const origin = j != null && this.fids[j] ? parts(this.fids[j]) : null;
-            for (const [token, type, addr, name, external] of syntax) {
+            for (const [token, type, addr, name, external, hashes] of syntax) {
                 const callId = type === 'func_call' && addr && !external && origin
                     ? `${origin.coll}:func:${origin.md5}:${addr}` : null;
                 const callAttrs = type === 'func_call' ? (callId
@@ -267,8 +276,13 @@
                     while (ends[ri] && pos >= ends[ri].end) ri++;
                     const length = Math.min(token.length - offset, ends[ri] ? ends[ri].end - pos : token.length);
                     const part = escapeHtml(token.slice(offset, offset + length));
-                    const colored = ['variable', 'func_call', 'type', 'op', 'field'].includes(type)
+                    let colored = ['variable', 'func_call', 'type', 'op', 'field'].includes(type)
                         ? `<span class="token-${type}"${callAttrs}>${part}</span>` : part;
+                    if (hashes && !/^\s*$/.test(part)) {
+                        const shared = other ? hashes.some(h => other.has(h)) : null;
+                        const hs = hashes.map(safeCssClassPart);
+                        colored = `<span class="token feature-highlight ${shared === null ? '' : shared ? 'diff-match' : 'diff-unique'} ${hs.map(h => 'feat-' + h).join(' ')}" data-hashes="${hs.join(' ')}" title="${hashes.length} BSim feature${hashes.length > 1 ? 's' : ''}${shared === null ? '' : shared ? ', also in the other function' : ', not in the other function'}">${colored}</span>`;
+                    }
                     html += ends[ri]?.changed ? `<b class="${cls}">${colored}</b>` : colored;
                     offset += length;
                     pos += length;
@@ -370,9 +384,9 @@
             const sim = g.funcs.map(j => Math.round(g.sims[String(j)] * 100)).join('/');
             return `<div class="xp-bd"><div class="xp-vchips"><span class="lab">Compare ${this._funcRef(c.reference)} with</span>${chips}${same.length ? `<span class="lab">${same.map(j => this._funcRef(j)).join(', ')}: same as ${this._funcRef(c.reference)}</span>` : ''}</div>
                 <div class="xp-panes">
-                  <div class="xp-pane"><div class="xp-ph">${this._funcRef(c.reference)} reference</div><pre data-xfns="${c.reference},${j0}">${this._codeHtml(b.ref_syntax, g.ref_segs, 'del', c.reference)}</pre></div>
+                  <div class="xp-pane"><div class="xp-ph">${this._funcRef(c.reference)} reference</div><pre data-xfns="${c.reference},${j0}">${this._codeHtml(b.ref_syntax, g.ref_segs, 'del', c.reference, this._hashSet(this._cellSyntax(b, j0)))}</pre></div>
                   <div class="xp-pane"><div class="xp-ph">${badges(g.funcs)} <span class="xp-cell st-${g.st}" style="cursor:default">${G[g.st]} ${NwayFunction.SNAME[g.st]}${g.st === 'miss' ? '' : ' ' + sim + '%'}</span>${cell.into ? `<span class="xp-tag hot">merged into ${escapeHtml(cell.into)}</span>` : ''}${this._expl(b.id, j0)}</div>
-                    <pre data-xfns="${j0},${c.reference}">${runs.length ? this._codeHtml(this._cellSyntax(b, j0), runs, 'chg', j0) : '(no matching code)'}</pre>${g.note ? `<div class="xp-pnote">${escapeHtml(g.note)}</div>` : ''}</div>
+                    <pre data-xfns="${j0},${c.reference}">${runs.length ? this._codeHtml(this._cellSyntax(b, j0), runs, 'chg', j0, this._hashSet(b.ref_syntax)) : '(no matching code)'}</pre>${g.note ? `<div class="xp-pnote">${escapeHtml(g.note)}</div>` : ''}</div>
                 </div></div>`;
         }
 
@@ -466,8 +480,8 @@
                     let right;
                     if (cell.st === 'miss') right = '<pre class="xp-fcode gap">(no matching code)</pre>';
                     else if (cell.into) right = `<pre class="xp-fcode gap">↑ merged into ${escapeHtml(cell.into)} above</pre>`;
-                    else right = `<pre class="xp-fcode st-${cell.st}" data-xfns="${f},${c.reference}">${this._codeHtml(this._cellSyntax(b, f), this._cellRuns(b, f), 'chg', f)}</pre>`;
-                    out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), cell.into ? tag('merged into ' + cell.into) : '', this._expl(b.id, f))}${this._fullGroups(b, f)}<pre class="xp-fcode" data-xfns="${c.reference},${f}">${this._codeHtml(b.ref_syntax, g && g.ref_segs, 'del', c.reference)}</pre>${right}</div>`;
+                    else right = `<pre class="xp-fcode st-${cell.st}" data-xfns="${f},${c.reference}">${this._codeHtml(this._cellSyntax(b, f), this._cellRuns(b, f), 'chg', f, this._hashSet(b.ref_syntax))}</pre>`;
+                    out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), cell.into ? tag('merged into ' + cell.into) : '', this._expl(b.id, f))}${this._fullGroups(b, f)}<pre class="xp-fcode" data-xfns="${c.reference},${f}">${this._codeHtml(b.ref_syntax, g && g.ref_segs, 'del', c.reference, this._hashSet(this._cellSyntax(b, f)))}</pre>${right}</div>`;
                 }
                 out += extraRows(b.id);
             }
@@ -639,6 +653,11 @@
         }
 
         // ---- Events ----
+        _featHover(e, on) {
+            const t = e.target.closest('.feature-highlight');
+            if (t && this.el.contains(t) && !t.contains(e.relatedTarget)) window.setHighlight?.(t.dataset.hashes, on, t);
+        }
+
         _callHover(e, on) {
             const call = e.target.closest('[data-xcall]');
             if (!call || !this.el.contains(call) || call.contains(e.relatedTarget)) return;

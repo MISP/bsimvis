@@ -568,7 +568,6 @@ window.FunctionView = {
         if (!on) return;
         const b = Number(n.dataset.cfb), { blockLines, rowOf } = this.cfgMaps();
         this.cfgMark([b]);
-        if (this.cfgLines) return;
         const lines = (blockLines.get(b) || []).map(i => {
             const row = rowOf.get(i);
             return `${String(i).padStart(3)}  ${row.tokens.map(t => (window.renderTokenHtml ? window.renderTokenHtml(t, {}) : escapeHtml(t.text))).join('')}`;

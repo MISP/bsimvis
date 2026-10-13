@@ -355,7 +355,7 @@ window.FunctionView = {
     },
 
     // ---- CFG tab: Ghidra high-pcode basic blocks, linked to the decompiled lines through tok_block ----
-    CFG_MAX_BLOCKS: 150,
+    CFG_MAX_BLOCKS: 500,
 
     // Line <-> block maps, built once from the rendered rows and the run-length tok_block.
     cfgMaps() {
@@ -486,7 +486,14 @@ window.FunctionView = {
     cfgSyncBind() {
         const g = document.getElementById('fn-cfg-gscroll'), c = document.getElementById('fn-cfg-col');
         if (!g || !c) return;
-        const anchors = () => {
+        // Anchors are measured once per drawing (and after a window resize): measuring hundreds of bands on every scroll event is slow.
+        this._cfgAnchors = null;
+        if (!this._cfgResizeBound) {
+            this._cfgResizeBound = true;
+            window.addEventListener('resize', () => { this._cfgAnchors = null; });
+        }
+        const anchors = () => this._cfgAnchors || (this._cfgAnchors = measure());
+        const measure = () => {
             const gt = g.getBoundingClientRect().top;
             const pts = [...c.querySelectorAll('.cl-band')].map(band => {
                 const node = band.dataset.lb === undefined ? null : g.querySelector(`[data-cfb="${band.dataset.lb}"]`);

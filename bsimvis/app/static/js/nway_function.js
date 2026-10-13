@@ -399,7 +399,7 @@
         // Reference CFG left, one function's CFG right; matched blocks are linked and coloured by state.
         _cfgPair(j, c) {
             const R = c.cfg[String(c.reference)], F = c.cfg[String(j)];
-            if (R.nodes.length > 80 || F.nodes.length > 80) return '';
+            if (R.nodes.length > 300 || F.nodes.length > 300) return '';
             const entries = c.funcs[String(j)] || [], pairOf = new Map(), taken = new Set();
             F.nodes.forEach((nd, k) => {
                 const ref = entries[k]?.refs?.[0], i = ref ? c.blocks.findIndex(b => b.id === ref.b) : -1;

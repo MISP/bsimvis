@@ -805,3 +805,15 @@ def get_nway_summaries():
     if len(fids) > nway_diff_service.caps()[0]:
         abort(400, "too many fids")
     return {"summaries": nway_facets_service.function_summaries(fids)}
+
+
+def get_nway_read():
+    """LLM read of a whole row (`/nway/facets` params): what the functions are, how they diverge.
+
+    Never waits for the model: `status` is off, pending (poll again), ready
+    (with `summary`) or failed.
+    """
+    out = get_nway_facets()
+    if isinstance(out, tuple):
+        return out
+    return nway_facets_service.read_row(out, [f["id"] for f in out["functions"]])

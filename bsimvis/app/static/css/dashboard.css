@@ -3184,6 +3184,8 @@ button.xp-cell:hover { outline: 2px solid var(--accent); }
 .xp-aisum { margin-top: 4px; font-size: 0.72rem; color: var(--dim); line-height: 1.3; }
 .xp-ai { margin-left: auto; padding-left: 8px; font-size: 0.74rem; color: var(--dim); }
 .xp-ai.done { flex: 1 1 100%; margin: 0; padding: 4px 0 2px; line-height: 1.35; }
+.xp-airead { margin: 8px 0; font-size: 0.8rem; line-height: 1.4; color: var(--dim); }
+.xp-airead:has(.xp-aibtn:only-child) { margin: 6px 0; }
 .xp-aibtn { border: 1px solid var(--border); background: transparent; color: inherit; border-radius: 4px; padding: 1px 6px; font-size: 0.72rem; cursor: pointer; }
 .xp-aibtn:disabled { opacity: 0.6; cursor: default; }
 .xp-pnote { padding: 6px 10px; border-top: 1px solid var(--border); font-size: 0.76rem; color: var(--dim); }

@@ -2658,6 +2658,21 @@ class BinSimNwayBlockExplain(Resource):
         return get_nway_block_explain()
 
 
+@ns_bin_sim.route("/nway/facets/read")
+class BinSimNwayRead(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "fids": "Comma-separated function ids of one N-way row (at least 2)",
+            "md5s": "Same file set / scope params as /nway/facets",
+        }
+    )
+    def get(self):
+        """LLM read of a whole row: what the functions are and how they diverge. Cached, or started in the background (status pending, poll again)."""
+        from bsimvis.app.routes.nway import get_nway_read
+
+        return get_nway_read()
+
+
 @ns_bin_sim.route("/nway/facets/summaries")
 class BinSimNwaySummaries(Resource):
     @ns_bin_sim.doc(params={"fids": "Comma-separated function ids"})

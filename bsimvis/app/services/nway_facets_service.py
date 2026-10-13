@@ -905,35 +905,77 @@ def block_titles(consensus):
     return {"status": out["status"], "titles": out.get("value") or {}}
 
 
-def _variant_text(consensus, block, j):
-    """Text function j holds for a reference block, or '' when it has none."""
-    cell = block["cells"].get(str(j))
-    if not cell:
-        return ""
-    segs = consensus["funcs"].get(str(j)) or []
-    return "\n".join(
-        "".join(t for t, _ in segs[k]["text"]) for k in cell["segs"] if k < len(segs)
-    )
+_EXPLAIN_FN_CAP = (
+    5000  # chars of one function shown to the model; the target block is cut last
+)
 
 
-def explain_block(consensus, block_id, j):
+def _fn_view(parts):
+    """[(header, text, is_target)] -> annotated source, trimming non-target blocks to fit."""
+    tcap = 1600
+    used = sum(min(len(t), tcap) for _, t, hit in parts if hit)
+    rest = [p for p in parts if not p[2]]
+    per = max(150, (_EXPLAIN_FN_CAP - used) // max(1, len(rest)))
+    out = []
+    for head, text, hit in parts:
+        if hit:
+            out.append(f"// {head}  <<< TARGET\n{text[:tcap]}")
+        else:
+            cut = "\n// ..." if len(text) > per else ""
+            out.append(f"// {head}\n{text[:per]}{cut}")
+    return "\n".join(out)
+
+
+def explain_block(consensus, block_id, j, fids=None):
     """{'status': ..., 'verdict': cosmetic|semantic|unclear, 'summary': str}.
 
-    Explains how function `j` differs from the reference in one block; cached
-    by the two texts.
+    Explains how function `j` differs from the reference in one block. The
+    model sees both whole functions (other blocks trimmed), the state of every
+    block, and the functions' stored LLM summaries; cached by that context.
     """
     from bsimvis.app.services.llm_service import llm_service
 
-    block = next((b for b in consensus["blocks"] if b["id"] == block_id), None)
+    blocks = consensus["blocks"]
+    block = next((b for b in blocks if b["id"] == block_id), None)
     cell = block and block["cells"].get(str(j))
     if not cell or cell["st"] == "same":
         return {"status": "off"}
-    ref = block["ref_text"][: _TITLE_TEXT_CAP * 2]
-    other = _variant_text(consensus, block, j)[: _TITLE_TEXT_CAP * 2]
-    key = hashlib.sha1(json.dumps([ref, other, cell["st"]]).encode()).hexdigest()
+    segs = consensus["funcs"].get(str(j)) or []
+    own = set(cell["segs"])
+    ref_view = _fn_view(
+        [(f"[{b['id']}] {b['title']}", b["ref_text"], b is block) for b in blocks]
+    )
+    other_view = _fn_view(
+        [
+            (
+                (
+                    "matches " + ", ".join(r["b"] for r in seg["refs"])
+                    if seg["refs"]
+                    else "no counterpart in the reference"
+                ),
+                "".join(t for t, _ in seg["text"]),
+                k in own,
+            )
+            for k, seg in enumerate(segs)
+        ]
+    )
+    outline = "; ".join(
+        f"{b['id']} {b['title']}: {(b['cells'].get(str(j)) or {'st': 'same'})['st']}"
+        for b in blocks
+    )
+    notes = function_summaries(fids) if fids else {}
+    ctx = {
+        "target": block_id,
+        "state": cell["st"],
+        "ref": ref_view,
+        "other": other_view,
+        "outline": outline,
+        "notes": [notes.get(f, "") for f in (fids or [])],
+    }
+    key = hashlib.sha1(json.dumps(ctx).encode()).hexdigest()
 
     def work():
-        value, _ = llm_service.explain_block_change(ref, other, cell["st"])
+        value, _ = llm_service.explain_block_change(ctx)
         return value
 
     out = _cached_llm("nway:explain", key, work)

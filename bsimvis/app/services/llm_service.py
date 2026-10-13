@@ -310,21 +310,36 @@ class LLMService:
                     out.setdefault(item["id"], title)
         return out, None
 
-    def explain_block_change(self, ref_code, other_code, state):
-        """How one block differs between two decompiled functions.
+    def explain_block_change(self, ctx):
+        """How one block of the reference function differs in another function.
 
-        Returns ({"verdict": cosmetic|semantic|unclear, "summary": str}, error).
+        `ctx` (see nway_facets_service.explain_block) holds both whole
+        functions, the per-block outline and stored summaries, so the block is
+        judged in the context of the rest. Returns
+        ({"verdict": cosmetic|semantic|unclear, "summary": str}, error).
         """
         self._load_config()
+        notes = "".join(
+            f"- Function {name} (already analysed): {t}\n"
+            for name, t in zip(("A (reference)", "B"), ctx.get("notes") or [])
+            if t
+        )
         prompt = (
-            "Two decompiled versions of the same code block follow (the matcher "
-            f"calls the change '{state}'). Say in at most two sentences how "
-            "VERSION B differs from VERSION A. Verdict: 'cosmetic' if the "
-            "behaviour is the same (renames, reordering, different compiler "
-            "layout), 'semantic' if behaviour changes (added or removed checks, "
+            "Two decompiled versions of the same function are compared block by "
+            "block. The matcher lists how every block of A looks in B: "
+            f"{ctx['outline']}.\n"
+            f"{notes}\n"
+            f"=== FUNCTION A (reference) ===\n{ctx['ref']}\n\n"
+            f"=== FUNCTION B ===\n{ctx['other']}\n\n"
+            f"Explain block {ctx['target']} only (marked TARGET; the matcher "
+            f"calls its change '{ctx['state']}'). Use the other blocks only as "
+            "context: say in at most two sentences how B's version of the block "
+            "differs from A's and what it does in the function. Verdict: "
+            "'cosmetic' if behaviour is the same (renames, reordering, a "
+            "different compiler layout, work moved to a neighbouring block), "
+            "'semantic' if behaviour changes (added or removed checks, "
             "different calls, constants or algorithm), else 'unclear'. Describe "
-            "only what the code shows.\n\n"
-            f"=== VERSION A ===\n{ref_code}\n\n=== VERSION B ===\n{other_code or '(no matching code)'}"
+            "only what the code shows."
         )
         fmt = {
             "type": "object",
@@ -345,7 +360,7 @@ class LLMService:
                 stream=False,
                 think=False,
                 format=fmt,
-                options={"num_predict": 200, "temperature": 0.1},
+                options={"num_predict": 200, "temperature": 0.1, "num_ctx": 8192},
             )
             msg = response.get("message", {})
             value = json.loads(

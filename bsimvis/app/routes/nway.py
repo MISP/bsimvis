@@ -788,8 +788,12 @@ def get_nway_block_explain():
     j = request.args.get("fn", type=int)
     if not out.get("consensus") or j is None:
         return {"status": "off"}
+    fs = out["functions"]
     return nway_facets_service.explain_block(
-        out["consensus"], request.args.get("block", ""), j
+        out["consensus"],
+        request.args.get("block", ""),
+        j,
+        [fs[out["reference"]]["id"], fs[j]["id"]] if 0 <= j < len(fs) else None,
     )
 
 

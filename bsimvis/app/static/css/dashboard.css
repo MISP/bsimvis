@@ -3196,7 +3196,7 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .xp-full-head .xp-fband { grid-column: auto; }
 .xp-full-groups { grid-column: 1 / -1; margin: 4px 0 6px; }
 .xp-fband .xp-cell { min-width: 0; height: 20px; }
-.xp-fband i { flex: 1; height: 1px; background: var(--border); }
+.xp-fband > i { flex: 1; height: 1px; background: var(--border); }
 .xp-fcode { border: 1px solid var(--border); border-radius: 6px; min-width: 0; background: var(--card-bg); }
 .xp-fcode.gap { color: var(--dim); font-style: italic; background: repeating-linear-gradient(135deg, transparent 0 6px, var(--hover) 6px 12px); }
 .xp-fcode.st-mod { border-left: 3px solid var(--token-warning); }

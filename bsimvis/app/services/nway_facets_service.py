@@ -205,6 +205,8 @@ COVER_MIN = 0.6  # share of a block's tokens another block must hold to absorb i
 RUN = 10  # longest straight run of statements kept as one block
 DIFF_CAP = 1500  # longer blocks are shown without token highlights
 TEXT_CAP = 4000  # characters of a block kept for display and token diff
+SEED_MIN = 0.6  # feature-hash Dice for two blocks to seed the CFG alignment
+PROP_MIN = 0.3  # token-bag Dice for a CFG neighbour of a matched pair to match
 
 
 def split_blocks(texts, run=RUN):
@@ -301,6 +303,154 @@ def _guard_else(texts, a, b):
             return e if ok else None
         d += s.count("{") - s.count("}")
     return None
+
+
+def has_cfg(src):
+    return bool(src and src.get("cfg", {}).get("blocks") and src.get("tok_block"))
+
+
+def _cfg_spans(src, texts, by_line, feats):
+    """Line spans of a function's display blocks, from its stored Ghidra CFG.
+
+    A line belongs to the Ghidra block most of its tokens belong to. Runs of
+    lines with one block are cut, then adjacent runs joined by a single edge
+    (one out, one in) are merged. Returns (spans, info) or None when no line
+    carries a block. info[k]: `bb` (Ghidra blocks touched), `H` (feature hashes
+    of the blocks it owns), `succ` / `pred` (display-block edges, out order).
+    """
+    n_tok = len(src["c_tokens"])
+    blk = [-1] * n_tok
+    tb = src["tok_block"]
+    for (a, b), nxt in zip(tb, [r[0] for r in tb[1:]] + [n_tok]):
+        blk[a:nxt] = [b] * (nxt - a)
+    dom = []
+    for i in range(len(texts)):
+        c = Counter(blk[idx] for idx, t in by_line.get(i, ()) if blk[idx] >= 0)
+        dom.append(c.most_common(1)[0][0] if c else None)
+    first = next((i for i, d in enumerate(dom) if d is not None), None)
+    if first is None:
+        return None
+    runs = [[0, first, None]] if first else []
+    for i in range(first, len(texts)):
+        d = dom[i] if dom[i] is not None else runs[-1][2]
+        if runs and runs[-1][2] == d:
+            runs[-1][1] = i + 1
+        else:
+            runs.append([i, i + 1, d])
+    touched, owner = [], {}
+    for u, (a, b, _) in enumerate(runs):
+        c = Counter(
+            blk[idx]
+            for i in range(a, b)
+            for idx, _t in by_line.get(i, ())
+            if blk[idx] >= 0
+        )
+        touched.append(set(c))
+        for bb, k in c.items():
+            if k > owner.get(bb, (0, -1))[0]:
+                owner[bb] = (k, u)
+    out_of = {b["i"]: b["out"] for b in src["cfg"]["blocks"]}
+
+    def graph(group, count):
+        succ = [[] for _ in range(count)]
+        for u, bbs in enumerate(touched):
+            for bb in bbs:
+                for t in out_of.get(bb, ()):
+                    v = group[owner[t][1]] if t in owner else None
+                    if v is not None and v != group[u] and v not in succ[group[u]]:
+                        succ[group[u]].append(v)
+        return succ
+
+    ident = list(range(len(runs)))
+    succ0 = graph(ident, len(runs))
+    pred0 = [[u for u in range(len(runs)) if v in succ0[u]] for v in ident]
+    group = []
+    for u in ident:
+        joined = u and succ0[u - 1] == [u] and pred0[u] == [u - 1]
+        group.append(group[-1] if joined else (group[-1] + 1 if group else 0))
+    count = group[-1] + 1
+    succ = graph(group, count)
+    bbs, owned = [set() for _ in range(count)], [set() for _ in range(count)]
+    for u in range(len(runs)):
+        g = group[u]
+        bbs[g] |= touched[u]
+        owned[g] |= {bb for bb, (_, o) in owner.items() if o == u}
+    spans = [
+        (
+            min(r[0] for u, r in enumerate(runs) if group[u] == g),
+            max(r[1] for u, r in enumerate(runs) if group[u] == g),
+        )
+        for g in range(count)
+    ]
+    by_bb = {}
+    for f in feats or ():
+        if f.get("block_index") is not None:
+            by_bb.setdefault(f["block_index"], []).append(f["hash"])
+    info = [
+        {
+            "bb": sorted(bbs[g]),
+            "H": Counter(h for bb in owned[g] for h in by_bb.get(bb, ())),
+            "succ": succ[g],
+            "pred": [u for u in range(count) if g in succ[u]],
+        }
+        for g in range(count)
+    ]
+    for x in info:
+        x["shape"] = (min(len(x["pred"]), 2), min(len(x["succ"]), 2))
+    return spans, info
+
+
+def _cfg_align(ref, other):
+    """Block pairs and the subset whose CFG neighbours also match.
+
+    Seeds are blocks sharing rare feature hashes; the CFG edges of every matched
+    pair then pull in their unmatched neighbours by token-bag Dice.
+    """
+
+    def where(blocks):
+        w = {}
+        for k, b in enumerate(blocks):
+            for h in b["H"]:
+                w.setdefault(h, []).append(k)
+        return w
+
+    wr, wo = where(ref), where(other)
+    votes = Counter()
+    for h, rs in wr.items():
+        os_ = wo.get(h, ())
+        if len(rs) <= 2 and 0 < len(os_) <= 2:
+            for i in rs:
+                for j in os_:
+                    votes[i, j] += 1
+    cand = sorted(
+        (-_dice(ref[i]["H"], other[j]["H"]), -v, i, j) for (i, j), v in votes.items()
+    )
+    mr, mo = {}, {}
+    for neg, _, i, j in cand:
+        if -neg >= SEED_MIN and i not in mr and j not in mo:
+            mr[i], mo[j] = j, i
+    work = list(mr.items())
+    while work:
+        i, j = work.pop()
+        for key in ("succ", "pred"):
+            nr = [x for x in ref[i][key] if x not in mr]
+            no = [y for y in other[j][key] if y not in mo]
+            for neg, x, y in sorted(
+                (-_dice(ref[x]["bag"], other[y]["bag"]), x, y) for x in nr for y in no
+            ):
+                lone = len(nr) == len(no) == 1 and ref[x]["shape"] == other[y]["shape"]
+                if x not in mr and y not in mo and (-neg >= PROP_MIN or lone):
+                    mr[x], mo[y] = y, x
+                    work.append((x, y))
+    ok = {
+        (i, j)
+        for i, j in mr.items()
+        if any(
+            mr.get(a) in other[j]["succ"] + other[j]["pred"]
+            for a in ref[i]["succ"] + ref[i]["pred"]
+        )
+    }
+    return sorted(mr.items()), ok
 
 
 def _bag(text, ids):
@@ -400,11 +550,13 @@ def _titles(texts):
     ]
 
 
-def _blocks_of(src, feats, cap, max_blocks, callees=()):
+def _blocks_of(src, feats, cap, max_blocks, callees=(), cfg=False):
     texts, ids, by_line, cut, f_map = _lines(src, feats, cap)
+    got = _cfg_spans(src, texts, by_line, feats) if cfg and has_cfg(src) else None
+    spans, info = got or (split_blocks(texts), None)
     callees_by_name = {c["name"]: c for c in callees if c.get("name")}
     out = []
-    for a, b in split_blocks(texts)[:max_blocks]:
+    for k, (a, b) in enumerate(spans[:max_blocks]):
         text = "\n".join(texts[a:b])
         syntax = []
         # feature hashes of the block; (start, end, hashes) of its local names
@@ -468,21 +620,38 @@ def _blocks_of(src, feats, cap, max_blocks, callees=()):
                 "hashes": hashes,
                 "locals": locals_,
                 "span": (a, b),
+                **(
+                    {
+                        **info[k],
+                        "succ": [v for v in info[k]["succ"] if v < max_blocks],
+                        "pred": [v for v in info[k]["pred"] if v < max_blocks],
+                    }
+                    if info
+                    else {}
+                ),
             }
         )
-    return out, cut or len(split_blocks(texts)) > max_blocks
+    return out, cut or len(spans) > max_blocks
 
 
-def _match_blocks(ref, other):
-    """Per reference block: ('same'|'mod'|'moved'|'restr'|'miss', sim, [other indices], note)."""
+def _match_blocks(ref, other, seeds=(), cfg_ok=()):
+    """Per reference block: ('same'|'mod'|'moved'|'restr'|'miss', sim, [other indices], note).
+
+    `seeds` are block pairs already fixed by the CFG alignment; those in `cfg_ok`
+    sit at the same place in both CFGs, so a different block order is not a move.
+    """
+    taken_r = {i for i, _ in seeds}
+    taken_o = {j for _, j in seeds}
+    pairs = [(i, j, _dice(ref[i]["bag"], other[j]["bag"])) for i, j in seeds]
     cand = sorted(
         (
             (-_dice(r["bag"], o["bag"]), i, j)
             for i, r in enumerate(ref)
+            if i not in taken_r
             for j, o in enumerate(other)
+            if j not in taken_o
         )
     )
-    taken_r, taken_o, pairs = set(), set(), []
     for neg, i, j in cand:
         if -neg < MATCH_MIN:
             break
@@ -491,7 +660,9 @@ def _match_blocks(ref, other):
             taken_o.add(j)
             pairs.append((i, j, -neg))
     pairs.sort()
-    stay = _lis([(i, j) for i, j, _ in pairs])
+    free = [k for k, (i, j, _) in enumerate(pairs) if (i, j) not in cfg_ok]
+    stay = {free[k] for k in _lis([(pairs[k][0], pairs[k][1]) for k in free])}
+    stay |= {k for k, (i, j, _) in enumerate(pairs) if (i, j) in cfg_ok}
     res = {}
     for k, (i, j, sim) in enumerate(pairs):
         if k in stay:
@@ -588,8 +759,11 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None):
     functions with no counterpart in the reference.
     """
     n = len(srcs)
+    # CFG blocks only when the reference has a CFG; a function without one
+    # keeps the text splitter and is matched by token bags alone.
+    use_cfg = has_cfg(srcs[ref])
     got = [
-        _blocks_of(s, f, cap, max_blocks, cs)
+        _blocks_of(s, f, cap, max_blocks, cs, use_cfg)
         for s, f, cs in zip(srcs, feats, callees or [[] for _ in srcs])
     ]
     blocks = [g[0] for g in got]
@@ -602,6 +776,8 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None):
             "ref_text": b["text"],
             "ref_syntax": b["syntax"],
             "lines": [b["span"][0] + 1, b["span"][1]],
+            "hashes": len(b["H"] if "H" in b else b["hashes"]),
+            **({"bb": b["bb"]} if "bb" in b else {}),
             "cells": {},
             "groups": [],
         }
@@ -612,7 +788,10 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None):
     for j in range(n):
         if j == ref:
             continue
-        res, _ = _match_blocks(rb, blocks[j])
+        cfg_pair = "succ" in rb[0] and blocks[j] and "succ" in blocks[j][0]
+        res, _ = _match_blocks(
+            rb, blocks[j], *(_cfg_align(rb, blocks[j]) if cfg_pair else ())
+        )
         refs = {}  # j block -> [(ref index, state, sim)]
         for i, (st, sim, idx, note) in res.items():
             if st != "miss":
@@ -627,6 +806,7 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None):
                     {"b": _bid(i), "st": st, "sim": round(sim, 3)}
                     for i, st, sim in mine
                 ],
+                **({"bb": b["bb"]} if "bb" in b else {}),
             }
             if mine:
                 i, st, _ = mine[0]
@@ -708,8 +888,26 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None):
                 else "Only renamed locals differ."
             )
         out[i]["groups"].append(g)
+    cfg = {}
+    for j in range(n):
+        if blocks[j] and "succ" in blocks[j][0]:
+            match = (
+                {str(i): _bid(i) for i in range(len(rb))}
+                if j == ref
+                else {
+                    str(k): e["refs"][0]["b"]
+                    for k, e in enumerate(funcs[str(j)])
+                    if e["refs"]
+                }
+            )
+            cfg[str(j)] = {
+                "nodes": [{"bb": b["bb"]} for b in blocks[j]],
+                "edges": [[u, v] for u, b in enumerate(blocks[j]) for v in b["succ"]],
+                "match": match,
+            }
     return {
         "reference": ref,
+        "cfg": cfg,
         "blocks": out,
         "funcs": funcs,
         "extras": [
@@ -1165,6 +1363,71 @@ def demo():
     assert ["param_2", "variable", None, None, False, ["a1"]] in got
     assert changed(run("a1", "b2"))  # hashes differ: the spelling diff stands
     assert not changed(run("a1", "a1"))  # same hash: a renamed local, not a change
+
+    # CFG path: blocks come from tok_block / cfg, features carry block_index.
+    def gsrc(lines, edges, nfeat=3):
+        toks = [
+            {"t": t, "line": i, "type": None, "seq": "s" if b is not None else None}
+            for i, (t, b) in enumerate(lines)
+        ]
+        tb, last = [], object()
+        for k, (_, b) in enumerate(lines):
+            b = -1 if b is None else b
+            if b != last:
+                tb.append([k, b])
+                last = b
+        bbs = sorted({b for _, b in lines if b is not None})
+        cfg = {
+            "entry": 0,
+            "blocks": [
+                {"i": b, "ops": 1, "kind": "plain", "out": edges.get(b, [])}
+                for b in bbs
+            ],
+        }
+        return {"c_tokens": toks, "tok_block": tb, "cfg": cfg}
+
+    gfeats = lambda hs: [
+        {"hash": h, "block_index": b, "addr_to_token_idx": []} for b, h in hs
+    ]
+    a_lines = [
+        ("void f(int a)", None),
+        ("{", None),
+        ("  if (a) {", 0),
+        ("    p(a);", 1),
+        ("  }", None),
+        ("  q(a);", 2),
+        ("  r(a);", 3),
+        ("}", None),
+    ]
+    a_edges = {0: [1, 2], 1: [2], 2: [3]}
+    a_f = gfeats([(0, "h0"), (1, "h1"), (1, "h1b"), (2, "h2"), (3, "h3")])
+    spans, info = _cfg_spans(
+        gsrc(a_lines, a_edges),
+        [t for t, _ in a_lines],
+        {i: [(i, {})] for i in range(len(a_lines))},
+        a_f,
+    )
+    assert spans == [(0, 2), (2, 3), (3, 5), (5, 8)], spans  # BB 2 and 3 are a chain
+    assert info[1]["succ"] == [2, 3] and info[3]["pred"] == [1, 2]
+    # B inserts a block on the else path; same hashes elsewhere, one block renamed
+    b_lines = a_lines[:5] + [("  z = 1;", 4)] + a_lines[5:]
+    b_lines = [(t.replace("q(a)", "q(b)"), b) for t, b in b_lines]
+    b_edges = {0: [1, 4], 1: [2], 4: [2], 2: [3]}
+    b_f = a_f + gfeats([(4, "h4")])
+    out = _consensus(
+        [gsrc(a_lines, a_edges), gsrc(b_lines, b_edges)], [a_f, b_f], 0, 100
+    )
+    assert [b["cells"]["1"]["st"] for b in out["blocks"]][:2] == ["same", "same"]
+    assert out["cfg"]["1"]["match"]["0"] == "b1" and out["blocks"][1]["bb"] == [0]
+    assert any(not e["refs"] for e in out["funcs"]["1"])  # the inserted block
+    # a function without cfg is matched by the text splitter, no crash
+    mixed = _consensus(
+        [gsrc(a_lines, a_edges), src([t for t, _ in a_lines])], [a_f, []], 0, 100
+    )
+    assert "1" not in mixed["cfg"] and "0" in mixed["cfg"]
+    assert (
+        _consensus([src(ref), gsrc(a_lines, a_edges)], [[], a_f], 0, 100)["cfg"] == {}
+    )
     print("nway_facets_service demo ok")
 
 

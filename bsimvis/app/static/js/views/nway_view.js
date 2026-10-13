@@ -72,7 +72,7 @@ window.NwayView = {
         this._familyName = cg.name || fx.name || '';
         this._familySource = source;
         this._familyDoc = doc;
-        this._familyState = { tab: fx.tab || 'graph', cv: fx.cv || 'blocks', only: fx.only === '1', single: fx.single === '1' };
+        this._familyState = { tab: fx.tab || 'graph', cv: fx.cv || 'blocks', bm: ['hybrid', 'cfg', 'text'].includes(fx.bm) ? fx.bm : 'hybrid', only: fx.only === '1', single: fx.single === '1' };
         if (!['graph', 'simple', 'facets', 'code', 'pair'].includes(this._familyState.tab)) this._familyState.tab = 'graph';
         if (fx.fn !== undefined && fx.fn !== '') this._familyState.fn = Number(fx.fn);
         this._container.innerHTML = `<div class="nway-view nway-function-view">
@@ -127,6 +127,7 @@ window.NwayView = {
         next.set('fx_name', this._familyName);
         next.set('fx_tab', st.tab);
         next.set('fx_cv', st.cv);
+        if (st.bm && st.bm !== 'hybrid') next.set('fx_bm', st.bm); else next.delete('fx_bm');
         next.set('fx_only', st.only ? '1' : '0');
         if (st.single) next.set('fx_single', '1'); else next.delete('fx_single');
         if (st.fn !== null && st.fn !== undefined) next.set('fx_fn', st.fn); else next.delete('fx_fn');
@@ -147,7 +148,7 @@ window.NwayView = {
             t.classList.toggle('active', tab === this._familyState.tab);
             t.setAttribute('aria-selected', String(tab === this._familyState.tab));
             t.disabled = tab !== 'graph' && this._familyFids.length < 2;
-            t.title = this._familyFids.length < 2 && tab !== 'graph' ? 'Comparison needs functions in at least two files' : tab === 'code' && data && !data.consensus ? `Code blocks need at most ${data.limits.code} functions` : '';
+            t.title = this._familyFids.length < 2 && tab !== 'graph' ? 'Comparison needs functions in at least two files' : tab === 'code' && data && !data.consensus && !data.blocks_error ? `Code blocks need at most ${data.limits.code} functions` : '';
         });
     },
 
@@ -166,7 +167,7 @@ window.NwayView = {
                 name: this._familyName, state: this._familyState, embedded: true,
                 onState: st => { this._familyState = st; this._writeFamilyState(); this._syncFamilyTabs(); },
                 onLoad: () => {
-                    if (this._familyState.tab === 'code' && !this._functionPanel.data.consensus) {
+                    if (this._familyState.tab === 'code' && !this._functionPanel.data.consensus && !this._functionPanel.data.blocks_error) {
                         const data = this._functionPanel.data;
                         showToast(`Code blocks are unavailable for ${data.functions.length} functions. Compare at most ${data.limits.code} functions to view them.`, 'warning');
                     }

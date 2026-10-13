@@ -768,7 +768,7 @@ def _confirm(runs, locals_, other):
     return out
 
 
-def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None):
+def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"):
     """Block-level comparison of the functions against the reference.
 
     `blocks`: the reference's blocks, each with a state per other function
@@ -779,9 +779,10 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None):
     functions with no counterpart in the reference.
     """
     n = len(srcs)
-    # CFG blocks only when the reference has a CFG; a function without one
-    # keeps the text splitter and is matched by token bags alone.
-    use_cfg = has_cfg(srcs[ref])
+    # Hybrid: CFG blocks when the reference has a CFG; a function without one
+    # keeps the text splitter and is matched by token bags alone. `text` never
+    # uses the CFG; `cfg` is hybrid with the caller having checked every function.
+    use_cfg = mode != "text" and has_cfg(srcs[ref])
     got = [
         _blocks_of(s, f, cap, max_blocks, cs, use_cfg)
         for s, f, cs in zip(srcs, feats, callees or [[] for _ in srcs])
@@ -972,9 +973,17 @@ def _shape(rows):
     return out
 
 
-def compute(r, doc, fids):
-    """Facets, similarity matrix and (for small N) consensus code of one row."""
-    cache_key = (doc["key"], tuple(fids))
+BLOCK_MODES = ("hybrid", "cfg", "text")
+
+
+def compute(r, doc, fids, mode="hybrid"):
+    """Facets, similarity matrix and (for small N) consensus code of one row.
+
+    `mode` picks the blocks: `hybrid` (Ghidra basic blocks where stored, text
+    splitting elsewhere), `cfg` (Ghidra only; `blocks_error` when a function has
+    none) or `text` (text splitting only).
+    """
+    cache_key = (doc["key"], tuple(fids), mode)
     hit = _CACHE.get(cache_key)
     if hit is not None:
         return hit
@@ -1085,15 +1094,22 @@ def compute(r, doc, fids):
             "blocks": block_cap,
         },
     }
+    out["blocks_mode"] = mode
     if level == "full":
-        out["consensus"] = _consensus(
-            srcs,
-            feats,
-            ref,
-            line_cap,
-            block_cap,
-            [m.get("callees") or [] for m in metas],
-        )
+        out["cfg_funcs"] = [has_cfg(x) for x in srcs]
+        missing = [j for j, ok in enumerate(out["cfg_funcs"]) if not ok]
+        if mode == "cfg" and missing:
+            out["blocks_error"] = {"reason": "no_cfg", "missing": missing}
+        else:
+            out["consensus"] = _consensus(
+                srcs,
+                feats,
+                ref,
+                line_cap,
+                block_cap,
+                [m.get("callees") or [] for m in metas],
+                mode,
+            )
     _CACHE.put(cache_key, out)
     return out
 
@@ -1448,6 +1464,15 @@ def demo():
     assert (
         _consensus([src(ref), gsrc(a_lines, a_edges)], [[], a_f], 0, 100)["cfg"] == {}
     )
+    # text mode ignores a stored CFG
+    flat = _consensus(
+        [gsrc(a_lines, a_edges), gsrc(b_lines, b_edges)],
+        [a_f, b_f],
+        0,
+        100,
+        mode="text",
+    )
+    assert flat["cfg"] == {} and all("bb" not in b for b in flat["blocks"])
     print("nway_facets_service demo ok")
 
 

@@ -759,7 +759,10 @@ def get_nway_facets():
     unknown = [f for f in fids if f not in doc["fmeta"]]
     if unknown:
         return {"error": "unknown_functions", "missing": unknown}, 404
-    return nway_facets_service.compute(r, doc, fids)
+    mode = request.args.get("blocks", "hybrid")
+    if mode not in nway_facets_service.BLOCK_MODES:
+        abort(400, "blocks must be hybrid, cfg or text")
+    return nway_facets_service.compute(r, doc, fids, mode)
 
 
 def get_nway_block_titles():

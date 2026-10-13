@@ -31,7 +31,7 @@
             this.onState = o.onState || null;
             this.embedded = !!o.embedded;
             this.onLoad = o.onLoad || null;
-            this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', open: {}, fn: null, single: false, ...(o.state || {}) };
+            this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', bm: 'hybrid', open: {}, fn: null, single: false, ...(o.state || {}) };
             this.titles = {};
             this.expl = {};
             this.sums = {};
@@ -72,13 +72,14 @@
             const qs = new URLSearchParams();
             for (const [k, v] of Object.entries({ ...this.source, ...this.doc })) if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             qs.set('fids', this.fids.join(','));
+            qs.set('blocks', this.s.bm || 'hybrid');
             return qs;
         }
 
         _persist() {
             if (!this.onState) return;
-            const { tab, cv, fn, only, single } = this.s;
-            this.onState({ tab, cv, fn, only, single });
+            const { tab, cv, fn, only, single, bm } = this.s;
+            this.onState({ tab, cv, fn, only, single, bm });
         }
 
         async load() {
@@ -100,7 +101,7 @@
         render() {
             const d = this.data, s = this.s;
             const code = d.consensus;
-            if (s.tab === 'code' && !code) s.tab = 'facets';
+            if (s.tab === 'code' && !code && !d.blocks_error) s.tab = 'facets';
             const tab = (k, label, why) => `<button class="bsim-tab${s.tab === k ? ' active' : ''}" role="tab" data-xtab="${k}"${why ? ` title="${escapeAttr(why)}"` : ''}>${label}</button>`;
             const nf = d.functions.length;
             this.el.innerHTML = `
@@ -324,9 +325,22 @@
 
         _isSame(b) { return Object.values(b.cells).every(c => c.st === 'same'); }
 
+        // Where the blocks come from: Ghidra basic blocks where stored with text splitting elsewhere (hybrid), Ghidra only, or text only.
+        _bmToggle() {
+            const d = this.data, bm = this.s.bm || 'hybrid', have = (d.cfg_funcs || []).filter(Boolean).length, all = (d.cfg_funcs || []).length;
+            const b = (k, label, why) => `<button class="view-btn${bm === k ? ' active' : ''}" data-xbm="${k}" title="${escapeAttr(why)}">${label}</button>`;
+            return `<div class="view-toggle" role="group" aria-label="Block source">${b('hybrid', 'Hybrid', 'Ghidra basic blocks where stored, text splitting for the rest')}${b('cfg', 'Ghidra blocks', 'Ghidra basic blocks only')}${b('text', 'Text', 'Blocks cut from the decompiled text only')}</div>`
+                + (all && bm === 'hybrid' && have < all ? `<span class="xp-tag" title="Functions analysed before the CFG was stored use text blocks">${have} of ${all} with Ghidra blocks</span>` : '');
+        }
+
         _code() {
             const s = this.s;
-            const sw = `<div class="xp-cbar"><div class="view-toggle" role="group" aria-label="Code view"><button class="view-btn${s.cv === 'blocks' ? ' active' : ''}" data-xcv="blocks">Blocks</button><button class="view-btn${s.cv === 'full' ? ' active' : ''}" data-xcv="full">Full function</button></div>
+            if (!this.data.consensus && this.data.blocks_error) {
+                const miss = this.data.blocks_error.missing || [];
+                return `<div class="xp-cbar">${this._bmToggle()}</div><div class="xp-none">Ghidra blocks are not stored for ${miss.map(j => this._funcRef(j)).join(' ')}: analysed before the CFG was stored. Re-analyse them, or use Hybrid or Text blocks.</div>`;
+            }
+            const sw = `<div class="xp-cbar">${this._bmToggle()}<div class="view-toggle" role="group" aria-label="Code view"><button class="view-btn${s.cv === 'blocks' ? ' active' : ''}" data-xcv="blocks">Blocks</button><button class="view-btn${s.cv === 'full' ? ' active' : ''}" data-xcv="full">Full function</button></div>
+
                 <span class="xp-hint" style="margin:0">${s.cv === 'blocks' ? 'Overview of what changed, block by block.' : 'Read the whole function, aligned to the reference by block.'}</span>
                 <button class="xp-aibtn" data-xask title="Open AI Insight and ask it about this whole row"><i class="fa-solid fa-robot"></i> Ask AI about this row</button>
                 <span class="xp-naming" ${this._naming ? '' : 'hidden'}><i class="fa-solid fa-spinner fa-spin"></i> naming blocks&hellip;</span></div>`;
@@ -932,7 +946,7 @@
         }
 
         async _click(e) {
-            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xask],[data-xpair],[data-xnav],[data-xopen]');
+            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xcv],[data-xbm],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xask],[data-xpair],[data-xnav],[data-xopen]');
             if (!t) return;
             const d = t.dataset;
             if (d.xask !== undefined) {
@@ -975,6 +989,7 @@
                 e.preventDefault();
                 return window.Nav.openPath(d.xnav, e, { title: d.title || 'Function', type: 'function' });
             }
+            if (d.xbm) { this.s.bm = d.xbm; this._persist(); return this.load(); }
             if (d.xcv) { this.s.cv = d.xcv; this._persist(); return this._rebody(); }
             if (d.xfn !== undefined) { this.s.fn = Number(d.xfn); this._persist(); return this._rebody(); }
             if (d.xx) { this.s.open[d.xx] = 0; return this._rebody(d.xx); }

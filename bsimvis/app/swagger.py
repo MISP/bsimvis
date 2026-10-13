@@ -2616,6 +2616,7 @@ class BinSimNwayFacets(Resource):
     @ns_bin_sim.doc(
         params={
             "fids": "Comma-separated function ids of one N-way row (at least 2)",
+            "blocks": "Code blocks: hybrid (default; Ghidra basic blocks where stored, text elsewhere), cfg (Ghidra only) or text",
             "md5s": "Same file set / scope params as /nway (cluster_uuid, collection, pool, mode, min_edge, ...)",
         }
     )

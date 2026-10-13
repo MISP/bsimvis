@@ -5202,6 +5202,33 @@ def test_nway_diff():
             ),
             str(_cons.get("cfg"))[:200],
         )
+        _r = requests.get(
+            _fx, params={**_base, "fids": _fids, "blocks": "x"}, timeout=30
+        )
+        check("nway facets: unknown blocks mode is a 400", _r.status_code == 400)
+        if _b.get("level") == "full":
+            _rt = requests.get(
+                _fx, params={**_base, "fids": _fids, "blocks": "text"}, timeout=120
+            )
+            _bt = _rt.json() if _rt.status_code == 200 else {}
+            check(
+                "nway facets: blocks=text never carries a CFG",
+                _rt.status_code == 200
+                and _bt.get("blocks_mode") == "text"
+                and not (_bt.get("consensus") or {}).get("cfg")
+                and not any("bb" in blk for blk in _bt["consensus"]["blocks"]),
+                str(_bt.get("blocks_mode")),
+            )
+            _rc = requests.get(
+                _fx, params={**_base, "fids": _fids, "blocks": "cfg"}, timeout=120
+            )
+            _bc = _rc.json() if _rc.status_code == 200 else {}
+            check(
+                "nway facets: blocks=cfg answers blocks or names the functions without a CFG",
+                _rc.status_code == 200
+                and (bool(_bc.get("consensus")) != bool(_bc.get("blocks_error"))),
+                str(_bc.get("blocks_error")),
+            )
         _r = requests.get(_fx + "/titles", params={**_base, "fids": _fids}, timeout=60)
         _t = _r.json() if _r.status_code == 200 else {}
         check(

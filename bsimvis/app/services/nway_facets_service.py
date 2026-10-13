@@ -206,6 +206,7 @@ _LOCAL = re.compile(
 )
 MATCH_MIN = 0.5  # block pairs below this Dice score are not the same block
 COVER_MIN = 0.6  # share of a block's tokens another block must hold to absorb it
+SPLIT_MIN = 20  # smaller blocks are never reported as split over several
 RUN = 10  # longest straight run of statements kept as one block
 DIFF_CAP = 1500  # longer blocks are shown without token highlights
 TEXT_CAP = 4000  # characters of a block kept for display and token diff
@@ -712,8 +713,10 @@ def _match_blocks(ref, other, seeds=(), cfg_ok=()):
         if i in res:
             continue
         # Merged into one block, or split over a few, of the other function.
+        # The signature and declarations are not code: they absorb nothing.
         ranked = sorted(
-            range(len(other)), key=lambda j: -_cover(r["bag"], other[j]["bag"])
+            (j for j, o in enumerate(other) if o["span"][0] > 0 and not o["decl"]),
+            key=lambda j: -_cover(r["bag"], other[j]["bag"]),
         )
         best = ranked[0] if ranked else None
         if best is not None and _cover(r["bag"], other[best]["bag"]) >= COVER_MIN:
@@ -729,7 +732,12 @@ def _match_blocks(ref, other, seeds=(), cfg_ok=()):
             if _cover(r["bag"], other[j]["bag"]) >= 0.25:
                 union |= other[j]["bag"]
                 pick.append(j)
-        if len(pick) > 1 and _cover(r["bag"], union) >= COVER_MIN:
+        # a few tokens are covered by any three blocks: no split for tiny blocks
+        if (
+            len(pick) > 1
+            and sum(r["bag"].values()) >= SPLIT_MIN
+            and _cover(r["bag"], union) >= COVER_MIN
+        ):
             res[i] = (
                 "restr",
                 _cover(r["bag"], union),

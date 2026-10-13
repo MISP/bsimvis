@@ -372,6 +372,61 @@
             return h + '</table></div>';
         }
 
+        // Ghidra basic blocks of a block, e.g. "BB 1 + 2"; absent for collections analysed before the CFG was stored.
+        _bbTag(bb, hashes) {
+            const n = hashes ? ` · ${Number(hashes)} hashes` : '';
+            return bb && bb.length ? `<span class="xp-tag" title="Ghidra basic blocks inside this block${hashes ? ' · distinct BSim feature hashes' : ''}">BB ${bb.map(Number).join(' + ')}${n}</span>` : '';
+        }
+
+        // Rank = steps from a block with no incoming edge; columns fill each rank left to right.
+        _cfgLayout(g) {
+            const n = g.nodes.length, indeg = new Array(n).fill(0), out = g.nodes.map(() => []);
+            for (const [u, v] of g.edges) { out[u].push(v); indeg[v]++; }
+            const rank = new Array(n).fill(-1), q = [];
+            indeg.forEach((x, i) => { if (!x) { rank[i] = 0; q.push(i); } });
+            if (!q.length) { rank[0] = 0; q.push(0); }
+            for (let h = 0; h < q.length; h++) for (const v of out[q[h]]) if (rank[v] < 0) { rank[v] = rank[q[h]] + 1; q.push(v); }
+            const col = [], used = {};
+            rank.forEach((r, i) => { const k = Math.max(r, 0); col[i] = used[k] = (used[k] ?? -1) + 1; rank[i] = k; });
+            return { rank, col, w: (Math.max(...col) + 1) * 54, h: (Math.max(...rank) + 1) * 34 };
+        }
+
+        // Reference CFG left, one function's CFG right; matched blocks are linked and coloured by state.
+        _cfgPair(j, c) {
+            const R = c.cfg[String(c.reference)], F = c.cfg[String(j)];
+            if (R.nodes.length > 80 || F.nodes.length > 80) return '';
+            const L = this._cfgLayout(R), M = this._cfgLayout(F), gap = 90, off = L.w + gap;
+            const pos = (lay, i, dx) => ({ x: dx + lay.col[i] * 54, y: lay.rank[i] * 34 });
+            const line = (a, b, cls) => `<line class="${cls}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/>`;
+            let svg = '';
+            for (const [u, v] of R.edges) svg += line({ ...pos(L, u, 0), x: pos(L, u, 0).x + 22, y: pos(L, u, 0).y + 20 }, { x: pos(L, v, 0).x + 22, y: pos(L, v, 0).y }, 'e');
+            for (const [u, v] of F.edges) svg += line({ x: pos(M, u, off).x + 22, y: pos(M, u, off).y + 20 }, { x: pos(M, v, off).x + 22, y: pos(M, v, off).y }, 'e');
+            const entries = c.funcs[String(j)] || [];
+            let nodes = '';
+            R.nodes.forEach((nd, i) => {
+                const b = c.blocks[i], st = this._cell(b, j).st, p = pos(L, i, 0);
+                nodes += `<button class="xp-cell xp-cfn st-${st}" style="left:${p.x}px;top:${p.y}px" data-xb="${escapeAttr(b.id)}" data-xc="${j}" title="${escapeAttr(`${b.id} · ${NwayFunction.SNAME[st]}${nd.bb.length ? ' · Ghidra BB ' + nd.bb.join(' + ') : ''}`)}">${escapeHtml(b.id)}</button>`;
+            });
+            F.nodes.forEach((nd, k) => {
+                const ref = entries[k]?.refs?.[0], p = pos(M, k, off), st = ref ? ref.st : 'extra';
+                const attrs = ref ? `data-xb="${escapeAttr(ref.b)}" data-xc="${j}"` : '';
+                nodes += `<button class="xp-cell xp-cfn st-${st}" style="left:${p.x}px;top:${p.y}px" ${attrs} title="${escapeAttr(`${ref ? ref.b + ' · ' + NwayFunction.SNAME[st] : 'no match in the reference'}${nd.bb.length ? ' · Ghidra BB ' + nd.bb.join(' + ') : ''}`)}">${ref ? escapeHtml(ref.b) : '+'}</button>`;
+                const i = ref ? c.blocks.findIndex(b => b.id === ref.b) : -1;
+                if (i >= 0) { const a = pos(L, i, 0); svg += line({ x: a.x + 44, y: a.y + 10 }, { x: p.x, y: p.y + 10 }, 'm'); }
+            });
+            const W = off + M.w, H = Math.max(L.h, M.h);
+            return `<div class="xp-cfgp"><div class="xp-ph">${this._funcRef(c.reference)} reference (${R.nodes.length} blocks) &harr; ${this._funcRef(j)} ${escapeHtml(this.data.functions[j].file_name || '')} (${F.nodes.length} blocks)</div>
+                <div class="xp-cfg" style="width:${W}px;height:${H}px"><svg width="${W}" height="${H}">${svg}</svg>${nodes}</div></div>`;
+        }
+
+        _cfgStrip() {
+            const c = this.data.consensus, cfg = c.cfg || {};
+            if (!cfg[String(c.reference)]) return '';
+            const js = this._others().filter(j => cfg[String(j)]);
+            if (!js.length) return '';
+            return `<div class="xp-cfgs"><p class="xp-hint">Basic blocks from Ghidra, merged along single edges. Matched blocks are linked and coloured like the table below; + marks a block with no counterpart. Click a block to jump to its code.</p>${js.map(j => this._cfgPair(j, c)).join('')}</div>`;
+        }
+
         _blockBody(b) {
             const d = this.data, c = d.consensus;
             if (!b.groups.length) return `<div class="xp-bd"><p class="xp-hint" style="margin:0">Identical in all ${d.functions.length} functions.</p><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${this._funcRef(c.reference)} all functions</div><pre>${this._codeHtml(b.ref_syntax, null, null, c.reference)}</pre></div></div></div>`;
@@ -384,8 +439,8 @@
             const sim = g.funcs.map(j => Math.round(g.sims[String(j)] * 100)).join('/');
             return `<div class="xp-bd"><div class="xp-vchips"><span class="lab">Compare ${this._funcRef(c.reference)} with</span>${chips}${same.length ? `<span class="lab">${same.map(j => this._funcRef(j)).join(', ')}: same as ${this._funcRef(c.reference)}</span>` : ''}</div>
                 <div class="xp-panes">
-                  <div class="xp-pane"><div class="xp-ph">${this._funcRef(c.reference)} reference</div><pre data-xfns="${c.reference},${j0}">${this._codeHtml(b.ref_syntax, g.ref_segs, 'del', c.reference, this._hashSet(this._cellSyntax(b, j0)))}</pre></div>
-                  <div class="xp-pane"><div class="xp-ph">${badges(g.funcs)} <span class="xp-cell st-${g.st}" style="cursor:default">${G[g.st]} ${NwayFunction.SNAME[g.st]}${g.st === 'miss' ? '' : ' ' + sim + '%'}</span>${cell.into ? `<span class="xp-tag hot">merged into ${escapeHtml(cell.into)}</span>` : ''}${this._expl(b.id, j0)}</div>
+                  <div class="xp-pane"><div class="xp-ph">${this._funcRef(c.reference)} reference ${this._bbTag(b.bb, b.hashes)}</div><pre data-xfns="${c.reference},${j0}">${this._codeHtml(b.ref_syntax, g.ref_segs, 'del', c.reference, this._hashSet(this._cellSyntax(b, j0)))}</pre></div>
+                  <div class="xp-pane"><div class="xp-ph">${badges(g.funcs)} <span class="xp-cell st-${g.st}" style="cursor:default">${G[g.st]} ${NwayFunction.SNAME[g.st]}${g.st === 'miss' ? '' : ' ' + sim + '%'}</span>${cell.into ? `<span class="xp-tag hot">merged into ${escapeHtml(cell.into)}</span>` : ''}${this._bbTag(cell.segs.flatMap(k => this._fseg(j0, k)?.bb || []))}${this._expl(b.id, j0)}</div>
                     <pre data-xfns="${j0},${c.reference}">${runs.length ? this._codeHtml(this._cellSyntax(b, j0), runs, 'chg', j0, this._hashSet(b.ref_syntax)) : '(no matching code)'}</pre>${g.note ? `<div class="xp-pnote">${escapeHtml(g.note)}</div>` : ''}</div>
                 </div></div>`;
         }
@@ -416,7 +471,7 @@
                 return `<div class="xp-blk wst-${worst}"><button class="xp-bh" data-xb="${escapeAttr(b.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(b.id)}</span>${this._tspan(b)}${verdict}</button>${open ? this._blockBody(b) : ''}</div>`;
             }).join('');
             const hidden = only ? c.blocks.length - ordered.filter(item => item.b).length : 0;
-            return head + this._ribbon(ordered) + legend + accordion
+            return head + this._cfgStrip() + this._ribbon(ordered) + legend + accordion
                 + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} identical in all ${this.data.functions.length} functions hidden.</p>` : '')
                 + (c.truncated ? `<p class="xp-foot">Large functions are compared on their first ${Number(this.data.limits.lines)} lines and ${Number(this.data.limits.blocks)} blocks.</p>` : '');
         }

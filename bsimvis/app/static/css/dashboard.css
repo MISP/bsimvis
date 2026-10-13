@@ -3141,6 +3141,13 @@ html.light-theme .nway-function-view { --xp-l: 40%; }
 .xp-cell { display: inline-flex; gap: 4px; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 6px; border-radius: 5px; border: 1px solid transparent; cursor: pointer; background: none; color: var(--text); font: inherit; }
 button.xp-cell:hover { outline: 2px solid var(--accent); }
 .xp-cell.sel { outline: 2px solid var(--text); }
+.xp-cfgs { margin-bottom: 10px; }
+.xp-cfgp { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; padding-bottom: 6px; }
+.xp-cfg { position: relative; margin: 8px 12px; }
+.xp-cfg svg { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+.xp-cfg line.e { stroke: var(--dim); stroke-width: 1; }
+.xp-cfg line.m { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.7; }
+.xp-cfn { position: absolute; min-width: 0; width: 44px; height: 20px; padding: 0; font-size: 0.7rem; background-color: var(--card-bg); }
 .st-same { color: var(--dim); }
 .st-mod { background: var(--xp-warn-bg); color: var(--token-warning); }
 .st-moved { background: color-mix(in srgb, var(--accent) 14%, var(--card-bg)); color: var(--accent); }

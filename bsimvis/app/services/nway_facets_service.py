@@ -87,6 +87,12 @@ _CAST = re.compile(
     r"\s*(?:[A-Za-z_]\w*\s+)*[A-Za-z_]\w*\s*(?:(?:\*\s*)+|\(\*\)\s*\[\d+\]\s*)"
 )
 _OPS = set("+-*/%<>=!&|^~")
+# the decompiler's p-code pseudo-functions: they look like calls and are not
+_PSEUDO = re.compile(
+    r"^(CONCAT|SUB|ZEXT|SEXT|SBORROW|SCARRY|CARRY|POPCOUNT|LZCOUNT|INT2FLOAT|TRUNC"
+    r"|CEIL|FLOOR|ROUND|SQRT|ABS|NAN|FLOAT2FLOAT|MULTIEQUAL|INDIRECT|PIECE|SUBPIECE"
+    r"|CAST|PTRADD|PTRSUB|SEGMENTOP|CPOOLREF|BCD)\d*$"
+)
 
 
 def _keys(toks, sig=False):
@@ -323,7 +329,12 @@ def _items(toks, keys):
             i += 1
         elif t.isidentifier():
             if k not in ("V", "T", "N", "const"):
-                if near(i, 1) == "(" and t not in _NOT_CALL:
+                if (
+                    near(i, 1) == "("
+                    and t not in _NOT_CALL
+                    and near(i, -1) != "."
+                    and not _PSEUDO.match(t)
+                ):
                     out.append((i, i, "c:" + k))
                 elif t.startswith(
                     "param_"
@@ -341,16 +352,17 @@ def _content(text, sig=False):
 
 
 def _calls_differ(ca, cb):
-    """Different call structure: another number of calls, or two different named callees.
+    """A named callee (`strlen`, `puts`) one side calls and the other does not.
 
-    A named callee against a generated name is a stripped build, not a change.
+    The number of calls to generated names is not a difference: helpers are
+    inlined, outlined or turned into inline arithmetic from one build to the
+    next. A generated call can stand for a named one (a stripped build).
     """
-    if sum(v for k, v in ca.items() if k[0] == "c") != sum(
-        v for k, v in cb.items() if k[0] == "c"
-    ):
-        return True
-    named = lambda x, y: {k for k in (x - y) if k[0] == "c" and k != "c:FUN_"}
-    return bool(named(ca, cb) and named(cb, ca))
+    named = lambda x, y: sum(
+        v for k, v in (x - y).items() if k[0] == "c" and k != "c:FUN_"
+    )
+    spare = lambda x, y: max(x["c:FUN_"] - y["c:FUN_"], 0)
+    return named(ca, cb) > spare(cb, ca) or named(cb, ca) > spare(ca, cb)
 
 
 def _soft_far(ca, cb):
@@ -390,10 +402,7 @@ def _holds(r, group, strict=False):
     of = lambda c, f: Counter({k: v for k, v in c.items() if f(k)})
     if of(cr, lambda k: k[0] == "s") - of(co, lambda k: k[0] == "s"):
         return False
-    calls = lambda c: sum(v for k, v in c.items() if k[0] == "c")
-    named = lambda c: of(c, lambda k: k[0] == "c" and k != "c:FUN_")
-    spare = max(co["c:FUN_"] - cr["c:FUN_"], 0)
-    if calls(cr) > calls(co) or sum((named(cr) - named(co)).values()) > spare:
+    if _calls_differ(of(cr, lambda k: k[0] == "c"), of(co, lambda k: k[0] == "c")):
         return False
     sr = of(cr, lambda k: k[0] not in "csp")
     return (
@@ -402,9 +411,21 @@ def _holds(r, group, strict=False):
     )
 
 
-def _far(fa, fb):
-    """Two functions whose BSim features disagree as wholes are not builds of one code."""
-    return min(sum(fa.values()), sum(fb.values())) >= FN_MIN and _dice(fa, fb) < FN_FAR
+def _far(fa, fb, ca=(), cb=()):
+    """Two functions that are not builds of one code.
+
+    Their BSim features disagree strongly as wholes, or moderately while both
+    have strings and share none. Another bitness or ABI alone gets the features
+    to about 0.35, so that is not enough, and call counts differ legitimately.
+    """
+    if min(sum(fa.values()), sum(fb.values())) < FN_MIN:
+        return False
+    d = _dice(fa, fb)
+    if d < FN_FAR_HARD:
+        return True
+    strs = lambda c: {k for k in c if k[0] == "s"}
+    sa, sb = strs(ca), strs(cb)
+    return d < FN_FAR and bool(sa) and bool(sb) and not sa & sb
 
 
 def _hard_differ(ca, cb):
@@ -473,6 +494,7 @@ DIFF_CAP = 1500  # longer blocks are shown without token highlights
 TEXT_CAP = 4000  # characters of a block kept for display and token diff
 SEED_MIN = 0.6  # feature-hash Dice for two blocks to seed the CFG alignment
 HASH_MIN = 4  # fewer features than this say nothing about a block
+FN_FAR_HARD = 0.25  # feature Dice below which two functions are not the same code
 FN_FAR = 0.4  # function-level feature Dice below which the functions are not builds of one code
 FN_MIN = 8  # features each function needs before that can be said
 SOFT_MIN = 4  # operators and constants each side must have before they can differ
@@ -1135,6 +1157,8 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"
     blocks = [g[0] for g in got]
     rb = blocks[ref]
     fh = [Counter(x["hash"] for x in (f or ())) for f in feats]
+    fi = [sum((b["items"] for b in bl), Counter()) for bl in blocks]
+    far = lambda a, b: _far(fh[a], fh[b], fi[a], fi[b])
     titles = _titles([b["text"] for b in rb])
     out = [
         {
@@ -1160,7 +1184,7 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"
             rb,
             blocks[j],
             *(_cfg_align(rb, blocks[j]) if cfg_pair else ((), ())),
-            strict=_far(fh[ref], fh[j]),
+            strict=far(ref, j),
         )
         # Local declarations differ with register allocation: never a change.
         for i, (st, sim, idx, note) in res.items():
@@ -1204,7 +1228,7 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"
                             ref_text,
                             b["text"],
                             sig=b["span"][0] == 0,
-                            strict=_far(fh[ref], fh[j]),
+                            strict=far(ref, j),
                         ),
                         b["locals"],
                         set().union(*(rb[m[0]]["hashes"] for m in mine)),
@@ -1260,7 +1284,7 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"
                         text,
                         out[i]["ref_text"],
                         rb[i]["span"][0] == 0,
-                        _far(fh[ref], fh[j0]),
+                        far(ref, j0),
                     ),
                     rb[i]["locals"],
                     set().union(*(blocks[j0][k]["hashes"] for k in idx)),
@@ -1316,7 +1340,7 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"
             (
                 k
                 for k, rep in enumerate(reps)
-                if _same(rep, cell) and not _far(fh[rep["j"]], fh[j])
+                if _same(rep, cell) and not far(rep["j"], j)
             ),
             len(reps),
         )
@@ -1749,6 +1773,8 @@ def demo():
         ("f(param_1, 2);", "f(in_a1, 2);"),
         ("x = y + -6;", "x = y - 6;"),
         ("x = strlen(y);", "x = FUN_0041(y);"),
+        ("x = CONCAT44(a, b) + 1;", "x = y + 1;"),  # a p-code pseudo-op is no call
+        ("x = vxor.v(a, b);", "x = 0;"),
     ]:
         assert not diff(x, y), (x, y)
     for x, y in [

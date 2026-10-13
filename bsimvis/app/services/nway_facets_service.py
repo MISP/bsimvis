@@ -268,7 +268,38 @@ def split_blocks(texts, run=RUN):
         spans.append((start, k))
         i, last_comp = k, True
     close(i)
-    return spans
+    return _unwrap(texts, spans)
+
+
+def _unwrap(texts, spans):
+    """Split a guard-shaped if/else (short `if`, long `else {}`) into its parts.
+
+    A guard clause (`if (x) return 0; ...`) and its decompiled single-exit form
+    (`if (x) r = 0; else { ... }`) then yield the same blocks.
+    """
+    out = []
+    for a, b in spans:
+        e = _guard_else(texts, a, b)
+        if e is None:
+            out.append((a, b))
+            continue
+        sub = split_blocks(["{"] + texts[e + 1 : b - 1])
+        out += [(a, e)] + [(x + e, y + e) for x, y in sub]
+    return out
+
+
+def _guard_else(texts, a, b):
+    """Index of the top-level `else {` of block (a, b) when its `if` part is short."""
+    if not texts[a].strip().startswith("if"):
+        return None
+    d = 0
+    for e in range(a, b):
+        s = texts[e].strip()
+        if e > a and d == 0 and s.startswith("else"):
+            ok = s.endswith("{") and e - a <= 3 and b - e > 2 * (e - a)
+            return e if ok else None
+        d += s.count("{") - s.count("}")
+    return None
 
 
 def _bag(text, ids):
@@ -556,12 +587,12 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None):
             }
             if mine:
                 i, st, _ = mine[0]
-                if st == "restr" or len(mine) > 1:
-                    ent["text"] = _runs("", b["text"], True)
-                elif st == "same":
+                if st == "same" and len(mine) == 1:
                     ent["text"] = [[b["text"], False]]
                 else:
-                    ent["text"] = _runs(rb[i]["text"], b["text"])
+                    # merged or split: diff against every reference block it maps to
+                    ref_text = "\n".join(rb[m[0]]["text"] for m in mine)
+                    ent["text"] = _runs(ref_text, b["text"])
             else:
                 ent["text"] = [[b["text"], False]]
                 if len(_IDENT.findall(b["text"])) >= 3:

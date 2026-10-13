@@ -235,6 +235,8 @@ window.FunctionView = {
             this.tokBlock = data.tok_block || null;
             this.cfgSel = null;
             this._cfgDone = false;
+            this._cfgBound = false;
+            this._cfgMaps = null;
             window.currentFuncName = fnName(data.meta) || 'unknown';
             if (data.meta && data.meta.file_name && file_md5) {
                 window.filenameCache = window.filenameCache || {};
@@ -280,19 +282,7 @@ window.FunctionView = {
                 }
             });
 
-            this.scrollEl.addEventListener('click', e => {
-                const token = this.findToken(e);
-                if (token) {
-                    const calledFuncId = token.getAttribute('data-called-func-id');
-                    if (calledFuncId) {
-                        const isExternal = token.getAttribute('data-is-external') === 'true';
-                        this.navigateToFunction(calledFuncId, isExternal, e);
-                        return;
-                    }
-                    const hashes = token.getAttribute('data-hashes');
-                    if (hashes && window.toggleLock) window.toggleLock(hashes, token);
-                }
-            });
+            this.scrollEl.addEventListener('click', e => this.onTokenClick(e));
 
             this.scrollEl.addEventListener('pointermove', e => {
                 if (window.parent && window.parent !== window && typeof window.parent.moveCodePreviewFromIframe === 'function') {
@@ -374,14 +364,32 @@ window.FunctionView = {
         const n = Math.max(0, ...this.funcRows.flatMap(r => r.tokens.map(t => t.global_idx + 1)));
         runs.forEach(([a, b], k) => { for (let i = a, end = k + 1 < runs.length ? runs[k + 1][0] : n; i < end; i++) tb[i] = b; });
         const lineBlocks = new Map(), blockLines = new Map(), rowOf = new Map();
+        // Same rule as nway_facets_service._cfg_spans: a line goes to the block most of its tokens are in,
+        // a line without block tokens inherits the previous line's block (none before the first one).
+        const dom = new Map(), conf = new Map(), counts = new Map(), blockFeats = new Map();
+        let prev = null;
         for (const row of this.funcRows) {
             rowOf.set(row.line_idx, row);
-            const set = new Set();
-            for (const t of row.tokens) { const b = tb[t.global_idx]; if (b >= 0) set.add(b); }
+            const set = new Set(), c = new Map();
+            for (const t of row.tokens) {
+                const b = tb[t.global_idx];
+                if (b >= 0) {
+                    set.add(b);
+                    c.set(b, (c.get(b) || 0) + 1);
+                    (blockFeats.get(b) || blockFeats.set(b, new Set()).get(b));
+                    (t.hash_list || []).forEach(h => blockFeats.get(b).add(h));
+                }
+            }
             lineBlocks.set(row.line_idx, set);
             set.forEach(b => (blockLines.get(b) || blockLines.set(b, []).get(b)).push(row.line_idx));
+            let d = null, best = 0;
+            c.forEach((k, b) => { if (k > best) { best = k; d = b; } });
+            if (d !== null) { prev = d; conf.set(row.line_idx, c.size > 1 ? 'mixed' : 'pure'); }
+            else { d = prev; conf.set(row.line_idx, d === null ? 'none' : 'inherit'); }
+            dom.set(row.line_idx, d);
+            counts.set(row.line_idx, c);
         }
-        return (this._cfgMaps = { lineBlocks, blockLines, rowOf });
+        return (this._cfgMaps = { lineBlocks, blockLines, rowOf, dom, conf, counts, blockFeats });
     },
 
     loadCfgPanel() {
@@ -424,26 +432,100 @@ window.FunctionView = {
             const cls = `k-${escapeAttr(b.kind)}${b.i === this.cfg.entry ? ' k-entry' : ''}`;
             nodes += `<button class="xp-cell xp-cfn ${cls}" style="left:${p.x}px;top:${p.y}px" data-cfb="${Number(b.i)}" title="${escapeAttr(`block ${b.i} · ${b.kind} · ${n} lines · ${b.ops} ops · ${b.start}`)}">${Number(b.i)}</button>`;
         });
-        el.innerHTML = `<p class="xp-hint">${blocks.length} Ghidra high-pcode blocks. Green outline: entry; tint by kind (conditional, red return, amber switch). Dashed arcs are back edges. Hover for the code, click to open it in the Code tab. Click a line number in the code to mark its blocks here.</p>
-            <div class="xp-cfgw" style="width:${Math.round(W * sc)}px;height:${Math.round(H * sc)}px"><div class="xp-cfg" id="fn-cfg-graph" style="width:${W}px;height:${H}px;transform:scale(${sc})"><svg width="${W}" height="${H}">${svg}</svg>${nodes}</div></div>`;
-        el.addEventListener('mouseover', e => this.cfgHover(e, true));
-        el.addEventListener('mouseout', e => this.cfgHover(e, false));
-        el.addEventListener('click', e => {
-            const n = e.target.closest('[data-cfb]');
-            if (n) this.cfgSelect([Number(n.dataset.cfb)], true);
-        });
+        this.cfgLines = this.cfgLinesPref();
+        const order = blocks.map((b, k) => [b, g.row.get('r' + k), g.L.x.get('r' + k)]).sort((a, b) => a[1] - b[1] || a[2] - b[2]).map(x => x[0]);
+        el.innerHTML = `<p class="xp-hint">${blocks.length} Ghidra high-pcode blocks. Green outline: entry; tint by kind (conditional, red return, amber switch). Dashed arcs are back edges. Hover or click a block to see its lines, hover or click a line to see its blocks. <label class="cl-lab"><input type="checkbox" id="fn-cfg-lines"${this.cfgLines ? ' checked' : ''}> Lines</label></p>
+            <div class="cl-row"><div class="xp-cfgw" style="width:${Math.round(W * sc)}px;height:${Math.round(H * sc)}px"><div class="xp-cfg" id="fn-cfg-graph" style="width:${W}px;height:${H}px;transform:scale(${sc})"><svg width="${W}" height="${H}">${svg}</svg>${nodes}</div></div>${this.cfgLines ? `<div class="cl-col" id="fn-cfg-col">${this.cfgColumnHtml(order)}</div>` : ''}</div>`;
+        el.querySelector('#fn-cfg-lines').onchange = e => {
+            try { localStorage.setItem('fnCfgLines', e.target.checked ? '1' : '0'); } catch (_) {}
+            this._cfgDone = false;
+            this.loadCfgPanel();
+        };
+        if (!this._cfgBound) {
+            this._cfgBound = true;
+            el.addEventListener('mouseover', e => this.cfgHover(e, true));
+            el.addEventListener('mouseout', e => this.cfgHover(e, false));
+            el.addEventListener('click', e => this.cfgClick(e));
+            el.addEventListener('pointerover', e => e.target.closest('#fn-cfg-col') && this.handleHoverMove(e, true));
+            el.addEventListener('pointerout', e => e.target.closest('#fn-cfg-col') && this.handleHoverMove(e, false));
+            // Code lines -> blocks: hover shows them in the graph, a click on the line number keeps them marked.
+            this.scrollEl.addEventListener('mouseover', e => this.cfgLineBlocks(e, false));
+            this.scrollEl.addEventListener('mouseout', () => this.cfgMark());
+            this.scrollEl.addEventListener('click', e => { if (e.target.closest('.gutter')) this.cfgLineBlocks(e, true); });
+        }
         this.cfgMark();
-        // Code lines -> blocks: hover shows them in the graph, a click on the line number keeps them marked.
-        this.scrollEl.addEventListener('mouseover', e => this.cfgLineBlocks(e, false));
-        this.scrollEl.addEventListener('mouseout', () => this.cfgMark());
-        this.scrollEl.addEventListener('click', e => { if (e.target.closest('.gutter')) this.cfgLineBlocks(e, true); });
+    },
+
+    cfgLinesPref() {
+        try { return localStorage.getItem('fnCfgLines') !== '0'; } catch (_) { return true; }
+    },
+
+    // "Code by block": lines grouped under the block they were assigned to, in graph reading order.
+    cfgColumnHtml(order) {
+        const { blockLines, rowOf, dom, conf, counts, blockFeats } = this.cfgMaps();
+        const byBlock = new Map(), loose = [];
+        for (const row of this.funcRows) {
+            const d = dom.get(row.line_idx);
+            if (d === null) loose.push(row.line_idx);
+            else (byBlock.get(d) || byBlock.set(d, []).get(d)).push(row.line_idx);
+        }
+        const known = new Set(order.map(b => b.i));
+        const chip = (b, n) => `<button class="cl-chip" data-lo="${Number(b)}" title="also touches block ${Number(b)}">b${Number(b)}${n > 1 ? '&times;' + Number(n) : ''}</button>`;
+        const lineHtml = ln => {
+            const row = rowOf.get(ln), cf = conf.get(ln), d = dom.get(ln);
+            const tag = cf === 'mixed' ? [...counts.get(ln)].filter(([b]) => b !== d).map(([b, n]) => chip(b, n)).join('')
+                : cf === 'inherit' ? '<span class="cl-hint" title="no op tokens on this line: assigned to the previous line\'s block">inherited</span>' : '';
+            const toks = row.tokens.map(t => window.renderTokenHtml(t, { inlineHoverHandlers: false })).join('');
+            return `<div class="cl-line c-${cf}" data-ln="${Number(ln)}"><span class="cl-num">${Number(ln)}</span><span class="cl-code">${toks || ' '}</span><span class="cl-tag">${tag}</span></div>`;
+        };
+        let html = '';
+        if (loose.length) html += `<div class="cl-band cl-none"><div class="cl-bh"><b>no block</b><span>${loose.length} lines before the first op</span></div>${loose.map(lineHtml).join('')}</div>`;
+        for (const b of order) {
+            const ls = byBlock.get(b.i) || [], mixed = ls.filter(l => conf.get(l) === 'mixed').length, inh = ls.filter(l => conf.get(l) === 'inherit').length;
+            const succ = b.out.filter(o => known.has(o)).map(o => 'b' + Number(o)).join(', ');
+            const range = ls.length ? `L${ls[0]}&ndash;${ls[ls.length - 1]}` : 'no lines';
+            html += `<div class="cl-band" data-lb="${Number(b.i)}"><div class="cl-bh"><b>b${Number(b.i)}</b><span class="cl-k k-${escapeAttr(b.kind)}">${escapeHtml(b.kind)}</span><span>${range}</span><span>${ls.length} lines${mixed ? `, ${mixed} mixed` : ''}${inh ? `, ${inh} inherited` : ''}</span><span>${(blockFeats.get(b.i) || []).size} feat</span><span>${succ ? '&rarr; ' + succ : 'exit'}</span><a href="#" class="cl-open" data-lopen="${Number(b.i)}">open in Code</a></div>${ls.map(lineHtml).join('')}</div>`;
+        }
+        return html;
+    },
+
+    cfgClick(e) {
+        const col = e.target.closest('#fn-cfg-col');
+        if (!col) {
+            const n = e.target.closest('[data-cfb]');
+            if (n) this.cfgSelect([Number(n.dataset.cfb)], !this.cfgLines);
+            if (n && this.cfgLines) this.cfgScroll(Number(n.dataset.cfb));
+            return;
+        }
+        const open = e.target.closest('[data-lopen]');
+        if (open) { e.preventDefault(); this.cfgSelect([Number(open.dataset.lopen)], true); return; }
+        if (e.target.closest('.token')) { this.onTokenClick(e); return; }
+        const chip = e.target.closest('[data-lo]');
+        if (chip) { this.cfgSelect([Number(chip.dataset.lo)]); this.cfgScroll(Number(chip.dataset.lo)); return; }
+        const line = e.target.closest('.cl-line');
+        if (line) this.cfgSelect(this.cfgLineSet(Number(line.dataset.ln)));
+        else if (e.target.closest('[data-lb]')) this.cfgSelect([Number(e.target.closest('[data-lb]').dataset.lb)]);
+    },
+
+    cfgLineSet(ln) {
+        const { dom, lineBlocks } = this.cfgMaps(), d = dom.get(ln);
+        return [...new Set([d, ...lineBlocks.get(ln)])].filter(b => b !== null && b !== undefined);
+    },
+
+    cfgScroll(b) {
+        const col = document.getElementById('fn-cfg-col'), band = col?.querySelector(`.cl-band[data-lb="${b}"]`);
+        if (band) col.scrollTo({ top: band.offsetTop - 4, behavior: 'smooth' });
     },
 
     cfgMark(extra) {
-        document.querySelectorAll('#fn-cfg-graph .xp-cfpair').forEach(x => x.classList.remove('xp-cfpair'));
-        for (const b of [...(this.cfgSel || []), ...(extra || [])]) {
+        const marked = new Set([...(this.cfgSel || []), ...(extra || [])]);
+        document.querySelectorAll('#fn-cfg-graph .xp-cfpair, #fn-cfg-col .hi, #fn-cfg-col .target-highlight').forEach(x => x.classList.remove('xp-cfpair', 'hi', 'target-highlight'));
+        const dom = this._cfgMaps?.dom;
+        for (const b of marked) {
             document.querySelector(`#fn-cfg-graph [data-cfb="${b}"]`)?.classList.add('xp-cfpair');
+            document.querySelector(`#fn-cfg-col .cl-band[data-lb="${b}"]`)?.classList.add('hi');
         }
+        document.querySelectorAll('#fn-cfg-col .cl-line').forEach(l => marked.has(dom.get(Number(l.dataset.ln))) && l.classList.add('target-highlight'));
     },
 
     cfgLineBlocks(e, keep) {
@@ -472,6 +554,13 @@ window.FunctionView = {
     },
 
     cfgHover(e, on) {
+        const lb = e.target.closest('#fn-cfg-col [data-lb], #fn-cfg-col .cl-line, #fn-cfg-col [data-lo]');
+        if (lb) {
+            if (lb.contains(e.relatedTarget)) return;
+            const o = lb.closest('[data-lo]'), l = lb.closest('.cl-line'), band = lb.closest('[data-lb]');
+            this.cfgMark(!on ? [] : o ? [Number(o.dataset.lo)] : l ? this.cfgLineSet(Number(l.dataset.ln)) : [Number(band.dataset.lb)]);
+            return;
+        }
         const n = e.target.closest('[data-cfb]');
         if (!n || n.contains(e.relatedTarget)) return;
         document.querySelectorAll('.cfg-tip').forEach(x => x.remove());
@@ -479,6 +568,7 @@ window.FunctionView = {
         if (!on) return;
         const b = Number(n.dataset.cfb), { blockLines, rowOf } = this.cfgMaps();
         this.cfgMark([b]);
+        if (this.cfgLines) return;
         const lines = (blockLines.get(b) || []).map(i => {
             const row = rowOf.get(i);
             return `${String(i).padStart(3)}  ${row.tokens.map(t => (window.renderTokenHtml ? window.renderTokenHtml(t, {}) : escapeHtml(t.text))).join('')}`;
@@ -1073,6 +1163,18 @@ window.FunctionView = {
             node = node.parentNode;
         }
         return null;
+    },
+
+    onTokenClick(e) {
+        const token = this.findToken(e);
+        if (!token) return;
+        const calledFuncId = token.getAttribute('data-called-func-id');
+        if (calledFuncId) {
+            this.navigateToFunction(calledFuncId, token.getAttribute('data-is-external') === 'true', e);
+            return;
+        }
+        const hashes = token.getAttribute('data-hashes');
+        if (hashes && window.toggleLock) window.toggleLock(hashes, token);
     },
 
     handleHoverMove(e, state) {

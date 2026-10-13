@@ -3237,3 +3237,30 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .xp-drow code.gap { background: repeating-linear-gradient(135deg, transparent 0 6px, var(--hover) 6px 12px); }
 
 .xp-pane pre .xp-callpair, .xp-fcode .xp-callpair { background: color-mix(in srgb, var(--token-register) 25%, transparent); text-decoration-style: solid; border-radius: 2px; }
+
+/* Single-function CFG tab: code grouped by block beside the graph */
+.cl-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+.cl-row > .xp-cfgw { margin: 8px 0; flex: 0 0 auto; }
+.cl-lab { margin-left: 8px; cursor: pointer; white-space: nowrap; }
+.cl-col { position: relative; flex: 1 1 380px; min-width: 0; max-height: 78vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); }
+.cl-band { border-left: 4px solid var(--border); border-bottom: 1px solid var(--border); }
+.cl-band.hi { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.cl-none { border-left-style: dashed; }
+.cl-bh { display: flex; flex-wrap: wrap; gap: 2px 12px; align-items: center; padding: 4px 10px; background: var(--bg); font-size: 0.72rem; color: var(--dim); cursor: pointer; }
+.cl-bh b { color: var(--text); font-family: 'Consolas', monospace; }
+.cl-k.k-cond { color: var(--accent); }
+.cl-k.k-ret { color: var(--token-instruction); }
+.cl-k.k-switch { color: var(--token-warning); }
+.cl-open { margin-left: auto; color: var(--accent); }
+.cl-line { min-width: max-content; display: flex; gap: 8px; align-items: baseline; padding: 0 10px; font: 0.76rem/1.55 'Consolas', monospace; }
+.cl-line:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.cl-line.target-highlight { box-shadow: inset 3px 0 0 var(--success); }
+.cl-num { flex: 0 0 3ch; text-align: right; color: var(--dim); user-select: none; }
+.cl-code { flex: 1 1 auto; white-space: pre; }
+.cl-tag { flex: 0 0 auto; display: inline-flex; gap: 3px; }
+.cl-line.c-mixed { border-right: 3px solid var(--token-warning); }
+.cl-line.c-inherit .cl-code { opacity: 0.8; }
+.cl-line.c-none { border-right: 3px dashed var(--token-instruction); }
+.cl-hint { font-size: 0.64rem; color: var(--dim); font-style: italic; }
+.cl-chip { font: 0.64rem 'Consolas', monospace; padding: 0 5px; border: 1px solid var(--token-warning); border-radius: 8px; background: none; color: var(--token-warning); cursor: pointer; }
+.cl-chip:hover { background: var(--xp-warn-bg); }

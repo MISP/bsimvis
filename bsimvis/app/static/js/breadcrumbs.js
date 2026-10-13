@@ -283,7 +283,7 @@ window.Breadcrumbs = {
                 if (window.location.pathname.endsWith('/nway/function') && window.NwayPanel) {
                     const q = new URLSearchParams(window.location.search);
                     const back = q.get('fx_back') || '';
-                    segments.push({
+                    if (q.get('scope') !== 'functions') segments.push({
                         label: 'N-way diff',
                         url: back.startsWith('/') && !back.startsWith('//') ? back : window.NwayPanel.backUrl(q),
                         icon: 'fa-solid fa-code-compare'

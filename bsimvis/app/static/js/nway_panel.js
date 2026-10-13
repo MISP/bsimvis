@@ -1671,5 +1671,11 @@
         return `/diff/nway?md5s=${encodeURIComponent(md5s)}${pool ? `&pool=${encodeURIComponent(pool)}` : anchor ? `&collection=${encodeURIComponent(anchor)}` : ''}`;
     };
 
+    // Family view of any set of functions (`coll:func:md5:addr` ids), whatever their files or collections.
+    NwayPanel.urlForFunctions = function (fids, name) {
+        const qs = new URLSearchParams({ scope: 'functions', fx_fids: [...new Set(fids)].join(','), fx_name: name || `${fids.length} functions`, fx_tab: 'facets' });
+        return `/diff/nway/function?${qs.toString()}`;
+    };
+
     window.NwayPanel = NwayPanel;
 })();

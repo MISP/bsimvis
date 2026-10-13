@@ -754,7 +754,10 @@ def get_nway_facets():
     if len(fids) < 2:
         abort(400, "fids needs at least two function ids")
     if len(fids) > nway_diff_service.caps()[0]:
-        abort(400, "too many fids")
+        abort(
+            400,
+            f"too many functions: at most {nway_diff_service.caps()[0]} per N-way diff",
+        )
     scope = request.args.get("scope", "files")
     if scope not in ("files", "functions"):
         abort(400, "scope must be files or functions")

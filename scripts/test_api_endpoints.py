@@ -5183,6 +5183,25 @@ def test_nway_diff():
             ),
             str(_cons)[:200],
         )
+        _ids = {blk["id"] for blk in _cons.get("blocks", [])}
+        check(
+            "nway facets: blocks carry hash counts; CFG nodes, edges and matches line up",
+            _b.get("level") != "full"
+            or (
+                all(isinstance(blk.get("hashes"), int) for blk in _cons["blocks"])
+                and isinstance(_cons.get("cfg"), dict)
+                and all(
+                    all(0 <= x < len(g["nodes"]) for e in g["edges"] for x in e)
+                    and set(g["match"].values()) <= _ids
+                    and all(isinstance(nd["bb"], list) for nd in g["nodes"])
+                    for g in _cons["cfg"].values()
+                )
+                # a reference with a CFG labels every block with its Ghidra blocks
+                and (str(_ref) in _cons["cfg"])
+                == all("bb" in blk for blk in _cons["blocks"])
+            ),
+            str(_cons.get("cfg"))[:200],
+        )
         _r = requests.get(_fx + "/titles", params={**_base, "fids": _fids}, timeout=60)
         _t = _r.json() if _r.status_code == 200 else {}
         check(

@@ -361,12 +361,32 @@ def _cfg_spans(src, texts, by_line, feats):
                         succ[group[u]].append(v)
         return succ
 
+    def has_loop(bbs):
+        seen, stack = set(), set()
+
+        def dfs(x):
+            seen.add(x)
+            stack.add(x)
+            for t in out_of.get(x, ()):
+                if t in bbs and (t in stack or (t not in seen and dfs(t))):
+                    return True
+            stack.discard(x)
+            return False
+
+        return any(x not in seen and dfs(x) for x in bbs)
+
+    loop = [has_loop(t) for t in touched]
     ident = list(range(len(runs)))
     succ0 = graph(ident, len(runs))
     pred0 = [[u for u in range(len(runs)) if v in succ0[u]] for v in ident]
     group = []
     for u in ident:
-        joined = u and succ0[u - 1] == [u] and pred0[u] == [u - 1]
+        joined = (
+            u
+            and succ0[u - 1] == [u]
+            and pred0[u] == [u - 1]
+            and not (loop[u - 1] or loop[u])
+        )
         group.append(group[-1] if joined else (group[-1] + 1 if group else 0))
     count = group[-1] + 1
     succ = graph(group, count)

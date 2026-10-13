@@ -64,7 +64,9 @@ window.NwayView = {
             }
         }
         this.destroy();
-        this._familyFids = Object.values(cells).filter(v => typeof v === 'string');
+        this._familyFids = source.scope === 'functions'
+            ? [...new Set((fx.fids || '').split(',').filter(Boolean))]
+            : Object.values(cells).filter(v => typeof v === 'string');
         if (!this._familyFids.length) {
             this._container.innerHTML = '<div class="nway-state">This link has no function to graph.</div>';
             return;
@@ -72,13 +74,14 @@ window.NwayView = {
         this._familyName = cg.name || fx.name || '';
         this._familySource = source;
         this._familyDoc = doc;
-        this._familyState = { tab: fx.tab || 'graph', cv: fx.cv || 'blocks', bm: ['hybrid', 'cfg', 'text'].includes(fx.bm) ? fx.bm : 'hybrid', only: fx.only === '1', single: fx.single === '1' };
-        if (!['graph', 'simple', 'facets', 'code', 'pair'].includes(this._familyState.tab)) this._familyState.tab = 'graph';
+        this._fnScope = source.scope === 'functions';
+        this._familyState = { tab: fx.tab || (this._fnScope ? 'facets' : 'graph'), cv: fx.cv || 'blocks', bm: ['hybrid', 'cfg', 'text'].includes(fx.bm) ? fx.bm : 'hybrid', only: fx.only === '1', single: fx.single === '1' };
+        if (!['graph', 'simple', 'facets', 'code', 'pair'].includes(this._familyState.tab) || (this._fnScope && this._familyState.tab === 'graph')) this._familyState.tab = this._fnScope ? 'facets' : 'graph';
         if (fx.fn !== undefined && fx.fn !== '') this._familyState.fn = Number(fx.fn);
         this._container.innerHTML = `<div class="nway-view nway-function-view">
             <div class="nway-head"><h2 id="nway-family-name"></h2></div>
             <div class="xp-bar"><div id="nway-family-tabs" class="bsim-tabbar" role="tablist" style="margin:0">
-                ${[['graph', 'Graph'], ['simple', 'Simple'], ['facets', 'Facets'], ['code', 'Code blocks'], ['pair', 'Pair diff']].map(([k, label]) => `<button class="bsim-tab" role="tab" data-family-tab="${k}">${label}</button>`).join('')}
+                ${[['graph', 'Graph'], ['simple', 'Simple'], ['facets', 'Facets'], ['code', 'Code blocks'], ['pair', 'Pair diff']].filter(([k]) => !(this._fnScope && k === 'graph')).map(([k, label]) => `<button class="bsim-tab" role="tab" data-family-tab="${k}">${label}</button>`).join('')}
             </div></div>
             <div id="nway-graph-host" class="nway-cgp" style="height:calc(100vh - 240px);min-height:400px;"></div>
             <div id="nway-fn-host" hidden></div>
@@ -96,6 +99,13 @@ window.NwayView = {
             this._showFamilyTab();
         };
         let graphReady = false;
+        if (this._fnScope) {
+            // A free function set has no file-level graph: show the comparison directly.
+            this._familyName = this._familyName || `${this._familyFids.length} functions`;
+            this._writeFamilyState();
+            this._showFamilyTab();
+            return;
+        }
         this._panel = new NwayPanel(document.getElementById('nway-graph-host'), {
             source, state: doc, cg: { ...cg, name: this._familyName, cells },
             onCg: url => {

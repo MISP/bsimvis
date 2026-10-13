@@ -455,6 +455,16 @@
                     <span>N-way Diff of ${nwayFiles.length} Files</span>
                 </div>`;
             }
+            // N-way diff of the selected functions themselves, whatever their files or collections.
+            const nwayFns = window.getSelectedTableIds('function').filter(id => id.includes(':func:'));
+            if (nwayFns.length >= 2 && window.NwayPanel) {
+                const fnUrl = NwayPanel.urlForFunctions(nwayFns);
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(fnUrl))}, event, { title: 'N-way diff', type: 'bin_sim' })">
+                    <i class="fa-solid fa-table-columns" style="width: 16px; text-align: center; opacity: 0.8; color: #fd971f;"></i>
+                    <span>N-way Diff of ${nwayFns.length} Functions</span>
+                </div>`;
+            }
             // The selected rows, or this function alone when nothing is selected.
             const llmIds = `(window.getSelectedTableIds && window.getSelectedTableIds('function').length ? window.getSelectedTableIds('function') : [${jsString(norm.id)}])`;
             actionsSubmenuHtml += renderLLMSubmenu(`{ funcIds: ${llmIds} }`);

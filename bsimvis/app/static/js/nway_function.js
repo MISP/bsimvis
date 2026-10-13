@@ -167,8 +167,10 @@
         }
 
         _fileRef(j, cls = 'xp-fn', link = true) {
-            const f = this.data.functions[j], { md5 } = parts(this.fids[j] || '');
-            return `<span class="${cls}${link ? ' xp-entity-link' : ''}"${link ? ` data-xfile="${j}" role="link" tabindex="0" title="${escapeAttr(`${f.file_name || md5} (${md5})`)}"` : ''}>${escapeHtml(f.file_name || md5)}</span>`;
+            const f = this.data.functions[j], { coll, md5 } = parts(this.fids[j] || '');
+            // Functions picked from several collections: say which one each column is from.
+            const label = new Set(this.data.functions.map(x => x.collection)).size > 1 ? `${coll} / ${f.file_name || md5}` : (f.file_name || md5);
+            return `<span class="${cls}${link ? ' xp-entity-link' : ''}"${link ? ` data-xfile="${j}" role="link" tabindex="0" title="${escapeAttr(`${label} (${md5})`)}"` : ''}>${escapeHtml(label)}</span>`;
         }
 
         _md5Ref(j) {

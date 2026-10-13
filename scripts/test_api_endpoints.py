@@ -5213,6 +5213,35 @@ def test_nway_diff():
             _fx, params={**_base, "fids": _fids, "blocks": "x"}, timeout=30
         )
         check("nway facets: unknown blocks mode is a 400", _r.status_code == 400)
+        # Function-set scope: the same fids with no file set.
+        _r = requests.get(
+            _fx, params={"scope": "functions", "fids": _fids}, timeout=120
+        )
+        _bf = _r.json() if _r.status_code == 200 else {}
+        check(
+            "nway facets scope=functions: fids alone give a full matrix and a medoid reference",
+            _r.status_code == 200
+            and len(_bf["functions"]) == _nf
+            and len(_bf["similarity"]) == _nf
+            and all(_bf["similarity"][i][i] == 1.0 for i in range(_nf))
+            and 0 <= _bf["reference"] < _nf
+            and all(f.get("collection") for f in _bf["functions"]),
+            f"HTTP {_r.status_code} {str(_bf)[:200]}",
+        )
+        _r = requests.get(
+            _fx,
+            params={
+                "scope": "functions",
+                "fids": _fids.split(",")[0] + ",nope:func:" + "a" * 32 + ":1",
+            },
+            timeout=30,
+        )
+        check(
+            "nway facets scope=functions: unknown function is a 404",
+            _r.status_code == 404,
+        )
+        _r = requests.get(_fx, params={"scope": "x", "fids": _fids}, timeout=30)
+        check("nway facets: unknown scope is a 400", _r.status_code == 400)
         if _b.get("level") == "full":
             _rt = requests.get(
                 _fx, params={**_base, "fids": _fids, "blocks": "text"}, timeout=120

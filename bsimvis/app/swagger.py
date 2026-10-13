@@ -2617,6 +2617,7 @@ class BinSimNwayFacets(Resource):
         params={
             "fids": "Comma-separated function ids of one N-way row (at least 2)",
             "blocks": "Code blocks: hybrid (default; Ghidra basic blocks where stored, text elsewhere), cfg (Ghidra only) or text",
+            "scope": "files (default; file set params below) or functions (fids alone, any collections, scored pairwise from their vectors; optional algo / min_score)",
             "md5s": "Same file set / scope params as /nway (cluster_uuid, collection, pool, mode, min_edge, ...)",
         }
     )

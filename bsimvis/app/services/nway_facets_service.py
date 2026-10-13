@@ -91,6 +91,10 @@ def pair_scores(doc, fids):
     out = [[None] * n for _ in range(n)]
     for i in range(n):
         out[i][i] = 1.0
+    if "fscore" in doc:
+        for i, j in combinations(range(n), 2):
+            out[i][j] = out[j][i] = doc["fscore"].get(frozenset((fids[i], fids[j])))
+        return out
     for i, j in combinations(range(n), 2):
         for key in ((cols[i], cols[j]), (cols[j], cols[i])):
             for a, b, s in doc["edges"].get(key, ()):
@@ -1071,6 +1075,7 @@ def compute(r, doc, fids, mode="hybrid"):
         "functions": [
             {
                 "id": f,
+                "collection": split_fid(f)[0],
                 "letter": letter(j),
                 "file_name": (cols.get(_col_id(*split_fid(f)[:2])) or {}).get(
                     "file_name"

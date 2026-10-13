@@ -45,6 +45,7 @@ from bsimvis.app.services.collection_config import (
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.nway_match import nway_match
 
+_MD5 = re.compile(r"^[0-9a-f]{32}$")
 _DEFAULT_NAME = re.compile(r"^(FUN_|sub_|thunk_)", re.I)
 
 
@@ -342,6 +343,29 @@ def _stored_edges(r, scope, members, columns, algo):
     return edges, fallback
 
 
+def _fn_meta(meta):
+    """The function fields the N-way views show."""
+    out = {
+        k: meta[k]
+        for k in (
+            "name",
+            "user_name",
+            "user_name_source",
+            "namespace",
+            "entrypoint_address",
+            "tags",
+            "user_tags",
+            "parameters",
+            "return_type",
+            "bsim_features_count",
+        )
+        if k in meta
+    }
+    if "function_name" in meta:
+        out["name"] = meta["function_name"]
+    return out
+
+
 def _load_base(r, scope, members, vparams, labels, warnings):
     """Everything min_edge-independent: columns, function weights, metadata, edges.
 
@@ -377,24 +401,7 @@ def _load_base(r, scope, members, vparams, labels, warnings):
         meta = _decode(raw)
         weights[fid] = float(meta.get("bsim_features_count") or 0) or 1.0
         library[fid] = any(is_library_tag(t) for t in merge_tag_fields(meta))
-        fmeta[fid] = {
-            k: meta[k]
-            for k in (
-                "name",
-                "user_name",
-                "user_name_source",
-                "namespace",
-                "entrypoint_address",
-                "tags",
-                "user_tags",
-                "parameters",
-                "return_type",
-                "bsim_features_count",
-            )
-            if k in meta
-        }
-        if "function_name" in meta:
-            fmeta[fid]["name"] = meta["function_name"]
+        fmeta[fid] = _fn_meta(meta)
 
     columns = [
         {
@@ -673,6 +680,80 @@ def compute(r, scope, members, params=None):
         "edges": base["edges"],
     }
     _DOC_CACHE.put(doc_key, doc)
+    return doc
+
+
+def compute_functions(r, fids, params=None):
+    """Doc for a free set of functions (any collections), nothing written.
+
+    Same shape `nway_facets_service.compute` reads from a file-level doc: one
+    synthetic row holding every function, `fscore` pairwise scores instead of
+    file-pair edges. Scores come from the tf vectors with the same
+    `discover_edges` + `virtual_params` the virtual mode uses.
+    """
+    params = params or {}
+    fids = list(dict.fromkeys(fids))
+    check_caps(len(fids))
+    parsed = []
+    for f in fids:
+        coll, _, rest = f.partition(":func:")
+        md5 = rest.partition(":")[0]
+        if not coll or not _MD5.match(md5):
+            raise BadParams(f"bad function id {f!r}")
+        parsed.append((_origin_coll(coll), md5))
+    colls = sorted({c for c, _ in parsed})
+    members = list(dict.fromkeys(parsed))
+    vparams, warnings = virtual_params({"collections": colls}, members, params)
+    revs = [(read_bin_sim_rev(r, c), read_tags_rev(r, c)) for c in colls]
+    key = hashlib.md5(
+        repr((sorted(fids), vparams, revs, warnings)).encode()
+    ).hexdigest()
+    doc = _DOC_CACHE.get(("fns", key))
+    if doc is not None:
+        return doc
+
+    pipe = r.pipeline(transaction=False)
+    for f in fids:
+        pipe.get(f"{f}:meta")
+    metas = [_decode(x) for x in pipe.execute()]
+    missing = [f for f, m in zip(fids, metas) if not m]
+    if missing:
+        raise MemberMissing(missing)
+    fmeta = {f: _fn_meta(m) for f, m in zip(fids, metas)}
+
+    vectors = load_vectors(r, fids)
+    fscore = {
+        frozenset((a, b)): round(float(s), 4)
+        for a, b, s in discover_edges(
+            vectors, set(fids), set(fids), vparams["algo"], 0.0
+        )
+        if a < b
+    }
+    names = _file_names(r, members)
+    columns = [
+        {
+            "id": _col_id(c, m),
+            "collection": c,
+            "md5": m,
+            "file_name": names[_col_id(c, m)],
+        }
+        for c, m in members
+    ]
+    weights = {f: float(fmeta[f].get("bsim_features_count") or 0) or 1.0 for f in fids}
+    name, n_names = _label(fids, fmeta, weights)
+    doc = {
+        "mode": "functions",
+        "algo": vparams["algo"],
+        "columns": columns,
+        "file_columns": None,
+        "rows": [{"cells": {f: f for f in fids}, "name": name, "names": n_names}],
+        "fmeta": fmeta,
+        "warnings": warnings,
+        "key": key,
+        "edges": {},
+        "fscore": fscore,
+    }
+    _DOC_CACHE.put(("fns", key), doc)
     return doc
 
 

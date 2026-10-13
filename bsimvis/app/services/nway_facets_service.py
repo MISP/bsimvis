@@ -18,7 +18,6 @@ Work is capped by function count (`nway.facet_max_functions` and
 (`nway.max_code_blocks`).
 """
 
-import difflib
 import hashlib
 import json
 import threading
@@ -83,6 +82,13 @@ def split_fid(fid):
     return coll, md5, addr
 
 
+# (long *), (byte **), (undefined1 (*) [16]): a pointer cast whatever the type is called
+_CAST = re.compile(
+    r"\s*(?:[A-Za-z_]\w*\s+)*[A-Za-z_]\w*\s*(?:(?:\*\s*)+|\(\*\)\s*\[\d+\]\s*)"
+)
+_OPS = set("+-*/%<>=!&|^~")
+
+
 def _keys(toks, sig=False):
     """Comparison key per token, None where it carries no meaning across builds.
 
@@ -112,17 +118,23 @@ def _keys(toks, sig=False):
             if keys[i] and t.isidentifier() and nxt == "(":
                 keys[i] = "N"
                 break
-    i = 0
-    while i < len(toks):
-        if toks[i] == "(":
-            j, typed = i + 1, False
-            while j < len(toks) and keys[j] in (None, "T", "*", "const"):
-                typed = typed or keys[j] == "T"
-                j += 1
-            if typed and j < len(toks) and toks[j] == ")":
+    for i, t in enumerate(toks):
+        if t == "(" and keys[i]:
+            j, depth = 0, 1
+            for k in range(i + 1, min(i + 12, len(toks))):
+                depth += (toks[k] == "(") - (toks[k] == ")")
+                if not depth:
+                    j = k
+                    break
+            inner = "".join(toks[i + 1 : j]) if j else ""
+            if j and (
+                _CAST.fullmatch(inner)
+                or (
+                    any(k == "T" for k in keys[i + 1 : j])
+                    and all(k in (None, "T", "const") for k in keys[i + 1 : j])
+                )
+            ):
                 keys[i : j + 1] = [None] * (j + 1 - i)
-                i = j
-        i += 1
     return keys
 
 
@@ -219,23 +231,111 @@ def _callee_key(fid, fmeta, row_of, rows):
     return f"name:{name}", name
 
 
+def _num(t):
+    """Value of a C integer literal; 0xffffffff and -1 are the same constant."""
+    m = _NUM.match(t)
+    if not m:
+        return None
+    v = int(m.group(1), 16 if m.group(1)[1:2] in "xX" else 10)
+    for bits in (32, 64):
+        if (1 << bits) - 0x10000 <= v < 1 << bits:
+            return v - (1 << bits)
+    return v
+
+
+def _items(toks, keys):
+    """What a reader compares across builds, as [(first token, last token, key)].
+
+    Operators, constants, string literals and callee names. Not content: local,
+    parameter and generated names (the same argument is `param_2`, `in_a1` or
+    `local_res8` depending on build and ABI; the features see its dataflow),
+    types, casts, grouping, layout, and a constant that only offsets a pointer
+    (`param_1 + 0x74`), which is a field position and moves with the struct
+    layout.
+    """
+    n, out, i = len(toks), [], 0
+    sig = [k for k in range(n) if keys[k] is not None]
+    pos = {k: x for x, k in enumerate(sig)}
+    near = lambda k, d: toks[sig[pos[k] + d]] if 0 <= pos[k] + d < len(sig) else ""
+    while i < n:
+        t, k = toks[i], keys[i]
+        if k is None:
+            i += 1
+        elif t == '"':
+            j = i + 1
+            while j < n and toks[j] != '"':
+                j += 2 if toks[j] == "\\" else 1
+            out.append((i, min(j, n - 1), "s:" + "".join(toks[i + 1 : j])))
+            i = j + 1
+        elif t in _OPS:
+            j = i
+            while j + 1 < n and toks[j + 1] in _OPS and keys[j + 1] is not None:
+                j += 1
+            op = "".join(toks[i : j + 1])
+            if op.startswith("/*"):  # a comment: skip to its end
+                while j < n and not (
+                    toks[j] == "/" and toks[j - 1] == "*" and j > i + 1
+                ):
+                    j += 1
+            else:
+                before = near(i, -1)
+                unary = (
+                    op[-1] == "-"
+                    and _NUM.match(near(j, 1))
+                    and not (
+                        (before[-1:].isalnum() and before not in ("return", "case"))
+                        or before in (")", "]")
+                    )
+                )
+                if op.endswith("=") and op not in ("==", "!=", "<=", ">="):
+                    op = op[:-1]
+                if unary:
+                    op = op[:-1]
+                if op:
+                    out.append((i, j, op))
+                if unary:
+                    v = _num(near(j, 1))
+                    nk = next(x for x in range(j + 1, n) if keys[x] is not None)
+                    if out and out[-1][2] == "+" and before == "+":  # x + -6 is x - 6
+                        out[-1] = (*out[-1][:2], "-")
+                        v = -v
+                    out.append((nk, nk, f"n:{-v}"))
+                    j = nk
+            i = j + 1
+        elif _NUM.match(t):
+            offset = near(i, -1) == "+" and near(i, 1) == ")"
+            if not offset:
+                out.append((i, i, f"n:{_num(t)}"))
+            i += 1
+        elif t.isidentifier():
+            if k not in ("V", "T", "N", "const"):
+                if near(i, 1) == "(" and t not in _NOT_CALL:
+                    out.append((i, i, "c:" + k))
+            i += 1
+        else:
+            i += 1
+    return out
+
+
+def _content(text, sig=False):
+    toks = _TOK.findall(text)
+    return Counter(k for _, _, k in _items(toks, _keys(toks, sig)))
+
+
 def _segments(ref, text, sig=False):
-    """`text` as [[token run, changed]] against the reference line."""
+    """`text` as [[token run, changed]]: the items the reference line has no match for."""
     a, b = _TOK.findall(ref), _TOK.findall(text)
-    ka, kb = _keys(a, sig), _keys(b, sig)
-    ia = [i for i, k in enumerate(ka) if k is not None]
-    ib = [i for i, k in enumerate(kb) if k is not None]
-    sm = difflib.SequenceMatcher(
-        None, [ka[i] for i in ia], [kb[i] for i in ib], autojunk=False
-    )
+    kb = _keys(b, sig)
+    need = Counter(k for _, _, k in _items(a, _keys(a, sig)))
     flag = [False] * len(b)
-    for tag, _, _, j1, j2 in sm.get_opcodes():
-        if tag != "equal":
-            for i in ib[j1:j2]:
-                flag[i] = True
-    # ignored tokens (spaces, casts) read as changed only between changed tokens
+    for first, last, k in _items(b, kb):
+        if need[k] > 0:
+            need[k] -= 1
+        else:
+            flag[first : last + 1] = [True] * (last + 1 - first)
+    # layout between two changed tokens reads as changed
     for i in range(1, len(b) - 1):
-        if kb[i] is None and flag[i - 1] and flag[i + 1]:
+        if b[i].isspace() and flag[i - 1] and flag[i + 1]:
             flag[i] = True
     segs = []
     for tok, changed in zip(b, flag):
@@ -271,6 +371,7 @@ DIFF_CAP = 1500  # longer blocks are shown without token highlights
 TEXT_CAP = 4000  # characters of a block kept for display and token diff
 SEED_MIN = 0.6  # feature-hash Dice for two blocks to seed the CFG alignment
 HASH_MIN = 4  # fewer features than this say nothing about a block
+HASH_SAME = 0.9  # feature Dice from which two blocks have the same dataflow
 PROP_MIN = 0.3  # token-bag Dice for a CFG neighbour of a matched pair to match
 
 
@@ -559,37 +660,27 @@ def _bag(text, ids):
     return bag
 
 
-_NUMLIT = re.compile(r"\b(0[xX][0-9a-fA-F]+|\d+)[uUlL]*\b")
-
-
-def _lits(text):
-    """What BSim features do not see: constants, string literals and callee names."""
-    c = Counter("s:" + x for x in _STR.findall(text))
-    rest = _STR.sub(" ", text)
-    c.update(
-        "n:" + str(int(m.group(1), 16 if m.group(1)[1:2] in "xX" else 10))
-        for m in _NUMLIT.finditer(rest)
-    )
-    c.update("c:" + _ADDR_NAME.sub(r"\1_", n) for n in _calls(rest))
-    return c
-
-
 def _same(r, o):
-    """Same code up to build noise: equal `_norm`, or equal BSim features and literals.
+    """Same code up to build noise.
 
-    The feature set sees through renamed locals and different types, but not
-    through a changed constant, string or callee, so those are compared apart.
+    Equal text once names and types are normalised, or equal content (see
+    `_items`), or BSim features that agree (sees through reordered operands
+    and temporaries) with equal constants, strings and callees, which the
+    features do not encode.
     """
     if r["norm"] == o["norm"]:
         return True
-    hr, ho = set(r.get("H") or r.get("hashes", ())), set(
-        o.get("H") or o.get("hashes", ())
-    )
+    cr, co = r.get("items"), o.get("items")
+    if cr is None or co is None:
+        return False
+    if cr == co:
+        return True
+    hr, ho = (Counter(x["H"] if "H" in x else x.get("hashes", ())) for x in (r, o))
+    lit = lambda c: {k: v for k, v in c.items() if k[0] in "nsc"}
     return (
         min(len(hr), len(ho)) >= HASH_MIN
-        and hr == ho
-        and "lits" in r
-        and r["lits"] == o.get("lits")
+        and _dice(hr, ho) >= HASH_SAME
+        and lit(cr) == lit(co)
     )
 
 
@@ -741,7 +832,7 @@ def _blocks_of(src, feats, cap, max_blocks, callees=(), cfg=False):
                 "text": text[:TEXT_CAP],
                 "syntax": clipped,
                 "norm": _norm(text, a == 0),
-                "lits": _lits(text),
+                "items": _content(text, a == 0),
                 "bag": _bag(text, ids[a:b]),
                 "hashes": hashes,
                 "locals": locals_,
@@ -1466,13 +1557,32 @@ def demo():
     # BSim features agree but a constant moved: the literals break the tie
     blk = lambda text, hs: {
         "norm": _norm(text),
-        "lits": _lits(text),
+        "items": _content(text),
         "hashes": hs,
     }
     hs = {"a", "b", "c", "d"}
     assert _same(blk("x = y * 7;", hs), blk("x = (long)y * 7L;", hs) | {"norm": "z"})
     assert not _same(blk("x = y * 7;", hs), blk("x = y * 9;", hs))
     assert not _same(blk("x = y * 7;", hs), blk("x = y * 7 + 0;", {"a"}))
+    # order-insensitive content: reordered operands, temporaries, -1 spelled 0xffffffff
+    same = lambda a, b: _content(a) == _content(b)
+    assert same(
+        "if ((u - 9 < 5) || (u == 0x20)) {", "if ((v == 0x20) || ((int)v - 9U < 5)) {"
+    )
+    assert same("return -1;", "iVar3 = 0xffffffff;") and same(
+        "x = -1;", "y = 0xffffffffffffffff;"
+    )
+    assert same("a = *(int *)(p + 0x74);", "b = *(long *)(q + 0x70);")  # field offsets
+    assert same("a += b;", "a = a + b;") and same("/* WARNING: x */ a = b;", "a = b;")
+    assert not same("a = b + c;", "a = b - c;") and not same("a = b + 4;", "a = b * 4;")
+    assert same("f(param_1, 2);", "f(in_a1, 2);") and same("x = y + -6;", "x = y - 6;")
+    assert not same('puts("a");', 'puts("b");')
+    assert not same("x = g1(y);", "x = g2(y);") and not same(
+        "if (a == 5)", "if (a == 6)"
+    )
+    assert same("p = (undefined1 (*) [16])q;", "p = q;") and same(
+        "p = (double *)q;", "p = q;"
+    )
     assert _segments("a = 80;", "a = 1024;") == [
         ["a = ", False],
         ["1024", True],
@@ -1563,18 +1673,18 @@ def demo():
         ]
     }
     feat = lambda h: [{"hash": h, "addr_to_token_idx": [2]}]
-    changed = lambda o: any(c for e in o["funcs"]["1"] for t, c in e["text"])
-    run = lambda h1, h2: _consensus(
-        [toks("param_2"), toks("iVar3")], [feat(h1), feat(h2)], 0, 100
-    )
+    run = lambda x, y: _consensus([toks(x), toks(y)], [[], []], 0, 100)
+    cells = lambda o: [b["cells"]["1"]["st"] for b in o["blocks"]]
     got = [
         e
         for b in _blocks_of(toks("param_2"), feat("a1"), 100, 60)[0]
         for e in b["syntax"]
     ]
     assert ["param_2", "variable", None, None, False, ["a1"]] in got
-    assert changed(run("a1", "b2"))  # hashes differ: the spelling diff stands
-    assert not changed(run("a1", "a1"))  # same hash: a renamed local, not a change
+    assert "mod" not in cells(run("iVar3", "uVar9"))  # a renamed local
+    assert "mod" not in cells(
+        run("param_2", "param_3")
+    )  # parameter names are not content
 
     # CFG path: blocks come from tok_block / cfg, features carry block_index.
     def gsrc(lines, edges, nfeat=3):

@@ -3216,7 +3216,51 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 @media (max-width: 760px) { .xp-frow { grid-template-columns: minmax(0, 1fr); } }
 .xp-fband { grid-column: 1 / -1; min-width: 0; display: flex; flex-wrap: wrap; overflow-wrap: anywhere; gap: 8px; align-items: center; font: 0.7rem 'Consolas', monospace; color: var(--dim); padding: 6px 0 2px; }
 .xp-full-head .xp-fband { grid-column: auto; }
-.xp-full-groups { grid-column: 1 / -1; margin: 4px 0 6px; }
+/* (i) tooltip for explanatory texts */
+.xp-info { position: relative; display: inline-flex; vertical-align: middle; width: 16px; height: 16px; border: 1px solid var(--dim); border-radius: 50%; color: var(--dim); cursor: help; align-items: center; justify-content: center; flex: none; }
+.xp-info i { font: italic 600 0.68rem Georgia, serif; }
+.xp-info:hover, .xp-info:focus-visible { color: var(--accent); border-color: var(--accent); }
+.xp-tipbox { display: none; position: absolute; left: 0; top: 22px; z-index: 30; width: max-content; max-width: min(340px, 80vw); background: var(--text); color: var(--bg); font-size: 0.76rem; line-height: 1.45; font-weight: 400; text-transform: none; letter-spacing: 0; padding: 8px 10px; border-radius: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25); white-space: normal; text-align: left; }
+.xp-info:hover .xp-tipbox, .xp-info:focus .xp-tipbox { display: block; }
+
+/* Whole function: block metadata in a gutter, code columns side by side */
+.xp-gwrap { display: grid; grid-template-columns: minmax(0, 1fr) 12px; gap: 8px; align-items: start; }
+.xp-gscroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; }
+.xp-ginner { min-width: calc(76px + (var(--n) + 1) * 240px); }
+.xp-frow.xp-g { grid-template-columns: 76px repeat(calc(var(--n) + 1), minmax(0, 1fr)); gap: 0; margin: 0; border-top: 1px solid var(--border); }
+.xp-g .xp-fcode { border: 0; border-left: 1px solid var(--border); border-radius: 0; }
+.xp-g .xp-fcode.st-mod { background: color-mix(in srgb, var(--xp-warn-bg) 45%, transparent); }
+.xp-g .xp-fcode.st-moved { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.xp-g .xp-fcode.st-restr { background: color-mix(in srgb, var(--token-instruction) 8%, transparent); }
+.xp-g .xp-fcode.st-extra { background: color-mix(in srgb, var(--success) 8%, transparent); }
+.xp-ghead { position: sticky; top: 0; z-index: 3; background: var(--card-bg); border-top: 0; border-bottom: 1px solid var(--border); }
+.xp-ghead .xp-fband { padding: 4px 8px; grid-column: auto; }
+.xp-gut { position: relative; background: var(--hover); padding: 4px 6px; font: 0.68rem 'Consolas', monospace; color: var(--dim); display: flex; flex-direction: column; gap: 3px; align-items: flex-start; min-width: 0; }
+.xp-gid { color: var(--text); font-weight: 600; font-size: 0.74rem; }
+.xp-gut .xp-gl { background: none; font-size: 0.8rem; line-height: 1; }
+.xp-gvar { background: var(--card-bg); border-radius: 4px; padding: 0 5px; }
+.wst-mod > .xp-gut { box-shadow: inset 3px 0 0 var(--token-warning); }
+.wst-moved > .xp-gut { box-shadow: inset 3px 0 0 var(--accent); }
+.wst-restr > .xp-gut, .wst-miss > .xp-gut { box-shadow: inset 3px 0 0 var(--token-instruction); }
+.wst-extra > .xp-gut { box-shadow: inset 3px 0 0 var(--success); }
+.xp-dots { display: flex; gap: 3px; }
+.xp-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+.xp-dots i.st-mod { background: var(--token-warning); }
+.xp-dots i.st-moved { background: var(--accent); }
+.xp-dots i.st-restr, .xp-dots i.st-miss { background: var(--token-instruction); }
+.xp-dots i.st-extra { background: var(--success); }
+.xp-more { display: none; position: absolute; left: 6px; top: 100%; z-index: 6; flex-direction: column; gap: 6px; min-width: 240px; max-width: 420px; padding: 8px; background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25); font: 0.76rem system-ui, sans-serif; white-space: normal; }
+.xp-gut:hover .xp-more, .xp-gut:focus-within .xp-more { display: flex; }
+.xp-more .xp-vchips { margin: 0; }
+.xp-fold button { width: 100%; font: 0.72rem 'Consolas', monospace; color: var(--dim); background: var(--hover); border: 0; border-top: 1px solid var(--border); padding: 3px 0; cursor: pointer; }
+.xp-fold button:hover { color: var(--accent); }
+.xp-rail { position: sticky; top: 40px; height: min(60vh, 420px); display: flex; flex-direction: column; border-radius: 4px; overflow: hidden; background: var(--hover); }
+.xp-rail a { min-height: 3px; cursor: pointer; background: none; }
+.xp-rail a.st-mod { background: var(--token-warning); }
+.xp-rail a.st-moved { background: var(--accent); }
+.xp-rail a.st-restr, .xp-rail a.st-miss { background: var(--token-instruction); }
+.xp-rail a.st-extra { background: var(--success); }
+.xp-rail a.st-same { background: none; }
 .xp-fband .xp-cell { min-width: 0; height: 20px; }
 .xp-fband > i { flex: 1; height: 1px; background: var(--border); }
 .xp-fcode { border: 1px solid var(--border); border-radius: 6px; min-width: 0; background: var(--card-bg); }

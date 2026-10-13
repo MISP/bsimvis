@@ -3227,15 +3227,15 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 
 /* Whole function: block metadata in a gutter, code columns side by side */
 .xp-gwrap { display: grid; grid-template-columns: minmax(0, 1fr) 12px; gap: 8px; align-items: start; }
-.xp-gscroll { overflow: auto; max-height: calc(100vh - 150px); border: 1px solid var(--border); border-radius: 6px; } /* scrolls in both axes so the column header can stick */
-.xp-ginner { min-width: calc(76px + (var(--n) + 1) * 240px); }
+/* No scroll container here: the header sticks to the page scroll, under the bars. */
+.xp-gscroll { border: 1px solid var(--border); border-radius: 6px; }
 .xp-frow.xp-g { grid-template-columns: 76px repeat(calc(var(--n) + 1), minmax(0, 1fr)); gap: 0; margin: 0; border-top: 1px solid var(--border); }
 .xp-g .xp-fcode { border: 0; border-left: 1px solid var(--border); border-radius: 0; }
 .xp-g .xp-fcode.st-mod { background: color-mix(in srgb, var(--xp-warn-bg) 45%, transparent); }
 .xp-g .xp-fcode.st-moved { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .xp-g .xp-fcode.st-restr { background: color-mix(in srgb, var(--token-instruction) 8%, transparent); }
 .xp-g .xp-fcode.st-extra { background: color-mix(in srgb, var(--success) 8%, transparent); }
-.xp-ghead { position: sticky; top: 0; z-index: 3; background: var(--card-bg); border-top: 0; border-bottom: 1px solid var(--border); }
+.xp-ghead { position: sticky; top: calc(var(--xp-bar-h, 0px) + var(--xp-bar2-h, 0px)); z-index: 1; background: var(--card-bg); border-top: 0; border-bottom: 1px solid var(--border); }
 .xp-ghead .xp-fband { padding: 4px 8px; grid-column: auto; }
 .xp-gut { position: relative; background: var(--hover); padding: 4px 6px; font: 0.68rem 'Consolas', monospace; color: var(--dim); display: flex; flex-direction: column; gap: 3px; align-items: flex-start; min-width: 0; }
 .xp-gid { color: var(--text); font-weight: 600; font-size: 0.74rem; }
@@ -3256,7 +3256,7 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .xp-more .xp-vchips { margin: 0; }
 .xp-fold button { width: 100%; font: 0.72rem 'Consolas', monospace; color: var(--dim); background: var(--hover); border: 0; border-top: 1px solid var(--border); padding: 3px 0; cursor: pointer; }
 .xp-fold button:hover { color: var(--accent); }
-.xp-rail { position: sticky; top: 40px; height: min(60vh, 420px); display: flex; flex-direction: column; border-radius: 4px; overflow: hidden; background: var(--hover); }
+.xp-rail { position: sticky; top: calc(var(--xp-bar-h, 0px) + var(--xp-bar2-h, 0px) + 40px); height: min(60vh, 420px); display: flex; flex-direction: column; border-radius: 4px; overflow: hidden; background: var(--hover); }
 .xp-rail a { min-height: 3px; cursor: pointer; background: none; }
 .xp-rail a.st-mod { background: var(--token-warning); }
 .xp-rail a.st-moved { background: var(--accent); }

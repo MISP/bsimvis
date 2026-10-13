@@ -3209,3 +3209,5 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .xp-drow code.d-replace { background: var(--xp-warn-bg); border-left-color: var(--token-warning); }
 .xp-drow code.d-insert, .xp-drow code.d-delete { background: color-mix(in srgb, var(--token-instruction) 12%, var(--card-bg)); border-left-color: var(--token-instruction); }
 .xp-drow code.gap { background: repeating-linear-gradient(135deg, transparent 0 6px, var(--hover) 6px 12px); }
+
+.xp-pane pre .xp-callpair, .xp-fcode .xp-callpair { background: color-mix(in srgb, var(--token-register) 25%, transparent); text-decoration-style: solid; border-radius: 2px; }

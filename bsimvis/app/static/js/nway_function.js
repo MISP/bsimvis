@@ -562,6 +562,7 @@
             const pos = { clientX: e.clientX, clientY: e.clientY, target: call, currentTarget: call };
             const tok = (this._hoverTok = (this._hoverTok || 0) + 1);
             if (!on) {
+                this.el.querySelectorAll('.xp-callpair').forEach(x => x.classList.remove('xp-callpair'));
                 window.hideDiffPreview?.(e);
                 return window.hideCodePreview?.(e);
             }
@@ -571,8 +572,17 @@
             this._calledHit(fns[0], fns[1], call.dataset.xcall).then(hit => {
                 if (tok !== this._hoverTok) return;
                 if (!hit) return fallback();
+                this._markPair(call, hit);
                 window.showDiffPreview(hit.func_a.id, hit.func_a.name || '', hit.func_b.id, hit.func_b.name || '', Number(hit.similarity) || 0, pos);
             });
+        }
+
+        // Light the hovered call and its partner call in the neighbouring pane.
+        _markPair(call, hit) {
+            const other = hit.func_a.id === call.dataset.xcall ? hit.func_b.id : hit.func_a.id;
+            const box = call.closest('.xp-panes, .xp-frow');
+            call.classList.add('xp-callpair');
+            box?.querySelectorAll('[data-xcall]').forEach(x => { if (x.dataset.xcall === other) x.classList.add('xp-callpair'); });
         }
 
         // Greedy partner row of a called function in the pair (i, j), null when unmatched.
@@ -613,12 +623,15 @@
             window.Nav.openPath(window.buildDiffUrl(this.fids[a], this.fids[b]), e, { title: `Diff: ${fs[a].addr} vs ${fs[b].addr}`, type: 'diff' });
         }
 
-        _click(e) {
+        async _click(e) {
             const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xcv],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xpair],[data-xnav],[data-xopen]');
             if (!t) return;
             const d = t.dataset;
             if (d.xcall) {
                 e.preventDefault(); e.stopPropagation();
+                const fns = t.closest('pre[data-xfns]')?.dataset.xfns.split(',').map(Number);
+                const hit = fns ? await this._calledHit(fns[0], fns[1], d.xcall) : null;
+                if (hit && window.buildDiffUrl) return window.Nav.openPath(window.buildDiffUrl(hit.func_a.id, hit.func_b.id), e, { title: `Diff: ${hit.func_a.name || hit.func_a.id} vs ${hit.func_b.name || hit.func_b.id}`, type: 'diff' });
                 return window.Nav.openPath(window.NwayPanel.fnUrl(d.xcall, this.source.pool || null), e, { title: d.xcallName || 'Function', type: 'function' });
             }
             if (d.xfnref !== undefined) {

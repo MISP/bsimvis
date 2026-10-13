@@ -118,7 +118,7 @@
                     ${s.tab === 'pair' || s.tab === 'simple' ? '' : `<label class="xp-chk"><input type="checkbox" data-xonly ${s.only ? 'checked' : ''}> Differences only</label>`}</div>
                 <div class="xp-body">${this._body()}</div>`;
             const bar = this.el.querySelector('.xp-bar');
-            new ResizeObserver(() => this.el.style.setProperty('--xp-bar2-h', bar.offsetHeight + 'px')).observe(bar);
+            new ResizeObserver(() => this.el.style.setProperty('--xp-bar2-h', bar.getBoundingClientRect().height + 'px')).observe(bar);
             this._loadSummaries();
             if (s.tab === 'pair') this._loadPair();
             if (s.tab === 'code') this._loadTitles();

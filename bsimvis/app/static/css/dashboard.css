@@ -3077,9 +3077,9 @@ body.has-entity-tabs .header-top > div:has(> #view-title) { display: none !impor
 .nway-function-view { min-height: 0; min-width: 0; --xp-l: 66%; --xp-warn-bg: color-mix(in srgb, var(--token-warning) 14%, var(--card-bg)); }
 html.light-theme .nway-function-view { --xp-l: 40%; }
 #nway-fn-host { min-width: 0; width: 100%; }
-.nway-function-view .xp-bar { position: sticky; top: 0; z-index: 3; padding: 8px 0; background: var(--bg); border-bottom: 1px solid var(--border); }
+.nway-function-view .xp-bar { position: sticky; top: 0; z-index: 40; padding: 8px 0; background: var(--bg); border-bottom: 1px solid var(--border); }
 /* The panel's own bar (Differences only) sits under the family tab bar. */
-.nway-function-view #nway-fn-host .xp-bar { top: var(--xp-bar-h, 46px); z-index: 2; }
+.nway-function-view #nway-fn-host .xp-bar { top: var(--xp-bar-h, 46px); z-index: 39; }
 .xp-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; padding: 16px; margin-bottom: 16px; }
 @media (max-width: 860px) { .xp-head { grid-template-columns: minmax(0, 1fr); } }
 .xp-cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; max-height: 280px; overflow: auto; align-content: start; }
@@ -3235,7 +3235,7 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .xp-g .xp-fcode.st-moved { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .xp-g .xp-fcode.st-restr { background: color-mix(in srgb, var(--token-instruction) 8%, transparent); }
 .xp-g .xp-fcode.st-extra { background: color-mix(in srgb, var(--success) 8%, transparent); }
-.xp-ghead { position: sticky; top: calc(var(--xp-bar-h, 0px) + var(--xp-bar2-h, 0px)); z-index: 1; background: var(--card-bg); border-top: 0; border-bottom: 1px solid var(--border); }
+.xp-ghead { position: sticky; top: calc(var(--xp-bar-h, 0px) + var(--xp-bar2-h, 0px)); z-index: 38; background: var(--card-bg); border-top: 0; border-bottom: 1px solid var(--border); }
 .xp-ghead .xp-fband { padding: 4px 8px; grid-column: auto; }
 .xp-gut { position: relative; background: var(--hover); padding: 4px 6px; font: 0.68rem 'Consolas', monospace; color: var(--dim); display: flex; flex-direction: column; gap: 3px; align-items: flex-start; min-width: 0; }
 .xp-gid { color: var(--text); font-weight: 600; font-size: 0.74rem; }

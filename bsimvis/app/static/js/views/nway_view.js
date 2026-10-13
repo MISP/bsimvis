@@ -87,7 +87,7 @@ window.NwayView = {
             <div id="nway-fn-host" hidden></div>
         </div>`;
         const bar = this._container.querySelector('.xp-bar');
-        new ResizeObserver(() => bar.parentElement.style.setProperty('--xp-bar-h', bar.offsetHeight + 'px')).observe(bar);
+        new ResizeObserver(() => bar.parentElement.style.setProperty('--xp-bar-h', bar.getBoundingClientRect().height + 'px')).observe(bar);
         this._container.querySelector('#nway-family-tabs').onclick = e => {
             const t = e.target.closest('[data-family-tab]');
             if (!t || t.disabled) return;

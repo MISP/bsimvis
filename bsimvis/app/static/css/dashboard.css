@@ -3145,8 +3145,16 @@ button.xp-cell:hover { outline: 2px solid var(--accent); }
 .xp-cfgp { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; padding-bottom: 6px; }
 .xp-cfg { position: relative; margin: 8px 12px; }
 .xp-cfg svg { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
-.xp-cfg line.e { stroke: var(--dim); stroke-width: 1; }
-.xp-cfg line.m { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.7; }
+.xp-cfg path { fill: none; }
+.xp-cfg path.e { stroke: var(--dim); stroke-width: 1; }
+.xp-cfg path.e.back { stroke-dasharray: 2 3; }
+.xp-cfg path.m { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.55; }
+.xp-cfn:disabled { cursor: default; opacity: 0.8; }
+.xp-cfn.xp-cfpair { outline: 2px solid var(--accent); z-index: 2; }
+.xp-cfgtip { position: fixed; z-index: 10000; display: flex; gap: 8px; max-width: min(760px, 94vw); padding: 6px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,.35); pointer-events: none; }
+.xp-cfgpane { min-width: 0; flex: 1 1 0; }
+.xp-cfgpane .xp-ph { font-size: 0.72rem; color: var(--dim); padding: 0 2px 3px; }
+.xp-cfgpane pre { margin: 0; max-height: 15em; overflow: hidden; font-size: 0.72rem; line-height: 1.35; white-space: pre; }
 .xp-cfn { position: absolute; min-width: 0; width: 44px; height: 20px; padding: 0; font-size: 0.7rem; background-color: var(--card-bg); }
 .st-same { color: var(--dim); }
 .st-mod { background: var(--xp-warn-bg); color: var(--token-warning); }

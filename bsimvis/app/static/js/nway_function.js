@@ -42,6 +42,8 @@
             el.addEventListener('change', e => this._change(e));
             el.addEventListener('mouseover', e => this._callHover(e, true));
             el.addEventListener('mouseout', e => this._callHover(e, false));
+            el.addEventListener('mouseover', e => this._cfgHover(e, true));
+            el.addEventListener('mouseout', e => this._cfgHover(e, false));
             // Feature tokens light up their twins in both panes; a click locks them (same helpers as the function diff).
             el.addEventListener('mouseover', e => this._featHover(e, true));
             el.addEventListener('mouseout', e => this._featHover(e, false));
@@ -378,45 +380,168 @@
             return bb && bb.length ? `<span class="xp-tag" title="Ghidra basic blocks inside this block${hashes ? ' · distinct BSim feature hashes' : ''}">BB ${bb.map(Number).join(' + ')}${n}</span>` : '';
         }
 
-        // Rank = steps from a block with no incoming edge; columns fill each rank left to right.
-        _cfgLayout(g) {
-            const n = g.nodes.length, indeg = new Array(n).fill(0), out = g.nodes.map(() => []);
-            for (const [u, v] of g.edges) { out[u].push(v); indeg[v]++; }
-            const rank = new Array(n).fill(-1), q = [];
-            indeg.forEach((x, i) => { if (!x) { rank[i] = 0; q.push(i); } });
-            if (!q.length) { rank[0] = 0; q.push(0); }
-            for (let h = 0; h < q.length; h++) for (const v of out[q[h]]) if (rank[v] < 0) { rank[v] = rank[q[h]] + 1; q.push(v); }
-            const col = [], used = {};
-            rank.forEach((r, i) => { const k = Math.max(r, 0); col[i] = used[k] = (used[k] ?? -1) + 1; rank[i] = k; });
-            return { rank, col, w: (Math.max(...col) + 1) * 54, h: (Math.max(...rank) + 1) * 34 };
+        // One row grid for both graphs: matched blocks share a row, so equal code lines up even with
+        // extra blocks between. Back edges (loops) are left out of the layering and drawn as side arcs.
+        _cfgGrid(R, F, pairOf) {
+            const fid = k => (pairOf.has(k) ? 'r' + pairOf.get(k) : 'f' + k);
+            const ids = [...R.nodes.keys()].map(i => 'r' + i).concat([...F.nodes.keys()].map(fid));
+            const adj = new Map(ids.map(id => [id, new Set()]));
+            const rE = R.edges.map(([u, v]) => ['r' + u, 'r' + v]), fE = F.edges.map(([u, v]) => [fid(u), fid(v)]);
+            // A block outside the CFG (the signature) hangs above the next block in source order.
+            [[R, rE, i => 'r' + i], [F, fE, fid]].forEach(([G, E, idf]) => {
+                const used = new Set(E.flat());
+                G.nodes.forEach((nd, i) => { if (!used.has(idf(i)) && i + 1 < G.nodes.length) E.push([idf(i), idf(i + 1)]); });
+            });
+            for (const [u, v] of rE.concat(fE)) if (u !== v) adj.get(u).add(v);
+            const state = new Map(), back = new Set();
+            for (const root of ['r0', ...adj.keys()]) {
+                if (state.has(root)) continue;
+                const stack = [[root, [...adj.get(root)]]];
+                state.set(root, 1);
+                while (stack.length) {
+                    const top = stack[stack.length - 1], v = top[1].shift();
+                    if (v === undefined) { state.set(top[0], 2); stack.pop(); continue; }
+                    if (state.get(v) === 1) back.add(top[0] + '|' + v);
+                    else if (!state.has(v)) { state.set(v, 1); stack.push([v, [...adj.get(v)]]); }
+                }
+            }
+            const indeg = new Map(ids.map(id => [id, 0])), row = new Map(ids.map(id => [id, 0]));
+            for (const [u, vs] of adj) for (const v of vs) if (!back.has(u + '|' + v)) indeg.set(v, indeg.get(v) + 1);
+            const q = ids.filter(id => !indeg.get(id));
+            for (let h = 0; h < q.length; h++) for (const v of adj.get(q[h])) {
+                if (back.has(q[h] + '|' + v)) continue;
+                row.set(v, Math.max(row.get(v), row.get(q[h]) + 1));
+                indeg.set(v, indeg.get(v) - 1);
+                if (!indeg.get(v)) q.push(v);
+            }
+            const NW = 44, mean = xs => xs.reduce((t, v) => t + v, 0) / xs.length;
+            // Each graph keeps its own shape. Edges spanning several rows get a dummy per row so they
+            // route around blocks; rows are ordered by barycenter sweeps, then packed under their neighbours.
+            const place = (members, edges) => {
+                const rowOf = new Map(row), dn = new Map(), up = new Map(), chain = new Map(), seen = new Set(), ids = [...members];
+                const link = (u, v) => { (dn.get(u) || dn.set(u, []).get(u)).push(v); (up.get(v) || up.set(v, []).get(v)).push(u); };
+                for (const [u, v] of edges) {
+                    const key = u + '|' + v;
+                    if (u === v || back.has(key) || seen.has(key)) continue;
+                    seen.add(key);
+                    let prev = u;
+                    const ds = [];
+                    for (let r = row.get(u) + 1; r < row.get(v); r++) { const d = `d${key}#${r}`; rowOf.set(d, r); ids.push(d); link(prev, d); prev = d; ds.push(d); }
+                    link(prev, v);
+                    chain.set(key, ds);
+                }
+                const byRow = new Map(), pos = new Map();
+                ids.forEach(id => { const r = rowOf.get(id); (byRow.get(r) || byRow.set(r, []).get(r)).push(id); });
+                const asc = [...byRow.keys()].sort((m, n) => m - n), desc = [...asc].reverse();
+                const reindex = r => byRow.get(r).forEach((id, i) => pos.set(id, i));
+                asc.forEach(reindex);
+                const sweep = (rs, nb) => rs.forEach(r => {
+                    const arr = byRow.get(r).map(id => { const ns = nb.get(id) || []; return { id, b: ns.length ? mean(ns.map(n => pos.get(n))) : pos.get(id) }; });
+                    arr.sort((m, n) => m.b - n.b);
+                    byRow.set(r, arr.map(m => m.id));
+                    reindex(r);
+                });
+                for (let it = 0; it < 4; it++) { sweep(asc, up); sweep(desc, dn); }
+                const hw = id => (id[0] === 'd' ? 4 : NW / 2), x = new Map();
+                const pack = (rs, nbf) => rs.forEach(r => {
+                    const arr = byRow.get(r);
+                    let root = 0;
+                    const want = arr.map(id => {
+                        const ns = nbf(id).filter(n => x.has(n));
+                        return ns.length ? mean(ns.map(n => x.get(n))) : x.has(id) ? x.get(id) : (root += 60) - 60;
+                    });
+                    const at = [];
+                    want.forEach((w, i) => at.push(i ? Math.max(w, at[i - 1] + hw(arr[i - 1]) + hw(arr[i]) + 14) : w));
+                    const shift = mean(want.map((w, i) => w - at[i]));
+                    arr.forEach((id, i) => x.set(id, at[i] + shift));
+                });
+                // First a top-down pass under the parents, then passes that pull each block towards all its neighbours.
+                const par = id => up.get(id) || [], all = id => par(id).concat(dn.get(id) || []);
+                pack(asc, par);
+                for (let it = 0; it < 3; it++) { pack(desc, all); pack(asc, all); }
+                const lo = Math.min(...[...x].map(([id, v]) => v - hw(id)));
+                for (const [id, v] of x) x.set(id, v - lo);
+                return { x, rowOf, chain, w: Math.max(...[...x].map(([id, v]) => v + hw(id))) };
+            };
+            const L = place(ids.filter(id => id[0] === 'r' && +id.slice(1) < R.nodes.length), rE);
+            const M = place([...F.nodes.keys()].map(fid).filter((id, i, a) => a.indexOf(id) === i), fE);
+            return { fid, row, back, L, M, rows: Math.max(...row.values()) + 1 };
         }
 
         // Reference CFG left, one function's CFG right; matched blocks are linked and coloured by state.
         _cfgPair(j, c) {
             const R = c.cfg[String(c.reference)], F = c.cfg[String(j)];
             if (R.nodes.length > 80 || F.nodes.length > 80) return '';
-            const L = this._cfgLayout(R), M = this._cfgLayout(F), gap = 90, off = L.w + gap;
-            const pos = (lay, i, dx) => ({ x: dx + lay.col[i] * 54, y: lay.rank[i] * 34 });
-            const line = (a, b, cls) => `<line class="${cls}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/>`;
+            const entries = c.funcs[String(j)] || [], pairOf = new Map(), taken = new Set();
+            F.nodes.forEach((nd, k) => {
+                const ref = entries[k]?.refs?.[0], i = ref ? c.blocks.findIndex(b => b.id === ref.b) : -1;
+                if (i >= 0 && !taken.has(i)) { taken.add(i); pairOf.set(k, i); }
+            });
+            const g = this._cfgGrid(R, F, pairOf), NW = 44, NH = 22, ROW = 46, gap = 50;
+            const off = g.L.w + gap, W = off + g.M.w, H = g.rows * ROW;
+            const cx = (side, id) => (side ? off + g.M.x.get(id) : g.L.x.get(id));
+            const at = (side, id) => ({ x: cx(side, id) - NW / 2, y: g.row.get(id) * ROW });
+            const edge = (side, u, v) => {
+                const key = u + '|' + v, G = side ? g.M : g.L;
+                if (g.back.has(key)) { const a = at(side, u), b = at(side, v), s = 26; return `<path class="e back" d="M${a.x + NW},${a.y + NH / 2} C${a.x + NW + s},${a.y + NH / 2} ${b.x + NW + s},${b.y + NH / 2} ${b.x + NW},${b.y + NH / 2}"/>`; }
+                const pts = [{ x: cx(side, u), y: g.row.get(u) * ROW + NH }]
+                    .concat((G.chain.get(key) || []).map(d => ({ x: (side ? off : 0) + G.x.get(d), y: G.rowOf.get(d) * ROW + NH / 2 })))
+                    .concat([{ x: cx(side, v), y: g.row.get(v) * ROW }]);
+                return `<path class="e" d="M${pts[0].x},${pts[0].y}${pts.slice(1).map((q, i) => { const m = (pts[i].y + q.y) / 2; return ` C${pts[i].x},${m} ${q.x},${m} ${q.x},${q.y}`; }).join('')}"/>`;
+            };
             let svg = '';
-            for (const [u, v] of R.edges) svg += line({ ...pos(L, u, 0), x: pos(L, u, 0).x + 22, y: pos(L, u, 0).y + 20 }, { x: pos(L, v, 0).x + 22, y: pos(L, v, 0).y }, 'e');
-            for (const [u, v] of F.edges) svg += line({ x: pos(M, u, off).x + 22, y: pos(M, u, off).y + 20 }, { x: pos(M, v, off).x + 22, y: pos(M, v, off).y }, 'e');
-            const entries = c.funcs[String(j)] || [];
+            for (const [u, v] of R.edges) svg += edge(0, 'r' + u, 'r' + v);
+            for (const [u, v] of F.edges) svg += edge(1, g.fid(u), g.fid(v));
+            for (const [k, i] of pairOf) {
+                const a = at(0, 'r' + i), b = at(1, 'r' + i);
+                svg += `<path class="m" d="M${a.x + NW},${a.y + NH / 2} L${b.x},${b.y + NH / 2}"/>`;
+            }
             let nodes = '';
+            const partner = new Map([...pairOf].map(([k, i]) => [i, k]));
             R.nodes.forEach((nd, i) => {
-                const b = c.blocks[i], st = this._cell(b, j).st, p = pos(L, i, 0);
-                nodes += `<button class="xp-cell xp-cfn st-${st}" style="left:${p.x}px;top:${p.y}px" data-xb="${escapeAttr(b.id)}" data-xc="${j}" title="${escapeAttr(`${b.id} · ${NwayFunction.SNAME[st]}${nd.bb.length ? ' · Ghidra BB ' + nd.bb.join(' + ') : ''}`)}">${escapeHtml(b.id)}</button>`;
+                const b = c.blocks[i], st = this._cell(b, j).st, p = at(0, 'r' + i), k = partner.get(i);
+                nodes += `<button class="xp-cell xp-cfn st-${st}" style="left:${p.x}px;top:${p.y}px" data-xb="${escapeAttr(b.id)}" data-xc="${j}" data-cfn="r:${i}"${k === undefined ? '' : ` data-cfp="f:${j}:${k}"`}>${escapeHtml(b.id)}</button>`;
             });
             F.nodes.forEach((nd, k) => {
-                const ref = entries[k]?.refs?.[0], p = pos(M, k, off), st = ref ? ref.st : 'extra';
-                const attrs = ref ? `data-xb="${escapeAttr(ref.b)}" data-xc="${j}"` : '';
-                nodes += `<button class="xp-cell xp-cfn st-${st}" style="left:${p.x}px;top:${p.y}px" ${attrs} title="${escapeAttr(`${ref ? ref.b + ' · ' + NwayFunction.SNAME[st] : 'no match in the reference'}${nd.bb.length ? ' · Ghidra BB ' + nd.bb.join(' + ') : ''}`)}">${ref ? escapeHtml(ref.b) : '+'}</button>`;
-                const i = ref ? c.blocks.findIndex(b => b.id === ref.b) : -1;
-                if (i >= 0) { const a = pos(L, i, 0); svg += line({ x: a.x + 44, y: a.y + 10 }, { x: p.x, y: p.y + 10 }, 'm'); }
+                const ent = entries[k], ref = ent?.refs?.[0], p = at(1, g.fid(k)), st = ref ? ref.st : 'extra';
+                const attrs = ref ? `data-xb="${escapeAttr(ref.b)}" data-xc="${j}"` : ent?.x ? `data-xx="${escapeAttr(ent.x)}"` : 'disabled';
+                nodes += `<button class="xp-cell xp-cfn st-${st}" style="left:${p.x}px;top:${p.y}px" ${attrs} data-cfn="f:${j}:${k}"${pairOf.has(k) ? ` data-cfp="r:${pairOf.get(k)}"` : ''}>${ref ? escapeHtml(ref.b) : '+'}</button>`;
             });
-            const W = off + M.w, H = Math.max(L.h, M.h);
             return `<div class="xp-cfgp"><div class="xp-ph">${this._funcRef(c.reference)} reference (${R.nodes.length} blocks) &harr; ${this._funcRef(j)} ${escapeHtml(this.data.functions[j].file_name || '')} (${F.nodes.length} blocks)</div>
                 <div class="xp-cfg" style="width:${W}px;height:${H}px"><svg width="${W}" height="${H}">${svg}</svg>${nodes}</div></div>`;
+        }
+
+        // Code of a graph node, for the hover preview: [heading, html].
+        _cfgSnip(key) {
+            const c = this.data.consensus, [side, a, b] = key.split(':');
+            if (side === 'r') {
+                const blk = c.blocks[Number(a)];
+                return [`${blk.id} reference`, escapeHtml(blk.ref_text)];
+            }
+            const ent = (c.funcs[a] || [])[Number(b)], ref = ent?.refs?.[0];
+            if (!ent) return null;
+            return [ref ? `${ref.b} · ${NwayFunction.SNAME[ref.st]} ${Math.round(ref.sim * 100)}%` : 'no match in the reference', this._runs(ent.text, 'chg')];
+        }
+
+        _cfgHover(e, on) {
+            const n = e.target.closest('[data-cfn]');
+            if (!n || !this.el.contains(n) || n.contains(e.relatedTarget)) return;
+            this.el.querySelectorAll('.xp-cfpair').forEach(x => x.classList.remove('xp-cfpair'));
+            document.querySelectorAll('.xp-cfgtip').forEach(x => x.remove());
+            if (!on) return;
+            const key = n.dataset.cfn, other = n.dataset.cfp || null, side = key[0];
+            const mine = this._cfgSnip(key), theirs = other && this._cfgSnip(other);
+            if (!mine) return;
+            n.classList.add('xp-cfpair');
+            if (other) n.closest('.xp-cfg').querySelector(`[data-cfn="${other}"]`)?.classList.add('xp-cfpair');
+            const pane = ([h, code]) => `<div class="xp-cfgpane"><div class="xp-ph">${escapeHtml(h)}</div><pre>${code}</pre></div>`;
+            const tip = document.createElement('div');
+            tip.className = 'xp-cfgtip';
+            tip.innerHTML = (side === 'r' || !theirs ? pane(mine) + (theirs ? pane(theirs) : '') : pane(theirs) + pane(mine));
+            document.body.appendChild(tip);
+            const r = tip.getBoundingClientRect();
+            tip.style.left = Math.max(4, Math.min(e.clientX + 14, innerWidth - r.width - 8)) + 'px';
+            tip.style.top = Math.max(4, Math.min(e.clientY + 14, innerHeight - r.height - 8)) + 'px';
         }
 
         _cfgStrip() {

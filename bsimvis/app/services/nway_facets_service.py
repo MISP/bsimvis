@@ -198,7 +198,7 @@ def _lines(src, feats, cap):
 
 
 _CTRL = re.compile(r"^(if|for|while|switch|do|else)\b")
-_DECL = re.compile(r"^[A-Za-z_][\w \t\*]*[\w\*]\s*(\[\w*\])?\s*;$")
+_DECL = re.compile(r"^[A-Za-z_][\w \t\*]*(\(\*\w+\))?[\w\*]?\s*(\[\w*\])?\s*;$")
 _IDENT = re.compile(r"[A-Za-z_]\w*|0[xX][0-9a-fA-F]+|\d+|[^\w\s]")
 # Decompiler-made local names carry no meaning across builds.
 _LOCAL = re.compile(
@@ -213,6 +213,16 @@ SEED_MIN = 0.6  # feature-hash Dice for two blocks to seed the CFG alignment
 PROP_MIN = 0.3  # token-bag Dice for a CFG neighbour of a matched pair to match
 
 
+def _sig_end(texts):
+    """Index after the line that opens the function body."""
+    depth = 0
+    for i, t in enumerate(texts):
+        depth += t.count("{") - t.count("}")
+        if depth >= 1:
+            return i + 1
+    return len(texts)
+
+
 def split_blocks(texts, run=RUN):
     """Line spans (start, end) of a function's blocks.
 
@@ -221,16 +231,11 @@ def split_blocks(texts, run=RUN):
     at most `run` statements. Braces are counted, so nesting stays inside its
     top-level block.
     """
-    n, i, depth = len(texts), 0, 0
-    while i < n:
-        s = texts[i].strip()
-        depth += s.count("{") - s.count("}")
-        i += 1
-        if depth >= 1:
-            break
+    n, i = len(texts), _sig_end(texts)
+    sig = i
     while i < n and _DECL.match(texts[i].strip()):
         i += 1
-    spans = [(0, i)] if i else []
+    spans = ([(0, sig)] if sig else []) + ([(sig, i)] if i > sig else [])
     run_at, last_comp = None, False
 
     def close(end):
@@ -334,7 +339,8 @@ def _cfg_spans(src, texts, by_line, feats):
     first = next((i for i, d in enumerate(dom) if d is not None), None)
     if first is None:
         return None
-    runs = [[0, first, None]] if first else []
+    sig = min(_sig_end(texts), first)
+    runs = [[a, b, None] for a, b in ((0, sig), (sig, first)) if b > a]
     for i in range(first, len(texts)):
         d = dom[i] if dom[i] is not None else runs[-1][2]
         if runs and runs[-1][2] == d:
@@ -644,6 +650,8 @@ def _blocks_of(src, feats, cap, max_blocks, callees=(), cfg=False):
                 "hashes": hashes,
                 "locals": locals_,
                 "span": (a, b),
+                "decl": k == 1
+                and all(_DECL.match(t.strip()) for t in texts[a:b] if t.strip()),
                 **(
                     {
                         **info[k],
@@ -817,6 +825,10 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"
         res, _ = _match_blocks(
             rb, blocks[j], *(_cfg_align(rb, blocks[j]) if cfg_pair else ())
         )
+        # Local declarations differ with register allocation: never a change.
+        for i, (st, sim, idx, note) in res.items():
+            if st == "mod" and rb[i]["decl"] and all(blocks[j][k]["decl"] for k in idx):
+                res[i] = ("same", 1.0, idx, "")
         refs = {}  # j block -> [(ref index, state, sim)]
         for i, (st, sim, idx, note) in res.items():
             if st != "miss":
@@ -835,7 +847,7 @@ def _consensus(srcs, feats, ref, cap, max_blocks=60, callees=None, mode="hybrid"
             }
             if mine:
                 i, st, _ = mine[0]
-                if st == "same" and len(mine) == 1:
+                if (st == "same" and len(mine) == 1) or b["decl"]:
                     ent["text"] = [[b["text"], False]]
                 else:
                     # merged or split: diff against every reference block it maps to

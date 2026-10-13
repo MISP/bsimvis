@@ -31,7 +31,7 @@
             this.onState = o.onState || null;
             this.embedded = !!o.embedded;
             this.onLoad = o.onLoad || null;
-            this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', open: null, gi: 0, fn: null, single: false, ...(o.state || {}) };
+            this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', open: {}, fn: null, single: false, ...(o.state || {}) };
             this.titles = {};
             this.data = null;
             this.simpleCode = null;
@@ -133,8 +133,11 @@
             if (!this._dead && this.s.tab === 'simple') this._rebody();
         }
 
-        _rebody() {
+        // `focus`: block id to scroll to once the body is redrawn (a matrix click opens it and jumps there).
+        _rebody(focus = null) {
             this.el.querySelector('.xp-body').innerHTML = this._body();
+            const hd = focus && this.el.querySelector(`.xp-bh[data-xb="${CSS.escape(focus)}"]`);
+            if (hd) hd.closest('.xp-blk').scrollIntoView({ block: 'start', behavior: 'smooth' });
             if (this.s.tab === 'pair') this._loadPair();
         }
 
@@ -332,8 +335,8 @@
                     }
                     if (j === c.reference) { h += '<td><span class="st-none">ref</span></td>'; continue; }
                     const cell = this._cell(b, j);
-                    const gsel = b.groups[this.s.gi];
-                    const sel = this.s.open === b.id && !!gsel && gsel.funcs.includes(j);
+                    const gsel = b.groups[this.s.open[b.id]];
+                    const sel = !!gsel && gsel.funcs.includes(j);
                     h += `<td><button class="xp-cell st-${cell.st}${sel ? ' sel' : ''}" data-xb="${escapeAttr(b.id)}" data-xc="${j}" title="${NwayFunction.SNAME[cell.st]}">${this._glyph(cell.st, cell.sim)}</button></td>`;
                 }
                 h += '</tr>';
@@ -344,7 +347,7 @@
         _blockBody(b) {
             const d = this.data, c = d.consensus;
             if (!b.groups.length) return `<div class="xp-bd"><p class="xp-hint" style="margin:0">Identical in all ${d.functions.length} functions.</p><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${this._funcRef(c.reference)} all functions</div><pre>${this._codeHtml(b.ref_syntax, null, null, c.reference)}</pre></div></div></div>`;
-            const gi = b.groups[this.s.gi] ? this.s.gi : 0, g = b.groups[gi], G = NwayFunction.GLYPH;
+            const gi = b.groups[this.s.open[b.id]] ? this.s.open[b.id] : 0, g = b.groups[gi], G = NwayFunction.GLYPH;
             const badges = (fs, link = true) => fs.map(j => this._funcRef(j, 'xp-badge', link)).join('');
             const chips = b.groups.map((x, i) => `<button class="xp-chip" aria-pressed="${i === gi}" data-xb="${escapeAttr(b.id)}" data-xg="${i}">${badges(x.funcs, false)} ${G[x.st]} ${NwayFunction.SNAME[x.st]}</button>`).join('');
             const same = this._others().filter(j => this._cell(b, j).st === 'same');
@@ -373,16 +376,16 @@
             const legend = `<div class="xp-legend">${Object.keys(NwayFunction.SNAME).map(k => `<span><span class="xp-cell st-${k}" style="min-width:0;height:18px;cursor:default">${G[k]}</span>${NwayFunction.SNAME[k]}</span>`).join('')}</div>`;
             const accordion = ordered.map(({ b, x }) => {
                 if (x) {
-                    const open = this.s.open === x.id;
-                    return `<div class="xp-blk wst-extra"><button class="xp-bh" data-xb="${escapeAttr(x.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(x.id)}</span><span class="bt">${escapeHtml(x.title)}</span><span class="xp-mini"><span class="xp-sum st-extra">+ ${x.funcs.length} of ${this.data.functions.length} only</span></span></button>${open ? `<div class="xp-bd"><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${x.funcs.map(j => `${this._funcRef(j)}`).join('')} <span class="xp-tag">no counterpart in the reference</span></div><pre>${x.syntax ? this._codeHtml(x.syntax, null, null, x.funcs[0]) : escapeHtml(x.text)}</pre></div></div></div>` : ''}</div>`;
+                    const open = x.id in this.s.open;
+                    return `<div class="xp-blk wst-extra"><button class="xp-bh" data-xb="${escapeAttr(x.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(x.id)}</span><span class="bt">${escapeHtml(x.title)}</span><span class="xp-sum st-extra">+ ${x.funcs.length} of ${this.data.functions.length} only</span></button>${open ? `<div class="xp-bd"><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${x.funcs.map(j => `${this._funcRef(j)}`).join('')} <span class="xp-tag">no counterpart in the reference</span></div><pre>${x.syntax ? this._codeHtml(x.syntax, null, null, x.funcs[0]) : escapeHtml(x.text)}</pre></div></div></div>` : ''}</div>`;
                 }
-                const open = this.s.open === b.id;
+                const open = b.id in this.s.open;
                 const sts = this._others().map(j => this._cell(b, j)), G2 = NwayFunction.GLYPH;
                 const worst = ['miss', 'restr', 'mod', 'moved'].find(k => sts.some(x => x.st === k)) || 'same';
                 const nSame = sts.filter(x => x.st === 'same').length;
                 const sims = sts.filter(x => x.st === 'mod' || x.st === 'moved').map(x => x.sim);
                 const verdict = `<span class="xp-sum st-${worst}" title="${escapeAttr(Object.keys(NwayFunction.SNAME).filter(k => k !== 'same' && sts.some(x => x.st === k)).map(k => `${sts.filter(x => x.st === k).length} ${NwayFunction.SNAME[k]}`).join(', ') || 'identical in all')}">${worst === 'same' ? G2.same : G2[worst]} ${nSame} of ${sts.length} match</span>${sims.length ? `<span class="xp-min" title="lowest similarity of the modified or moved functions">${Math.round(Math.min(...sims) * 100)}%<small> min</small></span>` : ''}`;
-                return `<div class="xp-blk wst-${worst}"><button class="xp-bh" data-xb="${escapeAttr(b.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(b.id)}</span>${this._tspan(b)}<span class="xp-mini">${verdict}</span></button>${open ? this._blockBody(b) : ''}</div>`;
+                return `<div class="xp-blk wst-${worst}"><button class="xp-bh" data-xb="${escapeAttr(b.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(b.id)}</span>${this._tspan(b)}${verdict}</button>${open ? this._blockBody(b) : ''}</div>`;
             }).join('');
             const hidden = only ? c.blocks.length - ordered.filter(item => item.b).length : 0;
             return head + this._ribbon(ordered) + legend + accordion
@@ -605,15 +608,17 @@
             }
             if (d.xcv) { this.s.cv = d.xcv; this._persist(); return this._rebody(); }
             if (d.xfn !== undefined) { this.s.fn = Number(d.xfn); this._persist(); return this._rebody(); }
-            if (d.xx) { this.s.open = d.xx; return this._rebody(); }
+            if (d.xx) { this.s.open[d.xx] = 0; return this._rebody(d.xx); }
             if (d.xb !== undefined) {
                 const b = this.data.consensus.blocks.find(x => x.id === d.xb);
-                if (d.xg !== undefined) { this.s.open = d.xb; this.s.gi = Number(d.xg); }
+                let focus = null;
+                if (d.xg !== undefined) this.s.open[d.xb] = Number(d.xg);
                 else if (d.xc !== undefined && b) {
-                    this.s.open = d.xb;
-                    this.s.gi = Math.max(0, b.groups.findIndex(g => g.funcs.includes(Number(d.xc))));
-                } else { this.s.open = this.s.open === d.xb ? null : d.xb; this.s.gi = 0; }
-                this._rebody();
+                    this.s.open[d.xb] = Math.max(0, b.groups.findIndex(g => g.funcs.includes(Number(d.xc))));
+                    focus = d.xb;
+                } else if (d.xb in this.s.open) delete this.s.open[d.xb];
+                else this.s.open[d.xb] = 0;
+                this._rebody(focus);
             }
         }
 

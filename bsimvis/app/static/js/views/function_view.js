@@ -411,31 +411,36 @@ window.FunctionView = {
         blocks.forEach((b, k) => b.out.forEach(o => pos.has(o) && edges.push([k, pos.get(o)])));
         const g = CfgLayout.grid({ nodes: blocks, edges }, { nodes: [], edges: [] }, new Map());
         const NW = 44, NH = 22, ROW = 46, W = g.L.w + 30, H = g.rows * ROW;
-        const sc = Math.max(0.4, Math.min(1, ((el.clientWidth || 1200) - 40) / W));
-        const cx = id => g.L.x.get(id), at = id => ({ x: cx(id) - NW / 2, y: g.row.get(id) * ROW });
-        let svg = '';
-        for (const [u, v] of edges) {
-            const a = 'r' + u, b = 'r' + v, key = a + '|' + b;
-            if (g.back.has(key)) {
-                const p = at(a), q = at(b), s = 26;
-                svg += `<path class="e back" d="M${p.x + NW},${p.y + NH / 2} C${p.x + NW + s},${p.y + NH / 2} ${q.x + NW + s},${q.y + NH / 2} ${q.x + NW},${q.y + NH / 2}"/>`;
-                continue;
+        const sc = Math.max(0.4, Math.min(1, ((el.clientWidth || 1200) - 40) * (this.cfgLinesPref() ? 0.5 : 1) / W));
+        // ry(row) is the y of a graph row; the first drawing uses even rows, the second lines rows up with the code bands.
+        const draw = ry => {
+            const cx = id => g.L.x.get(id), at = id => ({ x: cx(id) - NW / 2, y: ry(g.row.get(id)) });
+            let svg = '';
+            for (const [u, v] of edges) {
+                const a = 'r' + u, b = 'r' + v, key = a + '|' + b;
+                if (g.back.has(key)) {
+                    const p = at(a), q = at(b), s = 26;
+                    svg += `<path class="e back" d="M${p.x + NW},${p.y + NH / 2} C${p.x + NW + s},${p.y + NH / 2} ${q.x + NW + s},${q.y + NH / 2} ${q.x + NW},${q.y + NH / 2}"/>`;
+                    continue;
+                }
+                const pts = [{ x: cx(a), y: ry(g.row.get(a)) + NH }]
+                    .concat((g.L.chain.get(key) || []).map(d => ({ x: g.L.x.get(d), y: ry(g.L.rowOf.get(d)) + NH / 2 })))
+                    .concat([{ x: cx(b), y: ry(g.row.get(b)) }]);
+                svg += `<path class="e" d="${CfgLayout.path(pts)}"/>`;
             }
-            const pts = [{ x: cx(a), y: g.row.get(a) * ROW + NH }]
-                .concat((g.L.chain.get(key) || []).map(d => ({ x: g.L.x.get(d), y: g.L.rowOf.get(d) * ROW + NH / 2 })))
-                .concat([{ x: cx(b), y: g.row.get(b) * ROW }]);
-            svg += `<path class="e" d="${CfgLayout.path(pts)}"/>`;
-        }
-        let nodes = '';
-        blocks.forEach((b, k) => {
-            const p = at('r' + k), n = (blockLines.get(b.i) || []).length;
-            const cls = `k-${escapeAttr(b.kind)}${b.i === this.cfg.entry ? ' k-entry' : ''}`;
-            nodes += `<button class="xp-cell xp-cfn ${cls}" style="left:${p.x}px;top:${p.y}px" data-cfb="${Number(b.i)}" title="${escapeAttr(`block ${b.i} · ${b.kind} · ${n} lines · ${b.ops} ops · ${b.start}`)}">${Number(b.i)}</button>`;
-        });
+            let nodes = '';
+            blocks.forEach((b, k) => {
+                const p = at('r' + k), n = (blockLines.get(b.i) || []).length;
+                const cls = `k-${escapeAttr(b.kind)}${b.i === this.cfg.entry ? ' k-entry' : ''}`;
+                nodes += `<button class="xp-cell xp-cfn ${cls}" style="left:${p.x}px;top:${p.y}px" data-cfb="${Number(b.i)}" title="${escapeAttr(`block ${b.i} · ${b.kind} · ${n} lines · ${b.ops} ops · ${b.start}`)}">${Number(b.i)}</button>`;
+            });
+            const Hh = ry(g.rows - 1) + NH + 4;
+            return `<div class="xp-cfgw" style="width:${Math.round(W * sc)}px;height:${Math.round(Hh * sc)}px"><div class="xp-cfg" id="fn-cfg-graph" style="width:${W}px;height:${Hh}px;transform:scale(${sc})"><svg width="${W}" height="${Hh}">${svg}</svg>${nodes}</div></div>`;
+        };
         this.cfgLines = this.cfgLinesPref();
         const order = blocks.map((b, k) => [b, g.row.get('r' + k), g.L.x.get('r' + k)]).sort((a, b) => a[1] - b[1] || a[2] - b[2]).map(x => x[0]);
         el.innerHTML = `<p class="xp-hint">${blocks.length} Ghidra high-pcode blocks. Green outline: entry; tint by kind (conditional, red return, amber switch). Dashed arcs are back edges. Hover or click a block to see its lines, hover or click a line to see its blocks. <label class="cl-lab"><input type="checkbox" id="fn-cfg-lines"${this.cfgLines ? ' checked' : ''}> Lines</label></p>
-            <div class="cl-row"><div class="xp-cfgw" style="width:${Math.round(W * sc)}px;height:${Math.round(H * sc)}px"><div class="xp-cfg" id="fn-cfg-graph" style="width:${W}px;height:${H}px;transform:scale(${sc})"><svg width="${W}" height="${H}">${svg}</svg>${nodes}</div></div>${this.cfgLines ? `<div class="cl-col" id="fn-cfg-col">${this.cfgColumnHtml(order)}</div>` : ''}</div>`;
+            <div class="cl-row"><div class="cl-gs${this.cfgLines ? ' cl-sync' : ''}" id="fn-cfg-gscroll">${draw(r => r * ROW)}</div>${this.cfgLines ? `<div class="cl-col" id="fn-cfg-col">${this.cfgColumnHtml(order)}</div>` : ''}</div>`;
         el.querySelector('#fn-cfg-lines').onchange = e => {
             try { localStorage.setItem('fnCfgLines', e.target.checked ? '1' : '0'); } catch (_) {}
             this._cfgDone = false;
@@ -453,7 +458,60 @@ window.FunctionView = {
             this.scrollEl.addEventListener('mouseout', () => this.cfgMark());
             this.scrollEl.addEventListener('click', e => { if (e.target.closest('.gutter')) this.cfgLineBlocks(e, true); });
         }
+        if (this.cfgLines) {
+            // Stretch the rows to the code: each row sits at the top of its first band, so the graph is as long as the lines.
+            const col = el.querySelector('#fn-cfg-col'), top = new Map();
+            blocks.forEach((b, k) => {
+                const band = col.querySelector(`.cl-band[data-lb="${Number(b.i)}"]`), r = g.row.get('r' + k);
+                if (band) top.set(r, Math.min(top.has(r) ? top.get(r) : Infinity, band.offsetTop / sc));
+            });
+            const ys = [];
+            for (let r = 0; r < g.rows; r++) {
+                if (top.has(r)) ys[r] = top.get(r);
+                else {
+                    let nxt = r + 1;
+                    while (nxt < g.rows && !top.has(nxt)) nxt++;
+                    const prev = r ? ys[r - 1] : 0, to = top.has(nxt) ? top.get(nxt) : prev + (nxt - r + 1) * ROW;
+                    ys[r] = prev + (to - prev) / (nxt - r + 1);
+                }
+                if (r) ys[r] = Math.max(ys[r], ys[r - 1] + ROW);
+            }
+            el.querySelector('#fn-cfg-gscroll').innerHTML = draw(r => ys[r]);
+        }
+        this.cfgSyncBind();
         this.cfgMark();
+    },
+
+    // Graph and column scroll together: each band's top lines up with its node, in between they interpolate.
+    cfgSyncBind() {
+        const g = document.getElementById('fn-cfg-gscroll'), c = document.getElementById('fn-cfg-col');
+        if (!g || !c) return;
+        const anchors = () => {
+            const gt = g.getBoundingClientRect().top;
+            const pts = [...c.querySelectorAll('.cl-band')].map(band => {
+                const node = band.dataset.lb === undefined ? null : g.querySelector(`[data-cfb="${band.dataset.lb}"]`);
+                return { c: band.offsetTop, g: node ? node.getBoundingClientRect().top - gt + g.scrollTop - 4 : 0 };
+            }).sort((a, b) => a.c - b.c);
+            const cmax = c.scrollHeight - c.clientHeight, gmax = g.scrollHeight - g.clientHeight;
+            let top = 0;
+            const out = pts.filter(a => a.c < cmax).map(a => ({ c: a.c, g: (top = Math.min(gmax, Math.max(top, a.g))) }));
+            return [{ c: 0, g: 0 }, ...out, { c: cmax, g: gmax }];
+        };
+        const lerp = (x, A, from, to) => {
+            for (let i = 0; i < A.length - 1; i++) {
+                const a = A[i], b = A[i + 1];
+                if (x >= a[from] && x <= b[from]) return b[from] === a[from] ? a[to] : a[to] + (b[to] - a[to]) * (x - a[from]) / (b[from] - a[from]);
+            }
+            return A[A.length - 1][to];
+        };
+        let busy = null;
+        const follow = (src, dst, from, to) => src.addEventListener('scroll', () => {
+            if (busy === src) { busy = null; return; }
+            const t = lerp(src.scrollTop, anchors(), from, to);
+            if (Math.abs(dst.scrollTop - t) > 1) { busy = dst; dst.scrollTop = t; }
+        });
+        follow(c, g, 'c', 'g');
+        follow(g, c, 'g', 'c');
     },
 
     cfgLinesPref() {

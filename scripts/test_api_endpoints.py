@@ -2275,7 +2275,14 @@ def run_all_tests():
         )
 
     if func_id1:
-        test_endpoint("GET", "/api/function/code", params={"id": func_id1})
+        code_body = test_endpoint("GET", "/api/function/code", params={"id": func_id1})
+        check(
+            "function/code passes cfg and tok_block through (null on old analyses)",
+            isinstance(code_body, dict)
+            and "cfg" in code_body
+            and "tok_block" in code_body,
+            f"keys={sorted(code_body) if isinstance(code_body, dict) else code_body}",
+        )
         test_endpoint("GET", "/api/function/features", params={"id": func_id1})
         cg_body = test_endpoint(
             "GET", "/api/function/call_graph", params={"id": func_id1}

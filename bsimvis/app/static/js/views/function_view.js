@@ -77,6 +77,7 @@ window.FunctionView = {
                         <button class="bsim-tab active" id="function-tab-btn-code" onclick="FunctionView.switchTab('code')">Code</button>
                         <button class="bsim-tab" id="function-tab-btn-neighbors" onclick="FunctionView.switchTab('neighbors')">Similar<span id="fn-nbr-count-wrap" style="display:none;"> (<span id="fn-nbr-count">0</span>)</span></button>
                         <button class="bsim-tab" id="function-tab-btn-callgraph" onclick="FunctionView.switchTab('callgraph')">Call Graph</button>
+                        <button class="bsim-tab" id="function-tab-btn-cfg" onclick="FunctionView.switchTab('cfg')">CFG</button>
                         <button class="bsim-tab" id="function-tab-btn-strings" onclick="FunctionView.switchTab('strings')">Strings<span id="fn-str-count-wrap" style="display:none;"> (<span id="fn-str-count">0</span>)</span></button>
                     </div>
 
@@ -89,6 +90,8 @@ window.FunctionView = {
                             </button>
                         </div>
                     </div>
+
+                    <div id="function-panel-cfg" class="function-view-panel" style="display:none; flex:1; overflow:auto; padding:6px;"></div>
 
                     <div id="function-panel-neighbors" class="function-view-panel" style="display:none; flex:1; overflow-y:auto;">
                         <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
@@ -228,6 +231,10 @@ window.FunctionView = {
 
             this.funcRows = data.rows || [];
             this.funcTips = data.tips || {};
+            this.cfg = data.cfg || null;
+            this.tokBlock = data.tok_block || null;
+            this.cfgSel = null;
+            this._cfgDone = false;
             window.currentFuncName = fnName(data.meta) || 'unknown';
             if (data.meta && data.meta.file_name && file_md5) {
                 window.filenameCache = window.filenameCache || {};
@@ -357,6 +364,134 @@ window.FunctionView = {
         }
     },
 
+    // ---- CFG tab: Ghidra high-pcode basic blocks, linked to the decompiled lines through tok_block ----
+    CFG_MAX_BLOCKS: 150,
+
+    // Line <-> block maps, built once from the rendered rows and the run-length tok_block.
+    cfgMaps() {
+        if (this._cfgMaps) return this._cfgMaps;
+        const tb = [], runs = this.tokBlock || [];
+        const n = Math.max(0, ...this.funcRows.flatMap(r => r.tokens.map(t => t.global_idx + 1)));
+        runs.forEach(([a, b], k) => { for (let i = a, end = k + 1 < runs.length ? runs[k + 1][0] : n; i < end; i++) tb[i] = b; });
+        const lineBlocks = new Map(), blockLines = new Map(), rowOf = new Map();
+        for (const row of this.funcRows) {
+            rowOf.set(row.line_idx, row);
+            const set = new Set();
+            for (const t of row.tokens) { const b = tb[t.global_idx]; if (b >= 0) set.add(b); }
+            lineBlocks.set(row.line_idx, set);
+            set.forEach(b => (blockLines.get(b) || blockLines.set(b, []).get(b)).push(row.line_idx));
+        }
+        return (this._cfgMaps = { lineBlocks, blockLines, rowOf });
+    },
+
+    loadCfgPanel() {
+        const el = document.getElementById('function-panel-cfg');
+        if (!el || this._cfgDone) return;
+        const blocks = this.cfg?.blocks || [];
+        if (!blocks.length || !this.tokBlock) {
+            el.innerHTML = '<p class="xp-hint" style="padding:14px;">This function was analysed before CFG storage; re-analyse the file to see its control-flow graph.</p>';
+            return;
+        }
+        if (blocks.length > this.CFG_MAX_BLOCKS) {
+            el.innerHTML = `<p class="xp-hint" style="padding:14px;">${blocks.length} basic blocks: too many to draw (limit ${this.CFG_MAX_BLOCKS}).</p>`;
+            return;
+        }
+        this._cfgDone = true;
+        const { blockLines } = this.cfgMaps();
+        const pos = new Map(blocks.map((b, k) => [b.i, k]));
+        const edges = [];
+        blocks.forEach((b, k) => b.out.forEach(o => pos.has(o) && edges.push([k, pos.get(o)])));
+        const g = CfgLayout.grid({ nodes: blocks, edges }, { nodes: [], edges: [] }, new Map());
+        const NW = 44, NH = 22, ROW = 46, W = g.L.w + 30, H = g.rows * ROW;
+        const sc = Math.max(0.4, Math.min(1, ((el.clientWidth || 1200) - 40) / W));
+        const cx = id => g.L.x.get(id), at = id => ({ x: cx(id) - NW / 2, y: g.row.get(id) * ROW });
+        let svg = '';
+        for (const [u, v] of edges) {
+            const a = 'r' + u, b = 'r' + v, key = a + '|' + b;
+            if (g.back.has(key)) {
+                const p = at(a), q = at(b), s = 26;
+                svg += `<path class="e back" d="M${p.x + NW},${p.y + NH / 2} C${p.x + NW + s},${p.y + NH / 2} ${q.x + NW + s},${q.y + NH / 2} ${q.x + NW},${q.y + NH / 2}"/>`;
+                continue;
+            }
+            const pts = [{ x: cx(a), y: g.row.get(a) * ROW + NH }]
+                .concat((g.L.chain.get(key) || []).map(d => ({ x: g.L.x.get(d), y: g.L.rowOf.get(d) * ROW + NH / 2 })))
+                .concat([{ x: cx(b), y: g.row.get(b) * ROW }]);
+            svg += `<path class="e" d="${CfgLayout.path(pts)}"/>`;
+        }
+        let nodes = '';
+        blocks.forEach((b, k) => {
+            const p = at('r' + k), n = (blockLines.get(b.i) || []).length;
+            const cls = `k-${escapeAttr(b.kind)}${b.i === this.cfg.entry ? ' k-entry' : ''}`;
+            nodes += `<button class="xp-cell xp-cfn ${cls}" style="left:${p.x}px;top:${p.y}px" data-cfb="${Number(b.i)}" title="${escapeAttr(`block ${b.i} · ${b.kind} · ${n} lines · ${b.ops} ops · ${b.start}`)}">${Number(b.i)}</button>`;
+        });
+        el.innerHTML = `<p class="xp-hint">${blocks.length} Ghidra high-pcode blocks. Green outline: entry; tint by kind (conditional, red return, amber switch). Dashed arcs are back edges. Hover for the code, click to open it in the Code tab. Click a line number in the code to mark its blocks here.</p>
+            <div class="xp-cfgw" style="width:${Math.round(W * sc)}px;height:${Math.round(H * sc)}px"><div class="xp-cfg" id="fn-cfg-graph" style="width:${W}px;height:${H}px;transform:scale(${sc})"><svg width="${W}" height="${H}">${svg}</svg>${nodes}</div></div>`;
+        el.addEventListener('mouseover', e => this.cfgHover(e, true));
+        el.addEventListener('mouseout', e => this.cfgHover(e, false));
+        el.addEventListener('click', e => {
+            const n = e.target.closest('[data-cfb]');
+            if (n) this.cfgSelect([Number(n.dataset.cfb)], true);
+        });
+        this.cfgMark();
+        // Code lines -> blocks: hover shows them in the graph, a click on the line number keeps them marked.
+        this.scrollEl.addEventListener('mouseover', e => this.cfgLineBlocks(e, false));
+        this.scrollEl.addEventListener('mouseout', () => this.cfgMark());
+        this.scrollEl.addEventListener('click', e => { if (e.target.closest('.gutter')) this.cfgLineBlocks(e, true); });
+    },
+
+    cfgMark(extra) {
+        document.querySelectorAll('#fn-cfg-graph .xp-cfpair').forEach(x => x.classList.remove('xp-cfpair'));
+        for (const b of [...(this.cfgSel || []), ...(extra || [])]) {
+            document.querySelector(`#fn-cfg-graph [data-cfb="${b}"]`)?.classList.add('xp-cfpair');
+        }
+    },
+
+    cfgLineBlocks(e, keep) {
+        const line = e.target.closest('.code-line');
+        if (!line || !this._cfgDone) return;
+        const blocks = [...(this.cfgMaps().lineBlocks.get(parseInt(line.querySelector('.line-num')?.innerText)) || [])];
+        if (keep) { this.cfgSel = blocks; this.cfgMark(); } else this.cfgMark(blocks);
+    },
+
+    // Mark blocks in the graph; with open, show their lines highlighted in the Code tab.
+    cfgSelect(blocks, open) {
+        this.cfgSel = blocks;
+        this.cfgMark();
+        if (!open) return;
+        const { blockLines } = this.cfgMaps();
+        const lines = blocks.flatMap(b => blockLines.get(b) || []).sort((a, b) => a - b);
+        window.targetLineSet = new Set(lines);
+        document.querySelectorAll('.cfg-tip').forEach(x => x.remove());
+        this.switchTab('code');
+        if (!lines.length) return;
+        // Drop the cached line elements so renderRows rebuilds them with target-highlight.
+        this.vContentEl.innerHTML = '';
+        const idx = this.funcRows.findIndex(r => r.line_idx === lines[0]);
+        this.scrollEl.scrollTop = Math.max(0, idx * this.rowH - this.scrollEl.clientHeight / 3);
+        this.onScroll();
+    },
+
+    cfgHover(e, on) {
+        const n = e.target.closest('[data-cfb]');
+        if (!n || n.contains(e.relatedTarget)) return;
+        document.querySelectorAll('.cfg-tip').forEach(x => x.remove());
+        this.cfgMark();
+        if (!on) return;
+        const b = Number(n.dataset.cfb), { blockLines, rowOf } = this.cfgMaps();
+        this.cfgMark([b]);
+        const lines = (blockLines.get(b) || []).map(i => {
+            const row = rowOf.get(i);
+            return `${String(i).padStart(3)}  ${row.tokens.map(t => (window.renderTokenHtml ? window.renderTokenHtml(t, {}) : escapeHtml(t.text))).join('')}`;
+        });
+        const tip = document.createElement('div');
+        tip.className = 'xp-cfgtip cfg-tip';
+        tip.innerHTML = `<div class="xp-cfgpane"><div class="xp-ph">block ${b} &middot; ${lines.length} lines</div><pre class="c-code-container">${lines.join('\n') || 'no decompiled lines'}</pre></div>`;
+        document.body.appendChild(tip);
+        const r = tip.getBoundingClientRect();
+        tip.style.left = Math.max(4, Math.min(e.clientX + 14, innerWidth - r.width - 8)) + 'px';
+        tip.style.top = Math.max(4, Math.min(e.clientY + 14, innerHeight - r.height - 8)) + 'px';
+    },
+
     switchTab(tabId) {
         document.querySelectorAll('#function-view-tabs .bsim-tab').forEach(btn => btn.classList.remove('active'));
         document.querySelectorAll('.function-view-panel').forEach(panel => panel.style.display = 'none');
@@ -370,6 +505,7 @@ window.FunctionView = {
         // ponytail: no hash-routing for tabs here -- #L<line> hash is already owned by scrollToLine()
         if (tabId === 'neighbors') this.loadNeighborsPanel();
         if (tabId === 'callgraph') this.loadCallGraphPanel();
+        if (tabId === 'cfg') this.loadCfgPanel();
         if (tabId === 'strings') this.loadStringsPanel();
     },
 

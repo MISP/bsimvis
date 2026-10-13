@@ -264,7 +264,13 @@ def get_function_code():
         if pool_id and meta:
             enrich_pool_data(meta, pool_id)
 
-        return {"rows": rows, "tips": tips, "meta": meta or {}}
+        return {
+            "rows": rows,
+            "tips": tips,
+            "meta": meta or {},
+            "cfg": source.get("cfg"),
+            "tok_block": source.get("tok_block"),
+        }
     except Exception as e:
         # Capture the full stack trace as a string
         error_traceback = traceback.format_exc()

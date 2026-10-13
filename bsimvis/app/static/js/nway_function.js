@@ -466,8 +466,9 @@
                 for (const [id, v] of x) x.set(id, v - lo);
                 return { x, rowOf, chain, w: Math.max(...[...x].map(([id, v]) => v + hw(id))) };
             };
-            const L = place(ids.filter(id => id[0] === 'r' && +id.slice(1) < R.nodes.length), rE);
-            const M = place([...F.nodes.keys()].map(fid).filter((id, i, a) => a.indexOf(id) === i), fE);
+            // One layout for the union of both graphs: matched blocks share row and column, so equal
+            // functions draw the same shape and a difference shows as a change of shape.
+            const L = place([...new Set(ids)], rE.concat(fE)), M = L;
             return { fid, row, back, L, M, rows: Math.max(...row.values()) + 1 };
         }
 
@@ -482,6 +483,8 @@
             });
             const g = this._cfgGrid(R, F, pairOf), NW = 44, NH = 22, ROW = 46, gap = 50;
             const off = g.L.w + gap, W = off + g.M.w, H = g.rows * ROW;
+            // Shrink to the panel width so both shapes are visible together; the hover preview carries the detail.
+            const sc = Math.max(0.4, Math.min(1, ((this.el.clientWidth || 1200) - 40) / W));
             const cx = (side, id) => (side ? off + g.M.x.get(id) : g.L.x.get(id));
             const at = (side, id) => ({ x: cx(side, id) - NW / 2, y: g.row.get(id) * ROW });
             const edge = (side, u, v) => {
@@ -531,7 +534,7 @@
                 nodes += `<button class="xp-cell xp-cfn st-${st}" style="left:${p.x}px;top:${p.y}px" ${attrs} data-cfn="f:${j}:${k}"${relF.has(k) ? ` data-cfp="${relF.get(k).join(' ')}"` : ''}>${ref ? escapeHtml(ref.b) : '+'}</button>`;
             });
             return `<div class="xp-cfgp"><div class="xp-ph">${this._funcRef(c.reference)} reference (${R.nodes.length} blocks) &harr; ${this._funcRef(j)} ${escapeHtml(this.data.functions[j].file_name || '')} (${F.nodes.length} blocks)</div>
-                <div class="xp-cfg" style="width:${W}px;height:${H}px"><svg width="${W}" height="${H}">${svg}</svg>${nodes}</div></div>`;
+                <div class="xp-cfgw" style="width:${Math.round(W * sc)}px;height:${Math.round(H * sc)}px"><div class="xp-cfg" style="width:${W}px;height:${H}px;transform:scale(${sc})"><svg width="${W}" height="${H}">${svg}</svg>${nodes}</div></div></div>`;
         }
 
         // Code of a graph node, for the hover preview: [heading, html].

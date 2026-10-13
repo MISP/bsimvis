@@ -3143,7 +3143,8 @@ button.xp-cell:hover { outline: 2px solid var(--accent); }
 .xp-cell.sel { outline: 2px solid var(--text); }
 .xp-cfgs { margin-bottom: 10px; }
 .xp-cfgp { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; padding-bottom: 6px; }
-.xp-cfg { position: relative; margin: 8px 12px; }
+.xp-cfgw { margin: 8px 12px; }
+.xp-cfg { position: relative; transform-origin: 0 0; }
 .xp-cfg svg { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
 .xp-cfg path { fill: none; }
 .xp-cfg path.e { stroke: var(--dim); stroke-width: 1; }

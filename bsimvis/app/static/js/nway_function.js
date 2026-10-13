@@ -366,9 +366,9 @@
             const sim = g.funcs.map(j => Math.round(g.sims[String(j)] * 100)).join('/');
             return `<div class="xp-bd"><div class="xp-vchips"><span class="lab">Compare ${this._funcRef(c.reference)} with</span>${chips}${same.length ? `<span class="lab">${same.map(j => this._funcRef(j)).join(', ')}: same as ${this._funcRef(c.reference)}</span>` : ''}</div>
                 <div class="xp-panes">
-                  <div class="xp-pane"><div class="xp-ph">${this._funcRef(c.reference)} reference</div><pre>${this._codeHtml(b.ref_syntax, g.ref_segs, 'del', c.reference)}</pre></div>
+                  <div class="xp-pane"><div class="xp-ph">${this._funcRef(c.reference)} reference</div><pre data-xfns="${c.reference},${j0}">${this._codeHtml(b.ref_syntax, g.ref_segs, 'del', c.reference)}</pre></div>
                   <div class="xp-pane"><div class="xp-ph">${badges(g.funcs)} <span class="xp-cell st-${g.st}" style="cursor:default">${G[g.st]} ${NwayFunction.SNAME[g.st]}${g.st === 'miss' ? '' : ' ' + sim + '%'}</span>${cell.into ? `<span class="xp-tag hot">merged into ${escapeHtml(cell.into)}</span>` : ''}</div>
-                    <pre>${runs.length ? this._codeHtml(this._cellSyntax(b, j0), runs, 'chg', j0) : '(no matching code)'}</pre>${g.note ? `<div class="xp-pnote">${escapeHtml(g.note)}</div>` : ''}</div>
+                    <pre data-xfns="${j0},${c.reference}">${runs.length ? this._codeHtml(this._cellSyntax(b, j0), runs, 'chg', j0) : '(no matching code)'}</pre>${g.note ? `<div class="xp-pnote">${escapeHtml(g.note)}</div>` : ''}</div>
                 </div></div>`;
         }
 
@@ -462,8 +462,8 @@
                     let right;
                     if (cell.st === 'miss') right = '<pre class="xp-fcode gap">(no matching code)</pre>';
                     else if (cell.into) right = `<pre class="xp-fcode gap">↑ merged into ${escapeHtml(cell.into)} above</pre>`;
-                    else right = `<pre class="xp-fcode st-${cell.st}">${this._codeHtml(this._cellSyntax(b, f), this._cellRuns(b, f), 'chg', f)}</pre>`;
-                    out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), cell.into ? tag('merged into ' + cell.into) : '')}${this._fullGroups(b, f)}<pre class="xp-fcode">${this._codeHtml(b.ref_syntax, g && g.ref_segs, 'del', c.reference)}</pre>${right}</div>`;
+                    else right = `<pre class="xp-fcode st-${cell.st}" data-xfns="${f},${c.reference}">${this._codeHtml(this._cellSyntax(b, f), this._cellRuns(b, f), 'chg', f)}</pre>`;
+                    out += `<div class="xp-frow">${this._band(b.id, cell.st, cell.sim, this._bt(b), cell.into ? tag('merged into ' + cell.into) : '')}${this._fullGroups(b, f)}<pre class="xp-fcode" data-xfns="${c.reference},${f}">${this._codeHtml(b.ref_syntax, g && g.ref_segs, 'del', c.reference)}</pre>${right}</div>`;
                 }
                 out += extraRows(b.id);
             }
@@ -559,9 +559,39 @@
         _callHover(e, on) {
             const call = e.target.closest('[data-xcall]');
             if (!call || !this.el.contains(call) || call.contains(e.relatedTarget)) return;
-            if (on) window.showCodePreview?.(call.dataset.xcall, call.dataset.xcallName, null, null, null,
-                { clientX: e.clientX, clientY: e.clientY, target: call, currentTarget: call });
-            else window.hideCodePreview?.(e);
+            const pos = { clientX: e.clientX, clientY: e.clientY, target: call, currentTarget: call };
+            const tok = (this._hoverTok = (this._hoverTok || 0) + 1);
+            if (!on) {
+                window.hideDiffPreview?.(e);
+                return window.hideCodePreview?.(e);
+            }
+            const fallback = () => window.showCodePreview?.(call.dataset.xcall, call.dataset.xcallName, null, null, null, pos);
+            const fns = call.closest('pre[data-xfns]')?.dataset.xfns.split(',').map(Number);
+            if (!fns) return fallback();
+            this._calledHit(fns[0], fns[1], call.dataset.xcall).then(hit => {
+                if (tok !== this._hoverTok) return;
+                if (!hit) return fallback();
+                window.showDiffPreview(hit.func_a.id, hit.func_a.name || '', hit.func_b.id, hit.func_b.name || '', Number(hit.similarity) || 0, pos);
+            });
+        }
+
+        // Greedy partner row of a called function in the pair (i, j), null when unmatched.
+        async _calledHit(i, j, id) {
+            const key = `${i}|${j}`;
+            this._callSim = this._callSim || {};
+            if (!(key in this._callSim)) {
+                const A = parts(this.fids[i]), B = parts(this.fids[j]);
+                const run = source => {
+                    const q = new URLSearchParams({ collection_a: A.coll, collection_b: B.coll, md5_a: A.md5, md5_b: B.md5, addr_a: A.addr, addr_b: B.addr, min_score: 0.5, source });
+                    if (this.source.pool) q.set('pool', this.source.pool);
+                    return fetch(`/api/function/call_graph_similarity?${q}`).then(r => (r.ok ? r.json() : null)).catch(() => null);
+                };
+                // Stored file-pair match first, then the functions' own neighbours.
+                this._callSim[key] = run('stored').then(d => d || run('local'));
+            }
+            const data = await this._callSim[key];
+            if (!data) return null;
+            return ['callers', 'callees'].flatMap(r => data[r].matched).find(m => m.func_a.id === id || m.func_b.id === id) || null;
         }
 
         _entityMenu(e) {

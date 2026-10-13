@@ -3,9 +3,10 @@
 `cfg`, `tok_block` and the per-feature `block_index` come from the live Ghidra
 decompiler (`ghidra_service.stream_bsim_data`), so they cannot be rebuilt from
 stored data. This finds files whose functions lack `cfg` in `{fid}:source` and
-queues a plain GHIDRA_ANALYZE with `skip_sim` and every optional module skipped
-(tags, YARA, capa already exist; similarities are untouched), one lane unit per
-file, the same job the scan-commit top-up queues.
+queues one group of plain GHIDRA_ANALYZE jobs per collection (parallel across
+workers, one lane unit) with `skip_sim` and every optional module skipped: tags,
+YARA and capa already exist and similarities are untouched. Same job the
+scan-commit top-up queues.
 
 Files whose raw bytes are gone cannot be re-analysed and are reported.
 
@@ -54,6 +55,7 @@ def has_cfg(r, collection, md5):
 def backfill(collection, js, dry_run=False, limit=None):
     r, raw = get_redis(), get_raw_redis()
     queued = have = no_raw = empty = 0
+    tasks = []
     for base in sorted(_s(b) for b in r.smembers(f"{collection}:all_files")):
         md5 = base.rsplit(":", 1)[-1]
         state = has_cfg(r, collection, md5)
@@ -72,27 +74,28 @@ def backfill(collection, js, dry_run=False, limit=None):
             break
         meta = json.loads(r.get(f"{base}:meta") or "{}")
         queued += 1
-        if dry_run:
-            continue
-        job = js.create_job(
-            JobType.GHIDRA_ANALYZE,
-            {
-                "collection": collection,
-                "raw_file_id": raw_id,
-                "file_md5": md5,
-                "file_name": meta.get("file_name", "unknown"),
-                "batch_uuid": meta.get("batch_uuid"),
-                "batch_name": meta.get("batch_name"),
-                "skip_sim": True,
-                "skip_function_id": True,
-                "skip_capa": True,
-                "skip_yara": True,
-                "skip_rulezet": True,
-                "skip_boilerplate": True,
-            },
-            enqueue=False,
+        tasks.append(
+            (
+                JobType.GHIDRA_ANALYZE,
+                {
+                    "collection": collection,
+                    "raw_file_id": raw_id,
+                    "file_md5": md5,
+                    "file_name": meta.get("file_name", "unknown"),
+                    "batch_uuid": meta.get("batch_uuid"),
+                    "batch_name": meta.get("batch_name"),
+                    "skip_sim": True,
+                    "skip_function_id": True,
+                    "skip_capa": True,
+                    "skip_yara": True,
+                    "skip_rulezet": True,
+                    "skip_boilerplate": True,
+                },
+            )
         )
-        js.submit_to_lane(collection, job)
+    if tasks and not dry_run:
+        # One group: the files run in parallel across workers, one lane unit.
+        js.submit_to_lane(collection, js.create_group(tasks, enqueue=False))
     logging.info(
         f"{collection}: {'would queue' if dry_run else 'queued'} {queued}, "
         f"already have cfg {have}, no raw {no_raw}, no functions {empty}"

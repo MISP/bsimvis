@@ -228,6 +228,7 @@ window.FunctionView = {
             const res = await fetch(`/api/function/code?id=${encodeURIComponent(this.id)}`);
             if (!res.ok) throw new Error("Function not found");
             const data = await res.json();
+            if (!this.vHeightEl) return; // destroyed while loading
 
             this.funcRows = data.rows || [];
             this.funcTips = data.tips || {};
@@ -266,6 +267,7 @@ window.FunctionView = {
             if (window.fetchTagMetadata) {
                 await window.fetchTagMetadata(collection);
             }
+            if (!this.vHeightEl) return; // destroyed while loading
 
             // Set virtual height
             this.vHeightEl.style.height = (this.funcRows.length * this.rowH) + 'px';

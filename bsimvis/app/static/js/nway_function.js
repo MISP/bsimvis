@@ -647,8 +647,9 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
             const d = this.data, c = d.consensus, s = this.s, single = s.single, nf = d.functions.length;
             if (s.fn == null || (!single && s.fn === c.reference)) s.fn = this._others()[0];
             const f = s.fn, ref = c.reference, rl = d.functions[ref].letter;
-            const chips = this._functionGroups(single).map(g => `<button class="xp-chip" aria-pressed="${g.includes(f)}" data-xfn="${g.includes(f) ? f : g[0]}" title="${escapeAttr(g.map(j => `${d.functions[j].letter}: ${d.functions[j].file_name || ''}`).join('\n'))}">${g.map(j => this._funcRef(j, 'xp-badge', false)).join('')}${g.length > 1 ? 'same code' : this._fileRef(g[0], 'xp-rfile', false)}</button>`).join('');
-            const ncols = Math.min(5, nf);
+            const fgroups = this._functionGroups(single);
+            const chips = fgroups.map(g => `<button class="xp-chip" aria-pressed="${g.includes(f)}" data-xfn="${g.includes(f) ? f : g[0]}" title="${escapeAttr(g.map(j => `${d.functions[j].letter}: ${d.functions[j].file_name || ''}`).join('\n'))}">${g.map(j => this._funcRef(j, 'xp-badge', false)).join('')}${g.length > 1 ? 'same code' : this._fileRef(g[0], 'xp-rfile', false)}</button>`).join('');
+            const ncols = Math.min(5, nf, single ? nf : fgroups.length + 1);
             const colsCtl = !single && ncols > 2 ? `<div class="view-toggle" role="group" aria-label="Columns">${Array.from({ length: ncols - 1 }, (_, i) => i + 2).map(n => `<button class="view-btn${Math.min(s.cols, ncols) === n ? ' active' : ''}" data-xcols="${n}" title="${n} columns: ${escapeAttr(rl)} and ${n - 1} variant${n > 2 ? 's' : ''}">${n}</button>`).join('')}</div>` : '';
             const why = single ? `Whole function ${d.functions[f].letter}, blocks labelled with their match in the reference.`
                 : `Rows are blocks of ${rl}, the first column. The other columns are the selected variants, side by side. Functions sharing a block variant are grouped together; hover a block's gutter to see its variants and pick one to show first. Blocks that moved or merged stay on the row of the block they match.`;
@@ -662,7 +663,9 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
                     return `<div class="xp-frow one">${band}<pre class="xp-fcode st-${r ? r.st : 'extra'}">${this._codeHtml(seg.syntax, seg.text, 'chg', f)}</pre></div>`;
                 }).join('');
             }
-            const fs = [f, ...this._others().filter(j => j !== f)].slice(0, Math.min(s.cols, ncols) - 1);
+            // One representative per group of same-code functions; the selected one stands for its group.
+            const reps = fgroups.map(g => (g.includes(f) ? f : g[0]));
+            const fs = [f, ...reps.filter(j => j !== f)].slice(0, Math.min(s.cols, ncols) - 1);
             const G = NwayFunction.GLYPH, S = NwayFunction.SNAME, n = fs.length;
             this.unfold = this.unfold || new Set();
             const rail = [];

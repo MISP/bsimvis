@@ -994,7 +994,14 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
             if (d.xfold) { this.unfold.add(d.xfold); return this._rebody(); }
             if (d.xjump) return this.el.querySelector(`[data-xrow="${CSS.escape(d.xjump)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
             if (d.xbm) { this.s.bm = d.xbm; this._persist(); return this.load(); }
-            if (d.xfn !== undefined) { this.s.fn = Number(d.xfn); this._persist(); return this._rebody(); }
+            if (d.xfn !== undefined) {
+                // Keep the block the chip sits in at the same screen position across the redraw.
+                const row = t.closest('[data-xrow]'), id = row && row.dataset.xrow, y = row && row.getBoundingClientRect().top;
+                this.s.fn = Number(d.xfn); this._persist(); this._rebody();
+                const now = id && this.el.querySelector(`[data-xrow="${CSS.escape(id)}"]`);
+                if (now) scrollBy(0, now.getBoundingClientRect().top - y);
+                return;
+            }
             if (d.xx) { this.s.open[d.xx] = 0; return this._rebody(d.xx); }
             if (d.xb !== undefined) {
                 const b = this.data.consensus.blocks.find(x => x.id === d.xb);

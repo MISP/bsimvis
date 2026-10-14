@@ -390,27 +390,6 @@
             });
         }
 
-        // Code html cut into one block per source line, so a wrapped line hangs under its own indent (--i).
-        // Tags open across a newline are closed and reopened on the next line.
-        _lines(html) {
-            const ind = html.replace(/<[^>]*>/g, '').split('\n').map(l => l.length - l.trimStart().length);
-            const open = i => `<span class="xp-ln" style="--i:${ind[i]}">`;
-            const stack = [];
-            let li = 0, out = open(0);
-            for (const [tok] of html.matchAll(/<[^>]*>|[^<]+/g)) {
-                if (tok[0] === '<') {
-                    out += tok;
-                    if (tok[1] === '/') stack.pop(); else stack.push(tok);
-                    continue;
-                }
-                tok.split('\n').forEach((part, k) => {
-                    if (k) out += stack.map(t => `</${t.match(/^<(\w+)/)[1]}>`).reverse().join('') + '</span>' + open(++li) + stack.join('');
-                    out += part;
-                });
-            }
-            return out + '</span>';
-        }
-
         _cellSyntax(b, j) {
             return this._cell(b, j).segs.flatMap((k, i) => {
                 const seg = this._fseg(j, k);
@@ -723,9 +702,9 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
                     if (cell.st === 'miss') return gap('(no matching code)');
                     if (cell.into) return gap(`↑ merged into ${escapeHtml(cell.into)} above`);
                     const tip = `${d.functions[j].letter}: ${S[cell.st]}${cell.st === 'same' ? '' : ' ' + Math.round(cell.sim * 100) + '%'}`;
-                    return `<pre class="xp-fcode st-${cell.st}" title="${escapeAttr(tip)}" data-xfns="${j},${ref}">${this._lines(this._codeHtml(this._trim(syn, ind), this._trim(runs, ind), 'chg', j, this._hashSet(b.ref_syntax)))}</pre>`;
+                    return `<pre class="xp-fcode st-${cell.st}" title="${escapeAttr(tip)}" data-xfns="${j},${ref}">${this._codeHtml(this._trim(syn, ind), this._trim(runs, ind), 'chg', j, this._hashSet(b.ref_syntax))}</pre>`;
                 }).join('');
-                return `<div class="xp-frow xp-g wst-${w}" data-xrow="${escapeAttr(b.id)}" style="--n:${n}">${this._gutter(b, fs, ind)}<pre class="xp-fcode" data-xfns="${ref},${fs[0]}">${this._lines(this._codeHtml(this._trim(b.ref_syntax, ind), this._trim(g && g.ref_segs, ind), 'del', ref, this._hashSet(cs[0].syn)))}</pre>${cells}</div>`;
+                return `<div class="xp-frow xp-g wst-${w}" data-xrow="${escapeAttr(b.id)}" style="--n:${n}">${this._gutter(b, fs, ind)}<pre class="xp-fcode" data-xfns="${ref},${fs[0]}">${this._codeHtml(this._trim(b.ref_syntax, ind), this._trim(g && g.ref_segs, ind), 'del', ref, this._hashSet(cs[0].syn))}</pre>${cells}</div>`;
             };
             const slots = this._extraSlots(fs);
             const extraRows = after => (slots.get(after) || []).map(({ seg, x, f: owner }) => {

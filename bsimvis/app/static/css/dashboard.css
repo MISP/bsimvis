@@ -2860,7 +2860,7 @@ a.home-card:hover,
 .nway-head p { margin: 0; color: var(--subtle); font-size: 0.9rem; }
 .nway-hero { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
 .nway-hero-top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.nway-hero-name { margin: 0; color: var(--accent); font-size: 1.3rem; font-family: var(--font-mono, monospace); overflow-wrap: break-word; }
+.nway-hero-name { margin: 0; color: var(--accent); font-size: 1.3rem; font-family: var(--font-mono, monospace); overflow-wrap: anywhere; }
 .nway-hero-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px; }
 .nway-hero-proto { font-family: var(--font-mono, monospace); font-size: 0.85rem; overflow-x: auto; white-space: pre; }
 .nway-hero-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 0.8rem; }
@@ -3249,9 +3249,7 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 /* No scroll container here: the header sticks to the page scroll, under the bars. */
 .xp-gscroll { border: 1px solid var(--border); border-radius: 6px; }
 .xp-frow.xp-g { grid-template-columns: 76px repeat(calc(var(--n) + 1), minmax(0, 1fr)); gap: 0; margin: 0; border-top: 1px solid var(--border); }
-.xp-g .xp-fcode { border: 0; border-left: 1px solid var(--border); border-radius: 0; white-space: pre-wrap; overflow-x: visible; overflow-wrap: break-word; }
-/* One block per source line; a wrapped line continues two columns past its own indent. */
-.xp-ln { display: block; min-height: 1.55em; padding-left: calc((var(--i) + 2) * 1ch); text-indent: calc((var(--i) + 2) * -1ch); }
+.xp-g .xp-fcode { border: 0; border-left: 1px solid var(--border); border-radius: 0; }
 .xp-g .xp-fcode.st-mod { background: color-mix(in srgb, var(--xp-warn-bg) 45%, transparent); }
 .xp-g .xp-fcode.st-moved { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .xp-g .xp-fcode.st-restr { background: color-mix(in srgb, var(--token-instruction) 8%, transparent); }

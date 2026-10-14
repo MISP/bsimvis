@@ -12,7 +12,7 @@
  * uploaded sample: it all goes through escapeHtml / escapeAttr.
  */
 (function () {
-    const PAIR_ROWS = 600;
+    const PAIR_ROWS = 3000;
     const hue = j => Math.round((j * 137.508 + 215) % 360);
     const cc = j => `style="--cc:hsl(${hue(j)} 62% var(--xp-l))"`;
     const parts = fid => {
@@ -32,6 +32,7 @@
             this.embedded = !!o.embedded;
             this.onLoad = o.onLoad || null;
             this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', bm: 'hybrid', open: {}, fn: null, single: false, cols: 2, ...(o.state || {}) };
+            if (this.s.tab === 'code' && this.s.cv === 'full') this.s.tab = 'full';
             this.titles = {};
             this.expl = {};
             this.sums = {};
@@ -129,7 +130,7 @@
         render() {
             const d = this.data, s = this.s;
             const code = d.consensus;
-            if (s.tab === 'code' && !code && !d.blocks_error) s.tab = 'facets';
+            if ((s.tab === 'code' || s.tab === 'full') && !code && !d.blocks_error) s.tab = 'facets';
             const tab = (k, label, why) => `<button class="bsim-tab${s.tab === k ? ' active' : ''}" role="tab" data-xtab="${k}"${why ? ` title="${escapeAttr(why)}"` : ''}>${label}</button>`;
             const nf = d.functions.length;
             this.el.innerHTML = `
@@ -139,9 +140,10 @@
                     <div><div class="xp-mx" style="--n:${nf}">${this._matrix()}</div>
                     <div class="xp-cap">${this._info('Function similarity from the matcher; a dash means no match was found. Click a cell to open that pair in the 2-way diff.')}</div></div></div>
                 <div class="xp-bar"><div class="bsim-tabbar" role="tablist" style="margin:0">
-                    ${this.embedded ? '' : tab('simple', 'Simple')}
+                    ${this.embedded ? '' : tab('simple', 'Reference')}
                     ${this.embedded ? '' : tab('facets', 'Facets')}
                     ${this.embedded ? '' : tab('code', 'Code blocks', !code ? `Code blocks need at most ${d.limits.code} functions (this row has ${nf})` : '')}
+                    ${this.embedded ? '' : tab('full', 'Full function', !code ? `Code blocks need at most ${d.limits.code} functions (this row has ${nf})` : '')}
                     ${this.embedded ? '' : tab('pair', 'Pair diff')}</div><span class="xp-sp"></span>
                     ${s.tab === 'pair' || s.tab === 'simple' ? '' : `<label class="xp-chk"><input type="checkbox" data-xonly ${s.only ? 'checked' : ''}> Differences only</label>`}</div>
                 <div class="xp-body">${this._body()}</div>`;
@@ -149,14 +151,25 @@
             new ResizeObserver(() => this.el.style.setProperty('--xp-bar2-h', bar.getBoundingClientRect().height + 'px')).observe(bar);
             this._loadSummaries();
             if (s.tab === 'pair') this._loadPair();
-            if (s.tab === 'code') this._loadTitles();
+            if (s.tab === 'code' || s.tab === 'full') this._loadTitles();
             if (s.tab === 'simple') this._loadSimple();
             this._railSync();
         }
 
         _body() {
             const t = this.s.tab;
-            return t === 'simple' ? this._simple() : t === 'facets' ? this._facets() : t === 'code' ? this._code() : this._pair();
+            return t === 'simple' ? this._simple() : t === 'facets' ? this._facets() : t === 'code' || t === 'full' ? this._code() : this._pair();
+        }
+
+        // Server-tokenized code token; a resolved call becomes a data-xcall link like the block views use.
+        _tok(t) {
+            const h = window.renderTokenHtml(t);
+            return t.called_func_id && !t.is_external
+                ? h.replace('<span ', `<span data-xcall="${escapeAttr(t.called_func_id)}" data-xcall-name="${escapeAttr(t.target_name || '')}" `) : h;
+        }
+
+        _line(row, cls = '') {
+            return `<div class="code-line ${escapeAttr(cls)}"><div class="gutter" contenteditable="false"><div class="line-num"${row.tooltip_text ? ` title="${escapeAttr(row.tooltip_text)}"` : ''}>${Number(row.line_idx)}</div></div><div class="line-content">${(row.tokens || []).map(t => this._tok(t)).join('')}</div></div>`;
         }
 
         _simple() {
@@ -174,9 +187,7 @@
                 const res = await fetch(`/api/function/code?id=${encodeURIComponent(id)}`);
                 if (!res.ok) throw new Error(`Function not found (${res.status})`);
                 const data = await res.json();
-                this.simpleCode = (data.rows || []).map(row =>
-                    `<div class="code-line"><div class="gutter" contenteditable="false"><div class="line-num">${Number(row.line_idx)}</div></div><div class="line-content">${row.tokens.map(t => window.renderTokenHtml(t)).join('')}</div></div>`
-                ).join('') || 'No code available.';
+                this.simpleCode = (data.rows || []).map(row => this._line(row)).join('') || 'No code available.';
             } catch (e) {
                 this.simpleCode = `<div class="xp-none">${escapeHtml(e.message)}</div>`;
             }
@@ -378,11 +389,11 @@
                 const miss = this.data.blocks_error.missing || [];
                 return `<div class="xp-cbar">${this._bmToggle()}</div><div class="xp-none">Ghidra blocks are not stored for ${miss.map(j => this._funcRef(j)).join(' ')}: analysed before the CFG was stored. Re-analyse them, or use Hybrid or Text blocks.</div>`;
             }
-            const sw = `<div class="xp-cbar">${this._bmToggle()}<div class="view-toggle" role="group" aria-label="Code view"><button class="view-btn${s.cv === 'blocks' ? ' active' : ''}" data-xcv="blocks">Blocks</button><button class="view-btn${s.cv === 'full' ? ' active' : ''}" data-xcv="full">Full function</button></div>
-${this._info(s.cv === 'blocks' ? 'Overview of what changed, block by block.' : 'Read the whole function, aligned to the reference by block.')}
+            const sw = `<div class="xp-cbar">${this._bmToggle()}
+${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'Read the whole function, aligned to the reference by block.')}
                 <button class="xp-aibtn" data-xask title="Open AI Insight and ask it about this whole row"><i class="fa-solid fa-robot"></i> Ask AI about this row</button>
                 <span class="xp-naming" ${this._naming ? '' : 'hidden'}><i class="fa-solid fa-spinner fa-spin"></i> naming blocks&hellip;</span></div>`;
-            return sw + (s.cv === 'blocks' ? this._blocksView() : this._fullView());
+            return sw + (s.tab === 'code' ? this._blocksView() : this._fullView());
         }
 
         _extraSlots(functions, unique = false) {
@@ -574,7 +585,7 @@ ${this._info(s.cv === 'blocks' ? 'Overview of what changed, block by block.' : '
                 return `<div class="xp-blk wst-${worst}"><button class="xp-bh" data-xb="${escapeAttr(b.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(b.id)}</span>${this._tspan(b)}${verdict}</button>${open ? this._blockBody(b) : ''}</div>`;
             }).join('');
             const hidden = only ? c.blocks.length - ordered.filter(item => item.b).length : 0;
-            return head + this._cfgStrip() + this._ribbon(ordered) + legend + accordion
+            return head + (this._cfgStrip() || this._ribbon(ordered)) + legend + accordion
                 + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} identical in all ${this.data.functions.length} functions hidden.</p>` : '');
         }
 
@@ -836,13 +847,9 @@ ${this._info(s.cv === 'blocks' ? 'Overview of what changed, block by block.' : '
                 return;
             }
             if (tok !== this._pairTok) return;
-            const side = s => {
-                if (!s) return '<code class="gap"></code>';
-                const tag = ((s.chunk_class || '').match(/tag-(\w+)/) || [])[1] || 'equal';
-                return `<code class="d-${tag}"><span class="no">${Number(s.line_idx)}</span>${(s.tokens || []).map(t => escapeHtml(t.text)).join('')}</code>`;
-            };
+            const side = r => (r ? this._line(r, r.chunk_class) : '<div class="code-spacer"></div>');
             const rows = body.rows || [];
-            host.innerHTML = `<div class="xp-drows">${rows.slice(0, PAIR_ROWS).map(r => `<div class="xp-drow">${side(r.l)}${side(r.r)}</div>`).join('')}</div>
+            host.innerHTML = `<div class="xp-dpair" data-xfns="${a},${b}">${rows.slice(0, PAIR_ROWS).map(r => `<div class="xp-drow">${side(r.l)}${side(r.r)}</div>`).join('')}</div>
                 ${rows.length > PAIR_ROWS ? `<p class="xp-foot">First ${PAIR_ROWS} of ${rows.length} lines. Open the full diff for the rest.</p>` : ''}`;
         }
 
@@ -863,7 +870,7 @@ ${this._info(s.cv === 'blocks' ? 'Overview of what changed, block by block.' : '
                 return window.hideCodePreview?.(e);
             }
             const fallback = () => window.showCodePreview?.(call.dataset.xcall, call.dataset.xcallName, null, null, null, pos);
-            const fns = call.closest('pre[data-xfns]')?.dataset.xfns.split(',').map(Number);
+            const fns = call.closest('[data-xfns]')?.dataset.xfns.split(',').map(Number);
             if (!fns) return fallback();
             this._calledHit(fns[0], fns[1], call.dataset.xcall).then(hit => {
                 if (tok !== this._hoverTok) return;
@@ -876,7 +883,7 @@ ${this._info(s.cv === 'blocks' ? 'Overview of what changed, block by block.' : '
         // Light the hovered call and its partner call in the neighbouring pane.
         _markPair(call, hit) {
             const other = hit.func_a.id === call.dataset.xcall ? hit.func_b.id : hit.func_a.id;
-            const box = call.closest('.xp-panes, .xp-frow');
+            const box = call.closest('.xp-panes, .xp-frow, .xp-dpair');
             call.classList.add('xp-callpair');
             box?.querySelectorAll('[data-xcall]').forEach(x => { if (x.dataset.xcall === other) x.classList.add('xp-callpair'); });
         }
@@ -920,7 +927,7 @@ ${this._info(s.cv === 'blocks' ? 'Overview of what changed, block by block.' : '
         }
 
         async _click(e) {
-            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xcv],[data-xbm],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xask],[data-xpair],[data-xnav],[data-xopen],[data-xcols],[data-xjump],[data-xfold]');
+            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xbm],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xask],[data-xpair],[data-xnav],[data-xopen],[data-xcols],[data-xjump],[data-xfold]');
             if (!t) return;
             const d = t.dataset;
             if (d.xask !== undefined) {
@@ -933,7 +940,7 @@ ${this._info(s.cv === 'blocks' ? 'Overview of what changed, block by block.' : '
             }
             if (d.xcall) {
                 e.preventDefault(); e.stopPropagation();
-                const fns = t.closest('pre[data-xfns]')?.dataset.xfns.split(',').map(Number);
+                const fns = t.closest('[data-xfns]')?.dataset.xfns.split(',').map(Number);
                 const hit = fns ? await this._calledHit(fns[0], fns[1], d.xcall) : null;
                 if (hit && window.buildDiffUrl) return window.Nav.openPath(window.buildDiffUrl(hit.func_a.id, hit.func_b.id), e, { title: `Diff: ${hit.func_a.name || hit.func_a.id} vs ${hit.func_b.name || hit.func_b.id}`, type: 'diff' });
                 return window.Nav.openPath(window.NwayPanel.fnUrl(d.xcall, this.source.pool || null), e, { title: d.xcallName || 'Function', type: 'function' });
@@ -951,7 +958,7 @@ ${this._info(s.cv === 'blocks' ? 'Overview of what changed, block by block.' : '
                 return window.Nav.openPath(url, e, { title: f.file_name || md5, type: 'file' });
             }
             if (d.xtab) {
-                if (d.xtab === 'code' && !this.data.consensus) {
+                if ((d.xtab === 'code' || d.xtab === 'full') && !this.data.consensus) {
                     showToast(`Code blocks are unavailable for ${this.data.functions.length} functions. Compare at most ${this.data.limits.code} functions to view them.`, 'warning');
                     return;
                 }
@@ -967,7 +974,6 @@ ${this._info(s.cv === 'blocks' ? 'Overview of what changed, block by block.' : '
             if (d.xfold) { this.unfold.add(d.xfold); return this._rebody(); }
             if (d.xjump) return this.el.querySelector(`[data-xrow="${CSS.escape(d.xjump)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
             if (d.xbm) { this.s.bm = d.xbm; this._persist(); return this.load(); }
-            if (d.xcv) { this.s.cv = d.xcv; this._persist(); return this._rebody(); }
             if (d.xfn !== undefined) { this.s.fn = Number(d.xfn); this._persist(); return this._rebody(); }
             if (d.xx) { this.s.open[d.xx] = 0; return this._rebody(d.xx); }
             if (d.xb !== undefined) {

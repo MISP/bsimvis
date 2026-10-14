@@ -3278,13 +3278,10 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .xp-tag.hot { color: var(--token-warning); border-color: var(--token-warning); }
 .xp-pairbar { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin-bottom: 10px; }
 .xp-pairbar select { background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; max-width: 100%; }
-.xp-drows { border: 1px solid var(--border); border-radius: 6px; max-height: 480px; overflow: auto; font: 0.76rem/1.5 'Consolas', monospace; }
+.xp-dpair { border: 1px solid var(--border); border-radius: 6px; max-height: calc(100vh - 240px); overflow: auto; font: 0.76rem 'Consolas', monospace; }
 .xp-drow { display: grid; grid-template-columns: 1fr 1fr; min-width: max-content; }
-.xp-drow code { white-space: pre; padding: 0 8px; border-left: 3px solid transparent; font: inherit; min-height: 1.5em; }
-.xp-drow code .no { display: inline-block; width: 36px; color: var(--dim); text-align: right; margin-right: 8px; }
-.xp-drow code.d-replace { background: var(--xp-warn-bg); border-left-color: var(--token-warning); }
-.xp-drow code.d-insert, .xp-drow code.d-delete { background: color-mix(in srgb, var(--token-instruction) 12%, var(--card-bg)); border-left-color: var(--token-instruction); }
-.xp-drow code.gap { background: repeating-linear-gradient(135deg, transparent 0 6px, var(--hover) 6px 12px); }
+.xp-drow > * { min-width: 0; white-space: pre; }
+.xp-drow > :first-child { border-right: 1px solid var(--border); }
 
 .xp-pane pre .xp-callpair, .xp-fcode .xp-callpair { background: color-mix(in srgb, var(--token-register) 25%, transparent); text-decoration-style: solid; border-radius: 2px; }
 

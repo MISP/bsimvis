@@ -59,7 +59,7 @@
             el.addEventListener('scroll', e => {
                 const pre = e.target;
                 if (!pre.matches || !pre.matches('pre') || this._syncing) return;
-                const box = pre.closest('.xp-g') ? pre.closest('.xp-ginner') : pre.closest('.xp-panes, .xp-frow');
+                const box = pre.closest('.xp-panes, .xp-frow');
                 if (!box) return;
                 this._syncing = true;
                 box.querySelectorAll('pre').forEach(o => { if (o !== pre) { o.scrollTop = pre.scrollTop; if (o.scrollLeft !== pre.scrollLeft) o.scrollLeft = pre.scrollLeft; } });
@@ -674,7 +674,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
             const colsCtl = !single && ncols > 2 ? `<div class="view-toggle" role="group" aria-label="Columns">${Array.from({ length: ncols - 1 }, (_, i) => i + 2).map(n => `<button class="view-btn${Math.min(s.cols, ncols) === n ? ' active' : ''}" data-xcols="${n}" title="${n} columns: ${escapeAttr(rl)} and ${n - 1} variant${n > 2 ? 's' : ''}">${n}</button>`).join('')}</div>` : '';
             const why = single ? `Whole function ${d.functions[f].letter}, blocks labelled with their match in the reference.`
                 : `Rows are blocks of ${rl}, the first column. The other columns are the selected variants, side by side. Functions sharing a block variant are grouped together; hover a block's gutter to see its variants and pick one to show first. Blocks that moved or merged stay on the row of the block they match.`;
-            const out = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Show</span>${chips}${colsCtl}<label class="xp-chk"><input type="checkbox" data-xsingle ${single ? 'checked' : ''}> Function alone, in its own order</label>${this._info(why)}</div>`;
+            const out = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Show</span>${chips}${colsCtl}<label class="xp-chk"><input type="checkbox" data-xsingle ${single ? 'checked' : ''}> Function alone, in its own order</label>${single ? '' : `<label class="xp-chk" title="Hide the indentation every column of a block has in common, so deep code needs less sideways scrolling"><input type="checkbox" data-xdedent ${s.dedent ? 'checked' : ''}> Trim shared indent</label>`}${this._info(why)}</div>`;
             if (single) {
                 if (f === ref) return out + c.blocks.map(b => `<div class="xp-frow one">${this._band(b.id, 'same', 1, this._bt(b))}<pre class="xp-fcode">${this._codeHtml(b.ref_syntax, null, null, ref)}</pre></div>`).join('');
                 const segs = c.funcs[String(f)] || [];
@@ -697,7 +697,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
                 const cs = fs.map(j => ({ j, cell: this._cell(b, j), syn: this._cellSyntax(b, j), runs: this._cellRuns(b, j) }));
                 const txt = (syn, runs) => (syn || runs || []).map(e => e[0]).join('');
                 // Indent shared by the whole row is hidden, so deep blocks need no sideways scroll.
-                const ind = this._indent([txt(b.ref_syntax, g && g.ref_segs), ...cs.filter(x => x.cell.st !== 'miss' && !x.cell.into).map(x => txt(x.syn, x.runs))]);
+                const ind = !s.dedent ? 0 : this._indent([txt(b.ref_syntax, g && g.ref_segs), ...cs.filter(x => x.cell.st !== 'miss' && !x.cell.into).map(x => txt(x.syn, x.runs))]);
                 const cells = cs.map(({ j, cell, syn, runs }) => {
                     if (cell.st === 'miss') return gap('(no matching code)');
                     if (cell.into) return gap(`↑ merged into ${escapeHtml(cell.into)} above`);
@@ -1050,6 +1050,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
         _change(e) {
             const t = e.target;
             if (t.dataset.xsingle !== undefined) { this.s.single = t.checked; this._persist(); return this._rebody(); }
+            if (t.dataset.xdedent !== undefined) { this.s.dedent = t.checked; return this._rebody(); }
             if (t.dataset.xonly !== undefined) { this.s.only = t.checked; this._persist(); return this._rebody(); }
             if (t.dataset.xsel !== undefined) {
                 this.s.pair[Number(t.dataset.xsel)] = Number(t.value);

@@ -227,31 +227,25 @@ window.NwayView = {
         const typeText = Object.entries(types).map(([t, n]) => `${t} ${n}`).join(' · ');
         const proto = `${p.return_type} ${m.name}(${p.parameters.join(', ')})`;
         const facts = [[c.functions, 'functions'], [c.files, c.files === 1 ? 'file' : 'files'], [c.collections, c.collections === 1 ? 'collection' : 'collections'], [c.batches, c.batches === 1 ? 'batch' : 'batches'], [c.clusters, c.clusters === 1 ? 'cluster' : 'clusters'], [c.arch.join(' · ') || '?', 'arch']];
-        const stat = (label, value, color) => `<div style="min-width:110px;"><div class="dim" style="font-size:0.65rem; text-transform:uppercase; letter-spacing:1px;">${escapeHtml(label)}</div><div style="font-size:1.1rem; font-weight:bold;${color ? ` color:${color};` : ''}">${value}</div></div>`;
-        // Cohesion and return-type agreement read like the score cards elsewhere: scoreColor, plain badges.
-        let cohStat = '';
-        if (coh && coh.error) cohStat = stat('Cohesion', `<span class="dim" style="font-size:0.8rem;">unavailable: ${escapeHtml(coh.error)}</span>`);
+        let cohHtml = '';
+        if (coh && coh.error) cohHtml = `<span class="dim">Cohesion unavailable: ${escapeHtml(coh.error)}</span>`;
         else if (coh) {
+            const band = coh.median >= 0.7 ? '' : coh.median >= 0.4 ? ' mid' : ' low';
             const gap = coh.total_pairs - coh.scored_pairs;
-            cohStat = `<div title="${escapeAttr(`${gap} unscored pair${gap === 1 ? '' : 's'} count as 0`)}">${stat('Cohesion (median)', coh.median.toFixed(2), window.scoreColor(coh.median))}<div class="dim" style="font-size:0.7rem;">${coh.min.toFixed(2)} - ${coh.max.toFixed(2)} · ${Number(coh.scored_pairs)}/${Number(coh.total_pairs)} pairs</div></div>`;
+            cohHtml = `<span>Cohesion</span><span class="nway-hbar${band}"><i style="left:${(coh.min * 100).toFixed(0)}%;right:${((1 - coh.max) * 100).toFixed(0)}%"></i></span>
+                <b>${coh.min.toFixed(2)} - ${coh.max.toFixed(2)}</b>
+                <span class="dim" title="${escapeAttr(`${gap} unscored pair${gap === 1 ? '' : 's'} count as 0`)}">median ${coh.median.toFixed(2)} · ${Number(coh.scored_pairs)} of ${Number(coh.total_pairs)} pairs scored</span>
+                ${band === ' low' ? '<span class="nway-hpill bad">weak: probably not one function</span>' : ''}`;
         }
-        const weak = coh && !coh.error && coh.median < 0.4 ? '<span class="badge" style="color:var(--token-instruction);">weak: probably not one function</span>' : '';
-        const agree = c.functions > 1 ? (p.return_agree === c.functions ? `<span class="badge">return type agrees ${Number(p.return_agree)}/${Number(c.functions)}</span>` : `<span class="badge" style="color:var(--token-warning);">return type ${escapeHtml(typeText)}</span>`) : '';
-        const sample = m.sample.shown < m.sample.total ? `<span class="badge" style="color:var(--token-warning);">showing ${Number(m.sample.shown)} of ${Number(m.sample.total)}</span>` : '';
-        const btn = (icon, label, tooltip, attr) => UI.Button.render({ className: 'btn-code-action', icon, label, tooltip, attr });
-        const icons = ['fa-solid fa-table-columns', 'fa-solid fa-arrow-up-right-from-square'];
-        const links = this._heroLinks(m).map((l, i) => btn(l.text.startsWith('Open file') ? 'fa-solid fa-file' : icons[Math.min(i, 1)], l.text, l.title, { 'data-hero-link': i })).join('');
-        const more = (m.sample.shown < m.sample.total ? btn('fa-solid fa-sliders', 'Change sample', 'How many functions the comparison tabs take', { 'data-hero-sample': '' }) : '')
-            + btn('fa-solid fa-pen', 'Rename', 'Rename this function set', { 'data-rename-fids': m.fids.join(','), 'data-rename-name': m.name });
-        el.innerHTML = `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                <i class="fa-solid ${kind === 'set' ? 'fa-layer-group' : 'fa-bullseye'}" style="color:var(--accent);"></i>
-                <span style="font-size:1.2rem; font-weight:bold; overflow-wrap:anywhere;">${escapeHtml(m.name)}</span>
-                <span class="badge">${badge}</span>${agree}${sample}${weak}
-                <span style="margin-left:auto; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">${links}${more}</span>
-            </div>
-            <div class="dim" style="font-size:0.78rem; margin-top:4px;">${escapeHtml(where)} · ${escapeHtml(from)}</div>
-            <div class="mono" style="font-size:0.8rem; margin-top:8px; overflow-x:auto; white-space:pre;">${escapeHtml(proto)}${p.variants.length > 1 ? ` <span class="dim">· ${p.variants.length} variants</span>` : ''}</div>
-            <div style="display:flex; gap:26px; flex-wrap:wrap; margin-top:14px;">${facts.map(([n, l]) => stat(l, escapeHtml(String(n)))).join('')}${cohStat}</div>`;
+        const agree = c.functions > 1 ? (p.return_agree === c.functions ? `<span class="nway-hpill ok">return type agrees ${Number(p.return_agree)}/${Number(c.functions)}</span>` : `<span class="nway-hpill warn">return type ${escapeHtml(typeText)}</span>`) : '';
+        const sample = m.sample.shown < m.sample.total ? `<span class="nway-hpill warn">showing ${Number(m.sample.shown)} of ${Number(m.sample.total)}</span><button class="top-action-btn" data-hero-sample>Change sample</button>` : '';
+        const links = this._heroLinks(m).map((l, i) => `<a class="top-action-btn${l.primary ? ' primary' : ''}" href="${escapeAttr(l.href)}" data-hero-link="${i}" data-title="${escapeAttr(l.title)}">${escapeHtml(l.text)}</a>`).join('');
+        el.innerHTML = `<div class="nway-hero-top"><span class="nway-hkind ${kind === 'set' ? 'set' : ''}">${badge}</span><span class="dim">${escapeHtml(where)} · ${escapeHtml(from)}</span></div>
+            <h2 class="nway-hero-name">${escapeHtml(m.name)}</h2>
+            <div class="nway-hero-proto">${escapeHtml(proto)}${p.variants.length > 1 ? ` <span class="nway-hvar">· ${p.variants.length} variants</span>` : ''}</div>
+            <div class="nway-hero-facts">${facts.map(([n, l]) => `<div><b>${escapeHtml(String(n))}</b><span>${escapeHtml(l)}</span></div>`).join('')}</div>
+            <div class="nway-hero-coh">${cohHtml}${agree}${sample}</div>
+            <div class="nway-hero-actions">${links}<button class="top-action-btn" data-rename-fids="${escapeAttr(m.fids.join(','))}" data-rename-name="${escapeAttr(m.name)}">Rename...</button></div>`;
         const hrefs = this._heroLinks(m);
         el.onclick = e => {
             const a = e.target.closest('[data-hero-link]');

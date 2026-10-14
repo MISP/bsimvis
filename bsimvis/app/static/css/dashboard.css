@@ -3259,7 +3259,8 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .xp-more .xp-vchips { margin: 0; }
 .xp-fold button { width: 100%; font: 0.72rem 'Consolas', monospace; color: var(--dim); background: var(--hover); border: 0; border-top: 1px solid var(--border); padding: 3px 0; cursor: pointer; }
 .xp-fold button:hover { color: var(--accent); }
-.xp-rail { position: sticky; top: calc(var(--xp-bar-h, 0px) + var(--xp-bar2-h, 0px) + 40px); height: min(60vh, 420px); display: flex; flex-direction: column; border-radius: 4px; overflow: hidden; background: var(--hover); }
+.xp-rail { position: sticky; top: calc(var(--xp-bar-h, 0px) + var(--xp-bar2-h, 0px) + 40px); height: calc(100vh - var(--xp-bar-h, 0px) - var(--xp-bar2-h, 0px) - 60px); display: flex; flex-direction: column; border-radius: 4px; overflow: hidden; background: var(--hover); }
+.xp-thumb { position: absolute; left: 0; right: 0; background: rgba(128, 128, 128, 0.35); border: 1px solid var(--dim); border-radius: 3px; cursor: grab; touch-action: none; }
 .xp-rail a { min-height: 3px; cursor: pointer; background: none; }
 .xp-rail a.st-mod { background: var(--token-warning); }
 .xp-rail a.st-moved { background: var(--accent); }

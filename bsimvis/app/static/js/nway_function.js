@@ -49,6 +49,10 @@
             el.addEventListener('mouseout', e => this._featHover(e, false));
             el.addEventListener('click', e => { const t = e.target.closest('.feature-highlight'); if (t && !e.target.closest('[data-xcall]') && this.el.contains(t)) window.toggleLock?.(t.dataset.hashes, t); });
             el.addEventListener('contextmenu', e => this._entityMenu(e));
+            this._railFn = () => this._railSync();
+            addEventListener('scroll', this._railFn, true);
+            addEventListener('resize', this._railFn);
+            el.addEventListener('pointerdown', e => this._railDrag(e));
             // Side-by-side code panes scroll together (scroll does not bubble, so capture it).
             el.addEventListener('scroll', e => {
                 const pre = e.target;
@@ -66,6 +70,30 @@
 
         destroy() {
             this._dead = true;
+            removeEventListener('scroll', this._railFn, true);
+            removeEventListener('resize', this._railFn);
+        }
+
+        // The rail is the scrollbar of the block grid: its thumb is the part of the grid in view, drag it to scroll.
+        _railSync() {
+            const wrap = this.el.querySelector('.xp-gwrap'), rail = wrap && wrap.querySelector('.xp-rail'), th = rail && rail.querySelector('.xp-thumb');
+            if (!th) return;
+            const r = wrap.getBoundingClientRect(), H = r.height, rh = rail.clientHeight;
+            const a = Math.max(0, -r.top), b = Math.min(H, innerHeight - r.top);
+            th.style.display = b > a ? '' : 'none';
+            th.style.top = (a / H) * rh + 'px';
+            th.style.height = Math.max(8, ((b - a) / H) * rh) + 'px';
+        }
+
+        _railDrag(e) {
+            const th = e.target.closest('.xp-thumb');
+            if (!th) return;
+            e.preventDefault();
+            const wrap = th.closest('.xp-gwrap'), k = wrap.getBoundingClientRect().height / th.parentElement.clientHeight, y0 = e.clientY, s0 = scrollY;
+            const mv = m => scrollTo(0, s0 + (m.clientY - y0) * k);
+            const up = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); };
+            addEventListener('pointermove', mv);
+            addEventListener('pointerup', up);
         }
 
         _qs() {
@@ -123,6 +151,7 @@
             if (s.tab === 'pair') this._loadPair();
             if (s.tab === 'code') this._loadTitles();
             if (s.tab === 'simple') this._loadSimple();
+            this._railSync();
         }
 
         _body() {
@@ -161,6 +190,7 @@
             const hd = focus && this.el.querySelector(`.xp-bh[data-xb="${CSS.escape(focus)}"]`);
             if (hd) hd.closest('.xp-blk').scrollIntoView({ block: 'start', behavior: 'smooth' });
             if (this.s.tab === 'pair') this._loadPair();
+            this._railSync();
         }
 
         // The (i) tooltip every explanatory text lives in; `text` is plain, escaped here.
@@ -649,7 +679,7 @@ ${this._info(s.cv === 'blocks' ? 'Overview of what changed, block by block.' : '
                 if (ex) { flush(); body += ex; }
             }
             flush();
-            const railHtml = `<div class="xp-rail">${rail.map(r => `<a class="st-${r.w}" ${r.fold ? `data-xfold="${escapeAttr(r.fold)}"` : `data-xjump="${escapeAttr(r.id)}"`} style="flex:${r.n}" title="${escapeAttr(r.fold ? 'identical blocks, click to show' : `${r.id}: ${S[r.w]}`)}"></a>`).join('')}</div>`;
+            const railHtml = `<div class="xp-rail">${rail.map(r => `<a class="st-${r.w}" ${r.fold ? `data-xfold="${escapeAttr(r.fold)}"` : `data-xjump="${escapeAttr(r.id)}"`} style="flex:${r.n}" title="${escapeAttr(r.fold ? 'identical blocks, click to show' : `${r.id}: ${S[r.w]}`)}"></a>`).join('')}<div class="xp-thumb"></div></div>`;
             return out + `<div class="xp-gwrap"><div class="xp-gscroll"><div class="xp-ginner" style="--n:${n}">${head}${body}</div></div>${railHtml}</div>`;
         }
 

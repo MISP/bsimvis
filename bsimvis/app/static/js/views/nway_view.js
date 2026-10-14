@@ -250,7 +250,9 @@ window.NwayView = {
         else if (coh) {
             const gap = coh.total_pairs - coh.scored_pairs;
             const color = coh.median >= 0.7 ? 'var(--success)' : coh.median >= 0.4 ? 'var(--token-warning)' : 'var(--token-instruction)';
-            cohHtml = `<span title="${escapeAttr(`min ${coh.min.toFixed(2)}, max ${coh.max.toFixed(2)}, ${Number(coh.scored_pairs)} of ${Number(coh.total_pairs)} pairs scored; ${gap} unscored count as 0`)}">cohesion <b style="color:${color}">${coh.median.toFixed(2)}</b></span>`;
+            const pc = v => (v * 100).toFixed(0);
+            const tip = escapeAttr(`${Number(coh.scored_pairs)} of ${Number(coh.total_pairs)} pairs scored; ${gap} unscored count as 0`);
+            cohHtml = `<span style="display:inline-flex;align-items:center;gap:8px" title="${tip}">cohesion<span class="nway-hbar"><i style="left:${pc(coh.min)}%;right:${pc(1 - coh.max)}%;background:${color}"></i><u style="left:${pc(coh.median)}%"></u></span>min ${coh.min.toFixed(2)} · <b style="color:${color}">median ${coh.median.toFixed(2)}</b> · max ${coh.max.toFixed(2)}</span>`;
         }
         // Pills only for what is off; a healthy set shows none.
         const warns = [];

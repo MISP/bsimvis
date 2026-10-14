@@ -2867,6 +2867,9 @@ a.home-card:hover,
 .nway-hvar { color: var(--token-warning); }
 .nway-hkind { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; padding: 2px 8px; border-radius: 3px; background: rgba(77,171,247,.18); color: var(--accent); }
 .nway-hkind.set { background: rgba(250,176,5,.18); color: var(--token-warning); }
+.nway-hbar { position: relative; width: 120px; height: 8px; border-radius: 4px; background: rgba(127,127,127,.2); }
+.nway-hbar i { position: absolute; top: 0; bottom: 0; border-radius: 4px; background: var(--success); }
+.nway-hbar u { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text); }
 .nway-hpill { font-size: 0.75rem; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); white-space: nowrap; }
 .nway-hpill.warn { color: var(--token-warning); }
 .nway-edit { margin-bottom: 14px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); }

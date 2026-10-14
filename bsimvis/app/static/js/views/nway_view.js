@@ -129,6 +129,7 @@ window.NwayView = {
         const files = [...new Set(this._familyFids.map(f => { const i = f.indexOf(':func:'); return `${f.slice(0, i)}:${f.slice(i + 6).split(':')[0]}`; }))];
         const graphSource = this._fnScope ? { md5s: files.join(','), ...(this._meta && this._meta.links.nway.pool ? { pool: this._meta.links.nway.pool } : {}), ...(files.length < 2 ? { solo: '1' } : {}) } : source;
         this._graphSource = graphSource;
+        if (this._fnScope) this._parentN = files.length;
         this._panel = new NwayPanel(document.getElementById('nway-graph-host'), {
             source: graphSource, state: doc, cg: { ...cg, name: this._familyName, cells },
             onCg: url => {
@@ -202,11 +203,13 @@ window.NwayView = {
             // A row link also searches the diff for its name, so the row is the first thing in view.
             const focus = L.kind === 'nway' && m.name_source !== 'fallback' ? `&tab=all&q=${encodeURIComponent(m.name)}` : '';
             const warn = m.sample.shown < m.sample.total ? ' (sample)' : '';
-            const total = Number((this._ref || '').split(':')[1]) || 0;
+            // Files of the diff this view came from: a row ref's count, else what the graph spans (a merged focus has no row).
+            const nwayK = r => (/^nway:/.test(r || '') ? Number(r.split(':')[1]) : 0);
+            const total = nwayK(this._ref) || nwayK(this._ref0) || this._parentN || 0;
             // A set from a cluster has no file source of its own: the files its graph spans are the parent.
             const { solo, ...src } = this._graphSource || this._familySource || {};
             // From a row of a bigger diff: the whole diff is the parent, these files are a narrower one.
-            if (L.kind === 'nway' && total > nw.files && (src.md5s || src.batch_uuid || src.cluster_uuid)) {
+            if (total > nw.files && (src.md5s || src.batch_uuid || src.cluster_uuid)) {
                 const qs = new URLSearchParams({ ...src, ...this._familyDoc });
                 out.push({ primary: true, icon: 'fa-solid fa-table-columns', href: `/diff/nway?${qs}${focus}`, text: `Open parent N-way diff (${total} files)`, title: 'Parent N-way diff' });
                 out.push({ icon: 'fa-solid fa-table-columns', href: `/diff/nway?md5s=${encodeURIComponent(nw.md5s.join(','))}${pool}${focus}`, text: `Only these ${nw.files} files`, title: 'N-way diff of the files holding this row' });

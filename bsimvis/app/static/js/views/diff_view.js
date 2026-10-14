@@ -85,6 +85,7 @@ window.DiffView = {
                         <button id="btn-diff-mode-code" class="bsim-tab active" onclick="switchDiffMode('code')"><i class="fa-solid fa-code"></i> Code Diff</button>
                         <button id="btn-diff-mode-graph" class="bsim-tab" onclick="switchDiffMode('graph')"><i class="fa-solid fa-diagram-project"></i> Call Graph Diff</button>
                         <button id="btn-diff-mode-similarity" class="bsim-tab" onclick="switchDiffMode('similarity')"><i class="fa-solid fa-link"></i> Call Graph Similarity</button>
+                        <button id="btn-diff-mode-cfg" class="bsim-tab" onclick="switchDiffMode('cfg')"><i class="fa-solid fa-sitemap"></i> CFG Diff</button>
                     </div>
                 </div>
 
@@ -198,6 +199,7 @@ window.DiffView = {
                 </div>
 
                 <div id="bsim-call-sim-wrap" style="display:none; flex:1; overflow:auto; padding:16px;"></div>
+                <div id="bsim-cfg-wrap" style="display:none; flex:1; overflow:auto; padding:16px;"></div>
 
                 <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:var(--window-bg); padding:10px; border-radius:4px; border:1px solid var(--accent); color:var(--text); font-size:0.8rem; pointer-events:none;"></div>
             </div>
@@ -1308,17 +1310,39 @@ window.DiffView = {
         const codeBtn = document.getElementById('btn-diff-mode-code');
         const graphBtn = document.getElementById('btn-diff-mode-graph');
         const simBtn = document.getElementById('btn-diff-mode-similarity');
+        const cfgBtn = document.getElementById('btn-diff-mode-cfg');
+        const cfgWrap = document.getElementById('bsim-cfg-wrap');
         const scrollEl = document.getElementById('bsim-scroll');
         const graphWrap = document.getElementById('bsim-graph-diff-wrap');
         const simWrap = document.getElementById('bsim-call-sim-wrap');
-        [codeBtn, graphBtn, simBtn].forEach(btn => btn && btn.classList.remove('active'));
+        [codeBtn, graphBtn, simBtn, cfgBtn].forEach(btn => btn && btn.classList.remove('active'));
         if (scrollEl) scrollEl.style.display = mode === 'code' ? 'flex' : 'none';
         if (graphWrap) graphWrap.style.display = mode === 'graph' ? 'flex' : 'none';
         if (simWrap) simWrap.style.display = mode === 'similarity' ? 'block' : 'none';
-        const active = mode === 'graph' ? graphBtn : mode === 'similarity' ? simBtn : codeBtn;
+        if (cfgWrap) cfgWrap.style.display = mode === 'cfg' ? 'block' : 'none';
+        const active = mode === 'graph' ? graphBtn : mode === 'similarity' ? simBtn : mode === 'cfg' ? cfgBtn : codeBtn;
         if (active) active.classList.add('active');
         if (mode === 'graph') this.loadDiffCallGraphs();
         if (mode === 'similarity') this.loadCallGraphSimilarity();
+        if (mode === 'cfg') this.loadCfgDiff();
+    },
+
+    // Same CFG pair view as the N-way function page, fed with just these two functions.
+    loadCfgDiff() {
+        const wrap = document.getElementById('bsim-cfg-wrap');
+        const p = this._getCurrentP() || this._parsePathUrl();
+        if (!wrap || !p || !p.addr_a || !p.addr_b) return;
+        const key = this._callSimPairKey(p);
+        if (this._cfgKey === key) return;
+        this._cfgKey = key;
+        if (this._cfgPanel) this._cfgPanel.destroy();
+        const id = (c, m, a) => `${c}:func:${m}:${a}`;
+        this._cfgPanel = new NwayFunction(wrap, {
+            source: { scope: 'functions', ...(p.pool ? { pool: p.pool } : {}) },
+            fids: [id(p.collection_a, p.md5_a, p.addr_a), id(p.collection_b, p.md5_b, p.addr_b)],
+            embedded: true, cfgOnly: true,
+        });
+        this._cfgPanel.load();
     },
 
     _callSimPairKey(p) {
@@ -1607,5 +1631,7 @@ window.DiffView = {
         delete window.navigateToFunction;
         delete window.diffFocusContext;
         clearTimeout(this._callSimTimer);
+        if (this._cfgPanel) this._cfgPanel.destroy();
+        this._cfgPanel = this._cfgKey = null;
     }
 };

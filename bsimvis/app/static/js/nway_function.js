@@ -30,6 +30,7 @@
             this.name = o.name || '';
             this.onState = o.onState || null;
             this.embedded = !!o.embedded;
+            this.cfgOnly = !!o.cfgOnly;
             this.onLoad = o.onLoad || null;
             this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', bm: 'hybrid', open: {}, fn: null, single: false, cols: 2, ...(o.state || {}) };
             if (this.s.tab === 'code' && this.s.cv === 'full') this.s.tab = 'full';
@@ -130,6 +131,7 @@
         render() {
             const d = this.data, s = this.s;
             const code = d.consensus;
+            if (this.cfgOnly) { this.el.innerHTML = this._cfgOnly(); return; }
             if ((s.tab === 'code' || s.tab === 'full') && !code && !d.blocks_error) s.tab = 'facets';
             const tab = (k, label, why) => `<button class="bsim-tab${s.tab === k ? ' active' : ''}" role="tab" data-xtab="${k}"${why ? ` title="${escapeAttr(why)}"` : ''}>${label}</button>`;
             const nf = d.functions.length;
@@ -154,6 +156,16 @@
             if (s.tab === 'code' || s.tab === 'full') this._loadTitles();
             if (s.tab === 'simple') this._loadSimple();
             this._railSync();
+        }
+
+        // Diff-view tab: just the reference-vs-function CFG pairs, no cards or tabs.
+        _cfgOnly() {
+            const d = this.data;
+            if (!d.consensus) {
+                const miss = d.blocks_error ? d.blocks_error.missing || [] : [];
+                return `<div class="xp-cbar">${this._bmToggle()}</div><div class="xp-none">${miss.length ? `Ghidra blocks are not stored for ${miss.map(j => this._funcRef(j)).join(' ')}: analysed before the CFG was stored. Re-analyse them, or use Hybrid or Text blocks.` : 'No block comparison available for these functions.'}</div>`;
+            }
+            return `<div class="xp-cbar">${this._bmToggle()}</div>` + (this._cfgStrip() || '<div class="xp-none">No stored control-flow graph for these functions. Re-analyse the files.</div>');
         }
 
         _body() {
@@ -931,6 +943,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
             const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xbm],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xask],[data-xpair],[data-xnav],[data-xopen],[data-xcols],[data-xjump],[data-xfold]');
             if (!t) return;
             const d = t.dataset;
+            if (this.cfgOnly && (d.xb !== undefined || d.xx !== undefined)) return;
             if (d.xask !== undefined) {
                 e.preventDefault(); e.stopPropagation();
                 return this._askAI();

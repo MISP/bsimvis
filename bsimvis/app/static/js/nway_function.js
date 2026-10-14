@@ -59,10 +59,10 @@
             el.addEventListener('scroll', e => {
                 const pre = e.target;
                 if (!pre.matches || !pre.matches('pre') || this._syncing) return;
-                const box = pre.closest('.xp-panes, .xp-frow');
+                const box = pre.closest('.xp-g') ? pre.closest('.xp-ginner') : pre.closest('.xp-panes, .xp-frow');
                 if (!box) return;
                 this._syncing = true;
-                box.querySelectorAll('pre').forEach(o => { if (o !== pre) { o.scrollTop = pre.scrollTop; o.scrollLeft = pre.scrollLeft; } });
+                box.querySelectorAll('pre').forEach(o => { if (o !== pre) { o.scrollTop = pre.scrollTop; if (o.scrollLeft !== pre.scrollLeft) o.scrollLeft = pre.scrollLeft; } });
                 requestAnimationFrame(() => { this._syncing = false; });
             }, true);
             el.addEventListener('keydown', e => {
@@ -369,6 +369,27 @@
             });
         }
 
+        // Leading spaces shared by every non-blank line of `texts`.
+        _indent(texts) {
+            let n = Infinity;
+            for (const t of texts) for (const l of t.split('\n')) if (l.trim()) n = Math.min(n, l.length - l.trimStart().length);
+            return n === Infinity ? 0 : n;
+        }
+
+        // `list` (syntax tokens or diff runs) with `n` leading spaces removed from every line.
+        _trim(list, n) {
+            if (!n || !list) return list;
+            let bol = true, k = 0;
+            return list.map(it => {
+                let t = '';
+                for (const ch of it[0]) {
+                    if (bol && ch === ' ' && k < n) { k++; continue; }
+                    t += ch; bol = ch === '\n'; k = 0;
+                }
+                return [t, ...it.slice(1)];
+            });
+        }
+
         _cellSyntax(b, j) {
             return this._cell(b, j).segs.flatMap((k, i) => {
                 const seg = this._fseg(j, k);
@@ -631,7 +652,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
         }
 
         // Block metadata column: id, state, per-column dots; variants, title and Explain open on hover or focus.
-        _gutter(b, fs) {
+        _gutter(b, fs, trimmed = 0) {
             const G = NwayFunction.GLYPH, S = NwayFunction.SNAME, w = this._worst(b, fs), fnames = this.data.functions;
             const sts = fs.map(j => this._cell(b, j));
             const marks = fs.length > 1
@@ -640,7 +661,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
             const { groups, html } = this._fullGroups(b, fs[0]);
             const expl = fs.map(j => ({ j, e: this._expl(b.id, j) })).filter(x => x.e);
             const more = `<div class="xp-more"><b>${this._tspan(b)}</b>${groups.length > 1 ? html : ''}${expl.map(({ j, e }) => `<div class="xp-vchips">${this._funcRef(j)} ${e}</div>`).join('')}</div>`;
-            return `<div class="xp-gut" tabindex="0"><span class="xp-gid">${escapeHtml(b.id)}</span><span class="xp-gl st-${w}">${G[w]}</span>${marks}${groups.length > 1 ? `<span class="xp-gvar">${groups.length} var.</span>` : ''}${more}</div>`;
+            return `<div class="xp-gut" tabindex="0"><span class="xp-gid">${escapeHtml(b.id)}</span><span class="xp-gl st-${w}">${G[w]}</span>${marks}${trimmed ? `<span class="xp-gvar" title="${trimmed} leading spaces shared by every column of this block are hidden">&#8676;${trimmed}</span>` : ''}${groups.length > 1 ? `<span class="xp-gvar">${groups.length} var.</span>` : ''}${more}</div>`;
         }
 
         _fullView() {
@@ -673,14 +694,17 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
             const row = b => {
                 const w = this._worst(b, fs), g = this._group(b, fs[0]);
                 rail.push({ id: b.id, w, n: (b.ref_text || '').split('\n').length });
-                const cells = fs.map(j => {
-                    const cell = this._cell(b, j);
+                const cs = fs.map(j => ({ j, cell: this._cell(b, j), syn: this._cellSyntax(b, j), runs: this._cellRuns(b, j) }));
+                const txt = (syn, runs) => (syn || runs || []).map(e => e[0]).join('');
+                // Indent shared by the whole row is hidden, so deep blocks need no sideways scroll.
+                const ind = this._indent([txt(b.ref_syntax, g && g.ref_segs), ...cs.filter(x => x.cell.st !== 'miss' && !x.cell.into).map(x => txt(x.syn, x.runs))]);
+                const cells = cs.map(({ j, cell, syn, runs }) => {
                     if (cell.st === 'miss') return gap('(no matching code)');
                     if (cell.into) return gap(`↑ merged into ${escapeHtml(cell.into)} above`);
                     const tip = `${d.functions[j].letter}: ${S[cell.st]}${cell.st === 'same' ? '' : ' ' + Math.round(cell.sim * 100) + '%'}`;
-                    return `<pre class="xp-fcode st-${cell.st}" title="${escapeAttr(tip)}" data-xfns="${j},${ref}">${this._codeHtml(this._cellSyntax(b, j), this._cellRuns(b, j), 'chg', j, this._hashSet(b.ref_syntax))}</pre>`;
+                    return `<pre class="xp-fcode st-${cell.st}" title="${escapeAttr(tip)}" data-xfns="${j},${ref}">${this._codeHtml(this._trim(syn, ind), this._trim(runs, ind), 'chg', j, this._hashSet(b.ref_syntax))}</pre>`;
                 }).join('');
-                return `<div class="xp-frow xp-g wst-${w}" data-xrow="${escapeAttr(b.id)}" style="--n:${n}">${this._gutter(b, fs)}<pre class="xp-fcode" data-xfns="${ref},${fs[0]}">${this._codeHtml(b.ref_syntax, g && g.ref_segs, 'del', ref, this._hashSet(this._cellSyntax(b, fs[0])))}</pre>${cells}</div>`;
+                return `<div class="xp-frow xp-g wst-${w}" data-xrow="${escapeAttr(b.id)}" style="--n:${n}">${this._gutter(b, fs, ind)}<pre class="xp-fcode" data-xfns="${ref},${fs[0]}">${this._codeHtml(this._trim(b.ref_syntax, ind), this._trim(g && g.ref_segs, ind), 'del', ref, this._hashSet(cs[0].syn))}</pre>${cells}</div>`;
             };
             const slots = this._extraSlots(fs);
             const extraRows = after => (slots.get(after) || []).map(({ seg, x, f: owner }) => {

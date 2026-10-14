@@ -585,7 +585,8 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
                 return `<div class="xp-blk wst-${worst}"><button class="xp-bh" data-xb="${escapeAttr(b.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(b.id)}</span>${this._tspan(b)}${verdict}</button>${open ? this._blockBody(b) : ''}</div>`;
             }).join('');
             const hidden = only ? c.blocks.length - ordered.filter(item => item.b).length : 0;
-            return head + (this._cfgStrip() || this._ribbon(ordered)) + legend + accordion
+            const cfg = this._cfgStrip();
+            return head + this._ribbon(ordered) + (cfg ? `<details class="xp-cfgd"><summary>Control-flow graphs</summary>${cfg}</details>` : '') + legend + accordion
                 + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} identical in all ${this.data.functions.length} functions hidden.</p>` : '');
         }
 

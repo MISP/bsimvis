@@ -128,6 +128,7 @@ window.NwayView = {
         // A free function set has no file diff of its own: graph it over the diff of its parent files.
         const files = [...new Set(this._familyFids.map(f => { const i = f.indexOf(':func:'); return `${f.slice(0, i)}:${f.slice(i + 6).split(':')[0]}`; }))];
         const graphSource = this._fnScope ? { md5s: files.join(','), ...(this._meta && this._meta.links.nway.pool ? { pool: this._meta.links.nway.pool } : {}), ...(files.length < 2 ? { solo: '1' } : {}) } : source;
+        this._graphSource = graphSource;
         this._panel = new NwayPanel(document.getElementById('nway-graph-host'), {
             source: graphSource, state: doc, cg: { ...cg, name: this._familyName, cells },
             onCg: url => {
@@ -202,7 +203,8 @@ window.NwayView = {
             const focus = L.kind === 'nway' && m.name_source !== 'fallback' ? `&tab=all&q=${encodeURIComponent(m.name)}` : '';
             const warn = m.sample.shown < m.sample.total ? ' (sample)' : '';
             const total = Number((this._ref || '').split(':')[1]) || 0;
-            const src = this._familySource || {};
+            // A set from a cluster has no file source of its own: the files its graph spans are the parent.
+            const { solo, ...src } = this._graphSource || this._familySource || {};
             // From a row of a bigger diff: the whole diff is the parent, these files are a narrower one.
             if (L.kind === 'nway' && total > nw.files && (src.md5s || src.batch_uuid || src.cluster_uuid)) {
                 const qs = new URLSearchParams({ ...src, ...this._familyDoc });

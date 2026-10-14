@@ -513,7 +513,7 @@
         _cgStart(name, cells, init, host) {
             const prev = this._cg || {};
             this._cg = {
-                stack: [{ name, cells, pieces: init.pieces, name_from: init.name_from }],
+                stack: [{ name, cells, pieces: init.pieces, name_from: init.name_from, row: init.row }],
                 view: init.view || prev.view || 'graph',
                 scope: init.scope || prev.scope || this.state.scope || 'code',
                 outside: init.outside || prev.outside || 'merge',
@@ -723,6 +723,7 @@
             qs.set('cg_name', f.name);
             qs.set('cg_cells', JSON.stringify(f.cells));
             if (f.pieces) qs.set('cg_pieces', JSON.stringify(f.pieces));
+            if (f.row !== undefined) qs.set('cg_row', f.row);
             for (const k of ['view', 'scope', 'depth']) qs.set(`cg_${k}`, st[k]);
             if (st.co) qs.set('cg_co', '1');
             return `/diff/nway/graph?${qs.toString()}`;
@@ -1476,7 +1477,7 @@
             if (!it || it.kind !== 'row') return;
             const cells = {};
             for (const [k, v] of Object.entries(it.cells)) if (typeof v === 'string') cells[k] = v;
-            this._cg.stack.push({ name: it.name, cells, name_from: it.name_from });
+            this._cg.stack.push({ name: it.name, cells, name_from: it.name_from, row: String(it.key || '').startsWith('row:') ? it.key.slice(4) : undefined });
             this._cg.more = {};
             this._cgShow();
         }

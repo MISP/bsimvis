@@ -61,7 +61,7 @@ window.NwayView = {
         const tok = this._fnTok = (this._fnTok || 0) + 1;
         this.destroy();
         this._meta = null;
-        this._ref = fx.ref || '';
+        this._ref = this._ref0 = fx.ref || '';
         this._sample = Number(fx.sample) || 0;
         this._setId = fx.set || '';
         this._urlFids = (fx.fids || '').split(',').filter(Boolean);
@@ -88,6 +88,7 @@ window.NwayView = {
             }
         }
         this._cellFids = Object.values(cells);
+        this._fids0 = this._cellFids.join(',');
         if (!this._familyFids.length) {
             this._container.innerHTML = '<div class="nway-state">This link has no function to graph.</div>';
             return;
@@ -134,7 +135,9 @@ window.NwayView = {
                 const fids = Object.values(JSON.parse(graph.get('cg_cells'))).filter(v => typeof v === 'string');
                 if (fids.join(',') !== this._cellFids.join(',')) {
                     this._familyFids = this._cellFids = fids;
-                    this._ref = '';
+                    // A card is a row of the parent diff: stay an N-way row. Back on the starting set, restore its ref.
+                    const row = graph.get('cg_row');
+                    this._ref = row !== null ? `nway:${files.length}:${row}` : fids.join(',') === this._fids0 ? this._ref0 : '';
                     this._urlFids = fids;
                     this._setId = '';
                     if (this._meta) this._fetchMeta().then(m => { if (!m.error) { this._meta = m; this._familyName = m.name; this._renderHero(); this._crumbs(); } });

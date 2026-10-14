@@ -843,11 +843,15 @@ MAX_SET = 20000
 
 def _ref_members(r, ns, cid):
     """Function ids of a stored cluster, by cluster id or by cluster uuid."""
+    from bsimvis.app.services.cluster_utils import resolve_cluster_id_by_uuid
     from bsimvis.app.services.collection_config import resolve_collection_algo
 
-    members = r.smembers(f"{ns}:cluster:{resolve_collection_algo(ns)}:{cid}:members")
+    algo = resolve_collection_algo(ns)
+    members = r.smembers(f"{ns}:cluster:{algo}:{cid}:members")
     if not members:
-        members = r.smembers(f"{ns}:idx:func:cluster_uuid:{cid.lower()}")
+        real = resolve_cluster_id_by_uuid(r, ns, algo, cid)
+        if real:
+            members = r.smembers(f"{ns}:cluster:{algo}:{real}:members")
     return [
         (m.decode() if isinstance(m, bytes) else str(m)).removesuffix(":meta")
         for m in members

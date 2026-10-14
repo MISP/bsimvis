@@ -999,7 +999,12 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
                 const row = t.closest('[data-xrow]'), id = row && row.dataset.xrow, y = row && row.getBoundingClientRect().top;
                 this.s.fn = Number(d.xfn); this._persist(); this._rebody();
                 const now = id && this.el.querySelector(`[data-xrow="${CSS.escape(id)}"]`);
-                if (now) scrollBy(0, now.getBoundingClientRect().top - y);
+                if (now) {
+                    // The page may scroll in a container rather than the window.
+                    let sc = this.el;
+                    while (sc && !(/(auto|scroll)/.test(getComputedStyle(sc).overflowY) && sc.scrollHeight > sc.clientHeight)) sc = sc.parentElement;
+                    (sc || window).scrollBy(0, now.getBoundingClientRect().top - y);
+                }
                 return;
             }
             if (d.xx) { this.s.open[d.xx] = 0; return this._rebody(d.xx); }

@@ -687,7 +687,10 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
                 rail.push({ id: seg.x, w: 'extra', n: 2 });
                 return `<div class="xp-frow xp-g wst-extra" data-xrow="${escapeAttr(seg.x)}" style="--n:${n}"><div class="xp-gut"><span class="xp-gid">${escapeHtml(seg.x)}</span><span class="xp-gl st-extra">${G.extra}</span><div class="xp-more"><b>${escapeHtml(x ? x.title : '')}</b></div></div>${gap(`(no counterpart in ${escapeHtml(rl)})`)}${fs.map(j => j === owner ? `<pre class="xp-fcode st-extra">${this._codeHtml(seg.syntax, seg.text, 'chg', j)}</pre>` : gap('&ndash;')).join('')}</div>`;
             }).join('');
-            const head = `<div class="xp-frow xp-g xp-ghead" style="--n:${n}"><div></div><div class="xp-fband">${this._funcRef(ref)} ${this._fileRef(ref, 'xp-rfile')} (reference)</div>${fs.map(j => `<div class="xp-fband">${this._funcRef(j)} ${this._fileRef(j, 'xp-rfile')}</div>`).join('')}</div>`;
+            const head = `<div class="xp-frow xp-g xp-ghead" style="--n:${n}"><div></div><div class="xp-fband">${this._funcRef(ref)} ${this._fileRef(ref, 'xp-rfile')} (reference)</div>${fs.map(j => {
+                const twins = (fgroups.find(g => g.includes(j)) || []).filter(x => x !== j);
+                return `<div class="xp-fband">${this._funcRef(j)} ${this._fileRef(j, 'xp-rfile')}${twins.length ? ` <span class="dim">and</span> ${twins.map(x => this._funcRef(x)).join(' ')}` : ''}</div>`;
+            }).join('')}</div>`;
             let body = extraRows(null), run = [];
             const flush = () => {
                 if (!run.length) return;

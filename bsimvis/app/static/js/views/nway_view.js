@@ -201,16 +201,23 @@ window.NwayView = {
             // A row link also searches the diff for its name, so the row is the first thing in view.
             const focus = L.kind === 'nway' && m.name_source !== 'fallback' ? `&tab=all&q=${encodeURIComponent(m.name)}` : '';
             const warn = m.sample.shown < m.sample.total ? ' (sample)' : '';
-            out.push({ primary: true, href: `/diff/nway?md5s=${encodeURIComponent(nw.md5s.join(','))}${pool}${focus}`, text: `Open parent N-way diff (${nw.files} files)${warn}`, title: 'N-way diff' });
+            const total = Number((this._ref || '').split(':')[1]) || 0;
+            const src = this._familySource || {};
+            // From a row of a bigger diff: the whole diff is the parent, these files are a narrower one.
+            if (L.kind === 'nway' && total > nw.files && (src.md5s || src.batch_uuid || src.cluster_uuid)) {
+                const qs = new URLSearchParams({ ...src, ...this._familyDoc });
+                out.push({ primary: true, icon: 'fa-solid fa-table-columns', href: `/diff/nway?${qs}${focus}`, text: `Open parent N-way diff (${total} files)`, title: 'Parent N-way diff' });
+                out.push({ icon: 'fa-solid fa-table-columns', href: `/diff/nway?md5s=${encodeURIComponent(nw.md5s.join(','))}${pool}${focus}`, text: `Only these ${nw.files} files`, title: 'N-way diff of the files holding this row' });
+            } else out.push({ primary: true, icon: 'fa-solid fa-table-columns', href: `/diff/nway?md5s=${encodeURIComponent(nw.md5s.join(','))}${pool}${focus}`, text: `Open parent N-way diff (${nw.files} files)${warn}`, title: 'N-way diff' });
         } else if (nw.md5s.length) {
             const i = nw.md5s[0].lastIndexOf(':');
             const coll = nw.md5s[0].slice(0, i), md5 = nw.md5s[0].slice(i + 1);
-            out.push({ primary: true, href: `${nw.pool ? `/pools/${encodeURIComponent(nw.pool)}` : ''}/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(md5)}`, text: 'Open file', title: md5 });
+            out.push({ primary: true, icon: 'fa-solid fa-file', href: `${nw.pool ? `/pools/${encodeURIComponent(nw.pool)}` : ''}/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(md5)}`, text: 'Open file', title: md5 });
         }
         const c = L.cluster;
         if (c && c.cluster_uuid) {
             const href = c.pool ? `/pools/${encodeURIComponent(c.pool)}/functions/clusters/${encodeURIComponent(c.cluster_uuid)}` : window.Nav.buildUIUrl(c.collection, ['functions', 'clusters', c.cluster_uuid]);
-            out.push({ href, text: `Open cluster ${c.cluster_uuid.slice(0, 8)}`, title: 'Cluster' });
+            out.push({ icon: 'fa-solid fa-bullseye', href, text: `Open cluster ${c.cluster_uuid.slice(0, 8)}`, title: 'Cluster' });
         }
         return out;
     },
@@ -246,7 +253,7 @@ window.NwayView = {
         if (c.functions > 1 && p.return_agree !== c.functions) warns.push(`return type ${typeText}`);
         if (m.sample.shown < m.sample.total) warns.push(`showing ${Number(m.sample.shown)} of ${Number(m.sample.total)}`);
         const btn = (icon, label, tooltip, attr) => UI.Button.render({ className: 'btn-code-action', icon, label, tooltip, attr });
-        const links = this._heroLinks(m).map((l, i) => btn(l.text.startsWith('Open file') ? 'fa-solid fa-file' : i === 0 ? 'fa-solid fa-table-columns' : 'fa-solid fa-bullseye', l.text, l.title, { 'data-hero-link': i })).join('')
+        const links = this._heroLinks(m).map((l, i) => btn(l.icon, l.text, l.title, { 'data-hero-link': i })).join('')
             + (m.sample.shown < m.sample.total ? btn('fa-solid fa-sliders', 'Change sample', 'How many functions the comparison tabs take', { 'data-hero-sample': '' }) : '');
         el.innerHTML = `<div class="nway-hero-top">
                 <span class="nway-hkind ${kind === 'set' ? 'set' : ''}" title="${escapeAttr(`${where}; ${from}`)}">${badge}</span>

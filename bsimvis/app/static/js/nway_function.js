@@ -59,7 +59,7 @@
             el.addEventListener('scroll', e => {
                 const pre = e.target;
                 if (!pre.matches || !pre.matches('pre') || this._syncing) return;
-                const box = pre.closest('.xp-panes, .xp-frow');
+                const box = pre.closest('.xp-g') ? pre.closest('.xp-ginner') : pre.closest('.xp-panes, .xp-frow');
                 if (!box) return;
                 this._syncing = true;
                 box.querySelectorAll('pre').forEach(o => { if (o !== pre) { o.scrollTop = pre.scrollTop; if (o.scrollLeft !== pre.scrollLeft) o.scrollLeft = pre.scrollLeft; } });
@@ -77,20 +77,7 @@
         }
 
         // The rail is the scrollbar of the block grid: its thumb is the part of the grid in view, drag it to scroll.
-        // The column header sits outside the sideways scroller so it can stick to the page; mirror the grid's columns and scroll onto it.
-        _headSync() {
-            const sc = this.el.querySelector('.xp-gscroll'), hd = this.el.querySelector('.xp-ghead'), inner = sc && sc.firstElementChild;
-            if (!hd || !inner) return;
-            if (hd._w !== inner.offsetWidth) {
-                hd._w = inner.offsetWidth;
-                hd.style.gridTemplateColumns = getComputedStyle(inner).gridTemplateColumns;
-                hd.style.width = hd._w + 'px';
-            }
-            hd.style.transform = `translateX(${-sc.scrollLeft}px)`;
-        }
-
         _railSync() {
-            this._headSync();
             const wrap = this.el.querySelector('.xp-gwrap'), rail = wrap && wrap.querySelector('.xp-rail'), th = rail && rail.querySelector('.xp-thumb');
             if (!th) return;
             const r = wrap.getBoundingClientRect(), H = r.height, rh = rail.clientHeight;
@@ -747,7 +734,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
             }
             flush();
             const railHtml = `<div class="xp-rail">${rail.map(r => `<a class="st-${r.w}" ${r.fold ? `data-xfold="${escapeAttr(r.fold)}"` : `data-xjump="${escapeAttr(r.id)}"`} style="flex:${r.n}" title="${escapeAttr(r.fold ? 'identical blocks, click to show' : `${r.id}: ${S[r.w]}`)}"></a>`).join('')}<div class="xp-thumb"></div></div>`;
-            return out + `<div class="xp-gwrap"><div class="xp-gcol"><div class="xp-ghwrap">${head}</div><div class="xp-gscroll"><div class="xp-ginner" style="--n:${n}">${body}</div></div></div>${railHtml}</div>`;
+            return out + `<div class="xp-gwrap"><div class="xp-gscroll"><div class="xp-ginner" style="--n:${n}">${head}${body}</div></div>${railHtml}</div>`;
         }
 
         // LLM titles: asked once when the code tab first opens, never blocking the render.

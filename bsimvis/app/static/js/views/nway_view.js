@@ -99,7 +99,7 @@ window.NwayView = {
         if (!['graph', 'simple', 'facets', 'code', 'full', 'pair'].includes(this._familyState.tab)) this._familyState.tab = 'graph';
         if (fx.fn !== undefined && fx.fn !== '') this._familyState.fn = Number(fx.fn);
         this._container.innerHTML = `<div class="nway-view nway-function-view">
-            ${this._meta ? '<div id="nway-hero" class="nway-node center nway-hero"></div>' : '<div class="nway-head"><h2 id="nway-family-name"></h2></div>'}
+            ${this._meta ? '<div id="nway-hero" class="nway-hero"></div>' : '<div class="nway-head"><h2 id="nway-family-name"></h2></div>'}
             <div class="xp-bar"><div id="nway-family-tabs" class="bsim-tabbar" role="tablist" style="margin:0">
                 ${[['graph', 'Graph'], ['simple', 'Reference'], ['facets', 'Facets'], ['code', 'Code blocks'], ['full', 'Full function'], ['pair', 'Pair diff']].map(([k, label]) => `<button class="bsim-tab" role="tab" data-family-tab="${k}">${label}</button>`).join('')}
             </div></div>
@@ -225,26 +225,30 @@ window.NwayView = {
         const types = {};
         for (const v of p.variants) types[v.return_type] = (types[v.return_type] || 0) + v.count;
         const typeText = Object.entries(types).map(([t, n]) => `${t} ${n}`).join(' · ');
-        const proto = `${p.return_type} ${m.name}(${p.parameters.join(', ')})`;
+        const ty = t => `<span style="color:var(--token-address)">${escapeHtml(t)}</span>`;
+        const proto = `${ty(p.return_type)} ${escapeHtml(m.name)}(${p.parameters.map(ty).join(', ')})`;
         const facts = [[c.functions, 'functions'], [c.files, c.files === 1 ? 'file' : 'files'], [c.collections, c.collections === 1 ? 'collection' : 'collections'], [c.batches, c.batches === 1 ? 'batch' : 'batches'], [c.clusters, c.clusters === 1 ? 'cluster' : 'clusters'], [c.arch.join(' · ') || '?', 'arch']];
-        // Same pieces as the graph's cards and toolbar: .nway-node, the function renderer, .nway-reach, .view-btn, .bsim-tag-pill.
-        const pill = (text, color, title = '') => `<span class="bsim-tag-pill" title="${escapeAttr(title)}" style="${window.binSimPillStyle(true, color)} padding:2px 8px; font-size:0.72rem;">${escapeHtml(text)}</span>`;
         let cohHtml = '';
-        if (coh && coh.error) cohHtml = `<span class="dim">cohesion unavailable: ${escapeHtml(coh.error)}</span>`;
+        if (coh && coh.error) cohHtml = `<span class="dim">Cohesion unavailable: ${escapeHtml(coh.error)}</span>`;
         else if (coh) {
+            const band = coh.median >= 0.7 ? '' : coh.median >= 0.4 ? ' mid' : ' low';
             const gap = coh.total_pairs - coh.scored_pairs;
-            cohHtml = `<span class="nway-reach" style="--rc:${window.scoreColor(coh.median)}" title="${escapeAttr(`min ${coh.min.toFixed(2)}, max ${coh.max.toFixed(2)}; ${gap} unscored pair${gap === 1 ? '' : 's'} count as 0`)}">cohesion ${coh.median.toFixed(2)}</span><span class="dim">${Number(coh.scored_pairs)}/${Number(coh.total_pairs)} pairs</span>`;
+            cohHtml = `<span>Cohesion</span><span class="nway-hbar${band}"><i style="left:${(coh.min * 100).toFixed(0)}%;right:${((1 - coh.max) * 100).toFixed(0)}%"></i></span>
+                <b>${coh.min.toFixed(2)} - ${coh.max.toFixed(2)}</b>
+                <span class="dim" title="${escapeAttr(`${gap} unscored pair${gap === 1 ? '' : 's'} count as 0`)}">median ${coh.median.toFixed(2)} · ${Number(coh.scored_pairs)} of ${Number(coh.total_pairs)} pairs scored</span>
+                ${band === ' low' ? '<span class="nway-hpill bad">weak: probably not one function</span>' : ''}`;
         }
-        const weak = coh && !coh.error && coh.median < 0.4 ? pill('weak: probably not one function', 'var(--token-instruction)') : '';
-        const agree = c.functions > 1 ? (p.return_agree === c.functions ? pill(`return type agrees ${Number(p.return_agree)}/${Number(c.functions)}`, 'var(--success)') : pill(`return type ${typeText}`, 'var(--token-warning)')) : '';
-        const sample = m.sample.shown < m.sample.total ? pill(`showing ${Number(m.sample.shown)} of ${Number(m.sample.total)}`, 'var(--token-warning)') : '';
-        const vbtn = (icon, label, title, attr) => `<button class="view-btn" title="${escapeAttr(title)}" ${attr}><i class="${icon}"></i> ${escapeHtml(label)}</button>`;
-        const links = this._heroLinks(m).map((l, i) => vbtn(l.text.startsWith('Open file') ? 'fa-solid fa-file' : i === 0 ? 'fa-solid fa-table-columns' : 'fa-solid fa-bullseye', l.text, l.title, `data-hero-link="${i}"`)).join('');
-        const fn = window.EntityRenderer.renderFunction({ function_id: m.fids[0], function_name: m.name, return_type: p.return_type, parameters: p.parameters }, { hideNote: true, showActions: false, noNav: true });
-        el.innerHTML = `<div class="nway-node-sub"><span class="nway-lbl">${badge}</span><span class="dim">${escapeHtml(where)} · ${escapeHtml(from)}</span>${agree}${sample}${weak}</div>
-            <div class="nway-namerow">${fn}<button class="nway-rename" data-rename-fids="${escapeAttr(m.fids.join(','))}" data-rename-name="${escapeAttr(m.name)}" title="Rename this function set"><i class="fa-solid fa-pen"></i></button></div>
-            <div class="nway-node-sub">${facts.map(([n, l]) => `<span><b>${escapeHtml(String(n))}</b> <span class="dim">${escapeHtml(l)}</span></span>`).join('')}${cohHtml}${p.variants.length > 1 ? `<span class="dim">${p.variants.length} signature variants</span>` : ''}</div>
-            <div class="view-toggle" style="margin:0; align-self:flex-start;">${links}${m.sample.shown < m.sample.total ? vbtn('fa-solid fa-sliders', 'Change sample', 'How many functions the comparison tabs take', 'data-hero-sample') : ''}</div>`;
+        const agree = c.functions > 1 ? (p.return_agree === c.functions ? `<span class="nway-hpill ok">return type agrees ${Number(p.return_agree)}/${Number(c.functions)}</span>` : `<span class="nway-hpill warn">return type ${escapeHtml(typeText)}</span>`) : '';
+        const sample = m.sample.shown < m.sample.total ? `<span class="nway-hpill warn">showing ${Number(m.sample.shown)} of ${Number(m.sample.total)}</span>` : '';
+        const btn = (icon, label, tooltip, attr) => UI.Button.render({ className: 'btn-code-action', icon, label, tooltip, attr });
+        const links = this._heroLinks(m).map((l, i) => btn(l.text.startsWith('Open file') ? 'fa-solid fa-file' : i === 0 ? 'fa-solid fa-table-columns' : 'fa-solid fa-bullseye', l.text, l.title, { 'data-hero-link': i })).join('')
+            + (m.sample.shown < m.sample.total ? btn('fa-solid fa-sliders', 'Change sample', 'How many functions the comparison tabs take', { 'data-hero-sample': '' }) : '');
+        el.innerHTML = `<div class="nway-hero-top"><span class="nway-hkind ${kind === 'set' ? 'set' : ''}">${badge}</span><span class="dim">${escapeHtml(where)} · ${escapeHtml(from)}</span></div>
+            <h2 class="nway-hero-name">${escapeHtml(m.name)} <button class="nway-rename" data-rename-fids="${escapeAttr(m.fids.join(','))}" data-rename-name="${escapeAttr(m.name)}" title="Rename this function set"><i class="fa-solid fa-pen"></i></button></h2>
+            <div class="nway-hero-proto">${proto}${p.variants.length > 1 ? ` <span class="nway-hvar">· ${p.variants.length} variants</span>` : ''}</div>
+            <div class="nway-hero-facts">${facts.map(([n, l]) => `<div><b>${escapeHtml(String(n))}</b><span>${escapeHtml(l)}</span></div>`).join('')}</div>
+            <div class="nway-hero-coh">${cohHtml}${agree}${sample}</div>
+            <div class="nway-hero-actions">${links}</div>`;
         const hrefs = this._heroLinks(m);
         el.onclick = e => {
             const a = e.target.closest('[data-hero-link]');

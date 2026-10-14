@@ -1101,7 +1101,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
         }
 
         async _click(e) {
-            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xbm],[data-xfn],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xask],[data-xpair],[data-xnav],[data-xopen],[data-xcols],[data-xjump],[data-xfold]');
+            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xbm],[data-xfn],[data-xtw],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xask],[data-xpair],[data-xnav],[data-xopen],[data-xcols],[data-xjump],[data-xfold]');
             if (!t) return;
             const d = t.dataset;
             if (this.cfgOnly && (d.xb !== undefined || d.xx !== undefined)) return;
@@ -1152,7 +1152,10 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
             if (d.xaudit !== undefined) { this.audit = !this.audit; return this._rebody(); }
             if (d.xfn !== undefined || d.xtw !== undefined) {
                 // Keep the block the chip sits in at the same screen position across the redraw.
-                const row = t.closest('[data-xrow]'), id = row && row.dataset.xrow, y = row && row.getBoundingClientRect().top;
+                // The sticky header's buttons sit in no row: anchor on the first row visible under it.
+                const hb = t.closest('.xp-ghead')?.getBoundingClientRect().bottom;
+                const row = t.closest('[data-xrow]') || (hb != null && [...this.el.querySelectorAll('[data-xrow]')].find(r => r.getBoundingClientRect().bottom > hb));
+                const id = row && row.dataset.xrow, y = row && row.getBoundingClientRect().top;
                 if (d.xtw !== undefined) { const [k, m] = d.xtw.split(',').map(Number); this.s.pick[k] = m; } else this.s.fn = Number(d.xfn);
                 this._persist(); this._rebody();
                 const now = id && this.el.querySelector(`[data-xrow="${CSS.escape(id)}"]`);

@@ -86,6 +86,7 @@ window.DiffView = {
                         <button id="btn-diff-mode-graph" class="bsim-tab" onclick="switchDiffMode('graph')"><i class="fa-solid fa-diagram-project"></i> Call Graph Diff</button>
                         <button id="btn-diff-mode-similarity" class="bsim-tab" onclick="switchDiffMode('similarity')"><i class="fa-solid fa-link"></i> Call Graph Similarity</button>
                         <button id="btn-diff-mode-cfg" class="bsim-tab" onclick="switchDiffMode('cfg')"><i class="fa-solid fa-sitemap"></i> CFG Diff</button>
+                        <button id="btn-diff-mode-blocks" class="bsim-tab" onclick="switchDiffMode('blocks')"><i class="fa-solid fa-table-cells"></i> Block Diff</button>
                     </div>
                 </div>
 
@@ -200,6 +201,7 @@ window.DiffView = {
 
                 <div id="bsim-call-sim-wrap" style="display:none; flex:1; overflow:auto; padding:16px;"></div>
                 <div id="bsim-cfg-wrap" style="display:none; flex:1; overflow:auto; padding:16px;"></div>
+                <div id="bsim-blocks-wrap" style="display:none; flex:1; overflow:auto; padding:16px;"></div>
 
                 <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:var(--window-bg); padding:10px; border-radius:4px; border:1px solid var(--accent); color:var(--text); font-size:0.8rem; pointer-events:none;"></div>
             </div>
@@ -1312,37 +1314,45 @@ window.DiffView = {
         const simBtn = document.getElementById('btn-diff-mode-similarity');
         const cfgBtn = document.getElementById('btn-diff-mode-cfg');
         const cfgWrap = document.getElementById('bsim-cfg-wrap');
+        const blocksBtn = document.getElementById('btn-diff-mode-blocks');
+        const blocksWrap = document.getElementById('bsim-blocks-wrap');
         const scrollEl = document.getElementById('bsim-scroll');
         const graphWrap = document.getElementById('bsim-graph-diff-wrap');
         const simWrap = document.getElementById('bsim-call-sim-wrap');
-        [codeBtn, graphBtn, simBtn, cfgBtn].forEach(btn => btn && btn.classList.remove('active'));
+        [codeBtn, graphBtn, simBtn, cfgBtn, blocksBtn].forEach(btn => btn && btn.classList.remove('active'));
         if (scrollEl) scrollEl.style.display = mode === 'code' ? 'flex' : 'none';
         if (graphWrap) graphWrap.style.display = mode === 'graph' ? 'flex' : 'none';
         if (simWrap) simWrap.style.display = mode === 'similarity' ? 'block' : 'none';
         if (cfgWrap) cfgWrap.style.display = mode === 'cfg' ? 'block' : 'none';
-        const active = mode === 'graph' ? graphBtn : mode === 'similarity' ? simBtn : mode === 'cfg' ? cfgBtn : codeBtn;
+        if (blocksWrap) blocksWrap.style.display = mode === 'blocks' ? 'block' : 'none';
+        const active = { graph: graphBtn, similarity: simBtn, cfg: cfgBtn, blocks: blocksBtn }[mode] || codeBtn;
         if (active) active.classList.add('active');
         if (mode === 'graph') this.loadDiffCallGraphs();
         if (mode === 'similarity') this.loadCallGraphSimilarity();
         if (mode === 'cfg') this.loadCfgDiff();
+        if (mode === 'blocks') this.loadBlockDiff();
     },
 
-    // Same CFG pair view as the N-way function page, fed with just these two functions.
-    loadCfgDiff() {
-        const wrap = document.getElementById('bsim-cfg-wrap');
+    loadCfgDiff() { this._mountNway('cfg', { cfgOnly: true }); },
+    // Block-matched full function view (the N-way engine: Ghidra blocks, text split elsewhere), two functions only.
+    loadBlockDiff() { this._mountNway('blocks', { state: { tab: 'full' } }); },
+
+    _mountNway(kind, opts) {
+        const wrap = document.getElementById(`bsim-${kind}-wrap`);
         const p = this._getCurrentP() || this._parsePathUrl();
         if (!wrap || !p || !p.addr_a || !p.addr_b) return;
         const key = this._callSimPairKey(p);
-        if (this._cfgKey === key) return;
-        this._cfgKey = key;
-        if (this._cfgPanel) this._cfgPanel.destroy();
+        this._nway = this._nway || {};
+        if (this._nway[kind]?.key === key) return;
+        if (this._nway[kind]) this._nway[kind].panel.destroy();
         const id = (c, m, a) => `${c}:func:${m}:${a}`;
-        this._cfgPanel = new NwayFunction(wrap, {
+        const panel = new NwayFunction(wrap, {
             source: { scope: 'functions', ...(p.pool ? { pool: p.pool } : {}) },
             fids: [id(p.collection_a, p.md5_a, p.addr_a), id(p.collection_b, p.md5_b, p.addr_b)],
-            embedded: true, cfgOnly: true,
+            embedded: true, ...opts,
         });
-        this._cfgPanel.load();
+        this._nway[kind] = { key, panel };
+        panel.load();
     },
 
     _callSimPairKey(p) {
@@ -1631,7 +1641,7 @@ window.DiffView = {
         delete window.navigateToFunction;
         delete window.diffFocusContext;
         clearTimeout(this._callSimTimer);
-        if (this._cfgPanel) this._cfgPanel.destroy();
-        this._cfgPanel = this._cfgKey = null;
+        Object.values(this._nway || {}).forEach(n => n.panel.destroy());
+        this._nway = null;
     }
 };

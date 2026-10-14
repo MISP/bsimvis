@@ -933,7 +933,7 @@ window.ClusterDetailView = {
                 className: 'btn-code-action',
                 icon: 'fa-solid fa-table-columns',
                 label: 'N-way diff',
-                tooltip: `N-way diff of this cluster's functions (at most ${this.NWAY_FN_MAX})`,
+                tooltip: `N-way diff of this cluster's functions`,
                 onClick: 'ClusterDetailView.openFunctionNway(event)',
             });
         }
@@ -949,26 +949,11 @@ window.ClusterDetailView = {
         });
     },
 
-    // The family URL carries every function id, so the member count is capped here.
-    NWAY_FN_MAX: 200,
-
-    /** N-way diff of a function cluster's members (family view, scope=functions). */
-    async openFunctionNway(event) {
-        const qs = new URLSearchParams({ cluster_uuid: this.selectedClusterUuid, limit: String(this.NWAY_FN_MAX) });
-        if (this.params.pool) qs.set('pool', this.params.pool);
-        if (this.collection) qs.set('collection', this.collection);
-        try {
-            const res = await fetch(`/api/function/search?${qs.toString()}`);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-            const fids = (data.functions || []).map(m => m.function_id || m.id).filter(Boolean);
-            if (fids.length < 2) return showToast('This cluster has fewer than 2 functions to compare.', 'warning');
-            if (data.total > this.NWAY_FN_MAX) showToast(`Cluster has ${data.total} functions: comparing the first ${this.NWAY_FN_MAX}.`, 'warning');
-            const self = this.clusterMapByUuid[this.selectedClusterUuid] || {};
-            Nav.openPath(NwayPanel.urlForFunctions(fids, self.name || `Cluster ${String(this.selectedClusterUuid).slice(0, 8)}`), event, { title: 'N-way diff', type: 'bin_sim' });
-        } catch (e) {
-            showToast(`Could not load the cluster members: ${e.message}`, 'error');
-        }
+    /** N-way diff of a function cluster's members (family view): the server resolves the members from the cluster. */
+    openFunctionNway(event) {
+        const uuid = this.selectedClusterUuid;
+        const ref = this.params.pool ? `pool:${this.params.pool}:${uuid}` : `cluster:${this.collection}:${uuid}`;
+        Nav.openPath(NwayPanel.urlForFunctions([], ref), event, { title: 'N-way diff', type: 'bin_sim' });
     },
 
     renderSimilaritiesLink(self) {

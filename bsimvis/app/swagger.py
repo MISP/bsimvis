@@ -59,6 +59,7 @@ ns_searches = Namespace("searches", description="Persisted fast-relevance search
 ns_scan = Namespace(
     "scan", description="Fast scan: compare a file without ingesting it"
 )
+ns_nway = Namespace("nway", description="N-way function set views")
 ns_strings = Namespace(
     "strings", description="Strings extracted by Ghidra: per file, per function, pivot"
 )
@@ -85,6 +86,7 @@ api.add_namespace(ns_pool)
 api.add_namespace(ns_searches)
 api.add_namespace(ns_scan)
 api.add_namespace(ns_strings)
+api.add_namespace(ns_nway)
 
 # --- Models & Examples ---
 
@@ -3974,3 +3976,34 @@ class StringsSearch(Resource):
         from bsimvis.app.routes.strings import search_strings
 
         return search_strings()
+
+
+@ns_nway.route("/function/meta")
+class NwayFunctionMeta(Resource):
+    @ns_nway.doc(
+        params={
+            "ref": "cluster:<collection>:<id|uuid>, pool:<id>:<cluster>, or nway:<doc>:<row>",
+            "fids": "Comma-separated function ids (ad-hoc set, or the row of an nway ref)",
+            "set": "Short id from POST /nway/function/set, for lists too long for a URL",
+            "sample": "Functions the comparison tabs take when the set is over the nway cap",
+        }
+    )
+    def get(self):
+        """Name, prototype, counts, cohesion and links of a function set (the hero)."""
+        from bsimvis.app.routes.nway import get_function_meta
+
+        return get_function_meta()
+
+
+@ns_nway.route("/function/set")
+class NwayFunctionSet(Resource):
+    @ns_nway.expect(
+        api.model(
+            "NwayFunctionSet", {"fids": fields.List(fields.String, required=True)}
+        )
+    )
+    def post(self):
+        """Keep a long function list in Redis for a day; returns the short id (`fx_set`)."""
+        from bsimvis.app.routes.nway import post_function_set
+
+        return post_function_set()

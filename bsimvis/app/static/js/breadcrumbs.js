@@ -289,7 +289,7 @@ window.Breadcrumbs = {
                         icon: 'fa-solid fa-code-compare'
                     });
                     segments.push({
-                        label: `Function: ${q.get('fx_name') || ''}`,
+                        label: `Function: ${(window.NwayView && window.NwayView._familyName) || ''}`,
                         url: window.location.pathname + window.location.search,
                         icon: 'fa-solid fa-code-compare'
                     });

@@ -1,3 +1,4 @@
+import hashlib
 import re
 
 from flask import request
@@ -8,7 +9,7 @@ from bsimvis.app.routes.bin_sim import _fids_tags, _fn_haystack
 from bsimvis.app.services import nway_diff_service, nway_facets_service
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME
 from bsimvis.app.services.bin_sim_service import _origin_coll
-from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.redis_client import get_queue_redis, get_redis
 from bsimvis.app.services.tag_taxonomy import tag_in_scope
 
 # A stored cluster only names a row when its members agree this much.
@@ -432,7 +433,8 @@ def _load_doc():
                     dict.fromkeys(members + _batch_members(r, collection, batch_uuid))
                 )
             scope = _scope(members, pool_id)
-        if len(members) < 2:
+        # `solo` lets the function view graph a set that sits in one file.
+        if len(members) < (1 if request.args.get("solo") else 2):
             abort(400, "need at least two distinct files")
         doc = nway_diff_service.compute(
             r,
@@ -834,3 +836,79 @@ def get_nway_summaries():
     if len(fids) > nway_diff_service.caps()[0]:
         abort(400, "too many fids")
     return {"summaries": nway_facets_service.function_summaries(fids)}
+
+
+SET_TTL = 24 * 3600
+MAX_SET = 20000
+
+
+def _ref_members(r, ns, cid):
+    """Function ids of a stored cluster, by cluster id or by cluster uuid."""
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    members = r.smembers(f"{ns}:cluster:{resolve_collection_algo(ns)}:{cid}:members")
+    if not members:
+        members = r.smembers(f"{ns}:idx:func:cluster_uuid:{cid.lower()}")
+    return [
+        (m.decode() if isinstance(m, bytes) else str(m)).removesuffix(":meta")
+        for m in members
+    ]
+
+
+def post_function_set():
+    """Keep a long function list under a short id (Redis, one day): the URL carries `fx_set`."""
+    fids = list(
+        dict.fromkeys(
+            f for f in ((request.json or {}).get("fids") or []) if isinstance(f, str)
+        )
+    )
+    if not fids or len(fids) > MAX_SET or any(":func:" not in f for f in fids):
+        abort(400, f"fids: 1 to {MAX_SET} function ids")
+    sid = hashlib.sha1(",".join(sorted(fids)).encode()).hexdigest()[:12]
+    get_queue_redis().setex(f"nway:fnset:{sid}", SET_TTL, ",".join(fids))
+    return {"id": sid, "ttl": SET_TTL}
+
+
+def get_function_meta():
+    """Hero data of a function set: name, prototype, counts, cohesion, links.
+
+    The set is `ref` (`cluster:{coll}:{id}`, `pool:{id}:{cluster}`, `nway:{doc}:{row}`),
+    `fids` or `set` (see `post_function_set`); a stored-cluster ref names its own members.
+    """
+    ref_arg = request.args.get("ref") or ""
+    kind, _, rest = ref_arg.partition(":")
+    ref = {"kind": kind or None}
+    r = get_redis()
+    fids = [t for t in (request.args.get("fids") or "").split(",") if t]
+    if request.args.get("set"):
+        raw = get_queue_redis().get(f"nway:fnset:{request.args['set']}")
+        if not raw:
+            return {"error": "set_expired"}, 404
+        fids += (raw.decode() if isinstance(raw, bytes) else raw).split(",")
+    if kind in ("cluster", "pool"):
+        if kind == "cluster":
+            ns, _, cid = rest.rpartition(":")
+        else:
+            pool, _, cid = rest.rpartition(":")
+            ns, ref["pool"] = f"global:pool:{pool}", pool
+        if not ns or not cid:
+            abort(400, "ref: cluster:<collection>:<id> or pool:<id>:<cluster>")
+        fids = _ref_members(r, ns, cid)
+        if not fids:
+            return {"error": "unknown_cluster"}, 404
+        ref["cluster"] = cid.lower()  # a cluster id or its uuid
+    elif kind == "nway":
+        _, _, row = rest.rpartition(":")
+        ref["row"] = row
+    elif kind:
+        abort(400, "ref must start with cluster:, pool: or nway:")
+    try:
+        out = nway_diff_service.function_meta(
+            r, fids, ref, request.args.get("sample", type=int)
+        )
+    except nway_diff_service.BadParams as e:
+        abort(400, str(e))
+    except nway_diff_service.MemberMissing as e:
+        return {"error": "unknown_functions", "missing": e.missing}, 404
+    out["ref"] = ref_arg
+    return out

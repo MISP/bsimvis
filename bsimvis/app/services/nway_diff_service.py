@@ -18,6 +18,7 @@ it unchanged later; only the cache in front of it would move to Redis.
 import hashlib
 import json
 import re
+import statistics
 import threading
 from collections import Counter, OrderedDict, defaultdict
 from itertools import combinations
@@ -470,31 +471,38 @@ def _row_tags(fids, fmeta, limit=8):
     return ranked[:limit]
 
 
+def _name_row(fids, fmeta, weights):
+    """Name + tags of a set of functions: the rule N-way rows and the function hero share.
+
+    Analyst name > most frequent non-default name > tag-carried name > heaviest FUN_addr.
+    """
+    out = {"tags": _row_tags(fids, fmeta)}
+    out["name"], out["names"] = _label(fids, fmeta, weights)
+    if not out["names"] and _DEFAULT_NAME.match(out["name"]):
+        tagged = next((n for t in out["tags"] if (n := _tag_name(t))), None)
+        if tagged:
+            out["name"], out["name_from"] = tagged, "tag"
+    # An analyst name wins; the heaviest named function decides, others show as aliases.
+    named = sorted(
+        (f for f in fids if (fmeta.get(f) or {}).get("user_name")),
+        key=lambda f: (-weights[f], f),
+    )
+    if named:
+        meta = fmeta[named[0]]
+        out["name"] = meta["user_name"]
+        out["user_named"] = meta.get("user_name_source", "user")
+        out.pop("name_from", None)
+        out["aliases"] = sorted({fmeta[f]["user_name"] for f in named} - {out["name"]})
+    return out
+
+
 def _match(base, min_edge):
     weights = {f: w for funcs in base["funcs"].values() for f, w in funcs.items()}
     rows = nway_match(base["edges"], base["funcs"], min_edge)
     for row in rows:
         fids = list(row["cells"].values())
-        row["name"], row["names"] = _label(fids, base["fmeta"], weights)
+        row.update(_name_row(fids, base["fmeta"], weights))
         row["library"] = any(base["library"].get(f) for f in fids)
-        row["tags"] = _row_tags(fids, base["fmeta"])
-        if not row["names"] and _DEFAULT_NAME.match(row["name"]):
-            tagged = next((n for t in row["tags"] if (n := _tag_name(t))), None)
-            if tagged:
-                row["name"], row["name_from"] = tagged, "tag"
-        # An analyst name wins; the heaviest named function decides, others show as aliases.
-        named = sorted(
-            (f for f in fids if (base["fmeta"].get(f) or {}).get("user_name")),
-            key=lambda f: (-weights[f], f),
-        )
-        if named:
-            meta = base["fmeta"][named[0]]
-            row["name"] = meta["user_name"]
-            row["user_named"] = meta.get("user_name_source", "user")
-            row.pop("name_from", None)
-            row["aliases"] = sorted(
-                {base["fmeta"][f]["user_name"] for f in named} - {row["name"]}
-            )
     return rows
 
 
@@ -755,6 +763,189 @@ def compute_functions(r, fids, params=None):
     }
     _DOC_CACHE.put(("fns", key), doc)
     return doc
+
+
+def _signature(fids, fmeta):
+    """Consensus return type + parameter list (the vote of nway_panel `_rowSig`), with variants."""
+    items = []
+    for f in fids:
+        m = fmeta.get(f) or {}
+        params = tuple(
+            (
+                (p.get("type") or p.get("name") or "...")
+                if isinstance(p, dict)
+                else p or "..."
+            )
+            for p in m.get("parameters") or []
+        )
+        items.append((m.get("return_type") or "void", params))
+    # Ghidra's undefined/undefined4 return types are placeholders: vote among real ones when any exist.
+    real = [i for i in items if not i[0].startswith("undefined")]
+    ret = Counter(i[0] for i in real or items).most_common(1)[0][0]
+    params = Counter(i[1] for i in items if i[0] == ret).most_common(1)[0][0]
+    variants = Counter(items).most_common()
+    return {
+        "return_type": ret,
+        "parameters": list(params),
+        "return_agree": sum(1 for i in items if i[0] == ret),
+        "variants": [
+            {"return_type": v[0], "parameters": list(v[1]), "count": n}
+            for v, n in variants
+        ],
+    }
+
+
+def _sample(fids, weights, files, cap):
+    """At most `cap` functions: the heaviest of every file first, then the heaviest rest."""
+    by_file = {}
+    for f in sorted(fids, key=lambda f: (-weights[f], f)):
+        by_file.setdefault(files[f], []).append(f)
+    firsts = sorted((v[0] for v in by_file.values()), key=lambda f: (-weights[f], f))
+    rest = sorted(
+        (f for v in by_file.values() for f in v[1:]), key=lambda f: (-weights[f], f)
+    )
+    return sorted((firsts + rest)[:cap])
+
+
+def _cohesion(r, fids, params):
+    """Pairwise score spread over `fids`; pairs the engine did not score count 0."""
+    if len(fids) < 2:
+        return None
+    try:
+        fscore = compute_functions(r, fids, params)["fscore"]
+    except (BadParams, MemberMissing) as e:
+        return {"error": str(e)}
+    total = len(fids) * (len(fids) - 1) // 2
+    scores = list(fscore.values()) + [0.0] * (total - len(fscore))
+    return {
+        "min": min(scores),
+        "median": statistics.median(scores),
+        "max": max(scores),
+        "scored_pairs": len(fscore),
+        "total_pairs": total,
+        "functions": len(fids),
+    }
+
+
+def function_meta(r, fids, ref=None, sample=None):
+    """What the function-set hero shows, for any set of functions (nothing written).
+
+    `ref` is the resolved reference (`kind`: nway | cluster | pool | None, plus
+    `ns`, `pool`, `cluster_id`, `row`). Naming reuses `_name_row`. Counts cover
+    every member; names, signature and the sample the comparison tabs take
+    (`sample` functions, default the nway cap) follow the whole set too.
+    """
+    ref = ref or {}
+    fids = list(dict.fromkeys(fids))
+    files = {}
+    for f in fids:
+        coll, _, rest = f.partition(":func:")
+        md5 = rest.partition(":")[0]
+        if not coll or not _MD5.match(md5):
+            raise BadParams(f"bad function id {f!r}")
+        files[f] = (_origin_coll(coll), md5)
+    if not fids:
+        raise BadParams("no functions")
+    pipe = r.pipeline(transaction=False)
+    for f in fids:
+        pipe.get(f"{f}:meta")
+        pipe.hkeys(
+            f"global:pool:{ref['pool']}:{f}:cluster_scores"
+            if ref.get("pool")
+            else f"{f}:cluster_scores"
+        )
+    res = pipe.execute()
+    metas = [_decode(x) for x in res[0::2]]
+    missing = [f for f, m in zip(fids, metas) if not m]
+    if missing:
+        raise MemberMissing(missing)
+    fmeta = {f: _fn_meta(m) for f, m in zip(fids, metas)}
+    weights = {f: float(fmeta[f].get("bsim_features_count") or 0) or 1.0 for f in fids}
+    cids = {
+        f: {c.decode() if isinstance(c, bytes) else str(c) for c in cs}
+        for f, cs in zip(fids, res[1::2])
+    }
+
+    named = _name_row(fids, fmeta, weights)
+    source = (
+        "analyst"
+        if named.get("user_named")
+        else (
+            "tag"
+            if named.get("name_from") == "tag"
+            else "majority" if named["names"] else "fallback"
+        )
+    )
+
+    members = sorted(set(files.values()))
+    pipe = r.pipeline(transaction=False)
+    for coll, md5 in members:
+        pipe.get(f"{coll}:file:{md5}:meta")
+    fmetas = [_decode(x) for x in pipe.execute()]
+    arch = {(m.get("language_id") or "").split(":")[0] for m in fmetas} - {""}
+    batches = {m.get("batch_uuid") or m.get("batch_name") for m in fmetas} - {None, ""}
+
+    ns_of = lambda f: f"global:pool:{ref['pool']}" if ref.get("pool") else files[f][0]
+    all_clusters = {(ns_of(f), c) for f in fids for c in cids[f]}
+    shared = set.intersection(*(cids[f] for f in fids))
+    one_ns = len({ns_of(f) for f in fids}) == 1
+    cluster = None
+    stored = ref.get("cluster")  # a stored cluster's id or uuid: always linked
+    if one_ns and shared and (stored or len(shared) == 1):
+        ns = ns_of(fids[0])
+        algo = resolve_collection_algo(ns)
+        found = {
+            c: _decode(r.get(f"{ns}:cluster:{algo}:{c}:meta")) or {}
+            for c in sorted(shared)
+        }
+        cid = next(
+            (
+                c
+                for c, m in found.items()
+                if stored in (c, (m.get("cluster_uuid") or "").lower())
+            ),
+            next(iter(found)),
+        )
+        cluster = {
+            "namespace": ns,
+            "collection": files[fids[0]][0],
+            "pool": ref.get("pool"),
+            "cluster_id": cid,
+            "cluster_uuid": found[cid].get("cluster_uuid"),
+            "name": found[cid].get("cluster_name"),
+        }
+
+    cap = min(max(int(sample or 0), 2), caps()[0]) if sample else caps()[0]
+    sampled = len(fids) > cap or len(members) > caps()[0]
+    shown = _sample(fids, weights, files, cap) if sampled else sorted(fids)
+    shown_files = sorted({files[f] for f in shown})
+    return {
+        "name": named["name"],
+        "name_source": source,
+        "named_by": named.get("user_named"),
+        "aliases": named.get("aliases", []),
+        "prototype": _signature(fids, fmeta),
+        "counts": {
+            "functions": len(fids),
+            "files": len(members),
+            "collections": len({c for c, _ in members}),
+            "batches": len(batches),
+            "clusters": len(all_clusters),
+            "arch": sorted(arch),
+        },
+        "cohesion": _cohesion(r, shown, {}),
+        "sample": {"shown": len(shown), "total": len(fids), "cap": cap},
+        "fids": shown,
+        "links": {
+            "kind": ref.get("kind") or "set",
+            "nway": {
+                "md5s": [f"{c}:{m}" for c, m in shown_files],
+                "files": len(members),
+                "pool": ref.get("pool"),
+            },
+            "cluster": cluster,
+        },
+    }
 
 
 if __name__ == "__main__":

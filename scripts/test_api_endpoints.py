@@ -4999,6 +4999,127 @@ def _nway_rows(body):
     return {frozenset((r.get("files") or r["cells"]).values()) for r in rows}
 
 
+def test_nway_function_meta():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-quater – N-way function set hero (meta endpoint)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – meta checks skipped.", YELLOW))
+        return
+    _, core = _nway(tab="core", scope="all", limit=1000)
+    row = next(iter((core or {}).get("items", [])), None)
+    if not row:
+        print(_color("\n[SKIP] No shared row – meta checks skipped.", YELLOW))
+        return
+    fids = [f for f in row["cells"].values() if isinstance(f, str)]
+    url = f"{BASE_URL}/api/nway/function/meta"
+    get = lambda **kw: requests.get(url, params=kw, timeout=60)
+
+    r = get(fids=",".join(fids))
+    m = r.json() if r.status_code == 200 else {}
+    coh = m.get("cohesion") or {}
+    n = len(fids)
+    check(
+        "nway meta: name, source, prototype, counts and links are served",
+        r.status_code == 200
+        and m.get("name_source") in ("analyst", "majority", "tag", "fallback")
+        and m["counts"]["functions"] == n
+        and m["counts"]["files"] == 2
+        and m["prototype"]["return_type"]
+        and m["links"]["kind"] == "set"
+        and m["links"]["nway"]["files"] == 2,
+        f"HTTP {r.status_code} {str(m)[:200]}",
+    )
+    check(
+        "nway meta: cohesion reports min <= median <= max and counts unscored pairs",
+        coh.get("total_pairs") == n * (n - 1) // 2
+        and coh["scored_pairs"] <= coh["total_pairs"]
+        and 0 <= coh["min"] <= coh["median"] <= coh["max"] <= 1,
+        str(coh),
+    )
+
+    # Naming order: an analyst name outranks everything, and resetting drops it.
+    rename = lambda name: requests.post(
+        f"{BASE_URL}/api/notes/rename",
+        json={"func_ids": fids, "name": name, "owner": "user"},
+        timeout=30,
+    )
+    rename("meta_analyst_fn")
+    named = get(fids=",".join(fids)).json()
+    check(
+        "nway meta: analyst name wins (name_source=analyst)",
+        named.get("name") == "meta_analyst_fn"
+        and named.get("name_source") == "analyst",
+        str(named.get("name")),
+    )
+    rename("")
+    again = get(fids=",".join(fids)).json()
+    check(
+        "nway meta: resetting the name falls back to a derived source",
+        again.get("name") != "meta_analyst_fn"
+        and again.get("name_source") != "analyst",
+        str(again.get("name_source")),
+    )
+
+    # The URL never names the set: fx_name is ignored.
+    forged = get(fids=",".join(fids), fx_name="<img src=x onerror=alert(1)>").json()
+    check(
+        "nway meta: a forged fx_name changes nothing",
+        forged.get("name") == again.get("name"),
+        str(forged.get("name")),
+    )
+
+    # A long list rides a short id.
+    sid = requests.post(
+        f"{BASE_URL}/api/nway/function/set", json={"fids": fids}, timeout=30
+    ).json()
+    via_set = get(set=sid.get("id", "")).json()
+    check(
+        "nway meta: set= resolves a stored function list",
+        via_set.get("fids") == m.get("fids") and sid.get("ttl"),
+        str(sid),
+    )
+    check("nway meta: unknown set is a 404", get(set="nope").status_code == 404)
+    check(
+        "nway meta: bad ref is a 400", get(ref="x:y", fids=fids[0]).status_code == 400
+    )
+    check(
+        "nway meta: unknown function is a 404",
+        get(fids=f"{COLLECTION}:func:{'a' * 32}:1").status_code == 404,
+    )
+    r = get(ref="nway:2:0", fids=",".join(fids))
+    check(
+        "nway meta: nway ref keeps the row's functions",
+        r.status_code == 200 and r.json()["links"]["kind"] == "nway",
+        f"HTTP {r.status_code}",
+    )
+
+    # One function: no pairs, cohesion is empty, the parent link is the file.
+    one = get(fids=fids[0]).json()
+    check(
+        "nway meta: one function has no cohesion and one file",
+        one.get("cohesion") is None and one["counts"]["files"] == 1,
+        str(one)[:200],
+    )
+    # The graph of a one-file set: neighbors accept solo=1.
+    r = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/neighbors",
+        params={
+            "md5s": f"{COLLECTION}:{file_md5}",
+            "solo": "1",
+            "fids": fids[0],
+            "role": "callees",
+        },
+        timeout=60,
+    )
+    check(
+        "nway neighbors: solo=1 graphs a set in one file",
+        r.status_code == 200 and "items" in r.json(),
+        f"HTTP {r.status_code} {r.text[:120]}",
+    )
+
+
 def test_nway_diff():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-ter – N-way file diff (stored path)", BOLD))
@@ -9095,6 +9216,7 @@ if __name__ == "__main__":
         test_llm_agentic_analysis,
         test_bin_sim_diff_cache,
         test_nway_diff,
+        test_nway_function_meta,
         test_nway_cluster_entry,
         test_llm_pair_analysis_job,
         test_search_job,
@@ -9125,6 +9247,7 @@ if __name__ == "__main__":
         # Issues the /api/bin_sim/build whose doc the diff cache step reads.
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
         "test_nway_diff": ["test_search_filters_and_sorting"],
+        "test_nway_function_meta": ["test_search_filters_and_sorting"],
         "test_nway_cluster_entry": ["test_search_filters_and_sorting"],
         "test_llm_pair_analysis_job": ["test_search_filters_and_sorting"],
         "test_search_job": ["test_search_filters_and_sorting"],

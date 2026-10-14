@@ -734,7 +734,7 @@
             if (!fids.length) return '';
             const qs = this._docQs();
             qs.set('fx_fids', fids.join(','));
-            qs.set('fx_name', row.name);
+            qs.set('fx_ref', `nway:${(this.data.file_columns || this.data.columns).length}:${(Number(this.state.offset) || 0) + this.data.items.indexOf(row)}`);
             qs.set('fx_back', window.location.pathname + window.location.search);
             return `/diff/nway/function?${qs.toString()}`;
         }
@@ -1672,8 +1672,9 @@
     };
 
     // Family view of any set of functions (`coll:func:md5:addr` ids), whatever their files or collections.
-    NwayPanel.urlForFunctions = function (fids, name) {
-        const qs = new URLSearchParams({ scope: 'functions', fx_fids: [...new Set(fids)].join(','), fx_name: name || `${fids.length} functions`, fx_tab: 'facets' });
+    NwayPanel.urlForFunctions = function (fids, ref) {
+        const qs = new URLSearchParams({ scope: 'functions' });
+        if (ref) qs.set('fx_ref', ref); else qs.set('fx_fids', [...new Set(fids)].join(','));
         return `/diff/nway/function?${qs.toString()}`;
     };
 

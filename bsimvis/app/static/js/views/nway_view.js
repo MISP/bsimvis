@@ -17,6 +17,8 @@ window.NwayView = {
         this._panel = null;
         if (this._functionPanel) this._functionPanel.destroy();
         this._functionPanel = null;
+        if (this._renamedFn) document.removeEventListener('function-renamed', this._renamedFn);
+        this._renamedFn = null;
     },
 
     async init(params, containerId) {
@@ -42,7 +44,7 @@ window.NwayView = {
     },
 
     // Graph and comparison tabs share the focused family and URL state.
-    _initFunction() {
+    async _initFunction() {
         const q = new URLSearchParams(window.location.search);
         const CTL = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule'];
         const source = {}, doc = {}, fx = {}, cg = {};
@@ -55,33 +57,51 @@ window.NwayView = {
         let cells = {};
         try { cells = JSON.parse(cg.cells || '{}'); } catch (e) { /* fall back to function ids */ }
         try { cg.pieces = cg.pieces ? JSON.parse(cg.pieces) : undefined; } catch (e) { cg.pieces = undefined; }
-        if (!Object.keys(cells).length) {
-            for (const fid of (fx.fids || '').split(',').filter(Boolean)) {
-                const i = fid.indexOf(':func:');
-                if (i < 0) continue;
-                const md5 = fid.slice(i + 6).split(':')[0];
-                cells[`${fid.slice(0, i)}:${md5}`] = fid;
-            }
-        }
+        const urlCells = Object.keys(cells).length > 0;
+        const tok = this._fnTok = (this._fnTok || 0) + 1;
         this.destroy();
-        this._familyFids = source.scope === 'functions'
+        this._meta = null;
+        this._ref = fx.ref || '';
+        this._sample = Number(fx.sample) || 0;
+        this._setId = fx.set || '';
+        this._urlFids = (fx.fids || '').split(',').filter(Boolean);
+        this._fnScope = source.scope === 'functions';
+        if (window.location.pathname.endsWith('/nway/function') && (this._ref || this._setId || this._urlFids.length)) {
+            this._container.innerHTML = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Loading function set...</div>';
+            const meta = await this._fetchMeta();
+            if (tok !== this._fnTok) return;
+            if (meta.error) {
+                this._container.innerHTML = '<div class="nway-state"></div>';
+                this._container.firstChild.textContent = meta.error;
+                return;
+            }
+            this._meta = meta;
+            fx.fids = meta.fids.join(',');
+        }
+        this._familyFids = (this._fnScope || (this._meta && !urlCells))
             ? [...new Set((fx.fids || '').split(',').filter(Boolean))]
             : Object.values(cells).filter(v => typeof v === 'string');
+        if (!urlCells) {
+            for (const fid of this._familyFids) {
+                const i = fid.indexOf(':func:');
+                if (i >= 0) cells[`${fid.slice(0, i)}:${fid.slice(i + 6).split(':')[0]}`] = fid;
+            }
+        }
+        this._cellFids = Object.values(cells);
         if (!this._familyFids.length) {
             this._container.innerHTML = '<div class="nway-state">This link has no function to graph.</div>';
             return;
         }
-        this._familyName = cg.name || fx.name || '';
+        this._familyName = this._meta ? this._meta.name : cg.name || '';
         this._familySource = source;
         this._familyDoc = doc;
-        this._fnScope = source.scope === 'functions';
-        this._familyState = { tab: (fx.tab === 'code' && fx.cv === 'full' ? 'full' : fx.tab) || (this._fnScope ? 'facets' : 'graph'), cv: fx.cv || 'blocks', bm: ['hybrid', 'cfg', 'text'].includes(fx.bm) ? fx.bm : 'hybrid', only: fx.only === '1', single: fx.single === '1', cols: Math.min(5, Math.max(2, Number(fx.cols) || 2)) };
-        if (!['graph', 'simple', 'facets', 'code', 'full', 'pair'].includes(this._familyState.tab) || (this._fnScope && this._familyState.tab === 'graph')) this._familyState.tab = this._fnScope ? 'facets' : 'graph';
+        this._familyState = { tab: (fx.tab === 'code' && fx.cv === 'full' ? 'full' : fx.tab) || 'graph', cv: fx.cv || 'blocks', bm: ['hybrid', 'cfg', 'text'].includes(fx.bm) ? fx.bm : 'hybrid', only: fx.only === '1', single: fx.single === '1', cols: Math.min(5, Math.max(2, Number(fx.cols) || 2)) };
+        if (!['graph', 'simple', 'facets', 'code', 'full', 'pair'].includes(this._familyState.tab)) this._familyState.tab = 'graph';
         if (fx.fn !== undefined && fx.fn !== '') this._familyState.fn = Number(fx.fn);
         this._container.innerHTML = `<div class="nway-view nway-function-view">
-            <div class="nway-head"><h2 id="nway-family-name"></h2></div>
+            ${this._meta ? '<div id="nway-hero" class="nway-hero"></div>' : '<div class="nway-head"><h2 id="nway-family-name"></h2></div>'}
             <div class="xp-bar"><div id="nway-family-tabs" class="bsim-tabbar" role="tablist" style="margin:0">
-                ${[['graph', 'Graph'], ['simple', 'Reference'], ['facets', 'Facets'], ['code', 'Code blocks'], ['full', 'Full function'], ['pair', 'Pair diff']].filter(([k]) => !(this._fnScope && k === 'graph')).map(([k, label]) => `<button class="bsim-tab" role="tab" data-family-tab="${k}">${label}</button>`).join('')}
+                ${[['graph', 'Graph'], ['simple', 'Reference'], ['facets', 'Facets'], ['code', 'Code blocks'], ['full', 'Full function'], ['pair', 'Pair diff']].map(([k, label]) => `<button class="bsim-tab" role="tab" data-family-tab="${k}">${label}</button>`).join('')}
             </div></div>
             <div id="nway-graph-host" class="nway-cgp" style="height:calc(100vh - 240px);min-height:400px;"></div>
             <div id="nway-fn-host" hidden></div>
@@ -101,26 +121,29 @@ window.NwayView = {
             this._showFamilyTab();
         };
         let graphReady = false;
-        if (this._fnScope) {
-            // A free function set has no file-level graph: show the comparison directly.
-            this._familyName = this._familyName || `${this._familyFids.length} functions`;
-            this._writeFamilyState();
-            this._showFamilyTab();
-            return;
-        }
+        this._renamedFn = e => this._onRenamed(e);
+        document.addEventListener('function-renamed', this._renamedFn);
+        this._renderHero();
+        // A free function set has no file diff of its own: graph it over the diff of its parent files.
+        const files = [...new Set(this._familyFids.map(f => { const i = f.indexOf(':func:'); return `${f.slice(0, i)}:${f.slice(i + 6).split(':')[0]}`; }))];
+        const graphSource = this._fnScope ? { md5s: files.join(','), ...(this._meta && this._meta.links.nway.pool ? { pool: this._meta.links.nway.pool } : {}), ...(files.length < 2 ? { solo: '1' } : {}) } : source;
         this._panel = new NwayPanel(document.getElementById('nway-graph-host'), {
-            source, state: doc, cg: { ...cg, name: this._familyName, cells },
+            source: graphSource, state: doc, cg: { ...cg, name: this._familyName, cells },
             onCg: url => {
                 const graph = new URLSearchParams(url.split('?')[1]);
                 const fids = Object.values(JSON.parse(graph.get('cg_cells'))).filter(v => typeof v === 'string');
-                if (fids.join(',') !== this._familyFids.join(',')) {
-                    this._familyFids = fids;
+                if (fids.join(',') !== this._cellFids.join(',')) {
+                    this._familyFids = this._cellFids = fids;
+                    this._ref = '';
+                    this._urlFids = fids;
+                    this._setId = '';
+                    if (this._meta) this._fetchMeta().then(m => { if (!m.error) { this._meta = m; this._familyName = m.name; this._renderHero(); this._crumbs(); } });
                     this._familyState.fn = null;
                     if (this._functionPanel) this._functionPanel.destroy();
                     this._functionPanel = null;
                     document.getElementById('nway-fn-host').innerHTML = '';
                 }
-                this._familyName = graph.get('cg_name') || '';
+                if (!this._meta) this._familyName = graph.get('cg_name') || '';
                 const next = new URLSearchParams(window.location.search);
                 for (const k of [...next.keys()]) if (k.startsWith('cg_')) next.delete(k);
                 for (const [k, v] of graph) if (k.startsWith('cg_')) next.set(k, v);
@@ -135,8 +158,19 @@ window.NwayView = {
 
     _writeFamilyState(next = new URLSearchParams(window.location.search), push = false) {
         const st = this._familyState;
-        next.set('fx_fids', this._familyFids.join(','));
-        next.set('fx_name', this._familyName);
+        // A stored cluster names its own members; any other set is written as the list it was opened with.
+        next.delete('fx_name');
+        const own = /^(cluster|pool):/.test(this._ref);
+        const urlFids = this._meta ? this._urlFids : this._familyFids;
+        if (this._ref) next.set('fx_ref', this._ref); else next.delete('fx_ref');
+        if (this._sample) next.set('fx_sample', this._sample); else next.delete('fx_sample');
+        next.delete('fx_fids');
+        next.delete('fx_set');
+        if (own) { /* the ref is the set */ }
+        else if (urlFids.length > 20) {
+            if (this._setId) next.set('fx_set', this._setId);
+            else { next.set('fx_fids', urlFids.join(',')); this._ensureSet(urlFids); }
+        } else next.set('fx_fids', urlFids.join(','));
         next.set('fx_tab', st.tab);
         next.set('fx_cv', st.cv);
         if (st.bm && st.bm !== 'hybrid') next.set('fx_bm', st.bm); else next.delete('fx_bm');
@@ -147,14 +181,133 @@ window.NwayView = {
         const url = `/diff/nway/function?${next.toString()}`;
         if (url === window.location.pathname + window.location.search) return;
         history[push ? 'pushState' : 'replaceState'](null, '', url);
+        this._crumbs();
+    },
+
+    _crumbs() {
         if (window.Breadcrumbs && window.getRoutingState) {
             const r = window.getRoutingState();
             window.Breadcrumbs.render(window.Breadcrumbs.generate({ viewKey: r.viewKey, collection: r.collection, pool: r.pool, params: r.params }, null));
         }
     },
 
+    _heroLinks(m) {
+        const L = m.links, nw = L.nway, out = [];
+        const pool = nw.pool ? `&pool=${encodeURIComponent(nw.pool)}` : '';
+        if (nw.files >= 2) {
+            // A row link also searches the diff for its name, so the row is the first thing in view.
+            const focus = L.kind === 'nway' && m.name_source !== 'fallback' ? `&tab=all&q=${encodeURIComponent(m.name)}` : '';
+            const warn = m.sample.shown < m.sample.total ? ' (sample)' : '';
+            out.push({ primary: true, href: `/diff/nway?md5s=${encodeURIComponent(nw.md5s.join(','))}${pool}${focus}`, text: `Open parent N-way diff (${nw.files} files)${warn}`, title: 'N-way diff' });
+        } else if (nw.md5s.length) {
+            const i = nw.md5s[0].lastIndexOf(':');
+            const coll = nw.md5s[0].slice(0, i), md5 = nw.md5s[0].slice(i + 1);
+            out.push({ primary: true, href: `${nw.pool ? `/pools/${encodeURIComponent(nw.pool)}` : ''}/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(md5)}`, text: 'Open file', title: md5 });
+        }
+        const c = L.cluster;
+        if (c && c.cluster_uuid) {
+            const href = c.pool ? `/pools/${encodeURIComponent(c.pool)}/functions/clusters/${encodeURIComponent(c.cluster_uuid)}` : window.Nav.buildUIUrl(c.collection, ['functions', 'clusters', c.cluster_uuid]);
+            out.push({ href, text: `Open cluster ${c.cluster_uuid.slice(0, 8)}`, title: 'Cluster' });
+        }
+        return out;
+    },
+
+    // The hero: what this set is, in the server's words. Every server string goes through escapeHtml.
+    _renderHero() {
+        const el = document.getElementById('nway-hero');
+        const m = this._meta;
+        if (!el || !m) return;
+        const c = m.counts, coh = m.cohesion, p = m.prototype, kind = m.links.kind;
+        const badge = kind === 'nway' ? 'N-way cluster' : kind === 'cluster' || kind === 'pool' ? 'Function cluster' : 'Function set';
+        const row = (m.ref || '').split(':')[2];
+        const where = kind === 'nway' ? `row ${Number(row) + 1 || ''} of a ${c.files}-file diff` : kind === 'set' ? (c.files === 1 ? `${c.functions} functions, all in one file` : 'your selection, not an N-way cluster') : `stored in ${(m.links.cluster && (m.links.cluster.pool ? `pool ${m.links.cluster.pool}` : m.links.cluster.collection)) || 'a collection'}`;
+        const from = { analyst: 'name set by an analyst', majority: 'name from majority of members', tag: 'name from a tag', fallback: 'name of the heaviest function' }[m.name_source] || '';
+        const types = {};
+        for (const v of p.variants) types[v.return_type] = (types[v.return_type] || 0) + v.count;
+        const typeText = Object.entries(types).map(([t, n]) => `${t} ${n}`).join(' · ');
+        const proto = `${p.return_type} ${m.name}(${p.parameters.join(', ')})`;
+        const facts = [[c.functions, 'functions'], [c.files, c.files === 1 ? 'file' : 'files'], [c.collections, c.collections === 1 ? 'collection' : 'collections'], [c.batches, c.batches === 1 ? 'batch' : 'batches'], [c.clusters, c.clusters === 1 ? 'cluster' : 'clusters'], [c.arch.join(' · ') || '?', 'arch']];
+        let cohHtml = '';
+        if (coh && coh.error) cohHtml = `<span class="dim">Cohesion unavailable: ${escapeHtml(coh.error)}</span>`;
+        else if (coh) {
+            const band = coh.median >= 0.7 ? '' : coh.median >= 0.4 ? ' mid' : ' low';
+            const gap = coh.total_pairs - coh.scored_pairs;
+            cohHtml = `<span>Cohesion</span><span class="nway-hbar${band}"><i style="left:${(coh.min * 100).toFixed(0)}%;right:${((1 - coh.max) * 100).toFixed(0)}%"></i></span>
+                <b>${coh.min.toFixed(2)} - ${coh.max.toFixed(2)}</b>
+                <span class="dim" title="${escapeAttr(`${gap} unscored pair${gap === 1 ? '' : 's'} count as 0`)}">median ${coh.median.toFixed(2)} · ${Number(coh.scored_pairs)} of ${Number(coh.total_pairs)} pairs scored</span>
+                ${band === ' low' ? '<span class="nway-hpill bad">weak: probably not one function</span>' : ''}`;
+        }
+        const agree = c.functions > 1 ? (p.return_agree === c.functions ? `<span class="nway-hpill ok">return type agrees ${Number(p.return_agree)}/${Number(c.functions)}</span>` : `<span class="nway-hpill warn">return type ${escapeHtml(typeText)}</span>`) : '';
+        const sample = m.sample.shown < m.sample.total ? `<span class="nway-hpill warn">showing ${Number(m.sample.shown)} of ${Number(m.sample.total)}</span><button class="top-action-btn" data-hero-sample>Change sample</button>` : '';
+        const links = this._heroLinks(m).map((l, i) => `<a class="top-action-btn${l.primary ? ' primary' : ''}" href="${escapeAttr(l.href)}" data-hero-link="${i}" data-title="${escapeAttr(l.title)}">${escapeHtml(l.text)}</a>`).join('');
+        el.innerHTML = `<div class="nway-hero-top"><span class="nway-hkind ${kind === 'set' ? 'set' : ''}">${badge}</span><span class="dim">${escapeHtml(where)} · ${escapeHtml(from)}</span></div>
+            <h2 class="nway-hero-name">${escapeHtml(m.name)}</h2>
+            <div class="nway-hero-proto">${escapeHtml(proto)}${p.variants.length > 1 ? ` <span class="nway-hvar">· ${p.variants.length} variants</span>` : ''}</div>
+            <div class="nway-hero-facts">${facts.map(([n, l]) => `<div><b>${escapeHtml(String(n))}</b><span>${escapeHtml(l)}</span></div>`).join('')}</div>
+            <div class="nway-hero-coh">${cohHtml}${agree}${sample}</div>
+            <div class="nway-hero-actions">${links}<button class="top-action-btn" data-rename-fids="${escapeAttr(m.fids.join(','))}" data-rename-name="${escapeAttr(m.name)}">Rename...</button></div>`;
+        const hrefs = this._heroLinks(m);
+        el.onclick = e => {
+            const a = e.target.closest('[data-hero-link]');
+            if (a) {
+                e.preventDefault();
+                const l = hrefs[Number(a.dataset.heroLink)];
+                return window.Nav.openPath(l.href, e, { title: l.title });
+            }
+            if (e.target.closest('[data-hero-sample]')) {
+                const n = Number(window.prompt(`Functions to compare (2 to ${m.sample.cap}):`, String(m.sample.shown)));
+                if (n >= 2) { this._sample = Math.min(n, m.sample.cap); this._writeFamilyState(); this._initFunction(); }
+            }
+        };
+    },
+
+    // A rename from the hero: a stored cluster takes the new name too.
+    async _onRenamed(e) {
+        if (!this._meta) return;
+        const name = ((e.detail || {}).renames || [])[0]?.name;
+        const c = this._meta.links.cluster;
+        if (name && c && /^(cluster|pool):/.test(this._ref)) {
+            await fetch('/api/cluster/meta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ collection: c.collection, pool: c.pool || undefined, cluster_id: c.cluster_id, cluster_name: name }) }).catch(() => {});
+        }
+        const m = await this._fetchMeta();
+        if (m.error) return;
+        this._meta = m;
+        this._familyName = m.name;
+        this._renderHero();
+        this._crumbs();
+    },
+
+    // A long list rides the URL as a short Redis id (one day), never as thousands of characters.
+    async _ensureSet(fids) {
+        if (this._setting) return;
+        this._setting = true;
+        try {
+            const res = await fetch('/api/nway/function/set', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fids }) });
+            const body = await res.json().catch(() => ({}));
+            if (res.ok && body.id) { this._setId = body.id; this._writeFamilyState(); }
+        } catch (e) { /* the long fx_fids URL keeps working */ }
+        this._setting = false;
+    },
+
+    async _fetchMeta() {
+        const mq = new URLSearchParams();
+        if (this._ref) mq.set('ref', this._ref);
+        if (this._setId) mq.set('set', this._setId);
+        else if (!/^(cluster|pool):/.test(this._ref)) mq.set('fids', this._urlFids.join(','));
+        if (this._sample) mq.set('sample', this._sample);
+        try {
+            const res = await fetch(`/api/nway/function/meta?${mq.toString()}`);
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) return { error: body.error === 'set_expired' ? 'This function set has expired. Open it again from its table.' : (body.message || body.error || `HTTP ${res.status}`) };
+            return body;
+        } catch (e) {
+            return { error: String(e) };
+        }
+    },
+
     _syncFamilyTabs() {
-        document.getElementById('nway-family-name').textContent = this._familyName || 'Function family';
+        const title = document.getElementById('nway-family-name');
+        if (title) title.textContent = this._familyName || 'Function family';
         const data = this._functionPanel && this._functionPanel.data;
         this._container.querySelectorAll('[data-family-tab]').forEach(t => {
             const tab = t.dataset.familyTab;

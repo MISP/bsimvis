@@ -15,7 +15,7 @@
  * `state.column` keeps the rows with a function in one file; `state.focus` (file
  * ids) splits the files into Focus vs Rest, both set from the file header's
  * right-click menu.
- * `opts.cg` ({name, cells, view, scope, outside, depth}) makes the panel a standalone
+ * `opts.cg` ({name, cells, view, scope, depth}) makes the panel a standalone
  * call graph on `container` (no table); `onCg(snapshot)` fires on every graph change.
  * Rows are paged
  * server-side (Prev/Next, or appended on scroll -- see paging.js); nothing here
@@ -37,6 +37,13 @@
     const LOW_SUPPORT = 0.5;
     // Same icon + color as the Code / Library / All pills in the table's Show control.
     const AXIS = { code: { icon: 'fa-solid fa-code', color: 'var(--info, #3b82f6)' }, library: { icon: 'fa-solid fa-cubes', color: 'var(--warning, #d97706)' } };
+    // Match presets set the two thresholds together; '' is the server default edge.
+    // ponytail: placeholder values, calibrate on real collections.
+    const PRESETS = [
+        ['strict', 'Strict', { min_edge: 0.8, child_presence: 0.8 }, 'Only close matches count; a child needs most of its files to hold a function.'],
+        ['balanced', 'Balanced', { min_edge: '', child_presence: 0.5 }, 'The collection default edge; half of a child cluster must hold a function.'],
+        ['loose', 'Loose', { min_edge: 0.3, child_presence: 0.3 }, 'Weaker matches group together; a third of a child cluster is enough.'],
+    ];
     const DOC_KEYS = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule'];
 
     function fnParts(fid) {
@@ -115,6 +122,7 @@
             this.el.addEventListener('toggle', e => {
                 if (e.target.matches('details.nway-focus')) this._focusOpen = e.target.open;
                 if (e.target.matches('details.nway-match')) this._matchOpen = e.target.open;
+                if (e.target.matches('details.nway-adv')) this._advOpen = e.target.open;
             }, true);
             this.el.addEventListener('contextmenu', e => {
                 const file = e.target.closest('[data-nway-file]');
@@ -264,13 +272,18 @@
                 this._pills('Show', 'scope', [['code', 'Code', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['library', 'Library', 'fa-solid fa-cubes', 'var(--warning, #d97706)'], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']], 'Code: functions of the program itself. Library: functions recognised as library code (stdlib, statically linked). All: both.'),
                 this._columnChip(),
             ].join('');
-            const match = [
+            const cur = PRESETS.find(([, , v]) => String(v.min_edge) === String(s.min_edge) && Number(v.child_presence) === Number(s.child_presence));
+            const preset = `<span class="nway-ctlwrap"><div class="view-toggle"><span class="nway-lbl">Match</span>${PRESETS.map(([k, text, , t]) => `<button class="view-btn${cur && cur[0] === k ? ' active' : ''}" data-preset="${k}" title="${escapeAttr(t)}">${text}</button>`).join('')}${cur ? '' : '<span class="dim" style="margin-left:6px">Custom</span>'}</div>${this._tip('Strict, Balanced or Loose set Min edge and Child presence together. Open Advanced to set them by hand.')}</span>`;
+            const advanced = `<details class="nway-adv"${this._advOpen ? ' open' : ''}><summary class="nway-lbl">Advanced</summary>${[
                 this._slider('Min edge', 'min_edge', Number(d.min_edge), 0, 1, 0.05, 'Ignore function matches below this similarity. Higher is stricter: fewer functions get grouped together.'),
+                isNode && d.columns_mode === 'children' ? this._slider('Child presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, "Share of a child cluster's files that must hold a function for the child to count as having it.") : '',
+            ].join('')}</details>`;
+            const match = [
+                preset,
                 this._seg('Mode', 'mode', [['stored', 'Stored', 'reads built pair docs'], ['virtual', 'Virtual', 'recomputes from vectors']], 'Stored reads the similarity pairs already built. Virtual recomputes the matches from the function vectors, as a fresh collection of just these files would.'),
                 s.tab === 'partial' && !focus ? this._slider(`In at least (of ${n})`, 'k', s.k, 2, Math.max(2, n), 1, 'Partial tab: keep functions present in at least this many columns.') : '',
                 isNode ? this._seg('Columns', 'columns', [['auto', 'Auto'], ['files', 'Files'], ['children', 'Children']], "Files: one column per file of the node. Children: one column per child cluster. Auto switches to Children above 12 files.") : '',
-                isNode && d.columns_mode === 'children'
-                    ? this._slider('Child presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, "Share of a child cluster's files that must hold a function for the child to count as having it.") : '',
+                advanced,
             ].join('');
             return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${search}</div>
                 <div class="nway-bar">${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}</span></div>`;
@@ -508,7 +521,7 @@
                 more: {},
                 place: {},
                 co: init.co === '1' || init.co === true || (init.co === undefined && !!prev.co),
-                hints: init.hints === '1' || init.hints === true || (init.hints === undefined && !!prev.hints),
+                hints: init.co === '1' || init.hints === '1' || init.co === true || (init.co === undefined && init.hints === undefined && !!prev.hints),
                 suggest: prev.suggest === undefined ? 'comp' : prev.suggest,
                 nb: null,
             };
@@ -710,9 +723,8 @@
             qs.set('cg_name', f.name);
             qs.set('cg_cells', JSON.stringify(f.cells));
             if (f.pieces) qs.set('cg_pieces', JSON.stringify(f.pieces));
-            for (const k of ['view', 'scope', 'outside', 'depth']) qs.set(`cg_${k}`, st[k]);
+            for (const k of ['view', 'scope', 'depth']) qs.set(`cg_${k}`, st[k]);
             if (st.co) qs.set('cg_co', '1');
-            if (st.hints) qs.set('cg_hints', '1');
             return `/diff/nway/graph?${qs.toString()}`;
         }
 
@@ -1014,28 +1026,6 @@
             return out;
         }
 
-        // Cards present in exactly the same files (two or more of them): one change or fork touched them all.
-        // Same shape as _cgGroups, but members stay separate functions (no merge, no focus).
-        _cgGroupsSame(prefix, entries, files, focus) {
-            const by = new Map();
-            for (const x of entries) {
-                if (x.it.kind !== 'row') continue;
-                const m = this._cgMeasures(x.it, focus, files);
-                if (m.np < 2) continue;
-                const sig = m.present.map(v => (v ? 1 : 0)).join('');
-                if (!by.has(sig)) by.set(sig, []);
-                by.get(sig).push({ x, m, par: new Set(x.it.parents || ['focus']) });
-            }
-            const out = [...by.values()].filter(ms => ms.length > 1).map((ms, n) => ({
-                m: ms, u: ms[0].m.present.slice(), par: new Set(ms.flatMap(r => [...r.par])), same: true, n, label: `S${n + 1}`,
-                cov: ms[0].m.np,
-                id: prefix + 'same:' + ms.map(r => r.x.it.key).sort().join('+'),
-            }));
-            out.pending = [];
-            out.canon = new Map(out.flatMap(g => g.m.map(r => [r.x.it.key, g.m[0].x.it.key])));
-            return out;
-        }
-
         // A merged focus lists the cards it was made of, each with the files it covers.
         _cgPieces(focus, files) {
             if (!focus.pieces || focus.pieces.length < 2) return '';
@@ -1073,7 +1063,7 @@
             // Groups form over all `entries`, then `cap` counts a group as one card; the
             // entries past it come back in `rest` for the "+N more" card.
             const col0 = (role, lv, entries, cap = Infinity, canon = null) => {
-                const gs = st.suggest === 'lanes' ? [] : st.suggest === 'same' ? this._cgGroupsSame(`${role}${lv}|`, entries, files, focus) : st.suggest ? this._cgGroups(`${role}${lv}|`, entries, files, focus, st.place, canon) : [];
+                const gs = st.suggest === 'lanes' ? [] : st.suggest ? this._cgGroups(`${role}${lv}|`, entries, files, focus, st.place, canon) : [];
                 const by = new Map(), done = new Set(), pos = new Map(), units = [];
                 gs.forEach(g => g.m.forEach(r => by.set(r.x, g)));
                 for (const x of entries) {
@@ -1082,13 +1072,13 @@
                     else if (!done.has(g)) {
                         done.add(g);
                         units.push({ xs: g.m.map(r => r.x), html: () => {
-                            const chip = g.same ? `<span class="nway-grp" title="${g.m.length} cards in exactly the same files: likely one change or fork.">&sube; ${g.label} &middot; ${g.cov}/${files.length} files</span>` : `<span class="nway-grp" title="Suggested merge: ${g.m.length} cards with complementary files and the same parent.">&asymp; ${g.label} &middot; ${g.cov}/${files.length}</span>`;
+                            const chip = `<span class="nway-grp" title="Suggested merge: ${g.m.length} cards with complementary files and the same parent.">&asymp; ${g.label} &middot; ${g.cov}/${files.length}</span>`;
                             const cells = {};
                             g.m.forEach(m => Object.entries(m.x.it.cells).forEach(([k, v]) => { if (typeof v === 'string') cells[k] = v; }));
                             const pieces = g.m.map(m => ({ name: m.x.it.name, files: Object.keys(m.x.it.cells).filter(k => typeof m.x.it.cells[k] === 'string'), fids: Object.values(m.x.it.cells).filter(v => typeof v === 'string').slice(0, 3) }));
-                            if (!g.same) this._cgGrp[g.id] = { name: g.m[0].x.it.name, cells, pieces };
-                            const focusBtn = g.same ? '' : `<button class="nway-chip" data-cg-focusgrp="${escapeAttr(g.id)}" title="Make this merged group the focus: its functions in every file">&#9678; focus</button>`;
-                            return `<div class="nway-grpbox${lv ? ' deep' : ''}"><div class="nway-grpbox-h">${chip}${focusBtn}</div>${g.m.map((r, i) => node(role, lv, r.x) + (i && !g.same ? this._cgSim(pieces[0].fids, pieces[i].fids, pieces[0].name, pieces[i].name) : '')).join('')}</div>`;
+                            this._cgGrp[g.id] = { name: g.m[0].x.it.name, cells, pieces };
+                            const focusBtn = `<button class="nway-chip" data-cg-focusgrp="${escapeAttr(g.id)}" title="Make this merged group the focus: its functions in every file">&#9678; focus</button>`;
+                            return `<div class="nway-grpbox${lv ? ' deep' : ''}"><div class="nway-grpbox-h">${chip}${focusBtn}</div>${g.m.map((r, i) => node(role, lv, r.x) + (i ? this._cgSim(pieces[0].fids, pieces[i].fids, pieces[0].name, pieces[i].name) : '')).join('')}</div>`;
                         } });
                     }
                 }
@@ -1370,22 +1360,21 @@
             if (this.onCg) this.onCg(this._cgUrl());
             const st = this._cg, focus = this._cgFocus(), files = this._cgFiles();
             const crumbs = st.stack.map((f, i) => `<button class="nway-crumb" data-cg-crumb="${i}">${escapeHtml(f.name)}</button>`).join('<span class="dim">/</span>');
-            const outsideToggle = st.view === 'graph' && st.scope !== 'all' ? `<span class="nway-lbl" title="Neighbors outside the selected scope: grouped into one card per side, or each listed (faded)">Outside scope</span><div class="view-toggle" style="margin:0">${[['merge', 'Grouped'], ['each', 'Each']].map(([v, l]) => `<button class="view-btn${st.outside === v ? ' active' : ''}" data-cg-outside="${v}">${l}</button>`).join('')}</div>` : '';
             const scopeToggle = [['code', 'Code', AXIS.code.icon, AXIS.code.color], ['library', 'Library', AXIS.library.icon, AXIS.library.color], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']].map(([v, text, icon, color]) => `<span class="bsim-tag-pill" data-cg-scope="${v}" style="${window.binSimPillStyle(st.scope === v, color)} padding:4px 10px; font-size:0.78rem;"><i class="${icon}"></i>${text}</span>`).join('');
             const depthCtl = st.view === 'graph' ? `<label class="nway-ctl" title="How many hops to walk. Beyond the first, only rows in the selected scope are expanded (8 per row, 60 nodes)."><span class="nway-lbl">Depth</span><b>${st.depth}</b><input type="range" min="1" max="5" value="${st.depth}" data-cg-depth></label>` : '';
-            const suggestCtl = st.view === 'graph' ? `<span class="nway-lbl" title="Group cards on one side. Complementary: files that barely overlap and share a parent, probably one function split across files. Same files: cards present in exactly the same files, probably one change or fork. Lanes: one horizontal band per set of files.">Group</span><div class="view-toggle" style="margin:0">${[['off', 'Off'], ['comp', 'Complementary'], ['same', 'Same files'], ['lanes', 'Lanes']].map(([v, t]) => `<button class="view-btn${(st.suggest || 'off') === v ? ' active' : ''}" data-cg-suggest="${v}">${t}</button>`).join('')}</div>` : '';
-            const coCtl = st.view === 'graph' ? `<button class="view-btn${st.co ? ' active' : ''}" data-cg-co title="Also show the other functions that call what the focus calls, under the focus (the ones sharing most callees), to find look-alikes and unmatched siblings. Callees called by more than 25 functions are skipped. Off by default: it can add a lot."><i class="fa-solid fa-share-nodes"></i> Also called by</button>` : '';
-            const hintCtl = st.view === 'graph' ? `<button class="view-btn${st.hints ? ' active' : ''}" data-cg-hints title="Off by default. Per card, on hover: the other callers / callees it has beyond the focus (angled counts), and calls back to cards already shown in an earlier hop (dashed arrows)."><i class="fa-solid fa-diagram-project"></i> Hints</button>` : '';
+            const suggestCtl = st.view === 'graph' && st.suggest !== 'lanes' ? `<span class="nway-lbl" title="Auto: suggest merging cards on one side whose files barely overlap and that share a parent, probably one function split across files.">Group</span><div class="view-toggle" style="margin:0">${[['off', 'Off'], ['comp', 'Auto']].map(([v, t]) => `<button class="view-btn${(st.suggest || 'off') === v ? ' active' : ''}" data-cg-suggest="${v}">${t}</button>`).join('')}</div>` : '';
+            const detailsCtl = st.view === 'graph' ? `<button class="view-btn${st.co ? ' active' : ''}" data-cg-details title="Also show the other functions that call what the focus calls (look-alikes and unmatched siblings; callees with more than 25 callers are skipped), and per card on hover its other callers / callees and calls back to earlier hops. Off by default: it can add a lot."><i class="fa-solid fa-diagram-project"></i> Details</button>` : '';
             const hueCtl = `<button class="view-btn${this._hueOn ? ' active' : ''}" data-cg-hue title="Color each file's slot and column header, to match slots to columns. Off by default: the slots then show how many files have the function."><i class="fa-solid fa-palette"></i> Color files</button>`;
             const selCtl = st.view === 'graph' ? `<button class="view-btn${st.selMode ? ' active' : ''}" data-cg-select title="Select cards: click to toggle, drag the background to box-select (Shift adds). Ctrl-click works without this mode."><i class="fa-solid fa-object-group"></i> Select</button>` : '';
-            const toggle = ['list', 'graph'].map(v => `<button class="view-btn${st.view === v ? ' active' : ''}" data-cg-view="${v}">${v === 'list' ? 'List' : 'Graph'}</button>`).join('');
+            const lanes = st.view === 'graph' && st.suggest === 'lanes';
+            const toggle = [['list', 'List'], ['graph', 'Graph'], ['lanes', 'Lanes']].map(([v, t]) => `<button class="view-btn${(v === 'lanes' ? lanes : v === 'graph' ? st.view === 'graph' && !lanes : st.view === v) ? ' active' : ''}" data-cg-view="${v}">${t}</button>`).join('');
             const on = files.map(c => !!focus.cells[c.id]);
             const fs = this._cgStrip(on, files);
             let body;
             if (err) body = `<div style="color:#f92672;">${escapeHtml(err)}</div>`;
             else if (!st.nb) body = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Reading call graph...</div>';
             else body = `<div class="dim nway-cg-legend"><i class="fa-solid fa-file-code"></i> files that have the function (color: how many) &middot; dot: the focus function there calls it &middot; <i class="fa-solid fa-link"></i> calls from the focus${st.view === 'graph' ? ' (edge width)' : ''}. Click to recenter.${st.co ? ' Dashed lines: other callers of the same callee.' : ''}${st.depth > 1 ? (st.view === 'graph' ? ' Further hops show in-scope rows only.' : ' The list shows the first hop; depth applies to the graph.') : ''}</div>` + (st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files));
-            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${outsideToggle}${depthCtl}${suggestCtl}${coCtl}${hintCtl}${hueCtl}${selCtl}<div class="view-toggle" style="margin:0">${toggle}</div>${this.cgInit ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
+            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${depthCtl}${suggestCtl}${detailsCtl}${hueCtl}${selCtl}<div class="view-toggle" style="margin:0">${toggle}</div>${this.cgInit ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
                 <div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells, name_from: focus.name_from }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>
                 <div class="nway-cg-selbar" hidden></div>
                 <div class="nway-cg-body${st.selMode ? ' selmode' : ''}">${body}</div>`;
@@ -1417,7 +1406,7 @@
                 if (!sel.delete(k)) sel.add(k);
                 return this._cgSelSync();
             }
-            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-outside],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-suggest],[data-cg-co],[data-cg-hints],[data-cg-hue],[data-cg-focusgrp],[data-cg-mergefocus],[data-cg-deeper]');
+            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-suggest],[data-cg-details],[data-cg-hue],[data-cg-focusgrp],[data-cg-mergefocus],[data-cg-deeper]');
             if (!t || !this._cg) return;
             if (t.dataset.cgClose !== undefined) return window.closeCallsPanel();
             if (t.dataset.cgPop !== undefined) {
@@ -1425,15 +1414,20 @@
                 window.closeCallsPanel();
                 return window.Nav.openPath(url, e);
             }
-            if (t.dataset.cgView) { this._cg.view = t.dataset.cgView; return this._cgDraw(); }
-            if (t.dataset.cgOutside) { this._cg.outside = t.dataset.cgOutside; return this._cgDraw(); }
-            if (t.dataset.cgCo !== undefined) { this._cg.co = !this._cg.co; return this._cgShow(); }
+            if (t.dataset.cgView) {
+                const v = t.dataset.cgView, was = this._cg.suggest === 'lanes';
+                this._cg.view = v === 'lanes' ? 'graph' : v;
+                if (v === 'lanes') this._cg.suggest = 'lanes';
+                else if (was) this._cg.suggest = 'comp';
+                this._cgDraw();
+                return this._cg.nb && this._cg.view === 'graph' ? this._cgPlace(this._cgTok) : undefined;
+            }
+            if (t.dataset.cgDetails !== undefined) { this._cg.co = this._cg.hints = !this._cg.co; return this._cgShow(); }
             if (t.dataset.cgHue !== undefined) {
                 try { localStorage.setItem('nway.hue', this._hueOn ? '0' : '1'); } catch (err) { /* storage blocked */ }
                 this._applyHue();
                 return this._cgDraw();
             }
-            if (t.dataset.cgHints !== undefined) { this._cg.hints = !this._cg.hints; return this._cgDraw(); }
             if (t.dataset.cgFocusgrp) {
                 const g = this._cgGrp && this._cgGrp[t.dataset.cgFocusgrp];
                 if (!g) return;
@@ -1572,7 +1566,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open]');
             if (!t) return;
             if (t.dataset.nwayFile) {
                 e.preventDefault(); e.stopPropagation();
@@ -1600,6 +1594,7 @@
                 const next = focus.includes(id) ? focus.filter(f => f !== id) : [...focus, id];
                 return next.length ? this._setFocus(next, this._files().length) : this._set({ focus: '', side: '', offset: 0 });
             }
+            if (t.dataset.preset) return this._set({ ...PRESETS.find(p => p[0] === t.dataset.preset)[2], offset: 0 });
             if (t.dataset.set) {
                 const i = t.dataset.set.indexOf(':');
                 return this._set({ [t.dataset.set.slice(0, i)]: t.dataset.set.slice(i + 1), offset: 0 });

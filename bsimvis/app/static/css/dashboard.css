@@ -2759,6 +2759,8 @@ a.home-card:hover,
     padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg);
     box-shadow: 0 8px 24px rgba(0,0,0,0.35);
 }
+.nway-adv { display: flex; flex-direction: column; gap: 10px; }
+.nway-adv > summary { cursor: pointer; }
 .nway-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 6px; }
 .nway-group + .nway-group { padding-left: 22px; border-left: 1px solid var(--border); }
 .nway-gl { font-size: 0.68rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); }

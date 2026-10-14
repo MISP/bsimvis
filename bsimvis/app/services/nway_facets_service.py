@@ -61,8 +61,8 @@ def limits():
     return (
         int(config_service.get("nway.facet_max_functions", 300)),
         int(config_service.get("nway.code_max_functions", 100)),
-        int(config_service.get("nway.max_code_lines", 1500)),
-        int(config_service.get("nway.max_code_blocks", 60)),
+        int(config_service.get("nway.max_code_lines", 20000)),
+        int(config_service.get("nway.max_code_blocks", 2000)),
     )
 
 

@@ -3360,3 +3360,11 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .cl-hint { font-size: 0.64rem; color: var(--dim); font-style: italic; }
 .cl-chip { font: 0.64rem 'Consolas', monospace; padding: 0 5px; border: 1px solid var(--token-warning); border-radius: 8px; background: none; color: var(--token-warning); cursor: pointer; }
 .cl-chip:hover { background: var(--xp-warn-bg); }
+
+/* Unified: one function, differing blocks expand to their variants */
+.xp-ubody .xp-frow.one { border-top: 1px solid var(--border); }
+.xp-ubody .xp-fcode.st-mod { background: color-mix(in srgb, var(--xp-warn-bg) 45%, transparent); }
+.xp-ubody .xp-fcode.st-moved { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.xp-ubody .xp-fcode.st-restr { background: color-mix(in srgb, var(--token-instruction) 8%, transparent); }
+.xp-ubody .xp-fcode.st-extra { background: color-mix(in srgb, var(--success) 8%, transparent); }
+.xp-uvars { margin: 0 0 8px 14px; padding-left: 10px; border-left: 2px solid var(--border); min-width: 0; }

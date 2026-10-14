@@ -93,7 +93,7 @@
             this.embedded = !!o.embedded;
             this.cfgOnly = !!o.cfgOnly;
             this.onLoad = o.onLoad || null;
-            this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', bm: 'hybrid', open: {}, fn: null, single: false, cols: 2, pick: {}, ...(o.state || {}) };
+            this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', bm: 'hybrid', open: {}, fn: null, single: false, cols: 2, pick: {}, uoff: {}, uopen: {}, ...(o.state || {}) };
             this._pc = new Map();
             if (this.s.tab === 'code' && this.s.cv === 'full') this.s.tab = 'full';
             this.titles = {};
@@ -195,7 +195,7 @@
             const d = this.data, s = this.s;
             const code = d.consensus;
             if (this.cfgOnly) { this.el.innerHTML = this._cfgOnly(); return; }
-            if ((s.tab === 'code' || s.tab === 'full') && !code && !d.blocks_error) s.tab = 'facets';
+            if (['code', 'full', 'unified'].includes(s.tab) && !code && !d.blocks_error) s.tab = 'facets';
             const tab = (k, label, why) => `<button class="bsim-tab${s.tab === k ? ' active' : ''}" role="tab" data-xtab="${k}"${why ? ` title="${escapeAttr(why)}"` : ''}>${label}</button>`;
             const nf = d.functions.length;
             this.el.innerHTML = `
@@ -209,6 +209,7 @@
                     ${this.embedded ? '' : tab('facets', 'Facets')}
                     ${this.embedded ? '' : tab('code', 'Code blocks', !code ? `Code blocks need at most ${d.limits.code} functions (this row has ${nf})` : '')}
                     ${this.embedded ? '' : tab('full', 'Full function', !code ? `Code blocks need at most ${d.limits.code} functions (this row has ${nf})` : '')}
+                    ${this.embedded ? '' : tab('unified', 'Unified', !code ? `Code blocks need at most ${d.limits.code} functions (this row has ${nf})` : '')}
                     ${this.embedded ? '' : tab('pair', 'Pair diff')}</div><span class="xp-sp"></span>
                     ${s.tab === 'pair' || s.tab === 'simple' ? '' : `<label class="xp-chk"><input type="checkbox" data-xonly ${s.only ? 'checked' : ''}> Differences only</label>`}</div>
                 <div class="xp-body">${this._body()}</div>`;
@@ -216,7 +217,7 @@
             new ResizeObserver(() => this.el.style.setProperty('--xp-bar2-h', bar.getBoundingClientRect().height + 'px')).observe(bar);
             this._loadSummaries();
             if (s.tab === 'pair') this._loadPair();
-            if (s.tab === 'code' || s.tab === 'full') this._loadTitles();
+            if (['code', 'full', 'unified'].includes(s.tab)) this._loadTitles();
             if (s.tab === 'simple') this._loadSimple();
             this._railSync();
         }
@@ -233,7 +234,7 @@
 
         _body() {
             const t = this.s.tab;
-            return t === 'simple' ? this._simple() : t === 'facets' ? this._facets() : t === 'code' || t === 'full' ? this._code() : this._pair();
+            return t === 'simple' ? this._simple() : t === 'facets' ? this._facets() : t === 'code' || t === 'full' || t === 'unified' ? this._code() : this._pair();
         }
 
         // Server-tokenized code token; a resolved call becomes a data-xcall link like the block views use.
@@ -549,10 +550,10 @@
                 return `<div class="xp-cbar">${this._bmToggle()}</div><div class="xp-none">Ghidra blocks are not stored for ${miss.map(j => this._funcRef(j)).join(' ')}: analysed before the CFG was stored. Re-analyse them, or use Hybrid or Text blocks.</div>`;
             }
             const sw = `<div class="xp-cbar">${this._bmToggle()}
-${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'Read the whole function, aligned to the reference by block.')}
+${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.tab === 'unified' ? 'The reference function once. A block that differs in the selected functions expands to its variants.' : 'Read the whole function, aligned to the reference by block.')}
                 <button class="xp-aibtn" data-xask title="Open AI Insight and ask it about this whole row"><i class="fa-solid fa-robot"></i> Ask AI about this row</button>
                 <span class="xp-naming" ${this._naming ? '' : 'hidden'}><i class="fa-solid fa-spinner fa-spin"></i> naming blocks&hellip;</span></div>`;
-            return sw + (s.tab === 'code' ? this._blocksView() : this._fullView());
+            return sw + (s.tab === 'code' ? this._blocksView() : s.tab === 'unified' ? this._unifiedView() : this._fullView());
         }
 
         _extraSlots(functions, unique = false) {
@@ -868,6 +869,45 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
             return out + `<div class="xp-gwrap"><div class="xp-gscroll"><div class="xp-ginner" style="--n:${n}">${head}${body}</div></div>${railHtml}</div>`;
         }
 
+        // One function (the reference), once. A block that differs in the focus group expands to its variants.
+        _unifiedView() {
+            const d = this.data, c = d.consensus, s = this.s, ref = c.reference, rl = d.functions[ref].letter;
+            const fgroups = this._functionGroups(false), on = g => !s.uoff[g[0]];
+            const focus = fgroups.filter(on).flat();
+            const chips = fgroups.map(g => `<button class="xp-chip" aria-pressed="${on(g)}" data-xug="${g[0]}" title="${escapeAttr(g.map(j => `${d.functions[j].letter}: ${d.functions[j].file_name || ''}`).join('\n'))}">${g.map(j => this._funcRef(j, 'xp-badge', false)).join('')}${g.length > 1 ? 'same code' : this._fileRef(g[0], 'xp-rfile', false)}</button>`).join('');
+            const bar = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Compare ${this._funcRef(ref)} with</span>${chips}${this._info(`Toggle which functions are compared with ${rl}. Variants and the identical-block count follow the selection.`)}</div>`;
+            const variants = b => b.groups.map(g => ({ ...g, funcs: g.funcs.filter(j => focus.includes(j)) })).filter(g => g.funcs.length);
+            const badges = fs => fs.map(j => this._funcRef(j, 'xp-badge', false)).join('');
+            const variant = (b, g) => {
+                const j0 = g.funcs[0], cell = this._cell(b, j0);
+                const sim = g.funcs.map(j => Math.round(g.sims[String(j)] * 100)).join('/');
+                const tag = `<span class="xp-cell st-${g.st}" style="cursor:default">${NwayFunction.GLYPH[g.st]} ${NwayFunction.SNAME[g.st]}${g.st === 'miss' ? '' : ' ' + sim + '%'}</span>`;
+                const code = g.st === 'miss' ? '(no matching code)' : cell.into ? `↑ merged into ${escapeHtml(cell.into)}` : this._codeHtml(this._cellSyntax(b, j0), this._cellRuns(b, j0), 'chg', j0, this._hashSet(b.ref_syntax));
+                return `<div class="xp-fband">${badges(g.funcs)} ${tag}${this._expl(b.id, j0)}</div><pre class="xp-fcode st-${g.st}" data-xfns="${j0},${ref}">${code}</pre>`;
+            };
+            const rows = [], slots = this._extraSlots(focus, true);
+            let hidden = 0;
+            const extraRows = after => (slots.get(after) || []).forEach(({ seg, x }) => {
+                const own = x ? x.funcs.filter(j => focus.includes(j)) : [];
+                rows.push(`<div class="xp-frow one wst-extra" data-xrow="${escapeAttr(seg.x)}">${this._band(seg.x, 'extra', 1, x ? x.title : '', badges(own))}<pre class="xp-fcode st-extra">${this._codeHtml(seg.syntax, seg.text, 'chg', own[0])}</pre></div>`);
+            });
+            extraRows(null);
+            for (const b of c.blocks) {
+                const vs = variants(b), w = this._worst(b, focus);
+                if (s.only && !vs.length) hidden++;
+                else {
+                    const sims = focus.map(j => this._cell(b, j)).filter(x => x.st === 'mod' || x.st === 'moved').map(x => x.sim);
+                    const same = focus.filter(j => this._cell(b, j).st === 'same');
+                    const open = vs.length && s.uopen[b.id];
+                    const tail = vs.length ? `<button class="xp-chip" data-xu="${escapeAttr(b.id)}" aria-expanded="${!!open}" title="Show how the selected functions differ in this block">${vs.length} variant${vs.length === 1 ? '' : 's'} ${open ? '▴' : '▾'}</button>` : '';
+                    const body = open ? `<div class="xp-uvars">${vs.map(g => variant(b, g)).join('')}${same.length ? `<div class="xp-fband">${badges(same)} identical to ${escapeHtml(rl)}</div>` : ''}</div>` : '';
+                    rows.push(`<div class="xp-frow one wst-${w}" data-xrow="${escapeAttr(b.id)}">${this._band(b.id, w, sims.length ? Math.min(...sims) : 1, this._bt(b), '', tail)}<pre class="xp-fcode st-${w}" ${focus.length ? `data-xfns="${ref},${focus[0]}"` : ''}>${this._codeHtml(b.ref_syntax, null, null, ref)}</pre>${body}</div>`);
+                }
+                extraRows(b.id);
+            }
+            return bar + `<div class="xp-ubody">${rows.join('')}</div>` + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} identical in the selected functions hidden.</p>` : '');
+        }
+
         // LLM titles: asked once when the code tab first opens, never blocking the render.
         async _loadTitles() {
             if (this._titlesAsked) return;
@@ -1101,7 +1141,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
         }
 
         async _click(e) {
-            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xbm],[data-xfn],[data-xtw],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xask],[data-xpair],[data-xnav],[data-xopen],[data-xcols],[data-xjump],[data-xfold]');
+            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xbm],[data-xfn],[data-xtw],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xask],[data-xpair],[data-xnav],[data-xopen],[data-xcols],[data-xjump],[data-xfold],[data-xug],[data-xu]');
             if (!t) return;
             const d = t.dataset;
             if (this.cfgOnly && (d.xb !== undefined || d.xx !== undefined)) return;
@@ -1133,7 +1173,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
                 return window.Nav.openPath(url, e, { title: f.file_name || md5, type: 'file' });
             }
             if (d.xtab) {
-                if ((d.xtab === 'code' || d.xtab === 'full') && !this.data.consensus) {
+                if (['code', 'full', 'unified'].includes(d.xtab) && !this.data.consensus) {
                     showToast(`Code blocks are unavailable for ${this.data.functions.length} functions. Compare at most ${this.data.limits.code} functions to view them.`, 'warning');
                     return;
                 }
@@ -1149,6 +1189,8 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
             if (d.xfold) { this.unfold.add(d.xfold); return this._rebody(); }
             if (d.xjump) return this.el.querySelector(`[data-xrow="${CSS.escape(d.xjump)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
             if (d.xbm) { this.s.bm = d.xbm; this._persist(); return this.load(); }
+            if (d.xug) { this.s.uoff[d.xug] = !this.s.uoff[d.xug]; return this._rebody(); }
+            if (d.xu) { this.s.uopen[d.xu] = !this.s.uopen[d.xu]; return this._rebody(); }
             if (d.xaudit !== undefined) { this.audit = !this.audit; return this._rebody(); }
             if (d.xfn !== undefined || d.xtw !== undefined) {
                 // Keep the block the chip sits in at the same screen position across the redraw.

@@ -7,6 +7,8 @@ import numpy as np
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services import sim_edges
 from bsimvis.app.services.cluster_utils import (
+    write_tree_links,
+    clear_tree_links,
     cluster_summary,
     collect_member_values,
     set_tag_distribution_score,
@@ -1763,7 +1765,6 @@ class BinClusterService:
         tree_key = f"{collection}:bin_cluster:tree:{algo_ns}"
         r.set(tree_key, tree_json)
 
-        cluster_tree_key = f"{collection}:bin_cluster:tree_links:{algo_ns}"
         tree_links = []
         for row in tree_df.itertuples(index=False):
             if int(row.child_size) > 1:
@@ -1775,7 +1776,7 @@ class BinClusterService:
                         "size": int(row.child_size),
                     }
                 )
-        r.set(cluster_tree_key, json.dumps(tree_links))
+        write_tree_links(r, collection, "bin_cluster", algo_ns, tree_links)
 
         logging.info("[*] Extracting hierarchical clusters from tree...")
         if job_service and job_id:
@@ -2336,7 +2337,7 @@ class BinClusterService:
 
             r.delete(f"{collection}:bin_cluster:tree:{algo_ns}")
             r.delete(f"{collection}:bin_cluster:list:{algo_ns}")
-            r.delete(f"{collection}:bin_cluster:tree_links:{algo_ns}")
+            clear_tree_links(r, collection, "bin_cluster", algo_ns)
             clear_hier_state(r, f"{collection}:bin_cluster:hier:{algo_ns}")
 
         # Clear named-based indexes (shared bucket space across both

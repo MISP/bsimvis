@@ -8,6 +8,7 @@ from collections import Counter, defaultdict
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.cluster_utils import (
+    write_tree_links,
     cluster_summary,
     collect_member_values,
     default_bin_cluster_name,
@@ -648,7 +649,6 @@ class ClusterService:
         r.set(tree_key, tree_json)
 
         # Store cluster parent-child relationships for dendrogram
-        cluster_tree_key = f"{collection}:cluster:tree_links:{algo}"
         tree_links = []
         for row in tree_df.itertuples(index=False):
             if int(row.child_size) > 1:
@@ -660,7 +660,7 @@ class ClusterService:
                         "size": int(row.child_size),
                     }
                 )
-        r.set(cluster_tree_key, json.dumps(tree_links))
+        write_tree_links(r, collection, "cluster", algo, tree_links)
 
         logging.info("[*] Extracting hierarchical clusters from tree...")
         if job_service and job_id:
@@ -1787,7 +1787,7 @@ class ClusterService:
             for row in tree_df.itertuples(index=False)
             if int(row.child_size) > 1 and int(row.child) in node_members
         ]
-        r.set(f"{collection}:cluster:tree_links:{algo}", json.dumps(tree_links))
+        write_tree_links(r, collection, "cluster", algo, tree_links)
 
         func_tag_fields = [
             f for f in self.get_native_fields("func", False) if f.startswith("cluster_")
@@ -3083,9 +3083,8 @@ class ClusterService:
                         "size": int(row.child_size),
                     }
                 )
-        r.set(
-            f"global:pool:{pool_id}:bin_cluster:tree_links:{algo_ns}",
-            json.dumps(tree_links),
+        write_tree_links(
+            r, f"global:pool:{pool_id}", "bin_cluster", algo_ns, tree_links
         )
         # Extract cluster members (shed noise excluded, synthetic root and
         # sub-min_cluster_size survivors dropped). See cluster_common.

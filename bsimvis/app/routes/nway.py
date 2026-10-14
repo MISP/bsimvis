@@ -78,7 +78,7 @@ def _cluster_node(r, pool_id, collection, uuid):
     from bsimvis.app.routes.bin_cluster import _pool_bin_cluster_namespace
     from bsimvis.app.services.cluster_utils import (
         get_cluster_metas,
-        get_tree_links,
+        Tree,
         resolve_cluster_id_by_uuid,
     )
     from bsimvis.app.services.collection_config import resolve_collection_algo
@@ -111,8 +111,7 @@ def _cluster_node(r, pool_id, collection, uuid):
     if cid is None:
         abort(404, "unknown cluster_uuid")
     base = f"{ns}:bin_cluster:{algo}"
-    _, parent_to_children = get_tree_links(r, ns, algo, "bin_cluster")
-    child_ids = parent_to_children.get(str(cid), [])
+    child_ids, _ = Tree(r, ns, algo, "bin_cluster").children(cid)
     metas = get_cluster_metas(r, ns, algo, child_ids, "bin_cluster")
     child_ids = sorted(
         metas, key=lambda c: metas[c].get("member_count", 0), reverse=True

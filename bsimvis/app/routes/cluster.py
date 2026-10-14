@@ -11,6 +11,8 @@ from bsimvis.app.services.cluster_utils import (
     cluster_tree_slice,
     cluster_children_page,
     get_tree_links,
+    Tree,
+    _s,
     real_links,
     resolve_cluster_id_by_uuid,
 )
@@ -297,7 +299,7 @@ def _structural_direct_members(r, collection, algo, cid, parent_to_children):
     return r.sdiff(f"{base}:{cid}:members", *kids)
 
 
-def _shape_cluster_result(m, child_to_parent, parent_to_children, is_pool, pool_id):
+def _shape_cluster_result(m, parent, child_total, is_pool, pool_id):
     """meta blob -> the dict shape the UI expects (parent, has_children, distributions)."""
     raw_samples = m.get("sample_members") or m.get("sample_functions") or []
     sample_members = []
@@ -333,7 +335,7 @@ def _shape_cluster_result(m, child_to_parent, parent_to_children, is_pool, pool_
         "cohesion_score": m.get("cohesion_score", 0),
         "count": m.get("member_count"),
         "created_at": m.get("created_at"),
-        "parent": child_to_parent.get(cid),
+        "parent": parent,
         "sample_members": sample_members,
         "direct_members": m.get("direct_members", []),
         "tag_distribution": normalize_tag_distribution(
@@ -349,9 +351,23 @@ def _shape_cluster_result(m, child_to_parent, parent_to_children, is_pool, pool_
         "filetype_distribution": m.get("filetype_distribution", []),
         "stats_sampled": m.get("stats_sampled", False),
         "batch_uuid_distribution": m.get("batch_uuid_distribution", []),
-        "has_children": bool(parent_to_children.get(cid)),
-        "child_total": len(parent_to_children.get(cid, [])),
+        "has_children": bool(child_total),
+        "child_total": child_total,
     }
+
+
+def _local_links(tree, start, with_ancestors):
+    """child_to_parent / parent_to_children for `start` and its ancestors only."""
+    nodes, curr = [start], start
+    while with_ancestors and (curr := tree.parent(curr)) is not None:
+        nodes.append(curr)
+    c2p, p2c = {}, {}
+    for n in nodes:
+        if (p := tree.parent(n)) is not None:
+            c2p[n] = p
+        if kids := tree.children(n)[0]:
+            p2c[n] = kids
+    return c2p, p2c
 
 
 def _list_clusters_slice(collection, algo, is_pool, pool_id, r):
@@ -364,15 +380,14 @@ def _list_clusters_slice(collection, algo, is_pool, pool_id, r):
     if parent_q:
         width = request.args.get("width", 10, type=int)
         offset = request.args.get("offset", 0, type=int)
-        links = get_tree_links(r, collection, algo)
-        _, parent_to_children = links
+        tree = Tree(r, collection, algo)
         metas, total_children = cluster_children_page(
-            r, collection, algo, parent_q, offset=offset, width=width, links=links
+            r, collection, algo, parent_q, offset=offset, width=width, tree=tree
         )
-        child_to_parent = {cid: parent_q for cid in metas}
+        _, counts = tree.info(metas)
         results = [
             _shape_cluster_result(
-                m, child_to_parent, parent_to_children, is_pool, pool_id
+                m, parent_q, counts.get(str(m.get("cluster_id")), 0), is_pool, pool_id
             )
             for m in metas.values()
         ]
@@ -388,13 +403,19 @@ def _list_clusters_slice(collection, algo, is_pool, pool_id, r):
     up = request.args.get("up", 3, type=int)
     down = request.args.get("down", 3, type=int)
     width = request.args.get("width", 10, type=int)
-    links = get_tree_links(r, collection, algo)
-    child_to_parent, parent_to_children = links
+    tree = Tree(r, collection, algo)
     metas, center, hidden_above = cluster_tree_slice(
-        r, collection, algo, slice_uuid, up=up, down=down, width=width, links=links
+        r, collection, algo, slice_uuid, up=up, down=down, width=width, tree=tree
     )
+    parents, counts = tree.info(metas)
     results = [
-        _shape_cluster_result(m, child_to_parent, parent_to_children, is_pool, pool_id)
+        _shape_cluster_result(
+            m,
+            parents.get(str(m.get("cluster_id"))),
+            counts.get(str(m.get("cluster_id")), 0),
+            is_pool,
+            pool_id,
+        )
         for m in metas.values()
     ]
     return {
@@ -532,22 +553,31 @@ def list_clusters():
     results = []
     total = 0
 
-    # Fetch tree links to provide parent information
-    links_key = f"{collection}:cluster:tree_links:{algo}"
-    links_raw = r.get(links_key)
+    # Fetch tree links to provide parent information. One cluster (the detail
+    # view's member fetch) reads just its own neighbourhood from the node index.
     child_to_parent = {}
     parent_to_children = {}
-    if links_raw:
-        try:
-            links = real_links(json.loads(links_raw))
-            child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
-            for l in links:
-                p = str(l["parent"])
-                if p not in parent_to_children:
-                    parent_to_children[p] = []
-                parent_to_children[p].append(str(l["child"]))
-        except Exception:
-            pass
+    tree = Tree(r, collection, algo) if exact_cid and not show_children else None
+    if tree and tree.indexed:
+        child_to_parent, parent_to_children = _local_links(
+            tree, _s(exact_cid), show_parents
+        )
+    else:
+        links_key = f"{collection}:cluster:tree_links:{algo}"
+        links_raw = r.get(links_key)
+        child_to_parent = {}
+        parent_to_children = {}
+        if links_raw:
+            try:
+                links = real_links(json.loads(links_raw))
+                child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
+                for l in links:
+                    p = str(l["parent"])
+                    if p not in parent_to_children:
+                        parent_to_children[p] = []
+                    parent_to_children[p].append(str(l["child"]))
+            except Exception:
+                pass
 
     # The exact-uuid shortcut loaded one meta; load the relatives it will expand to.
     if exact_cid and (show_parents or show_children):

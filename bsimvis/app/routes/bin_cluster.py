@@ -15,6 +15,7 @@ from bsimvis.app.services.cluster_utils import (
     cluster_tree_slice,
     cluster_children_page,
     get_tree_links,
+    Tree,
     real_links,
 )
 
@@ -181,9 +182,8 @@ def _get_matching_ids(r, collection, level, field, val):
     return matching_ids
 
 
-def _shape_bin_cluster_result(m, child_to_parent, parent_to_children):
+def _shape_bin_cluster_result(m, parent, child_total):
     """meta blob -> the dict shape the UI expects (parent, has_children, distributions)."""
-    cid = str(m.get("cluster_id"))
     return {
         "cluster_id": m.get("cluster_id"),
         "cluster_uuid": m.get("cluster_uuid"),
@@ -196,7 +196,7 @@ def _shape_bin_cluster_result(m, child_to_parent, parent_to_children):
         "cohesion_axes": m.get("cohesion_axes", {}),
         "count": m.get("member_count"),
         "created_at": m.get("created_at"),
-        "parent": child_to_parent.get(cid),
+        "parent": parent,
         "snippet": m.get("snippet", ""),
         "sample_members": m.get("sample_members", []),
         "filename_distribution": m.get("filename_distribution", []),
@@ -211,8 +211,8 @@ def _shape_bin_cluster_result(m, child_to_parent, parent_to_children):
         "batch_uuid_distribution": m.get("batch_uuid_distribution", []),
         "inferred_tags": m.get("inferred_tags", []),
         "function_count_stats": m.get("function_count_stats", {}),
-        "has_children": bool(parent_to_children.get(cid)),
-        "child_total": len(parent_to_children.get(cid, [])),
+        "has_children": bool(child_total),
+        "child_total": child_total,
         "medoid": m.get("medoid"),
         "centrality_exact": m.get("centrality_exact"),
     }
@@ -231,6 +231,7 @@ def _list_bin_clusters_slice(collection, algo, r):
     if parent_q:
         width = request.args.get("width", 10, type=int)
         offset = request.args.get("offset", 0, type=int)
+        tree = Tree(r, collection, algo, "bin_cluster")
         metas, total_children = cluster_children_page(
             r,
             collection,
@@ -239,11 +240,13 @@ def _list_bin_clusters_slice(collection, algo, r):
             offset=offset,
             width=width,
             meta_prefix="bin_cluster",
+            tree=tree,
         )
-        _, parent_to_children = get_tree_links(r, collection, algo, "bin_cluster")
-        child_to_parent = {cid: parent_q for cid in metas}
+        _, counts = tree.info(metas)
         results = [
-            _shape_bin_cluster_result(m, child_to_parent, parent_to_children)
+            _shape_bin_cluster_result(
+                m, parent_q, counts.get(str(m.get("cluster_id")), 0)
+            )
             for m in metas.values()
         ]
         results.sort(key=lambda x: x.get("count") or 0, reverse=True)
@@ -258,6 +261,7 @@ def _list_bin_clusters_slice(collection, algo, r):
     up = request.args.get("up", 3, type=int)
     down = request.args.get("down", 3, type=int)
     width = request.args.get("width", 10, type=int)
+    tree = Tree(r, collection, algo, "bin_cluster")
     metas, center, hidden_above = cluster_tree_slice(
         r,
         collection,
@@ -267,12 +271,15 @@ def _list_bin_clusters_slice(collection, algo, r):
         down=down,
         width=width,
         meta_prefix="bin_cluster",
+        tree=tree,
     )
-    child_to_parent, parent_to_children = get_tree_links(
-        r, collection, algo, "bin_cluster"
-    )
+    parents, counts = tree.info(metas)
     results = [
-        _shape_bin_cluster_result(m, child_to_parent, parent_to_children)
+        _shape_bin_cluster_result(
+            m,
+            parents.get(str(m.get("cluster_id"))),
+            counts.get(str(m.get("cluster_id")), 0),
+        )
         for m in metas.values()
     ]
     return {

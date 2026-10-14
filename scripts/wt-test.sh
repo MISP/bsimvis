@@ -40,6 +40,7 @@ uv run python scripts/test_bin_sim_discovery.py || rc=1
 uv run python scripts/test_index_features_batching.py || rc=1
 uv run python scripts/test_enrich_resumable.py || rc=1
 uv run python scripts/test_enrich_stats_parity.py || rc=1
+uv run python scripts/test_tree_index.py || rc=1
 
 echo "=== algorithm pipeline matrix (disposable Redis) ==="
 uv run python scripts/test_algo_pipeline_matrix.py || rc=1

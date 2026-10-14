@@ -703,45 +703,163 @@ def get_tree_links(r, collection, algo, tree_links_prefix="cluster"):
     return child_to_parent, parent_to_children
 
 
-def resolve_cluster_id_by_uuid(r, collection, algo, uuid, meta_prefix="cluster"):
-    """cluster_id for a uuid via the small uf:uuid hash, not a full meta scan.
+def _tree_keys(collection, prefix, algo):
+    base = f"{collection}:{prefix}"
+    return (
+        f"{base}:tree_links:{algo}",
+        f"{base}:tree_parent:{algo}",
+        f"{base}:tree_children:{algo}:",
+        f"{base}:uuid2cid:{algo}",
+    )
 
-    The hierarchical_snn/HDBSCAN engine never writes that hash (its labels
-    come from a fresh uuid.uuid4() per build, kept only in the meta blob) --
-    fall back to a cached map built by one pipelined meta scan.
+
+def _s(v):
+    return v.decode() if isinstance(v, bytes) else str(v)
+
+
+def clear_tree_links(r, collection, prefix, algo):
+    """Delete the tree_links blob and its per-node index."""
+    r.delete(_tree_keys(collection, prefix, algo)[0])
+    _clear_tree_index(r, collection, prefix, algo)
+
+
+def _clear_tree_index(r, collection, prefix, algo):
+    _, parent_k, child_k, uuid_k = _tree_keys(collection, prefix, algo)
+    parents = {_s(p) for p in r.hvals(parent_k)}
+    r.delete(parent_k, uuid_k, *[child_k + p for p in parents])
+    _UUID_MAPS.pop((collection, algo, prefix), None)
+
+
+def rebuild_tree_index(r, collection, prefix, algo, links):
+    """(Re)write the per-node index from `links`; the blob is left alone.
+
+    `tree_parent:{algo}` is a child -> parent hash and
+    `tree_children:{algo}:{pid}` a ZSET of children scored by size, so the
+    detail view reads a node's neighbours without parsing the whole blob.
+    The uuid -> cid cache is dropped: a rebuild re-mints uuids.
+    """
+    _, parent_k, child_k, _ = _tree_keys(collection, prefix, algo)
+    _clear_tree_index(r, collection, prefix, algo)
+    kids = defaultdict(dict)
+    parent_of = {}
+    for l in real_links(links):
+        c, p = str(l["child"]), str(l["parent"])
+        parent_of[c] = p
+        kids[p][c] = l.get("size", 0)
+    items = list(parent_of.items())
+    for i in range(0, len(items), 5000):
+        r.hset(parent_k, mapping=dict(items[i : i + 5000]))
+    pipe = r.pipeline(transaction=False)
+    for n, (p, children) in enumerate(kids.items(), 1):
+        pipe.zadd(child_k + p, children)
+        if n % 5000 == 0:
+            pipe.execute()
+    pipe.execute()
+    return len(parent_of)
+
+
+def write_tree_links(r, collection, prefix, algo, links):
+    """Store the tree_links blob plus its per-node index."""
+    r.set(_tree_keys(collection, prefix, algo)[0], json.dumps(links))
+    rebuild_tree_index(r, collection, prefix, algo, links)
+
+
+class Tree:
+    """Parent / children lookups for one cluster tree.
+
+    Reads the per-node index written by write_tree_links; a tree stored
+    before that existed falls back to the tree_links blob.
+    """
+
+    def __init__(self, r, collection, algo, prefix="cluster", links=None):
+        self.r, self.collection, self.algo, self.prefix = r, collection, algo, prefix
+        _, self.parent_k, self.child_k, _ = _tree_keys(collection, prefix, algo)
+        self.indexed = links is None and bool(r.exists(self.parent_k))
+        if not self.indexed:
+            self.c2p, self.p2c = links or get_tree_links(r, collection, algo, prefix)
+
+    def parent(self, cid):
+        if not self.indexed:
+            return self.c2p.get(str(cid))
+        p = self.r.hget(self.parent_k, str(cid))
+        return _s(p) if p else None
+
+    def children(self, cid, offset=0, n=None):
+        """(ids, total): children by size desc, `n` of them from `offset`."""
+        cid = str(cid)
+        if self.indexed:
+            key = self.child_k + cid
+            end = -1 if n is None else offset + n - 1
+            ids = [_s(c) for c in self.r.zrevrange(key, offset, end)]
+            return ids, self.r.zcard(key)
+        ids = self.p2c.get(cid, [])
+        metas = get_cluster_metas(self.r, self.collection, self.algo, ids, self.prefix)
+        ranked = sorted(
+            ids, key=lambda c: metas.get(c, {}).get("member_count", 0), reverse=True
+        )
+        return ranked[offset : None if n is None else offset + n], len(ids)
+
+    def info(self, cids):
+        """({cid: parent}, {cid: child count}) for just these nodes."""
+        cids = [str(c) for c in cids]
+        if not cids:
+            return {}, {}
+        if not self.indexed:
+            return (
+                {c: self.c2p.get(c) for c in cids},
+                {c: len(self.p2c.get(c, [])) for c in cids},
+            )
+        pipe = self.r.pipeline(transaction=False)
+        pipe.hmget(self.parent_k, cids)
+        for c in cids:
+            pipe.zcard(self.child_k + c)
+        res = pipe.execute()
+        parents = {c: (_s(p) if p else None) for c, p in zip(cids, res[0])}
+        return parents, dict(zip(cids, res[1:]))
+
+
+def resolve_cluster_id_by_uuid(r, collection, algo, uuid, meta_prefix="cluster"):
+    """cluster_id for a uuid.
+
+    `uuid2cid` is a persistent uuid -> cid hash filled on first use (one
+    pipelined meta scan per rebuild, dropped by write_tree_links), so every
+    later lookup is an HGET plus a meta check that the uuid still matches.
     """
     uuid = str(uuid or "").lower()
     if not uuid:
         return None
+    cache_k = _tree_keys(collection, meta_prefix, algo)[3]
+    hit = r.hget(cache_k, uuid)
+    if hit:
+        hit = _s(hit)
+        m = get_cluster_metas(r, collection, algo, [hit], meta_prefix).get(hit)
+        if m and str(m.get("cluster_uuid", "")).lower() == uuid:
+            return hit
+        r.hdel(cache_k, uuid)
+
     uuid_key = f"{collection}:{meta_prefix}:{algo}:uf:uuid"
     pairs = r.hgetall(uuid_key) or {}
     for cid, u in pairs.items():
-        cid = cid.decode() if isinstance(cid, bytes) else cid
-        u = u.decode() if isinstance(u, bytes) else u
-        if str(u).lower() == uuid:
-            return cid
+        if _s(u).lower() == uuid:
+            r.hset(cache_k, uuid, _s(cid))
+            return _s(cid)
     if pairs:
         return None  # hash exists and was checked; a real miss, not "unwritten"
 
     ns = (collection, algo, meta_prefix)
-    meta_key_prefix = f"{collection}:{meta_prefix}:{algo}:"
-    cached = _UUID_MAPS.get(ns, {}).get(uuid)
-    if cached:
-        # A rebuild re-mints uuids: trust the cache only if the meta still agrees.
-        m = get_cluster_metas(r, collection, algo, [cached], meta_prefix).get(cached)
-        if m and str(m.get("cluster_uuid", "")).lower() == uuid:
-            return cached
-    elif ns in _UUID_MAPS and time.time() - _UUID_MAPS_AT[ns] < 30:
-        return None  # map is fresh; don't rescan for a bogus uuid
+    if ns in _UUID_MAPS and time.time() - _UUID_MAPS_AT[ns] < 30:
+        return _UUID_MAPS[ns].get(uuid)  # fresh map: no rescan for a bogus uuid
 
     _UUID_MAPS[ns] = _scan_uuid_map(r, collection, algo, meta_prefix)
     _UUID_MAPS_AT[ns] = time.time()
+    items = list(_UUID_MAPS[ns].items())
+    for i in range(0, len(items), 5000):
+        r.hset(cache_k, mapping=dict(items[i : i + 5000]))
     return _UUID_MAPS[ns].get(uuid)
 
 
-# ponytail: per-process uuid -> cid maps for engines with no uf:uuid hash;
-# one pipelined meta scan per rebuild, then O(1). Persist a uuid hash at build
-# time if the first-hit scan (~3s at 130k clusters) becomes a problem.
+# ponytail: per-process throttle for the uuid scan (the result is persisted in
+# uuid2cid); a build-time uuid hash would remove the first-hit scan (~3s at 130k).
 _UUID_MAPS = {}
 _UUID_MAPS_AT = {}
 
@@ -817,51 +935,37 @@ def cluster_tree_slice(
     down=3,
     width=10,
     meta_prefix="cluster",
-    tree_links_prefix=None,
-    links=None,
+    tree=None,
 ):
     """A bounded window of the cluster tree around `uuid`, cheap at any collection size.
 
-    Never reads more metas than the window actually needs: `up` ancestors on
-    the path, plus each visited node's top-`width` children by member_count.
+    Never reads more than the window needs: `up` ancestors on the path, plus
+    each visited node's top-`width` children by size (one ZREVRANGE each).
     Returns (nodes: {cid: meta}, center_cid, hidden_above: int) so the caller
     can render "N more above" without walking further.
     """
-    tree_links_prefix = tree_links_prefix or meta_prefix
-    child_to_parent, parent_to_children = links or get_tree_links(
-        r, collection, algo, tree_links_prefix
-    )
+    tree = tree or Tree(r, collection, algo, meta_prefix)
     center = resolve_cluster_id_by_uuid(r, collection, algo, uuid, meta_prefix)
     if center is None:
         return {}, None, 0
 
     # Ancestor chain, capped at `up` hops; count how many more exist above.
     ancestors = []
-    curr = center
-    while curr in child_to_parent:
-        curr = child_to_parent[curr]
+    curr = tree.parent(center)
+    while curr is not None:
         ancestors.append(curr)
+        curr = tree.parent(curr)
     shown_ancestors = ancestors[:up]
     hidden_above = max(0, len(ancestors) - up)
 
     needed = set(shown_ancestors)
     needed.add(center)
 
-    # Down: BFS by level, top-`width` children per node by member_count.
     frontier = [center]
     for _ in range(down):
         next_frontier = []
         for node in frontier:
-            child_ids = parent_to_children.get(node, [])
-            if not child_ids:
-                continue
-            child_metas = get_cluster_metas(r, collection, algo, child_ids, meta_prefix)
-            ranked = sorted(
-                child_ids,
-                key=lambda c: child_metas.get(c, {}).get("member_count", 0),
-                reverse=True,
-            )
-            shown = ranked[:width]
+            shown, _total = tree.children(node, 0, width)
             needed.update(shown)
             next_frontier.extend(shown)
         frontier = next_frontier
@@ -878,23 +982,17 @@ def cluster_children_page(
     offset=0,
     width=10,
     meta_prefix="cluster",
-    links=None,
+    tree=None,
 ):
-    """One page of a single node's children, sorted by member_count desc.
+    """One page of a single node's children, largest first.
 
-    Used for the tree's "+N more" row and for climbing further above the
-    ancestor window ("N more above" -> re-run with a bigger `up`, or for a
-    single extra parent hop this covers it). Bounded by that node's own
-    fan-out, never the whole collection.
+    Used for the tree's "+N more" row. Bounded by the page, never the
+    node's whole fan-out or the collection.
     """
-    _, parent_to_children = links or get_tree_links(r, collection, algo, meta_prefix)
-    child_ids = parent_to_children.get(str(parent_cid), [])
-    metas = get_cluster_metas(r, collection, algo, child_ids, meta_prefix)
-    ranked = sorted(
-        child_ids, key=lambda c: metas.get(c, {}).get("member_count", 0), reverse=True
-    )
-    page = ranked[offset : offset + width]
-    return {c: metas[c] for c in page if c in metas}, len(child_ids)
+    tree = tree or Tree(r, collection, algo, meta_prefix)
+    page, total = tree.children(parent_cid, offset, width)
+    metas = get_cluster_metas(r, collection, algo, page, meta_prefix)
+    return {c: metas[c] for c in page if c in metas}, total
 
 
 def demo():

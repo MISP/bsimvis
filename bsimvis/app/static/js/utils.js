@@ -266,7 +266,7 @@ function parseRestfulPath() {
             if (parts.length === pIdx) {
                 params.view = 'file';
             } else if (parts[pIdx] === 'strings') {
-                params.view = 'file-strings';
+                params.view = 'file'; // Strings is a tab of the file view
             } else if (parts[pIdx] === 'vs') {
                 params.view = 'bin_sim';
                 params.coll_b = decodeURIComponent(parts[pIdx + 1] || '');

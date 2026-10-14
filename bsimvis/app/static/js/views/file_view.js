@@ -29,6 +29,7 @@ window.FileView = {
         // Page mode only: a shared link's `offset` opens that page; scroll mode ignores it.
         this.funcOffset = window.Paging.mode() === 'page' ? Math.max(0, Number(new URLSearchParams(location.search).get('offset')) || 0) : 0;
         this.functionsLoaded = false;
+        this.stringsLoaded = false;
         this.neighborsLoaded = false;
         this.sortState = { col: 'function_name', dir: 1 };
         this.fvScoreAxes = new Set([window.BINSIM_DEFAULT_AXIS || "code"]);
@@ -152,7 +153,7 @@ window.FileView = {
                     <button class="bsim-tab" id="file-tab-btn-inferred" onclick="FileView.switchTab('inferred')" style="display:none;">Inferred Metadata (<span id="inferred-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-tags" onclick="FileView.switchTab('tags')">Tags</button>
                     <button class="bsim-tab" id="file-tab-btn-functions" onclick="FileView.switchTab('functions')">Functions (<span id="functions-count">0</span>)</button>
-                    <button class="bsim-tab" id="file-tab-btn-strings" onclick="FileView.openStrings(event)">Strings</button>
+                    <button class="bsim-tab" id="file-tab-btn-strings" onclick="FileView.switchTab('strings')">Strings</button>
                     <button class="bsim-tab" id="file-tab-btn-clusters" onclick="FileView.switchTab('clusters')">Clusters (<span id="cluster-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-extracted_from" onclick="FileView.switchTab('extracted_from')" style="display: none;">Extracted From</button>
                     <button class="bsim-tab" id="file-tab-btn-neighbors" onclick="FileView.switchTab('neighbors')">Similar<span id="nbr-count-wrap" style="display:none;"> (<span id="nbr-count">0</span>)</span></button>
@@ -276,6 +277,19 @@ window.FileView = {
                 </div>
 
                 <!-- Neighbors Tab Panel -->
+                <div id="file-panel-strings" class="file-view-panel" style="display: none;">
+                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
+                        <input type="text" id="file-str-q" placeholder="Filter strings..." onchange="FileView.loadStringsPanel(true)" style="max-width:320px;">
+                        <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
+                            <table id="file-str-table">
+                                <thead><tr><th>Address</th><th>Value</th><th>Encoding</th><th>Section</th><th>Len</th><th>Refs</th><th>Tags</th></tr></thead>
+                                <tbody id="file-str-body"></tbody>
+                            </table>
+                        </div>
+                        <div id="file-str-note" class="dim" style="font-size:0.75rem;"></div>
+                    </div>
+                </div>
+
                 <div id="file-panel-neighbors" class="file-view-panel" style="display: none;">
                     <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); display: flex; flex-direction: column; gap: 15px;">
                         <div class="filter-bar" style="gap:20px; padding:0;">
@@ -910,6 +924,9 @@ window.FileView = {
         if (tabId === 'tags') {
             this.renderFileTagsTab();
         }
+        if (tabId === 'strings') {
+            this.loadStringsPanel();
+        }
 
         if (push && location.hash.slice(1) !== tabId) {
             history.pushState(null, '', location.pathname + location.search + '#' + tabId);
@@ -917,8 +934,9 @@ window.FileView = {
     },
 
     applyTabFromHash() {
-        const allowedTabs = ['metadata', 'inferred', 'tags', 'functions', 'clusters', 'extracted_from', 'files', 'neighbors'];
+        const allowedTabs = ['metadata', 'inferred', 'tags', 'functions', 'clusters', 'strings', 'extracted_from', 'files', 'neighbors'];
         let tab = location.hash.slice(1);
+        if (!tab && location.pathname.endsWith('/strings')) tab = 'strings';
 
         const hasChildren = this.file && (this.file.child_count > 0 || this.file.is_container);
         const hasParents = this.file && !!this.file.parent_md5;
@@ -1927,10 +1945,27 @@ window.FileView = {
         Nav.openPath(url, e, { title: 'Functions', type: 'functions' });
     },
 
-    openStrings(e) {
-        e.preventDefault();
-        const url = Nav.buildUIUrl(this.params.collection, ['file-strings', this.params.md5]);
-        Nav.openPath(url, e, { title: `Strings: ${this.params.md5.substring(0, 8)}`, type: 'file-strings' });
+    async loadStringsPanel(reload = false) {
+        if (this.stringsLoaded && !reload) return;
+        const body = document.getElementById('file-str-body');
+        const note = document.getElementById('file-str-note');
+        const { collection, md5 } = this.params;
+        const qs = new URLSearchParams({ collection, md5, limit: 1000 });
+        const q = document.getElementById('file-str-q').value.trim();
+        if (q) qs.set('q', q);
+        try {
+            const res = await fetch(`/api/strings/file?${qs}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to load strings');
+            this.stringsLoaded = true;
+            body.innerHTML = data.strings.length
+                ? TableRenderers.renderFileStrings(data.strings, { collection, md5 })
+                : '<tr><td colspan="7" style="text-align: center; color: var(--dim); padding: 20px;">No strings.</td></tr>';
+            note.textContent = data.total > data.strings.length ? `Showing ${data.strings.length} of ${data.total}. Use the filter to narrow.` : '';
+            if (window.TableSelection) new window.TableSelection('file-str-table');
+        } catch (err) {
+            body.innerHTML = `<tr><td colspan="7" style="text-align: center; color:#f92672; padding: 20px;">${escapeHtml(err.message)}</td></tr>`;
+        }
     },
 
     openCallGraph(e) {

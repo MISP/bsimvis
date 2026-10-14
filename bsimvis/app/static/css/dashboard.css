@@ -3254,6 +3254,12 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .xp-g .xp-fcode.st-moved { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .xp-g .xp-fcode.st-restr { background: color-mix(in srgb, var(--token-instruction) 8%, transparent); }
 .xp-g .xp-fcode.st-extra { background: color-mix(in srgb, var(--success) 8%, transparent); }
+/* Pulse on the block whose variant was just switched, so the eye finds it again after the columns change. */
+.xp-frow.xp-flash { position: relative; z-index: 1; animation: xp-flash 1.6s ease-out; }
+@keyframes xp-flash {
+    0%, 35% { outline: 3px solid var(--accent); outline-offset: -3px; box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 22%, transparent); }
+    100% { outline: 3px solid transparent; outline-offset: -3px; box-shadow: inset 0 0 0 999px transparent; }
+}
 .xp-ghead { position: sticky; top: calc(var(--xp-bar-h, 0px) + var(--xp-bar2-h, 0px)); z-index: 38; background: var(--card-bg); border-top: 0; border-bottom: 1px solid var(--border); }
 .xp-ghead .xp-fband { padding: 4px 8px; grid-column: auto; }
 .xp-gut { position: relative; background: var(--hover); padding: 4px 6px; font: 0.68rem 'Consolas', monospace; color: var(--dim); display: flex; flex-direction: column; gap: 3px; align-items: flex-start; min-width: 0; }

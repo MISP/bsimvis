@@ -1004,6 +1004,8 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
                     let sc = this.el;
                     while (sc && !(/(auto|scroll)/.test(getComputedStyle(sc).overflowY) && sc.scrollHeight > sc.clientHeight)) sc = sc.parentElement;
                     (sc || window).scrollBy(0, now.getBoundingClientRect().top - y);
+                    now.classList.add('xp-flash');
+                    now.addEventListener('animationend', () => now.classList.remove('xp-flash'), { once: true });
                 }
                 return;
             }

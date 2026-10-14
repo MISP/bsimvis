@@ -3242,7 +3242,6 @@ button.xp-cell:hover { outline: 2px solid var(--accent); }
 .xp-pill { border: 1px solid var(--dim); border-radius: 14px; background: transparent; color: var(--dim); font: inherit; font-size: 0.76rem; padding: 3px 10px; cursor: pointer; }
 .xp-pill.look { color: var(--token-address); border-color: var(--token-address); background: color-mix(in srgb, var(--token-address) 12%, var(--bg)); }
 .xp-pill[aria-expanded="true"] { box-shadow: 0 0 0 1px currentColor; }
-.xp-gnote { font-size: 0.6rem; }
 u.xp-u-noise, u.xp-u-const, u.xp-u-chg { text-decoration: none; }
 u.xp-u-noise { border-bottom: 1px dotted var(--accent); }
 u.xp-u-const { border-bottom: 2px solid var(--token-address); }

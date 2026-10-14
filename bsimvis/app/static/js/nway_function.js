@@ -23,7 +23,6 @@
 
     // ---- What a same-code group ignores. Mirrors `_keys` in nway_facets_service.py. ----
     const REL = { eq: 'identical text', noise: 'names only', const: 'constants differ', chg: 'code differs' };
-    const REL_SHORT = { noise: 'names', const: 'constants', chg: 'code' };
     const REL_TIP = {
         eq: 'Every member has the same text.',
         noise: 'Members differ only in decompiler-chosen names, types and casts.',
@@ -94,7 +93,7 @@
             this.embedded = !!o.embedded;
             this.cfgOnly = !!o.cfgOnly;
             this.onLoad = o.onLoad || null;
-            this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', bm: 'hybrid', open: {}, fn: null, single: false, cols: 2, pick: {}, raw: false, ...(o.state || {}) };
+            this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', bm: 'hybrid', open: {}, fn: null, single: false, cols: 2, pick: {}, ...(o.state || {}) };
             this._pc = new Map();
             if (this.s.tab === 'code' && this.s.cv === 'full') this.s.tab = 'full';
             this.titles = {};
@@ -385,19 +384,14 @@
             return new Set((syntax || []).flatMap(e => e[5] || []));
         }
 
-        _codeHtml(syntax, runs, cls, j, other, marks) {
+        _codeHtml(syntax, runs, cls, j, other) {
             if (!syntax) return this._runs(runs, cls);
             const plain = syntax.map(([text]) => text).join('');
             if (runs && plain !== runs.map(([text]) => text).join('')) return this._runs(runs, cls);
             const ends = [];
             let end = 0;
             for (const [text, changed] of (runs || [])) ends.push({ end: end += text.length, changed });
-            // `marks`: [text, class] runs underlined on top (what a same-code group ignores); skipped unless they cover the same text.
-            const mends = [];
-            let mend = 0;
-            for (const [text, mc] of (marks || [])) mends.push({ end: mend += text.length, mc });
-            if (mend !== plain.length) mends.length = 0;
-            let pos = 0, ri = 0, mi = 0, html = '';
+            let pos = 0, ri = 0, html = '';
             const origin = j != null && this.fids[j] ? parts(this.fids[j]) : null;
             for (const [token, type, addr, name, external, hashes] of syntax) {
                 const callId = type === 'func_call' && addr && !external && origin
@@ -408,11 +402,8 @@
                 let offset = 0;
                 while (offset < token.length) {
                     while (ends[ri] && pos >= ends[ri].end) ri++;
-                    while (mends[mi] && pos >= mends[mi].end) mi++;
-                    let length = Math.min(token.length - offset, ends[ri] ? ends[ri].end - pos : token.length);
-                    if (mends[mi]) length = Math.min(length, mends[mi].end - pos);
-                    let part = escapeHtml(token.slice(offset, offset + length));
-                    if (mends[mi] && mends[mi].mc) part = `<u class="xp-u-${mends[mi].mc}">${part}</u>`;
+                    const length = Math.min(token.length - offset, ends[ri] ? ends[ri].end - pos : token.length);
+                    const part = escapeHtml(token.slice(offset, offset + length));
                     let colored = ['variable', 'func_call', 'type', 'op', 'field'].includes(type)
                         ? `<span class="token-${type}"${callAttrs}>${part}</span>` : part;
                     if (hashes && !/^\s*$/.test(part)) {
@@ -481,12 +472,6 @@
         // The function standing for group `g` in the grid: the selected one, else the member picked from its header.
         _rep(g) {
             return g.includes(this.s.fn) ? this.s.fn : (g.includes(this.s.pick[g[0]]) ? this.s.pick[g[0]] : g[0]);
-        }
-
-        // The group-mate `j` is compared with: the group's first function, as the matcher does.
-        _twin(fgroups, j) {
-            const g = fgroups.find(x => x.includes(j));
-            return g && g.length > 1 ? (g[0] === j ? g[1] : g[0]) : null;
         }
 
         // The text function j holds for block b, as plain code.
@@ -793,7 +778,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
         }
 
         // Block metadata column: id, state, per-column dots; variants, title and Explain open on hover or focus.
-        _gutter(b, fs, trimmed = 0, fgroups = null) {
+        _gutter(b, fs, trimmed = 0) {
             const G = NwayFunction.GLYPH, S = NwayFunction.SNAME, w = this._worst(b, fs), fnames = this.data.functions;
             const sts = fs.map(j => this._cell(b, j));
             const marks = fs.length > 1
@@ -801,12 +786,8 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
                 : (sts[0].st === 'mod' || sts[0].st === 'moved' ? `<span>${Math.round(sts[0].sim * 100)}%</span>` : '');
             const { groups, html } = this._fullGroups(b, fs[0]);
             const expl = fs.map(j => ({ j, e: this._expl(b.id, j) })).filter(x => x.e);
-            const tn = this.s.raw && fgroups ? fs.map(j => {
-                const t = this._twin(fgroups, j), r = t == null ? 'eq' : this._pd(b, j, t).rel;
-                return r === 'eq' ? '' : `<span class="xp-gnote xp-r-${r}" title="${escapeAttr(`${fnames[j].letter} against ${fnames[t].letter}, same code: ${REL[r]}`)}">${escapeHtml(fnames[t].letter)}: ${REL_SHORT[r]}</span>`;
-            }).join('') : '';
             const more = `<div class="xp-more"><b>${this._tspan(b)}</b>${groups.length > 1 ? html : ''}${expl.map(({ j, e }) => `<div class="xp-vchips">${this._funcRef(j)} ${e}</div>`).join('')}</div>`;
-            return `<div class="xp-gut" tabindex="0"><span class="xp-gid">${escapeHtml(b.id)}</span><span class="xp-gl st-${w}">${G[w]}</span>${marks}${trimmed ? `<span class="xp-gvar" title="${trimmed} leading spaces shared by every column of this block are hidden">&#8676;${trimmed}</span>` : ''}${groups.length > 1 ? `<span class="xp-gvar">${groups.length} var.</span>` : ''}${tn}${more}</div>`;
+            return `<div class="xp-gut" tabindex="0"><span class="xp-gid">${escapeHtml(b.id)}</span><span class="xp-gl st-${w}">${G[w]}</span>${marks}${trimmed ? `<span class="xp-gvar" title="${trimmed} leading spaces shared by every column of this block are hidden">&#8676;${trimmed}</span>` : ''}${groups.length > 1 ? `<span class="xp-gvar">${groups.length} var.</span>` : ''}${more}</div>`;
         }
 
         _fullView() {
@@ -822,8 +803,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
             const multi = !single && fgroups.some(g => g.length > 1);
             const nsame = fgroups.filter(g => g.length > 1).length, look = fgroups.filter(g => ['const', 'chg'].includes(this._groupRel(g))).length;
             const pill = multi ? `<button class="xp-pill${look ? ' look' : ''}" data-xaudit aria-expanded="${!!this.audit}" title="What each same-code group ignores, member by member">${nsame} same-code group${nsame === 1 ? '' : 's'} &middot; ${look ? `${look} need${look === 1 ? 's' : ''} a look` : 'names only or identical'}</button>` : '';
-            const rawChk = multi ? `<label class="xp-chk" title="Underline, in each column, the tokens its same-code twin differs in: names, constants or code"><input type="checkbox" data-xraw ${s.raw ? 'checked' : ''}> Underline what groups ignore</label>` : '';
-            const out = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Show</span>${chips}${colsCtl}<label class="xp-chk"><input type="checkbox" data-xsingle ${single ? 'checked' : ''}> Function alone, in its own order</label>${single ? '' : `<label class="xp-chk" title="Hide the indentation every column of a block has in common, so deep code needs less sideways scrolling"><input type="checkbox" data-xdedent ${s.dedent ? 'checked' : ''}> Trim shared indent</label>`}${rawChk}${pill}${this._info(why)}</div>${multi && this.audit ? this._audit(fgroups) : ''}`;
+            const out = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Show</span>${chips}${colsCtl}<label class="xp-chk"><input type="checkbox" data-xsingle ${single ? 'checked' : ''}> Function alone, in its own order</label>${single ? '' : `<label class="xp-chk" title="Hide the indentation every column of a block has in common, so deep code needs less sideways scrolling"><input type="checkbox" data-xdedent ${s.dedent ? 'checked' : ''}> Trim shared indent</label>`}${pill}${this._info(why)}</div>${multi && this.audit ? this._audit(fgroups) : ''}`;
             if (single) {
                 if (f === ref) return out + c.blocks.map(b => `<div class="xp-frow one">${this._band(b.id, 'same', 1, this._bt(b))}<pre class="xp-fcode">${this._codeHtml(b.ref_syntax, null, null, ref)}</pre></div>`).join('');
                 const segs = c.funcs[String(f)] || [];
@@ -840,7 +820,6 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
             this.unfold = this.unfold || new Set();
             const rail = [];
             const gap = text => `<pre class="xp-fcode gap">${text}</pre>`;
-            const twins = fs.map(j => (s.raw ? this._twin(fgroups, j) : null));
             const row = b => {
                 const w = this._worst(b, fs), g = this._group(b, fs[0]);
                 rail.push({ id: b.id, w, n: (b.ref_text || '').split('\n').length });
@@ -848,13 +827,13 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
                 const txt = (syn, runs) => (syn || runs || []).map(e => e[0]).join('');
                 // Indent shared by the whole row is hidden, so deep blocks need no sideways scroll.
                 const ind = !s.dedent ? 0 : this._indent([txt(b.ref_syntax, g && g.ref_segs), ...cs.filter(x => x.cell.st !== 'miss' && !x.cell.into).map(x => txt(x.syn, x.runs))]);
-                const cells = cs.map(({ j, cell, syn, runs }, ci) => {
+                const cells = cs.map(({ j, cell, syn, runs }) => {
                     if (cell.st === 'miss') return gap('(no matching code)');
                     if (cell.into) return gap(`↑ merged into ${escapeHtml(cell.into)} above`);
                     const tip = `${d.functions[j].letter}: ${S[cell.st]}${cell.st === 'same' ? '' : ' ' + Math.round(cell.sim * 100) + '%'}`;
-                    return `<pre class="xp-fcode st-${cell.st}" title="${escapeAttr(tip)}" data-xfns="${j},${ref}">${this._codeHtml(this._trim(syn, ind), this._trim(runs, ind), 'chg', j, this._hashSet(b.ref_syntax), this._trim(twins[ci] != null ? this._pd(b, j, twins[ci]).ma : null, ind))}</pre>`;
+                    return `<pre class="xp-fcode st-${cell.st}" title="${escapeAttr(tip)}" data-xfns="${j},${ref}">${this._codeHtml(this._trim(syn, ind), this._trim(runs, ind), 'chg', j, this._hashSet(b.ref_syntax))}</pre>`;
                 }).join('');
-                return `<div class="xp-frow xp-g wst-${w}" data-xrow="${escapeAttr(b.id)}" style="--n:${n}">${this._gutter(b, fs, ind, fgroups)}<pre class="xp-fcode" data-xfns="${ref},${fs[0]}">${this._codeHtml(this._trim(b.ref_syntax, ind), this._trim(g && g.ref_segs, ind), 'del', ref, this._hashSet(cs[0].syn))}</pre>${cells}</div>`;
+                return `<div class="xp-frow xp-g wst-${w}" data-xrow="${escapeAttr(b.id)}" style="--n:${n}">${this._gutter(b, fs, ind)}<pre class="xp-fcode" data-xfns="${ref},${fs[0]}">${this._codeHtml(this._trim(b.ref_syntax, ind), this._trim(g && g.ref_segs, ind), 'del', ref, this._hashSet(cs[0].syn))}</pre>${cells}</div>`;
             };
             const slots = this._extraSlots(fs);
             const extraRows = after => (slots.get(after) || []).map(({ seg, x, f: owner }) => {
@@ -1204,7 +1183,6 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : 'R
         _change(e) {
             const t = e.target;
             if (t.dataset.xsingle !== undefined) { this.s.single = t.checked; this._persist(); return this._rebody(); }
-            if (t.dataset.xraw !== undefined) { this.s.raw = t.checked; return this._rebody(); }
             if (t.dataset.xdedent !== undefined) { this.s.dedent = t.checked; return this._rebody(); }
             if (t.dataset.xonly !== undefined) { this.s.only = t.checked; this._persist(); return this._rebody(); }
             if (t.dataset.xsel !== undefined) {

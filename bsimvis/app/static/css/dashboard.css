@@ -2856,26 +2856,7 @@ a.home-card:hover,
 .nway-head { margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
 .nway-head h2 { margin: 0 0 4px; color: var(--accent); font-size: 1.5rem; }
 .nway-head p { margin: 0; color: var(--subtle); font-size: 0.9rem; }
-.nway-hero { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
-.nway-hero-top, .nway-hero-coh, .nway-hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.nway-hero-name { margin: 0; color: var(--accent); font-size: 1.5rem; font-family: var(--font-mono, monospace); overflow-wrap: anywhere; }
-.nway-hero-proto { font-family: var(--font-mono, monospace); font-size: 0.85rem; background: rgba(127,127,127,.12); border-radius: 4px; padding: 6px 10px; overflow-x: auto; white-space: pre; }
-.nway-hvar { color: var(--token-warning); }
-.nway-hero-facts { display: flex; flex-wrap: wrap; gap: 6px 18px; }
-.nway-hero-facts div { display: flex; flex-direction: column; }
-.nway-hero-facts b { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
-.nway-hero-facts span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--subtle); }
-.nway-hkind { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; padding: 2px 8px; border-radius: 3px; background: rgba(77,171,247,.18); color: var(--accent); }
-.nway-hkind.set { background: rgba(250,176,5,.18); color: var(--token-warning); }
-.nway-hbar { position: relative; width: 200px; height: 8px; border-radius: 4px; background: rgba(127,127,127,.2); }
-.nway-hbar i { position: absolute; top: 0; bottom: 0; border-radius: 4px; background: #2f9e44; }
-.nway-hbar.mid i { background: #f59f00; }
-.nway-hbar.low i { background: #e03131; }
-.nway-hpill { font-size: 0.75rem; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); white-space: nowrap; }
-.nway-hpill.ok { color: #2f9e44; }
-.nway-hpill.warn { color: var(--token-warning); }
-.nway-hpill.bad { color: #e03131; }
-.nway-hero-actions .top-action-btn.primary { background: var(--accent); color: #fff; }
+.nway-node.nway-hero { margin-bottom: 14px; width: auto; cursor: default; padding: 10px 14px; gap: 8px; }
 .nway-edit { margin-bottom: 14px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); }
 .nway-edit summary { cursor: pointer; font-weight: 600; font-size: 0.85rem; color: var(--text); }
 .nway-edit-grid { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; margin-top: 10px; }

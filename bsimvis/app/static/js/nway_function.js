@@ -366,7 +366,7 @@
 
         // ---- Code blocks ----
         static GLYPH = { same: '=', mod: '~', moved: '⇄', restr: '◧', miss: '✕', extra: '+' };
-        static SNAME = { same: 'identical', mod: 'modified', moved: 'moved', restr: 'restructured', miss: 'missing', extra: 'only here' };
+        static SNAME = { same: 'same code', mod: 'modified', moved: 'moved', restr: 'restructured', miss: 'missing', extra: 'only here' };
 
         _bt(b) { return this.titles[b.id] || b.title; }
 
@@ -533,6 +533,15 @@
             return `<div class="xp-audit">${cards.join('')}</div>`;
         }
 
+        // The same-code audit control: a pill and its panel; empty when no functions share code.
+        _auditBar(fgroups) {
+            const groups = fgroups.filter(g => g.length > 1);
+            if (!groups.length) return { pill: '', panel: '' };
+            const look = groups.filter(g => ['const', 'chg'].includes(this._groupRel(g))).length;
+            const pill = `<button class="xp-pill${look ? ' look' : ''}" data-xaudit aria-expanded="${!!this.audit}" title="Same code means the same after ignoring names and constants. This shows what each group ignores, member by member">${groups.length} same-code group${groups.length === 1 ? '' : 's'} &middot; ${look ? `${look} need${look === 1 ? 's' : ''} a look` : 'names only or identical'}</button>`;
+            return { pill, panel: this.audit ? this._audit(fgroups) : '' };
+        }
+
         _isSame(b) { return Object.values(b.cells).every(c => c.st === 'same'); }
 
         // Where the blocks come from: Ghidra basic blocks where stored with text splitting elsewhere (hybrid), Ghidra only, or text only.
@@ -549,10 +558,11 @@
                 const miss = this.data.blocks_error.missing || [];
                 return `<div class="xp-cbar">${this._bmToggle()}</div><div class="xp-none">Ghidra blocks are not stored for ${miss.map(j => this._funcRef(j)).join(' ')}: analysed before the CFG was stored. Re-analyse them, or use Hybrid or Text blocks.</div>`;
             }
+            const audit = s.tab === 'code' ? this._auditBar(this._functionGroups(false)) : { pill: '', panel: '' };
             const sw = `<div class="xp-cbar">${this._bmToggle()}
 ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.tab === 'unified' ? 'The reference function once. A block that differs in the selected functions expands to its variants.' : 'Read the whole function, aligned to the reference by block.')}
                 <button class="xp-aibtn" data-xask title="Open AI Insight and ask it about this whole row"><i class="fa-solid fa-robot"></i> Ask AI about this row</button>
-                <span class="xp-naming" ${this._naming ? '' : 'hidden'}><i class="fa-solid fa-spinner fa-spin"></i> naming blocks&hellip;</span></div>`;
+                <span class="xp-naming" ${this._naming ? '' : 'hidden'}><i class="fa-solid fa-spinner fa-spin"></i> naming blocks&hellip;</span>${audit.pill}</div>${audit.panel}`;
             return sw + (s.tab === 'code' ? this._blocksView() : s.tab === 'unified' ? this._unifiedView() : this._fullView());
         }
 
@@ -703,7 +713,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.
 
         _blockBody(b) {
             const d = this.data, c = d.consensus;
-            if (!b.groups.length) return `<div class="xp-bd"><p class="xp-hint" style="margin:0">Identical in all ${d.functions.length} functions.</p><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${this._funcRef(c.reference)} all functions</div><pre>${this._codeHtml(b.ref_syntax, null, null, c.reference)}</pre></div></div></div>`;
+            if (!b.groups.length) return `<div class="xp-bd"><p class="xp-hint" style="margin:0">Same code in all ${d.functions.length} functions.</p><div class="xp-panes"><div class="xp-pane"><div class="xp-ph">${this._funcRef(c.reference)} all functions</div><pre>${this._codeHtml(b.ref_syntax, null, null, c.reference)}</pre></div></div></div>`;
             const gi = b.groups[this.s.open[b.id]] ? this.s.open[b.id] : 0, g = b.groups[gi], G = NwayFunction.GLYPH;
             const badges = (fs, link = true) => fs.map(j => this._funcRef(j, 'xp-badge', link)).join('');
             const chips = b.groups.map((x, i) => `<button class="xp-chip" aria-pressed="${i === gi}" data-xb="${escapeAttr(b.id)}" data-xg="${i}">${badges(x.funcs, false)} ${G[x.st]} ${NwayFunction.SNAME[x.st]}</button>`).join('');
@@ -730,7 +740,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.
             }
             const G = NwayFunction.GLYPH;
             const head = '';
-            const legend = `<div class="xp-legend">${Object.keys(NwayFunction.SNAME).map(k => `<span><span class="xp-cell st-${k}" style="min-width:0;height:18px;cursor:default">${G[k]}</span>${NwayFunction.SNAME[k]}</span>`).join('')}${this._info('When decompiled code is laid out differently, lines do not match one to one. Functions are cut into blocks (loops, branches, straight runs) and each block is matched by its content, in any order. Each cell shows how that block looks in the other function: how similar it is, or that it moved, was merged into or split from another block, or is gone. Click a cell or a block to compare it with the reference.')}${c.truncated ? this._info(`Large functions are compared on their first ${Number(this.data.limits.lines)} lines and ${Number(this.data.limits.blocks)} blocks.`) : ''}</div>`;
+            const legend = `<div class="xp-legend">${Object.keys(NwayFunction.SNAME).map(k => `<span><span class="xp-cell st-${k}" style="min-width:0;height:18px;cursor:default">${G[k]}</span>${NwayFunction.SNAME[k]}</span>`).join('')}${this._info('When decompiled code is laid out differently, lines do not match one to one. Functions are cut into blocks (loops, branches, straight runs) and each block is matched by its content, in any order. Each cell shows how that block looks in the other function: how similar it is, or that it moved, was merged into or split from another block, or is gone. Click a cell or a block to compare it with the reference. "Same code" means the same after ignoring names and constants; the same-code pill shows what that ignores.')}${c.truncated ? this._info(`Large functions are compared on their first ${Number(this.data.limits.lines)} lines and ${Number(this.data.limits.blocks)} blocks.`) : ''}</div>`;
             const accordion = ordered.map(({ b, x }) => {
                 if (x) {
                     const open = x.id in this.s.open;
@@ -741,13 +751,13 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.
                 const worst = ['miss', 'restr', 'mod', 'moved'].find(k => sts.some(x => x.st === k)) || 'same';
                 const nSame = sts.filter(x => x.st === 'same').length;
                 const sims = sts.filter(x => x.st === 'mod' || x.st === 'moved').map(x => x.sim);
-                const verdict = `<span class="xp-sum st-${worst}" title="${escapeAttr(Object.keys(NwayFunction.SNAME).filter(k => k !== 'same' && sts.some(x => x.st === k)).map(k => `${sts.filter(x => x.st === k).length} ${NwayFunction.SNAME[k]}`).join(', ') || 'identical in all')}">${worst === 'same' ? G2.same : G2[worst]} ${nSame} of ${sts.length} match</span>${sims.length ? `<span class="xp-min" title="lowest similarity of the modified or moved functions">${Math.round(Math.min(...sims) * 100)}%<small> min</small></span>` : ''}`;
+                const verdict = `<span class="xp-sum st-${worst}" title="${escapeAttr(Object.keys(NwayFunction.SNAME).filter(k => k !== 'same' && sts.some(x => x.st === k)).map(k => `${sts.filter(x => x.st === k).length} ${NwayFunction.SNAME[k]}`).join(', ') || 'same code in all')}">${worst === 'same' ? G2.same : G2[worst]} ${nSame} of ${sts.length} match</span>${sims.length ? `<span class="xp-min" title="lowest similarity of the modified or moved functions">${Math.round(Math.min(...sims) * 100)}%<small> min</small></span>` : ''}`;
                 return `<div class="xp-blk wst-${worst}"><button class="xp-bh" data-xb="${escapeAttr(b.id)}" aria-expanded="${open}"><span class="xp-bid">${escapeHtml(b.id)}</span>${this._tspan(b)}${verdict}</button>${open ? this._blockBody(b) : ''}</div>`;
             }).join('');
             const hidden = only ? c.blocks.length - ordered.filter(item => item.b).length : 0;
             const cfg = this._cfgStrip();
             return head + this._ribbon(ordered) + (cfg ? `<details class="xp-cfgd"><summary>Control-flow graphs</summary>${cfg}</details>` : '') + legend + accordion
-                + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} identical in all ${this.data.functions.length} functions hidden.</p>` : '');
+                + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} with the same code in all ${this.data.functions.length} functions hidden.</p>` : '');
         }
 
         _band(id, st, sim, title, extra = '', tail = '') {
@@ -801,10 +811,8 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.
             const colsCtl = !single && ncols > 2 ? `<div class="view-toggle" role="group" aria-label="Columns">${Array.from({ length: ncols - 1 }, (_, i) => i + 2).map(n => `<button class="view-btn${Math.min(s.cols, ncols) === n ? ' active' : ''}" data-xcols="${n}" title="${n} columns: ${escapeAttr(rl)} and ${n - 1} variant${n > 2 ? 's' : ''}">${n}</button>`).join('')}</div>` : '';
             const why = single ? `Whole function ${d.functions[f].letter}, blocks labelled with their match in the reference.`
                 : `Rows are blocks of ${rl}, the first column. The other columns are the selected variants, side by side. Functions sharing a block variant are grouped together; hover a block's gutter to see its variants and pick one to show first. Blocks that moved or merged stay on the row of the block they match. Under a column header, the functions listed as the same code can be shown in that column instead.`;
-            const multi = !single && fgroups.some(g => g.length > 1);
-            const nsame = fgroups.filter(g => g.length > 1).length, look = fgroups.filter(g => ['const', 'chg'].includes(this._groupRel(g))).length;
-            const pill = multi ? `<button class="xp-pill${look ? ' look' : ''}" data-xaudit aria-expanded="${!!this.audit}" title="What each same-code group ignores, member by member">${nsame} same-code group${nsame === 1 ? '' : 's'} &middot; ${look ? `${look} need${look === 1 ? 's' : ''} a look` : 'names only or identical'}</button>` : '';
-            const out = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Show</span>${chips}${colsCtl}<label class="xp-chk"><input type="checkbox" data-xsingle ${single ? 'checked' : ''}> Function alone, in its own order</label>${single ? '' : `<label class="xp-chk" title="Hide the indentation every column of a block has in common, so deep code needs less sideways scrolling"><input type="checkbox" data-xdedent ${s.dedent ? 'checked' : ''}> Trim shared indent</label>`}${pill}${this._info(why)}</div>${multi && this.audit ? this._audit(fgroups) : ''}`;
+            const { pill, panel } = single ? { pill: '', panel: '' } : this._auditBar(fgroups);
+            const out = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Show</span>${chips}${colsCtl}<label class="xp-chk"><input type="checkbox" data-xsingle ${single ? 'checked' : ''}> Function alone, in its own order</label>${single ? '' : `<label class="xp-chk" title="Hide the indentation every column of a block has in common, so deep code needs less sideways scrolling"><input type="checkbox" data-xdedent ${s.dedent ? 'checked' : ''}> Trim shared indent</label>`}${pill}${this._info(why)}</div>${panel}`;
             if (single) {
                 if (f === ref) return out + c.blocks.map(b => `<div class="xp-frow one">${this._band(b.id, 'same', 1, this._bt(b))}<pre class="xp-fcode">${this._codeHtml(b.ref_syntax, null, null, ref)}</pre></div>`).join('');
                 const segs = c.funcs[String(f)] || [];
@@ -854,7 +862,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.
                 if (this.unfold.has(key)) body += run.map(row).join('');
                 else {
                     rail.push({ fold: key, w: 'same', n: 1 });
-                    body += `<div class="xp-fold"><button data-xfold="${escapeAttr(key)}">&hellip; ${run.length} identical block${run.length === 1 ? '' : 's'} (${run.map(b => escapeHtml(b.id)).join(', ')}) &middot; show</button></div>`;
+                    body += `<div class="xp-fold"><button data-xfold="${escapeAttr(key)}">&hellip; ${run.length} same-code block${run.length === 1 ? '' : 's'} (${run.map(b => escapeHtml(b.id)).join(', ')}) &middot; show</button></div>`;
                 }
                 run = [];
             };
@@ -865,17 +873,17 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.
                 if (ex) { flush(); body += ex; }
             }
             flush();
-            const railHtml = `<div class="xp-rail">${rail.map(r => `<a class="st-${r.w}" ${r.fold ? `data-xfold="${escapeAttr(r.fold)}"` : `data-xjump="${escapeAttr(r.id)}"`} style="flex:${r.n}" title="${escapeAttr(r.fold ? 'identical blocks, click to show' : `${r.id}: ${S[r.w]}`)}"></a>`).join('')}<div class="xp-thumb"></div></div>`;
+            const railHtml = `<div class="xp-rail">${rail.map(r => `<a class="st-${r.w}" ${r.fold ? `data-xfold="${escapeAttr(r.fold)}"` : `data-xjump="${escapeAttr(r.id)}"`} style="flex:${r.n}" title="${escapeAttr(r.fold ? 'same-code blocks, click to show' : `${r.id}: ${S[r.w]}`)}"></a>`).join('')}<div class="xp-thumb"></div></div>`;
             return out + `<div class="xp-gwrap"><div class="xp-gscroll"><div class="xp-ginner" style="--n:${n}">${head}${body}</div></div>${railHtml}</div>`;
         }
 
         // One function (the reference), once. A block that differs in the focus group expands to its variants.
         _unifiedView() {
             const d = this.data, c = d.consensus, s = this.s, ref = c.reference, rl = d.functions[ref].letter;
-            const fgroups = this._functionGroups(false), on = g => !s.uoff[g[0]];
+            const fgroups = this._functionGroups(false), on = g => !s.uoff[g[0]], audit = this._auditBar(fgroups);
             const focus = fgroups.filter(on).flat();
             const chips = fgroups.map(g => `<button class="xp-chip" aria-pressed="${on(g)}" data-xug="${g[0]}" title="${escapeAttr(g.map(j => `${d.functions[j].letter}: ${d.functions[j].file_name || ''}`).join('\n'))}">${g.map(j => this._funcRef(j, 'xp-badge', false)).join('')}${g.length > 1 ? 'same code' : this._fileRef(g[0], 'xp-rfile', false)}</button>`).join('');
-            const bar = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Compare ${this._funcRef(ref)} with</span>${chips}${this._info(`Toggle which functions are compared with ${rl}. Variants and the identical-block count follow the selection.`)}</div>`;
+            const bar = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Compare ${this._funcRef(ref)} with</span>${chips}${audit.pill}${this._info(`Toggle which functions are compared with ${rl}. Variants and the same-code block count follow the selection.`)}</div>${audit.panel}`;
             const variants = b => b.groups.map(g => ({ ...g, funcs: g.funcs.filter(j => focus.includes(j)) })).filter(g => g.funcs.length);
             const badges = fs => fs.map(j => this._funcRef(j, 'xp-badge', false)).join('');
             const variant = (b, g) => {
@@ -900,12 +908,12 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.
                     const same = focus.filter(j => this._cell(b, j).st === 'same');
                     const open = vs.length && s.uopen[b.id];
                     const tail = vs.length ? `<button class="xp-chip" data-xu="${escapeAttr(b.id)}" aria-expanded="${!!open}" title="Show how the selected functions differ in this block">${vs.length} variant${vs.length === 1 ? '' : 's'} ${open ? '▴' : '▾'}</button>` : '';
-                    const body = open ? `<div class="xp-uvars">${vs.map(g => variant(b, g)).join('')}${same.length ? `<div class="xp-fband">${badges(same)} identical to ${escapeHtml(rl)}</div>` : ''}</div>` : '';
+                    const body = open ? `<div class="xp-uvars">${vs.map(g => variant(b, g)).join('')}${same.length ? `<div class="xp-fband">${badges(same)} same code as ${escapeHtml(rl)}</div>` : ''}</div>` : '';
                     rows.push(`<div class="xp-frow one wst-${w}" data-xrow="${escapeAttr(b.id)}">${this._band(b.id, w, sims.length ? Math.min(...sims) : 1, this._bt(b), '', tail)}<pre class="xp-fcode st-${w}" ${focus.length ? `data-xfns="${ref},${focus[0]}"` : ''}>${this._codeHtml(b.ref_syntax, null, null, ref)}</pre>${body}</div>`);
                 }
                 extraRows(b.id);
             }
-            return bar + `<div class="xp-ubody">${rows.join('')}</div>` + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} identical in the selected functions hidden.</p>` : '');
+            return bar + `<div class="xp-ubody">${rows.join('')}</div>` + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} with the same code in the selected functions hidden.</p>` : '');
         }
 
         // LLM titles: asked once when the code tab first opens, never blocking the render.

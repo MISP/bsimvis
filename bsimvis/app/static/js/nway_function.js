@@ -293,8 +293,11 @@
         _fileRef(j, cls = 'xp-fn', link = true) {
             const f = this.data.functions[j], { coll, md5 } = parts(this.fids[j] || '');
             // Functions picked from several collections: say which one each column is from.
-            const label = new Set(this.data.functions.map(x => x.collection)).size > 1 ? `${coll} / ${f.file_name || md5}` : (f.file_name || md5);
-            return `<span class="${cls}${link ? ' xp-entity-link' : ''}"${link ? ` data-xfile="${j}" role="link" tabindex="0" title="${escapeAttr(`${label} (${md5})`)}"` : ''}>${escapeHtml(label)}</span>`;
+            // A hash-named file (md5 / sha256, optional extension) is cut to its first 8 characters; the tooltip keeps the whole name.
+            const name = f.file_name || md5, short = name.replace(/^([0-9a-f]{8})[0-9a-f]{24,}(\.\w+)?$/i, (m, h, ext) => `${h}…${ext || ''}`);
+            const multi = new Set(this.data.functions.map(x => x.collection)).size > 1;
+            const label = multi ? `${coll} / ${short}` : short;
+            return `<span class="${cls}${link ? ' xp-entity-link' : ''}"${link ? ` data-xfile="${j}" role="link" tabindex="0" title="${escapeAttr(`${multi ? `${coll} / ${name}` : name} (${md5})`)}"` : ''}>${escapeHtml(label)}</span>`;
         }
 
         _md5Ref(j) {

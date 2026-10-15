@@ -204,17 +204,17 @@
                 <div class="nway-card xp-head"><div class="xp-cols">${d.functions.map((f, j) => this._card(f, j)).join('')}</div>
                     <div><div class="xp-mx" style="--n:${nf}">${this._matrix()}</div>
                     <div class="xp-cap">${this._info('Function similarity from the matcher; a dash means no match was found. Click a cell to open that pair in the 2-way diff.')}</div></div></div>
-                <div class="xp-bar"><div class="bsim-tabbar" role="tablist" style="margin:0">
-                    ${this.embedded ? '' : tab('simple', 'Reference')}
-                    ${this.embedded ? '' : tab('facets', 'Facets')}
-                    ${this.embedded ? '' : tab('code', 'Code blocks', !code ? `Code blocks need at most ${d.limits.code} functions (this row has ${nf})` : '')}
-                    ${this.embedded ? '' : tab('full', 'Full function', !code ? `Code blocks need at most ${d.limits.code} functions (this row has ${nf})` : '')}
-                    ${this.embedded ? '' : tab('unified', 'Unified', !code ? `Code blocks need at most ${d.limits.code} functions (this row has ${nf})` : '')}
-                    ${this.embedded ? '' : tab('pair', 'Pair diff')}</div><span class="xp-sp"></span>
-                    ${s.tab === 'pair' || s.tab === 'simple' ? '' : `<label class="xp-chk"><input type="checkbox" data-xonly ${s.only ? 'checked' : ''}> Differences only</label>`}</div>
+                ${this.embedded ? '' : `<div class="xp-bar"><div class="bsim-tabbar" role="tablist" style="margin:0">
+                    ${tab('simple', 'Reference')}
+                    ${tab('facets', 'Facets')}
+                    ${tab('code', 'Code blocks', !code ? `Code blocks need at most ${d.limits.code} functions (this row has ${nf})` : '')}
+                    ${tab('full', 'Full function', !code ? `Code blocks need at most ${d.limits.code} functions (this row has ${nf})` : '')}
+                    ${tab('unified', 'Unified', !code ? `Code blocks need at most ${d.limits.code} functions (this row has ${nf})` : '')}
+                    ${tab('pair', 'Pair diff')}</div></div>`}
                 <div class="xp-body">${this._body()}</div>`;
             const bar = this.el.querySelector('.xp-bar');
-            new ResizeObserver(() => this.el.style.setProperty('--xp-bar2-h', bar.getBoundingClientRect().height + 'px')).observe(bar);
+            if (bar) new ResizeObserver(() => this.el.style.setProperty('--xp-bar2-h', bar.getBoundingClientRect().height + 'px')).observe(bar);
+            else this.el.style.setProperty('--xp-bar2-h', '0px');
             this._loadSummaries();
             if (s.tab === 'pair') this._loadPair();
             if (['code', 'full', 'unified'].includes(s.tab)) this._loadTitles();
@@ -362,7 +362,7 @@
         _facets() {
             const d = this.data;
             const shape = d.shape.map(r => `<tr><td class="xp-i xp-plain">${escapeHtml(r.label)}</td>${r.values.map((v, j) => `<td class="xp-c${r.off[j] ? ' out' : ''}">${v == null ? '&ndash;' : Number(v)}</td>`).join('')}</tr>`).join('');
-            return `<div class="xp-cbar" style="margin-bottom:6px"><span class="xp-hint" style="margin:0">Shared and missing items</span>${this._info(`Every string, API call, callee and constant found in the ${d.functions.length} functions, one list per kind. A dot means the function has it; items missing from some functions are marked in amber.`)}</div>
+            return `<div class="xp-cbar" style="margin-bottom:6px"><span class="xp-hint" style="margin:0">Shared and missing items</span>${this._info(`Every string, API call, callee and constant found in the ${d.functions.length} functions, one list per kind. A dot means the function has it; items missing from some functions are marked in amber.`)}${this._onlyChk()}</div>
                 ${d.facets.map(f => this._facet(f)).join('')}
                 <div class="xp-grp"><h3>Shape<span class="n">${this._info('Amber = more than 20% from the median.')}</span></h3><div class="xp-fx"><table>${this._thead()}${shape}</table></div></div>`;
         }
@@ -545,6 +545,11 @@
             return { pill, panel: this.audit ? this._audit(fgroups) : '' };
         }
 
+        // "Differences only", at the right end of the toolbar of the tab it filters.
+        _onlyChk() {
+            return `<span class="xp-sp"></span><label class="xp-chk"><input type="checkbox" data-xonly ${this.s.only ? 'checked' : ''}> Differences only</label>`;
+        }
+
         _isSame(b) { return Object.values(b.cells).every(c => c.st === 'same'); }
 
         // Where the blocks come from: Ghidra basic blocks where stored with text splitting elsewhere (hybrid), Ghidra only, or text only.
@@ -568,7 +573,7 @@
             const sw = `<div class="xp-cbar">${this._bmToggle()}
 ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.tab === 'unified' ? 'The reference function once. A block that differs in the selected functions expands to its variants.' : 'Read the whole function, aligned to the reference by block.')}
                 <button class="xp-aibtn" data-xask title="Open AI Insight and ask it about this whole row"><i class="fa-solid fa-robot"></i> Ask AI about this row</button>
-                <span class="xp-naming" ${this._naming ? '' : 'hidden'}><i class="fa-solid fa-spinner fa-spin"></i> naming blocks&hellip;</span>${audit.pill}</div>${audit.panel}`;
+                <span class="xp-naming" ${this._naming ? '' : 'hidden'}><i class="fa-solid fa-spinner fa-spin"></i> naming blocks&hellip;</span>${audit.pill}${this._onlyChk()}</div>${audit.panel}`;
             return sw + (s.tab === 'code' ? this._blocksView() : s.tab === 'unified' ? this._unifiedView() : this._fullView());
         }
 

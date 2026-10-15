@@ -3153,7 +3153,7 @@ html.light-theme .nway-function-view { --xp-l: 40%; }
 .xp-rib { min-width: 0; max-width: 100%; overflow: auto; max-height: min(420px, 60vh); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; }
 .xp-rib table { border-collapse: separate; table-layout: auto; width: max-content; min-width: 100%; }
 .xp-rib th, .xp-rib td { padding: 4px 6px; border-bottom: 1px solid var(--border); text-align: center; font: 0.74rem 'Consolas', monospace; }
-.xp-rib th { min-width: 96px; background: var(--card-bg); color: var(--dim); font-weight: 500; vertical-align: bottom; position: sticky; top: 0; z-index: 1; }
+.xp-rib th { width: 110px; min-width: 110px; max-width: 110px; background: var(--card-bg); color: var(--dim); font-weight: 500; vertical-align: bottom; position: sticky; top: 0; z-index: 1; }
 .xp-rib th small { display: block; font: 0.64rem sans-serif; white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; margin: 0 auto; }
 .xp-rib th.rowh, .xp-rib td.rowh { min-width: 240px; max-width: 240px; position: sticky; left: 0; z-index: 2; background: var(--card-bg); text-align: left; color: var(--cc, var(--dim)); font-weight: 600; white-space: nowrap; border-right: 1px solid var(--border); }
 .xp-rib th.rowh { z-index: 3; }

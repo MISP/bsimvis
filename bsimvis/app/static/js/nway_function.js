@@ -136,6 +136,7 @@
             this._dead = true;
             removeEventListener('scroll', this._railFn, true);
             removeEventListener('resize', this._railFn);
+            if (this._ro) this._ro.disconnect();
         }
 
         // The rail is the scrollbar of the block grid: its thumb is the part of the grid in view, drag it to scroll.
@@ -211,7 +212,9 @@
                     ${tab('pair', 'Pair diff')}</div></div>`}
                 <div class="xp-body">${this._body()}</div>`;
             const bar = this.el.querySelector('.xp-bar');
-            if (bar) new ResizeObserver(() => this.el.style.setProperty('--xp-bar2-h', bar.getBoundingClientRect().height + 'px')).observe(bar);
+            if (this._ro) this._ro.disconnect();
+            this._ro = null;
+            if (bar) (this._ro = new ResizeObserver(() => this.el.style.setProperty('--xp-bar2-h', bar.getBoundingClientRect().height + 'px'))).observe(bar);
             else this.el.style.setProperty('--xp-bar2-h', '0px');
             this._loadSummaries();
             if (s.tab === 'pair') this._loadPair();

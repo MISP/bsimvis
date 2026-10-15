@@ -201,9 +201,7 @@
             this.el.innerHTML = `
                 ${this.embedded ? '' : `<div class="nway-head"><h2><i class="fa-solid fa-table-columns"></i> ${escapeHtml(this.name || 'Function family')} <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></h2>
                     <p>${nf} functions, one per file. Strings, calls, constants and code compared across them.</p></div>`}
-                <div class="nway-card xp-head"><div class="xp-cols">${d.functions.map((f, j) => this._card(f, j)).join('')}</div>
-                    <div><div class="xp-mx" style="--n:${nf}">${this._matrix()}</div>
-                    <div class="xp-cap">${this._info('Function similarity from the matcher; a dash means no match was found. Click a cell to open that pair in the 2-way diff.')}</div></div></div>
+                ${this._head()}
                 ${this.embedded ? '' : `<div class="xp-bar"><div class="bsim-tabbar" role="tablist" style="margin:0">
                     ${tab('simple', 'Reference')}
                     ${tab('facets', 'Facets')}
@@ -220,6 +218,20 @@
             if (['code', 'full', 'unified'].includes(s.tab)) this._loadTitles();
             if (s.tab === 'simple') this._loadSimple();
             this._railSync();
+        }
+
+        // Function cards and similarity matrix. On the code views they shrink to one row of chips so the code keeps the screen; the button toggles.
+        _head() {
+            const d = this.data, s = this.s, nf = d.functions.length;
+            const min = s.head !== undefined ? s.head : ['code', 'unified', 'full'].includes(s.tab);
+            const btn = `<button class="xp-pill" data-xhead aria-expanded="${!min}" title="${min ? 'Show the function cards and the similarity matrix' : 'Collapse to one row'}">${min ? 'Details' : 'Collapse'} ${min ? '&#9662;' : '&#9652;'}</button>`;
+            if (min) {
+                const chips = d.functions.map((f, j) => `<span class="xp-hchip" ${cc(j)}>${this._funcRef(j)}${this._fileRef(j, 'xp-rfile')}${j === d.reference ? '<span class="xp-ref" title="Reference of the consensus code: the function most similar to the others">ref</span>' : ''}</span>`).join('');
+                return `<div class="nway-card xp-headmin">${chips}<span class="xp-sp"></span>${btn}</div>`;
+            }
+            return `<div class="nway-card xp-head"><div class="xp-cols">${d.functions.map((f, j) => this._card(f, j)).join('')}</div>
+                    <div><div class="xp-mx" style="--n:${nf}">${this._matrix()}</div>
+                    <div class="xp-cap">${this._info('Function similarity from the matcher; a dash means no match was found. Click a cell to open that pair in the 2-way diff.')}${btn}</div></div></div>`;
         }
 
         // Diff-view tab: just the reference-vs-function CFG pairs, no cards or tabs.
@@ -1162,7 +1174,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.
         }
 
         async _click(e) {
-            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xbm],[data-xfn],[data-xtw],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xask],[data-xpair],[data-xnav],[data-xopen],[data-xcols],[data-xjump],[data-xfold],[data-xug],[data-xu],[data-xview]');
+            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xbm],[data-xfn],[data-xtw],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xask],[data-xpair],[data-xnav],[data-xopen],[data-xcols],[data-xjump],[data-xfold],[data-xug],[data-xu],[data-xview],[data-xhead]');
             if (!t) return;
             const d = t.dataset;
             if (this.cfgOnly && (d.xb !== undefined || d.xx !== undefined)) return;
@@ -1200,6 +1212,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.
                 }
                 this.s.tab = d.xtab; this._persist(); return this.render();
             }
+            if (d.xhead !== undefined) { this.s.head = !(this.s.head !== undefined ? this.s.head : ['code', 'unified', 'full'].includes(this.s.tab)); return this.render(); }
             if (d.xview) { this.s.tab = d.xview; this._persist(); return this.render(); }
             if (d.xpair) { const [a, b] = d.xpair.split(',').map(Number); return this._openDiff(a, b, e); }
             if (d.xopen !== undefined) return this._openDiff(...this.s.pair, e);

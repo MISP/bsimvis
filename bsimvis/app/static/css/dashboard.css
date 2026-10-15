@@ -3100,6 +3100,8 @@ html.light-theme .nway-function-view { --xp-l: 40%; }
 /* The panel's own bar (Differences only) sits under the family tab bar. */
 .nway-function-view #nway-fn-host .xp-bar { top: var(--xp-bar-h, 46px); z-index: 39; }
 .xp-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; padding: 16px; margin-bottom: 16px; }
+.xp-headmin { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 8px 12px; margin-bottom: 10px; }
+.xp-hchip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 @media (max-width: 860px) { .xp-head { grid-template-columns: minmax(0, 1fr); } }
 .xp-cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; max-height: 280px; overflow: auto; align-content: start; }
 .xp-col { border: 1px solid var(--border); border-top: 3px solid var(--cc); border-radius: 6px; padding: 6px 8px; min-width: 0; background: var(--card-bg); }

@@ -759,7 +759,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.
             }).join('');
             const hidden = only ? c.blocks.length - ordered.filter(item => item.b).length : 0;
             const cfg = this._cfgStrip();
-            return head + this._ribbon(ordered) + (cfg ? `<details class="xp-cfgd"><summary>Control-flow graphs</summary>${cfg}</details>` : '') + legend + accordion
+            return head + this._ribbon(ordered) + (cfg ? `<details class="xp-cfgd"${this._others().filter(j => c.cfg && c.cfg[String(j)]).length <= 2 ? " open" : ""}><summary>Control-flow graph: the blocks inside each function</summary>${cfg}</details>` : '') + legend + accordion
                 + (hidden ? `<p class="xp-foot">${hidden} block${hidden === 1 ? '' : 's'} with the same code in all ${this.data.functions.length} functions hidden.</p>` : '');
         }
 

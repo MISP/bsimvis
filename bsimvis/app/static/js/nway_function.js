@@ -896,7 +896,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.
             const fgroups = this._functionGroups(false), on = g => !s.uoff[g[0]], audit = this._auditBar(fgroups);
             const focus = fgroups.filter(on).flat();
             const chips = fgroups.map(g => `<button class="xp-chip" aria-pressed="${on(g)}" data-xug="${g[0]}" title="${escapeAttr(g.map(j => `${d.functions[j].letter}: ${d.functions[j].file_name || ''}`).join('\n'))}">${g.map(j => this._funcRef(j, 'xp-badge', false)).join('')}${g.length > 1 ? 'same code' : this._fileRef(g[0], 'xp-rfile', false)}</button>`).join('');
-            const bar = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Compare ${this._funcRef(ref)} with</span>${chips}${audit.pill}${this._info(`Toggle which functions are compared with ${rl}. Variants and the same-code block count follow the selection.`)}</div>${audit.panel}`;
+            const bar = `<div class="xp-cbar"><span class="xp-hint" style="margin:0">Compare ${this._funcRef(ref)} with</span>${chips}${audit.pill}${this._info(`${rl} is the most central function of the set, the one most similar to the others. Toggle which functions are compared with it. Variants and the same-code block count follow the selection.`)}</div>${audit.panel}`;
             const variants = b => b.groups.map(g => ({ ...g, funcs: g.funcs.filter(j => focus.includes(j)) })).filter(g => g.funcs.length);
             const badges = fs => fs.map(j => this._funcRef(j, 'xp-badge', false)).join('');
             const variant = (b, g) => {

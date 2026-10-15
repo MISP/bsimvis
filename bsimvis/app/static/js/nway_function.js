@@ -1217,7 +1217,12 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.
             }
             if (d.xhead !== undefined) { this.s.head = !(this.s.head !== undefined ? this.s.head : ['code', 'unified', 'full'].includes(this.s.tab)); return this.render(); }
             if (d.xview) { this.s.tab = d.xview; this._persist(); return this.render(); }
-            if (d.xpair) { const [a, b] = d.xpair.split(',').map(Number); return this._openDiff(a, b, e); }
+            if (d.xpair) {
+                const [a, b] = d.xpair.split(',').map(Number);
+                if (this.s.tab !== 'pair') return this._openDiff(a, b, e);
+                this.s.pair = [a, b];
+                return this.render();
+            }
             if (d.xopen !== undefined) return this._openDiff(...this.s.pair, e);
             if (d.xnav) {
                 e.preventDefault();

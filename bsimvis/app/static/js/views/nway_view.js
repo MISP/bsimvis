@@ -102,7 +102,7 @@ window.NwayView = {
         this._container.innerHTML = `<div class="nway-view nway-function-view">
             ${this._meta ? '<div id="nway-hero" class="nway-hero"></div>' : '<div class="nway-head"><h2 id="nway-family-name"></h2></div>'}
             <div class="xp-bar"><div id="nway-family-tabs" class="bsim-tabbar" role="tablist" style="margin:0">
-                ${[['graph', 'Graph'], ['simple', 'Reference'], ['facets', 'Facets'], ['code', 'Code blocks'], ['full', 'Full function'], ['unified', 'Unified'], ['pair', 'Pair diff']].map(([k, label]) => `<button class="bsim-tab" role="tab" data-family-tab="${k}">${label}</button>`).join('')}
+                ${[['graph', 'Call graph'], ['simple', 'Reference'], ['facets', 'Facets'], ['code', 'Code blocks'], ['full', 'Full function'], ['unified', 'Unified'], ['pair', 'Pair diff']].map(([k, label]) => `<button class="bsim-tab" role="tab" data-family-tab="${k}">${label}</button>`).join('')}
             </div></div>
             <div id="nway-graph-host" class="nway-cgp" style="height:calc(100vh - 240px);min-height:400px;"></div>
             <div id="nway-fn-host" hidden></div>
@@ -349,7 +349,7 @@ window.NwayView = {
         if (graph) {
             if (this._panel && this._panel._cg) this._panel._cgDraw();
         } else if (this._familyFids.length < 2) {
-            host.innerHTML = '<div class="nway-state">Comparison needs functions in at least two files. Use Graph to explore this function.</div>';
+            host.innerHTML = '<div class="nway-state">Comparison needs functions in at least two files. Use Call graph to explore this function.</div>';
         } else if (!this._functionPanel) {
             this._functionPanel = new NwayFunction(host, {
                 source: this._familySource, doc: this._familyDoc, fids: this._familyFids,

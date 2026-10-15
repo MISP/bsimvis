@@ -126,6 +126,9 @@ window.NwayView = {
             if (CODE_VIEWS.includes(this._familyState.tab)) this._codeView = this._familyState.tab;
             this._writeFamilyState();
             this._showFamilyTab();
+            // A new tab starts at its top, not wherever the last one was scrolled to.
+            const host = this._container.querySelector(this._familyState.tab === 'graph' ? '#nway-graph-host' : '#nway-fn-host');
+            if (host && host.getBoundingClientRect().top < bar.getBoundingClientRect().bottom) host.scrollIntoView({ block: 'start' });
         };
         let graphReady = false;
         this._renamedFn = e => this._onRenamed(e);

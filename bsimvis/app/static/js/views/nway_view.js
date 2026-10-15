@@ -5,6 +5,9 @@
  * The set (md5s + batch) is edited in the "Edit set" panel; control state is
  * read from the URL and written back so the page is deep-linkable.
  */
+// The views of the Code tab.
+const CODE_VIEWS = ['code', 'unified', 'full'];
+
 window.NwayView = {
     _panel: null,
     _functionPanel: null,
@@ -102,7 +105,7 @@ window.NwayView = {
         this._container.innerHTML = `<div class="nway-view nway-function-view">
             ${this._meta ? '<div id="nway-hero" class="nway-hero"></div>' : '<div class="nway-head"><h2 id="nway-family-name"></h2></div>'}
             <div class="xp-bar"><div id="nway-family-tabs" class="bsim-tabbar" role="tablist" style="margin:0">
-                ${[['graph', 'Call graph'], ['simple', 'Reference'], ['facets', 'Facets'], ['code', 'Code blocks'], ['full', 'Full function'], ['unified', 'Unified'], ['pair', 'Pair diff']].map(([k, label]) => `<button class="bsim-tab" role="tab" data-family-tab="${k}">${label}</button>`).join('')}
+                ${[['graph', 'Call graph'], ['simple', 'Reference'], ['facets', 'Facets'], ['code', 'Code'], ['pair', 'Pair diff']].map(([k, label]) => `<button class="bsim-tab" role="tab" data-family-tab="${k}">${label}</button>`).join('')}
             </div></div>
             <div id="nway-graph-host" class="nway-cgp" style="height:calc(100vh - 240px);min-height:400px;"></div>
             <div id="nway-fn-host" hidden></div>
@@ -113,11 +116,13 @@ window.NwayView = {
             const t = e.target.closest('[data-family-tab]');
             if (!t || t.disabled) return;
             const data = this._functionPanel && this._functionPanel.data;
-            if (['code', 'full', 'unified'].includes(t.dataset.familyTab) && data && !data.consensus) {
+            if (t.dataset.familyTab === 'code' && data && !data.consensus) {
                 showToast(`Code blocks are unavailable for ${data.functions.length} functions. Compare at most ${data.limits.code} functions to view them.`, 'warning');
                 return;
             }
-            this._familyState.tab = t.dataset.familyTab;
+            // The Code tab has three views (code, unified, full); it reopens the one last used.
+            this._familyState.tab = t.dataset.familyTab === 'code' ? (CODE_VIEWS.includes(this._familyState.tab) ? this._familyState.tab : this._codeView || 'code') : t.dataset.familyTab;
+            if (CODE_VIEWS.includes(this._familyState.tab)) this._codeView = this._familyState.tab;
             this._writeFamilyState();
             this._showFamilyTab();
         };
@@ -334,10 +339,11 @@ window.NwayView = {
         const data = this._functionPanel && this._functionPanel.data;
         this._container.querySelectorAll('[data-family-tab]').forEach(t => {
             const tab = t.dataset.familyTab;
-            t.classList.toggle('active', tab === this._familyState.tab);
-            t.setAttribute('aria-selected', String(tab === this._familyState.tab));
+            const on = tab === 'code' ? CODE_VIEWS.includes(this._familyState.tab) : tab === this._familyState.tab;
+            t.classList.toggle('active', on);
+            t.setAttribute('aria-selected', String(on));
             t.disabled = tab !== 'graph' && this._familyFids.length < 2;
-            t.title = this._familyFids.length < 2 && tab !== 'graph' ? 'Comparison needs functions in at least two files' : ['code', 'full', 'unified'].includes(tab) && data && !data.consensus && !data.blocks_error ? `Code blocks need at most ${data.limits.code} functions` : '';
+            t.title = this._familyFids.length < 2 && tab !== 'graph' ? 'Comparison needs functions in at least two files' : tab === 'code' && data && !data.consensus && !data.blocks_error ? `Code blocks need at most ${data.limits.code} functions` : '';
         });
     },
 
@@ -356,7 +362,7 @@ window.NwayView = {
                 name: this._familyName, state: this._familyState, embedded: true,
                 onState: st => { this._familyState = st; this._writeFamilyState(); this._syncFamilyTabs(); },
                 onLoad: () => {
-                    if (['code', 'full', 'unified'].includes(this._familyState.tab) && !this._functionPanel.data.consensus && !this._functionPanel.data.blocks_error) {
+                    if (CODE_VIEWS.includes(this._familyState.tab) && !this._functionPanel.data.consensus && !this._functionPanel.data.blocks_error) {
                         const data = this._functionPanel.data;
                         showToast(`Code blocks are unavailable for ${data.functions.length} functions. Compare at most ${data.limits.code} functions to view them.`, 'warning');
                     }

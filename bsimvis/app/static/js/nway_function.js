@@ -570,7 +570,9 @@
                 return `<div class="xp-cbar">${this._bmToggle()}</div><div class="xp-none">Ghidra blocks are not stored for ${miss.map(j => this._funcRef(j)).join(' ')}: analysed before the CFG was stored. Re-analyse them, or use Hybrid or Text blocks.</div>`;
             }
             const audit = s.tab === 'code' ? this._auditBar(this._functionGroups(false)) : { pill: '', panel: '' };
-            const sw = `<div class="xp-cbar">${this._bmToggle()}
+            const views = [['code', 'Overview', 'What changed, block by block'], ['unified', 'Unified', 'The reference function once; differing blocks expand to their variants'], ['full', 'Side by side', 'Read whole functions next to the reference, aligned by block']];
+            const viewSwitch = `<div class="view-toggle" role="group" aria-label="Code view">${views.map(([k, label, why]) => `<button class="view-btn${s.tab === k ? ' active' : ''}" data-xview="${k}" title="${escapeAttr(why)}">${label}</button>`).join('')}</div>`;
+            const sw = `<div class="xp-cbar">${viewSwitch}${this._bmToggle()}
 ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.tab === 'unified' ? 'The reference function once. A block that differs in the selected functions expands to its variants.' : 'Read the whole function, aligned to the reference by block.')}
                 <button class="xp-aibtn" data-xask title="Open AI Insight and ask it about this whole row"><i class="fa-solid fa-robot"></i> Ask AI about this row</button>
                 <span class="xp-naming" ${this._naming ? '' : 'hidden'}><i class="fa-solid fa-spinner fa-spin"></i> naming blocks&hellip;</span>${audit.pill}${this._onlyChk()}</div>${audit.panel}`;
@@ -1160,7 +1162,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.
         }
 
         async _click(e) {
-            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xbm],[data-xfn],[data-xtw],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xask],[data-xpair],[data-xnav],[data-xopen],[data-xcols],[data-xjump],[data-xfold],[data-xug],[data-xu]');
+            const t = e.target.closest('[data-xcall],[data-xfnref],[data-xfile],[data-xtab],[data-xbm],[data-xfn],[data-xtw],[data-xg],[data-xc],[data-xx],[data-xb],[data-xexp],[data-xsave],[data-xask],[data-xpair],[data-xnav],[data-xopen],[data-xcols],[data-xjump],[data-xfold],[data-xug],[data-xu],[data-xview]');
             if (!t) return;
             const d = t.dataset;
             if (this.cfgOnly && (d.xb !== undefined || d.xx !== undefined)) return;
@@ -1198,6 +1200,7 @@ ${this._info(s.tab === 'code' ? 'Overview of what changed, block by block.' : s.
                 }
                 this.s.tab = d.xtab; this._persist(); return this.render();
             }
+            if (d.xview) { this.s.tab = d.xview; this._persist(); return this.render(); }
             if (d.xpair) { const [a, b] = d.xpair.split(',').map(Number); return this._openDiff(a, b, e); }
             if (d.xopen !== undefined) return this._openDiff(...this.s.pair, e);
             if (d.xnav) {

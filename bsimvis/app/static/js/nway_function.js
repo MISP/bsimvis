@@ -551,8 +551,11 @@
         _bmToggle() {
             const d = this.data, bm = this.s.bm || 'hybrid', have = (d.cfg_funcs || []).filter(Boolean).length, all = (d.cfg_funcs || []).length;
             const b = (k, label, why) => `<button class="view-btn${bm === k ? ' active' : ''}" data-xbm="${k}" title="${escapeAttr(why)}">${label}</button>`;
-            return `<div class="view-toggle" role="group" aria-label="Block source">${b('hybrid', 'Hybrid', 'Ghidra basic blocks where stored, text splitting for the rest')}${b('cfg', 'Ghidra blocks', 'Ghidra basic blocks only')}${b('text', 'Text', 'Blocks cut from the decompiled text only')}</div>`
-                + (all && bm === 'hybrid' && have < all ? `<span class="xp-tag" title="Functions analysed before the CFG was stored use text blocks">${have} of ${all} with Ghidra blocks</span>` : '');
+            // One closed control; amber when hybrid falls back to text for functions analysed before the CFG was stored.
+            const degraded = all && bm === 'hybrid' && have < all;
+            const name = { hybrid: 'Hybrid', cfg: 'Ghidra only', text: 'Text' }[bm] || 'Hybrid';
+            const label = degraded ? `Blocks: ${have === 0 ? 'text only' : 'Hybrid'} &middot; ${have} of ${all} have Ghidra blocks` : `Blocks: ${name}`;
+            return `<details class="xp-bmd"><summary class="xp-pill${degraded ? ' look' : ''}" title="Where the code blocks come from. ${degraded ? 'Functions analysed before the CFG was stored use text blocks; re-analyse them for Ghidra blocks.' : 'Click to change.'}">${label} &#9662;</summary><div class="view-toggle" role="group" aria-label="Block source">${b('hybrid', 'Hybrid', 'Ghidra basic blocks where stored, text splitting for the rest')}${b('cfg', 'Ghidra blocks', 'Ghidra basic blocks only')}${b('text', 'Text', 'Blocks cut from the decompiled text only')}</div></details>`;
         }
 
         _code() {

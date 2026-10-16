@@ -5693,6 +5693,39 @@ def test_nway_diff():
         and all("subset" not in m for m in _l1["groups"].values()),
         f"{len(_l1['groups'])} vs {len(_l2['groups'])}",
     )
+    # A unit missing a file of a bundle joins it when it has enough of its files (lane_fit).
+    _, _near = _nway(
+        tab="all",
+        scope="all",
+        limit=1000,
+        group="lane",
+        group_lane_min=7,
+        group_lane_fit=0.5,
+        group_open="all",
+    )
+    _subs = [i for i in (_near or {"items": []})["items"] if i.get("sub")]
+    check(
+        "nway group: lane_fit lets a unit missing a file join a bundle",
+        _subs and all(i["sub"] == 1 and i["miss"].count("1") == 1 for i in _subs),
+        f"{len(_subs)} rows",
+    )
+    _, _exact = _nway(
+        tab="all",
+        scope="all",
+        limit=1000,
+        group="lane",
+        group_lane_min=7,
+        group_open="all",
+    )
+    check(
+        "nway group: at the default fit (0.9) a unit missing half its bundle stays plain",
+        _exact and not any(i.get("sub") for i in _exact["items"]),
+    )
+    for _bad in ("bogus", "0", "1.5"):
+        check(
+            f"nway group: group_lane_fit={_bad} is a 400",
+            _nway(group="lane", group_lane_fit=_bad)[0] == 400,
+        )
     check(
         "nway group: a lane holds 2+ rows by default",
         _l2 and all(m["rows"] >= 2 for m in _l2["groups"].values()),

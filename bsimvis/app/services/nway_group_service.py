@@ -36,6 +36,9 @@ from bsimvis.app.services.tag_taxonomy import tag_body, tag_prefixes
 MODES = ("tag", "lane", "prefix")
 PREFIX_MIN = 2  # functions that must share a prefix before it makes a group
 LANE_MIN = 2  # units that must share a set of files before it makes a lane
+LANE_FIT = (
+    0.9  # a unit with this share of a bundle's files, all inside it, joins the bundle
+)
 SORTS = ("weight", "rows", "files")
 TAG_FANOUT = 3  # tags of one axis a row is listed under, most shared first
 NAME_BUCKET = 12  # rows sharing one name that are paired up
@@ -83,24 +86,37 @@ def _order(groups, sort):
     return sorted(groups, key=lambda g: (-_rank(g, sort), g["id"]))
 
 
-def lane_groups(rows, n, sort, min_size=LANE_MIN):
+def lane_groups(rows, n, sort, min_size=LANE_MIN, fit=LANE_FIT):
     """One group per set of files shared by `min_size`+ units, plus a headless pair for the rest.
 
     A unit with a set of files of its own stays a plain row beside the lanes (or
-    carries on to the next level): lanes are bundles, and a unit whose files are
-    only a subset of a bundle is not forced into it.
+    carries on to the next level), with one exception: a unit whose files all
+    lie inside a bundle's and make up `fit` or more of them (it misses a file or
+    two of many) joins the smallest such bundle. It carries `sub`, the number of
+    missing files, and `miss`, the missing files as a 0/1 string.
     """
     count = Counter(r["mask"] for r in rows)
+    bundles = [m for m, c in count.items() if c >= min_size]
     members = defaultdict(list)
     loose = []
     for r in rows:
-        (members[r["mask"]] if count[r["mask"]] >= min_size else loose).append(r)
+        mask = r["mask"]
+        if mask in bundles:
+            members[mask].append((r, {}))
+            continue
+        holds = [m for m in bundles if not mask & ~m]
+        near = min(holds, key=_pop) if holds else None
+        if near is not None and _pop(mask) / _pop(near) >= fit:
+            extra = {"sub": _pop(near) - _pop(mask), "miss": _bits(near & ~mask, n)}
+            members[near].append((r, extra))
+        else:
+            loose.append(r)
     out = []
     for lane, items in members.items():
-        g = _meta(items, n)
+        g = _meta([r for r, _ in items], n)
         g.update(id=f"lane:{_bits(lane, n)}", kind="lane", mask=_bits(lane, n))
         g["path"] = [g["id"]]
-        out.append((g, [(r, {}) for r in items]))
+        out.append((g, items))
     out.sort(key=lambda p: (-_rank(p[0], sort), p[0]["id"]))
     if loose:
         out.append(({"id": "", "path": [], "headless": True}, [(r, {}) for r in loose]))
@@ -406,7 +422,9 @@ def _level(mode, units, ctx):
     if mode == "prefix":
         return prefix_groups(units, ctx["n"], ctx["sort"], ctx["prefix_min"])
     if mode == "lane":
-        return lane_groups(units, ctx["n"], ctx["sort"], ctx["lane_min"])
+        return lane_groups(
+            units, ctx["n"], ctx["sort"], ctx["lane_min"], ctx["lane_fit"]
+        )
     return tag_groups(
         units, ctx["fmeta"], ctx["n"], ctx["sort"], ctx["axis"], ctx["axis_b"]
     )
@@ -471,6 +489,8 @@ def _expand(units, ctx, parent_id, parent_path, carried):
         extra = carried.get(id(u), {})
         if extra.get("also", 0) > 1:
             m["also"] = extra["also"]
+        if extra.get("sub"):
+            m["sub"], m["miss"] = extra["sub"], extra["miss"]
         m["path"] = [m["id"]]
         items.append(
             (
@@ -537,12 +557,20 @@ def group_rows(rows, doc, r, mode, params):
         "note": "",
         "prefix_min": PREFIX_MIN,
         "lane_min": LANE_MIN,
+        "lane_fit": LANE_FIT,
         "sort_col": (
             params.get("sort_col") if params.get("sort_col") in SORT_COLS else ""
         ),
         "reverse": params.get("sort_dir", "desc") != "asc"
         or params.get("sort_col") not in SORT_COLS,
     }
+    if params.get("group_lane_fit"):
+        try:
+            ctx["lane_fit"] = float(params["group_lane_fit"])
+        except ValueError:
+            raise BadParams("group_lane_fit must be a number between 0 and 1")
+        if not 0 < ctx["lane_fit"] <= 1:
+            raise BadParams("group_lane_fit must be a number between 0 and 1")
     if params.get("group_lane_min"):
         try:
             ctx["lane_min"] = max(1, int(params["group_lane_min"]))
@@ -618,6 +646,23 @@ def demo():
     assert [r["mask"] for r, _ in lanes[1][1]] == [1, 12]
     # lane_min 1 gives every set of files a lane of its own
     assert len(lane_groups(rows, 4, "weight", 1)) == 3
+    # near-bundle: 9 of a bundle's 10 files joins it (90%+), 5 of 10 does not
+    full, nine, five = (1 << 10) - 1, (1 << 10) - 1 - (1 << 3), 0b11111
+    near = lane_groups(
+        [row(full, 5), row(full, 4), row(nine, 3), row(five, 2)], 10, "weight"
+    )
+    assert [g["id"] for g, _ in near][0] == "lane:" + "1" * 10 and near[0][0][
+        "rows"
+    ] == 3
+    assert near[0][1][2][1] == {"sub": 1, "miss": "0001000000"}, near[0][1]
+    assert near[-1][0]["headless"] and near[-1][1][0][0]["mask"] == five
+    # a strict fit of 1 turns the exception off
+    assert (
+        near[0][0]["rows"] == 3
+        and lane_groups(
+            [row(full, 5), row(full, 4), row(nine, 3)], 10, "weight", 2, 1.0
+        )[-1][0]["headless"]
+    )
 
     # prefixes: first word of the name, auto names and one-word names have none
     assert name_prefix("attack_udp_flood") == ("attack", "_")
@@ -642,6 +687,7 @@ def demo():
         "note": "",
         "prefix_min": 2,
         "lane_min": 1,
+        "lane_fit": 0.9,
         "sort_col": "",
         "reverse": True,
     }
@@ -681,6 +727,7 @@ def demo():
         "merge": True,
         "note": "",
         "lane_min": 1,
+        "lane_fit": 0.9,
         "sort_col": "",
         "reverse": True,
     }

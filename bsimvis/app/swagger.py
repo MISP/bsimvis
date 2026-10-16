@@ -2706,6 +2706,7 @@ class BinSimNway(Resource):
             "group_merge": "Merge rows that are probably one function first: name, call or name,call (shared function name, shared caller row). Rows that share a file are never merged. With a group level, the merged function is what gets grouped (it sits in the lane of all its files together); merged functions show as `same` sub-groups holding their rows, and are ordered with the plain rows by sort_col as if each were one function (span: files covered, weight: heaviest row, support/cohesion: mean)",
             "group_axis": "group=tag: origin (default), severity, category, user, capa, mitre, mbc, yara, ruleset, family or vuln",
             "group_axis_b": "group=tag: a second axis crossed with group_axis",
+            "group_lane_fit": "group=lane: a unit whose files all lie inside a bundle and make up at least this share of the bundle's files (default 0.9) joins it, with `sub` (files missing) and `miss` set; 1 turns it off",
             "group_lane_min": "group=lane: units that must share a set of files before it makes a lane (default 2); the others stay plain rows",
             "group_prefix_min": "group=prefix: functions that must share a prefix before it makes a group (default 2)",
             "group_min_link": "group_merge=call: a shared caller joins two rows only when an edge between them scores at least this (default 0.3; 0 = no edge needed)",

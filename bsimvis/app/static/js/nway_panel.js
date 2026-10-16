@@ -45,7 +45,7 @@
     // Widths in px: Function, Span, Features, Support, Cohesion, Cluster, then one square column per file.
     const DATA_COLS = [380, 64, 90, 90, 90, 210];
     const SQ_COL = 28;
-    const GROUP_SORTS =[['weight', 'Features'], ['rows', 'Rows'], ['files', 'Files']];
+    const GROUP_SORTS = [['files', 'File coverage'], ['weight', 'Features'], ['rows', 'Rows']];
     const LOW_SUPPORT = 0.5;
     // Same icon + color as the Code / Library / All pills in the table's Show control.
     const AXIS = { code: { icon: 'fa-solid fa-code', color: 'var(--info, #3b82f6)' }, library: { icon: 'fa-solid fa-cubes', color: 'var(--warning, #d97706)' } };
@@ -333,7 +333,7 @@
             }).join('');
             const axes = lv.includes('tag') ? `<span class="nway-ctlwrap"><span class="nway-lbl">Axis</span>${sel('group_axis', axis, TAG_AXES)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, TAG_AXES.filter(([k]) => k !== axis), true)}</span>` : '';
             const hint = lv.length > 1 ? 'Click order is nesting order: each group is split again by the next level.' : on && lv.includes('lane') ? 'Each merged function is bundled by all the files it covers together.' : '';
-            const actions = active ? `<span class="nway-gacts"><span class="nway-lbl">Order groups</span>${sel('group_sort', s.group_sort || 'weight', GROUP_SORTS)}<button class="view-btn" data-gall="open">Expand all</button><button class="view-btn" data-gall="close">Collapse all</button></span>` : '';
+            const actions = active ? `<span class="nway-gacts"><span class="nway-lbl">Order groups</span>${sel('group_sort', s.group_sort || 'files', GROUP_SORTS)}<button class="view-btn" data-gall="open">Expand all</button><button class="view-btn" data-gall="close">Collapse all</button></span>` : '';
             return `<div class="nway-gcard${active ? ' active' : ''}">
                 <div class="nway-ghead"><b>Group rows</b>${this._tip('Put related rows together. The column sort still orders the rows inside each group.')}${actions}</div>
                 <div class="nway-gline">${step(1)}<label class="nway-ctl nway-gmain" title="Files with the same functions in every shared row are shown as one column."><input type="checkbox" data-twins${twin ? ' checked' : ''}> <span class="nway-gtitle">Merge files that have the same functions</span></label><span class="dim nway-ghint">${twinHint}</span></div>

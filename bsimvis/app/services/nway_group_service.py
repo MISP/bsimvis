@@ -39,7 +39,7 @@ LANE_MIN = 2  # units that must share a set of files before it makes a lane
 LANE_FIT = (
     0.9  # a unit with this share of a bundle's files, all inside it, joins the bundle
 )
-SORTS = ("weight", "rows", "files")
+SORTS = ("files", "weight", "rows")
 TAG_FANOUT = 3  # tags of one axis a row is listed under, most shared first
 NAME_BUCKET = 12  # rows sharing one name that are paired up
 CALL_HUB = 25  # a caller with more callee rows than this says nothing
@@ -79,11 +79,23 @@ def _meta(rows, n):
 
 
 def _rank(g, sort):
-    return {"weight": g["weight"], "rows": g["rows"], "files": g["files"]}[sort]
+    """Sort value of a group: the chosen measure first, the other two break ties.
+
+    Files first is the default: a group covering more files comes before one
+    covering fewer, whatever its kind, and features only decide between equals.
+    """
+    w, f, r = g["weight"], g["files"], g["rows"]
+    return {"files": (f, w, r), "weight": (w, f, r), "rows": (r, f, w)}[sort]
+
+
+def _by_rank(items, sort, meta=lambda x: x):
+    """Highest rank first, equal ranks in id order."""
+    items = sorted(items, key=lambda x: meta(x)["id"])
+    return sorted(items, key=lambda x: _rank(meta(x), sort), reverse=True)
 
 
 def _order(groups, sort):
-    return sorted(groups, key=lambda g: (-_rank(g, sort), g["id"]))
+    return _by_rank(groups, sort)
 
 
 def lane_groups(rows, n, sort, min_size=LANE_MIN, fit=LANE_FIT):
@@ -117,7 +129,7 @@ def lane_groups(rows, n, sort, min_size=LANE_MIN, fit=LANE_FIT):
         g.update(id=f"lane:{_bits(lane, n)}", kind="lane", mask=_bits(lane, n))
         g["path"] = [g["id"]]
         out.append((g, items))
-    out.sort(key=lambda p: (-_rank(p[0], sort), p[0]["id"]))
+    out = _by_rank(out, sort, lambda p: p[0])
     if loose:
         out.append(({"id": "", "path": [], "headless": True}, [(r, {}) for r in loose]))
     return out
@@ -163,7 +175,7 @@ def prefix_groups(units, n, sort, min_size=PREFIX_MIN):
         g.update(id=f"prefix:{word}{sep}", kind="prefix", label=f"{word}{sep}*")
         g["path"] = [g["id"]]
         out.append((g, [(u, {}) for u in members]))
-    out.sort(key=lambda p: (-_rank(p[0], sort), p[0]["id"]))
+    out = _by_rank(out, sort, lambda p: p[0])
     if loose:
         # units without a usable prefix go on to the next level beside the prefix groups
         pos = {id(u): i for i, u in enumerate(units)}
@@ -502,32 +514,58 @@ def _expand(units, ctx, parent_id, parent_path, carried):
     return [pair for _, pair in items]
 
 
+def _nodes(units, levels, ctx, parent_id, parent_path, carried):
+    """Sibling nodes under one parent: `{"container", "rank", "id", "pairs"}`.
+
+    A container is a group with everything inside it; the other node holds the
+    merged functions and plain rows the levels did not place.
+    """
+    if not levels:
+        pairs = _expand(units, ctx, parent_id, parent_path, carried)
+        return [{"container": False, "pairs": pairs}] if pairs else []
+    nodes = []
+    for g, items in _level(levels[0], units, ctx):
+        extras = {id(u): {**carried.get(id(u), {}), **extra} for u, extra in items}
+        if g.get("headless"):
+            # what this level could not place continues with the next levels, beside its groups
+            nodes += _nodes(
+                [u for u, _ in items], levels[1:], ctx, parent_id, parent_path, extras
+            )
+            continue
+        _graft(g, parent_id, parent_path)
+        if len(levels) == 1 and not ctx["merge"]:
+            pairs = [(g, [(u, extras[id(u)]) for u, _ in items])]
+        else:
+            inner = _nodes(
+                [u for u, _ in items], levels[1:], ctx, g["id"], g["path"], extras
+            )
+            pairs = [(g, [])] + _flat(inner, ctx)
+        nodes.append(
+            {
+                "container": True,
+                "rank": _rank(g, ctx["sort"]),
+                "id": g["id"],
+                "pairs": pairs,
+            }
+        )
+    return nodes
+
+
+def _flat(nodes, ctx):
+    """Groups first, every kind side by side in group order, then the rows no level placed."""
+    boxes = sorted((n for n in nodes if n["container"]), key=lambda n: n["id"])
+    boxes.sort(key=lambda n: n["rank"], reverse=True)
+    rest = [n for n in nodes if not n["container"]]
+    return [pair for n in boxes + rest for pair in n["pairs"]]
+
+
 def _nest(units, levels, ctx, parent_id, parent_path, carried):
     """Groups of `levels[0]` over `units`, each one split again by the next level.
 
     A group with sub-levels, or with a merge on, lists no rows itself: its
     sub-groups follow it. `carried` holds the per-unit extras of outer levels.
     """
-    if not levels:
-        return _expand(units, ctx, parent_id, parent_path, carried)
-    out = []
-    for g, items in _level(levels[0], units, ctx):
-        extras = {id(u): {**carried.get(id(u), {}), **extra} for u, extra in items}
-        if g.get("headless"):
-            # what this level could not place continues with the next levels, beside its groups
-            out += _nest(
-                [u for u, _ in items], levels[1:], ctx, parent_id, parent_path, extras
-            )
-            continue
-        _graft(g, parent_id, parent_path)
-        if len(levels) == 1 and not ctx["merge"]:
-            out.append((g, [(u, extras[id(u)]) for u, _ in items]))
-        else:
-            out.append((g, []))
-            out += _nest(
-                [u for u, _ in items], levels[1:], ctx, g["id"], g["path"], extras
-            )
-    return out
+    return _flat(_nodes(units, levels, ctx, parent_id, parent_path, carried), ctx)
 
 
 def group_rows(rows, doc, r, mode, params):
@@ -544,7 +582,7 @@ def group_rows(rows, doc, r, mode, params):
         raise BadParams("group_merge must be name, call or name,call")
     if not levels and not evidence:
         raise BadParams("group needs a level or group_merge")
-    sort = params.get("group_sort") or "weight"
+    sort = params.get("group_sort") or "files"
     if sort not in SORTS:
         raise BadParams(f"group_sort must be one of {SORTS}")
     ctx = {
@@ -693,8 +731,25 @@ def demo():
     }
     deep = _nest(named, ["prefix", "lane"], nest_ctx, "", [], {})
     heads = [g["id"] for g, _ in deep if not g.get("headless")]
-    assert heads == ["prefix:attack_", "prefix:attack_/lane:1000", "lane:1000"], heads
+    # features order: the 3-unit lane (15 feat) outranks the prefix group (10 feat)
+    assert heads == ["lane:1000", "prefix:attack_", "prefix:attack_/lane:1000"], heads
     assert sum(len(items) for _, items in deep) == 5
+
+    # sibling groups of every kind are ordered together, by file coverage first
+    kinds = [
+        row(1, 100, "attack_a"),
+        row(1, 100, "attack_b"),
+        row(7, 1, "x1"),
+        row(7, 1, "x2"),
+    ]
+    sctx = {**nest_ctx, "lane_min": 2}
+    by_files = _nest(kinds, ["prefix", "lane"], {**sctx, "sort": "files"}, "", [], {})
+    top = lambda pairs: [
+        g["id"] for g, _ in pairs if g.get("path") and len(g["path"]) == 1
+    ]
+    assert top(by_files) == ["lane:1110", "prefix:attack_"], top(by_files)
+    by_weight = _nest(kinds, ["prefix", "lane"], {**sctx, "sort": "weight"}, "", [], {})
+    assert top(by_weight) == ["prefix:attack_", "lane:1110"], top(by_weight)
 
     # names: suffixes and auto names
     assert name_key({"name": "resolv_lookup.part.0"}) == "resolv_lookup"

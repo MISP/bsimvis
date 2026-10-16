@@ -5726,6 +5726,22 @@ def test_nway_diff():
             f"nway group: group_lane_fit={_bad} is a 400",
             _nway(group="lane", group_lane_fit=_bad)[0] == 400,
         )
+    # Groups of every kind at one level are ordered together, file coverage first by default.
+    for _chain in ("lane", "prefix", "prefix,lane"):
+        _, _o = _nway(tab="all", scope="all", limit=1000, group=_chain)
+        _tops = [m["files"] for m in _o["groups"].values() if len(m["path"]) == 1]
+        check(
+            f"nway group={_chain}: top groups are ordered by file coverage",
+            _tops and _tops == sorted(_tops, reverse=True),
+            str(_tops),
+        )
+    _, _w = _nway(tab="all", scope="all", limit=1000, group="lane", group_sort="weight")
+    _ws = [m["weight"] for m in _w["groups"].values() if len(m["path"]) == 1]
+    check(
+        "nway group: group_sort=weight orders the groups by features",
+        _ws and _ws == sorted(_ws, reverse=True),
+        str(_ws),
+    )
     check(
         "nway group: a lane holds 2+ rows by default",
         _l2 and all(m["rows"] >= 2 for m in _l2["groups"].values()),

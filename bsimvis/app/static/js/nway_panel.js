@@ -113,7 +113,9 @@
             this._debounce = null;
             this._io = null;
             this._loading = false;
-            this._gclosed = new Set();
+            // Groups start closed. `_gflip` holds the ids that differ from the `_gdef` default; the server drops closed groups' rows.
+            this._gdef = 'none';
+            this._gflip = new Set();
             if (window.Paging.mode() === 'scroll') this.state.offset = 0;
             NwayPanel.current = this;
             this._onKey = e => this._cgKey(e);
@@ -164,7 +166,7 @@
         }
 
         _set(patch) {
-            if (Object.keys(patch).some(k => k.startsWith('group'))) this._gclosed.clear();
+            if (Object.keys(patch).some(k => k.startsWith('group'))) { this._gdef = 'none'; this._gflip.clear(); }
             Object.assign(this.state, patch);
             const s = { ...this.state };
             // Scroll mode keeps the offset out of the URL (and out of the state).
@@ -185,7 +187,13 @@
                 const v = this.state[k];
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
-            qs.set('limit', this.cgInit ? 1 : PAGE);
+            if (this.state.group) {
+                qs.set('group_open', this._gdef);
+                if (this._gflip.size) qs.set('group_flip', JSON.stringify([...this._gflip]));
+            }
+            // After opening or closing a group, reload as many rows as were on screen.
+            qs.set('limit', this.cgInit ? 1 : (this._keep || PAGE));
+            this._keep = 0;
             if (scroll) qs.set('offset', append ? this.data.items.length : 0);
             if (!this.data) this.el.innerHTML = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions...</div>';
             try {
@@ -1515,9 +1523,17 @@
         }
 
         // ---- Group by: header rows between the table rows, collapsible ----
-        _rowAttr(row) {
-            const g = row.g && (this.data.groups || {})[row.g];
-            return g && g.path.some(id => this._gclosed.has(id)) ? ' hidden' : '';
+        _gOpen(id) {
+            return (this._gdef === 'all') !== this._gflip.has(id);
+        }
+
+        // Open or close groups; the server answers with the new list of headers and rows.
+        _gChange(apply) {
+            apply();
+            this._scrollSave();
+            this.state.offset = 0;
+            this._keep = window.Paging.mode() === 'scroll' ? Math.max(PAGE, this.data.items.length) : 0;
+            this.load();
         }
 
         // Hover a group header: the lane tooltip of the files the group covers. A child-cluster column stands for its member files.
@@ -1536,8 +1552,8 @@
             return `<span class="nway-strip r-mid${n <= 16 ? ' hued' : ''}" style="--sq:${sz}px">${sq}</span>`;
         }
 
-        _groupHead(g, depth, ancestors) {
-            const n = g.union.length, closed = this._gclosed.has(g.id);
+        _groupHead(g, depth) {
+            const n = g.union.length, closed = !this._gOpen(g.id);
             const chip = (cls, text, tip) => `<span class="nway-gchip ${cls}" title="${escapeAttr(tip)}">${escapeHtml(text)}</span>`;
             let title, note = '';
             if (g.kind === 'tag') {
@@ -1557,9 +1573,8 @@
                 note = 'Rows that fit no bundle.';
             }
             const strip = g.kind === 'lane' ? '' : this._gStrip(g.union);
-            const hidden = ancestors.some(a => this._gclosed.has(a));
             const files = g.kind === 'lane' ? g.mask : g.union;
-            return `<tr class="nway-grow d${depth}"${hidden ? ' hidden' : ''}><td colspan="${this.data.columns.length + 7}"><button class="nway-gh" data-gtoggle="${escapeAttr(g.id)}" aria-expanded="${!closed}" style="padding-left:${10 + depth * 20}px"><b class="nway-gchev">${closed ? '&#9656;' : '&#9662;'}</b><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span>${strip}</button></td></tr>`;
+            return `<tr class="nway-grow d${depth}"><td colspan="${this.data.columns.length + 7}"><button class="nway-gh" data-gtoggle="${escapeAttr(g.id)}" aria-expanded="${!closed}" style="padding-left:${10 + depth * 20}px"><b class="nway-gchev">${closed ? '&#9656;' : '&#9662;'}</b><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span>${strip}</button></td></tr>`;
         }
 
         // Rows, with a header printed whenever a row's group path leaves the one printed last.
@@ -1570,9 +1585,9 @@
                 const path = (row.g && groups[row.g] && groups[row.g].path) || [];
                 let k = 0, head = '';
                 while (k < path.length && this._gprint[k] === path[k]) k++;
-                for (let d = k; d < path.length; d++) head += this._groupHead(groups[path[d]], d, path.slice(0, d));
+                for (let d = k; d < path.length; d++) head += this._groupHead(groups[path[d]], d);
                 this._gprint = path;
-                return head + this._row(row, at + i);
+                return head + (row.header ? '' : this._row(row, at + i));
             }).join('');
         }
 
@@ -1583,7 +1598,7 @@
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             const also = row.also > 1 ? `<span class="nway-gchip also" title="This row has ${Number(row.also)} tags on this axis, so it is listed under each of them">&times;${Number(row.also)}</span>` : '';
             const sub = row.sub ? '<span class="nway-gchip sub" title="Its files are a subset of this bundle, so it joined the smallest bundle that holds them. The cells show its real files.">&sub; subset</span>' : '';
-            return `<tr${this._rowAttr(row)}>
+            return `<tr>
                 <td class="nway-open" data-fn-open="${Number(ri)}" title="Compare this row's functions: strings, APIs, callees, constants and code" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${sub}</span></td>
                 <td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
@@ -1673,11 +1688,10 @@
             const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-gall]');
             if (!t) return;
             if (t.dataset.gtoggle !== undefined || t.dataset.gall) {
-                if (t.dataset.gall === 'close') this._gclosed = new Set(Object.keys(this.data.groups || {}));
-                else if (t.dataset.gall) this._gclosed.clear();
-                else if (!this._gclosed.delete(t.dataset.gtoggle)) this._gclosed.add(t.dataset.gtoggle);
-                this._scrollSave();
-                return this.render();
+                return this._gChange(() => {
+                    if (t.dataset.gall) { this._gdef = t.dataset.gall === 'open' ? 'all' : 'none'; this._gflip.clear(); }
+                    else if (!this._gflip.delete(t.dataset.gtoggle)) this._gflip.add(t.dataset.gtoggle);
+                });
             }
             if (t.dataset.nwayFile) {
                 e.preventDefault(); e.stopPropagation();

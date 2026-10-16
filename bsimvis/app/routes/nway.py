@@ -362,6 +362,7 @@ def _page(doc, args, r=None, pool_id=None):
     total, shown_groups, note = len(filtered), {}, ""
     if args.get("group"):
         # Rows come back in group order; a tag row can repeat under several groups.
+        # A closed group is one `{"g", "header": true}` item with no row.
         try:
             entries, groups, note = nway_group_service.group_rows(
                 filtered, doc, r, args["group"], args
@@ -369,15 +370,19 @@ def _page(doc, args, r=None, pool_id=None):
         except nway_diff_service.BadParams as e:
             abort(400, str(e))
         part = entries[offset : offset + limit] if limit > 0 else entries[offset:]
-        page = [{**row, "g": gid, **extra} for gid, row, extra in part]
+        page = [
+            {**row, "g": gid, **extra} if row else {"g": gid, "header": True}
+            for gid, row, extra in part
+        ]
         needed = {p for gid, _, _ in part for p in groups[gid]["path"]}
         shown_groups = {g: m for g, m in groups.items() if g in needed}
         total = len(entries)
     else:
         page = filtered[offset : offset + limit] if limit > 0 else filtered[offset:]
-    page_fids = {f for row in page for f in _row_fids(row)}
+    real = [row for row in page if not row.get("header")]
+    page_fids = {f for row in real for f in _row_fids(row)}
     if page_clusters:
-        cards = _attach_clusters(r, page, fmeta, pool_id, args)
+        cards = _attach_clusters(r, real, fmeta, pool_id, args)
     return {
         "items": page,
         "clusters": cards,

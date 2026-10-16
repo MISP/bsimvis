@@ -7,13 +7,15 @@ Three modes, all over the rows the table already filtered and sorted:
 - `same`: rows that are probably one function the matcher split, joined by a
   shared name and/or a shared caller. Rows that share a file are never joined.
 
-`group_rows` returns `(entries, groups)`. `entries` is the flat row list in
-display order, `(group id, row, extra fields)`; a tag row can appear under
-several groups. `groups` is `{id: meta}` in display order; `meta["path"]` lists
-the ancestor ids a client prints a header for. Masks go out as 0/1 strings over
-the table's columns so JavaScript never sees a big int.
+`group_rows` returns `(entries, groups, note)`. `entries` is the flat list in
+display order, `(group id, row, extra fields)`; a closed group is one entry with
+no row, and a tag row can appear under several groups. `groups` is `{id: meta}`
+in display order; `meta["path"]` lists the ancestor ids a client prints a header
+for. Masks go out as 0/1 strings over the table's columns so JavaScript never
+sees a big int.
 """
 
+import json
 import re
 from collections import Counter, defaultdict
 from itertools import combinations
@@ -352,11 +354,38 @@ def group_rows(rows, doc, r, mode, params):
         except ValueError:
             raise BadParams("group_min_link must be a number")
         pairs, note = same_groups(rows, doc, r, n, sort, evidence, min_link)
-    entries, groups = [], {}
+    return _entries(pairs, params), {g["id"]: g for g, _ in pairs}, note
+
+
+def _entries(pairs, params):
+    """Flat display list: a header entry `(id, None, {})` per visible group, then its rows when open.
+
+    `group_open` (`none` default, or `all`) is the default state of every group
+    and `group_flip` (JSON list of ids) the groups that differ from it. A group
+    under a closed ancestor is not listed at all.
+    """
+    default = params.get("group_open") or "none"
+    if default not in ("none", "all"):
+        raise BadParams("group_open must be none or all")
+    try:
+        flip = json.loads(params.get("group_flip") or "[]")
+    except ValueError:
+        raise BadParams("group_flip must be a JSON list of group ids")
+    if not isinstance(flip, list) or not all(isinstance(i, str) for i in flip):
+        raise BadParams("group_flip must be a JSON list of group ids")
+    flip = set(flip)
+
+    def is_open(gid):
+        return (default == "all") != (gid in flip)
+
+    entries = []
     for g, items in pairs:
-        groups[g["id"]] = g
-        entries += [(g["id"], row, extra) for row, extra in items]
-    return entries, groups, note
+        if not all(is_open(a) for a in g["path"][:-1]):
+            continue
+        entries.append((g["id"], None, {}))
+        if is_open(g["id"]):
+            entries += [(g["id"], row, extra) for row, extra in items]
+    return entries
 
 
 def demo():
@@ -412,6 +441,35 @@ def demo():
     }
     assert len(tree["tag:yara:botnet>yara:botnet:mirai"]) == 2
     assert len(tree["tag:yara:botnet"]) == 0 and len(tree["tag:(no tag)"]) == 1
+    # open/closed: headers always, rows only for open groups, nothing under a closed parent
+    pairs = [
+        ({"id": "a", "path": ["a"]}, [("r1", {}), ("r2", {})]),
+        ({"id": "b", "path": ["a", "b"]}, [("r3", {})]),
+        ({"id": "c", "path": ["c"]}, [("r4", {})]),
+    ]
+    ids = lambda p: [(g, r) for g, r, _ in _entries(pairs, p)]
+    assert ids({}) == [("a", None), ("c", None)]
+    assert ids({"group_open": "all"}) == [
+        ("a", None),
+        ("a", "r1"),
+        ("a", "r2"),
+        ("b", None),
+        ("b", "r3"),
+        ("c", None),
+        ("c", "r4"),
+    ]
+    assert ids({"group_flip": '["a"]'}) == [
+        ("a", None),
+        ("a", "r1"),
+        ("a", "r2"),
+        ("b", None),
+        ("c", None),
+    ]
+    assert ids({"group_open": "all", "group_flip": '["a"]'}) == [
+        ("a", None),
+        ("c", None),
+        ("c", "r4"),
+    ]
     print("nway_group_service demo ok")
 
 

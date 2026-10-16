@@ -2708,6 +2708,8 @@ class BinSimNway(Resource):
             "group_ev": "group=same: name, call or name,call (default). call = a shared caller row",
             "group_min_link": "group=same: a shared caller joins two rows only when an edge between them scores at least this (default 0.3; 0 = no edge needed)",
             "group_sort": "Order of the groups: weight (default), rows or files",
+            "group_open": "Default state of every group: none (default, headers only) or all. Closed groups return one `header` item and no rows, so `total`/`offset` count headers and rows together",
+            "group_flip": "JSON list of group ids whose state differs from group_open",
             "limit": "Page size",
             "offset": "Pagination offset",
         }

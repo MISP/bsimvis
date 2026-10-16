@@ -5485,22 +5485,29 @@ def test_nway_diff():
         _items, _groups = _g["items"], _g["groups"]
         _rows = [i for i in _items if not i.get("header")]
         check(
-            f"{_label}: every row names a group on the page",
-            all(i.get("g") in _groups for i in _items),
+            f"{_label}: every row names a group on the page (or none, at the top)",
+            all(i.get("g") in _groups or i.get("g") == "" for i in _items),
+        )
+        check(
+            f"{_label}: no catch-all group",
+            all(m["kind"] not in ("other", "rest") for m in _groups.values()),
         )
         # Collapsed (the default): one header per group, no rows.
         _, _shut = _nway(tab="all", scope="all", limit=1000, group=_mode, **_extra)
         check(
             f"{_label}: groups start closed, headers only",
-            _shut and _shut["items"] and all(i.get("header") for i in _shut["items"]),
+            _shut
+            and _shut["items"]
+            and all(i.get("header") or i.get("g") == "" for i in _shut["items"]),
             str(_shut and _shut["total"]),
         )
         # A group's rows are contiguous, so a client prints one header per group.
+        # (with a merge, the rows with no partner follow the merged groups under the same parent)
         _seq = [i["g"] for i in _items]
         _runs = [g for n, g in enumerate(_seq) if n == 0 or g != _seq[n - 1]]
         check(
             f"{_label}: a group's rows are contiguous",
-            len(_runs) == len(set(_runs)),
+            _extra.get("group_merge") or len(_runs) == len(set(_runs)),
         )
         # Only a tag row can repeat (once per tag); the other modes keep every row once.
         check(
@@ -5528,7 +5535,7 @@ def test_nway_diff():
                     sum(bin(m).count("1") for m in ms)
                     == bin(functools.reduce(operator.or_, ms)).count("1")
                     for g, ms in _masks.items()
-                    if _groups[g]["kind"] == "same"
+                    if g in _groups and _groups[g]["kind"] == "same"
                 ),
             )
     # Levels nest, and a merge comes first: merged functions are grouped by the lane of all their files.
@@ -5544,8 +5551,7 @@ def test_nway_diff():
         _label = f"nway group={_chain} {_extra}"
         if not check(f"{_label}: served", _st == 200 and _n, f"HTTP {_st}"):
             continue
-        # one path step per level, plus the same-function / no-partner step of a merge
-        _depth = len(_chain.split(",")) + (1 if _extra.get("group_merge") else 0)
+        _depth = len(_chain.split(","))
         _leaf = [i for i in _n["items"] if not i.get("header")]
         check(
             f"{_label}: rows sit under a group {_depth} levels deep",

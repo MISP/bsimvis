@@ -1574,12 +1574,6 @@
                 const more = `${g.sub ? chip('sub', '\u2282 subset', 'Its files are a subset of this bundle, so it joined the smallest bundle that holds them.') : ''}${g.also > 1 ? chip('also', `\u00d7${Number(g.also)}`, 'Listed under several tags on this axis.') : ''}`;
                 title = `${(g.names || []).map(x => `<span class="nway-gname">${escapeHtml(x)}</span>`).join(' + ')}${ev}${more}`;
                 note = `${g.files} of ${n} files together${g.link ? ` &middot; best link ${Number(g.link).toFixed(2)}, under the edge` : ''}`;
-            } else if (g.kind === 'rest') {
-                title = 'No partner found';
-                note = 'Rows with no row to join under the chosen evidence.';
-            } else {
-                title = 'Other rows';
-                note = 'Rows that fit no bundle.';
             }
             // The files the group covers, one square per file column: the same grid as the rows below.
             const files = g.kind === 'lane' ? g.mask : g.union, cols = this.data.columns;
@@ -1608,7 +1602,9 @@
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             const also = row.also > 1 ? `<span class="nway-gchip also" title="This row has ${Number(row.also)} tags on this axis, so it is listed under each of them">&times;${Number(row.also)}</span>` : '';
             const sub = row.sub ? '<span class="nway-gchip sub" title="Its files are a subset of this bundle, so it joined the smallest bundle that holds them. The cells show its real files.">&sub; subset</span>' : '';
-            return `<tr>
+            // Rows are indented one step past the header of the group they sit in, so a row with no partner lines up with the merged functions beside it.
+            const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
+            return `<tr${depth ? ` class="nway-in" style="--gd:${depth}"` : ''}>
                 <td class="nway-open" data-fn-open="${Number(ri)}" title="Compare this row's functions: strings, APIs, callees, constants and code" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${sub}</span></td>
                 <td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>

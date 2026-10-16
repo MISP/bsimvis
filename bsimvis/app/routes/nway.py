@@ -374,7 +374,7 @@ def _page(doc, args, r=None, pool_id=None):
             {**row, "g": gid, **extra} if row else {"g": gid, "header": True}
             for gid, row, extra in part
         ]
-        needed = {p for gid, _, _ in part for p in groups[gid]["path"]}
+        needed = {p for gid, _, _ in part if gid in groups for p in groups[gid]["path"]}
         shown_groups = {g: m for g, m in groups.items() if g in needed}
         total = len(entries)
     else:

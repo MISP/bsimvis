@@ -12,7 +12,7 @@ Two steps over the rows the table already filtered and sorted:
    a function split over two families sits in the lane of both together.
 
 Under every leaf, merged functions are "same function" sub-groups holding their
-rows, and rows with no partner share one "no partner" group.
+rows. Rows with no partner are listed directly under the leaf, after them.
 
 `group_rows` returns `(entries, groups, note)`. `entries` is the flat list in
 display order, `(group id, row, extra fields)`; a closed group is one entry with
@@ -33,7 +33,6 @@ from bsimvis.app.services.tag_taxonomy import tag_body, tag_prefixes
 
 MODES = ("tag", "lane")
 SORTS = ("weight", "rows", "files")
-LANES = 12  # lanes kept before the rest go to "other"
 TAG_FANOUT = 3  # tags of one axis a row is listed under, most shared first
 NAME_BUCKET = 12  # rows sharing one name that are paired up
 CALL_HUB = 25  # a caller with more callee rows than this says nothing
@@ -81,30 +80,30 @@ def _order(groups, sort):
 
 
 def lane_groups(rows, n, sort):
-    """One group per bundle of rows with the same file set, plus "other"."""
+    """One group per set of files. A unit whose files are a subset of a shared bundle joins it."""
     count = Counter(r["mask"] for r in rows)
-    lanes = [m for m, c in count.most_common() if c >= 2][:LANES]
+    bundles = [m for m, c in count.items() if c >= 2]
     members = defaultdict(list)
     for r in rows:
-        lane = r["mask"] if r["mask"] in lanes else None
-        if lane is None:
+        lane = r["mask"]
+        if lane not in bundles:
             # a subset of a bundle's files joins the smallest bundle that holds it
-            fits = [m for m in lanes if not r["mask"] & ~m]
-            lane = min(fits, key=_pop) if fits else None
-        members[lane].append((r, lane is not None and lane != r["mask"]))
+            fits = [m for m in bundles if not lane & ~m]
+            if fits:
+                lane = min(fits, key=_pop)
+        members[lane].append((r, lane != r["mask"]))
     out = []
     for lane, items in members.items():
         g = _meta([r for r, _ in items], n)
         g.update(
-            id=f"lane:{_bits(lane, n)}" if lane is not None else "lane:other",
-            kind="lane" if lane is not None else "other",
-            mask=_bits(lane, n) if lane is not None else None,
+            id=f"lane:{_bits(lane, n)}",
+            kind="lane",
+            mask=_bits(lane, n),
             subset=sum(1 for _, s in items if s),
-            path=[],
         )
         g["path"] = [g["id"]]
         out.append((g, [(r, {"sub": True} if s else {}) for r, s in items]))
-    out.sort(key=lambda p: (p[0]["kind"] == "other", -_rank(p[0], sort), p[0]["id"]))
+    out.sort(key=lambda p: (-_rank(p[0], sort), p[0]["id"]))
     return out
 
 
@@ -383,14 +382,9 @@ def _expand(units, ctx, parent_id, parent_path, carried):
     )
     single = [u for u in units if "_rows" not in u]
     if single:
-        m = _meta(single, n)
-        m.update(id="same:rest", kind="rest", path=["same:rest"])
-        pairs.append(
-            (
-                _graft(m, parent_id, parent_path),
-                [(u, carried.get(id(u), {})) for u in single],
-            )
-        )
+        # rows with no partner sit directly under the parent, after the merged functions
+        head = {"id": parent_id, "path": list(parent_path), "headless": True}
+        pairs.append((head, [(u, carried.get(id(u), {})) for u in single]))
     return pairs
 
 
@@ -452,7 +446,8 @@ def group_rows(rows, doc, r, mode, params):
             raise BadParams("group_min_link must be a number")
         units, ctx["note"] = merge_units(rows, doc, r, evidence, min_link)
     pairs = _nest(units, levels, ctx, "", [], {})
-    return _entries(pairs, params), {g["id"]: g for g, _ in pairs}, ctx["note"]
+    groups = {g["id"]: g for g, _ in pairs if not g.get("headless")}
+    return _entries(pairs, params), groups, ctx["note"]
 
 
 def _entries(pairs, params):
@@ -478,6 +473,11 @@ def _entries(pairs, params):
 
     entries = []
     for g, items in pairs:
+        if g.get("headless"):
+            # rows of the parent group itself: no header of their own
+            if all(is_open(a) for a in g["path"]):
+                entries += [(g["id"], row, extra) for row, extra in items]
+            continue
         if not all(is_open(a) for a in g["path"][:-1]):
             continue
         entries.append((g["id"], None, {}))
@@ -500,7 +500,8 @@ def demo():
     lanes = lane_groups(rows, 4, "weight")
     assert lanes[0][0]["id"] == "lane:1100" and lanes[0][0]["rows"] == 4
     assert lanes[0][0]["subset"] == 1
-    assert lanes[1][0]["kind"] == "other" and lanes[1][0]["rows"] == 1
+    # no catch-all: a row that fits no bundle is a lane of its own
+    assert lanes[1][0]["id"] == "lane:0011" and lanes[1][0]["rows"] == 1
 
     # names: suffixes and auto names
     assert name_key({"name": "resolv_lookup.part.0"}) == "resolv_lookup"
@@ -534,14 +535,17 @@ def demo():
         "note": "",
     }
     got = _nest(units, ["lane"], ctx, "", [], {})
-    ids = [g["id"] for g, _ in got]
-    assert ids == ["lane:other", "lane:other/same:0", "lane:other/same:rest"], ids
-    assert got[0][0]["rows"] == 4 and got[0][1] == []
-    assert [len(items) for _, items in got[1:]] == [2, 2]
-    assert got[1][0]["path"] == ["lane:other", "lane:other/same:0"]
-    # no levels: merged functions at the top
+    heads = [g["id"] for g, _ in got if not g.get("headless")]
+    assert heads == ["lane:1111", "lane:1111/same:0", "lane:0100", "lane:1000"], heads
+    own = [(g["path"], len(items)) for g, items in got if g.get("headless")]
+    assert own == [(["lane:0100"], 1), (["lane:1000"], 1)], own
+    merged_pair = next(p for p in got if p[0]["id"] == "lane:1111/same:0")
+    assert merged_pair[0]["path"] == ["lane:1111", "lane:1111/same:0"]
+    assert len(merged_pair[1]) == 2 and got[0][1] == []
+    # no levels: merged functions first, then the rows with no partner at the top
     top = _nest(units, [], ctx, "", [], {})
-    assert [g["id"] for g, _ in top] == ["same:0", "same:rest"]
+    assert [g["id"] for g, _ in top] == ["same:0", ""] and top[1][0]["headless"]
+    assert len(top[1][1]) == 2
     for mode in ("lane,lane", "bogus", "same"):
         try:
             group_rows(doc["rows"], doc, None, mode, {})

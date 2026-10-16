@@ -31,9 +31,19 @@
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
         columns: 'auto', child_presence: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
+        group: '', group_axis: '', group_axis_b: '', group_ev: '', group_min_link: '', group_sort: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'column', 'focus', 'focus_rule', 'side'];
+    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_ev', 'group_min_link', 'group_sort'];
+    // Group by: rows bundled by file set, nested under one tag axis, or joined as one probable function.
+    const GROUPS = [
+        ['', 'None', 'One flat list, sorted by a column.'],
+        ['lane', 'Lane', 'Rows bundled by the set of files they appear in, biggest bundle first. A row whose files are a subset of a bundle joins the smallest one that holds it.'],
+        ['tag', 'Tag', 'Rows nested under the tags of one axis. A row with several tags on the axis is listed under each.'],
+        ['same', 'Same function', 'Rows that are probably one function the matcher split: they share a name, or a caller and a weak link. Rows that share a file are never joined.'],
+    ];
+    const TAG_AXES = [['origin', 'Origin'], ['severity', 'Severity'], ['category', 'Behavior'], ['user', 'User'], ['capa', 'Capa'], ['mitre', 'ATT&CK'], ['mbc', 'MBC'], ['yara', 'YARA'], ['ruleset', 'Ruleset'], ['family', 'Family'], ['vuln', 'Vulnerability']];
+    const GROUP_SORTS = [['weight', 'Features'], ['rows', 'Rows'], ['files', 'Files']];
     const LOW_SUPPORT = 0.5;
     // Same icon + color as the Code / Library / All pills in the table's Show control.
     const AXIS = { code: { icon: 'fa-solid fa-code', color: 'var(--info, #3b82f6)' }, library: { icon: 'fa-solid fa-cubes', color: 'var(--warning, #d97706)' } };
@@ -103,6 +113,7 @@
             this._debounce = null;
             this._io = null;
             this._loading = false;
+            this._gclosed = new Set();
             if (window.Paging.mode() === 'scroll') this.state.offset = 0;
             NwayPanel.current = this;
             this._onKey = e => this._cgKey(e);
@@ -151,6 +162,7 @@
         }
 
         _set(patch) {
+            if (Object.keys(patch).some(k => k.startsWith('group'))) this._gclosed.clear();
             Object.assign(this.state, patch);
             const s = { ...this.state };
             // Scroll mode keeps the offset out of the URL (and out of the state).
@@ -286,7 +298,24 @@
                 advanced,
             ].join('');
             return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${search}</div>
-                <div class="nway-bar">${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}</span></div>`;
+                <div class="nway-bar">${filter}${this._groupBar()}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}</span></div>`;
+        }
+
+        _groupBar() {
+            const s = this.state, g = s.group || '', axis = s.group_axis || 'origin';
+            const sel = (key, cur, opts, none) => `<select class="view-btn" data-select="${key}">${none ? '<option value="">none</option>' : ''}${opts.map(([v, t]) => `<option value="${escapeAttr(v)}"${v === cur ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('')}</select>`;
+            const ev = new Set((s.group_ev || 'name,call').split(',').filter(Boolean));
+            const box = (k, text, tip) => `<label class="nway-ctl" title="${escapeAttr(tip)}"><input type="checkbox" data-ev="${k}"${ev.has(k) ? ' checked' : ''}> ${text}</label>`;
+            const parts = [this._seg('Group by', 'group', GROUPS, 'Put related rows together. The column sort still orders the rows inside each group.')];
+            if (g === 'tag') parts.push(`<span class="nway-ctlwrap"><span class="nway-lbl">Axis</span>${sel('group_axis', axis, TAG_AXES)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, TAG_AXES.filter(([k]) => k !== axis), true)}</span>`);
+            if (g === 'same') {
+                parts.push(`<span class="nway-ctlwrap"><span class="nway-lbl">Evidence</span>${box('name', 'Name', 'Rows with the same function name (auto names such as FUN_ and compiler suffixes are ignored).')}${box('call', 'Call position', 'Rows under the same caller, on different files, with a weak edge between them. Needs the callers of every function.')}</span>`);
+                if (ev.has('call')) parts.push(this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.'));
+            }
+            if (g) {
+                parts.push(`<span class="nway-ctlwrap"><span class="nway-lbl">Order groups</span>${sel('group_sort', s.group_sort || 'weight', GROUP_SORTS)}<button class="view-btn" data-gall="open">Expand all</button><button class="view-btn" data-gall="close">Collapse all</button></span>`);
+            }
+            return parts.join('');
         }
 
         // Match settings live in a popover; the summary shows what is set, so the bar stays one line.
@@ -1482,13 +1511,67 @@
             this._cgShow();
         }
 
+        // ---- Group by: header rows between the table rows, collapsible ----
+        _rowAttr(row) {
+            const g = row.g && (this.data.groups || {})[row.g];
+            return g && g.path.some(id => this._gclosed.has(id)) ? ' hidden' : '';
+        }
+
+        // The columns a mask ("0110...") covers, as the call graph's presence squares.
+        _gStrip(mask) {
+            const cols = this.data.columns, n = mask.length, sz = n <= 16 ? 11 : n <= 64 ? 6 : 4;
+            const sq = [...mask].map((b, i) => `<i class="${b === '1' ? 'on' : ''}"${n <= 16 ? ` style="--h:${this._fileHue(i)}"` : ''} title="${escapeAttr(cols[i] ? cols[i].file_name || cols[i].label || '' : '')}"></i>`).join('');
+            return `<span class="nway-strip r-mid${n <= 16 ? ' hued' : ''}" style="--sq:${sz}px">${sq}</span>`;
+        }
+
+        _groupHead(g, depth, ancestors) {
+            const n = g.union.length, closed = this._gclosed.has(g.id);
+            const chip = (cls, text, tip) => `<span class="nway-gchip ${cls}" title="${escapeAttr(tip)}">${escapeHtml(text)}</span>`;
+            let title, note = '';
+            if (g.kind === 'tag') {
+                title = `<span class="nway-gtag" style="color:${escapeAttr(window.TagColor.forTag(g.label))}">${escapeHtml(g.label)}</span>`;
+            } else if (g.kind === 'lane') {
+                title = `${this._gStrip(g.mask)} <b>${g.mask.split('1').length - 1} of ${n} files</b>`;
+                note = g.subset ? `${Number(g.subset)} subset row${g.subset > 1 ? 's' : ''} joined` : '';
+            } else if (g.kind === 'same') {
+                const ev = (g.evidence || []).map(k => k === 'name' ? chip('ev-n', 'name', 'The rows share a function name') : chip('ev-c', 'call position', 'The rows share a caller and a weak edge links them')).join('');
+                title = `${(g.names || []).map(x => `<span class="nway-gname">${escapeHtml(x)}</span>`).join(' + ')}${ev}`;
+                note = `${g.files} of ${n} files together${g.link ? ` &middot; best link ${Number(g.link).toFixed(2)}, under the edge` : ''}`;
+            } else if (g.kind === 'rest') {
+                title = 'No partner found';
+                note = 'Rows with no row to join under the chosen evidence.';
+            } else {
+                title = 'Other rows';
+                note = 'Rows that fit no bundle.';
+            }
+            const strip = g.kind === 'lane' ? '' : this._gStrip(g.union);
+            const hidden = ancestors.some(a => this._gclosed.has(a));
+            return `<tr class="nway-grow d${depth}"${hidden ? ' hidden' : ''}><td colspan="${this.data.columns.length + 7}"><button class="nway-gh" data-gtoggle="${escapeAttr(g.id)}" aria-expanded="${!closed}" style="padding-left:${10 + depth * 20}px"><b class="nway-gchev">${closed ? '&#9656;' : '&#9662;'}</b><span class="nway-gt">${title}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span>${strip}</button></td></tr>`;
+        }
+
+        // Rows, with a header printed whenever a row's group path leaves the one printed last.
+        _rows(items, at) {
+            if (!at) this._gprint = [];
+            const groups = this.data.groups || {};
+            return items.map((row, i) => {
+                const path = (row.g && groups[row.g] && groups[row.g].path) || [];
+                let k = 0, head = '';
+                while (k < path.length && this._gprint[k] === path[k]) k++;
+                for (let d = k; d < path.length; d++) head += this._groupHead(groups[path[d]], d, path.slice(0, d));
+                this._gprint = path;
+                return head + this._row(row, at + i);
+            }).join('');
+        }
+
         _row(row, ri) {
             const cols = this.data.columns;
             const extra = Array.isArray(row.names) ? row.names.length - 1 : Number(row.names || 0) - 1;
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
-            return `<tr>
-                <td class="nway-open" data-fn-open="${Number(ri)}" title="Compare this row's functions: strings, APIs, callees, constants and code" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}</span></td>
+            const also = row.also > 1 ? `<span class="nway-gchip also" title="This row has ${Number(row.also)} tags on this axis, so it is listed under each of them">&times;${Number(row.also)}</span>` : '';
+            const sub = row.sub ? '<span class="nway-gchip sub" title="Its files are a subset of this bundle, so it joined the smallest bundle that holds them. The cells show its real files.">&sub; subset</span>' : '';
+            return `<tr${this._rowAttr(row)}>
+                <td class="nway-open" data-fn-open="${Number(ri)}" title="Compare this row's functions: strings, APIs, callees, constants and code" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${sub}</span></td>
                 <td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
@@ -1525,10 +1608,10 @@
                 return;
             }
             const d = this.data;
-            const rows = d.items.map((r, i) => this._row(r, i)).join('');
+            const rows = this._rows(d.items, 0);
             const off = Number(d.offset), total = Number(d.total);
             const scroll = window.Paging.mode() === 'scroll';
-            this.el.innerHTML = `<div class="nway-panel">${this._controls()}${this._notes()}
+            this.el.innerHTML = `<div class="nway-panel">${this._controls()}${this._notes()}${d.group_note ? `<div class="nway-note warn">${escapeHtml(d.group_note)}</div>` : ''}
                 <div class="nway-card table-scope">
                     <div class="nway-scroll">
                         <table id="nway-table" class="nway-table">
@@ -1564,17 +1647,25 @@
             const d = this.data;
             Object.assign(d.functions_metadata, body.functions_metadata);
             Object.assign(d.clusters, body.clusters);
+            Object.assign(d.groups, body.groups);
             const at = d.items.length;
             d.items.push(...body.items);
             d.total = body.total;
-            this.el.querySelector('#nway-table tbody').insertAdjacentHTML('beforeend', body.items.map((r, i) => this._row(r, at + i)).join(''));
+            this.el.querySelector('#nway-table tbody').insertAdjacentHTML('beforeend', this._rows(body.items, at));
             this.el.querySelector('.table-footer-left').innerHTML = window.Paging.footer({ offset: 0, total: Number(d.total), size: PAGE, shown: d.items.length });
             this._watch();
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-gall]');
             if (!t) return;
+            if (t.dataset.gtoggle !== undefined || t.dataset.gall) {
+                if (t.dataset.gall === 'close') this._gclosed = new Set(Object.keys(this.data.groups || {}));
+                else if (t.dataset.gall) this._gclosed.clear();
+                else if (!this._gclosed.delete(t.dataset.gtoggle)) this._gclosed.add(t.dataset.gtoggle);
+                this._scrollSave();
+                return this.render();
+            }
             if (t.dataset.nwayFile) {
                 e.preventDefault(); e.stopPropagation();
                 const f = this._files().find(x => x.id === t.dataset.nwayFile);
@@ -1619,7 +1710,11 @@
 
         _onChange(e) {
             const t = e.target;
-            if (t.dataset.select) this._set({ [t.dataset.select]: t.value, offset: 0 });
+            if (t.dataset.ev) {
+                const ev = new Set((this.state.group_ev || 'name,call').split(',').filter(k => k && k !== 'none'));
+                if (t.checked) ev.add(t.dataset.ev); else ev.delete(t.dataset.ev);
+                this._set({ group_ev: [...ev].join(',') || 'none', offset: 0 });
+            } else if (t.dataset.select) this._set({ [t.dataset.select]: t.value, offset: 0 });
             else if (t.dataset.range) this._set({ [t.dataset.range]: t.value, offset: 0 });
             else if (t.dataset.text) this._set({ [t.dataset.text]: t.value.trim(), offset: 0 });
         }

@@ -753,7 +753,7 @@ window.ClusterDetailView = {
         if (!el || !this.selectedClusterUuid || !window.NwayPanel) return;
         if (this._nway) this._nway.destroy();
         const url = new URLSearchParams(window.location.search);
-        const keys = ['scope', 'k', 'min_edge', 'mode', 'columns', 'child_presence', 'q', 'tags', 'offset'];
+        const keys = ['scope', 'k', 'min_edge', 'mode', 'columns', 'child_presence', 'q', 'tags', 'offset', 'group', 'group_axis', 'group_axis_b', 'group_ev', 'group_min_link', 'group_sort'];
         const state = {};
         keys.forEach(k => { if (url.get(k)) state[k] = url.get(k); });
         if (url.get('ntab')) state.tab = url.get('ntab');

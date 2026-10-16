@@ -6,7 +6,11 @@ from flask_restx import abort
 
 from bsimvis.app.routes._list_query import fnum, in_bounds
 from bsimvis.app.routes.bin_sim import _fids_tags, _fn_haystack
-from bsimvis.app.services import nway_diff_service, nway_facets_service
+from bsimvis.app.services import (
+    nway_diff_service,
+    nway_facets_service,
+    nway_group_service,
+)
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME
 from bsimvis.app.services.bin_sim_service import _origin_coll
 from bsimvis.app.services.redis_client import get_queue_redis, get_redis
@@ -355,14 +359,31 @@ def _page(doc, args, r=None, pool_id=None):
         limit = int(args.get("limit", 100))
     except ValueError:
         abort(400, "offset and limit must be integers")
-    page = filtered[offset : offset + limit] if limit > 0 else filtered[offset:]
+    total, shown_groups, note = len(filtered), {}, ""
+    if args.get("group"):
+        # Rows come back in group order; a tag row can repeat under several groups.
+        try:
+            entries, groups, note = nway_group_service.group_rows(
+                filtered, doc, r, args["group"], args
+            )
+        except nway_diff_service.BadParams as e:
+            abort(400, str(e))
+        part = entries[offset : offset + limit] if limit > 0 else entries[offset:]
+        page = [{**row, "g": gid, **extra} for gid, row, extra in part]
+        needed = {p for gid, _, _ in part for p in groups[gid]["path"]}
+        shown_groups = {g: m for g, m in groups.items() if g in needed}
+        total = len(entries)
+    else:
+        page = filtered[offset : offset + limit] if limit > 0 else filtered[offset:]
     page_fids = {f for row in page for f in _row_fids(row)}
     if page_clusters:
         cards = _attach_clusters(r, page, fmeta, pool_id, args)
     return {
         "items": page,
         "clusters": cards,
-        "total": len(filtered),
+        "total": total,
+        "groups": shown_groups,
+        "group_note": note,
         "offset": offset,
         "limit": limit,
         "tab": tab,

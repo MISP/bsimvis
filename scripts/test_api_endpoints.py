@@ -11,6 +11,8 @@ Usage:
     uv run python test_api_endpoints.py --verbose
 """
 
+import functools
+import operator
 import sys
 import time
 import json
@@ -5460,6 +5462,79 @@ def test_nway_diff():
     check(
         "nway: every core row has a function in both files",
         all(len(r["cells"]) == 2 and r["span"] == 2 for r in core["items"]),
+    )
+
+    # Group by: rows come back in group order, each tagged with its group.
+    _, flat = _nway(tab="all", scope="all", limit=1000)
+    check("nway group: off by default", flat and flat["groups"] == {})
+    for _mode, _extra in (
+        ("lane", {}),
+        ("tag", {"group_axis": "origin"}),
+        ("tag", {"group_axis": "capa", "group_axis_b": "yara"}),
+        ("same", {"group_ev": "name"}),
+        ("same", {"group_ev": "name,call", "group_min_link": 0}),
+        ("same", {"group_ev": "none"}),
+    ):
+        _st, _g = _nway(tab="all", scope="all", limit=1000, group=_mode, **_extra)
+        _label = f"nway group={_mode} {_extra}"
+        if not check(f"{_label}: served", _st == 200 and _g, f"HTTP {_st}"):
+            continue
+        _items, _groups = _g["items"], _g["groups"]
+        check(
+            f"{_label}: every row names a group on the page",
+            all(i.get("g") in _groups for i in _items),
+        )
+        # A group's rows are contiguous, so a client prints one header per group.
+        _seq = [i["g"] for i in _items]
+        _runs = [g for n, g in enumerate(_seq) if n == 0 or g != _seq[n - 1]]
+        check(
+            f"{_label}: a group's rows are contiguous",
+            len(_runs) == len(set(_runs)),
+        )
+        # Only a tag row can repeat (once per tag); the other modes keep every row once.
+        check(
+            f"{_label}: total counts the grouped rows",
+            _g["total"] == len(_items)
+            and (
+                _g["total"] >= flat["total"]
+                if _mode == "tag"
+                else _g["total"] == flat["total"]
+            ),
+            f"{_g['total']} vs flat {flat['total']}",
+        )
+        check(
+            f"{_label}: group masks match the column count",
+            all(len(m["union"]) == len(_g["columns"]) for m in _groups.values()),
+        )
+        if _mode == "same":
+            # Rows joined into one function never share a file.
+            _masks = {}
+            for i in _items:
+                _masks.setdefault(i["g"], []).append(i["mask"])
+            check(
+                f"{_label}: joined rows share no file",
+                all(
+                    sum(bin(m).count("1") for m in ms)
+                    == bin(functools.reduce(operator.or_, ms)).count("1")
+                    for g, ms in _masks.items()
+                    if _groups[g]["kind"] == "same"
+                ),
+            )
+    check(
+        "nway group: unknown mode is a 400",
+        _nway(group="bogus")[0] == 400,
+    )
+    check(
+        "nway group: unknown tag axis is a 400",
+        _nway(group="tag", group_axis="bogus")[0] == 400,
+    )
+    check(
+        "nway group: unknown group order is a 400",
+        _nway(group="lane", group_sort="bogus")[0] == 400,
+    )
+    check(
+        "nway group: unknown evidence is a 400",
+        _nway(group="same", group_ev="bogus")[0] == 400,
     )
 
     # Paging, sorting, filtering.

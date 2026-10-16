@@ -3017,8 +3017,10 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .nway-gst { color: var(--dim); font: 0.72rem 'Consolas', monospace; }
 .nway-gnote { flex: 1 1 200px; min-width: 0; color: var(--dim); font-size: 0.76rem; }
 /* Presence squares: the file columns of the rows, the column headers and the group headers share them.
-   The table hugs its content so the squares stay next to the numbers instead of at the far edge. */
-.nway-table { width: auto; }
+   Fixed layout with a colgroup (see _colgroup) so expanding a group never moves a column. */
+.nway-bar label.nway-ctl { font-size: 0.8rem; }
+.nway-table { table-layout: fixed; }
+.nway-table td.nway-open, .nway-table td.cluster-cards-cell { overflow: hidden; overflow-wrap: anywhere; }
 .nway-table th.sq, .nway-table td.sq, .nway-table tr.nway-grow td.sq { min-width: 0; width: 28px; max-width: 28px; padding: 4px 2px; text-align: center; }
 .nway-sq { display: inline-grid; place-items: center; box-sizing: border-box; width: 18px; height: 18px; border: 1px dashed var(--border); border-radius: 3px; vertical-align: middle; font: 600 0.62rem 'Consolas', monospace; color: #111; }
 .nway-sq.on { background: hsl(var(--h, 195) 62% 52%); border: 1px solid transparent; }

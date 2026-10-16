@@ -5530,6 +5530,50 @@ def test_nway_diff():
                     if _groups[g]["kind"] == "same"
                 ),
             )
+    # Several levels nest: each group of the first is split again by the next.
+    for _chain in ("same,lane", "lane,same", "lane,tag,same"):
+        _st, _n = _nway(
+            tab="all", scope="all", limit=1000, group=_chain, group_open="all"
+        )
+        _label = f"nway group={_chain}"
+        if not check(f"{_label}: served", _st == 200 and _n, f"HTTP {_st}"):
+            continue
+        _depth = len(_chain.split(","))
+        _leaf = [i for i in _n["items"] if not i.get("header")]
+        check(
+            f"{_label}: rows sit under a group {_depth} levels deep",
+            _leaf and all(len(_n["groups"][i["g"]]["path"]) >= _depth for i in _leaf),
+        )
+        check(
+            f"{_label}: a group's id extends its parent's",
+            all(
+                m["path"][-1] == gid
+                and (len(m["path"]) == 1 or gid.startswith(m["path"][-2] + "/"))
+                for gid, m in _n["groups"].items()
+            ),
+        )
+        if "tag" not in _chain:
+            check(
+                f"{_label}: every row is listed once",
+                len(_leaf) == flat["total"],
+                f"{len(_leaf)} vs {flat['total']}",
+            )
+        _, _top = _nway(tab="all", scope="all", limit=1000, group=_chain)
+        check(
+            f"{_label}: closed shows only the outer groups",
+            _top
+            and _top["items"]
+            and all(len(_top["groups"][i["g"]]["path"]) == 1 for i in _top["items"]),
+        )
+    check(
+        "nway group: a level can be used once",
+        _nway(group="lane,lane")[0] == 400,
+    )
+    check(
+        "nway group: unknown level in a chain is a 400",
+        _nway(group="lane,bogus")[0] == 400,
+    )
+
     # Opening one closed group (group_flip) lists just that group's rows.
     _, _shut = _nway(tab="all", scope="all", limit=1000, group="lane")
     if _shut and _shut["items"]:

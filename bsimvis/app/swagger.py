@@ -2702,7 +2702,7 @@ class BinSimNway(Resource):
             "support_min": "Minimum share of file pairs matched inside a row (0-1)",
             "sort_col": "span, weight, support, cohesion or name",
             "sort_dir": "asc or desc",
-            "group": "Group the rows: lane (same file set), tag (nest under one tag axis) or same (rows that look like one function: shared name and/or caller). Rows come back in group order with a group id `g`; `groups` describes the ones on the page. sort_col orders rows inside a group",
+            "group": "Group the rows: lane (same file set), tag (nest under one tag axis) or same (rows that look like one function: shared name and/or caller). Several levels separated by commas nest, each once, e.g. `same,lane` splits every same-function group by lane. Rows come back in group order with a group id `g`; `groups` describes the ones on the page. sort_col orders rows inside a group",
             "group_axis": "group=tag: origin (default), severity, category, user, capa, mitre, mbc, yara, ruleset, family or vuln",
             "group_axis_b": "group=tag: a second axis crossed with group_axis",
             "group_ev": "group=same: name, call or name,call (default). call = a shared caller row",

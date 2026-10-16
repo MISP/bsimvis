@@ -43,7 +43,10 @@
         ['same', 'Same function', 'Rows that are probably one function the matcher split: they share a name, or a caller and a weak link. Rows that share a file are never joined.'],
     ];
     const TAG_AXES = [['origin', 'Origin'], ['severity', 'Severity'], ['category', 'Behavior'], ['user', 'User'], ['capa', 'Capa'], ['mitre', 'ATT&CK'], ['mbc', 'MBC'], ['yara', 'YARA'], ['ruleset', 'Ruleset'], ['family', 'Family'], ['vuln', 'Vulnerability']];
-    const GROUP_SORTS = [['weight', 'Features'], ['rows', 'Rows'], ['files', 'Files']];
+    // Widths in px: Function, Span, Features, Support, Cohesion, Cluster, then one square column per file.
+    const DATA_COLS = [380, 64, 90, 90, 90, 210];
+    const SQ_COL = 28;
+    const GROUP_SORTS =[['weight', 'Features'], ['rows', 'Rows'], ['files', 'Files']];
     const LOW_SUPPORT = 0.5;
     // Same icon + color as the Code / Library / All pills in the table's Show control.
     const AXIS = { code: { icon: 'fa-solid fa-code', color: 'var(--info, #3b82f6)' }, library: { icon: 'fa-solid fa-cubes', color: 'var(--warning, #d97706)' } };
@@ -312,17 +315,20 @@
         }
 
         _groupBar() {
-            const s = this.state, g = s.group || '', axis = s.group_axis || 'origin';
+            const s = this.state, lv = (s.group || '').split(',').filter(Boolean), axis = s.group_axis || 'origin';
             const sel = (key, cur, opts, none) => `<select class="view-btn" data-select="${key}">${none ? '<option value="">none</option>' : ''}${opts.map(([v, t]) => `<option value="${escapeAttr(v)}"${v === cur ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('')}</select>`;
             const ev = new Set((s.group_ev || 'name,call').split(',').filter(Boolean));
             const box = (k, text, tip) => `<label class="nway-ctl" title="${escapeAttr(tip)}"><input type="checkbox" data-ev="${k}"${ev.has(k) ? ' checked' : ''}> ${text}</label>`;
-            const parts = [this._seg('Group by', 'group', GROUPS, 'Put related rows together. The column sort still orders the rows inside each group.')];
-            if (g === 'tag') parts.push(`<span class="nway-ctlwrap"><span class="nway-lbl">Axis</span>${sel('group_axis', axis, TAG_AXES)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, TAG_AXES.filter(([k]) => k !== axis), true)}</span>`);
-            if (g === 'same') {
+            // One select per level; a level can only use a grouping the other levels do not, and the next level appears once this one is set.
+            const used = new Set(lv);
+            const chain = [...lv, ''].slice(0, GROUPS.length - 1).map((cur, i) => `<select class="view-btn" data-glevel="${i}" title="${i ? 'Split each group again by' : 'Group the rows by'}"><option value="">${i ? '(none)' : 'None'}</option>${GROUPS.filter(([v]) => v && (v === cur || !used.has(v))).map(([v, t, tip]) => `<option value="${v}" title="${escapeAttr(tip)}"${v === cur ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('')}</select>`).join('<span class="nway-lbl">&rsaquo;</span>');
+            const parts = [`<span class="nway-ctlwrap"><span class="nway-lbl">Group by</span>${chain}${this._tip('Put related rows together. Pick a second and third grouping to split each group again, for example Same function then Lane. The column sort still orders the rows inside each group.')}</span>`];
+            if (lv.includes('tag')) parts.push(`<span class="nway-ctlwrap"><span class="nway-lbl">Axis</span>${sel('group_axis', axis, TAG_AXES)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, TAG_AXES.filter(([k]) => k !== axis), true)}</span>`);
+            if (lv.includes('same')) {
                 parts.push(`<span class="nway-ctlwrap"><span class="nway-lbl">Evidence</span>${box('name', 'Name', 'Rows with the same function name (auto names such as FUN_ and compiler suffixes are ignored).')}${box('call', 'Call position', 'Rows under the same caller, on different files, with a weak edge between them. Needs the callers of every function.')}</span>`);
                 if (ev.has('call')) parts.push(this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.'));
             }
-            if (g) {
+            if (lv.length) {
                 parts.push(`<span class="nway-ctlwrap"><span class="nway-lbl">Order groups</span>${sel('group_sort', s.group_sort || 'weight', GROUP_SORTS)}<button class="view-btn" data-gall="open">Expand all</button><button class="view-btn" data-gall="close">Collapse all</button></span>`);
             }
             return parts.join('');
@@ -1610,6 +1616,15 @@
             </tr>`;
         }
 
+        // Fixed column widths, so opening or closing a group never reflows the columns.
+        _tableWidth() {
+            return DATA_COLS.reduce((a, b) => a + b, 0) + SQ_COL * this.data.columns.length;
+        }
+
+        _colgroup() {
+            return `<colgroup>${DATA_COLS.map(w => `<col style="width:${w}px">`).join('')}${`<col style="width:${SQ_COL}px">`.repeat(this.data.columns.length)}</colgroup>`;
+        }
+
         _head() {
             const s = this.state;
             const th = ([key, label]) => {
@@ -1642,7 +1657,7 @@
             this.el.innerHTML = `<div class="nway-panel">${this._controls()}${this._notes()}${d.group_note ? `<div class="nway-note warn">${escapeHtml(d.group_note)}</div>` : ''}
                 <div class="nway-card table-scope">
                     <div class="nway-scroll">
-                        <table id="nway-table" class="nway-table">
+                        <table id="nway-table" class="nway-table" style="width:${this._tableWidth()}px">${this._colgroup()}
                             <thead>${this._head()}</thead>
                             <tbody>${rows || `<tr><td colspan="${d.columns.length + 7}" class="gap">No rows in this tab.</td></tr>`}</tbody>
                             ${scroll ? `<tfoot><tr><td class="nway-sentinel" colspan="${d.columns.length + 7}"></td></tr></tfoot>` : ''}
@@ -1737,7 +1752,11 @@
 
         _onChange(e) {
             const t = e.target;
-            if (t.dataset.ev) {
+            if (t.dataset.glevel !== undefined) {
+                const next = (this.state.group || '').split(',').filter(Boolean), i = Number(t.dataset.glevel);
+                if (t.value) next[i] = t.value; else next.length = i;
+                this._set({ group: next.join(','), offset: 0 });
+            } else if (t.dataset.ev) {
                 const ev = new Set((this.state.group_ev || 'name,call').split(',').filter(k => k && k !== 'none'));
                 if (t.checked) ev.add(t.dataset.ev); else ev.delete(t.dataset.ev);
                 this._set({ group_ev: [...ev].join(',') || 'none', offset: 0 });

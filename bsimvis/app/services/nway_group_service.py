@@ -325,36 +325,89 @@ def same_groups(rows, doc, r, n, sort, evidence, min_link):
     return out, note
 
 
+def _level(mode, rows, ctx):
+    """The groups of one level over `rows`: [(meta, [(row, extra)])]."""
+    if mode == "lane":
+        return lane_groups(rows, ctx["n"], ctx["sort"])
+    if mode == "tag":
+        return tag_groups(
+            rows, ctx["fmeta"], ctx["n"], ctx["sort"], ctx["axis"], ctx["axis_b"]
+        )
+    pairs, note = same_groups(
+        rows,
+        ctx["doc"],
+        ctx["r"],
+        ctx["n"],
+        ctx["sort"],
+        ctx["evidence"],
+        ctx["min_link"],
+    )
+    ctx["note"] = ctx["note"] or note
+    return pairs
+
+
+def _nest(rows, levels, ctx, parent_id, parent_path, carried):
+    """Groups of `levels[0]` over `rows`, each one split again by the next level.
+
+    A group that has sub-levels lists no rows itself: its sub-groups follow it.
+    Ids and paths of sub-groups are prefixed with their parent's, so one id is
+    unique across the tree. `carried` holds the per-row extras of outer levels.
+    """
+    out = []
+    for g, items in _level(levels[0], rows, ctx):
+        if parent_id:
+            prefix = lambda i: f"{parent_id}/{i}"
+            g["id"] = prefix(g["id"])
+            g["path"] = parent_path + [prefix(p) for p in g["path"]]
+        extras = {
+            id(row): {**carried.get(id(row), {}), **extra} for row, extra in items
+        }
+        if len(levels) == 1:
+            out.append((g, [(row, extras[id(row)]) for row, _ in items]))
+        else:
+            out.append((g, []))
+            out += _nest(
+                [row for row, _ in items], levels[1:], ctx, g["id"], g["path"], extras
+            )
+    return out
+
+
 def group_rows(rows, doc, r, mode, params):
-    """Group `rows` (already filtered and sorted) -> (entries, groups, note)."""
-    if mode not in MODES:
-        raise BadParams(f"group must be one of {MODES}")
+    """Group `rows` (already filtered and sorted) -> (entries, groups, note).
+
+    `mode` is one level (`lane`) or a comma-separated chain (`same,lane`): each
+    level is split again by the next one.
+    """
+    levels = [m for m in (mode or "").split(",") if m]
+    if not levels or set(levels) - set(MODES) or len(set(levels)) != len(levels):
+        raise BadParams(
+            f"group must be {MODES}, one or several separated by commas, each once"
+        )
     sort = params.get("group_sort") or "weight"
     if sort not in SORTS:
         raise BadParams(f"group_sort must be one of {SORTS}")
-    n = len(doc["columns"])
-    note = ""
-    if mode == "lane":
-        pairs = lane_groups(rows, n, sort)
-    elif mode == "tag":
-        pairs = tag_groups(
-            rows,
-            doc["fmeta"],
-            n,
-            sort,
-            params.get("group_axis") or "origin",
-            params.get("group_axis_b") or "",
-        )
-    else:
-        evidence = {e for e in (params.get("group_ev") or "name,call").split(",") if e}
-        if evidence - {"name", "call", "none"}:
+    ctx = {
+        "n": len(doc["columns"]),
+        "sort": sort,
+        "fmeta": doc["fmeta"],
+        "axis": params.get("group_axis") or "origin",
+        "axis_b": params.get("group_axis_b") or "",
+        "doc": doc,
+        "r": r,
+        "note": "",
+    }
+    if "same" in levels:
+        ctx["evidence"] = {
+            e for e in (params.get("group_ev") or "name,call").split(",") if e
+        }
+        if ctx["evidence"] - {"name", "call", "none"}:
             raise BadParams("group_ev must be name, call, name,call or none")
         try:
-            min_link = float(params.get("group_min_link") or 0.3)
+            ctx["min_link"] = float(params.get("group_min_link") or 0.3)
         except ValueError:
             raise BadParams("group_min_link must be a number")
-        pairs, note = same_groups(rows, doc, r, n, sort, evidence, min_link)
-    return _entries(pairs, params), {g["id"]: g for g, _ in pairs}, note
+    pairs = _nest(rows, levels, ctx, "", [], {})
+    return _entries(pairs, params), {g["id"]: g for g, _ in pairs}, ctx["note"]
 
 
 def _entries(pairs, params):
@@ -441,6 +494,34 @@ def demo():
     }
     assert len(tree["tag:yara:botnet>yara:botnet:mirai"]) == 2
     assert len(tree["tag:yara:botnet"]) == 0 and len(tree["tag:(no tag)"]) == 1
+    # nesting: lanes first, then same function inside each lane
+    ctx = {
+        "n": 4,
+        "sort": "weight",
+        "fmeta": {},
+        "axis": "origin",
+        "axis_b": "",
+        "doc": doc,
+        "r": None,
+        "note": "",
+        "evidence": {"name"},
+        "min_link": 0.3,
+    }
+    nested = _nest(doc["rows"], ["lane", "same"], ctx, "", [], {})
+    heads = [g["path"] for g, _ in nested]
+    assert heads[0] == ["lane:other"], heads
+    assert all(p[0] == "lane:other" for p in heads) and len(heads) > 1
+    assert all(p[1].startswith("lane:other/same:") for p in heads[1:]), heads
+    assert sum(len(items) for _, items in nested) == 4
+    assert nested[0][1] == []
+    bad = [("lane,lane", None), ("bogus", None), ("", None)]
+    for mode, _ in bad:
+        try:
+            group_rows(doc["rows"], doc, None, mode, {})
+        except BadParams:
+            continue
+        raise AssertionError(mode)
+
     # open/closed: headers always, rows only for open groups, nothing under a closed parent
     pairs = [
         ({"id": "a", "path": ["a"]}, [("r1", {}), ("r2", {})]),

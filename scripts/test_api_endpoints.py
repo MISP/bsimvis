@@ -5471,9 +5471,10 @@ def test_nway_diff():
         ("lane", {}),
         ("tag", {"group_axis": "origin"}),
         ("tag", {"group_axis": "capa", "group_axis_b": "yara"}),
-        ("same", {"group_ev": "name"}),
-        ("same", {"group_ev": "name,call", "group_min_link": 0}),
-        ("same", {"group_ev": "none"}),
+        ("", {"group_merge": "name"}),
+        ("", {"group_merge": "name,call", "group_min_link": 0}),
+        ("lane", {"group_merge": "name"}),
+        ("lane,tag", {}),
     ):
         _st, _g = _nway(
             tab="all", scope="all", limit=1000, group=_mode, group_open="all", **_extra
@@ -5507,7 +5508,7 @@ def test_nway_diff():
             _g["total"] == len(_items)
             and (
                 len(_rows) >= flat["total"]
-                if _mode == "tag"
+                if "tag" in _mode
                 else len(_rows) == flat["total"]
             ),
             f"{len(_rows)} rows vs flat {flat['total']}",
@@ -5516,7 +5517,7 @@ def test_nway_diff():
             f"{_label}: group masks match the column count",
             all(len(m["union"]) == len(_g["columns"]) for m in _groups.values()),
         )
-        if _mode == "same":
+        if _extra.get("group_merge"):
             # Rows joined into one function never share a file.
             _masks = {}
             for i in _rows:
@@ -5530,15 +5531,21 @@ def test_nway_diff():
                     if _groups[g]["kind"] == "same"
                 ),
             )
-    # Several levels nest: each group of the first is split again by the next.
-    for _chain in ("same,lane", "lane,same", "lane,tag,same"):
+    # Levels nest, and a merge comes first: merged functions are grouped by the lane of all their files.
+    for _chain, _extra in (
+        ("lane,tag", {}),
+        ("lane", {"group_merge": "name,call", "group_min_link": 0}),
+        ("lane,tag", {"group_merge": "name"}),
+        ("tag", {"group_merge": "name"}),
+    ):
         _st, _n = _nway(
-            tab="all", scope="all", limit=1000, group=_chain, group_open="all"
+            tab="all", scope="all", limit=1000, group=_chain, group_open="all", **_extra
         )
-        _label = f"nway group={_chain}"
+        _label = f"nway group={_chain} {_extra}"
         if not check(f"{_label}: served", _st == 200 and _n, f"HTTP {_st}"):
             continue
-        _depth = len(_chain.split(","))
+        # one path step per level, plus the same-function / no-partner step of a merge
+        _depth = len(_chain.split(",")) + (1 if _extra.get("group_merge") else 0)
         _leaf = [i for i in _n["items"] if not i.get("header")]
         check(
             f"{_label}: rows sit under a group {_depth} levels deep",
@@ -5558,7 +5565,7 @@ def test_nway_diff():
                 len(_leaf) == flat["total"],
                 f"{len(_leaf)} vs {flat['total']}",
             )
-        _, _top = _nway(tab="all", scope="all", limit=1000, group=_chain)
+        _, _top = _nway(tab="all", scope="all", limit=1000, group=_chain, **_extra)
         check(
             f"{_label}: closed shows only the outer groups",
             _top
@@ -5614,8 +5621,12 @@ def test_nway_diff():
         _nway(group="lane", group_sort="bogus")[0] == 400,
     )
     check(
-        "nway group: unknown evidence is a 400",
-        _nway(group="same", group_ev="bogus")[0] == 400,
+        "nway group: unknown merge evidence is a 400",
+        _nway(group_merge="bogus")[0] == 400,
+    )
+    check(
+        "nway group: the old same level is gone (400)",
+        _nway(group="same")[0] == 400,
     )
 
     # Paging, sorting, filtering.

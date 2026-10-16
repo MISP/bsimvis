@@ -360,12 +360,12 @@ def _page(doc, args, r=None, pool_id=None):
     except ValueError:
         abort(400, "offset and limit must be integers")
     total, shown_groups, note = len(filtered), {}, ""
-    if args.get("group"):
+    if args.get("group") or args.get("group_merge"):
         # Rows come back in group order; a tag row can repeat under several groups.
         # A closed group is one `{"g", "header": true}` item with no row.
         try:
             entries, groups, note = nway_group_service.group_rows(
-                filtered, doc, r, args["group"], args
+                filtered, doc, r, args.get("group", ""), args
             )
         except nway_diff_service.BadParams as e:
             abort(400, str(e))

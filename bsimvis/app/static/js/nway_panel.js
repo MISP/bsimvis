@@ -31,16 +31,14 @@
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
         columns: 'auto', child_presence: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
-        group: '', group_axis: '', group_axis_b: '', group_ev: '', group_min_link: '', group_sort: '',
+        group: '', group_axis: '', group_axis_b: '', group_merge: '', group_min_link: '', group_sort: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_ev', 'group_min_link', 'group_sort'];
+    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort'];
     // Group by: rows bundled by file set, nested under one tag axis, or joined as one probable function.
     const GROUPS = [
-        ['', 'None', 'One flat list, sorted by a column.'],
-        ['lane', 'Lane', 'Rows bundled by the set of files they appear in, biggest bundle first. A row whose files are a subset of a bundle joins the smallest one that holds it.'],
-        ['tag', 'Tag', 'Rows nested under the tags of one axis. A row with several tags on the axis is listed under each.'],
-        ['same', 'Same function', 'Rows that are probably one function the matcher split: they share a name, or a caller and a weak link. Rows that share a file are never joined.'],
+        ['lane', 'Lane', 'Bundles of rows that appear in exactly the same files, biggest bundle first. With the merge on, a merged function is bundled by all the files it covers together. Something whose files are a subset of a bundle joins the smallest bundle that holds it.'],
+        ['tag', 'Tag', 'Nest under the tags of one axis (origin, capa, YARA...). Something with several tags on the axis is listed under each.'],
     ];
     const TAG_AXES = [['origin', 'Origin'], ['severity', 'Severity'], ['category', 'Behavior'], ['user', 'User'], ['capa', 'Capa'], ['mitre', 'ATT&CK'], ['mbc', 'MBC'], ['yara', 'YARA'], ['ruleset', 'Ruleset'], ['family', 'Family'], ['vuln', 'Vulnerability']];
     // Widths in px: Function, Span, Features, Support, Cohesion, Cluster, then one square column per file.
@@ -190,7 +188,7 @@
                 const v = this.state[k];
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
-            if (this.state.group) {
+            if (this.state.group || this.state.group_merge) {
                 qs.set('group_open', this._gdef);
                 if (this._gflip.size) qs.set('group_flip', JSON.stringify([...this._gflip]));
             }
@@ -311,27 +309,31 @@
                 advanced,
             ].join('');
             return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${search}</div>
-                <div class="nway-bar">${filter}${this._groupBar()}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}</span></div>`;
+                <div class="nway-bar">${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}</span></div>${this._groupCard()}`;
         }
 
-        _groupBar() {
+        // The Group card: step 1 merges rows that are the same function, step 2 groups what is left (merged or not).
+        _groupCard() {
             const s = this.state, lv = (s.group || '').split(',').filter(Boolean), axis = s.group_axis || 'origin';
+            const merge = new Set((s.group_merge || '').split(',').filter(Boolean)), on = merge.size > 0, active = on || lv.length > 0;
             const sel = (key, cur, opts, none) => `<select class="view-btn" data-select="${key}">${none ? '<option value="">none</option>' : ''}${opts.map(([v, t]) => `<option value="${escapeAttr(v)}"${v === cur ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('')}</select>`;
-            const ev = new Set((s.group_ev || 'name,call').split(',').filter(Boolean));
-            const box = (k, text, tip) => `<label class="nway-ctl" title="${escapeAttr(tip)}"><input type="checkbox" data-ev="${k}"${ev.has(k) ? ' checked' : ''}> ${text}</label>`;
-            // One select per level; a level can only use a grouping the other levels do not, and the next level appears once this one is set.
-            const used = new Set(lv);
-            const chain = [...lv, ''].slice(0, GROUPS.length - 1).map((cur, i) => `<select class="view-btn" data-glevel="${i}" title="${i ? 'Split each group again by' : 'Group the rows by'}"><option value="">${i ? '(none)' : 'None'}</option>${GROUPS.filter(([v]) => v && (v === cur || !used.has(v))).map(([v, t, tip]) => `<option value="${v}" title="${escapeAttr(tip)}"${v === cur ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('')}</select>`).join('<span class="nway-lbl">&rsaquo;</span>');
-            const parts = [`<span class="nway-ctlwrap"><span class="nway-lbl">Group by</span>${chain}${this._tip('Put related rows together. Pick a second and third grouping to split each group again, for example Same function then Lane. The column sort still orders the rows inside each group.')}</span>`];
-            if (lv.includes('tag')) parts.push(`<span class="nway-ctlwrap"><span class="nway-lbl">Axis</span>${sel('group_axis', axis, TAG_AXES)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, TAG_AXES.filter(([k]) => k !== axis), true)}</span>`);
-            if (lv.includes('same')) {
-                parts.push(`<span class="nway-ctlwrap"><span class="nway-lbl">Evidence</span>${box('name', 'Name', 'Rows with the same function name (auto names such as FUN_ and compiler suffixes are ignored).')}${box('call', 'Call position', 'Rows under the same caller, on different files, with a weak edge between them. Needs the callers of every function.')}</span>`);
-                if (ev.has('call')) parts.push(this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.'));
-            }
-            if (lv.length) {
-                parts.push(`<span class="nway-ctlwrap"><span class="nway-lbl">Order groups</span>${sel('group_sort', s.group_sort || 'weight', GROUP_SORTS)}<button class="view-btn" data-gall="open">Expand all</button><button class="view-btn" data-gall="close">Collapse all</button></span>`);
-            }
-            return parts.join('');
+            const box = (k, text, tip) => `<label class="nway-ctl" title="${escapeAttr(tip)}"><input type="checkbox" data-ev="${k}"${merge.has(k) ? ' checked' : ''}> ${text}</label>`;
+            const step = n => `<span class="nway-gstep">${n}</span>`;
+            const evidence = on
+                ? `${box('name', 'Name', 'Rows with the same function name. Auto names (FUN_, sub_) and compiler suffixes (.part.0) are ignored.')}${box('call', 'Call position', 'Rows under the same caller, in different files, with a weak edge between them. Needs the callers of every function.')}${merge.has('call') ? this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.') : ''}`
+                : '<span class="dim">Rows the matcher kept apart (another decompilation, architecture or version) show as one function, with their rows under it.</span>';
+            const picks = GROUPS.map(([v, t, tip]) => {
+                const i = lv.indexOf(v);
+                return `<button class="nway-gpick${i >= 0 ? ' on' : ''}" data-gpick="${v}" aria-pressed="${i >= 0}" title="${escapeAttr(tip)}">${i >= 0 ? `<b>${i + 1}</b>` : ''}${escapeHtml(t)}</button>`;
+            }).join('');
+            const axes = lv.includes('tag') ? `<span class="nway-ctlwrap"><span class="nway-lbl">Axis</span>${sel('group_axis', axis, TAG_AXES)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, TAG_AXES.filter(([k]) => k !== axis), true)}</span>` : '';
+            const hint = lv.length > 1 ? 'Click order is nesting order: each group of the first is split again by the second.' : on && lv.includes('lane') ? 'Each merged function is bundled by all the files it covers together.' : '';
+            const actions = active ? `<span class="nway-gacts"><span class="nway-lbl">Order groups</span>${sel('group_sort', s.group_sort || 'weight', GROUP_SORTS)}<button class="view-btn" data-gall="open">Expand all</button><button class="view-btn" data-gall="close">Collapse all</button></span>` : '';
+            return `<div class="nway-gcard${active ? ' active' : ''}">
+                <div class="nway-ghead"><b>Group rows</b>${this._tip('Put related rows together. The column sort still orders the rows inside each group.')}${actions}</div>
+                <div class="nway-gline">${step(1)}<label class="nway-ctl nway-gmain" title="Join rows that are probably one function."><input type="checkbox" data-merge-on${on ? ' checked' : ''}> <span class="nway-gtitle">Merge rows that are the same function</span></label>${evidence}</div>
+                <div class="nway-gline">${step(2)}<span class="nway-gmain"><span class="nway-gtitle">Group by</span></span><span class="nway-gpicks">${picks}</span>${axes}<span class="dim nway-ghint">${hint}</span></div>
+            </div>`;
         }
 
         // Match settings live in a popover; the summary shows what is set, so the bar stays one line.
@@ -1569,7 +1571,8 @@
                 note = g.subset ? `${Number(g.subset)} subset row${g.subset > 1 ? 's' : ''} joined` : '';
             } else if (g.kind === 'same') {
                 const ev = (g.evidence || []).map(k => k === 'name' ? chip('ev-n', 'name', 'The rows share a function name') : chip('ev-c', 'call position', 'The rows share a caller and a weak edge links them')).join('');
-                title = `${(g.names || []).map(x => `<span class="nway-gname">${escapeHtml(x)}</span>`).join(' + ')}${ev}`;
+                const more = `${g.sub ? chip('sub', '\u2282 subset', 'Its files are a subset of this bundle, so it joined the smallest bundle that holds them.') : ''}${g.also > 1 ? chip('also', `\u00d7${Number(g.also)}`, 'Listed under several tags on this axis.') : ''}`;
+                title = `${(g.names || []).map(x => `<span class="nway-gname">${escapeHtml(x)}</span>`).join(' + ')}${ev}${more}`;
                 note = `${g.files} of ${n} files together${g.link ? ` &middot; best link ${Number(g.link).toFixed(2)}, under the edge` : ''}`;
             } else if (g.kind === 'rest') {
                 title = 'No partner found';
@@ -1700,8 +1703,13 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-gall]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-gall],[data-gpick]');
             if (!t) return;
+            if (t.dataset.gpick) {
+                const lv = (this.state.group || '').split(',').filter(Boolean), i = lv.indexOf(t.dataset.gpick);
+                if (i >= 0) lv.splice(i, 1); else lv.push(t.dataset.gpick);
+                return this._set({ group: lv.join(','), offset: 0 });
+            }
             if (t.dataset.gtoggle !== undefined || t.dataset.gall) {
                 return this._gChange(() => {
                     if (t.dataset.gall) { this._gdef = t.dataset.gall === 'open' ? 'all' : 'none'; this._gflip.clear(); }
@@ -1752,14 +1760,12 @@
 
         _onChange(e) {
             const t = e.target;
-            if (t.dataset.glevel !== undefined) {
-                const next = (this.state.group || '').split(',').filter(Boolean), i = Number(t.dataset.glevel);
-                if (t.value) next[i] = t.value; else next.length = i;
-                this._set({ group: next.join(','), offset: 0 });
+            if (t.dataset.mergeOn !== undefined) {
+                this._set({ group_merge: t.checked ? 'name,call' : '', offset: 0 });
             } else if (t.dataset.ev) {
-                const ev = new Set((this.state.group_ev || 'name,call').split(',').filter(k => k && k !== 'none'));
+                const ev = new Set((this.state.group_merge || '').split(',').filter(Boolean));
                 if (t.checked) ev.add(t.dataset.ev); else ev.delete(t.dataset.ev);
-                this._set({ group_ev: [...ev].join(',') || 'none', offset: 0 });
+                this._set({ group_merge: [...ev].join(','), offset: 0 });
             } else if (t.dataset.select) this._set({ [t.dataset.select]: t.value, offset: 0 });
             else if (t.dataset.range) this._set({ [t.dataset.range]: t.value, offset: 0 });
             else if (t.dataset.text) this._set({ [t.dataset.text]: t.value.trim(), offset: 0 });

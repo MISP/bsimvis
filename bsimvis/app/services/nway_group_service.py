@@ -1,11 +1,18 @@
 """Group the rows of the N-way function table.
 
-Three modes, all over the rows the table already filtered and sorted:
+Two steps over the rows the table already filtered and sorted:
 
-- `lane`: rows bundled by the set of files they appear in (`row["mask"]`).
-- `tag`: rows nested under the tags of one axis, optionally crossed with a second.
-- `same`: rows that are probably one function the matcher split, joined by a
-  shared name and/or a shared caller. Rows that share a file are never joined.
+1. Merge (`group_merge`, optional): rows that are probably one function the
+   matcher split are joined by a shared name and/or a shared caller. Rows that
+   share a file are never joined. A merged function covers the union of its
+   rows' files.
+2. Group (`group`, optional, up to two levels): `lane` bundles by the set of
+   files, `tag` nests under the tags of one axis (optionally crossed with a
+   second). With a merge on, the unit being grouped is the merged function, so
+   a function split over two families sits in the lane of both together.
+
+Under every leaf, merged functions are "same function" sub-groups holding their
+rows, and rows with no partner share one "no partner" group.
 
 `group_rows` returns `(entries, groups, note)`. `entries` is the flat list in
 display order, `(group id, row, extra fields)`; a closed group is one entry with
@@ -24,7 +31,7 @@ from bsimvis.app.services.bin_sim_tags import AXES, merge_tag_fields, tag_axis
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME, BadParams
 from bsimvis.app.services.tag_taxonomy import tag_body, tag_prefixes
 
-MODES = ("tag", "same", "lane")
+MODES = ("tag", "lane")
 SORTS = ("weight", "rows", "files")
 LANES = 12  # lanes kept before the rest go to "other"
 TAG_FANOUT = 3  # tags of one axis a row is listed under, most shared first
@@ -53,11 +60,12 @@ def _fids(row):
 
 
 def _meta(rows, n):
+    """Totals of units: a unit is a row or a merged function (`_rows`)."""
     union = 0
     for r in rows:
         union |= r["mask"]
     return {
-        "rows": len(rows),
+        "rows": sum(len(r["_rows"]) if "_rows" in r else 1 for r in rows),
         "weight": sum(r["weight"] for r in rows),
         "union": _bits(union, n),
         "files": _pop(union),
@@ -233,8 +241,12 @@ def _caller_rows(r, rows, row_of):
     return out
 
 
-def same_groups(rows, doc, r, n, sort, evidence, min_link):
-    """Rows joined by a shared name and/or a shared caller; see the module doc."""
+def merge_units(rows, doc, r, evidence, min_link):
+    """Join rows that are probably one function -> (units, note).
+
+    A unit is a row left alone, or a pseudo-row for 2+ joined rows: `mask` is
+    the union of their files, `_rows` the rows, `_kinds` the evidence.
+    """
     all_rows = doc["rows"]
     row_of = {f: i for i, row in enumerate(all_rows) for f in _fids(row)}
     at = {id(row): i for i, row in enumerate(all_rows)}
@@ -295,79 +307,111 @@ def same_groups(rows, doc, r, n, sort, evidence, min_link):
                 grp[i] = ga
         ga["kinds"] |= e["kinds"]
         ga["sim"] = max(ga["sim"], e["sim"])
-    seen, sets, rest = set(), [], []
+    byrow, seen, units = dict(cand), set(), []
     for i, _ in cand:
         g = grp[i]
         if id(g) in seen:
             continue
         seen.add(id(g))
-        (sets if len(g["rows"]) > 1 else rest).append(g)
-    byrow = dict(cand)
-    out = []
-    for g in sets:
-        members = [byrow[i] for i in sorted(g["rows"])]
+        if len(g["rows"]) == 1:
+            units.append(byrow[i])
+            continue
+        members = [byrow[j] for j in sorted(g["rows"])]
+        cells = {
+            f"{k}:{c}": f
+            for k, row in enumerate(members)
+            for c, f in (row.get("files") or row["cells"]).items()
+            if isinstance(f, str)
+        }
+        units.append(
+            {
+                "mask": g["mask"],
+                "weight": sum(m["weight"] for m in members),
+                "cells": cells,
+                "_rows": members,
+                "_kinds": g["kinds"],
+                "_sim": g["sim"],
+                "_idx": min(g["rows"]),
+            }
+        )
+    return units, note
+
+
+def _level(mode, units, ctx):
+    """The groups of one level over `units`: [(meta, [(unit, extra)])]."""
+    if mode == "lane":
+        return lane_groups(units, ctx["n"], ctx["sort"])
+    return tag_groups(
+        units, ctx["fmeta"], ctx["n"], ctx["sort"], ctx["axis"], ctx["axis_b"]
+    )
+
+
+def _graft(g, parent_id, parent_path):
+    """Prefix a sub-group's id and path with its parent's, so ids are unique across the tree."""
+    pre = (lambda i: f"{parent_id}/{i}") if parent_id else (lambda i: i)
+    g["path"] = parent_path + [pre(p) for p in g["path"]]
+    g["id"] = pre(g["id"])
+    return g
+
+
+def _expand(units, ctx, parent_id, parent_path, carried):
+    """Merged units become "same function" sub-groups, the rest one "no partner" group."""
+    n, pairs = ctx["n"], []
+    for u in units:
+        if "_rows" not in u:
+            continue
+        members = u["_rows"]
         m = _meta(members, n)
         m.update(
-            id=f"same:{min(g['rows'])}",
+            id=f"same:{u['_idx']}",
             kind="same",
-            evidence=sorted(g["kinds"]),
-            link=round(g["sim"], 3),
+            evidence=sorted(u["_kinds"]),
+            link=round(u["_sim"], 3),
             names=list(dict.fromkeys(row["name"] for row in members))[:4],
         )
+        extra = carried.get(id(u), {})
+        if extra.get("sub"):
+            m["sub"] = True
+        if extra.get("also", 0) > 1:
+            m["also"] = extra["also"]
         m["path"] = [m["id"]]
-        out.append((m, [(row, {}) for row in members]))
-    out.sort(key=lambda p: (-len(p[0]["evidence"]), -_rank(p[0], sort), p[0]["id"]))
-    if rest:
-        members = [byrow[g["rows"][0]] for g in rest]
-        m = _meta(members, n)
-        m.update(id="same:rest", kind="rest", path=["same:rest"])
-        out.append((m, [(row, {}) for row in members]))
-    return out, note
-
-
-def _level(mode, rows, ctx):
-    """The groups of one level over `rows`: [(meta, [(row, extra)])]."""
-    if mode == "lane":
-        return lane_groups(rows, ctx["n"], ctx["sort"])
-    if mode == "tag":
-        return tag_groups(
-            rows, ctx["fmeta"], ctx["n"], ctx["sort"], ctx["axis"], ctx["axis_b"]
+        pairs.append(
+            (_graft(m, parent_id, parent_path), [(row, {}) for row in members])
         )
-    pairs, note = same_groups(
-        rows,
-        ctx["doc"],
-        ctx["r"],
-        ctx["n"],
-        ctx["sort"],
-        ctx["evidence"],
-        ctx["min_link"],
+    pairs.sort(
+        key=lambda p: (-len(p[0]["evidence"]), -_rank(p[0], ctx["sort"]), p[0]["id"])
     )
-    ctx["note"] = ctx["note"] or note
+    single = [u for u in units if "_rows" not in u]
+    if single:
+        m = _meta(single, n)
+        m.update(id="same:rest", kind="rest", path=["same:rest"])
+        pairs.append(
+            (
+                _graft(m, parent_id, parent_path),
+                [(u, carried.get(id(u), {})) for u in single],
+            )
+        )
     return pairs
 
 
-def _nest(rows, levels, ctx, parent_id, parent_path, carried):
-    """Groups of `levels[0]` over `rows`, each one split again by the next level.
+def _nest(units, levels, ctx, parent_id, parent_path, carried):
+    """Groups of `levels[0]` over `units`, each one split again by the next level.
 
-    A group that has sub-levels lists no rows itself: its sub-groups follow it.
-    Ids and paths of sub-groups are prefixed with their parent's, so one id is
-    unique across the tree. `carried` holds the per-row extras of outer levels.
+    A group with sub-levels, or with a merge on, lists no rows itself: its
+    sub-groups follow it. `carried` holds the per-unit extras of outer levels.
     """
+    if not levels:
+        return _expand(units, ctx, parent_id, parent_path, carried)
     out = []
-    for g, items in _level(levels[0], rows, ctx):
-        if parent_id:
-            prefix = lambda i: f"{parent_id}/{i}"
-            g["id"] = prefix(g["id"])
-            g["path"] = parent_path + [prefix(p) for p in g["path"]]
-        extras = {
-            id(row): {**carried.get(id(row), {}), **extra} for row, extra in items
-        }
-        if len(levels) == 1:
-            out.append((g, [(row, extras[id(row)]) for row, _ in items]))
+    for g, items in _level(levels[0], units, ctx):
+        _graft(g, parent_id, parent_path)
+        extras = {id(u): {**carried.get(id(u), {}), **extra} for u, extra in items}
+        if len(levels) == 1 and not ctx["merge"]:
+            out.append((g, [(u, extras[id(u)]) for u, _ in items]))
         else:
             out.append((g, []))
             out += _nest(
-                [row for row, _ in items], levels[1:], ctx, g["id"], g["path"], extras
+                [u for u, _ in items], levels[1:], ctx, g["id"], g["path"], extras
             )
     return out
 
@@ -375,14 +419,19 @@ def _nest(rows, levels, ctx, parent_id, parent_path, carried):
 def group_rows(rows, doc, r, mode, params):
     """Group `rows` (already filtered and sorted) -> (entries, groups, note).
 
-    `mode` is one level (`lane`) or a comma-separated chain (`same,lane`): each
-    level is split again by the next one.
+    `mode` is a comma-separated chain of levels (`lane`, `tag`, `lane,tag`) and
+    may be empty when `group_merge` is set. See the module doc.
     """
     levels = [m for m in (mode or "").split(",") if m]
-    if not levels or set(levels) - set(MODES) or len(set(levels)) != len(levels):
+    if set(levels) - set(MODES) or len(set(levels)) != len(levels):
         raise BadParams(
-            f"group must be {MODES}, one or several separated by commas, each once"
+            f"group must be {MODES}, one or both separated by commas, each once"
         )
+    evidence = {e for e in (params.get("group_merge") or "").split(",") if e}
+    if evidence - {"name", "call"}:
+        raise BadParams("group_merge must be name, call or name,call")
+    if not levels and not evidence:
+        raise BadParams("group needs a level or group_merge")
     sort = params.get("group_sort") or "weight"
     if sort not in SORTS:
         raise BadParams(f"group_sort must be one of {SORTS}")
@@ -392,21 +441,17 @@ def group_rows(rows, doc, r, mode, params):
         "fmeta": doc["fmeta"],
         "axis": params.get("group_axis") or "origin",
         "axis_b": params.get("group_axis_b") or "",
-        "doc": doc,
-        "r": r,
+        "merge": bool(evidence),
         "note": "",
     }
-    if "same" in levels:
-        ctx["evidence"] = {
-            e for e in (params.get("group_ev") or "name,call").split(",") if e
-        }
-        if ctx["evidence"] - {"name", "call", "none"}:
-            raise BadParams("group_ev must be name, call, name,call or none")
+    units = rows
+    if evidence:
         try:
-            ctx["min_link"] = float(params.get("group_min_link") or 0.3)
+            min_link = float(params.get("group_min_link") or 0.3)
         except ValueError:
             raise BadParams("group_min_link must be a number")
-    pairs = _nest(rows, levels, ctx, "", [], {})
+        units, ctx["note"] = merge_units(rows, doc, r, evidence, min_link)
+    pairs = _nest(units, levels, ctx, "", [], {})
     return _entries(pairs, params), {g["id"]: g for g, _ in pairs}, ctx["note"]
 
 
@@ -453,21 +498,19 @@ def demo():
     # lanes: three rows share 0b0011, one row (0b0001) is a subset, one fits no lane
     rows = [row(3, 10), row(3, 5), row(3, 1), row(1, 4), row(12, 2)]
     lanes = lane_groups(rows, 4, "weight")
-    assert (
-        lanes[0][0]["id"] == "lane:1100"
-        and lanes[0][0]["rows"] == 4
-        and lanes[0][0]["subset"] == 1
-    )
+    assert lanes[0][0]["id"] == "lane:1100" and lanes[0][0]["rows"] == 4
+    assert lanes[0][0]["subset"] == 1
     assert lanes[1][0]["kind"] == "other" and lanes[1][0]["rows"] == 1
 
     # names: suffixes and auto names
     assert name_key({"name": "resolv_lookup.part.0"}) == "resolv_lookup"
     assert name_key({"name": "FUN_00401000"}) is None
 
-    # same: equal names join disjoint rows, overlapping rows stay apart
+    # merge: equal names join disjoint rows, overlapping rows stay apart
     doc = {
         "columns": [0, 0, 0, 0],
         "edges": {},
+        "fmeta": {},
         "rows": [
             row(3, 9, "init", {"A": "a1", "B": "b1"}),
             row(12, 8, "init", {"C": "c1", "D": "d1"}),
@@ -475,10 +518,43 @@ def demo():
             row(1, 6, "other", {"A": "a2"}),
         ],
     }
-    pairs, note = same_groups(doc["rows"], doc, None, 4, "weight", {"name"}, 0.3)
-    sets = [g for g, _ in pairs if g["kind"] == "same"]
-    assert len(sets) == 1 and sets[0]["rows"] == 2 and sets[0]["union"] == "1111", sets
-    assert sets[0]["evidence"] == ["name"] and note == ""
+    units, note = merge_units(doc["rows"], doc, None, {"name"}, 0.3)
+    merged = [u for u in units if "_rows" in u]
+    assert len(units) == 3 and len(merged) == 1 and note == ""
+    assert merged[0]["mask"] == 15 and merged[0]["_kinds"] == {"name"}
+
+    # a merged function is grouped by the lane of ALL its files, with its rows under it
+    ctx = {
+        "n": 4,
+        "sort": "weight",
+        "fmeta": {},
+        "axis": "origin",
+        "axis_b": "",
+        "merge": True,
+        "note": "",
+    }
+    got = _nest(units, ["lane"], ctx, "", [], {})
+    ids = [g["id"] for g, _ in got]
+    assert ids == ["lane:other", "lane:other/same:0", "lane:other/same:rest"], ids
+    assert got[0][0]["rows"] == 4 and got[0][1] == []
+    assert [len(items) for _, items in got[1:]] == [2, 2]
+    assert got[1][0]["path"] == ["lane:other", "lane:other/same:0"]
+    # no levels: merged functions at the top
+    top = _nest(units, [], ctx, "", [], {})
+    assert [g["id"] for g, _ in top] == ["same:0", "same:rest"]
+    for mode in ("lane,lane", "bogus", "same"):
+        try:
+            group_rows(doc["rows"], doc, None, mode, {})
+        except BadParams:
+            continue
+        raise AssertionError(mode)
+    for params in ({}, {"group_merge": "bogus"}):
+        try:
+            group_rows(doc["rows"], doc, None, "", params)
+        except BadParams:
+            continue
+        raise AssertionError(params)
+
     # tags: two tags with the same first two levels list the row once
     fmeta = {
         "f1": {"tags": ["yara:botnet:mirai:A", "yara:botnet:mirai:B"]},
@@ -494,33 +570,6 @@ def demo():
     }
     assert len(tree["tag:yara:botnet>yara:botnet:mirai"]) == 2
     assert len(tree["tag:yara:botnet"]) == 0 and len(tree["tag:(no tag)"]) == 1
-    # nesting: lanes first, then same function inside each lane
-    ctx = {
-        "n": 4,
-        "sort": "weight",
-        "fmeta": {},
-        "axis": "origin",
-        "axis_b": "",
-        "doc": doc,
-        "r": None,
-        "note": "",
-        "evidence": {"name"},
-        "min_link": 0.3,
-    }
-    nested = _nest(doc["rows"], ["lane", "same"], ctx, "", [], {})
-    heads = [g["path"] for g, _ in nested]
-    assert heads[0] == ["lane:other"], heads
-    assert all(p[0] == "lane:other" for p in heads) and len(heads) > 1
-    assert all(p[1].startswith("lane:other/same:") for p in heads[1:]), heads
-    assert sum(len(items) for _, items in nested) == 4
-    assert nested[0][1] == []
-    bad = [("lane,lane", None), ("bogus", None), ("", None)]
-    for mode, _ in bad:
-        try:
-            group_rows(doc["rows"], doc, None, mode, {})
-        except BadParams:
-            continue
-        raise AssertionError(mode)
 
     # open/closed: headers always, rows only for open groups, nothing under a closed parent
     pairs = [

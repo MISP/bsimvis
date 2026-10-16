@@ -425,49 +425,56 @@
             };
         }
 
-        _fnEntity(fid, col, rowName) {
+        // Presence squares: one colour per file column, in the header, the rows and the group headers.
+        _sqStyle(i) {
+            return this.data.columns.length <= 16 ? `--h:${this._fileHue(i)}` : '';
+        }
+
+        _colLabel(c) {
+            return c ? c.file_name || c.label || c.md5 || '' : '';
+        }
+
+        // A square standing for one function: the same data, hover preview, click and right-click menu
+        // as the function entity. The address and signature are in the hover.
+        _fnEntity(fid, col, ci) {
             const f = this._fnData(fid, col);
-            // Default names (FUN_, sub_, thunk_) add nothing next to the address.
-            const note = /^(FUN_|sub_|thunk_)/i.test(f.function_name) ? ''
-                : f.function_name === rowName
-                    ? ' <span class="dim" title="same name as the function column">(*)</span>'
-                    : ` <span class="dim">(${escapeHtml(f.function_name)})</span>`;
             const sig = typeof formatSigComponent === 'function'
                 ? formatSigComponent(f.namespace, f.return_type, f.function_name, f.parameters).fullSig : f.function_name;
-            return `<span class="entity-function" title="${escapeAttr(sig)}" data-etype="function" data-eid="${escapeAttr(fid)}"
+            const tip = `@ ${f.entrypoint_address}\n${sig}\n${this._colLabel(col)}`;
+            return `<span class="entity-function" data-etype="function" data-eid="${escapeAttr(fid)}"
                     data-entity-data='${escapeAttr(JSON.stringify(f))}'
                     oncontextmenu='EntityRenderer.handleContextMenu(event, "function", this)'>
-                <b class="entity-name nway-addr"
+                <i class="nway-sq on" style="${this._sqStyle(ci)}" title="${escapeAttr(tip)}"
                    onmouseenter="typeof showCodePreview === 'function' && showCodePreview(${escapeAttr(jsString(fid))}, ${escapeAttr(jsString(f.function_name))}, ${escapeAttr(jsString(f.entrypoint_address))}, ${escapeAttr(jsString(col.md5))}, ${Number(f.bsim_features_count) || 0}, event)"
                    onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)"
                    onmouseleave="typeof hideCodePreview === 'function' && hideCodePreview(event)"
-                   onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(fid))}, ${escapeAttr(jsString(f.function_name))}, '', event)">@ ${escapeHtml(f.entrypoint_address)}</b>${note}</span>`;
+                   onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(fid))}, ${escapeAttr(jsString(f.function_name))}, '', event)"></i></span>`;
         }
 
-        // A child/direct column: "m/n files", plus links to the functions of the
-        // files in that group (a few; the rest as a count).
-        _groupCell(row, col) {
+        // A child/direct column: a square that shows how many of the group's files hold the function.
+        // It opens the first of those functions; the hover lists the addresses.
+        _groupCell(row, col, ci) {
             const cell = row.cells[col.id];
             const pool = this.source.pool || null;
-            const links = [];
+            const hits = [];
             for (const f of this.data.file_columns || []) {
                 const fid = col.members.includes(f.id) && (row.files || {})[f.id];
-                if (!fid) continue;
-                const data = this._fnData(fid, f);
-                const url = fnUrl(f, fid, pool);
-                links.push(`<a data-nav="${escapeAttr(url)}" data-title="${escapeAttr(f.file_name)}" title="${escapeAttr(f.file_name)}"
-                    data-etype="function" data-eid="${escapeAttr(fid)}" data-entity-data='${escapeAttr(JSON.stringify(data))}'
-                    oncontextmenu='EntityRenderer.handleContextMenu(event, "function", this)'>${escapeHtml(data.entrypoint_address)}</a>`);
+                if (fid) hits.push({ f, fid, data: this._fnData(fid, f) });
             }
-            const more = links.length > 3 ? `<span class="dim">+${links.length - 3}</span>` : '';
-            return `<td class="col${cell.on ? '' : ' dim'}"><b>${Number(cell.present)}/${Number(cell.total)}</b> files${links.length ? `<div class="nway-group-links">${links.slice(0, 3).join('')}${more}</div>` : ''}</td>`;
+            const tip = `${col.label || ''}\n${Number(cell.present)}/${Number(cell.total)} files${hits.length ? '\n' + hits.slice(0, 6).map(h => `@ ${h.data.entrypoint_address}  ${h.f.file_name || ''}`).join('\n') : ''}${hits.length > 6 ? `\n+${hits.length - 6} more` : ''}`;
+            const sq = `<i class="nway-sq${cell.present ? (cell.on ? ' on' : ' part') : ''}" style="${this._sqStyle(ci)}" title="${escapeAttr(tip)}">${cell.present > 1 ? Number(cell.present) : ''}</i>`;
+            if (!hits.length) return `<td class="col sq">${sq}</td>`;
+            const { f, fid, data } = hits[0];
+            return `<td class="col sq"><a data-nav="${escapeAttr(fnUrl(f, fid, pool))}" data-title="${escapeAttr(f.file_name)}"
+                data-etype="function" data-eid="${escapeAttr(fid)}" data-entity-data='${escapeAttr(JSON.stringify(data))}'
+                oncontextmenu='EntityRenderer.handleContextMenu(event, "function", this)'>${sq}</a></td>`;
         }
 
-        _cell(row, col, ri) {
-            if (col.kind) return this._groupCell(row, col);
+        _cell(row, col, ci) {
+            if (col.kind) return this._groupCell(row, col, ci);
             const fid = row.cells[col.id];
-            if (!fid) return '<td class="col gap">&mdash;</td>';
-            return `<td class="col"><div class="nway-fn">${this._fnEntity(fid, col, row.name)}</div></td>`;
+            if (!fid) return `<td class="col sq"><i class="nway-sq" title="${escapeAttr(`${this._colLabel(col)}: no function in this row`)}"></i></td>`;
+            return `<td class="col sq">${this._fnEntity(fid, col, ci)}</td>`;
         }
 
         // Support / cohesion use the same red-to-green ramp as the other score cells.
@@ -1545,13 +1552,6 @@
             this._cgLaneTip(t, this._cgFiles().map(f => [...mask].some((b, i) => b === '1' && cols[i] && (cols[i].kind ? cols[i].members.includes(f.id) : cols[i].id === f.id))));
         }
 
-        // The columns a mask ("0110...") covers, as the call graph's presence squares.
-        _gStrip(mask) {
-            const cols = this.data.columns, n = mask.length, sz = n <= 16 ? 11 : n <= 64 ? 6 : 4;
-            const sq = [...mask].map((b, i) => `<i class="${b === '1' ? 'on' : ''}"${n <= 16 ? ` style="--h:${this._fileHue(i)}"` : ''} title="${escapeAttr(cols[i] ? cols[i].file_name || cols[i].label || '' : '')}"></i>`).join('');
-            return `<span class="nway-strip r-mid${n <= 16 ? ' hued' : ''}" style="--sq:${sz}px">${sq}</span>`;
-        }
-
         _groupHead(g, depth) {
             const n = g.union.length, closed = !this._gOpen(g.id);
             const chip = (cls, text, tip) => `<span class="nway-gchip ${cls}" title="${escapeAttr(tip)}">${escapeHtml(text)}</span>`;
@@ -1559,7 +1559,7 @@
             if (g.kind === 'tag') {
                 title = `<span class="nway-gtag" style="color:${escapeAttr(window.TagColor.forTag(g.label))}">${escapeHtml(g.label)}</span>`;
             } else if (g.kind === 'lane') {
-                title = `${this._gStrip(g.mask)} <b>${g.mask.split('1').length - 1} of ${n} files</b>`;
+                title = `<b>${g.mask.split('1').length - 1} of ${n} files</b>`;
                 note = g.subset ? `${Number(g.subset)} subset row${g.subset > 1 ? 's' : ''} joined` : '';
             } else if (g.kind === 'same') {
                 const ev = (g.evidence || []).map(k => k === 'name' ? chip('ev-n', 'name', 'The rows share a function name') : chip('ev-c', 'call position', 'The rows share a caller and a weak edge links them')).join('');
@@ -1572,9 +1572,10 @@
                 title = 'Other rows';
                 note = 'Rows that fit no bundle.';
             }
-            const strip = g.kind === 'lane' ? '' : this._gStrip(g.union);
-            const files = g.kind === 'lane' ? g.mask : g.union;
-            return `<tr class="nway-grow d${depth}"><td colspan="${this.data.columns.length + 7}"><button class="nway-gh" data-gtoggle="${escapeAttr(g.id)}" aria-expanded="${!closed}" style="padding-left:${10 + depth * 20}px"><b class="nway-gchev">${closed ? '&#9656;' : '&#9662;'}</b><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span>${strip}</button></td></tr>`;
+            // The files the group covers, one square per file column: the same grid as the rows below.
+            const files = g.kind === 'lane' ? g.mask : g.union, cols = this.data.columns;
+            const sq = [...files].map((b, i) => `<td class="col sq"><i class="nway-sq${b === '1' ? ' on' : ''}" style="${this._sqStyle(i)}" title="${escapeAttr(this._colLabel(cols[i]) + (b === '1' ? '' : ': not in this group'))}"></i></td>`).join('');
+            return `<tr class="nway-grow d${depth}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="6"><button class="nway-gh" data-gtoggle="${escapeAttr(g.id)}" aria-expanded="${!closed}" style="padding-left:${10 + depth * 20}px"><b class="nway-gchev">${closed ? '&#9656;' : '&#9662;'}</b><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span></button></td>${sq}</tr>`;
         }
 
         // Rows, with a header printed whenever a row's group path leaves the one printed last.
@@ -1605,7 +1606,7 @@
                 <td class="num">${this._score(row.support)}</td>
                 <td class="num">${this._score(row.cohesion)}</td>
                 <td class="cluster-cards-cell">${window.EntityRenderer.renderClusterCard((row.clusters || []).map(u => this.data.clusters[u]).filter(Boolean))}</td>
-                ${cols.map(c => this._cell(row, c, ri)).join('')}
+                ${cols.map((c, ci) => this._cell(row, c, ci)).join('')}
             </tr>`;
         }
 
@@ -1615,18 +1616,17 @@
                 const arrow = s.sort_col === key ? (s.sort_dir === 'asc' ? '▲' : '▼') : '↕';
                 return `<th class="sortable${key === 'name' ? '' : ' num'}" data-sort="${key}">${label} <span class="dim">${arrow}</span></th>`;
             };
-            const fileHead = c => {
+            // A narrow column per file: its colour square on top, the name running up the column. The counts live in the hover.
+            const fileHead = (c, ci) => {
                 const named = c.file_name && c.file_name !== c.md5;
-                const name = named ? window.EntityRenderer.renderFileName(c.file_name, c.md5, c.collection) : '';
-                const coverage = c.coverage == null ? '' : ` &middot; <span title="share of the shared (span >= 2) weight this file holds">${(Number(c.coverage) * 100).toFixed(0)}% shared</span>`;
-                const fi = this._cgFiles().findIndex(x => x.id === c.id);
-                const sw = fi >= 0 && this._cgFiles().length <= 16 ? `<i class="nway-sw" style="--h:${this._fileHue(fi)}"></i>` : '';
-                return `<th class="col" data-col="${escapeAttr(c.id)}" title="${escapeAttr(`${c.file_name} (${c.collection}) - right-click: focus / filter`)}"><div class="nway-colhead">${sw}${name}${window.EntityRenderer.renderMd5(c.md5, { collection: c.collection })}<span class="nway-sub">${Number(c.functions)} fn${coverage}</span></div></th>`;
+                const name = named ? window.EntityRenderer.renderFileName(c.file_name, c.md5, c.collection) : escapeHtml(c.md5.slice(0, 8));
+                const coverage = c.coverage == null ? '' : ` · ${(Number(c.coverage) * 100).toFixed(0)}% of the shared weight`;
+                return `<th class="col sq" data-col="${escapeAttr(c.id)}" title="${escapeAttr(`${c.file_name} (${c.collection})\n${c.md5}\n${Number(c.functions)} fn${coverage}\nright-click: focus / filter`)}"><i class="nway-sq on" style="${this._sqStyle(ci)}"></i><div class="nway-vname">${name}</div></th>`;
             };
             const names = c => (this.data.file_columns || []).filter(f => c.members.includes(f.id)).map(f => f.file_name || f.md5).join(', ');
-            const colHead = c => c.kind
-                ? `<th class="col" title="${escapeAttr(c.kind === 'focus' || c.kind === 'rest' ? names(c) : c.kind === 'child' ? 'child cluster' : 'files at this node, in no child cluster')}"><div class="nway-colhead"><span class="nway-colname">${escapeHtml(c.label)}</span><span class="nway-sub">${Number(c.member_count)} files</span></div></th>`
-                : fileHead(c);
+            const colHead = (c, ci) => c.kind
+                ? `<th class="col sq" title="${escapeAttr(`${c.label}\n${Number(c.member_count)} files\n${c.kind === 'focus' || c.kind === 'rest' ? names(c) : c.kind === 'child' ? 'child cluster' : 'files at this node, in no child cluster'}`)}"><i class="nway-sq on" style="${this._sqStyle(ci)}"></i><div class="nway-vname">${escapeHtml(c.label)}</div></th>`
+                : fileHead(c, ci);
             return `<tr>${SORTS.map(th).join('')}<th>Cluster</th>${this.data.columns.map(colHead).join('')}</tr>`;
         }
 

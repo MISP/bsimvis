@@ -3008,6 +3008,7 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 /* Group by: header rows between the table rows */
 .nway-table tr.nway-grow td { padding: 0; background: var(--meta-bg, var(--card-bg)); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .nway-table tr.nway-grow.d1 td { background: var(--card-bg); }
+.nway-table tbody tr[hidden] { display: none; } /* `tbody tr { display: table-row }` would otherwise beat [hidden] */
 .nway-gh { all: unset; box-sizing: border-box; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; width: 100%; padding: 6px 10px; cursor: pointer; color: var(--text); }
 .nway-gh:hover { background: var(--hover); }
 .nway-gh:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

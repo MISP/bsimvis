@@ -127,6 +127,8 @@
             };
             document.addEventListener('function-renamed', this._onRenamed);
             this.el.addEventListener('click', e => this._onClick(e));
+            this.el.addEventListener('mouseover', e => this._gTip(e, true));
+            this.el.addEventListener('mouseout', e => this._gTip(e, false));
             this.el.addEventListener('change', e => this._onChange(e));
             this.el.addEventListener('input', e => this._onInput(e));
             window.Paging.bind(this.el, () => ({ offset: Number(this.state.offset) || 0, total: Number(this.data && this.data.total) || 0, size: PAGE }), off => this._set({ offset: off }));
@@ -573,9 +575,10 @@
         }
 
         // Hover a lane label: what the lane's files have in common (the bar's tick is the share across all files).
-        _cgLaneTip(lbl) {
+        // `preset`: the files of the lane as booleans, for a table group header (the graph lanes look theirs up).
+        _cgLaneTip(lbl, preset) {
             clearTimeout(this._tipT);
-            const files = this._cgFiles(), mask = (this._cgLaneFiles || [])[Number(lbl.dataset.lane)];
+            const files = this._cgFiles(), mask = preset || (this._cgLaneFiles || [])[Number(lbl.dataset.lane)];
             if (!mask) return;
             const lane = files.filter((_, k) => mask[k]);
             if (!this._laneTipEl) {
@@ -1517,6 +1520,15 @@
             return g && g.path.some(id => this._gclosed.has(id)) ? ' hidden' : '';
         }
 
+        // Hover a group header: the lane tooltip of the files the group covers. A child-cluster column stands for its member files.
+        _gTip(e, show) {
+            const t = e.target.closest('[data-gmask]');
+            if (!t || t.contains(e.relatedTarget)) return;
+            if (!show) return this._cgTipLater();
+            const cols = this.data.columns, mask = t.dataset.gmask;
+            this._cgLaneTip(t, this._cgFiles().map(f => [...mask].some((b, i) => b === '1' && cols[i] && (cols[i].kind ? cols[i].members.includes(f.id) : cols[i].id === f.id))));
+        }
+
         // The columns a mask ("0110...") covers, as the call graph's presence squares.
         _gStrip(mask) {
             const cols = this.data.columns, n = mask.length, sz = n <= 16 ? 11 : n <= 64 ? 6 : 4;
@@ -1546,7 +1558,8 @@
             }
             const strip = g.kind === 'lane' ? '' : this._gStrip(g.union);
             const hidden = ancestors.some(a => this._gclosed.has(a));
-            return `<tr class="nway-grow d${depth}"${hidden ? ' hidden' : ''}><td colspan="${this.data.columns.length + 7}"><button class="nway-gh" data-gtoggle="${escapeAttr(g.id)}" aria-expanded="${!closed}" style="padding-left:${10 + depth * 20}px"><b class="nway-gchev">${closed ? '&#9656;' : '&#9662;'}</b><span class="nway-gt">${title}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span>${strip}</button></td></tr>`;
+            const files = g.kind === 'lane' ? g.mask : g.union;
+            return `<tr class="nway-grow d${depth}"${hidden ? ' hidden' : ''}><td colspan="${this.data.columns.length + 7}"><button class="nway-gh" data-gtoggle="${escapeAttr(g.id)}" aria-expanded="${!closed}" style="padding-left:${10 + depth * 20}px"><b class="nway-gchev">${closed ? '&#9656;' : '&#9662;'}</b><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span>${strip}</button></td></tr>`;
         }
 
         // Rows, with a header printed whenever a row's group path leaves the one printed last.

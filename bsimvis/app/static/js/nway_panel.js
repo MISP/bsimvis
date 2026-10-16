@@ -441,6 +441,8 @@
 
         // Presence squares: one colour per file column, in the header, the rows and the group headers.
         _sqStyle(i) {
+            const t = this._tree();
+            if (t.grouped) { const c = t.colors[i]; return `--h:${c.h};--l:${c.l}%;--ll:${c.l - 8}%`; }
             return this.data.columns.length <= 16 ? `--h:${this._fileHue(i)}` : '';
         }
 
@@ -992,7 +994,38 @@
         }
 
         _fileHue(i) {
-            return Math.round((i * 137.508 + 215) % 360);
+            const t = this._tree();
+            return t.grouped ? t.colors[i].h : Math.round((i * 137.508 + 215) % 360);
+        }
+
+        // The column tree rebuilt from the columns' paths: each top-level group or column gets a hue, and what is
+        // inside it shifts that hue and its lightness a little, so a sub-cluster reads as part of its parent.
+        _tree() {
+            const d = this.data;
+            if (d._tree) return d._tree;
+            const cols = d.columns, grouped = cols.some(c => c.kind || (c.path || []).length);
+            const root = { kids: [] }, byId = new Map(), colors = [];
+            const node = (parent, id, o) => {
+                let n = byId.get(id);
+                if (!n) { n = { id, kids: [], lo: Infinity, hi: -1, ...o }; parent.kids.push(n); byId.set(id, n); }
+                return n;
+            };
+            cols.forEach((c, i) => {
+                let p = root;
+                const chain = [];
+                for (const g of c.path || []) { p = node(p, g.id, { label: g.label, count: Number(g.member_count) || 0 }); chain.push(p); }
+                const label = c.kind ? c.label : (c.file_name && c.file_name !== c.md5 ? c.file_name : String(c.md5 || c.id).slice(0, 8));
+                const leaf = node(p, c.id, { label, count: c.kind ? Number(c.member_count) || 0 : 1, col: i, expandable: !!c.expandable });
+                for (const n of [...chain, leaf]) { n.lo = Math.min(n.lo, i); n.hi = Math.max(n.hi, i); }
+            });
+            const paint = (n, h, l, depth) => {
+                n.h = h; n.l = l;
+                if (n.col != null) colors[n.col] = { h, l };
+                const m = n.kids.length;
+                n.kids.forEach((k, j) => paint(k, depth === 0 ? Math.round((j * 137.508 + 215) % 360) : (h + Math.round((j - (m - 1) / 2) * 12) + 360) % 360, depth === 0 ? 52 : 46 + (j % 3) * 6, depth + 1));
+            };
+            if (grouped) paint(root, 0, 52, 0);
+            return (d._tree = { grouped, root, colors });
         }
 
         // The focus card's presence squares: which files have this function.
@@ -1652,30 +1685,6 @@
             this._set({ col_open: open.size ? JSON.stringify([...open]) : '', offset: 0 });
         }
 
-        _bandDepth() {
-            return Math.max(0, ...this.data.columns.map(c => (c.path || []).length));
-        }
-
-        // A band over each run of columns that were expanded out of one group: its fold button.
-        _bands() {
-            const cols = this.data.columns, depth = this._bandDepth();
-            let out = '';
-            for (let d = 0; d < depth; d++) {
-                let cells = '', i = 0;
-                while (i < cols.length) {
-                    const p = (cols[i].path || [])[d];
-                    let j = i + 1;
-                    if (p) while (j < cols.length && ((cols[j].path || [])[d] || {}).id === p.id) j++;
-                    cells += p
-                        ? `<th class="sq nway-band" colspan="${j - i}" data-colx="${escapeAttr(p.id)}" title="${escapeAttr(`Fold ${p.label} (${p.member_count} files)`)}"><span class="nway-cx open"><i>&#9662;</i><b>${Number(p.member_count)}</b></span></th>`
-                        : `<th class="sq" colspan="${j - i}"></th>`;
-                    i = j;
-                }
-                out += `<tr class="nway-bands" style="--bi:${d}"><th></th><th colspan="${DATA_COLS.length - 1}"></th>${cells}</tr>`;
-            }
-            return out;
-        }
-
         _head() {
             const s = this.state;
             const th = ([key, label]) => {
@@ -1689,20 +1698,39 @@
                 const coverage = c.coverage == null ? '' : ` · ${(Number(c.coverage) * 100).toFixed(0)}% of the shared weight`;
                 return `<th class="col sq" data-col="${escapeAttr(c.id)}" title="${escapeAttr(`${c.file_name} (${c.collection})\n${c.md5}\n${Number(c.functions)} fn${coverage}\nright-click: focus / filter`)}"><i class="nway-sq on" style="${this._sqStyle(ci)}"></i><div class="nway-vname">${name}</div></th>`;
             };
+            if (this._tree().grouped) return `<tr>${SORTS.map(th).join('')}<th>Cluster</th>${this.data.columns.map((c, ci) => this._numHead(c, ci)).join('')}</tr>`;
+            return `<tr>${SORTS.map(th).join('')}<th>Cluster</th>${this.data.columns.map(fileHead).join('')}</tr>`;
+        }
+
+        // With grouped columns the header is a numbered dot in the cluster's colour; names live in the legend.
+        _numHead(c, ci) {
             const fname = new Map((this.data.file_columns || []).map(f => [f.id, f.file_name || f.md5]));
-            const kindNote = { child: 'child cluster', direct: 'files at this node, in no child cluster', twin: 'files that hold the same shared functions', file: '' };
-            // A column that stands for several files is a card: the colour square, a count button that opens it, the name.
-            const groupHead = (c, ci) => {
-                const count = Number(c.member_count) || 0;
+            const kindNote = { child: 'child cluster', direct: 'files at this node, in no child cluster', twin: 'files that hold the same shared functions' };
+            let tip;
+            if (c.kind) {
                 const members = (c.members || []).map(m => fname.get(m) || m);
-                const tip = [c.label, `${count} file${count === 1 ? '' : 's'}`, kindNote[c.kind] || '', ...members.slice(0, 12), members.length > 12 ? `+${members.length - 12} more` : '', c.expandable ? 'click the count to show the files' : ''].filter(Boolean).join('\n');
-                const badge = c.expandable
-                    ? `<span class="nway-cx"><i>&#9656;</i><b>${count}</b></span>`
-                    : count > 1 ? `<span class="nway-cnt" title="${escapeAttr(`${count} files`)}">${count}</span>` : '';
-                return `<th class="col sq nway-colcard${c.expandable ? ' expandable' : ''}"${c.expandable ? ` data-colx="${escapeAttr(c.id)}"` : ''} title="${escapeAttr(tip)}"><i class="nway-sq on" style="${this._sqStyle(ci)}"></i>${badge}<div class="nway-vname">${escapeHtml(c.label)}</div></th>`;
+                tip = [c.label, `${Number(c.member_count)} files`, kindNote[c.kind] || '', ...members.slice(0, 12), members.length > 12 ? `+${members.length - 12} more` : '', c.expandable ? 'click to show the files' : ''].filter(Boolean).join('\n');
+            } else {
+                tip = `${c.file_name} (${c.collection})\n${c.md5}\n${Number(c.functions)} fn\nright-click: focus / filter`;
+            }
+            return `<th class="col sq nway-numcol${c.expandable ? ' expandable' : ''}"${c.kind ? '' : ` data-col="${escapeAttr(c.id)}"`}${c.expandable ? ` data-colx="${escapeAttr(c.id)}"` : ''} title="${escapeAttr(tip)}"><i class="nway-num" style="${this._sqStyle(ci)}">${ci + 1}</i></th>`;
+        }
+
+        // The column outline: every group and column with its number range, and the button that opens or folds it.
+        _legend() {
+            const t = this._tree();
+            if (!t.grouped) return '';
+            const row = (n, dep) => {
+                const open = n.kids.length > 0, toggle = open || n.expandable;
+                const range = n.lo === n.hi ? `${n.lo + 1}` : `${n.lo + 1}–${n.hi + 1}`;
+                const tip = `${n.label}${n.count > 1 ? ` (${n.count} files)` : ''}${toggle ? (open ? '\nclick to fold' : '\nclick to show the files') : ''}`;
+                return `<div class="nway-ol${toggle ? ' expandable' : ''}" style="--dep:${dep}"${toggle ? ` data-colx="${escapeAttr(n.id)}"` : ''} title="${escapeAttr(tip)}">`
+                    + (toggle ? `<button type="button" class="nway-tg" data-colx="${escapeAttr(n.id)}" aria-label="${open ? 'Fold' : 'Open'} ${escapeAttr(n.label)}">${open ? '&#9662;' : '&#9656;'}</button>` : '<span class="nway-tg"></span>')
+                    + `<i class="nway-sq on" style="--h:${n.h};--l:${n.l}%;--ll:${n.l - 8}%"></i><span class="nway-olb">${escapeHtml(n.label)}</span>`
+                    + (n.count > 1 ? `<em>${n.count}</em>` : '') + `<b class="nway-rg">${range}</b></div>`
+                    + n.kids.map(k => row(k, dep + 1)).join('');
             };
-            const colHead = (c, ci) => c.kind ? groupHead(c, ci) : fileHead(c, ci);
-            return `${this._bands()}<tr>${SORTS.map(th).join('')}<th>Cluster</th>${this.data.columns.map(colHead).join('')}</tr>`;
+            return `<aside class="nway-legend${this._legOff ? ' off' : ''}"><details${this._legOff ? '' : ' open'} ontoggle="NwayPanel.legend(this)"><summary>Columns <em>${this.data.columns.length}</em></summary>${t.root.kids.map(k => row(k, 0)).join('')}</details></aside>`;
         }
 
         render() {
@@ -1716,13 +1744,14 @@
             const scroll = window.Paging.mode() === 'scroll';
             this.el.innerHTML = `<div class="nway-panel">${this._controls()}${this._notes()}${d.group_note ? `<div class="nway-note warn">${escapeHtml(d.group_note)}</div>` : ''}
                 <div class="nway-card table-scope">
+                    <div class="nway-body">${this._legend()}
                     <div class="nway-scroll">
                         <table id="nway-table" class="nway-table" style="width:${this._tableWidth()}px">${this._colgroup()}
-                            <thead style="--nb:${this._bandDepth()}">${this._head()}</thead>
+                            <thead>${this._head()}</thead>
                             <tbody>${rows || `<tr><td colspan="${d.columns.length + 7}" class="gap">No rows in this tab.</td></tr>`}</tbody>
                             ${scroll ? `<tfoot><tr><td class="nway-sentinel" colspan="${d.columns.length + 7}"></td></tr></tfoot>` : ''}
                         </table>
-                    </div>
+                    </div></div>
                     <div class="table-footer">
                         <div class="table-footer-left">${window.Paging.footer({ offset: off, total, size: PAGE, shown: d.items.length })}</div>
                         <div class="table-footer-right">
@@ -1852,6 +1881,12 @@
         if (!list.length || typeof window.showCodePreview !== 'function') return;
         const [a, ...rest] = list;
         window.showCodePreview(a.fid, a.name, a.addr, a.md5, a.feat, e, rest.length, a.file, rest);
+    };
+
+    NwayPanel.legend = el => {
+        const p = NwayPanel._active;
+        if (p) p._legOff = !el.open;
+        el.parentNode.classList.toggle('off', !el.open);
     };
 
     NwayPanel.act = (act, id) => NwayPanel._active && NwayPanel._active._act(act, id);

@@ -2829,8 +2829,7 @@ a.home-card:hover,
 #cluster-tab-functions .nway-panel { height: 100%; display: flex; flex-direction: column; }
 #cluster-tab-functions .nway-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #cluster-tab-functions .nway-scroll { flex: 1; min-height: 0; }
-#cluster-tab-functions .nway-table thead th { position: sticky; top: calc(var(--nb, 0) * 24px); z-index: 4; background: var(--bg); }
-#cluster-tab-functions .nway-table thead tr.nway-bands th { top: calc(var(--bi, 0) * 24px); }
+#cluster-tab-functions .nway-table thead th { position: sticky; top: 0; z-index: 4; background: var(--bg); }
 #cluster-tab-functions .nway-table thead th:first-child { z-index: 5; }
 .nway-table td:first-child { background: var(--bg); }
 .nway-table tbody tr:nth-child(even) td:first-child { background: var(--card-bg); }
@@ -3042,24 +3041,31 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .nway-table td.nway-open, .nway-table td.cluster-cards-cell { overflow: hidden; overflow-wrap: anywhere; }
 .nway-table th.sq, .nway-table td.sq, .nway-table tr.nway-grow td.sq { min-width: 0; width: 28px; max-width: 28px; padding: 4px 2px; text-align: center; }
 .nway-sq { display: inline-grid; place-items: center; box-sizing: border-box; width: 18px; height: 18px; border: 1px dashed var(--border); border-radius: 3px; vertical-align: middle; font: 600 0.62rem 'Consolas', monospace; color: #111; }
-.nway-sq.on { background: hsl(var(--h, 195) 62% 52%); border: 1px solid transparent; }
-.nway-sq.part { background: hsl(var(--h, 195) 50% 52% / 0.3); border: 1px solid hsl(var(--h, 195) 62% 52%); color: var(--text); }
-html.light-theme .nway-sq.on { background: hsl(var(--h, 195) 62% 44%); color: #fff; }
+.nway-sq.on { background: hsl(var(--h, 195) 62% var(--l, 52%)); border: 1px solid transparent; }
+.nway-sq.part { background: hsl(var(--h, 195) 50% var(--l, 52%) / 0.3); border: 1px solid hsl(var(--h, 195) 62% var(--l, 52%)); color: var(--text); }
+html.light-theme .nway-sq.on { background: hsl(var(--h, 195) 62% var(--ll, 44%)); color: #fff; }
 .nway-table td.sq .entity-function, .nway-table td.sq a { cursor: pointer; }
-/* Column cards: a grouped column is a card, click it to open; a band over its children folds it again */
-.nway-colcard { vertical-align: bottom; }
-.nway-colcard .nway-sq { display: grid; margin: 0 auto; }
-.nway-colcard.expandable { cursor: pointer; border-radius: 6px 6px 0 0; }
-.nway-colcard.expandable:hover { background: var(--hover); }
-.nway-cx { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 2px; min-width: 24px; margin: 4px auto 0; padding: 1px 3px; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg); color: var(--text); font: 600 0.62rem 'Consolas', monospace; line-height: 1.2; }
-.nway-colcard .nway-cx { display: flex; width: fit-content; }
-.nway-cx i { font-style: normal; font-size: 0.6rem; color: var(--dim); }
-.nway-colcard.expandable:hover .nway-cx, .nway-band:hover .nway-cx { border-color: var(--accent); }
-.nway-cx.open { margin: 0 auto; border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
-.nway-cnt { display: table; margin: 4px auto 0; padding: 1px 6px; border: 1px solid var(--border); border-radius: 10px; color: var(--dim); font: 600 0.62rem 'Consolas', monospace; }
-tr.nway-bands th { box-sizing: border-box; height: 24px; padding: 2px 2px 0; border: 0; background: var(--bg); text-align: center; vertical-align: middle; }
-tr.nway-bands th.nway-band { cursor: pointer; border-bottom: 2px solid color-mix(in srgb, var(--accent) 45%, var(--border)); }
-tr.nway-bands th.nway-band:hover { background: var(--hover); }
+/* Numbered column dots and the legend outline that opens and folds the column groups */
+.nway-numcol { vertical-align: bottom; }
+.nway-numcol.expandable { cursor: pointer; }
+.nway-numcol.expandable:hover { background: var(--hover); }
+.nway-num { display: inline-grid; place-items: center; box-sizing: border-box; width: 20px; height: 20px; border-radius: 50%; background: hsl(var(--h, 195) 62% var(--l, 52%)); color: #111; font: 600 0.64rem 'Consolas', monospace; }
+html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); color: #fff; }
+.nway-body { display: flex; align-items: flex-start; }
+.nway-body > .nway-scroll { flex: 1; min-width: 0; }
+#cluster-tab-functions .nway-body { flex: 1; min-height: 0; align-items: stretch; }
+.nway-legend { flex: none; width: 250px; max-height: calc(100vh - 180px); overflow: auto; position: sticky; top: 0; border-right: 1px solid var(--border); padding: 4px 6px 8px; font-size: 0.76rem; }
+#cluster-tab-functions .nway-legend { max-height: none; }
+.nway-legend.off { width: auto; }
+.nway-legend summary { cursor: pointer; padding: 4px; color: var(--dim); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.68rem; }
+.nway-legend em, .nway-ol em { font-style: normal; font: 600 0.62rem 'Consolas', monospace; background: var(--hover); border-radius: 8px; padding: 0 5px; color: var(--dim); }
+.nway-ol { display: flex; align-items: center; gap: 6px; padding: 2px 4px 2px calc(var(--dep) * 14px + 2px); border-radius: 4px; font-family: 'Consolas', monospace; }
+.nway-ol.expandable { cursor: pointer; }
+.nway-ol:hover { background: var(--hover); }
+.nway-tg { flex: none; width: 18px; height: 18px; padding: 0; border: 0; background: none; color: var(--text); cursor: pointer; font-size: 0.7rem; }
+.nway-tg:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.nway-olb { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nway-rg { flex: none; min-width: 2.2em; text-align: right; font-size: 0.64rem; color: var(--dim); }
 .nway-vname { writing-mode: vertical-rl; transform: rotate(180deg); max-height: 150px; margin: 6px auto 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: 0; font-size: 0.78rem; font-weight: 500; color: var(--text); }
 .nway-vname .entity-filename { display: inline; max-width: none; }
 .nway-gchip { display: inline-block; font-size: 0.66rem; font-weight: 400; line-height: 1.5; padding: 0 6px; margin-left: 5px; border-radius: 9px; border: 1px solid var(--border); color: var(--dim); }

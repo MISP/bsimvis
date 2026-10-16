@@ -38,7 +38,7 @@
     // Group by: rows bundled by file set, nested under one tag axis, or joined as one probable function.
     const GROUPS = [
         ['prefix', 'Prefix', 'Group by the first word of the function name (attack_*, killer_*...). Functions with no prefix, or a prefix only one function has, carry on to the next level beside the prefix groups.'],
-        ['lane', 'Lane', 'Bundles of rows that appear in exactly the same files, biggest bundle first. With the merge on, a merged function is bundled by all the files it covers together. Something whose files are a subset of a bundle joins the smallest bundle that holds it.'],
+        ['lane', 'Lane', 'Bundles of rows that appear in exactly the same files, biggest bundle first. With the merge on, a merged function is bundled by all the files it covers together. A set of files only one function has gets no lane: it stays a plain row beside the lanes.'],
         ['tag', 'Tag', 'Nest under the tags of one axis (origin, capa, YARA...). Something with several tags on the axis is listed under each.'],
     ];
     const TAG_AXES = [['origin', 'Origin'], ['severity', 'Severity'], ['category', 'Behavior'], ['user', 'User'], ['capa', 'Capa'], ['mitre', 'ATT&CK'], ['mbc', 'MBC'], ['yara', 'YARA'], ['ruleset', 'Ruleset'], ['family', 'Family'], ['vuln', 'Vulnerability']];
@@ -1577,10 +1577,9 @@
                 title = `<span class="nway-gtag" style="color:${escapeAttr(window.TagColor.forTag(g.label))}">${escapeHtml(g.label)}</span>`;
             } else if (g.kind === 'lane') {
                 title = `<b>${g.mask.split('1').length - 1} of ${n} files</b>`;
-                note = g.subset ? `${Number(g.subset)} subset row${g.subset > 1 ? 's' : ''} joined` : '';
             } else if (g.kind === 'same') {
                 const ev = (g.evidence || []).map(k => k === 'name' ? chip('ev-n', 'name', 'The rows share a function name') : chip('ev-c', 'call position', 'The rows share a caller and a weak edge links them')).join('');
-                const more = `${g.sub ? chip('sub', '\u2282 subset', 'Its files are a subset of this bundle, so it joined the smallest bundle that holds them.') : ''}${g.also > 1 ? chip('also', `\u00d7${Number(g.also)}`, 'Listed under several tags on this axis.') : ''}`;
+                const more = `${g.also > 1 ? chip('also', `\u00d7${Number(g.also)}`, 'Listed under several tags on this axis.') : ''}`;
                 title = `${(g.names || []).map(x => `<span class="nway-gname">${escapeHtml(x)}</span>`).join(' + ')}${ev}${more}`;
                 note = `${g.files} of ${n} files together${g.link ? ` &middot; best link ${Number(g.link).toFixed(2)}, under the edge` : ''}`;
             }
@@ -1610,11 +1609,10 @@
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             const also = row.also > 1 ? `<span class="nway-gchip also" title="This row has ${Number(row.also)} tags on this axis, so it is listed under each of them">&times;${Number(row.also)}</span>` : '';
-            const sub = row.sub ? '<span class="nway-gchip sub" title="Its files are a subset of this bundle, so it joined the smallest bundle that holds them. The cells show its real files.">&sub; subset</span>' : '';
             // Rows are indented one step past the header of the group they sit in, so a row with no partner lines up with the merged functions beside it.
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
             return `<tr${depth ? ` class="nway-in" style="--gd:${depth}"` : ''}>
-                <td class="nway-open" data-fn-open="${Number(ri)}" title="Compare this row's functions: strings, APIs, callees, constants and code" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${sub}</span></td>
+                <td class="nway-open" data-fn-open="${Number(ri)}" title="Compare this row's functions: strings, APIs, callees, constants and code" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}</span></td>
                 <td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>

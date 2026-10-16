@@ -5608,17 +5608,12 @@ def test_nway_diff():
         _depth = len(_chain.split(","))
         _leaf = [i for i in _n["items"] if not i.get("header")]
         _path = lambda g: _n["groups"][g]["path"] if g in _n["groups"] else []
-        if "prefix" in _chain:
-            # a function with no prefix carries on to the next level, so depths differ
-            check(
-                f"{_label}: grouped rows sit under their groups",
-                _leaf and max(len(_path(i["g"])) for i in _leaf) >= 1,
-            )
-        else:
-            check(
-                f"{_label}: rows sit under a group {_depth} levels deep",
-                _leaf and all(len(_path(i["g"])) >= _depth for i in _leaf),
-            )
+        # a unit a level cannot place (no prefix, a set of files only it has) is a plain row
+        # beside the groups and carries on to the next level, so depths differ
+        check(
+            f"{_label}: grouped rows sit under their groups",
+            _leaf and max(len(_path(i["g"])) for i in _leaf) >= 1,
+        )
         check(
             f"{_label}: a group's id extends its parent's",
             all(
@@ -5652,6 +5647,55 @@ def test_nway_diff():
         "nway group: prefix groups hold 2+ functions and name their prefix",
         _pgroups and all(m["rows"] >= 2 and m["label"].endswith("*") for m in _pgroups),
         str([(m["label"], m["rows"]) for m in _pgroups]),
+    )
+    # A merged function is ordered among the plain rows by the table sort, like one function.
+    for _dir in ("desc", "asc"):
+        _, _s = _nway(
+            tab="all",
+            scope="all",
+            limit=1000,
+            group="lane",
+            group_merge="name",
+            sort_col="weight",
+            sort_dir=_dir,
+            group_open="all",
+        )
+        _at = next(
+            (
+                n
+                for n, i in enumerate(_s["items"])
+                if i.get("header") and _s["groups"][i["g"]]["kind"] == "same"
+            ),
+            None,
+        )
+        if _at is None:
+            check(f"nway sort {_dir}: a merged function is listed", False)
+            continue
+        _lane = _s["groups"][_s["items"][_at]["g"]]["path"][0]
+        _plain = [
+            n
+            for n, i in enumerate(_s["items"])
+            if i["g"] == _lane and not i.get("header")
+        ]
+        check(
+            f"nway sort weight {_dir}: the merged function sorts among the plain rows",
+            _plain and (_at < min(_plain) if _dir == "desc" else _at > max(_plain)),
+            f"merged at {_at}, plain rows at {_plain[:3]}",
+        )
+    # Lanes need 2+ units; group_lane_min=1 gives every set of files a lane.
+    _, _l2 = _nway(tab="all", scope="all", limit=1000, group="lane")
+    _, _l1 = _nway(tab="all", scope="all", limit=1000, group="lane", group_lane_min=1)
+    check(
+        "nway group: lane_min=1 makes at least as many lanes, and none is subset-merged",
+        _l2
+        and _l1
+        and len(_l1["groups"]) >= len(_l2["groups"])
+        and all("subset" not in m for m in _l1["groups"].values()),
+        f"{len(_l1['groups'])} vs {len(_l2['groups'])}",
+    )
+    check(
+        "nway group: a lane holds 2+ rows by default",
+        _l2 and all(m["rows"] >= 2 for m in _l2["groups"].values()),
     )
     check(
         "nway group: a level can be used once",

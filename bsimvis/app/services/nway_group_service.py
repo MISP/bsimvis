@@ -35,6 +35,7 @@ from bsimvis.app.services.tag_taxonomy import tag_body, tag_prefixes
 
 MODES = ("tag", "lane", "prefix")
 PREFIX_MIN = 2  # functions that must share a prefix before it makes a group
+LANE_MIN = 2  # units that must share a set of files before it makes a lane
 SORTS = ("weight", "rows", "files")
 TAG_FANOUT = 3  # tags of one axis a row is listed under, most shared first
 NAME_BUCKET = 12  # rows sharing one name that are paired up
@@ -82,31 +83,27 @@ def _order(groups, sort):
     return sorted(groups, key=lambda g: (-_rank(g, sort), g["id"]))
 
 
-def lane_groups(rows, n, sort):
-    """One group per set of files. A unit whose files are a subset of a shared bundle joins it."""
+def lane_groups(rows, n, sort, min_size=LANE_MIN):
+    """One group per set of files shared by `min_size`+ units, plus a headless pair for the rest.
+
+    A unit with a set of files of its own stays a plain row beside the lanes (or
+    carries on to the next level): lanes are bundles, and a unit whose files are
+    only a subset of a bundle is not forced into it.
+    """
     count = Counter(r["mask"] for r in rows)
-    bundles = [m for m, c in count.items() if c >= 2]
     members = defaultdict(list)
+    loose = []
     for r in rows:
-        lane = r["mask"]
-        if lane not in bundles:
-            # a subset of a bundle's files joins the smallest bundle that holds it
-            fits = [m for m in bundles if not lane & ~m]
-            if fits:
-                lane = min(fits, key=_pop)
-        members[lane].append((r, lane != r["mask"]))
+        (members[r["mask"]] if count[r["mask"]] >= min_size else loose).append(r)
     out = []
     for lane, items in members.items():
-        g = _meta([r for r, _ in items], n)
-        g.update(
-            id=f"lane:{_bits(lane, n)}",
-            kind="lane",
-            mask=_bits(lane, n),
-            subset=sum(1 for _, s in items if s),
-        )
+        g = _meta(items, n)
+        g.update(id=f"lane:{_bits(lane, n)}", kind="lane", mask=_bits(lane, n))
         g["path"] = [g["id"]]
-        out.append((g, [(r, {"sub": True} if s else {}) for r, s in items]))
+        out.append((g, [(r, {}) for r in items]))
     out.sort(key=lambda p: (-_rank(p[0], sort), p[0]["id"]))
+    if loose:
+        out.append(({"id": "", "path": [], "headless": True}, [(r, {}) for r in loose]))
     return out
 
 
@@ -398,6 +395,7 @@ def merge_units(rows, doc, r, evidence, min_link):
                 "_kinds": g["kinds"],
                 "_sim": g["sim"],
                 "_idx": min(g["rows"]),
+                "_fspan": _pop(g["fmask"]),
             }
         )
     return units, note
@@ -408,7 +406,7 @@ def _level(mode, units, ctx):
     if mode == "prefix":
         return prefix_groups(units, ctx["n"], ctx["sort"], ctx["prefix_min"])
     if mode == "lane":
-        return lane_groups(units, ctx["n"], ctx["sort"])
+        return lane_groups(units, ctx["n"], ctx["sort"], ctx["lane_min"])
     return tag_groups(
         units, ctx["fmeta"], ctx["n"], ctx["sort"], ctx["axis"], ctx["axis_b"]
     )
@@ -422,11 +420,44 @@ def _graft(g, parent_id, parent_path):
     return g
 
 
+SORT_COLS = ("name", "span", "weight", "support", "cohesion")
+
+
+def _unit_sortkey(u, ctx):
+    """The table's sort value of a unit: a merged function sorts like one function."""
+    if "_rows" in u:
+        rs = u["_rows"]
+        vals = {
+            "name": str(rs[0]["name"]).lower(),
+            "span": u["_fspan"],
+            "weight": max(r["weight"] for r in rs),
+            "support": sum(r.get("support", 1.0) for r in rs) / len(rs),
+            "cohesion": sum(r.get("cohesion", 1.0) for r in rs) / len(rs),
+        }
+    else:
+        vals = {
+            "name": str(u["name"]).lower(),
+            "span": u.get("file_span", u.get("span", _pop(u["mask"]))),
+            "weight": u["weight"],
+            "support": u.get("support", 1.0),
+            "cohesion": u.get("cohesion", 1.0),
+        }
+    col = ctx["sort_col"]
+    # the table's default order: most files first, then the heaviest
+    return vals[col] if col else (vals["span"], vals["weight"])
+
+
 def _expand(units, ctx, parent_id, parent_path, carried):
-    """Merged units become "same function" sub-groups, the rest one "no partner" group."""
-    n, pairs = ctx["n"], []
+    """Merged units become "same function" sub-groups; rows with no partner stay plain rows.
+
+    Both are ordered together by the table's sort column, so a merged function
+    sits among the plain rows where one function with its values would.
+    """
+    n, items = ctx["n"], []
     for u in units:
         if "_rows" not in u:
+            head = {"id": parent_id, "path": list(parent_path), "headless": True}
+            items.append((_unit_sortkey(u, ctx), (head, [(u, carried.get(id(u), {}))])))
             continue
         members = u["_rows"]
         m = _meta(members, n)
@@ -438,23 +469,17 @@ def _expand(units, ctx, parent_id, parent_path, carried):
             names=list(dict.fromkeys(row["name"] for row in members))[:4],
         )
         extra = carried.get(id(u), {})
-        if extra.get("sub"):
-            m["sub"] = True
         if extra.get("also", 0) > 1:
             m["also"] = extra["also"]
         m["path"] = [m["id"]]
-        pairs.append(
-            (_graft(m, parent_id, parent_path), [(row, {}) for row in members])
+        items.append(
+            (
+                _unit_sortkey(u, ctx),
+                (_graft(m, parent_id, parent_path), [(row, {}) for row in members]),
+            )
         )
-    pairs.sort(
-        key=lambda p: (-len(p[0]["evidence"]), -_rank(p[0], ctx["sort"]), p[0]["id"])
-    )
-    single = [u for u in units if "_rows" not in u]
-    if single:
-        # rows with no partner sit directly under the parent, after the merged functions
-        head = {"id": parent_id, "path": list(parent_path), "headless": True}
-        pairs.append((head, [(u, carried.get(id(u), {})) for u in single]))
-    return pairs
+    items.sort(key=lambda it: it[0], reverse=ctx["reverse"])
+    return [pair for _, pair in items]
 
 
 def _nest(units, levels, ctx, parent_id, parent_path, carried):
@@ -511,7 +536,18 @@ def group_rows(rows, doc, r, mode, params):
         "merge": bool(evidence),
         "note": "",
         "prefix_min": PREFIX_MIN,
+        "lane_min": LANE_MIN,
+        "sort_col": (
+            params.get("sort_col") if params.get("sort_col") in SORT_COLS else ""
+        ),
+        "reverse": params.get("sort_dir", "desc") != "asc"
+        or params.get("sort_col") not in SORT_COLS,
     }
+    if params.get("group_lane_min"):
+        try:
+            ctx["lane_min"] = max(1, int(params["group_lane_min"]))
+        except ValueError:
+            raise BadParams("group_lane_min must be an integer")
     if params.get("group_prefix_min"):
         try:
             ctx["prefix_min"] = max(2, int(params["group_prefix_min"]))
@@ -574,13 +610,14 @@ def demo():
             "cells": cells or {"A": f"f{mask}{name}"},
         }
 
-    # lanes: three rows share 0b0011, one row (0b0001) is a subset, one fits no lane
+    # lanes: a set of files shared by 2+ rows is a lane; the other rows are plain, not forced into one
     rows = [row(3, 10), row(3, 5), row(3, 1), row(1, 4), row(12, 2)]
     lanes = lane_groups(rows, 4, "weight")
-    assert lanes[0][0]["id"] == "lane:1100" and lanes[0][0]["rows"] == 4
-    assert lanes[0][0]["subset"] == 1
-    # no catch-all: a row that fits no bundle is a lane of its own
-    assert lanes[1][0]["id"] == "lane:0011" and lanes[1][0]["rows"] == 1
+    assert [g["id"] for g, _ in lanes] == ["lane:1100", ""], lanes
+    assert lanes[0][0]["rows"] == 3 and lanes[1][0]["headless"]
+    assert [r["mask"] for r, _ in lanes[1][1]] == [1, 12]
+    # lane_min 1 gives every set of files a lane of its own
+    assert len(lane_groups(rows, 4, "weight", 1)) == 3
 
     # prefixes: first word of the name, auto names and one-word names have none
     assert name_prefix("attack_udp_flood") == ("attack", "_")
@@ -604,6 +641,9 @@ def demo():
         "merge": False,
         "note": "",
         "prefix_min": 2,
+        "lane_min": 1,
+        "sort_col": "",
+        "reverse": True,
     }
     deep = _nest(named, ["prefix", "lane"], nest_ctx, "", [], {})
     heads = [g["id"] for g, _ in deep if not g.get("headless")]
@@ -640,6 +680,9 @@ def demo():
         "axis_b": "",
         "merge": True,
         "note": "",
+        "lane_min": 1,
+        "sort_col": "",
+        "reverse": True,
     }
     got = _nest(units, ["lane"], ctx, "", [], {})
     heads = [g["id"] for g, _ in got if not g.get("headless")]
@@ -649,10 +692,23 @@ def demo():
     merged_pair = next(p for p in got if p[0]["id"] == "lane:1111/same:0")
     assert merged_pair[0]["path"] == ["lane:1111", "lane:1111/same:0"]
     assert len(merged_pair[1]) == 2 and got[0][1] == []
-    # no levels: merged functions first, then the rows with no partner at the top
+    # no levels: the merged function and the plain rows are ordered together, like functions
     top = _nest(units, [], ctx, "", [], {})
-    assert [g["id"] for g, _ in top] == ["same:0", ""] and top[1][0]["headless"]
-    assert len(top[1][1]) == 2
+    assert [g["id"] for g, _ in top] == ["same:0", "", ""], top
+    assert all(len(items) == 1 for _, items in top[1:])
+
+    # the merged function (4 files, heaviest row 9) sorts by its own values, not first
+    def order(**over):
+        c = {**ctx, **over}
+        return [
+            g["id"] or items[0][0]["name"] + str(items[0][0]["weight"])
+            for g, items in _nest(units, [], c, "", [], {})
+        ]
+
+    assert order(sort_col="weight", reverse=True) == ["same:0", "init7", "other6"]
+    assert order(sort_col="weight", reverse=False) == ["other6", "init7", "same:0"]
+    assert order(sort_col="span", reverse=False)[-1] == "same:0"
+    assert order(sort_col="name", reverse=False)[0] == "same:0"  # "init" < "other"
     for mode in ("lane,lane", "bogus", "same"):
         try:
             group_rows(doc["rows"], doc, None, mode, {})

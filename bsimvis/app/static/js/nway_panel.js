@@ -1652,9 +1652,13 @@
             this._set({ col_open: open.size ? JSON.stringify([...open]) : '', offset: 0 });
         }
 
+        _bandDepth() {
+            return Math.max(0, ...this.data.columns.map(c => (c.path || []).length));
+        }
+
         // A band over each run of columns that were expanded out of one group: its fold button.
         _bands() {
-            const cols = this.data.columns, depth = Math.max(0, ...cols.map(c => (c.path || []).length));
+            const cols = this.data.columns, depth = this._bandDepth();
             let out = '';
             for (let d = 0; d < depth; d++) {
                 let cells = '', i = 0;
@@ -1663,11 +1667,11 @@
                     let j = i + 1;
                     if (p) while (j < cols.length && ((cols[j].path || [])[d] || {}).id === p.id) j++;
                     cells += p
-                        ? `<th class="sq nway-band" colspan="${j - i}"><button class="nway-cx open" data-colx="${escapeAttr(p.id)}" title="${escapeAttr(`Fold ${p.label} (${p.member_count} files)`)}"><i>&#9662;</i><b>${Number(p.member_count)}</b></button></th>`
+                        ? `<th class="sq nway-band" colspan="${j - i}" data-colx="${escapeAttr(p.id)}" title="${escapeAttr(`Fold ${p.label} (${p.member_count} files)`)}"><span class="nway-cx open"><i>&#9662;</i><b>${Number(p.member_count)}</b></span></th>`
                         : `<th class="sq" colspan="${j - i}"></th>`;
                     i = j;
                 }
-                out += `<tr class="nway-bands"><th colspan="${DATA_COLS.length}"></th>${cells}</tr>`;
+                out += `<tr class="nway-bands" style="--bi:${d}"><th></th><th colspan="${DATA_COLS.length - 1}"></th>${cells}</tr>`;
             }
             return out;
         }
@@ -1693,9 +1697,9 @@
                 const members = (c.members || []).map(m => fname.get(m) || m);
                 const tip = [c.label, `${count} file${count === 1 ? '' : 's'}`, kindNote[c.kind] || '', ...members.slice(0, 12), members.length > 12 ? `+${members.length - 12} more` : '', c.expandable ? 'click the count to show the files' : ''].filter(Boolean).join('\n');
                 const badge = c.expandable
-                    ? `<button class="nway-cx" data-colx="${escapeAttr(c.id)}" title="${escapeAttr(`Show the ${count} files of ${c.label}`)}"><i>&#9656;</i><b>${count}</b></button>`
+                    ? `<span class="nway-cx"><i>&#9656;</i><b>${count}</b></span>`
                     : count > 1 ? `<span class="nway-cnt" title="${escapeAttr(`${count} files`)}">${count}</span>` : '';
-                return `<th class="col sq nway-colcard" title="${escapeAttr(tip)}"><i class="nway-sq on" style="${this._sqStyle(ci)}"></i>${badge}<div class="nway-vname">${escapeHtml(c.label)}</div></th>`;
+                return `<th class="col sq nway-colcard${c.expandable ? ' expandable' : ''}"${c.expandable ? ` data-colx="${escapeAttr(c.id)}"` : ''} title="${escapeAttr(tip)}"><i class="nway-sq on" style="${this._sqStyle(ci)}"></i>${badge}<div class="nway-vname">${escapeHtml(c.label)}</div></th>`;
             };
             const colHead = (c, ci) => c.kind ? groupHead(c, ci) : fileHead(c, ci);
             return `${this._bands()}<tr>${SORTS.map(th).join('')}<th>Cluster</th>${this.data.columns.map(colHead).join('')}</tr>`;
@@ -1714,7 +1718,7 @@
                 <div class="nway-card table-scope">
                     <div class="nway-scroll">
                         <table id="nway-table" class="nway-table" style="width:${this._tableWidth()}px">${this._colgroup()}
-                            <thead>${this._head()}</thead>
+                            <thead style="--nb:${this._bandDepth()}">${this._head()}</thead>
                             <tbody>${rows || `<tr><td colspan="${d.columns.length + 7}" class="gap">No rows in this tab.</td></tr>`}</tbody>
                             ${scroll ? `<tfoot><tr><td class="nway-sentinel" colspan="${d.columns.length + 7}"></td></tr></tfoot>` : ''}
                         </table>

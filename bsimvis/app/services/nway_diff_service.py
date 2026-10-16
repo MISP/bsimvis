@@ -540,6 +540,44 @@ def project_rows(rows, groups, presence):
     return out
 
 
+def twin_groups(rows, columns):
+    """Files that hold a function in exactly the same shared rows (span >= 2): one column each.
+
+    -> groups for `project_rows` (a group of one file for a file with no twin),
+    or None when no two files are twins. A group counts as holding a function
+    when any of its files does, so a function only one twin has shows as partial.
+    """
+    held = {c["id"]: 0 for c in columns}
+    k = 0
+    for row in rows:
+        if row["span"] < 2:
+            continue
+        for cid in row["cells"]:
+            held[cid] |= 1 << k
+        k += 1
+    by = {}
+    for c in columns:
+        by.setdefault(held[c["id"]], []).append(c)
+    if len(by) == len(columns):
+        return None
+    groups = []
+    for n, files in enumerate(by.values()):
+        names = [f.get("file_name") or f["md5"] for f in files]
+        groups.append(
+            {
+                "id": f"twin:{n}",
+                "kind": "twin",
+                "label": (
+                    names[0] if len(names) == 1 else f"{names[0]} +{len(names) - 1}"
+                ),
+                "members": [f["id"] for f in files],
+                "member_count": len(files),
+                "presence": 1e-9,
+            }
+        )
+    return groups
+
+
 def coverage(rows, column_ids):
     """{column id: share of the shared weight that file holds}.
 
@@ -589,6 +627,27 @@ def demo():
     assert project_rows([half], groups, 0.25)[0]["span"] == 2
     own = [dict(groups[0], presence=1.0), groups[1]]
     assert project_rows([half], own, 0.25)[0]["cells"]["A"]["on"] is False
+    # twin files: same shared rows -> one column; a file with other rows stays alone
+    cols = [{"id": i, "md5": i, "file_name": i.lower()} for i in "ABC"]
+    shared = [
+        {"span": 3, "cells": {"A": 1, "B": 2, "C": 3}},
+        {"span": 2, "cells": {"A": 4, "B": 5}},
+        {"span": 1, "cells": {"C": 6}},
+    ]
+    tw = twin_groups(shared, cols)
+    assert [g["members"] for g in tw] == [["A", "B"], ["C"]], tw
+    assert tw[0]["label"] == "a +1" and tw[1]["label"] == "c"
+    assert twin_groups(shared[:1], cols) is not None
+    assert (
+        twin_groups(
+            [
+                {"span": 2, "cells": {"A": 1, "B": 2}},
+                {"span": 2, "cells": {"B": 3, "C": 4}},
+            ],
+            cols,
+        )
+        is None
+    )
     print("nway_diff_service demo ok")
 
 
@@ -634,6 +693,10 @@ def compute(r, scope, members, params=None):
     groups = params.get("groups")
     presence = float(params.get("child_presence", 0.5))
     focus = list(dict.fromkeys(params.get("focus") or []))
+    # twin columns come from the matched rows, so they replace any child-cluster groups
+    twins = bool(params.get("twins")) and not focus
+    if twins:
+        groups = None
     if focus:
         ids = [_col_id(c, m) for c, m in members]
         if [f for f in focus if f not in ids]:
@@ -657,6 +720,7 @@ def compute(r, scope, members, params=None):
     doc_key = base_key + (
         min_edge,
         presence,
+        twins,
         hashlib.md5(json.dumps(groups, sort_keys=True).encode()).hexdigest(),
     )
     doc = _DOC_CACHE.get(doc_key)
@@ -670,6 +734,9 @@ def compute(r, scope, members, params=None):
     rows = _match(base, min_edge)
     cov = coverage(rows, [c["id"] for c in base["columns"]])
     file_columns = [{**c, "coverage": cov[c["id"]]} for c in base["columns"]]
+    if twins:
+        groups = twin_groups(rows, base["columns"])
+        twins = groups is not None
     if groups:
         rows = project_rows(rows, groups, presence)
     doc = {
@@ -677,7 +744,11 @@ def compute(r, scope, members, params=None):
         "algo": base["algo"],
         "min_edge": min_edge,
         "columns": groups or file_columns,
-        "columns_mode": "focus" if focus else "children" if groups else "files",
+        "columns_mode": (
+            "focus"
+            if focus
+            else "twins" if twins else "children" if groups else "files"
+        ),
         "file_columns": file_columns if groups else None,
         "rows": rows,
         "fmeta": base["fmeta"],

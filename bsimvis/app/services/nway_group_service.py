@@ -252,6 +252,14 @@ def merge_units(rows, doc, r, evidence, min_link):
     cand = [(at[id(row)], row) for row in rows if id(row) in at]
     best = _best_links(doc["edges"], row_of)
     link = {}  # (row, row) -> {"kinds", "sim"}
+    # Rows are joined on files, lanes group on columns: with twin or child columns
+    # one column holds several files, and two rows in one column may sit in different files.
+    fbit = {
+        c["id"]: 1 << i for i, c in enumerate(doc.get("file_columns") or doc["columns"])
+    }
+
+    def fmask(row):
+        return sum(fbit.get(c, 0) for c in (row.get("files") or row["cells"]))
 
     def add(a, b, kind, sim):
         k = (min(a, b), max(a, b))
@@ -286,7 +294,13 @@ def merge_units(rows, doc, r, evidence, min_link):
 
     # Merge the strongest evidence first and never join rows that share a file.
     grp = {
-        i: {"rows": [i], "kinds": set(), "sim": 0.0, "mask": row["mask"]}
+        i: {
+            "rows": [i],
+            "kinds": set(),
+            "sim": 0.0,
+            "mask": row["mask"],
+            "fmask": fmask(row),
+        }
         for i, row in cand
     }
     for (a, b), e in sorted(
@@ -296,10 +310,11 @@ def merge_units(rows, doc, r, evidence, min_link):
             continue
         ga, gb = grp[a], grp[b]
         if ga is not gb:
-            if ga["mask"] & gb["mask"]:
+            if ga["fmask"] & gb["fmask"]:
                 continue
             ga["rows"] += gb["rows"]
             ga["mask"] |= gb["mask"]
+            ga["fmask"] |= gb["fmask"]
             ga["kinds"] |= gb["kinds"]
             ga["sim"] = max(ga["sim"], gb["sim"])
             for i in gb["rows"]:
@@ -509,7 +524,7 @@ def demo():
 
     # merge: equal names join disjoint rows, overlapping rows stay apart
     doc = {
-        "columns": [0, 0, 0, 0],
+        "columns": [{"id": i} for i in "ABCD"],
         "edges": {},
         "fmeta": {},
         "rows": [

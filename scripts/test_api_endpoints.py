@@ -5464,6 +5464,53 @@ def test_nway_diff():
         all(len(r["cells"]) == 2 and r["span"] == 2 for r in core["items"]),
     )
 
+    # Twin columns: files that hold the same shared rows share one column; tabs still count files.
+    _, tw = _nway(tab="core", scope="all", limit=1000, columns="twins")
+    check(
+        "nway twins: the pair is one column holding both files",
+        tw
+        and tw["columns_mode"] == "twins"
+        and len(tw["columns"]) == 1
+        and sorted(tw["columns"][0]["members"])
+        == sorted(c["id"] for c in tw["file_columns"]),
+        str(tw and [tw["columns_mode"], tw["columns"]]),
+    )
+    check(
+        "nway twins: core rows are the plain core rows",
+        tw and tw["total"] == core["total"],
+        f"{tw and tw['total']} vs {core['total']}",
+    )
+    _, tw_u = _nway(tab="unique", scope="all", limit=1000, columns="twins")
+    check(
+        "nway twins: unique rows are the plain unique rows",
+        tw_u and tw_u["total"] == only["total"],
+        f"{tw_u and tw_u['total']} vs {only['total']}",
+    )
+    check(
+        "nway twins: every row keeps its file span and the column's mask bit",
+        tw and all(r["file_span"] == 2 and r["mask"] == 1 for r in tw["items"]),
+    )
+    _st, _both = _nway(
+        tab="all",
+        scope="all",
+        limit=1000,
+        columns="twins",
+        group="lane",
+        group_merge="name",
+        group_open="all",
+    )
+    check(
+        "nway twins: rows in different files of one column still merge",
+        _both and any(m["kind"] == "same" for m in _both["groups"].values()),
+    )
+    check(
+        "nway twins: merge and lane work on the twin columns",
+        _st == 200
+        and _both
+        and all(len(m["union"]) == 1 for m in _both["groups"].values()),
+        f"HTTP {_st}",
+    )
+
     # Group by: rows come back in group order, each tagged with its group.
     _, flat = _nway(tab="all", scope="all", limit=1000)
     check("nway group: off by default", flat and flat["groups"] == {})

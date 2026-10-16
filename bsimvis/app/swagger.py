@@ -2679,7 +2679,7 @@ class BinSimNway(Resource):
             "md5s": "Comma-separated files, each `<collection>:<md5>` or a bare md5 with `collection` (2 or more); or use cluster_uuid",
             "batch_uuid": "Upload batch whose files are added to `md5s` (with `collection`, or searched in every collection); unknown batch -> 404",
             "cluster_uuid": "Binary cluster (file node) to diff instead of `md5s`; with `collection` or `pool`, optional `axis`/`algo`",
-            "columns": "With cluster_uuid: auto (default), files or children (one column per child cluster + direct files)",
+            "columns": "auto (default), files, children (cluster_uuid only: one column per child cluster + direct files) or twins (any set: files that hold a function in exactly the same shared rows share one column; tabs still count files)",
             "child_presence": "children columns: share of a child's files that must hold a function for it to count as present (default 0.5)",
             "collection": "Collection for bare md5s",
             "pool": "Pool ID; members must come from the pool's collections",

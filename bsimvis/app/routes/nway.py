@@ -175,8 +175,9 @@ def _cluster_node(r, pool_id, collection, uuid):
     return scope, members, groups, children
 
 
-def _in_tab(row, tab, k, n, focus=False):
-    span = row["span"]
+def _in_tab(row, tab, k, n, focus=False, twin=False):
+    # twin columns hold several files each: tabs count the files, not the columns
+    span = row.get("file_span", row["span"]) if twin else row["span"]
     if tab == "all":
         return span >= 1 or not focus
     if tab == "unique" and focus:  # one side only
@@ -269,7 +270,8 @@ def _page(doc, args, r=None, pool_id=None):
     """Tab counts, then filter + sort + slice one tab of the rows."""
     rows, fmeta = doc["rows"], doc["fmeta"]
     focus = doc["columns_mode"] == "focus"
-    n = len(doc["columns"])
+    twin = doc["columns_mode"] == "twins"
+    n = len(doc["file_columns"] if twin else doc["columns"])
     tab = args.get("tab", "core")
     if tab not in TABS:
         abort(400, f"tab must be one of {TABS}")
@@ -287,10 +289,10 @@ def _page(doc, args, r=None, pool_id=None):
     counts = {
         t: {
             "code": sum(
-                1 for r in rows if _in_tab(r, t, k, n, focus) and not r["library"]
+                1 for r in rows if _in_tab(r, t, k, n, focus, twin) and not r["library"]
             ),
             "library": sum(
-                1 for r in rows if _in_tab(r, t, k, n, focus) and r["library"]
+                1 for r in rows if _in_tab(r, t, k, n, focus, twin) and r["library"]
             ),
         }
         for t in TABS
@@ -303,7 +305,7 @@ def _page(doc, args, r=None, pool_id=None):
     sup_min = fnum("support_min", args)
 
     def keep(row):
-        if not _in_tab(row, tab, k, n, focus):
+        if not _in_tab(row, tab, k, n, focus, twin):
             return False
         if focus and side and not row["mask"] & (1 if side == "focus" else 2):
             return False
@@ -417,8 +419,8 @@ def _load_doc():
     collection = request.args.get("collection")
     cluster_uuid = (request.args.get("cluster_uuid") or "").strip().lower()
     columns = request.args.get("columns", "auto")
-    if columns not in ("auto", "files", "children"):
-        abort(400, "columns must be auto, files or children")
+    if columns not in ("auto", "files", "children", "twins"):
+        abort(400, "columns must be auto, files, children or twins")
     if columns == "children" and not cluster_uuid:
         abort(400, "columns=children needs cluster_uuid")
     focus = [
@@ -472,6 +474,7 @@ def _load_doc():
                 "min_score": min_score,
                 "min_features": min_features,
                 "groups": groups,
+                "twins": columns == "twins",
                 "focus": focus,
                 "focus_rule": focus_rule,
                 "child_presence": max(0.0, min(1.0, presence)),

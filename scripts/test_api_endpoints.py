@@ -5480,6 +5480,61 @@ def test_nway_diff():
         tw and tw["total"] == core["total"],
         f"{tw and tw['total']} vs {core['total']}",
     )
+    # A twin column opens into its files (col_open), and folds back.
+    _twin = (tw or {"columns": [{}]})["columns"][0]
+    check(
+        "nway twins: a twin column is expandable and has no parent",
+        _twin.get("expandable") is True and _twin.get("path") == [],
+        str(_twin)[:200],
+    )
+    _, tw_open = _nway(
+        tab="core",
+        scope="all",
+        limit=1000,
+        columns="twins",
+        col_open=json.dumps([_twin.get("id")]),
+    )
+    check(
+        "nway twins: col_open shows one column per file, under the twin as parent",
+        tw_open
+        and len(tw_open["columns"]) == len(tw["file_columns"])
+        and all(
+            c["kind"] == "file"
+            and c["member_count"] == 1
+            and not c["expandable"]
+            and [p["id"] for p in c["path"]] == [_twin["id"]]
+            for c in tw_open["columns"]
+        ),
+        str(tw_open and tw_open["columns"])[:300],
+    )
+    check(
+        "nway twins: expanding keeps the rows and labels the columns with file names",
+        tw_open
+        and tw_open["total"] == tw["total"]
+        and all(
+            c["label"] in {f["file_name"] for f in tw_open["file_columns"]}
+            for c in tw_open["columns"]
+        )
+        and all(len(r["cells"]) == len(tw_open["columns"]) for r in tw_open["items"]),
+    )
+    _st, _bad = _nway(columns="twins", col_open="not json")
+    check("nway twins: a bad col_open is a 400", _st == 400)
+    _, _grp = _nway(
+        tab="all",
+        scope="all",
+        limit=1000,
+        columns="twins",
+        col_open=json.dumps([_twin.get("id")]),
+        group="lane",
+        group_open="all",
+    )
+    check(
+        "nway twins: lanes follow the expanded columns",
+        _grp
+        and all(len(m["union"]) == 2 for m in _grp["groups"].values())
+        and {m["mask"] for m in _grp["groups"].values()} >= {"11"},
+        str(_grp and [m["mask"] for m in _grp["groups"].values()]),
+    )
     _, tw_u = _nway(tab="unique", scope="all", limit=1000, columns="twins")
     check(
         "nway twins: unique rows are the plain unique rows",

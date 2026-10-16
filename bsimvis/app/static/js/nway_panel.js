@@ -31,10 +31,10 @@
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
         columns: 'auto', child_presence: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
-        group: '', group_axis: '', group_axis_b: '', group_merge: '', group_min_link: '', group_sort: '', group_lane_min: '', group_lane_fit: '', group_prefix_min: '',
+        group: '', group_axis: '', group_axis_b: '', group_merge: '', group_min_link: '', group_sort: '', group_lane_min: '', group_lane_fit: '', group_prefix_min: '', col_open: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min'];
+    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open'];
     // Group by: rows bundled by file set, nested under one tag axis, or joined as one probable function.
     const GROUPS = [
         ['prefix', 'Prefix', 'Group by the first word of the function name (attack_*, killer_*...). Functions with no prefix, or a prefix only one function has, carry on to the next level beside the prefix groups.'],
@@ -306,7 +306,7 @@
                 preset,
                 this._seg('Mode', 'mode', [['stored', 'Stored', 'reads built pair docs'], ['virtual', 'Virtual', 'recomputes from vectors']], 'Stored reads the similarity pairs already built. Virtual recomputes the matches from the function vectors, as a fresh collection of just these files would.'),
                 s.tab === 'partial' && !focus ? this._slider(`In at least (of ${n})`, 'k', s.k, 2, Math.max(2, n), 1, 'Partial tab: keep functions present in at least this many columns.') : '',
-                isNode ? this._seg('Columns', 'columns', [['auto', 'Auto'], ['files', 'Files'], ['children', 'Children'], ['twins', 'Twins']], "Files: one column per file of the node. Children: one column per child cluster. Twins: files with the same functions share a column. Auto switches to Children above 12 files.") : '',
+                isNode ? this._seg('Columns', 'columns', [['auto', 'Auto'], ['files', 'Files'], ['children', 'Children'], ['twins', 'Twins']], "Files: one column per file of the node. Children: one column per child cluster; click a column's count to open its own children, down to files. Twins: files with the same functions share a column. Auto switches to Children above 12 files.") : '',
                 advanced,
             ].join('');
             return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${search}</div>
@@ -322,7 +322,7 @@
             const step = n => `<span class="nway-gstep">${n}</span>`;
             const twin = s.columns === 'twins', files = (d.file_columns || d.columns).length;
             const twinHint = !twin ? 'Files that hold a function in exactly the same shared rows become one column.'
-                : d.columns_mode === 'twins' ? `${files} files in ${d.columns.length} columns. A function only some of a column's files hold shows as a partly filled square.`
+                : d.columns_mode === 'twins' ? `${files} files in ${d.columns.length} columns. Click a column's count to show its files. A function only some of a column's files hold shows as a partly filled square.`
                     : 'No two files hold exactly the same functions in this set.';
             const evidence = on
                 ? `${box('name', 'Name', 'Rows with the same function name. Auto names (FUN_, sub_) and compiler suffixes (.part.0) are ignored.')}${box('call', 'Call position', 'Rows under the same caller, in different files, with a weak edge between them. Needs the callers of every function.')}${merge.has('call') ? this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.') : ''}`
@@ -482,9 +482,11 @@
                 const fid = col.members.includes(f.id) && (row.files || {})[f.id];
                 if (fid) hits.push({ f, fid, data: this._fnData(fid, f) });
             }
-            const tip = `${col.label || ''}\n${Number(cell.present)}/${Number(cell.total)} files${hits.length ? '\n' + hits.slice(0, 6).map(h => `@ ${h.data.entrypoint_address}  ${h.f.file_name || ''}`).join('\n') : ''}${hits.length > 6 ? `\n+${hits.length - 6} more` : ''}`;
             // Filled when every file of the column holds the function, tinted with the count when only some do.
-            const sq = `<i class="nway-sq${cell.present ? (cell.present === cell.total ? ' on' : ' part') : ''}" style="${this._sqStyle(ci)}" title="${escapeAttr(tip)}">${cell.total > 1 && cell.present ? Number(cell.present) : ''}</i>`;
+            // Hovering shows the function preview of the first one, and the others in its "other functions" card.
+            const list = hits.map(h => ({ fid: h.fid, name: h.data.function_name, addr: h.data.entrypoint_address, md5: h.f.md5, feat: h.data.bsim_features_count, file: h.f.file_name || '' }));
+            const hover = hits.length ? ` data-gfns='${escapeAttr(JSON.stringify(list))}' onmouseenter="NwayPanel.hoverGroup(this, event)" onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)" onmouseleave="typeof hideCodePreview === 'function' && hideCodePreview(event)"` : ` title="${escapeAttr(`${col.label || ''}: no function in this row`)}"`;
+            const sq = `<i class="nway-sq${cell.present ? (cell.present === cell.total ? ' on' : ' part') : ''}" style="${this._sqStyle(ci)}"${hover}>${cell.total > 1 && cell.present ? Number(cell.present) : ''}</i>`;
             if (!hits.length) return `<td class="col sq">${sq}</td>`;
             const { f, fid, data } = hits[0];
             return `<td class="col sq"><a data-nav="${escapeAttr(fnUrl(f, fid, pool))}" data-title="${escapeAttr(f.file_name)}"
@@ -1638,6 +1640,38 @@
             return `<colgroup>${DATA_COLS.map(w => `<col style="width:${w}px">`).join('')}${`<col style="width:${SQ_COL}px">`.repeat(this.data.columns.length)}</colgroup>`;
         }
 
+        // The columns the user has expanded (ids of column groups); the server answers with their children.
+        _colOpen() {
+            try { return new Set(JSON.parse(this.state.col_open || '[]')); } catch (e) { return new Set(); }
+        }
+
+        _colToggle(id) {
+            const open = this._colOpen();
+            if (!open.delete(id)) open.add(id);
+            this._scrollSave();
+            this._set({ col_open: open.size ? JSON.stringify([...open]) : '', offset: 0 });
+        }
+
+        // A band over each run of columns that were expanded out of one group: its fold button.
+        _bands() {
+            const cols = this.data.columns, depth = Math.max(0, ...cols.map(c => (c.path || []).length));
+            let out = '';
+            for (let d = 0; d < depth; d++) {
+                let cells = '', i = 0;
+                while (i < cols.length) {
+                    const p = (cols[i].path || [])[d];
+                    let j = i + 1;
+                    if (p) while (j < cols.length && ((cols[j].path || [])[d] || {}).id === p.id) j++;
+                    cells += p
+                        ? `<th class="sq nway-band" colspan="${j - i}"><button class="nway-cx open" data-colx="${escapeAttr(p.id)}" title="${escapeAttr(`Fold ${p.label} (${p.member_count} files)`)}"><i>&#9662;</i><b>${Number(p.member_count)}</b></button></th>`
+                        : `<th class="sq" colspan="${j - i}"></th>`;
+                    i = j;
+                }
+                out += `<tr class="nway-bands"><th colspan="${DATA_COLS.length}"></th>${cells}</tr>`;
+            }
+            return out;
+        }
+
         _head() {
             const s = this.state;
             const th = ([key, label]) => {
@@ -1651,11 +1685,20 @@
                 const coverage = c.coverage == null ? '' : ` · ${(Number(c.coverage) * 100).toFixed(0)}% of the shared weight`;
                 return `<th class="col sq" data-col="${escapeAttr(c.id)}" title="${escapeAttr(`${c.file_name} (${c.collection})\n${c.md5}\n${Number(c.functions)} fn${coverage}\nright-click: focus / filter`)}"><i class="nway-sq on" style="${this._sqStyle(ci)}"></i><div class="nway-vname">${name}</div></th>`;
             };
-            const names = c => (this.data.file_columns || []).filter(f => c.members.includes(f.id)).map(f => f.file_name || f.md5).join(', ');
-            const colHead = (c, ci) => c.kind
-                ? `<th class="col sq" title="${escapeAttr(`${c.label}\n${Number(c.member_count)} files\n${['focus', 'rest', 'twin'].includes(c.kind) ? names(c) : c.kind === 'child' ? 'child cluster' : 'files at this node, in no child cluster'}`)}"><i class="nway-sq on" style="${this._sqStyle(ci)}"></i><div class="nway-vname">${escapeHtml(c.label)}</div></th>`
-                : fileHead(c, ci);
-            return `<tr>${SORTS.map(th).join('')}<th>Cluster</th>${this.data.columns.map(colHead).join('')}</tr>`;
+            const fname = new Map((this.data.file_columns || []).map(f => [f.id, f.file_name || f.md5]));
+            const kindNote = { child: 'child cluster', direct: 'files at this node, in no child cluster', twin: 'files that hold the same shared functions', file: '' };
+            // A column that stands for several files is a card: the colour square, a count button that opens it, the name.
+            const groupHead = (c, ci) => {
+                const count = Number(c.member_count) || 0;
+                const members = (c.members || []).map(m => fname.get(m) || m);
+                const tip = [c.label, `${count} file${count === 1 ? '' : 's'}`, kindNote[c.kind] || '', ...members.slice(0, 12), members.length > 12 ? `+${members.length - 12} more` : '', c.expandable ? 'click the count to show the files' : ''].filter(Boolean).join('\n');
+                const badge = c.expandable
+                    ? `<button class="nway-cx" data-colx="${escapeAttr(c.id)}" title="${escapeAttr(`Show the ${count} files of ${c.label}`)}"><i>&#9656;</i><b>${count}</b></button>`
+                    : count > 1 ? `<span class="nway-cnt" title="${escapeAttr(`${count} files`)}">${count}</span>` : '';
+                return `<th class="col sq nway-colcard" title="${escapeAttr(tip)}"><i class="nway-sq on" style="${this._sqStyle(ci)}"></i>${badge}<div class="nway-vname">${escapeHtml(c.label)}</div></th>`;
+            };
+            const colHead = (c, ci) => c.kind ? groupHead(c, ci) : fileHead(c, ci);
+            return `${this._bands()}<tr>${SORTS.map(th).join('')}<th>Cluster</th>${this.data.columns.map(colHead).join('')}</tr>`;
         }
 
         render() {
@@ -1713,8 +1756,9 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-gall],[data-gpick]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-gall],[data-gpick],[data-colx]');
             if (!t) return;
+            if (t.dataset.colx) return this._colToggle(t.dataset.colx);
             if (t.dataset.gpick) {
                 const lv = (this.state.group || '').split(',').filter(Boolean), i = lv.indexOf(t.dataset.gpick);
                 if (i >= 0) lv.splice(i, 1); else lv.push(t.dataset.gpick);
@@ -1795,6 +1839,15 @@
     NwayPanel.fnUrl = (fid, pool) => {
         const { md5 } = fnParts(fid);
         return fnUrl({ collection: fid.slice(0, fid.indexOf(':func:')), md5 }, fid, pool);
+    };
+
+    // Hover a grouped column's cell: the preview of its first function, and the rest in the "other functions" card.
+    NwayPanel.hoverGroup = (el, e) => {
+        let list = [];
+        try { list = JSON.parse(el.dataset.gfns || '[]'); } catch (err) { /* no preview */ }
+        if (!list.length || typeof window.showCodePreview !== 'function') return;
+        const [a, ...rest] = list;
+        window.showCodePreview(a.fid, a.name, a.addr, a.md5, a.feat, e, rest.length, a.file, rest);
     };
 
     NwayPanel.act = (act, id) => NwayPanel._active && NwayPanel._active._act(act, id);

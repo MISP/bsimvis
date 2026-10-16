@@ -1,4 +1,5 @@
 import hashlib
+import json
 import re
 
 from flask import request
@@ -71,13 +72,15 @@ def _scope(members, pool_id):
 AUTO_FILE_COLUMNS = 12
 
 
-def _cluster_node(r, pool_id, collection, uuid):
+def _cluster_node(r, pool_id, collection, uuid, open_ids=()):
     """A binary cluster node's files and child groups, read-only.
 
     Mirrors the namespace rules of routes/bin_cluster.py (file nodes only).
     Returns `(scope, members, groups, children)`: `groups` is one entry per
     child cluster plus a `direct` pseudo-group for files in no child, `children`
-    is the same child list shaped for the 413 body.
+    is the same child list shaped for the 413 body. A group named in `open_ids`
+    is replaced by its own child clusters (and direct files), recursively, and a
+    leaf by one column per file; see `nway_diff_service.grow_columns`.
     """
     from bsimvis.app.routes.bin_cluster import _pool_bin_cluster_namespace
     from bsimvis.app.services.cluster_utils import (
@@ -158,6 +161,7 @@ def _cluster_node(r, pool_id, collection, uuid):
                     "cluster_uuid": metas[c].get("cluster_uuid"),
                     "member_count": len(ids),
                     "members": ids,
+                    "cid": c,
                 }
             )
             taken.update(ids)
@@ -172,6 +176,53 @@ def _cluster_node(r, pool_id, collection, uuid):
                 "members": direct,
             }
         )
+    tree = Tree(r, ns, algo, "bin_cluster")
+
+    def children_of(g):
+        """Sub-groups of one group: its child clusters plus direct files, else one column per file."""
+        if g.get("cid") is not None:
+            kid_ids, _ = tree.children(g["cid"])
+            kid_metas = get_cluster_metas(r, ns, algo, kid_ids, "bin_cluster")
+            order = sorted(
+                kid_metas,
+                key=lambda c: kid_metas[c].get("member_count", 0),
+                reverse=True,
+            )
+            pipe = r.pipeline(transaction=False)
+            for c in order:
+                pipe.smembers(f"{base}:{c}:members")
+            have, subs, took = set(g["members"]), [], set()
+            for c, raw in zip(order, pipe.execute()):
+                ids = sorted({ident(m) for m in raw} & have)
+                if ids:
+                    subs.append(
+                        {
+                            "id": kid_metas[c].get("cluster_uuid") or str(c),
+                            "kind": "child",
+                            "label": kid_metas[c].get("cluster_name") or str(c),
+                            "cluster_uuid": kid_metas[c].get("cluster_uuid"),
+                            "member_count": len(ids),
+                            "members": ids,
+                            "cid": c,
+                        }
+                    )
+                    took.update(ids)
+            rest = [m for m in g["members"] if m not in took]
+            if subs and rest:
+                subs.append(
+                    {
+                        "id": f"{g['id']}:direct",
+                        "kind": "direct",
+                        "label": "direct files",
+                        "member_count": len(rest),
+                        "members": rest,
+                    }
+                )
+            if subs:
+                return subs
+        return nway_diff_service.file_groups(g, {})
+
+    groups = nway_diff_service.grow_columns(groups, set(open_ids), children_of)
     return scope, members, groups, children
 
 
@@ -426,6 +477,12 @@ def _load_doc():
     focus = [
         t.strip() for t in (request.args.get("focus") or "").split(",") if t.strip()
     ]
+    try:
+        open_ids = json.loads(request.args.get("col_open") or "[]")
+    except ValueError:
+        open_ids = None
+    if not isinstance(open_ids, list) or not all(isinstance(i, str) for i in open_ids):
+        abort(400, "col_open must be a JSON list of column ids")
     focus_rule = request.args.get("focus_rule", "any")
     if focus_rule not in ("any", "all"):
         abort(400, "focus_rule must be any or all")
@@ -446,7 +503,7 @@ def _load_doc():
     try:
         if cluster_uuid:
             scope, members, node_groups, children = _cluster_node(
-                r, pool_id, collection, cluster_uuid
+                r, pool_id, collection, cluster_uuid, open_ids
             )
             if columns == "children" or (
                 columns == "auto" and len(members) > AUTO_FILE_COLUMNS
@@ -475,6 +532,7 @@ def _load_doc():
                 "min_features": min_features,
                 "groups": groups,
                 "twins": columns == "twins",
+                "open": open_ids,
                 "focus": focus,
                 "focus_rule": focus_rule,
                 "child_presence": max(0.0, min(1.0, presence)),

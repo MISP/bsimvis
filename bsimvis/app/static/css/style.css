@@ -1852,6 +1852,8 @@ body {
     border-color: var(--accent);
 }
 
+.others-fn { margin-top: 3px; font: 0.68rem 'Consolas', monospace; color: var(--text); }
+.others-file { color: var(--subtle, #75715e); }
 .others-count-card {
     background: var(--card-bg);
     border-left: 4px solid var(--accent);

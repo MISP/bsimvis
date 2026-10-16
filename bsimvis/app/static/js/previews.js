@@ -213,7 +213,7 @@
         lastTriggerElement = null;
     };
 
-    window.showCodePreview = async function (id, name, addr, bin, v_size, e, extra = 0, file_name = '') {
+    window.showCodePreview = async function (id, name, addr, bin, v_size, e, extra = 0, file_name = '', others = []) {
         const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
         if (isMenuOpen) return;
         if (!id) return;
@@ -231,7 +231,7 @@
         tooltip.classList.add('showing');
         window.moveCodePreview(e);
 
-        const extraHtml = extra > 0 ? `<div class="others-count-card"><span>⚡</span> And ${extra} other functions...</div>` : '';
+        const extraHtml = _othersHtml(extra, others);
 
         tooltip.innerHTML = `
             <div class="preview-card">
@@ -259,7 +259,7 @@
                 const cached = previewCache.get(id);
                 window.previewTips = cached.tips;
                 window.previewCollection = collection;
-                _renderCodePreview(tooltip, cached, name, addr, bin, v_size, extra, file_name);
+                _renderCodePreview(tooltip, cached, name, addr, bin, v_size, extra, file_name, others);
                 // Re-position after content loads to account for new dimensions
                 window.moveCodePreview(e);
                 return;
@@ -271,7 +271,7 @@
                 window.previewTips = data.tips;
                 window.previewCollection = collection;
                 previewCache.set(id, data);
-                _renderCodePreview(tooltip, data, name, addr, bin, v_size, extra, file_name);
+                _renderCodePreview(tooltip, data, name, addr, bin, v_size, extra, file_name, others);
                 // Re-position after content loads
                 window.moveCodePreview(e);
             } catch (err) {
@@ -280,7 +280,16 @@
         }, 50);
     };
 
-    function _renderCodePreview(tooltip, data, name, addr, bin, v_size, extra = 0, file_name = '') {
+    // The card under a preview that stands for several functions (a cluster, a column of twin files):
+    // how many more there are, and the address and file of the first few.
+    function _othersHtml(extra, others) {
+        if (!(extra > 0)) return '';
+        const list = (others || []).slice(0, 8).map(o => `<div class="others-fn">${escapeHtml(o.addr || '---')} <span class="others-file">${escapeHtml(o.file || '')}</span></div>`).join('');
+        const more = (others || []).length > 8 ? `<div class="others-fn others-file">+${(others || []).length - 8} more</div>` : '';
+        return `<div class="others-count-card"><span>⚡</span> And ${extra} other function${extra > 1 ? 's' : ''}...${list}${more}</div>`;
+    }
+
+    function _renderCodePreview(tooltip, data, name, addr, bin, v_size, extra = 0, file_name = '', others = []) {
         const rows = data.rows;
         const m = data.meta || {};
         const ns = m.namespace || '';
@@ -291,7 +300,7 @@
         const displayBin = file_name || bin || m.file_name || '---';
         const displayFeat = v_size || m.bsim_features_count || 0;
         const displayName = name || fnName(m) || 'Function';
-        const extraHtml = extra > 0 ? `<div class="others-count-card"><span>⚡</span> And ${extra} other functions...</div>` : '';
+        const extraHtml = _othersHtml(extra, others);
 
         let html = `
             <div class="preview-card" style="max-height:450px; display:flex; flex-direction:column;">

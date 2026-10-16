@@ -48,6 +48,7 @@ from bsimvis.app.services.nway_match import nway_match
 
 _MD5 = re.compile(r"^[0-9a-f]{32}$")
 _DEFAULT_NAME = re.compile(r"^(FUN_|sub_|thunk_)", re.I)
+MAX_COLUMNS = 400  # a column tree stops expanding past this many columns
 
 
 class TooLarge(Exception):
@@ -540,6 +541,48 @@ def project_rows(rows, groups, presence):
     return out
 
 
+def file_groups(group, names):
+    """One column per file of a group: what an expanded twin or cluster leaf shows."""
+    return [
+        {
+            "id": f"{group['id']}/{m}",
+            "kind": "file",
+            "label": names.get(m, m),
+            "members": [m],
+            "member_count": 1,
+            "presence": 1e-9,
+        }
+        for m in group["members"]
+    ]
+
+
+def grow_columns(groups, open_ids, children_of, limit=MAX_COLUMNS):
+    """Replace every open group by its sub-groups, recursively -> the columns to show.
+
+    `children_of(group)` gives a group's sub-groups (`[]` for a leaf). Each column
+    comes back with `path`, the groups it was expanded out of (outermost first,
+    each `{id, label, member_count}`, so a header can draw a collapse band over
+    its children), and `expandable`: more than one file. A group is left closed
+    when expanding would pass `limit` columns.
+    """
+    count = [len(groups)]
+
+    def grow(g, path):
+        g = {**g, "path": path, "expandable": g["member_count"] > 1}
+        if g["id"] not in open_ids or not g["expandable"]:
+            return [g]
+        sub = children_of(g)
+        if not sub or count[0] + len(sub) - 1 > limit:
+            return [g]
+        count[0] += len(sub) - 1
+        here = path + [
+            {"id": g["id"], "label": g["label"], "member_count": g["member_count"]}
+        ]
+        return [x for child in sub for x in grow(child, here)]
+
+    return [x for g in groups for x in grow(g, [])]
+
+
 def twin_groups(rows, columns):
     """Files that hold a function in exactly the same shared rows (span >= 2): one column each.
 
@@ -561,16 +604,14 @@ def twin_groups(rows, columns):
     if len(by) == len(columns):
         return None
     groups = []
-    for n, files in enumerate(by.values()):
-        names = [f.get("file_name") or f["md5"] for f in files]
+    for files in by.values():
+        ids = [f["id"] for f in files]
         groups.append(
             {
-                "id": f"twin:{n}",
+                "id": "twin:" + hashlib.md5("|".join(ids).encode()).hexdigest()[:8],
                 "kind": "twin",
-                "label": (
-                    names[0] if len(names) == 1 else f"{names[0]} +{len(names) - 1}"
-                ),
-                "members": [f["id"] for f in files],
+                "label": files[0].get("file_name") or files[0]["md5"],
+                "members": ids,
                 "member_count": len(files),
                 "presence": 1e-9,
             }
@@ -636,7 +677,61 @@ def demo():
     ]
     tw = twin_groups(shared, cols)
     assert [g["members"] for g in tw] == [["A", "B"], ["C"]], tw
-    assert tw[0]["label"] == "a +1" and tw[1]["label"] == "c"
+    assert tw[0]["label"] == "a" and tw[1]["label"] == "c"
+    assert tw[0]["id"].startswith("twin:") and tw[0]["id"] != tw[1]["id"]
+
+    # column tree: open groups give way to their children, recursively, within the limit
+    g0 = [
+        {
+            "id": "a",
+            "label": "A",
+            "kind": "child",
+            "members": ["f1", "f2", "f3"],
+            "member_count": 3,
+        },
+        {
+            "id": "b",
+            "label": "B",
+            "kind": "child",
+            "members": ["f4"],
+            "member_count": 1,
+        },
+    ]
+    a1 = {
+        "id": "a1",
+        "label": "A1",
+        "kind": "child",
+        "members": ["f1", "f2"],
+        "member_count": 2,
+    }
+    a_direct = {
+        "id": "a:direct",
+        "label": "direct",
+        "kind": "direct",
+        "members": ["f3"],
+        "member_count": 1,
+    }
+    kids = {"a": [a1, a_direct], "a1": file_groups(a1, {"f1": "one", "f2": "two"})}
+    of = lambda g: kids.get(g["id"], [])
+    ids = lambda gs: [g["id"] for g in gs]
+    assert ids(grow_columns(g0, set(), of)) == ["a", "b"]
+    assert [g["expandable"] for g in grow_columns(g0, set(), of)] == [True, False]
+    one = grow_columns(g0, {"a"}, of)
+    assert ids(one) == ["a1", "a:direct", "b"] and one[0]["path"][0]["id"] == "a"
+    assert one[0]["expandable"] and not one[1]["expandable"] and one[2]["path"] == []
+    deep = grow_columns(g0, {"a", "a1"}, of)
+    assert ids(deep) == ["a1/f1", "a1/f2", "a:direct", "b"], ids(deep)
+    assert [p["id"] for p in deep[0]["path"]] == ["a", "a1"] and deep[0][
+        "label"
+    ] == "one"
+    assert ids(grow_columns(g0, {"a"}, of, limit=2)) == [
+        "a",
+        "b",
+    ]  # would pass the limit
+    assert ids(grow_columns(g0, {"b", "zzz"}, of)) == [
+        "a",
+        "b",
+    ]  # one file: not expandable
     assert twin_groups(shared[:1], cols) is not None
     assert (
         twin_groups(
@@ -697,6 +792,7 @@ def compute(r, scope, members, params=None):
     twins = bool(params.get("twins")) and not focus
     if twins:
         groups = None
+    open_ids = set(params.get("open") or [])
     if focus:
         ids = [_col_id(c, m) for c, m in members]
         if [f for f in focus if f not in ids]:
@@ -721,6 +817,7 @@ def compute(r, scope, members, params=None):
         min_edge,
         presence,
         twins,
+        tuple(sorted(open_ids)) if twins else (),
         hashlib.md5(json.dumps(groups, sort_keys=True).encode()).hexdigest(),
     )
     doc = _DOC_CACHE.get(doc_key)
@@ -734,9 +831,15 @@ def compute(r, scope, members, params=None):
     rows = _match(base, min_edge)
     cov = coverage(rows, [c["id"] for c in base["columns"]])
     file_columns = [{**c, "coverage": cov[c["id"]]} for c in base["columns"]]
+    names = {c["id"]: c.get("file_name") or c["md5"] for c in base["columns"]}
     if twins:
         groups = twin_groups(rows, base["columns"])
         twins = groups is not None
+        if twins:
+            groups = grow_columns(groups, open_ids, lambda g: file_groups(g, names))
+    for g in groups or []:
+        if g.get("kind") == "file":
+            g["label"] = names.get(g["members"][0], g["label"])
     if groups:
         rows = project_rows(rows, groups, presence)
     doc = {

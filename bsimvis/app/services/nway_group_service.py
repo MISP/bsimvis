@@ -477,52 +477,64 @@ def _unit_sortkey(u, ctx):
     return vals[col] if col else (vals["span"], vals["weight"])
 
 
+def _unit_rank(u, ctx):
+    """The group rank of a unit, on the same measures a group is ranked on."""
+    if "_rows" in u:
+        meta = {"weight": u["weight"], "files": u["_fspan"], "rows": len(u["_rows"])}
+    else:
+        files = u.get("file_span", u.get("span", _pop(u["mask"])))
+        meta = {"weight": u["weight"], "files": files, "rows": 1}
+    return _rank(meta, ctx["sort"])
+
+
 def _expand(units, ctx, parent_id, parent_path, carried):
     """Merged units become "same function" sub-groups; rows with no partner stay plain rows.
 
-    Both are ordered together by the table's sort column, so a merged function
-    sits among the plain rows where one function with its values would.
+    -> sibling nodes, one per merged function or plain row, in the table's sort
+    order, so a merged function sits among the plain rows where one function
+    with its values would.
     """
     n, items = ctx["n"], []
     for u in units:
         if "_rows" not in u:
             head = {"id": parent_id, "path": list(parent_path), "headless": True}
-            items.append((_unit_sortkey(u, ctx), (head, [(u, carried.get(id(u), {}))])))
-            continue
-        members = u["_rows"]
-        m = _meta(members, n)
-        m.update(
-            id=f"same:{u['_idx']}",
-            kind="same",
-            evidence=sorted(u["_kinds"]),
-            link=round(u["_sim"], 3),
-            names=list(dict.fromkeys(row["name"] for row in members))[:4],
-        )
-        extra = carried.get(id(u), {})
-        if extra.get("also", 0) > 1:
-            m["also"] = extra["also"]
-        if extra.get("sub"):
-            m["sub"], m["miss"] = extra["sub"], extra["miss"]
-        m["path"] = [m["id"]]
-        items.append(
-            (
-                _unit_sortkey(u, ctx),
-                (_graft(m, parent_id, parent_path), [(row, {}) for row in members]),
+            pair = (head, [(u, carried.get(id(u), {}))])
+        else:
+            members = u["_rows"]
+            m = _meta(members, n)
+            m.update(
+                id=f"same:{u['_idx']}",
+                kind="same",
+                evidence=sorted(u["_kinds"]),
+                link=round(u["_sim"], 3),
+                names=list(dict.fromkeys(row["name"] for row in members))[:4],
             )
-        )
-    items.sort(key=lambda it: it[0], reverse=ctx["reverse"])
-    return [pair for _, pair in items]
+            extra = carried.get(id(u), {})
+            if extra.get("also", 0) > 1:
+                m["also"] = extra["also"]
+            if extra.get("sub"):
+                m["sub"], m["miss"] = extra["sub"], extra["miss"]
+            m["path"] = [m["id"]]
+            pair = (_graft(m, parent_id, parent_path), [(row, {}) for row in members])
+        node = {
+            "container": False,
+            "rank": _unit_rank(u, ctx),
+            "key": _unit_sortkey(u, ctx),
+            "pairs": [pair],
+        }
+        items.append(node)
+    items.sort(key=lambda it: it["key"], reverse=ctx["reverse"])
+    return items
 
 
 def _nodes(units, levels, ctx, parent_id, parent_path, carried):
     """Sibling nodes under one parent: `{"container", "rank", "id", "pairs"}`.
 
-    A container is a group with everything inside it; the other node holds the
-    merged functions and plain rows the levels did not place.
+    A container is a group with everything inside it; the other nodes are the
+    merged functions and plain rows the levels did not place, one each.
     """
     if not levels:
-        pairs = _expand(units, ctx, parent_id, parent_path, carried)
-        return [{"container": False, "pairs": pairs}] if pairs else []
+        return _expand(units, ctx, parent_id, parent_path, carried)
     nodes = []
     for g, items in _level(levels[0], units, ctx):
         extras = {id(u): {**carried.get(id(u), {}), **extra} for u, extra in items}
@@ -552,11 +564,21 @@ def _nodes(units, levels, ctx, parent_id, parent_path, carried):
 
 
 def _flat(nodes, ctx):
-    """Groups first, every kind side by side in group order, then the rows no level placed."""
+    """Every sibling in one list.
+
+    By default groups of every kind, merged functions and plain rows are ordered
+    together by the group order (file coverage first), so a plain row that
+    covers more files than a lane comes before it, at every level. With a table
+    sort column the groups come first and the rows follow that column.
+    """
     boxes = sorted((n for n in nodes if n["container"]), key=lambda n: n["id"])
-    boxes.sort(key=lambda n: n["rank"], reverse=True)
     rest = [n for n in nodes if not n["container"]]
-    return [pair for n in boxes + rest for pair in n["pairs"]]
+    if ctx["sort_col"]:
+        boxes.sort(key=lambda n: n["rank"], reverse=True)
+        ordered = boxes + rest
+    else:
+        ordered = sorted(boxes + rest, key=lambda n: n["rank"], reverse=True)
+    return [pair for n in ordered for pair in n["pairs"]]
 
 
 def _nest(units, levels, ctx, parent_id, parent_path, carried):
@@ -750,6 +772,24 @@ def demo():
     assert top(by_files) == ["lane:1110", "prefix:attack_"], top(by_files)
     by_weight = _nest(kinds, ["prefix", "lane"], {**sctx, "sort": "weight"}, "", [], {})
     assert top(by_weight) == ["prefix:attack_", "lane:1110"], top(by_weight)
+
+    # at every level: under a prefix, a plain row covering more files comes before a lane
+    under = [
+        row(1, 5, "attack_a"),
+        row(1, 5, "attack_b"),
+        row(7, 1, "attack_c"),
+    ]
+    inner = _nest(under, ["prefix", "lane"], {**sctx, "sort": "files"}, "", [], {})
+    shape = ["row" if g.get("headless") else g["id"] for g, _ in inner]
+    assert shape == ["prefix:attack_", "row", "prefix:attack_/lane:1000"], shape
+    # ... and the other way round when features decide
+    heavy = [row(1, 50, "attack_a"), row(1, 50, "attack_b"), row(7, 1, "attack_c")]
+    flip = _nest(heavy, ["prefix", "lane"], {**sctx, "sort": "weight"}, "", [], {})
+    assert ["row" if g.get("headless") else g["id"] for g, _ in flip] == [
+        "prefix:attack_",
+        "prefix:attack_/lane:1000",
+        "row",
+    ]
 
     # names: suffixes and auto names
     assert name_key({"name": "resolv_lookup.part.0"}) == "resolv_lookup"

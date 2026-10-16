@@ -5552,8 +5552,9 @@ def test_nway_diff():
             str(_shut and _shut["total"]),
         )
         # A group's rows are contiguous, so a client prints one header per group.
+        # (rows no level placed are siblings of the groups and sit among them, with no group)
         # (with a merge, the rows with no partner follow the merged groups under the same parent)
-        _seq = [i["g"] for i in _items]
+        _seq = [i["g"] for i in _items if i["g"] != ""]
         _runs = [g for n, g in enumerate(_seq) if n == 0 or g != _seq[n - 1]]
         check(
             f"{_label}: a group's rows are contiguous",
@@ -5742,6 +5743,34 @@ def test_nway_diff():
         _ws and _ws == sorted(_ws, reverse=True),
         str(_ws),
     )
+    # Plain rows are siblings of the groups: ordered with them, not appended after them.
+    for _gs, _want in (("weight", "before"), ("files", "after")):
+        _, _mix = _nway(
+            tab="all",
+            scope="all",
+            limit=1000,
+            group="lane",
+            group_lane_min=7,
+            group_sort=_gs,
+            group_open="all",
+        )
+        _its = _mix["items"]
+        _plain = [n for n, i in enumerate(_its) if not i.get("header") and i["g"] == ""]
+        _wide = next(
+            (
+                n
+                for n, i in enumerate(_its)
+                if i.get("header") and _mix["groups"][i["g"]]["files"] == 2
+            ),
+            None,
+        )
+        check(
+            f"nway group: plain rows are ordered with the lanes (group_sort={_gs})",
+            _plain
+            and _wide is not None
+            and (min(_plain) < _wide if _want == "before" else min(_plain) > _wide),
+            f"plain rows at {_plain[:3]}, 2-file lane at {_wide}",
+        )
     check(
         "nway group: a lane holds 2+ rows by default",
         _l2 and all(m["rows"] >= 2 for m in _l2["groups"].values()),

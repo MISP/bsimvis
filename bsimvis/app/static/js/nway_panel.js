@@ -37,6 +37,7 @@
     const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort'];
     // Group by: rows bundled by file set, nested under one tag axis, or joined as one probable function.
     const GROUPS = [
+        ['prefix', 'Prefix', 'Group by the first word of the function name (attack_*, killer_*...). Functions with no prefix, or a prefix only one function has, carry on to the next level beside the prefix groups.'],
         ['lane', 'Lane', 'Bundles of rows that appear in exactly the same files, biggest bundle first. With the merge on, a merged function is bundled by all the files it covers together. Something whose files are a subset of a bundle joins the smallest bundle that holds it.'],
         ['tag', 'Tag', 'Nest under the tags of one axis (origin, capa, YARA...). Something with several tags on the axis is listed under each.'],
     ];
@@ -331,7 +332,7 @@
                 return `<button class="nway-gpick${i >= 0 ? ' on' : ''}" data-gpick="${v}" aria-pressed="${i >= 0}" title="${escapeAttr(tip)}">${i >= 0 ? `<b>${i + 1}</b>` : ''}${escapeHtml(t)}</button>`;
             }).join('');
             const axes = lv.includes('tag') ? `<span class="nway-ctlwrap"><span class="nway-lbl">Axis</span>${sel('group_axis', axis, TAG_AXES)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, TAG_AXES.filter(([k]) => k !== axis), true)}</span>` : '';
-            const hint = lv.length > 1 ? 'Click order is nesting order: each group of the first is split again by the second.' : on && lv.includes('lane') ? 'Each merged function is bundled by all the files it covers together.' : '';
+            const hint = lv.length > 1 ? 'Click order is nesting order: each group is split again by the next level.' : on && lv.includes('lane') ? 'Each merged function is bundled by all the files it covers together.' : '';
             const actions = active ? `<span class="nway-gacts"><span class="nway-lbl">Order groups</span>${sel('group_sort', s.group_sort || 'weight', GROUP_SORTS)}<button class="view-btn" data-gall="open">Expand all</button><button class="view-btn" data-gall="close">Collapse all</button></span>` : '';
             return `<div class="nway-gcard${active ? ' active' : ''}">
                 <div class="nway-ghead"><b>Group rows</b>${this._tip('Put related rows together. The column sort still orders the rows inside each group.')}${actions}</div>
@@ -1570,7 +1571,9 @@
             const n = g.union.length, closed = !this._gOpen(g.id);
             const chip = (cls, text, tip) => `<span class="nway-gchip ${cls}" title="${escapeAttr(tip)}">${escapeHtml(text)}</span>`;
             let title, note = '';
-            if (g.kind === 'tag') {
+            if (g.kind === 'prefix') {
+                title = `<span class="nway-gname">${escapeHtml(g.label)}</span>`;
+            } else if (g.kind === 'tag') {
                 title = `<span class="nway-gtag" style="color:${escapeAttr(window.TagColor.forTag(g.label))}">${escapeHtml(g.label)}</span>`;
             } else if (g.kind === 'lane') {
                 title = `<b>${g.mask.split('1').length - 1} of ${n} files</b>`;

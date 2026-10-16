@@ -1,14 +1,16 @@
 """Group the rows of the N-way function table.
 
-Two steps over the rows the table already filtered and sorted:
+Two steps over the rows the table already filtered and sorted (units are
+rows, or merged functions once a merge is on):
 
 1. Merge (`group_merge`, optional): rows that are probably one function the
    matcher split are joined by a shared name and/or a shared caller. Rows that
    share a file are never joined. A merged function covers the union of its
    rows' files.
-2. Group (`group`, optional, up to two levels): `lane` bundles by the set of
-   files, `tag` nests under the tags of one axis (optionally crossed with a
-   second). With a merge on, the unit being grouped is the merged function, so
+2. Group (`group`, optional, up to three levels): `prefix` groups by the first
+   word of the function name (`attack_*`), `lane` bundles by the set of files,
+   `tag` nests under the tags of one axis (optionally crossed with a second).
+   With a merge on, the unit being grouped is the merged function, so
    a function split over two families sits in the lane of both together.
 
 Under every leaf, merged functions are "same function" sub-groups holding their
@@ -31,7 +33,8 @@ from bsimvis.app.services.bin_sim_tags import AXES, merge_tag_fields, tag_axis
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME, BadParams
 from bsimvis.app.services.tag_taxonomy import tag_body, tag_prefixes
 
-MODES = ("tag", "lane")
+MODES = ("tag", "lane", "prefix")
+PREFIX_MIN = 2  # functions that must share a prefix before it makes a group
 SORTS = ("weight", "rows", "files")
 TAG_FANOUT = 3  # tags of one axis a row is listed under, most shared first
 NAME_BUCKET = 12  # rows sharing one name that are paired up
@@ -104,6 +107,55 @@ def lane_groups(rows, n, sort):
         g["path"] = [g["id"]]
         out.append((g, [(r, {"sub": True} if s else {}) for r, s in items]))
     out.sort(key=lambda p: (-_rank(p[0], sort), p[0]["id"]))
+    return out
+
+
+def name_prefix(name):
+    """The first word of a function name -> (word, separator) or None.
+
+    `attack_udp_flood` -> (`attack`, `_`), `Foo::bar` -> (`foo`, `:`),
+    `killerKill` -> (`killer`, ``). None for auto names (FUN_, sub_) and for a
+    name that is one word, which has no prefix of its own.
+    """
+    name = (name or "").strip().lstrip("_")
+    if not name or _DEFAULT_NAME.match(name):
+        return None
+    word = re.split(r"[_.:$@]|(?<=[a-z0-9])(?=[A-Z])", name, maxsplit=1)[0]
+    if len(word) < 2 or word == name:
+        return None
+    sep = name[len(word) : len(word) + 1]
+    return word.lower(), sep if sep in "_.:" else ""
+
+
+def _unit_prefix(unit):
+    """The most common prefix over the names of a unit (a merged function has several rows)."""
+    names = [r["name"] for r in unit["_rows"]] if "_rows" in unit else [unit["name"]]
+    found = [p for p in map(name_prefix, names) if p]
+    return Counter(found).most_common(1)[0][0] if found else None
+
+
+def prefix_groups(units, n, sort, min_size=PREFIX_MIN):
+    """One group per name prefix shared by `min_size`+ units, plus a headless pair for the rest."""
+    by = defaultdict(list)
+    loose = []
+    for u in units:
+        p = _unit_prefix(u)
+        (by[p] if p else loose).append(u)
+    out = []
+    for (word, sep), members in by.items():
+        if len(members) < min_size:
+            loose += members
+            continue
+        g = _meta(members, n)
+        g.update(id=f"prefix:{word}{sep}", kind="prefix", label=f"{word}{sep}*")
+        g["path"] = [g["id"]]
+        out.append((g, [(u, {}) for u in members]))
+    out.sort(key=lambda p: (-_rank(p[0], sort), p[0]["id"]))
+    if loose:
+        # units without a usable prefix go on to the next level beside the prefix groups
+        pos = {id(u): i for i, u in enumerate(units)}
+        loose.sort(key=lambda u: pos[id(u)])
+        out.append(({"id": "", "path": [], "headless": True}, [(u, {}) for u in loose]))
     return out
 
 
@@ -353,6 +405,8 @@ def merge_units(rows, doc, r, evidence, min_link):
 
 def _level(mode, units, ctx):
     """The groups of one level over `units`: [(meta, [(unit, extra)])]."""
+    if mode == "prefix":
+        return prefix_groups(units, ctx["n"], ctx["sort"], ctx["prefix_min"])
     if mode == "lane":
         return lane_groups(units, ctx["n"], ctx["sort"])
     return tag_groups(
@@ -413,8 +467,14 @@ def _nest(units, levels, ctx, parent_id, parent_path, carried):
         return _expand(units, ctx, parent_id, parent_path, carried)
     out = []
     for g, items in _level(levels[0], units, ctx):
-        _graft(g, parent_id, parent_path)
         extras = {id(u): {**carried.get(id(u), {}), **extra} for u, extra in items}
+        if g.get("headless"):
+            # what this level could not place continues with the next levels, beside its groups
+            out += _nest(
+                [u for u, _ in items], levels[1:], ctx, parent_id, parent_path, extras
+            )
+            continue
+        _graft(g, parent_id, parent_path)
         if len(levels) == 1 and not ctx["merge"]:
             out.append((g, [(u, extras[id(u)]) for u, _ in items]))
         else:
@@ -428,14 +488,12 @@ def _nest(units, levels, ctx, parent_id, parent_path, carried):
 def group_rows(rows, doc, r, mode, params):
     """Group `rows` (already filtered and sorted) -> (entries, groups, note).
 
-    `mode` is a comma-separated chain of levels (`lane`, `tag`, `lane,tag`) and
+    `mode` is a comma-separated chain of levels (`prefix`, `lane`, `tag`, `prefix,lane`) and
     may be empty when `group_merge` is set. See the module doc.
     """
     levels = [m for m in (mode or "").split(",") if m]
     if set(levels) - set(MODES) or len(set(levels)) != len(levels):
-        raise BadParams(
-            f"group must be {MODES}, one or both separated by commas, each once"
-        )
+        raise BadParams(f"group must be {MODES}, separated by commas, each once")
     evidence = {e for e in (params.get("group_merge") or "").split(",") if e}
     if evidence - {"name", "call"}:
         raise BadParams("group_merge must be name, call or name,call")
@@ -452,7 +510,13 @@ def group_rows(rows, doc, r, mode, params):
         "axis_b": params.get("group_axis_b") or "",
         "merge": bool(evidence),
         "note": "",
+        "prefix_min": PREFIX_MIN,
     }
+    if params.get("group_prefix_min"):
+        try:
+            ctx["prefix_min"] = max(2, int(params["group_prefix_min"]))
+        except ValueError:
+            raise BadParams("group_prefix_min must be an integer")
     units = rows
     if evidence:
         try:
@@ -517,6 +581,34 @@ def demo():
     assert lanes[0][0]["subset"] == 1
     # no catch-all: a row that fits no bundle is a lane of its own
     assert lanes[1][0]["id"] == "lane:0011" and lanes[1][0]["rows"] == 1
+
+    # prefixes: first word of the name, auto names and one-word names have none
+    assert name_prefix("attack_udp_flood") == ("attack", "_")
+    assert name_prefix("__do_global") == ("do", "_")
+    assert name_prefix("Foo::bar") == ("foo", ":")
+    assert name_prefix("killerKill") == ("killer", "")
+    assert name_prefix("main") is None and name_prefix("FUN_00101020") is None
+    named = [
+        row(1, 5, n) for n in ("attack_a", "attack_b", "killer_x", "main", "FUN_1")
+    ]
+    pg = prefix_groups(named, 4, "weight")
+    assert [g["id"] for g, _ in pg] == ["prefix:attack_", ""], pg
+    assert pg[0][0]["rows"] == 2 and pg[1][0]["headless"] and len(pg[1][1]) == 3
+    # unplaced units carry on to the next level, beside the prefix groups
+    nest_ctx = {
+        "n": 4,
+        "sort": "weight",
+        "fmeta": {},
+        "axis": "origin",
+        "axis_b": "",
+        "merge": False,
+        "note": "",
+        "prefix_min": 2,
+    }
+    deep = _nest(named, ["prefix", "lane"], nest_ctx, "", [], {})
+    heads = [g["id"] for g, _ in deep if not g.get("headless")]
+    assert heads == ["prefix:attack_", "prefix:attack_/lane:1000", "lane:1000"], heads
+    assert sum(len(items) for _, items in deep) == 5
 
     # names: suffixes and auto names
     assert name_key({"name": "resolv_lookup.part.0"}) == "resolv_lookup"

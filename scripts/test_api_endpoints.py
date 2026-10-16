@@ -5522,6 +5522,9 @@ def test_nway_diff():
         ("", {"group_merge": "name,call", "group_min_link": 0}),
         ("lane", {"group_merge": "name"}),
         ("lane,tag", {}),
+        ("prefix", {}),
+        ("prefix,lane", {}),
+        ("prefix", {"group_merge": "name"}),
     ):
         _st, _g = _nway(
             tab="all", scope="all", limit=1000, group=_mode, group_open="all", **_extra
@@ -5587,6 +5590,10 @@ def test_nway_diff():
             )
     # Levels nest, and a merge comes first: merged functions are grouped by the lane of all their files.
     for _chain, _extra in (
+        ("prefix,lane", {}),
+        ("lane,prefix", {}),
+        ("prefix,lane,tag", {}),
+        ("prefix", {"group_merge": "name"}),
         ("lane,tag", {}),
         ("lane", {"group_merge": "name,call", "group_min_link": 0}),
         ("lane,tag", {"group_merge": "name"}),
@@ -5600,10 +5607,18 @@ def test_nway_diff():
             continue
         _depth = len(_chain.split(","))
         _leaf = [i for i in _n["items"] if not i.get("header")]
-        check(
-            f"{_label}: rows sit under a group {_depth} levels deep",
-            _leaf and all(len(_n["groups"][i["g"]]["path"]) >= _depth for i in _leaf),
-        )
+        _path = lambda g: _n["groups"][g]["path"] if g in _n["groups"] else []
+        if "prefix" in _chain:
+            # a function with no prefix carries on to the next level, so depths differ
+            check(
+                f"{_label}: grouped rows sit under their groups",
+                _leaf and max(len(_path(i["g"])) for i in _leaf) >= 1,
+            )
+        else:
+            check(
+                f"{_label}: rows sit under a group {_depth} levels deep",
+                _leaf and all(len(_path(i["g"])) >= _depth for i in _leaf),
+            )
         check(
             f"{_label}: a group's id extends its parent's",
             all(
@@ -5621,10 +5636,23 @@ def test_nway_diff():
         _, _top = _nway(tab="all", scope="all", limit=1000, group=_chain, **_extra)
         check(
             f"{_label}: closed shows only the outer groups",
-            _top
-            and _top["items"]
-            and all(len(_top["groups"][i["g"]]["path"]) == 1 for i in _top["items"]),
+            _top and _top["items"]
+            # (a function with no prefix is a plain row at the top, with no group)
+            and all(
+                len(_top["groups"][i["g"]]["path"]) == 1
+                for i in _top["items"]
+                if i["g"] in _top["groups"]
+            ),
         )
+    _, _pre = _nway(
+        tab="all", scope="all", limit=1000, group="prefix", group_open="all"
+    )
+    _pgroups = [m for m in _pre["groups"].values() if m["kind"] == "prefix"]
+    check(
+        "nway group: prefix groups hold 2+ functions and name their prefix",
+        _pgroups and all(m["rows"] >= 2 and m["label"].endswith("*") for m in _pgroups),
+        str([(m["label"], m["rows"]) for m in _pgroups]),
+    )
     check(
         "nway group: a level can be used once",
         _nway(group="lane,lane")[0] == 400,

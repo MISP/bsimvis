@@ -310,7 +310,7 @@
                 advanced,
             ].join('');
             return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${search}</div>
-                <div class="nway-bar">${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}</span></div>${this._groupCard()}`;
+                <div class="nway-bar">${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}<button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-stats-toggle title="Hide or show the Span, Features, Support, Cohesion and Cluster columns, to focus on the matrix."><i class="fa-solid fa-table-columns"></i> Stats <span class="dim">${this._statsOff() ? 'hidden' : 'shown'}</span></button></span></div>${this._groupCard()}`;
         }
 
         // The Group card: step 1 merges rows that are the same function, step 2 groups what is left (merged or not).
@@ -1628,7 +1628,7 @@
             // The files the group covers, one square per file column: the same grid as the rows below.
             const files = g.kind === 'lane' ? g.mask : g.union, cols = this.data.columns;
             const sq = [...files].map((b, i) => `<td class="col sq"><i class="nway-sq${b === '1' ? ' on' : ''}" style="${this._sqStyle(i)}" title="${escapeAttr(this._colLabel(cols[i]) + (b === '1' ? '' : ': not in this group'))}"></i></td>`).join('');
-            return `<tr class="nway-grow d${depth}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="6"><button class="nway-gh" data-gtoggle="${escapeAttr(g.id)}" aria-expanded="${!closed}" style="padding-left:${10 + depth * 20}px"><b class="nway-gchev">${closed ? '&#9656;' : '&#9662;'}</b><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span></button></td>${sq}</tr>`;
+            return `<tr class="nway-grow d${depth}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><button class="nway-gh" data-gtoggle="${escapeAttr(g.id)}" aria-expanded="${!closed}" style="padding-left:${10 + depth * 20}px"><b class="nway-gchev">${closed ? '&#9656;' : '&#9662;'}</b><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span></button></td>${sq}</tr>`;
         }
 
         // Rows, with a header printed whenever a row's group path leaves the one printed last.
@@ -1655,22 +1655,34 @@
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
             return `<tr${depth ? ` class="nway-in" style="--gd:${depth}"` : ''}>
                 <td class="nway-open" data-fn-open="${Number(ri)}" title="Compare this row's functions: strings, APIs, callees, constants and code" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
-                <td class="num">${Number(row.file_span || row.span)}</td>
+                ${this._statsOff() ? '' : `<td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
                 <td class="num">${this._score(row.cohesion)}</td>
-                <td class="cluster-cards-cell">${window.EntityRenderer.renderClusterCard((row.clusters || []).map(u => this.data.clusters[u]).filter(Boolean))}</td>
+                <td class="cluster-cards-cell">${window.EntityRenderer.renderClusterCard((row.clusters || []).map(u => this.data.clusters[u]).filter(Boolean))}</td>`}
                 ${cols.map((c, ci) => this._cell(row, c, ci)).join('')}
             </tr>`;
         }
 
         // Fixed column widths, so opening or closing a group never reflows the columns.
+        // The stats columns (Span .. Cluster) can be hidden to leave room for the matrix.
+        _statsOff() {
+            if (this._so == null) {
+                try { this._so = localStorage.getItem('nway.stats') === '0'; } catch (e) { this._so = false; }
+            }
+            return this._so;
+        }
+
+        _lead() {
+            return this._statsOff() ? DATA_COLS.slice(0, 1) : DATA_COLS;
+        }
+
         _tableWidth() {
-            return DATA_COLS.reduce((a, b) => a + b, 0) + SQ_COL * this.data.columns.length;
+            return this._lead().reduce((a, b) => a + b, 0) + SQ_COL * this.data.columns.length;
         }
 
         _colgroup() {
-            return `<colgroup>${DATA_COLS.map(w => `<col style="width:${w}px">`).join('')}${`<col style="width:${SQ_COL}px">`.repeat(this.data.columns.length)}</colgroup>`;
+            return `<colgroup>${this._lead().map(w => `<col style="width:${w}px">`).join('')}${`<col style="width:${SQ_COL}px">`.repeat(this.data.columns.length)}</colgroup>`;
         }
 
         // The columns the user has expanded (ids of column groups); the server answers with their children.
@@ -1678,9 +1690,9 @@
             try { return new Set(JSON.parse(this.state.col_open || '[]')); } catch (e) { return new Set(); }
         }
 
-        _colToggle(id) {
+        _colToggle(id, openOnly) {
             const open = this._colOpen();
-            if (!open.delete(id)) open.add(id);
+            if (openOnly) open.add(id); else if (!open.delete(id)) open.add(id);
             this._scrollSave();
             this._set({ col_open: open.size ? JSON.stringify([...open]) : '', offset: 0 });
         }
@@ -1698,8 +1710,9 @@
                 const coverage = c.coverage == null ? '' : ` · ${(Number(c.coverage) * 100).toFixed(0)}% of the shared weight`;
                 return `<th class="col sq" data-col="${escapeAttr(c.id)}" title="${escapeAttr(`${c.file_name} (${c.collection})\n${c.md5}\n${Number(c.functions)} fn${coverage}\nright-click: focus / filter`)}"><i class="nway-sq on" style="${this._sqStyle(ci)}"></i><div class="nway-vname">${name}</div></th>`;
             };
-            if (this._tree().grouped) return `<tr>${SORTS.map(th).join('')}<th>Cluster</th>${this.data.columns.map((c, ci) => this._numHead(c, ci)).join('')}</tr>`;
-            return `<tr>${SORTS.map(th).join('')}<th>Cluster</th>${this.data.columns.map(fileHead).join('')}</tr>`;
+            const lead = this._statsOff() ? th(SORTS[0]) : SORTS.map(th).join('') + '<th>Cluster</th>';
+            if (this._tree().grouped) return `<tr>${lead}${this.data.columns.map((c, ci) => this._numHead(c, ci)).join('')}</tr>`;
+            return `<tr>${lead}${this.data.columns.map(fileHead).join('')}</tr>`;
         }
 
         // With grouped columns the header is a numbered dot in the cluster's colour; names live in the legend.
@@ -1713,7 +1726,7 @@
             } else {
                 tip = `${c.file_name} (${c.collection})\n${c.md5}\n${Number(c.functions)} fn\nright-click: focus / filter`;
             }
-            return `<th class="col sq nway-numcol${c.expandable ? ' expandable' : ''}"${c.kind ? '' : ` data-col="${escapeAttr(c.id)}"`}${c.expandable ? ` data-colx="${escapeAttr(c.id)}"` : ''} title="${escapeAttr(tip)}"><i class="nway-num" style="${this._sqStyle(ci)}">${ci + 1}</i></th>`;
+            return `<th class="col sq nway-numcol${c.expandable ? ' expandable' : ''}"${c.kind ? '' : ` data-col="${escapeAttr(c.id)}"`}${c.expandable ? ` data-colx="${escapeAttr(c.id)}"` : ''} title="${escapeAttr(tip)}"><i class="nway-num ${c.kind ? 'grp' : 'file'}" style="${this._sqStyle(ci)}">${ci + 1}</i></th>`;
         }
 
         // The column outline: every group and column with its number range, and the button that opens or folds it.
@@ -1726,7 +1739,7 @@
                 const tip = `${n.label}${n.count > 1 ? ` (${n.count} files)` : ''}${toggle ? (open ? '\nclick to fold' : '\nclick to show the files') : ''}`;
                 return `<div class="nway-ol${toggle ? ' expandable' : ''}" style="--dep:${dep}"${toggle ? ` data-colx="${escapeAttr(n.id)}"` : ''} title="${escapeAttr(tip)}">`
                     + (toggle ? `<button type="button" class="nway-tg" data-colx="${escapeAttr(n.id)}" aria-label="${open ? 'Fold' : 'Open'} ${escapeAttr(n.label)}">${open ? '&#9662;' : '&#9656;'}</button>` : '<span class="nway-tg"></span>')
-                    + `<i class="nway-sq on" style="--h:${n.h};--l:${n.l}%;--ll:${n.l - 8}%"></i><span class="nway-olb">${escapeHtml(n.label)}</span>`
+                    + `<i class="nway-sq on${n.count > 1 ? ' grp' : ''}" style="--h:${n.h};--l:${n.l}%;--ll:${n.l - 8}%"></i><span class="nway-olb">${escapeHtml(n.label)}</span>`
                     + (n.count > 1 ? `<em>${n.count}</em>` : '') + `<b class="nway-rg">${range}</b></div>`
                     + n.kids.map(k => row(k, dep + 1)).join('');
             };
@@ -1789,9 +1802,16 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-gall],[data-gpick],[data-colx]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-gall],[data-gpick],[data-colx],[data-stats-toggle]');
             if (!t) return;
-            if (t.dataset.colx) return this._colToggle(t.dataset.colx);
+            if (t.dataset.statsToggle !== undefined) {
+                this._so = !this._statsOff();
+                try { localStorage.setItem('nway.stats', this._so ? '0' : '1'); } catch (err) { /* storage blocked */ }
+                this._scrollSave();
+                return this.render();
+            }
+            // A header dot only opens its column; the outline folds it again.
+            if (t.dataset.colx) return this._colToggle(t.dataset.colx, !!t.closest('th'));
             if (t.dataset.gpick) {
                 const lv = (this.state.group || '').split(',').filter(Boolean), i = lv.indexOf(t.dataset.gpick);
                 if (i >= 0) lv.splice(i, 1); else lv.push(t.dataset.gpick);

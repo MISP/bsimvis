@@ -45,6 +45,7 @@
     // Widths in px: Function, Span, Features, Support, Cohesion, Cluster, then one square column per file.
     const DATA_COLS = [380, 64, 90, 90, 90, 210];
     const SQ_COL = 28;
+    const BAND_H = 22;
     const GROUP_SORTS = [['files', 'File coverage'], ['weight', 'Features'], ['rows', 'Rows']];
     const LOW_SUPPORT = 0.5;
     // Same icon + color as the Code / Library / All pills in the table's Show control.
@@ -1025,7 +1026,7 @@
                 n.kids.forEach((k, j) => paint(k, depth === 0 ? Math.round((j * 137.508 + 215) % 360) : (h + Math.round((j - (m - 1) / 2) * 12) + 360) % 360, depth === 0 ? 52 : 46 + (j % 3) * 6, depth + 1));
             };
             if (grouped) paint(root, 0, 52, 0);
-            return (d._tree = { grouped, root, colors });
+            return (d._tree = { grouped, root, colors, byId });
         }
 
         // A line left of each column that starts a new group; the shallower the split, the heavier the line.
@@ -1741,8 +1742,36 @@
                 return `<th class="col sq" data-col="${escapeAttr(c.id)}" title="${escapeAttr(`${c.file_name} (${c.collection})\n${c.md5}\n${Number(c.functions)} fn${coverage}\nright-click: focus / filter`)}"><i class="nway-sq on" style="${this._sqStyle(ci)}"></i><div class="nway-vname">${name}</div></th>`;
             };
             const lead = this._statsOff() ? th(SORTS[0]) : SORTS.map(th).join('') + '<th>Cluster</th>';
-            if (this._tree().grouped) return `<tr>${lead}${this.data.columns.map((c, ci) => this._numHead(c, ci)).join('')}</tr>`;
+            if (this._tree().grouped) {
+                const bands = this._bands();
+                return `${bands.html}<tr style="--bt:${bands.n * BAND_H}px">${lead}${this.data.columns.map((c, ci) => this._numHead(c, ci)).join('')}</tr>`;
+            }
             return `<tr>${lead}${this.data.columns.map(fileHead).join('')}</tr>`;
+        }
+
+        // One header row per nesting level: a band over the columns of each opened cluster or twin, with a button that folds it.
+        _bands() {
+            const cols = this.data.columns, byId = this._tree().byId;
+            const n = Math.max(0, ...cols.map(c => (c.path || []).length));
+            let html = '';
+            for (let k = 0; k < n; k++) {
+                const lead = this._lead().length;
+                let cells = `<th></th>${lead > 1 ? `<th colspan="${lead - 1}"></th>` : ''}`;
+                for (let i = 0; i < cols.length;) {
+                    const g = (cols[i].path || [])[k];
+                    let j = i + 1;
+                    while (j < cols.length && ((cols[j].path || [])[k] || {}).id === (g || {}).id) j++;
+                    if (!g) cells += `<th colspan="${j - i}"></th>`;
+                    else {
+                        const nd = byId.get(g.id) || {};
+                        const tip = `${g.label} (${Number(g.member_count)} files)\nclick to fold`;
+                        cells += `<th class="nway-band" colspan="${j - i}" data-colx="${escapeAttr(g.id)}" title="${escapeAttr(tip)}" style="--h:${nd.h};--l:${nd.l}%"><button type="button" class="nway-fold" data-colx="${escapeAttr(g.id)}" aria-label="Fold ${escapeAttr(g.label)}">&#9662; <span>${escapeHtml(g.label)}</span></button></th>`;
+                    }
+                    i = j;
+                }
+                html += `<tr class="nway-bandrow" style="--bt:${k * BAND_H}px">${cells}</tr>`;
+            }
+            return { html, n };
         }
 
         // With grouped columns the header is a numbered dot in the cluster's colour; names live in the legend.
@@ -1843,7 +1872,7 @@
                 return this.render();
             }
             // A header dot only opens its column; the outline folds it again.
-            if (t.dataset.colx) return this._colToggle(t.dataset.colx, !!t.closest('th'));
+            if (t.dataset.colx) return this._colToggle(t.dataset.colx, !!t.closest('th') && !t.closest('.nway-band'));
             if (t.dataset.gpick) {
                 const lv = (this.state.group || '').split(',').filter(Boolean), i = lv.indexOf(t.dataset.gpick);
                 if (i >= 0) lv.splice(i, 1); else lv.push(t.dataset.gpick);

@@ -5535,6 +5535,14 @@ def test_nway_diff():
         and {m["mask"] for m in _grp["groups"].values()} >= {"11"},
         str(_grp and [m["mask"] for m in _grp["groups"].values()]),
     )
+    check(
+        "nway group: fcover is one 0/1 per file column, no leaked internals",
+        _grp
+        and all(
+            len(m["fcover"]) == len(_grp["file_columns"]) and "_held" not in m
+            for m in _grp["groups"].values()
+        ),
+    )
     _, tw_u = _nway(tab="unique", scope="all", limit=1000, columns="twins")
     check(
         "nway twins: unique rows are the plain unique rows",

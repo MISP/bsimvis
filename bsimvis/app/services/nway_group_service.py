@@ -65,12 +65,21 @@ def _fids(row):
     ]
 
 
+def _fileset(r):
+    """Ids of the file columns holding a unit; a merged function holds its rows' files."""
+    if "_rows" in r:
+        return set().union(*map(_fileset, r["_rows"]))
+    return set(r.get("files") or r["cells"])
+
+
 def _meta(rows, n):
     """Totals of units: a unit is a row or a merged function (`_rows`)."""
-    union = 0
+    union, held = 0, set()
     for r in rows:
         union |= r["mask"]
+        held |= _fileset(r)
     return {
+        "_held": held,
         "rows": sum(len(r["_rows"]) if "_rows" in r else 1 for r in rows),
         "weight": sum(r["weight"] for r in rows),
         "union": _bits(union, n),
@@ -649,6 +658,12 @@ def group_rows(rows, doc, r, mode, params):
             raise BadParams("group_min_link must be a number")
         units, ctx["note"] = merge_units(rows, doc, r, evidence, min_link)
     pairs = _nest(units, levels, ctx, "", [], {})
+    # `fcover`: the files the group holds, one 0/1 per file column. Child and twin columns stand for
+    # several files, so the column-level `union` alone would show a half-covered column as full.
+    fids = [c["id"] for c in doc.get("file_columns") or doc["columns"]]
+    for g, _ in pairs:
+        held = g.pop("_held", set())
+        g["fcover"] = "".join("1" if f in held else "0" for f in fids)
     groups = {g["id"]: g for g, _ in pairs if not g.get("headless")}
     return _entries(pairs, params), groups, ctx["note"]
 

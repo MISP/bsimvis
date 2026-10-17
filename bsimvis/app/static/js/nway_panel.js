@@ -1627,6 +1627,14 @@
             this._cgLaneTip(t, this._cgFiles().map(f => [...mask].some((b, i) => b === '1' && cols[i] && (cols[i].kind ? cols[i].members.includes(f.id) : cols[i].id === f.id))));
         }
 
+        // How many of a child/twin column's files the group holds: [held, total]; [0, 0] for a file column.
+        _cover(g, col) {
+            if (!col || !col.kind || !g.fcover) return [0, 0];
+            const d = this.data;
+            if (!d._fidx) d._fidx = new Map((this.data.file_columns || []).map((f, i) => [f.id, i]));
+            return [col.members.filter(m => g.fcover[d._fidx.get(m)] === '1').length, col.members.length];
+        }
+
         _groupHead(g, depth) {
             const n = g.union.length, closed = !this._gOpen(g.id);
             const chip = (cls, text, tip) => `<span class="nway-gchip ${cls}" title="${escapeAttr(tip)}">${escapeHtml(text)}</span>`;
@@ -1645,7 +1653,11 @@
             }
             // The files the group covers, one square per file column: the same grid as the rows below.
             const files = g.kind === 'lane' ? g.mask : g.union, cols = this.data.columns;
-            const sq = [...files].map((b, i) => `<td class="col sq"><i class="nway-sq${b === '1' ? ' on' : ''}" style="${this._sqStyle(i)}" title="${escapeAttr(this._colLabel(cols[i]) + (b === '1' ? '' : ': not in this group'))}"></i></td>`).join('');
+            const sq = [...files].map((b, i) => {
+                const [have, all] = this._cover(g, cols[i]);
+                const full = all ? have === all : b === '1', some = all ? have > 0 : b === '1';
+                return `<td class="col sq"><i class="nway-sq${some ? (full ? ' on' : ' part') : ''}" style="${this._sqStyle(i)}" title="${escapeAttr(this._colLabel(cols[i]) + (some ? (all > 1 ? `: ${have} of ${all} files` : '') : ': not in this group'))}">${all > 1 && some && !full ? have : ''}</i></td>`;
+            }).join('');
             return `<tr class="nway-grow d${depth}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><button class="nway-gh" data-gtoggle="${escapeAttr(g.id)}" aria-expanded="${!closed}" style="padding-left:${10 + depth * 20}px"><b class="nway-gchev">${closed ? '&#9656;' : '&#9662;'}</b><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span></button></td>${sq}</tr>`;
         }
 

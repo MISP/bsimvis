@@ -1042,7 +1042,7 @@
             });
             for (const tr of table.rows) {
                 const cells = tr.querySelectorAll('.col');
-                cells.forEach((el, i) => { if (i && lvl[i] != null) el.classList.add(`cs${Math.min(lvl[i], 2)}`); });
+                cells.forEach((el, i) => { if (i && lvl[i] != null) el.classList.add(`cs${lvl[i]}`); });
             }
         }
 

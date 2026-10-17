@@ -45,7 +45,7 @@
     // Widths in px: Function, Span, Features, Support, Cohesion, Cluster, then one square column per file.
     const DATA_COLS = [380, 64, 90, 90, 90, 210];
     const SQ_COL = 28;
-    const BAND_H = 76;
+    const BAND_H = 18;
     const GROUP_SORTS = [['files', 'File coverage'], ['weight', 'Features'], ['rows', 'Rows']];
     const LOW_SUPPORT = 0.5;
     // Same icon + color as the Code / Library / All pills in the table's Show control.
@@ -1765,7 +1765,7 @@
                     else {
                         const nd = byId.get(g.id) || {};
                         const tip = `${g.label} (${Number(g.member_count)} files)\nclick to fold`;
-                        cells += `<th class="nway-band" colspan="${j - i}" data-colx="${escapeAttr(g.id)}" title="${escapeAttr(tip)}" style="--h:${nd.h};--l:${nd.l}%;z-index:${6 + cols.length - i}"><button type="button" class="nway-fold" data-colx="${escapeAttr(g.id)}" aria-label="Fold ${escapeAttr(g.label)}">&#9662; <span>${escapeHtml(g.label)}</span></button></th>`;
+                        cells += `<th class="nway-band" colspan="${j - i}" data-colx="${escapeAttr(g.id)}" title="${escapeAttr(tip)}" style="--h:${nd.h};--l:${nd.l}%"><button type="button" class="nway-fold" data-colx="${escapeAttr(g.id)}" aria-label="Fold ${escapeAttr(g.label)}">&#9662;</button></th>`;
                     }
                     i = j;
                 }

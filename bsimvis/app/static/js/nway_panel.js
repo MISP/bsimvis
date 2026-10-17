@@ -1765,7 +1765,7 @@
                     else {
                         const nd = byId.get(g.id) || {};
                         const tip = `${g.label} (${Number(g.member_count)} files)\nclick to fold`;
-                        cells += `<th class="nway-band" colspan="${j - i}" data-colx="${escapeAttr(g.id)}" title="${escapeAttr(tip)}" style="--h:${nd.h};--l:${nd.l}%"><button type="button" class="nway-fold" data-colx="${escapeAttr(g.id)}" aria-label="Fold ${escapeAttr(g.label)}">&#9662;</button></th>`;
+                        cells += `<th class="nway-band" colspan="${j - i}" data-colx="${escapeAttr(g.id)}" title="${escapeAttr(tip)}" style="--h:${nd.h};--l:${nd.l}%"></th>`;
                     }
                     i = j;
                 }

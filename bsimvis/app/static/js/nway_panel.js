@@ -1028,6 +1028,24 @@
             return (d._tree = { grouped, root, colors });
         }
 
+        // A line left of each column that starts a new group; the shallower the split, the heavier the line.
+        _mark(table) {
+            const t = this._tree();
+            if (!t.grouped) return;
+            let prev = [];
+            const lvl = this.data.columns.map(c => {
+                const chain = [...(c.path || []).map(g => g.id), c.id];
+                let k = 0;
+                while (k < prev.length && prev[k] === chain[k]) k++;
+                prev = chain;
+                return k;
+            });
+            for (const tr of table.rows) {
+                const cells = tr.querySelectorAll('.col');
+                cells.forEach((el, i) => { if (i && lvl[i] != null) el.classList.add(`cs${Math.min(lvl[i], 2)}`); });
+            }
+        }
+
         // The focus card's presence squares: which files have this function.
         _cgFocusSub(focus, files) {
             const fs = this._cgStrip(files.map(c => !!focus.cells[c.id]), files);
@@ -1775,6 +1793,7 @@
             // The shared grid selection: it reads the function entities in the
             // selected cells, so the bulk actions of the function menu apply.
             if (window.TableSelection) new window.TableSelection('nway-table');
+            this._mark(this.el.querySelector('#nway-table'));
             this._watch();
             this._scrollRestore();
         }
@@ -1798,6 +1817,7 @@
             d.total = body.total;
             this.el.querySelector('#nway-table tbody').insertAdjacentHTML('beforeend', this._rows(body.items, at));
             this.el.querySelector('.table-footer-left').innerHTML = window.Paging.footer({ offset: 0, total: Number(d.total), size: PAGE, shown: d.items.length });
+            this._mark(this.el.querySelector('#nway-table'));
             this._watch();
         }
 

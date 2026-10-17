@@ -3052,6 +3052,9 @@ html.light-theme .nway-sq.on { background: hsl(var(--h, 195) 62% var(--ll, 44%))
 .nway-num { display: inline-grid; place-items: center; box-sizing: border-box; width: 18px; height: 18px; border-radius: 50%; background: hsl(var(--h, 195) 62% var(--l, 52%)); color: #111; font: 600 0.64rem 'Consolas', monospace; }
 .nway-num.grp, .nway-ol .nway-sq.grp { box-shadow: 0 0 0 1.5px var(--card-bg), 0 0 0 3px hsl(var(--h, 195) 62% var(--l, 52%)); }
 .nway-ol .nway-sq, .nway-table th .nway-sq { border-radius: 50%; }
+.nway-table .col.cs0 { border-left: 2px solid var(--dim); }
+.nway-table .col.cs1 { border-left: 1px solid var(--border); }
+.nway-table .col.cs2 { border-left: 1px dotted var(--border); }
 .nway-ol .nway-sq { flex: none; width: 13px; height: 13px; margin: 0 4px; }
 html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); color: #fff; }
 .nway-body { display: flex; align-items: flex-start; }

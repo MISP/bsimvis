@@ -1726,7 +1726,7 @@
             } else {
                 tip = `${c.file_name} (${c.collection})\n${c.md5}\n${Number(c.functions)} fn\nright-click: focus / filter`;
             }
-            return `<th class="col sq nway-numcol${c.expandable ? ' expandable' : ''}"${c.kind ? '' : ` data-col="${escapeAttr(c.id)}"`}${c.expandable ? ` data-colx="${escapeAttr(c.id)}"` : ''} title="${escapeAttr(tip)}"><i class="nway-num ${c.kind ? 'grp' : 'file'}" style="${this._sqStyle(ci)}">${ci + 1}</i></th>`;
+            return `<th class="col sq nway-numcol${c.expandable ? ' expandable' : ''}"${c.kind ? '' : ` data-col="${escapeAttr(c.id)}"`}${c.expandable ? ` data-colx="${escapeAttr(c.id)}"` : ''} title="${escapeAttr(tip)}"><i class="nway-num${Number(c.member_count) > 1 ? ' grp' : ''}" style="${this._sqStyle(ci)}">${ci + 1}</i></th>`;
         }
 
         // The column outline: every group and column with its number range, and the button that opens or folds it.

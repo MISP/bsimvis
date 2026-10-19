@@ -2047,6 +2047,7 @@
             this._mark(this.el.querySelector('#nway-table'));
             this._watch();
             this._scrollRestore();
+            if (window.NwayLineage) window.NwayLineage.mount(this);
         }
 
         // Scroll mode: load the next batch when the sentinel nears the viewport.

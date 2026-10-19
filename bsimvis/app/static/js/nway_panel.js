@@ -2054,7 +2054,8 @@
             if (this._io) this._io.disconnect();
             const s = this.el.querySelector('.nway-sentinel');
             if (!s) return;
-            if (this.data.items.length >= Number(this.data.total)) return s.remove();
+            // Keep the sentinel: a group opened later adds rows and needs it again.
+            if (this.data.items.length >= Number(this.data.total)) return;
             this._io = window.Paging.observe(s, () => this.load(true));
         }
 

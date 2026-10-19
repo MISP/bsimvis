@@ -148,6 +148,8 @@
                 if (file) return this._menu(e, file.dataset.nwayFile);
                 const th = e.target.closest('th[data-col]');
                 if (th) return this._menu(e, th.dataset.col);
+                const lf = e.target.closest('[data-lfile]');
+                if (lf) return this._menu(e, lf.dataset.lfile);
                 const grp = e.target.closest('[data-colx]');
                 if (grp) return this._groupMenu(e, grp.dataset.colx);
                 // A right-click on a function cell's empty space opens the function menu, not the plain cell one.
@@ -1779,9 +1781,11 @@
 
         // Hover a group header: the lane tooltip of the files the group covers. A child-cluster column stands for its member files.
         _gTip(e, show) {
-            const t = e.target.closest('[data-gmask], [data-colx]');
+            const t = e.target.closest('[data-gmask], [data-colx], [data-lfile], th[data-col]');
             if (!t || t.contains(e.relatedTarget)) return;
             if (!show) return this._cgTipLater();
+            const one = t.dataset.lfile || t.dataset.col;
+            if (one && !t.dataset.colx) return this._cgLaneTip(t, this._cgFiles().map(f => f.id === one));
             if (t.dataset.colx) {
                 const { ids } = this._groupIds(t.dataset.colx);
                 return ids.size && this._cgLaneTip(t, this._cgFiles().map(f => ids.has(f.id)));
@@ -1961,7 +1965,7 @@
                 const open = n.kids.length > 0, toggle = open || n.expandable;
                 const range = n.lo === n.hi ? `${n.lo + 1}` : `${n.lo + 1}–${n.hi + 1}`;
                 const tip = `${n.label}${n.count > 1 ? ` (${n.count} files)` : ''}${toggle ? (open ? '\nclick to fold' : '\nclick to show the files') : ''}`;
-                return `<div class="nway-ol${toggle ? ' expandable' : ''}" style="--dep:${dep}"${toggle ? ` data-colx="${escapeAttr(n.id)}"` : ''} title="${escapeAttr(tip)}">`
+                return `<div class="nway-ol${toggle ? ' expandable' : ''}" style="--dep:${dep}"${toggle ? ` data-colx="${escapeAttr(n.id)}"` : ''}${n.col !== undefined && !this.data.columns[n.col].kind ? ` data-lfile="${escapeAttr(n.id)}"` : ''} title="${escapeAttr(tip)}">`
                     + (toggle ? `<button type="button" class="nway-tg" data-colx="${escapeAttr(n.id)}" aria-label="${open ? 'Fold' : 'Open'} ${escapeAttr(n.label)}">${open ? '&#9662;' : '&#9656;'}</button>` : '<span class="nway-tg"></span>')
                     + `<i class="nway-sq on${n.count > 1 ? ' grp' : ''}" style="--h:${n.h};--l:${n.l}%;--ll:${n.l - 8}%"></i><span class="nway-olb">${escapeHtml(n.label)}</span>`
                     + (n.count > 1 ? `<em>${n.count}</em>` : '') + `<b class="nway-rg">${range}</b></div>`

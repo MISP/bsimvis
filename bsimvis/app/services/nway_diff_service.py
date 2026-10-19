@@ -498,11 +498,12 @@ def _load_base(r, scope, members, vparams, labels, warnings):
     else:
         edges, fallback = _stored_edges(r, scope, members, columns, algo, fid_sets)
 
+    columns = seriate(columns, edges, default_min_edge())
     return {
         "algo": algo,
         "columns": columns,
         "funcs": {
-            cid: {fid: weights[fid] for fid in fids} for cid, fids in fid_sets.items()
+            c["id"]: {fid: weights[fid] for fid in fid_sets[c["id"]]} for c in columns
         },
         "fmeta": fmeta,
         "library": library,
@@ -566,6 +567,33 @@ def _name_row(fids, fmeta, weights):
         out.pop("name_from", None)
         out["aliases"] = sorted({fmeta[f]["user_name"] for f in named} - {out["name"]})
     return out
+
+
+def seriate(columns, edges, min_edge):
+    """Column order that puts files sharing many functions side by side.
+
+    Greedy chain over pair affinity (matched pairs / smaller file), so lanes
+    (sets of files) stay contiguous in the matrix. Depends on the base only,
+    so it does not move when a display parameter changes.
+    """
+    ids = [c["id"] for c in columns]
+    if len(ids) < 3:
+        return columns
+    size = {c["id"]: max(1, c["functions"]) for c in columns}
+    aff = {i: {} for i in ids}
+    for (a, b), found in edges.items():
+        n = sum(1 for _, _, sc in found if sc >= min_edge) / min(size[a], size[b])
+        aff[a][b] = aff[b][a] = n
+    left = set(ids)
+    cur = max(ids, key=lambda i: sum(aff[i].values()))
+    order = [cur]
+    left.discard(cur)
+    while left:
+        cur = max((i for i in ids if i in left), key=lambda i: aff[cur].get(i, 0))
+        order.append(cur)
+        left.discard(cur)
+    by = {c["id"]: c for c in columns}
+    return [by[i] for i in order]
 
 
 def _match(base, min_edge):
@@ -717,6 +745,11 @@ def coverage(rows, column_ids):
 
 
 def demo():
+    cols = [{"id": i, "functions": 10} for i in "abcd"]
+    ed = {("a", "c"): [(1, 2, 0.9)] * 9, ("b", "d"): [(1, 2, 0.9)] * 9}
+    got = [c["id"] for c in seriate(cols, ed, 0.5)]
+    assert abs(got.index("a") - got.index("c")) == 1, got
+    assert abs(got.index("b") - got.index("d")) == 1, got
     cov_rows = [
         {"span": 3, "weight": 6.0, "cells": {"a": 1, "b": 2, "c": 3}},
         {"span": 2, "weight": 2.0, "cells": {"a": 4, "b": 5}},

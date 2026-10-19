@@ -179,12 +179,8 @@
             this.load();
         }
 
-        // `append` (scroll mode): fetch the next batch after the rows already shown.
-        async load(append = false) {
-            const scroll = window.Paging.mode() === 'scroll';
-            if (append && (this._loading || !this.data)) return;
-            const gen = ++this._gen;
-            this._loading = append;
+        // The table request's params, without offset / limit.
+        _listQs() {
             const qs = new URLSearchParams();
             for (const [k, v] of Object.entries(this.source)) if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             for (const k of API_KEYS) {
@@ -195,6 +191,16 @@
                 qs.set('group_open', this._gdef);
                 if (this._gflip.size) qs.set('group_flip', JSON.stringify([...this._gflip]));
             }
+            return qs;
+        }
+
+        // `append` (scroll mode): fetch the next batch after the rows already shown.
+        async load(append = false) {
+            const scroll = window.Paging.mode() === 'scroll';
+            if (append && (this._loading || !this.data)) return;
+            const gen = ++this._gen;
+            this._loading = append;
+            const qs = this._listQs();
             // After opening or closing a group, reload as many rows as were on screen.
             qs.set('limit', this.cgInit ? 1 : (this._keep || PAGE));
             this._keep = 0;
@@ -240,7 +246,7 @@
                 const body = await res.json().catch(() => ({}));
                 done();
                 if (gen !== this._gen) return;
-                this._loading = false;
+                this._loading = false; this._drawn = gen;
                 if (res.ok) NwayPanel._lastMs = Date.now() - t0;
                 if (append && res.ok) return this._append(body);
                 if (append) return;
@@ -254,7 +260,7 @@
             } catch (e) {
                 done();
                 if (gen !== this._gen) return;
-                this._loading = false;
+                this._loading = false; this._drawn = gen;
                 if (append) return;
                 const timedOut = e.name === 'TimeoutError';
                 // Cancelled with a table on screen: keep it.
@@ -1669,6 +1675,65 @@
             this.load();
         }
 
+        // Open or close one group in place: only its rows are fetched and drawn, the rest of the table stays.
+        // Redrawing the whole table cost ~200ms at 100 files; this costs the group's own rows.
+        async _gSplice(id) {
+            const d = this.data, items = d.items, groups = d.groups || {};
+            const flip = () => { if (!this._gflip.delete(id)) this._gflip.add(id); };
+            const i = items.findIndex(x => x.header && x.g === id);
+            const tbody = this.el.querySelector('#nway-table tbody');
+            const head = i < 0 || !groups[id] ? null : tbody.querySelector(`tr.nway-grow[data-gtoggle="${CSS.escape(id)}"]`);
+            // A load or another splice still in flight: fall back to the full reload.
+            if (!head || this._drawn !== this._gen) return this._gChange(flip);
+            flip();
+            const gen = ++this._gen, open = this._gOpen(id), path = groups[id].path;
+            const under = g => !!g && !!groups[g] && groups[g].path.includes(id);
+            const qs = this._listQs();
+            let body;
+            if (!open) {
+                // Closing drops the rows now; the request brings the new total and the rows that refill the page.
+                let n = 0;
+                while (i + 1 + n < items.length && under(items[i + 1 + n].g)) n++;
+                items.splice(i + 1, n);
+                while (head.nextElementSibling && under(head.nextElementSibling.dataset.g || head.nextElementSibling.dataset.gtoggle)) head.nextElementSibling.remove();
+            }
+            qs.set('offset', (Number(d.offset) || 0) + (open ? i + 1 : items.length));
+            qs.set('limit', open ? PAGE : Math.max(1, PAGE - items.length));
+            try {
+                const res = await fetch(`/api/bin_sim/nway?${qs.toString()}`, { signal: AbortSignal.timeout(NWAY_TIMEOUT_MS) });
+                body = res.ok ? await res.json() : null;
+            } catch (e) { body = null; }
+            if (gen !== this._gen) return;
+            if (!body) return this.load();
+            if (open) {
+                Object.assign(d.functions_metadata, body.functions_metadata);
+                Object.assign(d.clusters, body.clusters);
+                Object.assign(groups, body.groups);
+                // The group's entries are the ones the open added; a group longer than the batch ends the loaded list.
+                const added = Number(body.total) - Number(d.total), rows = body.items.slice(0, Math.max(0, added));
+                const whole = added <= body.items.length;
+                items.splice(i + 1, whole ? 0 : items.length, ...rows);
+                if (!whole) while (head.nextElementSibling) head.nextElementSibling.remove();
+                this._gprint = path;
+                head.insertAdjacentHTML('afterend', this._rows(rows, i + 1));
+            } else if (items.length < PAGE && body.items.length) {
+                Object.assign(d.functions_metadata, body.functions_metadata);
+                Object.assign(d.clusters, body.clusters);
+                Object.assign(groups, body.groups);
+                const last = items[items.length - 1], at = items.length;
+                this._gprint = (last && last.g && groups[last.g] && groups[last.g].path) || [];
+                items.push(...body.items);
+                tbody.insertAdjacentHTML('beforeend', this._rows(body.items, at));
+            }
+            d.total = body.total;
+            head.insertAdjacentHTML('afterend', this._groupHead(groups[id], path.length - 1));
+            head.remove();
+            this._mark(this.el.querySelector('#nway-table'));
+            this.el.querySelector('.table-footer-left').innerHTML = window.Paging.footer({ offset: Number(d.offset) || 0, total: Number(d.total), size: PAGE, shown: items.length });
+            this._drawn = gen;
+            this._watch();
+        }
+
         // Hover a group header: the lane tooltip of the files the group covers. A child-cluster column stands for its member files.
         _gTip(e, show) {
             const t = e.target.closest('[data-gmask]');
@@ -1717,17 +1782,17 @@
         _rows(items, at) {
             if (!at) this._gprint = [];
             const groups = this.data.groups || {};
-            return items.map((row, i) => {
+            return items.map(row => {
                 const path = (row.g && groups[row.g] && groups[row.g].path) || [];
                 let k = 0, head = '';
                 while (k < path.length && this._gprint[k] === path[k]) k++;
                 for (let d = k; d < path.length; d++) head += this._groupHead(groups[path[d]], d);
                 this._gprint = path;
-                return head + (row.header ? '' : this._row(row, at + i));
+                return head + (row.header ? '' : this._row(row));
             }).join('');
         }
 
-        _row(row, ri) {
+        _row(row) {
             const cols = this.data.columns;
             const extra = Array.isArray(row.names) ? row.names.length - 1 : Number(row.names || 0) - 1;
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
@@ -1735,8 +1800,8 @@
             const also = row.also > 1 ? `<span class="nway-gchip also" title="This row has ${Number(row.also)} tags on this axis, so it is listed under each of them">&times;${Number(row.also)}</span>` : '';
             // Rows are indented one step past the header of the group they sit in, so a row with no partner lines up with the merged functions beside it.
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
-            return `<tr${depth ? ` class="nway-in" style="--gd:${depth}"` : ''}>
-                <td class="nway-open" data-fn-open="${Number(ri)}" title="Compare this row's functions: strings, APIs, callees, constants and code" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
+            return `<tr${depth ? ` class="nway-in" style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}>
+                <td class="nway-open" data-fn-open title="Compare this row's functions: strings, APIs, callees, constants and code" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
                 ${this._statsOff() ? '' : `<td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
@@ -1936,11 +2001,9 @@
                 if (i >= 0) lv.splice(i, 1); else lv.push(t.dataset.gpick);
                 return this._set({ group: lv.join(','), offset: 0 });
             }
-            if (t.dataset.gtoggle !== undefined || t.dataset.gall) {
-                return this._gChange(() => {
-                    if (t.dataset.gall) { this._gdef = t.dataset.gall === 'open' ? 'all' : 'none'; this._gflip.clear(); }
-                    else if (!this._gflip.delete(t.dataset.gtoggle)) this._gflip.add(t.dataset.gtoggle);
-                });
+            if (t.dataset.gtoggle !== undefined && !t.dataset.gall) return this._gSplice(t.dataset.gtoggle);
+            if (t.dataset.gall) {
+                return this._gChange(() => { this._gdef = t.dataset.gall === 'open' ? 'all' : 'none'; this._gflip.clear(); });
             }
             if (t.dataset.nwayFile) {
                 e.preventDefault(); e.stopPropagation();
@@ -1951,7 +2014,9 @@
             }
             if (t.dataset.fnOpen !== undefined) {
                 if (e.target.closest('button, a, input, .bsim-tag-pill, .entity-actions')) return;
-                const url = this._fnUrl(this.data.items[Number(t.dataset.fnOpen)]);
+                // The n-th row cell is the n-th non-header item (group splices shift indexes, so none is stored).
+                const at = [...this.el.querySelectorAll('#nway-table td[data-fn-open]')].indexOf(t);
+                const url = this._fnUrl(this.data.items.filter(x => !x.header)[at]);
                 if (!url) return;
                 e.preventDefault();
                 this._scrollSave();

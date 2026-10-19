@@ -49,6 +49,7 @@ from bsimvis.app.services.nway_match import nway_match
 _MD5 = re.compile(r"^[0-9a-f]{32}$")
 _DEFAULT_NAME = re.compile(r"^(FUN_|sub_|thunk_)", re.I)
 MAX_COLUMNS = 400  # a column tree stops expanding past this many columns
+PAIR_CHUNK = 100  # pair docs fetched per pipeline; a doc can be megabytes
 
 
 _progress = threading.local()
@@ -338,29 +339,56 @@ def _stored_edges(r, scope, members, columns, algo):
     # ponytail: fallback pairs use a fixed discovery floor, so lowering min_edge
     # below it cannot recover their weaker edges; pairs with a stored doc are exact.
     fallback_floor = float(config_service.get("similarity.discovery_min_score", 0.5))
-    edges, fallback = {}, 0
-    pairs = list(combinations(enumerate(members), 2))
-    for n, ((i, a), (j, b)) in enumerate(pairs):
-        _report(0.1 + 0.85 * n / len(pairs), f"reading file pair {n + 1}/{len(pairs)}")
-        (coll_a, md5_a), (coll_b, md5_b) = a, b
-        _, doc = bin_sim_service.load_pair(
-            coll_a, md5_a, md5_b, coll_b if pool_id else None, pool_id, algo
-        )
-        if not doc:
-            fallback += 1
-            doc = bin_sim_service.cached_pair_from_stored_sims(
-                coll_a,
-                md5_a,
-                md5_b,
-                algo,
-                coll_b if pool_id else None,
-                pool_id,
-                min_score=fallback_floor,
+    pairs = list(combinations(range(len(members)), 2))
+    if pool_id:
+        # One involves set per member, intersected here, not two reads per pair.
+        pipe = r.pipeline(transaction=False)
+        for coll, md5 in members:
+            pipe.smembers(
+                f"global:pool:{pool_id}:bin_sim:involves:{_origin_coll(coll)}:{md5}"
             )
-        matched = ((doc or {}).get("diff") or {}).get("matched") or []
-        edges[(columns[i]["id"], columns[j]["id"])] = [
-            (m["func_a"], m["func_b"], float(m["similarity"])) for m in matched
+        tag = f":bin_sim:{algo}:"
+        involves = [
+            {s for x in res if tag in (s := x.decode() if isinstance(x, bytes) else x)}
+            for res in pipe.execute()
         ]
+        sids = [next(iter(involves[i] & involves[j]), None) for i, j in pairs]
+    else:
+        sids = [
+            bin_sim_service.find_pair_sid(
+                members[i][0], members[i][1], members[j][1], algo=algo
+            )
+            for i, j in pairs
+        ]
+
+    edges, fallback = {}, 0
+    for start in range(0, len(pairs), PAIR_CHUNK):
+        _report(
+            0.1 + 0.85 * start / len(pairs),
+            f"reading file pair {start + 1}/{len(pairs)}",
+        )
+        pipe = r.pipeline(transaction=False)
+        for sid in sids[start : start + PAIR_CHUNK]:
+            pipe.get(sid or "")
+        chunk = zip(pairs[start : start + PAIR_CHUNK], pipe.execute())
+        for (i, j), raw in chunk:
+            (coll_a, md5_a), (coll_b, md5_b) = members[i], members[j]
+            doc = _decode(raw)
+            if not doc:
+                fallback += 1
+                doc = bin_sim_service.cached_pair_from_stored_sims(
+                    coll_a,
+                    md5_a,
+                    md5_b,
+                    algo,
+                    coll_b if pool_id else None,
+                    pool_id,
+                    min_score=fallback_floor,
+                )
+            matched = ((doc or {}).get("diff") or {}).get("matched") or []
+            edges[(columns[i]["id"], columns[j]["id"])] = [
+                (m["func_a"], m["func_b"], float(m["similarity"])) for m in matched
+            ]
     return edges, fallback
 
 

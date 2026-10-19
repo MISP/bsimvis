@@ -30,7 +30,7 @@ from collections import Counter, defaultdict
 from itertools import combinations
 
 from bsimvis.app.services.bin_sim_tags import AXES, merge_tag_fields, tag_axis
-from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME, BadParams
+from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME, _LRU, BadParams
 from bsimvis.app.services.tag_taxonomy import tag_body, tag_prefixes
 
 MODES = ("tag", "lane", "prefix")
@@ -45,8 +45,9 @@ NAME_BUCKET = 12  # rows sharing one name that are paired up
 CALL_HUB = 25  # a caller with more callee rows than this says nothing
 CALL_MAX_FIDS = 30000  # call position reads one Redis set per function
 UNTAGGED = "(no tag)"
-# ponytail: the grouping is recomputed on every page request; cache it on the
-# doc key if the scroll-append calls get slow.
+# Grouped tree per (doc, filtered rows, group params): opening a group or
+# scrolling only rebuilds the flat entry list.
+_CACHE = _LRU(8)
 
 _SUFFIX = re.compile(r"\.(part|isra|constprop|cold|llvm)(\.\d+)?$")
 
@@ -333,10 +334,13 @@ def merge_units(rows, doc, r, evidence, min_link):
     the union of their files, `_rows` the rows, `_kinds` the evidence.
     """
     all_rows = doc["rows"]
-    row_of = {f: i for i, row in enumerate(all_rows) for f in _fids(row)}
+    # every edge is scanned once per doc, not once per filter change
+    if "_links" not in doc:
+        row_of = {f: i for i, row in enumerate(all_rows) for f in _fids(row)}
+        doc["_links"] = (row_of, _best_links(doc["edges"], row_of))
+    row_of, best = doc["_links"]
     at = {id(row): i for i, row in enumerate(all_rows)}
     cand = [(at[id(row)], row) for row in rows if id(row) in at]
-    best = _best_links(doc["edges"], row_of)
     link = {}  # (row, row) -> {"kinds", "sim"}
     # Rows are joined on files, lanes group on columns: with twin or child columns
     # one column holds several files, and two rows in one column may sit in different files.
@@ -605,6 +609,23 @@ def group_rows(rows, doc, r, mode, params):
     `mode` is a comma-separated chain of levels (`prefix`, `lane`, `tag`, `prefix,lane`) and
     may be empty when `group_merge` is set. See the module doc.
     """
+    key = doc.get("key") and (
+        doc["key"],
+        mode,
+        tuple(
+            sorted(
+                (k, v)
+                for k, v in params.items()
+                if k.startswith(("group_", "sort_"))
+                and k not in ("group_open", "group_flip")
+            )
+        ),
+        tuple(map(id, rows)),
+    )
+    hit = key and _CACHE.get(key)
+    if hit:
+        pairs, groups, note = hit
+        return _entries(pairs, params), groups, note
     levels = [m for m in (mode or "").split(",") if m]
     if set(levels) - set(MODES) or len(set(levels)) != len(levels):
         raise BadParams(f"group must be {MODES}, separated by commas, each once")
@@ -665,7 +686,10 @@ def group_rows(rows, doc, r, mode, params):
         held = g.pop("_held", set())
         g["fcover"] = "".join("1" if f in held else "0" for f in fids)
     groups = {g["id"]: g for g, _ in pairs if not g.get("headless")}
-    return _entries(pairs, params), groups, ctx["note"]
+    entries = _entries(pairs, params)
+    if key:
+        _CACHE.put(key, (pairs, groups, ctx["note"]))
+    return entries, groups, ctx["note"]
 
 
 def _entries(pairs, params):

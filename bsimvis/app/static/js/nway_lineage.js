@@ -7,16 +7,17 @@
  * shared (grey, between the nodes), born (blue, from the top lane into the
  * child) and died (orange, from the parent into the bottom lane). The part of
  * born/died that looks like a matcher miss (recall_suspect) is a hatched
- * sub-band of the same colour. d3-sankey places the nodes (plain stacking if
- * it is missing); the ribbons are hand-built SVG. Click an edge or node for numbers.
+ * sub-band of the same colour. d3.sankey builds the graph (born sources and
+ * died sinks are real nodes), d3.sankeyLinkHorizontal draws the ribbons. Click an edge or node for numbers.
  * Everything from a sample (file names, md5s) is set with textContent / SVG
  * attributes, never innerHTML.
  */
 (function () {
     const NS = 'http://www.w3.org/2000/svg';
     const ORDERS = [['tree', 'Tree'], ['chain', 'Chain'], ['star', 'Star']];
-    const NODE_W = 110, PAD = 30, LANE_H = 56, PADDING = 36;
-    // colour-blind-safe pair (Okabe-Ito); lane position carries the meaning as well
+    const NODE_W = 110, BAND_W = 12, GAP = 230, PAD = 30, PADDING = 28, BAND_PAD = 6;
+    const LANE_PAD = 34, BAND_H = 200, FILE_H = 420, KY_MAX = 1.5;
+    // colour-blind-safe pair (Okabe-Ito): blue is only born, orange only died
     const BLUE = '#0072B2', ORANGE = '#D55E00', GREY = '#8a8f98';
     let uid = 0;
 
@@ -33,152 +34,170 @@
         return e;
     }
 
-    // Node boxes: d3.sankey sets x0/x1/y0/y1 (height = function count through
-    // fixedValue); without d3-sankey a plain column stacker gives the same fields.
-    function placeNodes(doc, W, H) {
-        const nodes = doc.nodes.map(n => ({ ...n }));
-        const links = doc.edges.map(e => ({ source: e.parent, target: e.child, value: e.shared, edge: e }));
-        const ext = [[PAD, LANE_H + 20], [W - PAD, H - LANE_H - 20]];
-        if (window.d3 && d3.sankey) {
-            nodes.forEach(n => { n.fixedValue = Math.max(1, n.functions); });
-            d3.sankey().nodeId(n => n.id).nodeWidth(NODE_W).nodePadding(PADDING).nodeAlign(d3.sankeyLeft)
-                .nodeSort(null).extent(ext).iterations(0)({ nodes, links });
-        } else {
-            const byId = new Map(nodes.map(n => [n.id, n]));
-            const dep = depths(doc);
-            const cols = new Map();
-            nodes.forEach(n => { n.depth = dep.get(n.id); (cols.get(n.depth) || cols.set(n.depth, []).get(n.depth)).push(n); });
-            const nc = Math.max(...cols.keys()) + 1;
-            let ky = Infinity;
-            for (const c of cols.values()) ky = Math.min(ky, (ext[1][1] - ext[0][1] - PADDING * (c.length - 1)) / c.reduce((a, n) => a + Math.max(1, n.functions), 0));
-            for (const [d, c] of cols) {
-                let y = ext[0][1];
-                for (const n of c) {
-                    n.x0 = ext[0][0] + (nc > 1 ? d * (ext[1][0] - ext[0][0] - NODE_W) / (nc - 1) : 0);
-                    n.x1 = n.x0 + NODE_W; n.y0 = y; n.y1 = y + Math.max(1, n.functions) * ky; y = n.y1 + PADDING;
-                }
-            }
-            links.forEach(l => { l.source = byId.get(l.source); l.target = byId.get(l.target); });
-        }
-        return { nodes, links };
-    }
-
+    // File depth from the root; a file's layer is 2 * depth, the layers between
+    // hold the BORN sources and DIED sinks of the edges that cross that gap.
     function depths(doc) {
         const d = new Map([[doc.root, 0]]);
         for (const e of doc.edges) d.set(e.child, d.get(e.parent) + 1);
         return d;
     }
 
-    // Slots along a node's top or bottom edge, one per edge: widths are shares of
-    // the node width (flow / the node's functions), squeezed when they overflow.
-    function slots(items, node, key) {
-        const f = items.map(it => it.edge[key] / Math.max(1, node.functions));
-        const q = Math.min(1, 1 / Math.max(f.reduce((a, b) => a + b, 0), 1e-9));
-        let at = 0;
-        return items.map((it, i) => { const s = [node.x0 + at * q * NODE_W, f[i] * q * NODE_W]; at += f[i]; return s; });
+    // d3.sankey builds the graph (node values, link lists, link breadths); we
+    // fix the geometry afterwards so every flow shares one px-per-function scale
+    // and the born / died nodes sit in their own bands.
+    function layout(doc, width) {
+        const dep = depths(doc);
+        const maxd = Math.max(...dep.values());
+        const files = doc.nodes.map(n => ({ ...n, kind: 'file', sid: `f:${n.id}`, d: dep.get(n.id) }));
+        const fileOf = new Map(files.map(n => [n.id, n]));
+        const nodes = [...files], links = [];
+        doc.edges.forEach((e, i) => {
+            const p = fileOf.get(e.parent), c = fileOf.get(e.child);
+            const sus = e.recall_suspect;
+            links.push({ source: p.sid, target: c.sid, value: Math.max(e.shared, 0), kind: 'shared', edge: e });
+            if (e.gained > 0) {
+                const b = { kind: 'born', sid: `b:${i}`, d: c.d, edge: e };
+                nodes.push(b);
+                const s = Math.min(sus, e.gained);
+                links.push({ source: b.sid, target: c.sid, value: e.gained - s, kind: 'born', edge: e });
+                if (s > 0) links.push({ source: b.sid, target: c.sid, value: s, kind: 'born', hatch: true, edge: e });
+            }
+            if (e.lost > 0) {
+                const x = { kind: 'died', sid: `d:${i}`, d: p.d, edge: e };
+                nodes.push(x);
+                const s = Math.min(sus, e.lost);
+                links.push({ source: p.sid, target: x.sid, value: e.lost - s, kind: 'died', edge: e });
+                if (s > 0) links.push({ source: p.sid, target: x.sid, value: s, kind: 'died', hatch: true, edge: e });
+            }
+        });
+        const graph = { nodes, links: links.filter(l => l.value > 0 || l.kind === 'shared') };
+        const sankey = d3.sankey().nodeId(n => n.sid).nodeWidth(NODE_W).nodePadding(PADDING)
+            .extent([[0, 0], [100, 100]]).iterations(0);
+        sankey(graph);
+
+        // node height in functions: max(functions, flow in, flow out); never squeezed
+        const units = n => n.kind === 'file' ? Math.max(n.functions, n.value) : n.value;
+        const cols = new Map();
+        for (const n of files) (cols.get(n.d) || cols.set(n.d, []).get(n.d)).push(n);
+        const stack = (kind, k) => {
+            const m = new Map();
+            for (const n of nodes) if (n.kind === kind) m.set(n.d, (m.get(n.d) || 0) + units(n) + BAND_PAD * 0);
+            return Math.max(1, ...m.values(), k);
+        };
+        let ky = KY_MAX;
+        for (const c of cols.values()) ky = Math.min(ky, (FILE_H - PADDING * (c.length - 1)) / c.reduce((a, n) => a + units(n), 0));
+        ky = Math.min(ky, BAND_H / stack('born', 1), BAND_H / stack('died', 1));
+        ky = Math.max(ky, 0.02);
+
+        const colW = NODE_W + GAP;
+        const W = Math.max(width || 600, 2 * PAD + (maxd + 1) * colW);
+        const fileTop = LANE_PAD + BAND_H + 70;
+        // files: left to right, each below its parent's top where there is room
+        const order = [...files].sort((a, b) => a.d - b.d || doc.nodes.findIndex(n => n.id === a.id) - doc.nodes.findIndex(n => n.id === b.id));
+        const parentOf = new Map(doc.edges.map(e => [e.child, e.parent]));
+        const bottoms = new Map();
+        let filesBottom = fileTop;
+        for (const n of order) {
+            n.x0 = PAD + n.d * colW; n.x1 = n.x0 + NODE_W;
+            const par = fileOf.get(parentOf.get(n.id));
+            n.y0 = Math.max((bottoms.get(n.d) ?? fileTop - PADDING) + PADDING, par ? par.y0 : fileTop);
+            n.y1 = n.y0 + Math.max(2, units(n) * ky);
+            bottoms.set(n.d, n.y1);
+            filesBottom = Math.max(filesBottom, n.y1);
+        }
+        const diedTop = filesBottom + 70;
+        const H = diedTop + BAND_H + LANE_PAD;
+        // born sources: top band, left part of the gap before the child; died sinks: bottom band, right part of the gap after the parent
+        const place = (kind, base, x0, byY) => {
+            const per = new Map();
+            nodes.filter(n => n.kind === kind).sort((a, b) => byY(a) - byY(b)).forEach(n => {
+                const used = per.get(n.d) || 0;
+                n.y0 = base + used; n.y1 = n.y0 + Math.max(2, units(n) * ky);
+                per.set(n.d, n.y1 - base + BAND_PAD);
+                n.x0 = x0(n); n.x1 = n.x0 + BAND_W;
+            });
+        };
+        place('born', LANE_PAD, n => PAD + (n.d - 1) * colW + NODE_W + 30, n => fileOf.get(n.edge.child).y0);
+        place('died', diedTop, n => PAD + n.d * colW + NODE_W + GAP - 30 - BAND_W, n => fileOf.get(n.edge.parent).y0);
+        // links: one scale for all
+        for (const l of graph.links) l.width = Math.max(1, l.value * ky);
+        sankey.update(graph);
+        return { graph, files, W, H, ky, filesBottom, diedTop, fileTop };
     }
 
     function draw(doc, onPick, width) {
-        const dep = depths(doc);
-        const sizes = new Map();
-        for (const v of dep.values()) sizes.set(v, (sizes.get(v) || 0) + 1);
-        const W = Math.max(width || 600, (Math.max(...dep.values()) + 1) * (NODE_W + 150) + 2 * PAD);
-        const H = Math.max(440, 140 * Math.max(...sizes.values()) + 2 * LANE_H + 60);
-        const { nodes, links } = placeNodes(doc, W, H);
-        const name = new Map(nodes.map(n => [n.id, n.file_name || n.id]));
         uid++;
-        const s = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Lineage of the files: shared, born and died code' });
-        const defs = svg('defs');
-        for (const [id, col] of [['hatchBorn', BLUE], ['hatchDied', ORANGE]]) {
-            const p = svg('pattern', { id: `${id}${uid}`, width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' });
-            p.append(svg('rect', { width: 6, height: 6, fill: col, 'fill-opacity': 0.2 }), svg('rect', { width: 3, height: 6, fill: col }));
-            defs.append(p);
+        const L = layout(doc, width);
+        const { graph, W, H } = L;
+        const name = new Map(L.files.map(n => [n.id, n.file_name || n.id]));
+        const s = d3.create('svg').attr('width', W).attr('height', H).attr('viewBox', `0 0 ${W} ${H}`)
+            .attr('role', 'img').attr('aria-label', 'Lineage of the files: shared, born and died code');
+        const defs = s.append('defs');
+        for (const [kind, col] of [['born', BLUE], ['died', ORANGE]]) {
+            const p = defs.append('pattern').attr('id', `hatch-${kind}-${uid}`).attr('width', 6).attr('height', 6)
+                .attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
+            p.append('rect').attr('width', 6).attr('height', 6).attr('fill', col).attr('fill-opacity', 0.25);
+            p.append('rect').attr('width', 3).attr('height', 6).attr('fill', col);
         }
-        s.append(defs);
-        const total = k => doc.edges.reduce((a, e) => a + e[k], 0);
-        const lane = (y, label, col, n) => s.append(
-            svg('rect', { x: 0, y, width: W, height: LANE_H, fill: col, 'fill-opacity': 0.1 }),
-            svg('text', { x: 8, y: y + 20, 'font-size': 12, 'font-weight': 600, fill: 'currentColor' }, `${label}: ${n} functions`));
-        lane(0, 'BORN (gained by the child)', BLUE, total('gained'));
-        lane(H - LANE_H, 'DIED (lost from the parent)', ORANGE, total('lost'));
-
-        const ky = Math.min(...nodes.map(n => (n.y1 - n.y0) / Math.max(1, n.functions)));
-        const outs = new Map(nodes.map(n => [n, []])), ins = new Map(nodes.map(n => [n, []]));
-        links.forEach(l => { outs.get(l.source).push(l); ins.get(l.target).push(l); });
-        const diedAt = new Map(), bornAt = new Map();
-        for (const n of nodes) {
-            const ls = outs.get(n).sort((a, b) => a.target.y0 - b.target.y0);
-            const ws = ls.map(l => Math.max(1, l.value * ky));
-            const sq = Math.min(1, (n.y1 - n.y0) / Math.max(ws.reduce((a, b) => a + b, 0), 1e-9));
-            let cum = 0;
-            ls.forEach((l, i) => { l.w = Math.max(1, ws[i] * sq); l.ys = n.y0 + (cum + ws[i] / 2) * sq; cum += ws[i]; l.yt = l.target.y0 + Math.max(1, l.value * ky) / 2; });
-            slots(ls, n, 'lost').forEach((sl, i) => diedAt.set(ls[i].edge, sl));
-            const is = ins.get(n);
-            slots(is, n, 'gained').forEach((sl, i) => bornAt.set(is[i].edge, sl));
-        }
-
-        const tip = el('div', { style: 'position:fixed;pointer-events:none;display:none;z-index:50;padding:6px 8px;border-radius:4px;background:#1f2328;color:#fff;font-size:12px;line-height:1.4;white-space:pre' });
-        document.body.append(tip);
-        s._cleanup = () => tip.remove();
-        const band = (x, y, w, h, kind, hatch) => {
-            const col = kind === 'born' ? BLUE : ORANGE;
-            return svg('rect', {
-                x, y, width: Math.max(1, w), height: Math.max(0, h), 'fill-opacity': hatch ? 1 : 0.8,
-                fill: hatch ? `url(#${kind === 'born' ? 'hatchBorn' : 'hatchDied'}${uid})` : col,
-                stroke: hatch ? col : 'none', 'stroke-width': 0.5,
-            });
+        const bandTotal = k => doc.edges.reduce((a, e) => a + e[k], 0);
+        const lane = (y, h, col, label) => {
+            s.append('rect').attr('x', 0).attr('y', y).attr('width', W).attr('height', h).attr('fill', col).attr('fill-opacity', 0.08);
+            s.append('text').attr('x', 8).attr('y', y + 16).attr('font-size', 12).attr('font-weight', 600).attr('fill', 'currentColor').text(label);
         };
-        const edgeGs = [];
-        for (const l of links) {
-            const e = l.edge, g = svg('g', { style: 'cursor:pointer;transition:opacity .15s' });
-            const midX = (l.source.x1 + l.target.x0) / 2;
-            const grey = svg('path', {
-                d: `M${l.source.x1},${l.ys} C${midX},${l.ys} ${midX},${l.yt} ${l.target.x0},${l.yt}`,
-                fill: 'none', stroke: GREY, 'stroke-width': l.w, 'stroke-opacity': 0.45,
-            });
-            g.append(grey);
-            // the suspect part of a lane is a hatched sub-band of the same colour
-            if (e.gained > 0) {
-                const [x, w] = bornAt.get(e), hs = w * Math.min(e.recall_suspect, e.gained) / e.gained;
-                g.append(band(x, LANE_H, w - hs, l.target.y0 - LANE_H, 'born'), band(x + w - hs, LANE_H, hs, l.target.y0 - LANE_H, 'born', true));
-            }
-            if (e.lost > 0) {
-                const [x, w] = diedAt.get(e), hs = w * Math.min(e.recall_suspect, e.lost) / e.lost;
-                const y = l.source.y1, h = H - LANE_H - y;
-                g.append(band(x, y, w - hs, h, 'died'), band(x + w - hs, y, hs, h, 'died', true));
-            }
-            const text = `${name.get(e.parent)} → ${name.get(e.child)}\nborn ${e.gained}   died ${e.lost}   shared ${e.shared}\nrecall suspect ${e.recall_suspect}`;
-            g.addEventListener('mouseenter', () => {
-                edgeGs.forEach(o => { o.style.opacity = o === g ? 1 : 0.12; });
-                grey.setAttribute('stroke-opacity', 0.85);
-                tip.textContent = text; tip.style.display = 'block';
-            });
-            g.addEventListener('mousemove', ev => { tip.style.left = `${ev.clientX + 12}px`; tip.style.top = `${ev.clientY + 12}px`; });
-            g.addEventListener('mouseleave', () => {
-                edgeGs.forEach(o => { o.style.opacity = 1; });
-                grey.setAttribute('stroke-opacity', 0.45);
-                tip.style.display = 'none';
-            });
-            g.addEventListener('click', () => onPick({ edge: e }));
-            edgeGs.push(g);
-            s.append(g);
-        }
-        for (const n of nodes) {
-            const g = svg('g', { style: 'cursor:pointer' });
-            const full = name.get(n.id);
-            const label = full.length > 16 ? `${full.slice(0, 15)}…` : full;
-            g.append(svg('title', {}, `${full} (${n.functions} functions)`),
-                svg('rect', { x: n.x0, y: n.y0, width: NODE_W, height: Math.max(2, n.y1 - n.y0), fill: n.root ? '#1d4ed8' : '#4b5563', rx: 2 }));
-            if (n.y1 - n.y0 >= 30) {
-                g.append(svg('text', { x: n.x0 + 6, y: n.y0 + 15, 'font-size': 11, fill: '#fff' }, label),
-                    svg('text', { x: n.x0 + 6, y: n.y0 + 28, 'font-size': 10, fill: '#fff' }, `${n.functions} fn`));
-            } else {
-                g.append(svg('text', { x: n.x0, y: n.y0 - 4, 'font-size': 10, fill: 'currentColor' }, `${label} (${n.functions})`));
-            }
-            g.addEventListener('click', () => onPick({ node: n }));
-            s.append(g);
-        }
-        return { svg: s, byId: new Map(nodes.map(n => [n.id, n])) };
+        lane(0, LANE_PAD + BAND_H + 30, BLUE, `BORN: ${bandTotal('gained')} functions`);
+        lane(L.diedTop - 30, H - L.diedTop + 30, ORANGE, `DIED: ${bandTotal('lost')} functions`);
+        s.append('text').attr('x', 8).attr('y', L.fileTop - 14).attr('font-size', 12).attr('font-weight', 600).attr('fill', 'currentColor')
+            .text('SHARED (kept from parent to child)');
+
+        const tip = d3.select(document.body).append('div')
+            .style('position', 'fixed').style('pointer-events', 'none').style('display', 'none').style('z-index', 50)
+            .style('padding', '6px 8px').style('border-radius', '4px').style('background', '#1f2328').style('color', '#fff')
+            .style('font-size', '12px').style('line-height', 1.4).style('white-space', 'pre');
+        s.node()._cleanup = () => tip.remove();
+
+        // grey ribbons fade parent -> child
+        graph.links.filter(l => l.kind === 'shared').forEach((l, i) => {
+            const g = defs.append('linearGradient').attr('id', `sh-${uid}-${i}`).attr('gradientUnits', 'userSpaceOnUse')
+                .attr('x1', l.source.x1).attr('x2', l.target.x0);
+            g.append('stop').attr('offset', 0).attr('stop-color', GREY).attr('stop-opacity', 0.65);
+            g.append('stop').attr('offset', 1).attr('stop-color', GREY).attr('stop-opacity', 0.3);
+            l.grad = `url(#sh-${uid}-${i})`;
+        });
+        const stroke = l => l.kind === 'shared' ? l.grad
+            : l.hatch ? `url(#hatch-${l.kind}-${uid})` : l.kind === 'born' ? BLUE : ORANGE;
+        const ribbons = s.append('g').selectAll('path').data(graph.links).join('path')
+            .attr('d', d3.sankeyLinkHorizontal()).attr('fill', 'none').attr('stroke', stroke)
+            .attr('stroke-width', l => l.width).attr('stroke-opacity', l => l.kind === 'shared' ? 1 : 0.85)
+            .style('cursor', 'pointer');
+        const text = e => `${name.get(e.parent)} → ${name.get(e.child)}\nborn ${e.gained}   died ${e.lost}   shared ${e.shared}\nrecall suspect ${e.recall_suspect}`;
+        ribbons.on('mouseenter', (ev, l) => {
+            ribbons.transition().duration(120).style('opacity', d => d.edge === l.edge ? 1 : 0.1);
+            ribbons.filter(d => d.edge === l.edge).raise();
+            tip.text(text(l.edge)).style('display', 'block');
+        }).on('mousemove', ev => tip.style('left', `${ev.clientX + 12}px`).style('top', `${ev.clientY + 12}px`))
+            .on('mouseleave', () => {
+                ribbons.transition().duration(120).style('opacity', 1);
+                tip.style('display', 'none');
+            }).on('click', (ev, l) => onPick({ edge: l.edge }));
+
+        const NODE_FILL = '#475569';
+        const nodes = s.append('g').selectAll('g').data(graph.nodes).join('g').style('cursor', 'pointer');
+        nodes.append('rect').attr('x', n => n.x0).attr('y', n => n.y0).attr('width', n => n.x1 - n.x0)
+            .attr('height', n => Math.max(2, n.y1 - n.y0)).attr('rx', 2)
+            .attr('fill', n => n.kind === 'born' ? BLUE : n.kind === 'died' ? ORANGE : NODE_FILL);
+        nodes.append('title').text(n => n.kind === 'file' ? `${name.get(n.id)} (${n.functions} functions)`
+            : `${n.kind === 'born' ? 'born in' : 'died from'} ${name.get(n.kind === 'born' ? n.edge.child : n.edge.parent)}: ${n.value}`);
+        const files = nodes.filter(n => n.kind === 'file');
+        const trunc = n => { const f = name.get(n.id); return f.length > 16 ? `${f.slice(0, 15)}…` : f; };
+        // a file too short for its label gets it above the box, in the page's text colour
+        const tall = n => n.y1 - n.y0 >= 32;
+        files.append('text').attr('x', n => n.x0 + (tall(n) ? 6 : 0)).attr('y', n => tall(n) ? n.y0 + 15 : n.y0 - 5)
+            .attr('font-size', 11).attr('fill', n => tall(n) ? '#fff' : 'currentColor')
+            .text(n => tall(n) ? trunc(n) : `${trunc(n)} (${n.functions} fn)`);
+        files.filter(tall).append('text').attr('x', n => n.x0 + 6).attr('y', n => n.y0 + 28).attr('font-size', 10).attr('fill', '#fff')
+            .text(n => `${n.functions} fn`);
+        files.on('click', (ev, n) => onPick({ node: n }));
+        return { svg: s.node(), byId: new Map(L.files.map(n => [n.id, n])) };
     }
 
     function legend() {
@@ -189,8 +208,9 @@
             w.append(el('span', { style: `display:inline-block;width:16px;height:10px;${bg}border:1px solid ${fill}` }), el('span', {}, text));
             return w;
         };
-        box.append(item(GREY, 'shared (parent to child)'), item(BLUE, 'born (top lane)'), item(ORANGE, 'died (bottom lane)'),
-            item(BLUE, 'hatched: likely a matcher miss', true), el('span', { class: 'dim' }, 'height = functions (feature weight is not returned by the API)'));
+        box.append(item(GREY, 'shared'), item(BLUE, 'born'), item(ORANGE, 'died'),
+            item(GREY, 'hatched: likely a matcher miss (blue in born, orange in died)', true),
+            el('span', { class: 'dim' }, 'One scale: ribbon width and node height are in functions. A file is as tall as max(its functions, flow in, flow out). Feature weight is not returned by the API.'));
         return box;
     }
 
@@ -218,6 +238,10 @@
         const st = panel._lineage;
         if (st.cleanup) st.cleanup();
         st.cleanup = null;
+        if (!(window.d3 && d3.sankey)) {
+            body.replaceChildren(el('div', { class: 'nway-note err' }, 'd3 / d3-sankey are not loaded.'));
+            return;
+        }
         body.replaceChildren(el('div', { class: 'dim' }, 'Loading lineage...'));
         const qs = panel._listQs();
         qs.delete('offset');

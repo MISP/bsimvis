@@ -38,6 +38,7 @@ window.NwayView = {
             cluster_uuid: q.get('cluster_uuid') || '',
             axis: q.get('axis') || '',
         };
+        this._tree = null;
         this._state = {};
         for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'column', 'focus', 'focus_rule', 'side', 'columns', 'child_presence', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open']) {
             if (q.has(k)) this._state[k] = q.get(k);
@@ -472,6 +473,98 @@ window.NwayView = {
         el.innerHTML = `<div class="nway-hero-top"><span class="nway-hkind ${kind === 'File set' ? 'set' : ''}">${kind}</span><span class="dim">${escapeHtml(where)}</span></div>
             <div class="nway-hero-meta dim">${comp}</div>
             <div class="nway-hero-meta dim">${[...parts.map(escapeHtml), coh].join(' · ')}${warns.map(w => `<span class="nway-hpill warn">${escapeHtml(w)}</span>`).join('')}</div>`;
+        if (s.cluster_uuid) this._treeMount(el);
+        el.onclick = e => {
+            const n = e.target.closest('[data-ct-focus]');
+            if (n) { e.preventDefault(); return this._refocus(n.dataset.ctFocus, e); }
+            const m = e.target.closest('[data-ct-more]');
+            if (m) { e.preventDefault(); this._treeMore(m.dataset.ctMore); }
+        };
+    },
+
+    // Parent / sub-cluster explorer of the binary cluster (same slice call as the cluster page); a click refocuses the table.
+    _treeMount(el) {
+        const box = document.createElement('details');
+        box.className = 'nway-ctree';
+        box.open = !!this._ctOpen;
+        box.innerHTML = '<summary>Cluster tree: parents and sub-clusters</summary><div class="nway-ctree-body dim">Loading...</div>';
+        el.appendChild(box);
+        box.addEventListener('toggle', () => {
+            this._ctOpen = box.open;
+            if (box.open && !this._tree) this._treeLoad();
+        });
+        if (this._tree) this._treeDraw();
+        else if (box.open) this._treeLoad();
+    },
+
+    async _treeFetch(extra) {
+        const s = this._set, qs = new URLSearchParams({ axis: s.axis || 'overall', ...extra });
+        if (s.pool) qs.set('pool', s.pool); else qs.set('collection', s.collection);
+        const res = await fetch(`/api/bin_cluster/list?${qs}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+    },
+
+    _treeAdd(list) {
+        const t = this._tree;
+        for (const n of list || []) {
+            const id = String(n.cluster_id);
+            t.nodes[id] = { ...(t.nodes[id] || {}), ...n };
+            if (n.parent) {
+                const p = String(n.parent);
+                t.kids[p] = t.kids[p] || [];
+                if (!t.kids[p].includes(id)) t.kids[p].push(id);
+            }
+        }
+    },
+
+    async _treeLoad() {
+        try {
+            const data = await this._treeFetch({ slice: this._set.cluster_uuid, up: 5, down: 2, width: 10 });
+            this._tree = { nodes: {}, kids: {}, center: String(data.center_cluster_id || ''), above: data.hidden_above || 0 };
+            this._treeAdd(data.results);
+        } catch (e) {
+            const b = document.querySelector('#nway-file-hero .nway-ctree-body');
+            if (b) b.textContent = `Could not load the cluster tree: ${e.message || e}`;
+            return;
+        }
+        this._treeDraw();
+    },
+
+    async _treeMore(pid) {
+        try {
+            this._treeAdd((await this._treeFetch({ parent: pid, width: 10, offset: (this._tree.kids[pid] || []).length })).results);
+        } catch (e) { return showToast(`Could not load more: ${e.message || e}`, 'warning'); }
+        this._treeDraw();
+    },
+
+    _treeDraw() {
+        const body = document.querySelector('#nway-file-hero .nway-ctree-body'), t = this._tree;
+        if (!body || !t) return;
+        let top = t.center;
+        while (t.nodes[top] && t.nodes[top].parent && t.nodes[String(t.nodes[top].parent)]) top = String(t.nodes[top].parent);
+        const row = (id, depth) => {
+            const n = t.nodes[id];
+            if (!n) return '';
+            const kids = t.kids[id] || [], left = (n.child_total || 0) - kids.length;
+            const name = n.cluster_name || `Cluster #${n.cluster_id}`;
+            return `<div class="nway-ctnode${id === t.center ? ' cur' : ''}" style="padding-left:${depth * 16}px">
+                <a href="#" data-ct-focus="${escapeAttr(n.cluster_uuid)}" title="Open this cluster as the N-way table">${escapeHtml(name)}</a>
+                <span class="dim">${Number(n.count || 0).toLocaleString()} files</span></div>`
+                + kids.map(k => row(k, depth + 1)).join('')
+                + (left > 0 ? `<div class="nway-ctnode" style="padding-left:${(depth + 1) * 16}px"><a href="#" data-ct-more="${escapeAttr(id)}">+ ${left} more</a></div>` : '');
+        };
+        body.className = 'nway-ctree-body';
+        body.innerHTML = (t.above ? `<div class="dim">${Number(t.above)} more parents above</div>` : '') + row(top, 0);
+    },
+
+    // Same table, another cluster: its files replace the set, so the old column/row focus goes.
+    _refocus(uuid, e) {
+        const q = new URLSearchParams(window.location.search);
+        for (const k of ['col_open', 'offset', 'focus', 'focus_rule', 'column', 'q']) q.delete(k);
+        q.set('cluster_uuid', uuid);
+        this._tree = null;
+        window.Nav.openPath(`/diff/nway?${q}`, e, { title: 'N-way diff' });
     },
 
     // `coll:md5` (or a bare md5) -> its collection and md5.

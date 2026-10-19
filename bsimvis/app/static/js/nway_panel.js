@@ -199,27 +199,29 @@
             qs.set('limit', this.cgInit ? 1 : (this._keep || PAGE));
             this._keep = 0;
             if (scroll) qs.set('offset', append ? this.data.items.length : 0);
-            if (!this.data) this.el.innerHTML = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> <span class="nway-busy-txt"></span></div>';
+            if (!this.data) this.el.innerHTML = '<div class="nway-state"></div>';
             const t0 = Date.now(), usual = NwayPanel._lastMs;
             const pid = Math.random().toString(36).slice(2, 12) + t0.toString(36);
             qs.set('progress_id', pid);
             let prog = null, polling = false;
-            // Elapsed time plus the last run's duration as the estimate; the panel stays usable while it ticks.
+            // Progress card: server fraction when reported, else elapsed time against the last run's duration.
             const tick = () => {
-                if (!this.el.querySelector('.nway-busy-txt') && !this.el.querySelector('.nway-busy')) {
-                    const b = document.createElement('div');
-                    b.className = 'nway-busy';
-                    b.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span class="nway-busy-txt"></span>';
-                    this.el.appendChild(b);
+                let b = this.el.querySelector('.nway-busy');
+                if (!b) {
+                    b = document.createElement('div');
+                    b.innerHTML = '<div class="nway-busy-head"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions</div><div class="nway-bar-track"><div class="nway-bar-fill"></div></div><div class="nway-busy-foot"><span class="nway-busy-l"></span><span class="nway-busy-r"></span></div>';
+                    (this.data ? this.el : this.el.querySelector('.nway-state') || this.el).appendChild(b);
                 }
-                const t = this.el.querySelector('.nway-busy-txt');
-                const el = (Date.now() - t0) / 1000;
-                let txt = `Matching functions... ${Math.round(el)}s`;
-                if (prog && prog.fraction > 0) {
-                    txt = `Matching functions: ${prog.label} (${Math.round(prog.fraction * 100)}%), ${Math.round(el)}s`;
-                    if (prog.fraction > 0.1 && el > 2) txt += `, ~${Math.max(1, Math.round(el * (1 - prog.fraction) / prog.fraction))}s left`;
-                } else if (usual) txt += ` (usually ~${Math.max(1, Math.round(usual / 1000))}s)`;
-                if (t) t.textContent = txt + ` - times out at ${NWAY_TIMEOUT_MS / 1000}s`;
+                b.className = 'nway-busy' + (this.data ? '' : ' inline');
+                const el = (Date.now() - t0) / 1000, f = prog && prog.fraction > 0 ? prog.fraction : 0;
+                const fill = b.querySelector('.nway-bar-fill');
+                fill.classList.toggle('indet', !f);
+                fill.style.width = f ? `${Math.max(2, Math.round(f * 100))}%` : '';
+                const right = [f ? `${Math.round(f * 100)}%` : '', `${Math.round(el)}s`];
+                if (f > 0.1 && el > 2) right.push(`~${Math.max(1, Math.round(el * (1 - f) / f))}s left`);
+                else if (!f && usual) right.push(`usually ~${Math.max(1, Math.round(usual / 1000))}s`);
+                b.querySelector('.nway-busy-l').textContent = f ? prog.label : 'Starting...';
+                b.querySelector('.nway-busy-r').textContent = right.filter(Boolean).join(' · ') + ` · times out at ${NWAY_TIMEOUT_MS / 1000}s`;
                 if (!polling) {
                     polling = true;
                     fetch(`/api/bin_sim/nway/progress?id=${pid}`).then(r => r.json()).then(p => { if (p.label) prog = p; }).catch(() => { }).finally(() => { polling = false; });

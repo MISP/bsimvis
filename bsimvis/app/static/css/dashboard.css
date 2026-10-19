@@ -2805,7 +2805,15 @@ a.home-card:hover,
 .nway-note.err { border-left: 3px solid var(--token-instruction); }
 .nway-note ul { margin: 6px 0 0; padding-left: 18px; }
 .nway-state { padding: 40px 20px; text-align: center; color: var(--dim); }
-.nway-busy { position: fixed; right: 20px; bottom: 20px; z-index: 50; padding: 8px 14px; border-radius: 8px; background: var(--card-bg, #222); border: 1px solid var(--border); color: var(--dim); font-size: 0.85rem; box-shadow: 0 2px 8px rgba(0,0,0,.3); pointer-events: none; }
+.nway-busy { position: fixed; right: 20px; bottom: 20px; z-index: 50; width: 340px; padding: 12px 14px; border-radius: 10px; background: var(--card-bg, #222); border: 1px solid var(--border); box-shadow: 0 4px 16px rgba(0,0,0,.35); pointer-events: none; }
+.nway-busy.inline { position: static; margin: 0 auto; box-shadow: none; }
+.nway-busy-head { font-size: 0.9rem; font-weight: 600; margin-bottom: 8px; }
+.nway-bar-track { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.nway-bar-fill { height: 100%; border-radius: 3px; background: var(--info, #3b82f6); transition: width .4s ease; }
+.nway-bar-fill.indet { width: 35%; animation: nway-indet 1.2s ease-in-out infinite; }
+@keyframes nway-indet { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+.nway-busy-foot { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px; font-size: 0.75rem; color: var(--dim); }
+.nway-busy-r { text-align: right; }
 .nway-card { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .nway-scroll { overflow: auto; max-height: calc(100vh - 140px); }
 .nway-table td.nway-sentinel { padding: 0; height: 1px; border: 0; }

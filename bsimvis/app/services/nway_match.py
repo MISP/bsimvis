@@ -27,8 +27,11 @@ def nway_match(edges_by_pair, members, min_edge=0.0):
     bit = {m: 1 << i for i, m in enumerate(members)}
     owner = {fid: m for m, funcs in members.items() for fid in funcs}
     weight = {fid: w for funcs in members.values() for fid, w in funcs.items()}
-    parent = {fid: fid for fid in owner}
-    mask = {fid: bit[owner[fid]] for fid in owner}
+    # Int ids in fid order: same tie-break as sorting on the fids, much cheaper.
+    fids = sorted(owner)
+    ix = {fid: i for i, fid in enumerate(fids)}
+    parent = list(range(len(fids)))
+    mask = [bit[owner[fid]] for fid in fids]
 
     def find(x):
         while parent[x] != x:
@@ -38,38 +41,38 @@ def nway_match(edges_by_pair, members, min_edge=0.0):
 
     edges = sorted(
         (
-            (-score, fid_a, fid_b)
+            (-score, ix[fid_a], ix[fid_b])
             for pair_edges in edges_by_pair.values()
             for fid_a, fid_b, score in pair_edges
             if score >= min_edge
         )
     )
-    for _, fid_a, fid_b in edges:
-        root_a, root_b = find(fid_a), find(fid_b)
+    for _, a, b in edges:
+        root_a, root_b = find(a), find(b)
         if root_a == root_b or mask[root_a] & mask[root_b]:
             continue
         parent[root_b] = root_a
         mask[root_a] |= mask[root_b]
 
+    root = [find(i) for i in range(len(fids))]
     groups = {}
-    for fid in sorted(owner):
-        groups.setdefault(find(fid), []).append(fid)
-    scores = {root: [] for root in groups}
-    for neg_score, fid_a, fid_b in edges:
-        root = find(fid_a)
-        if root == find(fid_b):
-            scores[root].append(-neg_score)
+    for i, r in enumerate(root):
+        groups.setdefault(r, []).append(i)
+    scores = {r: [] for r in groups}
+    for neg_score, a, b in edges:
+        if root[a] == root[b]:
+            scores[root[a]].append(-neg_score)
 
     rows = []
-    for root, fids in groups.items():
-        span = len(fids)
-        found = scores[root]
+    for r, members_ix in groups.items():
+        span = len(members_ix)
+        found = scores[r]
         rows.append(
             {
-                "mask": mask[root],
-                "cells": {owner[fid]: fid for fid in fids},
+                "mask": mask[r],
+                "cells": {owner[fids[i]]: fids[i] for i in members_ix},
                 "span": span,
-                "weight": max(weight[fid] for fid in fids),
+                "weight": max(weight[fids[i]] for i in members_ix),
                 "support": len(found) / (span * (span - 1) / 2) if span > 1 else 1.0,
                 "cohesion": sum(found) / len(found) if found else 1.0,
             }

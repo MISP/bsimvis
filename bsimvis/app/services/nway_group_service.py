@@ -84,7 +84,7 @@ def _meta(rows, n):
         "rows": sum(len(r["_rows"]) if "_rows" in r else 1 for r in rows),
         "weight": sum(r["weight"] for r in rows),
         "union": _bits(union, n),
-        "files": _pop(union),
+        "files": len(held),
     }
 
 
@@ -808,8 +808,8 @@ def demo():
     kinds = [
         row(1, 100, "attack_a"),
         row(1, 100, "attack_b"),
-        row(7, 1, "x1"),
-        row(7, 1, "x2"),
+        row(7, 1, "x1", {"A": "a1", "B": "b1", "C": "c1"}),
+        row(7, 1, "x2", {"A": "a2", "B": "b2", "C": "c2"}),
     ]
     sctx = {**nest_ctx, "lane_min": 2}
     by_files = _nest(kinds, ["prefix", "lane"], {**sctx, "sort": "files"}, "", [], {})

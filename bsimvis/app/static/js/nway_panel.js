@@ -1695,7 +1695,8 @@
             } else if (g.kind === 'tag') {
                 title = `<span class="nway-gtag" style="color:${escapeAttr(window.TagColor.forTag(g.label))}">${escapeHtml(g.label)}</span>`;
             } else if (g.kind === 'lane') {
-                title = `<b>${g.mask.split('1').length - 1} of ${n} files</b>`;
+                const cov = g.fcover || g.mask;
+                title = `<b>${cov.split('1').length - 1} of ${cov.length} files</b>`;
             } else if (g.kind === 'same') {
                 const ev = (g.evidence || []).map(k => k === 'name' ? chip('ev-n', 'name', 'The rows share a function name') : chip('ev-c', 'call position', 'The rows share a caller and a weak edge links them')).join('');
                 const more = `${this._missChip(g.sub, g.miss)}${g.also > 1 ? chip('also', `\u00d7${Number(g.also)}`, 'Listed under several tags on this axis.') : ''}`;

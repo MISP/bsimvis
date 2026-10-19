@@ -549,6 +549,9 @@ def _expand(units, ctx, parent_id, parent_path, carried):
                 evidence=sorted(u["_kinds"]),
                 link=round(u["_sim"], 3),
                 names=list(dict.fromkeys(row["name"] for row in members))[:4],
+                fids=list(dict.fromkeys(f for row in members for f in _fids(row))),
+                cohesion=sum(row.get("cohesion", 1.0) for row in members)
+                / len(members),
             )
             extra = carried.get(id(u), {})
             if extra.get("also", 0) > 1:
@@ -907,6 +910,8 @@ def demo():
     assert own == [(["lane:0100"], 1), (["lane:1000"], 1)], own
     merged_pair = next(p for p in got if p[0]["id"] == "lane:1111/same:0")
     assert merged_pair[0]["path"] == ["lane:1111", "lane:1111/same:0"]
+    assert merged_pair[0]["fids"] == ["a1", "b1", "c1", "d1"]
+    assert merged_pair[0]["cohesion"] == 1.0
     assert len(merged_pair[1]) == 2 and got[0][1] == []
     # no levels: the merged function and the plain rows are ordered together, like functions
     top = _nest(units, [], ctx, "", [], {})

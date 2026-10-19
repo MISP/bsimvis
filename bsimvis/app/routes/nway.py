@@ -14,6 +14,7 @@ from bsimvis.app.services import (
 )
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME
 from bsimvis.app.services.bin_sim_service import _origin_coll
+from bsimvis.app.services.bin_sim_tags import merge_tag_fields, tag_axis
 from bsimvis.app.services.redis_client import get_queue_redis, get_redis
 from bsimvis.app.services.tag_taxonomy import tag_in_scope
 
@@ -113,7 +114,10 @@ def _cluster_node(r, pool_id, collection, uuid, open_ids=(), restrict=None):
             abort(400, "collection or pool required with cluster_uuid")
         algo = resolve_collection_algo(collection, algo)
         algo = f"{algo}:{axis}" if axis != "overall" else algo
-        if config_service.get("clustering.bin_engine") == "hierarchical_snn":
+        if (
+            config_service.get("clustering.bin_engine", "hierarchical_snn")
+            == "hierarchical_snn"
+        ):
             algo = f"{algo}:snn"
         ns, scope = collection, {"collection": collection}
 
@@ -246,6 +250,15 @@ def _in_tab(row, tab, k, n, focus=False, twin=False):
 def _row_fids(row):
     """Function ids of a row; child-group rows keep them under `files`."""
     return (row.get("files") or row["cells"]).values()
+
+
+def _tag_axis_counts(fmeta):
+    """Distinct function tags available to this N-way comparison, by axis."""
+    tags = {}
+    for meta in fmeta.values():
+        for tag in merge_tag_fields(meta):
+            tags.setdefault(tag_axis(tag), set()).add(tag)
+    return {axis: len(values) for axis, values in tags.items()}
 
 
 def _row_clusters(r, rows, fmeta, pool_id, args):
@@ -441,6 +454,8 @@ def _page(doc, args, r=None, pool_id=None):
     page_fids = {f for row in real for f in _row_fids(row)}
     if page_clusters:
         cards = _attach_clusters(r, real, fmeta, pool_id, args)
+    if "tag_axis_counts" not in doc:
+        doc["tag_axis_counts"] = _tag_axis_counts(fmeta)
     return {
         "items": page,
         "clusters": cards,
@@ -453,6 +468,7 @@ def _page(doc, args, r=None, pool_id=None):
         "k": k,
         "scope": scope,
         "counts": counts,
+        "tag_axis_counts": doc["tag_axis_counts"],
         "columns": doc["columns"],
         "columns_mode": doc["columns_mode"],
         "file_columns": doc["file_columns"],
@@ -647,7 +663,10 @@ def _shared_cluster(r, members, args):
     axis = args.get("axis", "overall").strip().lower()
     algo = resolve_collection_algo(coll, args.get("algo"))
     algo = f"{algo}:{axis}" if axis != "overall" else algo
-    if config_service.get("clustering.bin_engine") == "hierarchical_snn":
+    if (
+        config_service.get("clustering.bin_engine", "hierarchical_snn")
+        == "hierarchical_snn"
+    ):
         algo = f"{algo}:snn"
     pipe = r.pipeline(transaction=False)
     for c, md5 in members:

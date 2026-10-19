@@ -3486,3 +3486,7 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .xp-ubody .xp-fcode.st-restr { background: color-mix(in srgb, var(--token-instruction) 8%, transparent); }
 .xp-ubody .xp-fcode.st-extra { background: color-mix(in srgb, var(--success) 8%, transparent); }
 .xp-uvars { margin: 0 0 8px 14px; padding-left: 10px; border-left: 2px solid var(--border); min-width: 0; }
+.nway-ctree summary { cursor: pointer; font-size: 0.85rem; color: var(--dim); }
+.nway-ctree-body { margin-top: 6px; max-height: 260px; overflow: auto; font-size: 0.85rem; }
+.nway-ctnode { display: flex; gap: 8px; padding: 2px 0; }
+.nway-ctnode.cur a { font-weight: 700; color: var(--accent); }

@@ -278,8 +278,13 @@ window.NwayView = {
             </div>
             <div class="nway-hero-proto">${proto}${p.variants.length > 1 ? ` <span class="nway-hvar">· ${p.variants.length} variants</span>` : ''}</div>
             <div class="nway-hero-meta dim">${[...parts.map(escapeHtml), cohHtml].join(' · ')}${warns.map(w => `<span class="nway-hpill warn">${escapeHtml(w)}</span>`).join('')}</div>`;
+        this._renderTree(el, m);
         const hrefs = this._heroLinks(m);
         el.onclick = e => {
+            const n = e.target.closest('[data-ct-focus]');
+            if (n) { e.preventDefault(); return this._refocus(n.dataset.ctFocus, e); }
+            const c = e.target.closest('[data-ct-more]');
+            if (c) return this._treeMore(c.dataset.ctMore);
             const a = e.target.closest('[data-hero-link]');
             if (a) {
                 e.preventDefault();
@@ -291,6 +296,98 @@ window.NwayView = {
                 if (n >= 2) { this._sample = Math.min(n, m.sample.cap); this._writeFamilyState(); this._initFunction(); }
             }
         };
+    },
+
+    // Parent / child cluster explorer under the hero (same slice call as the cluster page); a node click refocuses this view on it.
+    _renderTree(el, m) {
+        const c = m.links.cluster;
+        let box = el.querySelector('.nway-ctree');
+        if (!c || !c.cluster_uuid) { if (box) box.remove(); return; }
+        if (!box) {
+            box = document.createElement('details');
+            box.className = 'nway-ctree';
+            el.appendChild(box);
+            box.addEventListener('toggle', () => { if (box.open && !this._tree) this._treeLoad(); });
+        }
+        box.innerHTML = '<summary>Cluster tree: parents and sub-clusters</summary><div class="nway-ctree-body dim">Loading...</div>';
+        this._tree = null;
+        if (box.open) this._treeLoad();
+    },
+
+    async _treeFetch(extra) {
+        const c = this._meta.links.cluster;
+        const qs = new URLSearchParams(extra);
+        if (c.pool) qs.set('pool', c.pool); else qs.set('collection', c.collection);
+        const res = await fetch(`/api/cluster/list?${qs}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+    },
+
+    _treeAdd(list) {
+        const t = this._tree;
+        for (const n of list || []) {
+            const id = String(n.cluster_id);
+            t.nodes[id] = { ...(t.nodes[id] || {}), ...n };
+            if (n.parent) {
+                const p = String(n.parent);
+                (t.kids[p] = t.kids[p] || []);
+                if (!t.kids[p].includes(id)) t.kids[p].push(id);
+            }
+        }
+    },
+
+    async _treeLoad() {
+        const body = this._treeBody();
+        try {
+            const data = await this._treeFetch({ slice: this._meta.links.cluster.cluster_uuid, up: 5, down: 2, width: 10 });
+            this._tree = { nodes: {}, kids: {}, center: String(data.center_cluster_id || ''), above: data.hidden_above || 0 };
+            this._treeAdd(data.results);
+        } catch (e) {
+            if (body) body.textContent = `Could not load the cluster tree: ${e.message || e}`;
+            return;
+        }
+        this._treeDraw();
+    },
+
+    async _treeMore(pid) {
+        const t = this._tree;
+        try {
+            this._treeAdd((await this._treeFetch({ parent: pid, width: 10, offset: (t.kids[pid] || []).length })).results);
+        } catch (e) { return showToast(`Could not load more: ${e.message || e}`, 'warning'); }
+        this._treeDraw();
+    },
+
+    _treeBody() {
+        return document.querySelector('#nway-hero .nway-ctree-body');
+    },
+
+    _treeDraw() {
+        const body = this._treeBody(), t = this._tree;
+        if (!body || !t) return;
+        let top = t.center;
+        while (t.nodes[top] && t.nodes[top].parent && t.nodes[String(t.nodes[top].parent)]) top = String(t.nodes[top].parent);
+        const row = (id, depth) => {
+            const n = t.nodes[id];
+            if (!n) return '';
+            const kids = t.kids[id] || [], left = (n.child_total || 0) - kids.length;
+            const name = n.cluster_name || `Cluster #${n.cluster_id}`;
+            return `<div class="nway-ctnode${id === t.center ? ' cur' : ''}" style="padding-left:${depth * 16}px">
+                <a href="#" data-ct-focus="${escapeAttr(n.cluster_uuid)}" title="Refocus the N-way view on this cluster">${escapeHtml(name)}</a>
+                <span class="dim">${Number(n.count || 0).toLocaleString()} functions</span></div>`
+                + kids.map(k => row(k, depth + 1)).join('')
+                + (left > 0 ? `<div class="nway-ctnode" style="padding-left:${(depth + 1) * 16}px"><a href="#" data-ct-more="${escapeAttr(id)}">+ ${left} more</a></div>` : '');
+        };
+        body.className = 'nway-ctree-body';
+        body.innerHTML = (t.above ? `<div class="dim">${Number(t.above)} more parents above</div>` : '') + row(top, 0);
+    },
+
+    // Same view, another stored cluster: its members replace the set, the old graph cells go.
+    _refocus(uuid, e) {
+        const c = this._meta.links.cluster;
+        const q = new URLSearchParams(window.location.search);
+        for (const k of [...q.keys()]) if (/^(cg_|fx_(fids|set|sample|fn|ref))/.test(k)) q.delete(k);
+        q.set('fx_ref', c.pool ? `pool:${c.pool}:${uuid}` : `cluster:${c.collection}:${uuid}`);
+        window.Nav.openPath(`/diff/nway/function?${q}`, e, { title: 'N-way function' });
     },
 
     // A rename from the hero: a stored cluster takes the new name too.

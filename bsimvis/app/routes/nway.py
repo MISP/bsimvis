@@ -73,7 +73,7 @@ def _scope(members, pool_id):
 AUTO_FILE_COLUMNS = 12
 
 
-def _cluster_node(r, pool_id, collection, uuid, open_ids=()):
+def _cluster_node(r, pool_id, collection, uuid, open_ids=(), restrict=None):
     """A binary cluster node's files and child groups, read-only.
 
     Mirrors the namespace rules of routes/bin_cluster.py (file nodes only).
@@ -82,6 +82,8 @@ def _cluster_node(r, pool_id, collection, uuid, open_ids=()):
     is the same child list shaped for the 413 body. A group named in `open_ids`
     is replaced by its own child clusters (and direct files), recursively, and a
     leaf by one column per file; see `nway_diff_service.grow_columns`.
+    `restrict` ({`coll:md5`}) keeps only those files of the node, so a file set
+    can be grouped by the clusters it spans.
     """
     from bsimvis.app.routes.bin_cluster import _pool_bin_cluster_namespace
     from bsimvis.app.services.cluster_utils import (
@@ -133,7 +135,7 @@ def _cluster_node(r, pool_id, collection, uuid, open_ids=()):
         for c in child_ids
     ]
 
-    n = r.scard(f"{base}:{cid}:members")
+    n = len(restrict) if restrict else r.scard(f"{base}:{cid}:members")
     if n > nway_diff_service.caps()[0]:
         err = nway_diff_service.TooLarge(n)
         err.children = children
@@ -148,6 +150,8 @@ def _cluster_node(r, pool_id, collection, uuid, open_ids=()):
         return f"{_origin_coll(parts[0])}:{parts[-1].lower()}"
 
     sets = [{ident(m) for m in raw} for raw in pipe.execute()]
+    if restrict:
+        sets[0] &= restrict
     all_ids = sorted(sets[0])
     members = [tuple(i.rsplit(":", 1)) for i in all_ids]
     groups, taken = [], set()
@@ -477,8 +481,6 @@ def _load_doc():
     columns = request.args.get("columns", "auto")
     if columns not in ("auto", "files", "children", "twins"):
         abort(400, "columns must be auto, files, children or twins")
-    if columns == "children" and not cluster_uuid:
-        abort(400, "columns=children needs cluster_uuid")
     focus = [
         t.strip() for t in (request.args.get("focus") or "").split(",") if t.strip()
     ]
@@ -529,12 +531,27 @@ def _load_doc():
                 groups = node_groups if len(node_groups) > 1 else None
         else:
             members = _members(collection, pool_id)
+            if columns == "children":
+                # a file set grouped by the clusters it spans, under their smallest shared one
+                sc = not pool_id and _shared_cluster(r, members, request.args)
+                if not sc or not sc["cluster_uuid"]:
+                    abort(400, "these files share no stored cluster")
+                scope, members, node_groups, children = _cluster_node(
+                    r,
+                    pool_id,
+                    sc["collection"],
+                    sc["cluster_uuid"],
+                    open_ids,
+                    {f"{c}:{m}" for c, m in members},
+                )
+                groups = node_groups if len(node_groups) > 1 else None
             batch_uuid = (request.args.get("batch_uuid") or "").strip()
             if batch_uuid:
                 members = list(
                     dict.fromkeys(members + _batch_members(r, collection, batch_uuid))
                 )
-            scope = _scope(members, pool_id)
+            if columns != "children":
+                scope = _scope(members, pool_id)
         # `solo` lets the function view graph a set that sits in one file.
         if len(members) < (1 if request.args.get("solo") else 2):
             abort(400, "need at least two distinct files")

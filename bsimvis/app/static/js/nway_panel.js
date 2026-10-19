@@ -355,7 +355,7 @@
             const preset = `<span class="nway-ctlwrap"><div class="view-toggle"><span class="nway-lbl">Match</span>${PRESETS.map(([k, text, , t]) => `<button class="view-btn${cur && cur[0] === k ? ' active' : ''}" data-preset="${k}" title="${escapeAttr(t)}">${text}</button>`).join('')}${cur ? '' : '<span class="dim" style="margin-left:6px">Custom</span>'}</div>${this._tip('Strict, Balanced or Loose set Min edge and Child presence together. Open Advanced to set them by hand.')}</span>`;
             const advanced = `<details class="nway-adv"${this._advOpen ? ' open' : ''}><summary class="nway-lbl">Advanced</summary>${[
                 this._slider('Min edge', 'min_edge', Number(d.min_edge), 0, 1, 0.05, 'Ignore function matches below this similarity. Higher is stricter: fewer functions get grouped together.'),
-                isNode && d.columns_mode === 'children' ? this._slider('Child presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, "Share of a child cluster's files that must hold a function for the child to count as having it.") : '',
+                (isNode || d.shared_cluster) && d.columns_mode === 'children' ? this._slider('Child presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, "Share of a child cluster's files that must hold a function for the child to count as having it.") : '',
             ].join('')}</details>`;
             const match = [
                 preset,
@@ -387,7 +387,7 @@
             const axes = lv.includes('tag') ? `${sel('group_axis', axis, TAG_AXES)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, TAG_AXES.filter(([k]) => k !== axis), true)}` : '';
             const minLink = merge.has('call') ? this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.') : '';
             // Merge files by: None = one column per file, Cluster = child clusters (a cluster node only), Same code = twins.
-            const fileOpts = [['files', 'None', 'One column per file.'], ...(this.source.cluster_uuid ? [['children', 'Cluster', 'One column per child cluster; open a column to show its own children, down to files.']] : []), ['twins', 'Same code', "Files that hold a function in exactly the same shared rows become one column. Click a column's count to show its files; a function only some of them hold shows as a partly filled square."]];
+            const fileOpts = [['files', 'None', 'One column per file.'], ...(this.source.cluster_uuid || d.shared_cluster ? [['children', 'Cluster', 'One column per child cluster; open a column to show its own children, down to files.']] : []), ['twins', 'Same code', "Files that hold a function in exactly the same shared rows become one column. Click a column's count to show its files; a function only some of them hold shows as a partly filled square."]];
             const fileBtns = fileOpts.map(([v, text, tip]) => `<button class="view-btn${fileMode === v ? ' active' : ''}" data-set="columns:${v}" title="${escapeAttr(tip)}">${text}</button>`).join('');
             return `<div class="nway-gcard${active ? ' active' : ''}">
                 <span class="nway-bgrp">${lbl('Group by', 'Click order is nesting order: each group is split again by the next level. The column sort still orders the rows inside each group.')}${picks}${axes}</span>${sep}

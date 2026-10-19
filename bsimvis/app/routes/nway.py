@@ -600,6 +600,10 @@ def _load_doc():
         raise _Reply(({"error": "unknown_files", "missing": e.missing}, 404))
     finally:
         nway_diff_service.set_progress(None)
+    if columns == "children" and not cluster_uuid and doc["columns_mode"] != "children":
+        doc["warnings"].append(
+            "No sub-cluster splits these files: their smallest shared cluster holds them directly."
+        )
     return doc, r, pool_id
 
 

@@ -609,13 +609,63 @@ def cancel_nway():
     return {"status": "cancelling"}
 
 
+def _shared_cluster(r, members, args):
+    """The smallest binary cluster holding every file of a set, or None.
+
+    One collection only (pools keep their clusters in another namespace).
+    """
+    from bsimvis.app.services.cluster_utils import get_cluster_metas
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+    from bsimvis.app.services.config_service import config_service
+
+    colls = {c for c, _ in members}
+    if len(colls) != 1:
+        return None
+    coll = colls.pop()
+    axis = args.get("axis", "overall").strip().lower()
+    algo = resolve_collection_algo(coll, args.get("algo"))
+    algo = f"{algo}:{axis}" if axis != "overall" else algo
+    if config_service.get("clustering.bin_engine") == "hierarchical_snn":
+        algo = f"{algo}:snn"
+    pipe = r.pipeline(transaction=False)
+    for c, md5 in members:
+        pipe.smembers(f"{c}:file:{md5}:bin_clusters:{algo}")
+    sets = [
+        {x.decode() if isinstance(x, bytes) else str(x) for x in s}
+        for s in pipe.execute()
+    ]
+    common = set.intersection(*sets) if sets else set()
+    if not common:
+        return None
+    metas = get_cluster_metas(r, coll, algo, list(common), "bin_cluster")
+    if not metas:
+        return None
+    m = min(metas.values(), key=lambda m: m.get("member_count", 0))
+    return {
+        "cluster_uuid": m.get("cluster_uuid"),
+        "cluster_name": m.get("cluster_name"),
+        "member_count": m.get("member_count", 0),
+        "collection": coll,
+    }
+
+
 def get_nway():
     """N-way file diff over `md5s=` or a binary cluster's files (`cluster_uuid=`)."""
     try:
         doc, r, pool_id = _load_doc()
     except _Reply as e:
         return e.args[0]
-    return _page(doc, request.args, r, pool_id)
+    page = _page(doc, request.args, r, pool_id)
+    if not request.args.get("cluster_uuid") and not pool_id:
+        page["shared_cluster"] = _shared_cluster(
+            r,
+            [
+                tuple(c["id"].rsplit(":", 1))
+                for c in doc["file_columns"] or doc["columns"]
+            ],
+            request.args,
+        )
+    return page
 
 
 NEIGHBOR_MAX_DEPTH = 5

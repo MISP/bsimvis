@@ -363,8 +363,10 @@
                 s.tab === 'partial' && !focus ? this._slider(`In at least (of ${n})`, 'k', s.k, 2, Math.max(2, n), 1, 'Partial tab: keep functions present in at least this many columns.') : '',
                 advanced,
             ].join('');
+            const sc = d.shared_cluster;
+            const shared = sc && sc.cluster_uuid ? `<a href="#" class="nway-chip" data-open-shared="${escapeAttr(sc.cluster_uuid)}" title="The smallest stored cluster holding all of these files. Open it as an N-way to keep its cluster context."><i class="fa-solid fa-bullseye"></i> Shared cluster <span class="dim">${escapeHtml(sc.cluster_name || sc.cluster_uuid)} &middot; ${Number(sc.member_count)} files</span></a>` : '';
             return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${search}</div>
-                <div class="nway-bar">${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}<button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-stats-toggle title="Hide or show the Span, Features, Support, Cohesion and Cluster columns, to focus on the matrix."><i class="fa-solid fa-table-columns"></i> Stats <span class="dim">${this._statsOff() ? 'hidden' : 'shown'}</span></button></span></div>${this._groupCard()}`;
+                <div class="nway-bar">${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}${shared}<button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-stats-toggle title="Hide or show the Span, Features, Support, Cohesion and Cluster columns, to focus on the matrix."><i class="fa-solid fa-table-columns"></i> Stats <span class="dim">${this._statsOff() ? 'hidden' : 'shown'}</span></button></span></div>${this._groupCard()}`;
         }
 
         // The Group bar: one line read left to right - group by, merge functions, merge files, order.
@@ -464,6 +466,14 @@
         }
 
         // Right-click on a column group (band, outline row or numbered group head): copy / fold / focus its files.
+        // The N-way tab of a stored cluster, for this panel's pool or collection.
+        _clusterUrl(uuid) {
+            const pool = this.source.pool, out = new URLSearchParams({ tab: 'functions' });
+            for (const k of ['axis', 'scope']) if (this.state[k]) out.set(k, this.state[k]);
+            const base = pool ? `/pools/${encodeURIComponent(pool)}/files/clusters/${encodeURIComponent(uuid)}` : window.Nav.buildUIUrl((this._files()[0] || {}).collection, ['files', 'clusters', uuid]);
+            return `${base}?${out.toString()}`;
+        }
+
         _groupIds(id) {
             const ids = new Set();
             let label = id;
@@ -488,7 +498,11 @@
                 ['fa-copy', 'Copy file names', () => copyToClipboard(files.map(f => f.file_name || f.md5).join('\n'))],
                 ...(n && (n.kids.length || n.expandable) ? [[n.kids.length ? 'fa-compress' : 'fa-expand', n.kids.length ? 'Fold' : 'Show files', () => this._colToggle(id)]] : []),
                 ['fa-bullseye', 'Focus on these files', () => this._setFocus(files.map(f => f.id), this._files().length)],
-                ['fa-arrow-up-right-from-square', 'Open as its own N-way', () => window.Nav.openPath(NwayPanel.urlFor(files.map(f => f.id)), e, { title: label, type: 'nway' })],
+                ['fa-arrow-up-right-from-square', 'Open as its own N-way', () => {
+                    // A child cluster keeps its cluster context; any other group is a plain file set.
+                    const col = this.data.columns.find(c => c.id === id && c.cluster_uuid);
+                    window.Nav.openPath(col ? this._clusterUrl(col.cluster_uuid) : NwayPanel.urlFor(files.map(f => f.id)), e, { title: label, type: 'nway' });
+                }],
             ].filter(it => files.length || /^(Copy name|Fold|Show files)$/.test(it[1]));
             document.getElementById('nway-gmenu')?.remove();
             const m = document.createElement('div');
@@ -2032,13 +2046,17 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared]');
             if (!t) return;
             if (t.dataset.statsToggle !== undefined) {
                 this._so = !this._statsOff();
                 try { localStorage.setItem('nway.stats', this._so ? '0' : '1'); } catch (err) { /* storage blocked */ }
                 this._scrollSave();
                 return this.render();
+            }
+            if (t.dataset.openShared) {
+                e.preventDefault();
+                return window.Nav.openPath(this._clusterUrl(t.dataset.openShared), e, { title: 'Cluster', type: 'cluster' });
             }
             if (t.dataset.coldepth) {
                 const n = t.dataset.coldepth;

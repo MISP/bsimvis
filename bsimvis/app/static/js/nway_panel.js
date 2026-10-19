@@ -279,7 +279,9 @@
                     const link = uuid && this.onOpenCluster ? `<a href="#" class="btn-action" data-open-cluster="${escapeAttr(uuid)}">${name}</a>` : name;
                     return `<li>${link}${c.member_count ? ` <span class="dim">${Number(c.member_count)} files</span>` : ''}</li>`;
                 }).join('');
-                return `<div class="nway-note warn"><b>Too many members</b> (${Number(e.members) || '?'}): pick fewer files${kids ? ' or open a child cluster:' : '.'}${kids ? `<ul>${kids}</ul>` : ''}</div>`;
+                const cap = e.caps || {}, overFn = e.functions != null && cap.functions != null && Number(e.functions) > Number(cap.functions);
+                const what = overFn ? `Too many functions</b> (${Number(e.functions)}, cap ${Number(cap.functions)} in nway.max_functions)` : `Too many members</b> (${Number(e.members) || '?'}${cap.members != null ? `, cap ${Number(cap.members)} in nway.max_members` : ''})`;
+                return `<div class="nway-note warn"><b>${what}: pick fewer files${kids ? ' or open a child cluster:' : '.'}${kids ? `<ul>${kids}</ul>` : ''}</div>`;
             }
             const msg = e.missing ? `Unknown files: ${e.missing.join(', ')}` : (e.message || e.error || `HTTP ${e.status}`);
             return `<div class="nway-note err">${escapeHtml(msg)}</div>`;

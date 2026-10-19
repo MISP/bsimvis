@@ -564,6 +564,10 @@ def _load_doc():
                     "error": "too_large",
                     "message": "too many files: narrow the set",
                     "members": e.members,
+                    "functions": e.functions,
+                    "caps": dict(
+                        zip(("members", "functions"), nway_diff_service.caps())
+                    ),
                     "children": getattr(e, "children", children),
                 },
                 413,

@@ -262,10 +262,31 @@
         const side = el('div', { style: 'min-width:220px;max-width:300px;font-size:0.85rem;padding:0 12px' }, 'Click a file or an edge.');
         const { svg: tree, byId } = draw(doc, pick => detail(side, pick, byId), body.clientWidth - 260);
         st.cleanup = tree._cleanup;
-        const scroller = el('div', { style: 'overflow:auto;flex:1' });
+        // scroll inside a bounded box; zoom rescales the SVG (its viewBox keeps the drawing)
+        const scroller = el('div', { style: 'overflow:auto;flex:1;max-height:75vh;min-width:0' });
         scroller.append(tree);
+        const w0 = Number(tree.getAttribute('width')), h0 = Number(tree.getAttribute('height'));
+        const zoom = z => {
+            st.zoom = Math.max(0.1, Math.min(4, z));
+            tree.setAttribute('width', w0 * st.zoom);
+            tree.setAttribute('height', h0 * st.zoom);
+        };
+        const fit = () => zoom(Math.min(1, (scroller.clientWidth || w0) / w0));
+        const bar = el('div', { style: 'display:flex;gap:6px;align-items:center;padding:4px 0' });
+        for (const [t, f] of [['\u2212', () => zoom((st.zoom || 1) / 1.25)], ['+', () => zoom((st.zoom || 1) * 1.25)], ['Fit', fit], ['100%', () => zoom(1)]]) {
+            const b = el('button', { class: 'view-btn', type: 'button' }, t);
+            b.addEventListener('click', f);
+            bar.append(b);
+        }
+        scroller.addEventListener('wheel', ev => {
+            if (!ev.ctrlKey && !ev.metaKey) return;
+            ev.preventDefault();
+            zoom((st.zoom || 1) * (ev.deltaY < 0 ? 1.1 : 1 / 1.1));
+        }, { passive: false });
         const wrap = el('div', { style: 'display:flex' });
         wrap.append(scroller, side);
+        zoom(st.zoom || 1);
+        body.append(bar);
         body.append(legend(), wrap);
     }
 

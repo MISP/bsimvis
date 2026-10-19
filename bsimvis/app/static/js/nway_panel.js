@@ -148,10 +148,12 @@
                 if (file) return this._menu(e, file.dataset.nwayFile);
                 const th = e.target.closest('th[data-col]');
                 if (th) return this._menu(e, th.dataset.col);
-                const lf = e.target.closest('[data-lfile]');
-                if (lf) return this._menu(e, lf.dataset.lfile);
-                const grp = e.target.closest('[data-colx]');
-                if (grp) return this._groupMenu(e, grp.dataset.colx);
+                const grp = e.target.closest('[data-gid], [data-colx]');
+                if (grp) {
+                    const gid = grp.dataset.gid || grp.dataset.colx, col = this.data.columns.find(c => c.id === gid);
+                    const file = col && this._colFile(col);
+                    return file ? this._menu(e, file) : this._groupMenu(e, gid);
+                }
                 // A right-click on a function cell's empty space opens the function menu, not the plain cell one.
                 const fn = !e.target.closest('[data-entity-data], button, a') && e.target.closest('td.col')?.querySelector('[data-etype="function"]');
                 if (fn) window.EntityRenderer.handleContextMenu(e, 'function', fn);

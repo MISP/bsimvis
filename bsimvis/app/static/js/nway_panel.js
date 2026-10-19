@@ -210,7 +210,7 @@
                 let b = this.el.querySelector('.nway-busy');
                 if (!b) {
                     b = document.createElement('div');
-                    b.innerHTML = '<div class="nway-busy-head"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions<button type="button" class="view-btn nway-busy-cancel">Cancel</button></div><div class="nway-bar-track"><div class="nway-bar-fill"></div></div><div class="nway-busy-foot"><span class="nway-busy-l"></span><span class="nway-busy-r"></span></div>';
+                    b.innerHTML = '<div class="nway-busy-head"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions<button type="button" class="nway-busy-cancel" title="Stop this computation"><i class="fa-solid fa-xmark"></i> Cancel</button></div><div class="nway-bar-track"><div class="nway-bar-fill"></div></div><div class="nway-busy-foot"><span class="nway-busy-l"></span><span class="nway-busy-r"></span></div>';
                     (this.data ? this.el : this.el.querySelector('.nway-state') || this.el).appendChild(b);
                     b.querySelector('.nway-busy-cancel').onclick = () => {
                         fetch(`/api/bin_sim/nway/cancel?id=${pid}`, { method: 'POST' }).catch(() => { });

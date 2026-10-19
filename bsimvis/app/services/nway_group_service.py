@@ -39,7 +39,7 @@ LANE_MIN = 2  # units that must share a set of files before it makes a lane
 LANE_FIT = (
     0.9  # a unit with this share of a bundle's files, all inside it, joins the bundle
 )
-SORTS = ("files", "weight", "rows")
+SORTS = ("files", "lanes", "weight", "rows")
 TAG_FANOUT = 3  # tags of one axis a row is listed under, most shared first
 NAME_BUCKET = 12  # rows sharing one name that are paired up
 CALL_HUB = 25  # a caller with more callee rows than this says nothing
@@ -95,7 +95,12 @@ def _rank(g, sort):
     covering fewer, whatever its kind, and features only decide between equals.
     """
     w, f, r = g["weight"], g["files"], g["rows"]
-    return {"files": (f, w, r), "weight": (w, f, r), "rows": (r, f, w)}[sort]
+    return {
+        "files": (f, w, r),
+        "lanes": (f, w, r),
+        "weight": (w, f, r),
+        "rows": (r, f, w),
+    }[sort]
 
 
 def _by_rank(items, sort, meta=lambda x: x):
@@ -582,12 +587,15 @@ def _flat(nodes, ctx):
     By default groups of every kind, merged functions and plain rows are ordered
     together by the group order (file coverage first), so a plain row that
     covers more files than a lane comes before it, at every level. With a table
-    sort column the groups come first and the rows follow that column.
+    sort column the groups come first and the rows follow that column; the
+    `lanes` order puts the groups first too, widest coverage first.
     """
     boxes = sorted((n for n in nodes if n["container"]), key=lambda n: n["id"])
     rest = [n for n in nodes if not n["container"]]
-    if ctx["sort_col"]:
+    if ctx["sort_col"] or ctx["sort"] == "lanes":
         boxes.sort(key=lambda n: n["rank"], reverse=True)
+        if not ctx["sort_col"]:
+            rest.sort(key=lambda n: n["rank"], reverse=True)
         ordered = boxes + rest
     else:
         ordered = sorted(boxes + rest, key=lambda n: n["rank"], reverse=True)
@@ -821,6 +829,10 @@ def demo():
     inner = _nest(under, ["prefix", "lane"], {**sctx, "sort": "files"}, "", [], {})
     shape = ["row" if g.get("headless") else g["id"] for g, _ in inner]
     assert shape == ["prefix:attack_", "row", "prefix:attack_/lane:1000"], shape
+    # ... while the lanes order lists the groups first, plain rows after
+    lanes = _nest(under, ["prefix", "lane"], {**sctx, "sort": "lanes"}, "", [], {})
+    shape = ["row" if g.get("headless") else g["id"] for g, _ in lanes]
+    assert shape == ["prefix:attack_", "prefix:attack_/lane:1000", "row"], shape
     # ... and the other way round when features decide
     heavy = [row(1, 50, "attack_a"), row(1, 50, "attack_b"), row(7, 1, "attack_c")]
     flip = _nest(heavy, ["prefix", "lane"], {**sctx, "sort": "weight"}, "", [], {})

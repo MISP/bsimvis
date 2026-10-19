@@ -2721,7 +2721,7 @@ class BinSimNway(Resource):
             "group_lane_min": "group=lane: units that must share a set of files before it makes a lane (default 2); the others stay plain rows",
             "group_prefix_min": "group=prefix: functions that must share a prefix before it makes a group (default 2)",
             "group_min_link": "group_merge=call: a shared caller joins two rows only when an edge between them scores at least this (default 0.3; 0 = no edge needed)",
-            "group_sort": "Order of the groups, every kind side by side at one level: files (default: groups covering more files first, features then rows break ties), weight (features) or rows",
+            "group_sort": "Order of the groups, every kind side by side at one level: files (default: groups covering more files first, features then rows break ties, plain rows mixed in), lanes (groups first, widest file coverage first, plain rows after), weight (features) or rows",
             "group_open": "Default state of every group: none (default, headers only) or all. Closed groups return one `header` item and no rows, so `total`/`offset` count headers and rows together",
             "group_flip": "JSON list of group ids whose state differs from group_open",
             "limit": "Page size",

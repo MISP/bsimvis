@@ -47,7 +47,7 @@
     const DATA_COLS = [380, 64, 90, 90, 90, 210];
     const SQ_COL = 28;
     const BAND_H = 18;
-    const GROUP_SORTS = [['files', 'File coverage'], ['weight', 'Features'], ['rows', 'Rows']];
+    const GROUP_SORTS = [['files', 'File coverage'], ['lanes', 'Lanes first'], ['weight', 'Features'], ['rows', 'Rows']];
     const LOW_SUPPORT = 0.5;
     // Same icon + color as the Code / Library / All pills in the table's Show control.
     const AXIS = { code: { icon: 'fa-solid fa-code', color: 'var(--info, #3b82f6)' }, library: { icon: 'fa-solid fa-cubes', color: 'var(--warning, #d97706)' } };

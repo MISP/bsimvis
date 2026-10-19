@@ -368,6 +368,13 @@ def _zadd_score_split(pipe, base, algo, sid, scores):
         pipe.zrem(f"{base}:score_content:{algo}", sid)
 
 
+def _decode_doc(raw):
+    if not raw:
+        return {}
+    value = json.loads(raw) if not isinstance(raw, dict) else raw
+    return json.loads(value) if isinstance(value, str) else value
+
+
 def _matches_algo(doc, algo):
     return doc.get("algo", "unweighted_cosine") == algo
 
@@ -602,7 +609,7 @@ class BinSimService:
             f"{endpoints[0][0]}:{endpoints[0][1]}::{endpoints[1][0]}:{endpoints[1][1]}"
         )
 
-    def cached_pair_from_stored_sims(
+    def stored_sim_edges(
         self,
         collection,
         md5_a,
@@ -611,23 +618,23 @@ class BinSimService:
         coll_b=None,
         pool_id=None,
         min_score=0.0,
-        unweighted=None,
+        fid_sets=None,
+        vectors=None,
     ):
-        """Build one transient file diff from stored function-sim docs."""
-        if unweighted is None:
-            unweighted = stored_unweighted_match()
+        """Edges of one pair from stored function-sim docs, plus discovery.
+
+        -> `(edges, fids_a, fids_b)`, edges oriented a->b. `fid_sets`
+        (`{(coll, md5): fids}`) and `vectors` let a caller reading many pairs
+        load each file once.
+        """
         coll_a = _origin_coll(collection) if pool_id else collection
         coll_b = _origin_coll(coll_b or collection) if pool_id else collection
         if not pool_id and md5_a > md5_b:
             md5_a, md5_b = md5_b, md5_a
 
-        def decode(raw):
-            if not raw:
-                return {}
-            value = json.loads(raw) if not isinstance(raw, dict) else raw
-            return json.loads(value) if isinstance(value, str) else value
-
         def file_fids(coll, md5):
+            if fid_sets is not None and (coll, md5) in fid_sets:
+                return fid_sets[(coll, md5)]
             return {
                 (fid.decode() if isinstance(fid, bytes) else str(fid)).removesuffix(
                     ":meta"
@@ -636,7 +643,6 @@ class BinSimService:
             }
 
         fids_a, fids_b = file_fids(coll_a, md5_a), file_fids(coll_b, md5_b)
-        fids = fids_a | fids_b
         sim_prefix = (
             f"global:pool:{pool_id}:sim:involves:file:"
             if pool_id
@@ -652,19 +658,8 @@ class BinSimService:
         pipe = self.r.pipeline(transaction=False)
         for key in sim_keys:
             pipe.get(key)
-        for fid in fids:
-            pipe.get(f"{fid}:meta")
-        pipe.get(f"{coll_a}:file:{md5_a}:meta")
-        pipe.get(f"{coll_b}:file:{md5_b}:meta")
-        results = pipe.execute()
+        sim_docs = (_decode_doc(raw) for raw in pipe.execute())
 
-        sim_count = len(sim_keys)
-        sim_docs = (decode(raw) for raw in results[:sim_count])
-        meta = {fid: decode(raw) for fid, raw in zip(fids, results[sim_count:-2])}
-        raw_file_meta_a, raw_file_meta_b = results[-2:]
-        if not raw_file_meta_a or not raw_file_meta_b:
-            return None
-        file_meta_a, file_meta_b = map(decode, (raw_file_meta_a, raw_file_meta_b))
         edges = []
         seen_pairs = set()
         for doc in sim_docs:
@@ -696,7 +691,11 @@ class BinSimService:
         # "what did BSim propose above similarity.min_score".
         edges.extend(
             discover_edges(
-                load_vectors(self.r, fids_a | fids_b),
+                (
+                    vectors
+                    if vectors is not None
+                    else load_vectors(self.r, fids_a | fids_b)
+                ),
                 fids_a,
                 fids_b,
                 algo,
@@ -704,6 +703,42 @@ class BinSimService:
                 skip_pairs=seen_pairs,
             )
         )
+        return edges, fids_a, fids_b
+
+    def cached_pair_from_stored_sims(
+        self,
+        collection,
+        md5_a,
+        md5_b,
+        algo,
+        coll_b=None,
+        pool_id=None,
+        min_score=0.0,
+        unweighted=None,
+    ):
+        """Build one transient file diff from stored function-sim docs."""
+        if unweighted is None:
+            unweighted = stored_unweighted_match()
+        coll_a = _origin_coll(collection) if pool_id else collection
+        coll_b = _origin_coll(coll_b or collection) if pool_id else collection
+        if not pool_id and md5_a > md5_b:
+            md5_a, md5_b = md5_b, md5_a
+        edges, fids_a, fids_b = self.stored_sim_edges(
+            collection, md5_a, md5_b, algo, coll_b, pool_id, min_score
+        )
+        fids = fids_a | fids_b
+        pipe = self.r.pipeline(transaction=False)
+        for fid in fids:
+            pipe.get(f"{fid}:meta")
+        pipe.get(f"{coll_a}:file:{md5_a}:meta")
+        pipe.get(f"{coll_b}:file:{md5_b}:meta")
+        results = pipe.execute()
+
+        meta = {fid: _decode_doc(raw) for fid, raw in zip(fids, results[:-2])}
+        raw_file_meta_a, raw_file_meta_b = results[-2:]
+        if not raw_file_meta_a or not raw_file_meta_b:
+            return None
+        file_meta_a, file_meta_b = map(_decode_doc, (raw_file_meta_a, raw_file_meta_b))
 
         fid_tags = {
             fid: tags

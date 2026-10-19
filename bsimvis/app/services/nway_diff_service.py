@@ -334,7 +334,7 @@ def _virtual_edges(r, columns, fid_sets, p):
     return edges
 
 
-def _stored_edges(r, scope, members, columns, algo):
+def _stored_edges(r, scope, members, columns, algo, fid_sets):
     pool_id = scope.get("pool")
     # ponytail: fallback pairs use a fixed discovery floor, so lowering min_edge
     # below it cannot recover their weaker edges; pairs with a stored doc are exact.
@@ -361,7 +361,7 @@ def _stored_edges(r, scope, members, columns, algo):
             for i, j in pairs
         ]
 
-    edges, fallback = {}, 0
+    edges, missing = {}, []
     for start in range(0, len(pairs), PAIR_CHUNK):
         _report(
             0.1 + 0.85 * start / len(pairs),
@@ -372,24 +372,44 @@ def _stored_edges(r, scope, members, columns, algo):
             pipe.get(sid or "")
         chunk = zip(pairs[start : start + PAIR_CHUNK], pipe.execute())
         for (i, j), raw in chunk:
-            (coll_a, md5_a), (coll_b, md5_b) = members[i], members[j]
             doc = _decode(raw)
-            if not doc:
-                fallback += 1
-                doc = bin_sim_service.cached_pair_from_stored_sims(
-                    coll_a,
-                    md5_a,
-                    md5_b,
-                    algo,
-                    coll_b if pool_id else None,
-                    pool_id,
-                    min_score=fallback_floor,
-                )
-            matched = ((doc or {}).get("diff") or {}).get("matched") or []
             edges[(columns[i]["id"], columns[j]["id"])] = [
-                (m["func_a"], m["func_b"], float(m["similarity"])) for m in matched
+                (m["func_a"], m["func_b"], float(m["similarity"]))
+                for m in (doc.get("diff") or {}).get("matched") or []
             ]
-    return edges, fallback
+            if not doc:
+                missing.append((i, j))
+
+    if missing:
+        # No stored doc: edges from function-sim docs, each file's vectors read once.
+        def key(m):
+            return (_origin_coll(m[0]) if pool_id else m[0], m[1])
+
+        files = {
+            key(members[x]): fid_sets[columns[x]["id"]] for p in missing for x in p
+        }
+        vectors = load_vectors(r, set().union(*files.values()))
+        for n, (i, j) in enumerate(missing):
+            _report(
+                0.1 + 0.85 * n / len(missing),
+                f"matching file pair {n + 1}/{len(missing)}",
+            )
+            (coll_a, md5_a), (coll_b, md5_b) = members[i], members[j]
+            found, _, _ = bin_sim_service.stored_sim_edges(
+                coll_a,
+                md5_a,
+                md5_b,
+                algo,
+                coll_b if pool_id else None,
+                pool_id,
+                min_score=fallback_floor,
+                fid_sets=files,
+                vectors=vectors,
+            )
+            edges[(columns[i]["id"], columns[j]["id"])] = [
+                (x, y, float(s)) for x, y, s in greedy_match(found)[0]
+            ]
+    return edges, len(missing)
 
 
 def _fn_meta(meta):
@@ -473,7 +493,7 @@ def _load_base(r, scope, members, vparams, labels, warnings):
     if vparams:
         edges, fallback = _virtual_edges(r, columns, fid_sets, vparams), 0
     else:
-        edges, fallback = _stored_edges(r, scope, members, columns, algo)
+        edges, fallback = _stored_edges(r, scope, members, columns, algo, fid_sets)
 
     return {
         "algo": algo,

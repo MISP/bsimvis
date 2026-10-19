@@ -148,6 +148,8 @@
                 if (file) return this._menu(e, file.dataset.nwayFile);
                 const th = e.target.closest('th[data-col]');
                 if (th) return this._menu(e, th.dataset.col);
+                const grp = e.target.closest('[data-colx]');
+                if (grp) return this._groupMenu(e, grp.dataset.colx);
                 // A right-click on a function cell's empty space opens the function menu, not the plain cell one.
                 const fn = !e.target.closest('[data-entity-data], button, a') && e.target.closest('td.col')?.querySelector('[data-etype="function"]');
                 if (fn) window.EntityRenderer.handleContextMenu(e, 'function', fn);
@@ -395,8 +397,10 @@
         _colDepth() {
             const all = this._colOpen().has('*');
             const cur = all ? Infinity : Math.max(0, ...this.data.columns.map(c => (c.path || []).length));
+            // Dots follow the tree: up to its depth, rounded up to a step of 5; "+5" adds another step (and opens it).
+            const lim = this._dlim = Math.max(this._dlim || 5, 5 * Math.ceil((Number.isFinite(cur) ? cur : 0) / 5));
             const dot = n => `<button type="button" class="nway-ddot${n <= cur ? ' on' : ''}" data-coldepth="${n}" aria-label="${n ? `Open ${n} level${n === 1 ? '' : 's'}` : 'Fold all'}" title="${n ? `Open ${n} level${n === 1 ? '' : 's'}` : 'Fold all'}"></button>`;
-            return `<div class="nway-depth"><span>Depth</span>${[0, 1, 2, 3, 4, 5].map(dot).join('<i></i>')}<button type="button" class="nway-dall${all ? ' on' : ''}" data-coldepth="all" aria-label="Open all levels" title="Open all levels">&infin;</button></div>`;
+            return `<div class="nway-depth"><span>Depth</span>${[...Array(lim + 1).keys()].map(dot).join('<i></i>')}<button type="button" class="nway-dall" data-coldepth="${lim + 5}" title="Open ${lim + 5} levels">+5</button><button type="button" class="nway-dall${all ? ' on' : ''}" data-coldepth="all" aria-label="Open all levels" title="Open all levels">&infin;</button></div>`;
         }
 
         // Match settings live in a popover; the summary shows what is set, so the bar stays one line.
@@ -455,6 +459,40 @@
                 fileId: `${f.collection}:file:${f.md5}`,
                 __nway: { id, focused: focus.includes(id), anyFocus: focus.length > 0, filtered: this.state.column === id },
             });
+        }
+
+        // Right-click on a column group (band, outline row or numbered group head): copy / fold / focus its files.
+        _groupMenu(e, id) {
+            e.preventDefault();
+            e.stopPropagation();
+            const ids = new Set();
+            let label = id;
+            for (const c of this.data.columns) {
+                const g = (c.path || []).find(x => x.id === id);
+                if (c.id === id && c.kind) label = c.label;
+                if (g) label = g.label;
+                if (g || c.id === id) (c.kind ? c.members || [] : [c.id]).forEach(m => ids.add(m));
+            }
+            const files = this._files().filter(f => ids.has(f.id));
+            const n = this._tree().byId.get(id);
+            const items = [
+                ['fa-copy', 'Copy name', () => copyToClipboard(label)],
+                ['fa-copy', `Copy ${files.length} md5s`, () => copyToClipboard(files.map(f => f.md5).join('\n'))],
+                ['fa-copy', 'Copy file names', () => copyToClipboard(files.map(f => f.file_name || f.md5).join('\n'))],
+                ...(n && (n.kids.length || n.expandable) ? [[n.kids.length ? 'fa-compress' : 'fa-expand', n.kids.length ? 'Fold' : 'Show files', () => this._colToggle(id)]] : []),
+                ['fa-bullseye', 'Focus on these files', () => this._setFocus(files.map(f => f.id), this._files().length)],
+                ['fa-arrow-up-right-from-square', 'Open as its own N-way', () => window.Nav.openPath(NwayPanel.urlFor(files.map(f => f.id)), e, { title: label, type: 'nway' })],
+            ].filter(it => files.length || /^(Copy name|Fold|Show files)$/.test(it[1]));
+            document.getElementById('nway-gmenu')?.remove();
+            const m = document.createElement('div');
+            m.id = 'nway-gmenu';
+            m.className = 'context-menu';
+            m.style.cssText = `display:block;position:fixed;left:${Math.min(e.clientX, innerWidth - 220)}px;top:${Math.min(e.clientY, innerHeight - 40 * items.length)}px;z-index:20010`;
+            m.innerHTML = items.map((it, i) => `<div class="context-menu-item" data-i="${i}"><i class="fa-solid ${it[0]}" style="width:16px;text-align:center;opacity:.8"></i><span>${escapeHtml(it[1])}</span></div>`).join('');
+            const close = () => { m.remove(); document.removeEventListener('click', close, true); };
+            m.addEventListener('click', ev => { const i = ev.target.closest('[data-i]'); close(); if (i) items[i.dataset.i][2](); });
+            document.body.appendChild(m);
+            setTimeout(() => document.addEventListener('click', close, true));
         }
 
         _act(act, id) {
@@ -1991,6 +2029,7 @@
             }
             if (t.dataset.coldepth) {
                 const n = t.dataset.coldepth;
+                if (Number(n) > (this._dlim || 5)) this._dlim = Number(n);
                 this._scrollSave();
                 return this._set({ col_open: n === 'all' ? '["*"]' : n === '0' ? '' : JSON.stringify([`*${n}`]), offset: 0 });
             }

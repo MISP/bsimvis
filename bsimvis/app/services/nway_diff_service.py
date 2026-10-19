@@ -634,14 +634,22 @@ def grow_columns(groups, open_ids, children_of, limit=MAX_COLUMNS):
     comes back with `path`, the groups it was expanded out of (outermost first,
     each `{id, label, member_count}`, so a header can draw a collapse band over
     its children), and `expandable`: more than one file. A group is left closed
-    when expanding would pass `limit` columns. `"*"` in `open_ids` opens every group.
+    when expanding would pass `limit` columns. `"*"` in `open_ids` opens every group,
+    `"*N"` every group less than N levels deep.
     """
-    every = "*" in open_ids
+    depth = max(
+        (
+            float("inf") if i == "*" else int(i[1:])
+            for i in open_ids
+            if i[:1] == "*" and (i == "*" or i[1:].isdigit())
+        ),
+        default=0,
+    )
     count = [len(groups)]
 
     def grow(g, path):
         g = {**g, "path": path, "expandable": g["member_count"] > 1}
-        if not (every or g["id"] in open_ids) or not g["expandable"]:
+        if not (len(path) < depth or g["id"] in open_ids) or not g["expandable"]:
             return [g]
         sub = children_of(g)
         if not sub or count[0] + len(sub) - 1 > limit:

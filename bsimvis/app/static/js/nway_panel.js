@@ -38,8 +38,8 @@
     const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open'];
     // Group by: rows bundled by file set, nested under one tag axis, or joined as one probable function.
     const GROUPS = [
-        ['prefix', 'Prefix', 'Group by the first word of the function name (attack_*, killer_*...). Functions with no prefix, or a prefix only one function has, carry on to the next level beside the prefix groups.'],
         ['lane', 'Lane', 'Bundles of rows that appear in exactly the same files, biggest bundle first. With the merge on, a merged function is bundled by all the files it covers together. A set of files only one function has gets no lane and stays a plain row beside the lanes, unless it is a bundle minus a file or two (90% or more of its files), which joins it with a chip.'],
+        ['prefix', 'Prefix', 'Group by the first word of the function name (attack_*, killer_*...). Functions with no prefix, or a prefix only one function has, carry on to the next level beside the prefix groups.'],
         ['tag', 'Tag', 'Nest under the tags of one axis (origin, capa, YARA...). Something with several tags on the axis is listed under each.'],
     ];
     const TAG_AXES = [['origin', 'Origin'], ['severity', 'Severity'], ['category', 'Behavior'], ['user', 'User'], ['capa', 'Capa'], ['mitre', 'ATT&CK'], ['mbc', 'MBC'], ['yara', 'YARA'], ['ruleset', 'Ruleset'], ['family', 'Family'], ['vuln', 'Vulnerability']];
@@ -342,7 +342,6 @@
                 preset,
                 this._seg('Mode', 'mode', [['stored', 'Stored', 'reads built pair docs'], ['virtual', 'Virtual', 'recomputes from vectors']], 'Stored reads the similarity pairs already built. Virtual recomputes the matches from the function vectors, as a fresh collection of just these files would.'),
                 s.tab === 'partial' && !focus ? this._slider(`In at least (of ${n})`, 'k', s.k, 2, Math.max(2, n), 1, 'Partial tab: keep functions present in at least this many columns.') : '',
-                isNode ? this._seg('Columns', 'columns', [['auto', 'Auto'], ['files', 'Files'], ['children', 'Children'], ['twins', 'Twins']], "Files: one column per file of the node. Children: one column per child cluster; click a column's count to open its own children, down to files. Twins: files with the same functions share a column. Auto switches to Children above 12 files.") : '',
                 advanced,
             ].join('');
             return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${search}</div>
@@ -360,22 +359,30 @@
             const twinHint = !twin ? 'Files that hold a function in exactly the same shared rows become one column.'
                 : d.columns_mode === 'twins' ? `${files} files in ${d.columns.length} columns. Click a column's count to show its files. A function only some of a column's files hold shows as a partly filled square.`
                     : 'No two files hold exactly the same functions in this set.';
-            const evidence = on
-                ? `${box('name', 'Name', 'Rows with the same function name. Auto names (FUN_, sub_) and compiler suffixes (.part.0) are ignored.')}${box('call', 'Call position', 'Rows under the same caller, in different files, with a weak edge between them. Needs the callers of every function.')}${merge.has('call') ? this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.') : ''}`
-                : '<span class="dim">Rows the matcher kept apart (another decompilation, architecture or version) show as one function, with their rows under it.</span>';
+            const evidence = `${box('name', 'Name', 'Rows with the same function name. Auto names (FUN_, sub_) and compiler suffixes (.part.0) are ignored.')}${box('call', 'Call position', 'Rows under the same caller, in different files, with a weak edge between them. Needs the callers of every function.')}${merge.has('call') ? this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.') : ''}${on ? '' : '<span class="dim nway-ghint">Rows the matcher kept apart (another decompilation, architecture or version) show as one function, with their rows under it.</span>'}`;
             const picks = GROUPS.map(([v, t, tip]) => {
                 const i = lv.indexOf(v);
                 return `<button class="nway-gpick${i >= 0 ? ' on' : ''}" data-gpick="${v}" aria-pressed="${i >= 0}" title="${escapeAttr(tip)}">${i >= 0 ? `<b>${i + 1}</b>` : ''}${escapeHtml(t)}</button>`;
             }).join('');
             const axes = lv.includes('tag') ? `<span class="nway-ctlwrap"><span class="nway-lbl">Axis</span>${sel('group_axis', axis, TAG_AXES)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, TAG_AXES.filter(([k]) => k !== axis), true)}</span>` : '';
             const hint = lv.length > 1 ? 'Click order is nesting order: each group is split again by the next level.' : on && lv.includes('lane') ? 'Each merged function is bundled by all the files it covers together.' : '';
-            const actions = active ? `<span class="nway-gacts"><span class="nway-lbl">Order groups</span>${sel('group_sort', s.group_sort || 'files', GROUP_SORTS)}<button class="view-btn" data-gall="open">Expand all</button><button class="view-btn" data-gall="close">Collapse all</button></span>` : '';
+            const actions = `<span class="nway-gacts"><span class="nway-lbl">Order groups</span>${sel('group_sort', s.group_sort || 'files', GROUP_SORTS)}${active ? '<button class="view-btn" data-gall="open">Expand all</button><button class="view-btn" data-gall="close">Collapse all</button>' : ''}</span>`;
+            // Merge files by: None = one column per file, Cluster = child clusters (a cluster node only), Same code = twins.
+            const fileMode = twin || d.columns_mode === 'twins' ? 'twins' : d.columns_mode === 'children' ? 'children' : 'files';
+            const fileOpts = [['files', 'None', 'One column per file.'], ...(this.source.cluster_uuid ? [['children', 'Cluster', "One column per child cluster; open a column to show its own children, down to files."]] : []), ['twins', 'Same code', 'Files that hold a function in exactly the same shared rows become one column.']];
+            const fileBtns = fileOpts.map(([v, text, tip]) => `<button class="view-btn${fileMode === v ? ' active' : ''}" data-set="columns:${v}" title="${escapeAttr(tip)}">${text}</button>`).join('');
             return `<div class="nway-gcard${active ? ' active' : ''}">
                 <div class="nway-ghead"><b>Group rows</b>${this._tip('Put related rows together. The column sort still orders the rows inside each group.')}${actions}</div>
-                <div class="nway-gline">${step(1)}<label class="nway-ctl nway-gmain" title="Files with the same functions in every shared row are shown as one column."><input type="checkbox" data-twins${twin ? ' checked' : ''}> <span class="nway-gtitle">Merge files that have the same functions</span></label><span class="dim nway-ghint">${twinHint}</span></div>
-                <div class="nway-gline">${step(2)}<label class="nway-ctl nway-gmain" title="Join rows that are probably one function."><input type="checkbox" data-merge-on${on ? ' checked' : ''}> <span class="nway-gtitle">Merge rows that are the same function</span></label>${evidence}</div>
-                <div class="nway-gline">${step(3)}<span class="nway-gmain"><span class="nway-gtitle">Group by</span></span><span class="nway-gpicks">${picks}</span>${axes}<span class="dim nway-ghint">${hint}</span></div>
+                <div class="nway-gline">${step(1)}<span class="nway-gmain"><span class="nway-gtitle">Group by</span></span><span class="nway-gpicks">${picks}</span>${axes}<span class="dim nway-ghint">${hint}</span></div>
+                <div class="nway-gline">${step(2)}<span class="nway-gmain" title="Join rows that are probably one function."><span class="nway-gtitle">Merge same function</span></span>${evidence}</div>
+                <div class="nway-gline">${step(3)}<span class="nway-gmain"><span class="nway-gtitle">Merge files by</span></span><div class="view-toggle">${fileBtns}</div>${this._colActs()}${fileMode === 'twins' ? `<span class="dim nway-ghint">${twinHint}</span>` : ''}</div>
             </div>`;
+        }
+
+        // Open or fold the whole column tree; Expand more opens 5 more levels.
+        _colActs() {
+            if (!this._tree().grouped) return '';
+            return `<span class="view-toggle"><button type="button" class="view-btn" data-colall="more" title="Open the column groups 5 levels deeper">Expand more</button><button type="button" class="view-btn" data-colall="open">Expand all</button><button type="button" class="view-btn" data-colall="close">Collapse all</button></span>`;
         }
 
         // Match settings live in a popover; the summary shows what is set, so the bar stays one line.
@@ -1759,7 +1766,7 @@
         _colToggle(id, openOnly) {
             let open = this._colOpen();
             // Folding one node after "expand all": spell the wildcard out as the nodes now open.
-            if (open.has('*')) open = new Set([...this._tree().byId.values()].filter(n => n.kids.length).map(n => n.id));
+            if ([...open].some(i => i[0] === '*')) open = new Set([...this._tree().byId.values()].filter(n => n.kids.length).map(n => n.id));
             if (openOnly) open.add(id); else if (!open.delete(id)) open.add(id);
             this._scrollSave();
             this._set({ col_open: open.size ? JSON.stringify([...open]) : '', offset: 0 });
@@ -1839,7 +1846,7 @@
                     + (n.count > 1 ? `<em>${n.count}</em>` : '') + `<b class="nway-rg">${range}</b></div>`
                     + n.kids.map(k => row(k, dep + 1)).join('');
             };
-            return `<aside class="nway-legend${this._legOff ? ' off' : ''}"><details${this._legOff ? '' : ' open'} ontoggle="NwayPanel.legend(this)"><summary>Columns <em>${this.data.columns.length}</em></summary><div class="nway-olacts"><button type="button" class="view-btn" data-colall="open">Expand all</button><button type="button" class="view-btn" data-colall="close">Collapse all</button></div>${t.root.kids.map(k => row(k, 0)).join('')}</details></aside>`;
+            return `<aside class="nway-legend${this._legOff ? ' off' : ''}"><details${this._legOff ? '' : ' open'} ontoggle="NwayPanel.legend(this)"><summary>Columns <em>${this.data.columns.length}</em></summary><div class="nway-olacts">${this._colActs()}</div>${t.root.kids.map(k => row(k, 0)).join('')}</details></aside>`;
         }
 
         render() {
@@ -1910,7 +1917,11 @@
             }
             if (t.dataset.colall) {
                 this._scrollSave();
-                return this._set({ col_open: t.dataset.colall === 'open' ? '["*"]' : '', offset: 0 });
+                const all = t.dataset.colall, open = [...this._colOpen()];
+                if (all !== 'more') return this._set({ col_open: all === 'open' ? '["*"]' : '', offset: 0 });
+                if (open.includes('*')) return;
+                const deep = Math.max(0, ...this.data.columns.map(c => (c.path || []).length));
+                return this._set({ col_open: JSON.stringify([...open.filter(i => i[0] !== '*'), `*${deep + 5}`]), offset: 0 });
             }
             // A header dot only opens its column; the outline folds it again.
             if (t.dataset.colx) return this._colToggle(t.dataset.colx, !!t.closest('th') && !t.closest('.nway-band'));
@@ -1969,11 +1980,7 @@
 
         _onChange(e) {
             const t = e.target;
-            if (t.dataset.twins !== undefined) {
-                this._set({ columns: t.checked ? 'twins' : 'auto', offset: 0 });
-            } else if (t.dataset.mergeOn !== undefined) {
-                this._set({ group_merge: t.checked ? 'name,call' : '', offset: 0 });
-            } else if (t.dataset.ev) {
+            if (t.dataset.ev) {
                 const ev = new Set((this.state.group_merge || '').split(',').filter(Boolean));
                 if (t.checked) ev.add(t.dataset.ev); else ev.delete(t.dataset.ev);
                 this._set({ group_merge: [...ev].join(','), offset: 0 });

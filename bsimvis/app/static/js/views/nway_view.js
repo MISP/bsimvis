@@ -100,7 +100,7 @@ window.NwayView = {
         this._familySource = source;
         this._tabExplicit = !!fx.tab;
         this._familyDoc = doc;
-        this._familyState = { tab: (fx.tab === 'code' && fx.cv === 'full' ? 'full' : fx.tab === 'simple' ? 'unified' : fx.tab) || (this._familyFids.length >= 2 ? 'full' : 'graph'), cv: fx.cv || 'blocks', bm: ['hybrid', 'cfg', 'text'].includes(fx.bm) ? fx.bm : 'hybrid', only: fx.only === '1', single: fx.single === '1', cols: Math.min(5, Math.max(2, Number(fx.cols) || 2)) };
+        this._familyState = { tab: (fx.tab === 'code' && fx.cv === 'full' ? 'full' : fx.tab === 'simple' ? 'unified' : fx.tab) || (this._familyFids.length >= 2 ? 'full' : 'graph'), cv: fx.cv || 'blocks', bm: ['hybrid', 'cfg', 'text'].includes(fx.bm) ? fx.bm : 'hybrid', only: fx.only === '1', single: fx.single === '1', cols: Math.min(5, Math.max(2, Number(fx.cols) || 5)) };
         if (!['graph', 'simple', 'facets', 'code', 'full', 'unified', 'pair'].includes(this._familyState.tab)) this._familyState.tab = 'graph';
         if (fx.fn !== undefined && fx.fn !== '') this._familyState.fn = Number(fx.fn);
         this._container.innerHTML = `<div class="nway-view nway-function-view">
@@ -190,7 +190,7 @@ window.NwayView = {
         if (st.bm && st.bm !== 'hybrid') next.set('fx_bm', st.bm); else next.delete('fx_bm');
         next.set('fx_only', st.only ? '1' : '0');
         if (st.single) next.set('fx_single', '1'); else next.delete('fx_single');
-        if (st.cols > 2) next.set('fx_cols', st.cols); else next.delete('fx_cols');
+        if (st.cols < 5) next.set('fx_cols', st.cols); else next.delete('fx_cols');
         if (st.fn !== null && st.fn !== undefined) next.set('fx_fn', st.fn); else next.delete('fx_fn');
         const url = `/diff/nway/function?${next.toString()}`;
         if (url === window.location.pathname + window.location.search) return;

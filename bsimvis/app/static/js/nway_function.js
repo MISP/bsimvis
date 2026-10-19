@@ -93,7 +93,7 @@
             this.embedded = !!o.embedded;
             this.cfgOnly = !!o.cfgOnly;
             this.onLoad = o.onLoad || null;
-            this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', bm: 'hybrid', open: {}, fn: null, single: false, cols: 2, pick: {}, uoff: {}, uopen: {}, ...(o.state || {}) };
+            this.s = { tab: 'facets', only: false, pair: null, cv: 'blocks', bm: 'hybrid', open: {}, fn: null, single: false, cols: 5, pick: {}, uoff: {}, uopen: {}, ...(o.state || {}) };
             this._pc = new Map();
             if (this.s.tab === 'code' && this.s.cv === 'full') this.s.tab = 'full';
             this.titles = {};

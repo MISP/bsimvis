@@ -100,7 +100,7 @@ window.NwayView = {
         this._familySource = source;
         this._tabExplicit = !!fx.tab;
         this._familyDoc = doc;
-        this._familyState = { tab: (fx.tab === 'code' && fx.cv === 'full' ? 'full' : fx.tab === 'simple' ? 'unified' : fx.tab) || (this._familyFids.length >= 2 ? 'code' : 'graph'), cv: fx.cv || 'blocks', bm: ['hybrid', 'cfg', 'text'].includes(fx.bm) ? fx.bm : 'hybrid', only: fx.only === '1', single: fx.single === '1', cols: Math.min(5, Math.max(2, Number(fx.cols) || 2)) };
+        this._familyState = { tab: (fx.tab === 'code' && fx.cv === 'full' ? 'full' : fx.tab === 'simple' ? 'unified' : fx.tab) || (this._familyFids.length >= 2 ? 'full' : 'graph'), cv: fx.cv || 'blocks', bm: ['hybrid', 'cfg', 'text'].includes(fx.bm) ? fx.bm : 'hybrid', only: fx.only === '1', single: fx.single === '1', cols: Math.min(5, Math.max(2, Number(fx.cols) || 2)) };
         if (!['graph', 'simple', 'facets', 'code', 'full', 'unified', 'pair'].includes(this._familyState.tab)) this._familyState.tab = 'graph';
         if (fx.fn !== undefined && fx.fn !== '') this._familyState.fn = Number(fx.fn);
         this._container.innerHTML = `<div class="nway-view nway-function-view">
@@ -122,7 +122,7 @@ window.NwayView = {
                 return;
             }
             // The Code tab has three views (code, unified, full); it reopens the one last used.
-            this._familyState.tab = t.dataset.familyTab === 'code' ? (CODE_VIEWS.includes(this._familyState.tab) ? this._familyState.tab : this._codeView || 'code') : t.dataset.familyTab;
+            this._familyState.tab = t.dataset.familyTab === 'code' ? (CODE_VIEWS.includes(this._familyState.tab) ? this._familyState.tab : this._codeView || 'full') : t.dataset.familyTab;
             if (CODE_VIEWS.includes(this._familyState.tab)) this._codeView = this._familyState.tab;
             this._writeFamilyState();
             this._showFamilyTab();

@@ -2805,6 +2805,7 @@ a.home-card:hover,
 .nway-note.err { border-left: 3px solid var(--token-instruction); }
 .nway-note ul { margin: 6px 0 0; padding-left: 18px; }
 .nway-state { padding: 40px 20px; text-align: center; color: var(--dim); }
+.nway-busy { position: fixed; right: 20px; bottom: 20px; z-index: 50; padding: 8px 14px; border-radius: 8px; background: var(--card-bg, #222); border: 1px solid var(--border); color: var(--dim); font-size: 0.85rem; box-shadow: 0 2px 8px rgba(0,0,0,.3); pointer-events: none; }
 .nway-card { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .nway-scroll { overflow: auto; max-height: calc(100vh - 140px); }
 .nway-table td.nway-sentinel { padding: 0; height: 1px; border: 0; }

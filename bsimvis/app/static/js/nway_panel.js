@@ -25,6 +25,7 @@
 (function () {
     const TABS = [['all', 'All'], ['core', 'Core'], ['partial', 'Partial'], ['unique', 'Unique']];
     const PAGE = 50;
+    const NWAY_TIMEOUT_MS = 180000;
     const SORTS = [['name', 'Function'], ['span', 'Span'], ['weight', 'Features'], ['support', 'Support'], ['cohesion', 'Cohesion']];
     const DEFAULTS = {
         tab: 'core', scope: 'code', k: 2, min_edge: '', mode: 'stored',
@@ -198,12 +199,29 @@
             qs.set('limit', this.cgInit ? 1 : (this._keep || PAGE));
             this._keep = 0;
             if (scroll) qs.set('offset', append ? this.data.items.length : 0);
-            if (!this.data) this.el.innerHTML = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions...</div>';
+            if (!this.data) this.el.innerHTML = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> <span class="nway-busy-txt"></span></div>';
+            const t0 = Date.now(), usual = NwayPanel._lastMs;
+            // Elapsed time plus the last run's duration as the estimate; the panel stays usable while it ticks.
+            const tick = () => {
+                if (!this.el.querySelector('.nway-busy-txt') && !this.el.querySelector('.nway-busy')) {
+                    const b = document.createElement('div');
+                    b.className = 'nway-busy';
+                    b.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span class="nway-busy-txt"></span>';
+                    this.el.appendChild(b);
+                }
+                const t = this.el.querySelector('.nway-busy-txt');
+                if (t) t.textContent = `Matching functions... ${Math.round((Date.now() - t0) / 1000)}s` + (usual ? ` (usually ~${Math.max(1, Math.round(usual / 1000))}s)` : '') + ` - times out at ${NWAY_TIMEOUT_MS / 1000}s`;
+            };
+            tick();
+            const timer = setInterval(tick, 500);
+            const done = () => { clearInterval(timer); this.el.querySelector('.nway-busy')?.remove(); };
             try {
-                const res = await fetch(`/api/bin_sim/nway?${qs.toString()}`);
+                const res = await fetch(`/api/bin_sim/nway?${qs.toString()}`, { signal: AbortSignal.timeout(NWAY_TIMEOUT_MS) });
                 const body = await res.json().catch(() => ({}));
+                done();
                 if (gen !== this._gen) return;
                 this._loading = false;
+                if (res.ok) NwayPanel._lastMs = Date.now() - t0;
                 if (append && res.ok) return this._append(body);
                 if (append) return;
                 if (!res.ok) {
@@ -214,10 +232,12 @@
                     this.data = body;
                 }
             } catch (e) {
+                done();
                 if (gen !== this._gen) return;
                 this._loading = false;
                 if (append) return;
-                this.error = { status: 0, message: String(e) };
+                const timedOut = e.name === 'TimeoutError';
+                this.error = { status: 0, message: timedOut ? `Timed out after ${NWAY_TIMEOUT_MS / 1000}s matching functions. Try fewer files, a higher Min edge, or a narrower search.` : String(e) };
                 this.data = null;
             }
             if (this.cgInit) {

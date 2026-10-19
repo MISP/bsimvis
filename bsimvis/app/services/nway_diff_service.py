@@ -628,11 +628,11 @@ def _tag_name(tag):
     return parts[-1] if len(parts) >= 3 and parts[0] != "user" else None
 
 
-def _row_tags(fids, fmeta, limit=8):
+def _row_tags(fids, fmeta):
     """Tags over the row's functions, most shared first, library tags ahead on a tie."""
     count = Counter(t for f in fids for t in merge_tag_fields(fmeta.get(f)))
     ranked = sorted(count, key=lambda t: (-count[t], not is_library_tag(t), t))
-    return ranked[:limit]
+    return ranked
 
 
 def _name_row(fids, fmeta, weights):
@@ -840,6 +840,8 @@ def coverage(rows, column_ids):
 
 
 def demo():
+    tags = [f"capa:rule:{i}" for i in range(8)] + ["yara:trojan:family#Canary"]
+    assert "yara:trojan:family#Canary" in _row_tags(["f"], {"f": {"tags": tags}})
     cols = [{"id": i, "functions": 10} for i in "abcd"]
     ed = {("a", "c"): [(1, 2, 0.9)] * 9, ("b", "d"): [(1, 2, 0.9)] * 9}
     got = [c["id"] for c in seriate(cols, ed, 0.5)]

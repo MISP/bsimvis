@@ -19,6 +19,7 @@
     const LANE_PAD = 34, BAND_H = 200, FILE_H = 420, KY_MAX = 1.5;
     // colour-blind-safe pair (Okabe-Ito): blue is only born, orange only died
     const BLUE = '#0072B2', ORANGE = '#D55E00', GREY = '#8a8f98';
+    const SLATE = '#475569', SLATE_LIGHT = '#64748b', GREY_DARK = '#5b6472';
     let uid = 0;
 
     function el(tag, attrs = {}, text) {
@@ -34,7 +35,7 @@
         return e;
     }
 
-    // File depth from the root; a file's layer is 2 * depth, the layers between
+    // File depth from the root; a file's layer is 2 * depth, the gaps between
     // hold the BORN sources and DIED sinks of the edges that cross that gap.
     function depths(doc) {
         const d = new Map([[doc.root, 0]]);
@@ -42,94 +43,131 @@
         return d;
     }
 
-    // d3.sankey builds the graph (node values, link lists, link breadths); we
-    // fix the geometry afterwards so every flow shares one px-per-function scale
-    // and the born / died nodes sit in their own bands.
+    // Every file is drawn at exactly its function count. A parent is cut into
+    // segments, one per partition of its kept code (the exact set of children
+    // that keep it) plus a "kept by no child" segment, all on one px-per-function
+    // scale. A segment held by several children forks: one ribbon per child, each
+    // starting on the same segment (an overlap ribbon is drawn once per child).
     function layout(doc, width) {
         const dep = depths(doc);
         const maxd = Math.max(...dep.values());
-        const files = doc.nodes.map(n => ({ ...n, kind: 'file', sid: `f:${n.id}`, d: dep.get(n.id) }));
+        const files = doc.nodes.map((n, idx) => ({ ...n, kind: 'file', idx, d: dep.get(n.id) }));
         const fileOf = new Map(files.map(n => [n.id, n]));
-        const nodes = [...files], links = [];
-        doc.edges.forEach((e, i) => {
-            const p = fileOf.get(e.parent), c = fileOf.get(e.child);
-            const sus = e.recall_suspect;
-            links.push({ source: p.sid, target: c.sid, value: Math.max(e.shared, 0), kind: 'shared', edge: e });
-            if (e.gained > 0) {
-                const b = { kind: 'born', sid: `b:${i}`, d: c.d, edge: e };
-                nodes.push(b);
-                const s = Math.min(sus, e.gained);
-                links.push({ source: b.sid, target: c.sid, value: e.gained - s, kind: 'born', edge: e });
-                if (s > 0) links.push({ source: b.sid, target: c.sid, value: s, kind: 'born', hatch: true, edge: e });
-            }
-            if (e.lost > 0) {
-                const x = { kind: 'died', sid: `d:${i}`, d: p.d, edge: e };
-                nodes.push(x);
-                const s = Math.min(sus, e.lost);
-                links.push({ source: p.sid, target: x.sid, value: e.lost - s, kind: 'died', edge: e });
-                if (s > 0) links.push({ source: p.sid, target: x.sid, value: s, kind: 'died', hatch: true, edge: e });
-            }
-        });
-        const graph = { nodes, links: links.filter(l => l.value > 0 || l.kind === 'shared') };
-        const sankey = d3.sankey().nodeId(n => n.sid).nodeWidth(NODE_W).nodePadding(PADDING)
-            .extent([[0, 0], [100, 100]]).iterations(0);
-        sankey(graph);
+        const edgeOf = new Map(doc.edges.map(e => [`${e.parent}|${e.child}`, e]));
+        const parentOf = new Map(doc.edges.map(e => [e.child, e.parent]));
+        const partsOf = new Map();
+        for (const p of doc.partitions || []) (partsOf.get(p.parent) || partsOf.set(p.parent, []).get(p.parent)).push(p);
+        const fn = n => Math.max(1, n.functions);
 
-        // node height in functions: max(functions, flow in, flow out); never squeezed
-        const units = n => n.kind === 'file' ? Math.max(n.functions, n.value) : n.value;
-        const cols = new Map();
-        for (const n of files) (cols.get(n.d) || cols.set(n.d, []).get(n.d)).push(n);
-        const stack = (kind, k) => {
-            const m = new Map();
-            for (const n of nodes) if (n.kind === kind) m.set(n.d, (m.get(n.d) || 0) + units(n) + BAND_PAD * 0);
-            return Math.max(1, ...m.values(), k);
-        };
+        const colSum = new Map(), colCnt = new Map(), bornSum = new Map(), diedSum = new Map();
+        for (const n of files) {
+            colSum.set(n.d, (colSum.get(n.d) || 0) + fn(n));
+            colCnt.set(n.d, (colCnt.get(n.d) || 0) + 1);
+            if (n.died_all > 0) diedSum.set(n.d, (diedSum.get(n.d) || 0) + n.died_all);
+        }
+        for (const e of doc.edges) if (e.gained > 0) { const d = dep.get(e.child); bornSum.set(d, (bornSum.get(d) || 0) + e.gained); }
         let ky = KY_MAX;
-        for (const c of cols.values()) ky = Math.min(ky, (FILE_H - PADDING * (c.length - 1)) / c.reduce((a, n) => a + units(n), 0));
-        ky = Math.min(ky, BAND_H / stack('born', 1), BAND_H / stack('died', 1));
+        for (const [d, sum] of colSum) ky = Math.min(ky, (FILE_H - PADDING * (colCnt.get(d) - 1)) / sum);
+        ky = Math.min(ky, BAND_H / Math.max(1, ...bornSum.values()), BAND_H / Math.max(1, ...diedSum.values()));
         ky = Math.max(ky, 0.02);
 
         const colW = NODE_W + GAP;
         const W = Math.max(width || 600, 2 * PAD + (maxd + 1) * colW);
         const fileTop = LANE_PAD + BAND_H + 70;
-        // files: left to right, each below its parent's top where there is room
-        const order = [...files].sort((a, b) => a.d - b.d || doc.nodes.findIndex(n => n.id === a.id) - doc.nodes.findIndex(n => n.id === b.id));
-        const parentOf = new Map(doc.edges.map(e => [e.child, e.parent]));
-        const bottoms = new Map();
         let filesBottom = fileTop;
-        for (const n of order) {
-            n.x0 = PAD + n.d * colW; n.x1 = n.x0 + NODE_W;
-            const par = fileOf.get(parentOf.get(n.id));
-            n.y0 = Math.max((bottoms.get(n.d) ?? fileTop - PADDING) + PADDING, par ? par.y0 : fileTop);
-            n.y1 = n.y0 + Math.max(2, units(n) * ky);
-            bottoms.set(n.d, n.y1);
-            filesBottom = Math.max(filesBottom, n.y1);
+        for (let d = 0; d <= maxd; d++) {
+            const col = files.filter(n => n.d === d)
+                .sort((a, b) => (fileOf.get(parentOf.get(a.id))?.y0 ?? 0) - (fileOf.get(parentOf.get(b.id))?.y0 ?? 0) || a.idx - b.idx);
+            let bottom = fileTop - PADDING;
+            for (const n of col) {
+                n.x0 = PAD + d * colW; n.x1 = n.x0 + NODE_W;
+                n.y0 = Math.max(bottom + PADDING, fileOf.get(parentOf.get(n.id))?.y0 ?? fileTop);
+                n.y1 = n.y0 + Math.max(2, n.functions * ky);
+                bottom = n.y1;
+                filesBottom = Math.max(filesBottom, n.y1);
+            }
         }
         const diedTop = filesBottom + 70;
         const H = diedTop + BAND_H + LANE_PAD;
-        // born sources: top band, left part of the gap before the child; died sinks: bottom band, right part of the gap after the parent
-        const place = (kind, base, x0, byY) => {
-            const per = new Map();
-            nodes.filter(n => n.kind === kind).sort((a, b) => byY(a) - byY(b)).forEach(n => {
-                const used = per.get(n.d) || 0;
-                n.y0 = base + used; n.y1 = n.y0 + Math.max(2, units(n) * ky);
-                per.set(n.d, n.y1 - base + BAND_PAD);
-                n.x0 = x0(n); n.x1 = n.x0 + BAND_W;
-            });
+
+        // parent segments, top to bottom: ordered by their children's positions so forks cross little
+        const segs = [];
+        for (const n of files) {
+            const ps = partsOf.get(n.id);
+            if (!ps) continue;
+            const pos = c => fileOf.get(c).idx;
+            const key = p => p.children.map(pos);
+            const cmp = (a, b) => {
+                const x = key(a), y = key(b);
+                for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] - y[i];
+                return x.length - y.length;
+            };
+            let y = n.y0;
+            const mine = [...ps].sort((a, b) => (a.folded ? 1 : 0) - (b.folded ? 1 : 0) || cmp(a, b));
+            for (const p of mine) { segs.push({ n, part: p, y0: y, y1: y + p.count * ky }); y += p.count * ky; }
+            if (n.died_all > 0) segs.push({ n, died: true, count: n.died_all, y0: y, y1: y + n.died_all * ky });
+        }
+
+        const nodes = [...files];
+        const stackBand = (list, base, x0) => {
+            const used = new Map();
+            for (const b of list) {
+                const u = used.get(b.d) || 0;
+                b.y0 = base + u; b.y1 = b.y0 + Math.max(2, b.value * ky);
+                used.set(b.d, u + (b.y1 - b.y0) + BAND_PAD);
+                b.x0 = x0(b); b.x1 = b.x0 + BAND_W;
+            }
+            nodes.push(...list);
         };
-        place('born', LANE_PAD, n => PAD + (n.d - 1) * colW + NODE_W + 30, n => fileOf.get(n.edge.child).y0);
-        place('died', diedTop, n => PAD + n.d * colW + NODE_W + GAP - 30 - BAND_W, n => fileOf.get(n.edge.parent).y0);
-        // links: one scale for all
-        for (const l of graph.links) l.width = Math.max(1, l.value * ky);
-        sankey.update(graph);
-        return { graph, files, W, H, ky, filesBottom, diedTop, fileTop };
+        const borns = doc.edges.filter(e => e.gained > 0).map(e => ({ kind: 'born', edge: e, value: e.gained, d: dep.get(e.child), child: fileOf.get(e.child) }))
+            .sort((a, b) => a.child.y0 - b.child.y0);
+        stackBand(borns, LANE_PAD, b => PAD + (b.d - 1) * colW + NODE_W + 30);
+        const dieds = files.filter(n => n.died_all > 0).map(n => ({ kind: 'died', parent: n, value: n.died_all, d: n.d }))
+            .sort((a, b) => a.parent.y0 - b.parent.y0);
+        stackBand(dieds, diedTop, b => PAD + b.d * colW + NODE_W + GAP - 30 - BAND_W);
+
+        const links = [];
+        const split = (mkSrc, tgt, total, sus, fields, srcY, tgtY) => {
+            const s = Math.min(sus, total), cert = total - s;
+            let a = srcY, b = tgtY, before = 0;
+            for (const [v, hatch] of [[cert, false], [s, true]]) {
+                if (v <= 0) continue;
+                const w = Math.max(1, v * ky);
+                links.push({ ...fields, hatch, value: v, before, width: w, source: mkSrc, target: tgt, y0: a + w / 2, y1: b + w / 2 });
+                a += v * ky; b += v * ky; before += v;
+            }
+        };
+        for (const b of borns)
+            split(b, b.child, b.value, b.edge.recall_suspect, { kind: 'born', edge: b.edge, bf: b.edge.born_by_file }, b.y0, b.child.y0);
+        const cursor = new Map(files.map(n => [n.id, n.y0 + (doc.edges.find(e => e.child === n.id)?.gained || 0) * ky]));
+        for (const sg of segs) {
+            if (sg.died) continue;
+            for (const c of sg.part.children) {
+                const v = sg.part.per_child ? sg.part.per_child[c] : sg.part.count;
+                const w = Math.max(1, v * ky), t = fileOf.get(c);
+                links.push({
+                    kind: 'shared', edge: edgeOf.get(`${sg.n.id}|${c}`), part: sg.part, value: v, before: 0, width: w, bf: sg.part.by_file,
+                    source: sg.n, target: t, y0: sg.y0 + w / 2, y1: cursor.get(c) + w / 2, overlap: sg.part.children.length > 1,
+                });
+                cursor.set(c, cursor.get(c) + v * ky);
+            }
+        }
+        for (const dn of dieds) {
+            const sg = segs.find(x => x.died && x.n === dn.parent);
+            const kidEdges = doc.edges.filter(e => e.parent === dn.parent.id);
+            const sus = kidEdges.length ? Math.min(...kidEdges.map(e => e.recall_suspect)) : 0;
+            split(dn.parent, dn, dn.value, sus, { kind: 'died', pnode: dn.parent, bf: dn.parent.died_by_file }, sg.y0, dn.y0);
+        }
+        return { nodes, files, links, segs, W, H, ky, filesBottom, diedTop, fileTop, edgeOf };
     }
 
     function draw(doc, onPick, width) {
         uid++;
         const L = layout(doc, width);
-        const { graph, W, H } = L;
+        const { links, segs, W, H, ky } = L;
+        const nFiles = doc.nodes.length;
         const name = new Map(L.files.map(n => [n.id, n.file_name || n.id]));
+        const names = ids => ids.map(i => name.get(i)).join(', ');
         const s = d3.create('svg').attr('width', W).attr('height', H).attr('viewBox', `0 0 ${W} ${H}`)
             .attr('role', 'img').attr('aria-label', 'Lineage of the files: shared, born and died code');
         const defs = s.append('defs');
@@ -139,13 +177,17 @@
             p.append('rect').attr('width', 6).attr('height', 6).attr('fill', col).attr('fill-opacity', 0.25);
             p.append('rect').attr('width', 3).attr('height', 6).attr('fill', col);
         }
+        const stripe = defs.append('pattern').attr('id', `ovl-${uid}`).attr('width', 6).attr('height', 6)
+            .attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
+        stripe.append('rect').attr('width', 6).attr('height', 6).attr('fill', SLATE_LIGHT);
+        stripe.append('rect').attr('width', 2).attr('height', 6).attr('fill', '#cbd5e1');
         const bandTotal = k => doc.edges.reduce((a, e) => a + e[k], 0);
         const lane = (y, h, col, label) => {
             s.append('rect').attr('x', 0).attr('y', y).attr('width', W).attr('height', h).attr('fill', col).attr('fill-opacity', 0.08);
             s.append('text').attr('x', 8).attr('y', y + 16).attr('font-size', 12).attr('font-weight', 600).attr('fill', 'currentColor').text(label);
         };
         lane(0, LANE_PAD + BAND_H + 30, BLUE, `BORN: ${bandTotal('gained')} functions`);
-        lane(L.diedTop - 30, H - L.diedTop + 30, ORANGE, `DIED: ${bandTotal('lost')} functions`);
+        lane(L.diedTop - 30, H - L.diedTop + 30, ORANGE, `DIED (kept by no child): ${L.files.reduce((a, n) => a + (n.died_all || 0), 0)} functions`);
         s.append('text').attr('x', 8).attr('y', L.fileTop - 14).attr('font-size', 12).attr('font-weight', 600).attr('fill', 'currentColor')
             .text('SHARED (kept from parent to child)');
 
@@ -154,53 +196,121 @@
             .style('padding', '6px 8px').style('border-radius', '4px').style('background', '#1f2328').style('color', '#fff')
             .style('font-size', '12px').style('line-height', 1.4).style('white-space', 'pre');
         s.node()._cleanup = () => tip.remove();
+        const showTip = (ev, t) => tip.text(t).style('display', 'block').style('left', `${ev.clientX + 12}px`).style('top', `${ev.clientY + 12}px`);
+        const hideTip = () => tip.style('display', 'none');
 
-        // grey ribbons fade parent -> child
-        graph.links.filter(l => l.kind === 'shared').forEach((l, i) => {
+        links.filter(l => l.kind === 'shared').forEach((l, i) => {
             const g = defs.append('linearGradient').attr('id', `sh-${uid}-${i}`).attr('gradientUnits', 'userSpaceOnUse')
                 .attr('x1', l.source.x1).attr('x2', l.target.x0);
-            g.append('stop').attr('offset', 0).attr('stop-color', GREY).attr('stop-opacity', 0.65);
-            g.append('stop').attr('offset', 1).attr('stop-color', GREY).attr('stop-opacity', 0.3);
+            const col = l.overlap ? GREY_DARK : GREY;
+            g.append('stop').attr('offset', 0).attr('stop-color', col).attr('stop-opacity', 0.7);
+            g.append('stop').attr('offset', 1).attr('stop-color', col).attr('stop-opacity', 0.3);
             l.grad = `url(#sh-${uid}-${i})`;
         });
-        const stroke = l => l.kind === 'shared' ? l.grad
-            : l.hatch ? `url(#hatch-${l.kind}-${uid})` : l.kind === 'born' ? BLUE : ORANGE;
-        const ribbons = s.append('g').selectAll('path').data(graph.links).join('path')
-            .attr('d', d3.sankeyLinkHorizontal()).attr('fill', 'none').attr('stroke', stroke)
-            .attr('stroke-width', l => l.width).attr('stroke-opacity', l => l.kind === 'shared' ? 1 : 0.85)
-            .style('cursor', 'pointer');
-        const text = e => `${name.get(e.parent)} → ${name.get(e.child)}\nborn ${e.gained}   died ${e.lost}   shared ${e.shared}\nrecall suspect ${e.recall_suspect}`;
-        ribbons.on('mouseenter', (ev, l) => {
-            ribbons.transition().duration(120).style('opacity', d => d.edge === l.edge ? 1 : 0.1);
-            ribbons.filter(d => d.edge === l.edge).raise();
-            tip.text(text(l.edge)).style('display', 'block');
-        }).on('mousemove', ev => tip.style('left', `${ev.clientX + 12}px`).style('top', `${ev.clientY + 12}px`))
-            .on('mouseleave', () => {
-                ribbons.transition().duration(120).style('opacity', 1);
-                tip.style('display', 'none');
-            }).on('click', (ev, l) => onPick({ edge: l.edge }));
+        const stroke = l => l.kind === 'shared' ? l.grad : l.hatch ? `url(#hatch-${l.kind}-${uid})` : l.kind === 'born' ? BLUE : ORANGE;
+        const full = l => l.kind === 'shared' ? (l.overlap ? GREY_DARK : GREY) : stroke(l);
+        const path = d3.sankeyLinkHorizontal();
+        const ribbons = s.append('g').selectAll('path').data(links).join('path')
+            .attr('d', path).attr('fill', 'none').attr('stroke', stroke)
+            .attr('stroke-width', l => l.width).attr('stroke-opacity', l => l.kind === 'shared' ? 1 : 0.85).style('cursor', 'pointer');
+        const ov = s.append('g').style('pointer-events', 'none');
 
-        const NODE_FILL = '#475569';
-        const nodes = s.append('g').selectAll('g').data(graph.nodes).join('g').style('cursor', 'pointer');
-        nodes.append('rect').attr('x', n => n.x0).attr('y', n => n.y0).attr('width', n => n.x1 - n.x0)
-            .attr('height', n => Math.max(2, n.y1 - n.y0)).attr('rx', 2)
-            .attr('fill', n => n.kind === 'born' ? BLUE : n.kind === 'died' ? ORANGE : NODE_FILL);
-        nodes.append('title').text(n => n.kind === 'file' ? `${name.get(n.id)} (${n.functions} functions)`
-            : `${n.kind === 'born' ? 'born in' : 'died from'} ${name.get(n.kind === 'born' ? n.edge.child : n.edge.parent)}: ${n.value}`);
-        const files = nodes.filter(n => n.kind === 'file');
-        const trunc = n => { const f = name.get(n.id); return f.length > 16 ? `${f.slice(0, 15)}…` : f; };
-        // a file too short for its label gets it above the box, in the page's text colour
+        // parent segments drawn on the node; leaves are plain boxes
+        const nodeG = s.append('g');
+        const segRect = nodeG.selectAll('rect.seg').data(segs).join('rect').attr('class', 'seg')
+            .attr('x', d => d.n.x0).attr('y', d => d.y0).attr('width', NODE_W).attr('height', d => Math.max(1, d.y1 - d.y0))
+            .attr('fill', d => d.died ? ORANGE : d.part.children.length > 1 ? SLATE_LIGHT : SLATE)
+            .attr('stroke', '#fff').attr('stroke-width', 0.75).style('cursor', 'pointer');
+        // overlap segments carry a stripe; a core segment (in every file) gets a dashed inset outline
+        nodeG.selectAll('rect.stripe').data(segs.filter(d => !d.died && d.part.children.length > 1)).join('rect').attr('class', 'stripe')
+            .attr('x', d => d.n.x0).attr('y', d => d.y0).attr('width', NODE_W).attr('height', d => Math.max(1, d.y1 - d.y0))
+            .attr('fill', `url(#ovl-${uid})`).style('pointer-events', 'none');
+        const isCore = d => !d.died && !doc.by_file_skipped && d.part.by_file && Object.keys(d.part.by_file).length === nFiles
+            && Object.values(d.part.by_file).every(v => v === d.part.count);
+        nodeG.selectAll('rect.core').data(segs.filter(isCore)).join('rect').attr('class', 'core')
+            .attr('x', d => d.n.x0 + 2).attr('y', d => d.y0 + 1).attr('width', NODE_W - 4).attr('height', d => Math.max(1, d.y1 - d.y0 - 2))
+            .attr('fill', 'none').attr('stroke', '#fff').attr('stroke-dasharray', '3 2').style('pointer-events', 'none');
+        const leaf = L.files.filter(n => !segs.some(g => g.n === n));
+        const fileBox = nodeG.selectAll('rect.leaf').data(leaf).join('rect').attr('class', 'leaf')
+            .attr('x', n => n.x0).attr('y', n => n.y0).attr('width', NODE_W).attr('height', n => Math.max(2, n.y1 - n.y0))
+            .attr('fill', SLATE).attr('rx', 2);
+        const bandNodes = L.nodes.filter(n => n.kind !== 'file');
+        nodeG.selectAll('rect.band').data(bandNodes).join('rect').attr('class', 'band')
+            .attr('x', n => n.x0).attr('y', n => n.y0).attr('width', BAND_W).attr('height', n => Math.max(2, n.y1 - n.y0))
+            .attr('fill', n => n.kind === 'born' ? BLUE : ORANGE);
+        const label = n => { const f = name.get(n.id); return f.length > 16 ? `${f.slice(0, 15)}…` : f; };
         const tall = n => n.y1 - n.y0 >= 32;
-        files.append('text').attr('x', n => n.x0 + (tall(n) ? 6 : 0)).attr('y', n => tall(n) ? n.y0 + 15 : n.y0 - 5)
-            .attr('font-size', 11).attr('fill', n => tall(n) ? '#fff' : 'currentColor')
-            .text(n => tall(n) ? trunc(n) : `${trunc(n)} (${n.functions} fn)`);
-        files.filter(tall).append('text').attr('x', n => n.x0 + 6).attr('y', n => n.y0 + 28).attr('font-size', 10).attr('fill', '#fff')
-            .text(n => `${n.functions} fn`);
-        files.on('click', (ev, n) => onPick({ node: n }));
-        return { svg: s.node(), byId: new Map(L.files.map(n => [n.id, n])) };
+        const fileHit = nodeG.selectAll('g.file').data(L.files).join('g').attr('class', 'file').style('cursor', 'pointer');
+        fileHit.append('rect').attr('x', n => n.x0).attr('y', n => n.y0).attr('width', 22).attr('height', n => Math.max(2, n.y1 - n.y0)).attr('fill', 'transparent');
+        fileHit.append('title').text(n => `${name.get(n.id)} (${n.functions} functions)`);
+        fileHit.append('text').attr('x', n => n.x0 + (tall(n) ? 6 : 0)).attr('y', n => tall(n) ? n.y0 + 15 : n.y0 - 5)
+            .attr('font-size', 11).attr('fill', n => tall(n) ? '#fff' : 'currentColor').style('pointer-events', 'none')
+            .text(n => tall(n) ? label(n) : `${label(n)} (${n.functions} fn)`);
+        fileHit.filter(tall).append('text').attr('x', n => n.x0 + 6).attr('y', n => n.y0 + 28).attr('font-size', 10)
+            .attr('fill', '#fff').style('pointer-events', 'none').text(n => `${n.functions} fn`);
+        nodeG.selectAll('text.seg').data(segs.filter(d => !d.died && d.part.children.length > 1 && d.y1 - d.y0 >= 14 && d.y0 >= d.n.y0 + 32)).join('text')
+            .attr('class', 'seg').attr('x', d => d.n.x0 + 6).attr('y', d => d.y0 + 11).attr('font-size', 10).attr('fill', '#fff')
+            .style('pointer-events', 'none').text(d => `kept by ${d.part.children.map(c => name.get(c)).join(' + ')}: ${d.part.count}`.slice(0, 24));
+
+        // ---- hover ----
+        const edgeText = e => `${name.get(e.parent)} → ${name.get(e.child)}\nborn ${e.gained}   died ${e.lost}   shared ${e.shared}\nrecall suspect ${e.recall_suspect}`;
+        const partText = (p, par) => `${name.get(par)}: kept by ${p.folded ? 'several children (folded)' : names(p.children)}: ${p.count}`;
+        const dim = pred => {
+            ribbons.transition().duration(120).style('opacity', d => pred(d) ? 1 : 0.1);
+            ribbons.filter(pred).raise();
+        };
+        const undim = () => {
+            ribbons.transition().duration(120).style('opacity', 1);
+            segRect.transition().duration(120).style('opacity', 1);
+            fileBox.transition().duration(120).style('opacity', 1);
+            ov.selectAll('*').remove();
+        };
+        ribbons.on('mouseenter', (ev, l) => {
+            dim(d => l.kind === 'died' ? d.kind === 'died' && d.pnode === l.pnode : d.edge === l.edge);
+            showTip(ev, l.kind === 'died' ? `kept by no child of ${name.get(l.pnode.id)}: ${l.pnode.died_all}` : edgeText(l.edge) + (l.part ? `\n${partText(l.part, l.part.parent)}` : ''));
+        }).on('mousemove', ev => tip.style('left', `${ev.clientX + 12}px`).style('top', `${ev.clientY + 12}px`))
+            .on('mouseleave', () => { undim(); hideTip(); })
+            .on('click', (ev, l) => onPick(l.kind === 'died' ? { node: l.pnode } : { edge: l.edge, part: l.part }));
+        segRect.on('mouseenter', (ev, d) => {
+            dim(l => d.died ? l.kind === 'died' && l.pnode === d.n : l.part === d.part);
+            showTip(ev, d.died ? `${name.get(d.n.id)}: kept by no child: ${d.count}` : partText(d.part, d.n.id));
+        }).on('mousemove', ev => tip.style('left', `${ev.clientX + 12}px`).style('top', `${ev.clientY + 12}px`))
+            .on('mouseleave', () => { undim(); hideTip(); })
+            .on('click', (ev, d) => onPick(d.died ? { node: d.n } : { part: d.part, parent: d.n.id }));
+
+        // file hover: that file's functions through the whole chart, same scale, anchored at each ribbon's top edge
+        const fileHover = (ev, F) => {
+            const lines = [`${name.get(F.id)}: ${F.functions} functions`];
+            if (doc.by_file_skipped) {
+                dim(l => l.edge && (l.edge.parent === F.id || l.edge.child === F.id) || (l.pnode === F));
+                lines.push('(per-file highlight skipped: more than 60 files)');
+            } else {
+                ribbons.transition().duration(120).style('opacity', 0.1);
+                segRect.transition().duration(120).style('opacity', 0.3);
+                for (const l of links) {
+                    const n = Math.max(0, Math.min(l.value, ((l.bf || {})[F.id] || 0) - l.before));
+                    if (!n) continue;
+                    const w = Math.max(1, n * ky), top = l.y0 - l.width / 2;
+                    ov.append('path').attr('d', path({ source: l.source, target: l.target, y0: top + w / 2, y1: l.y1 - l.width / 2 + w / 2, width: w }))
+                        .attr('fill', 'none').attr('stroke', full(l)).attr('stroke-width', w).attr('stroke-opacity', l.kind === 'shared' ? 0.95 : 1);
+                }
+                for (const sg of segs) {
+                    const n = sg.died ? (F.id === sg.n.id ? sg.count : (sg.n.died_by_file || {})[F.id] || 0) : (sg.part.by_file || {})[F.id] || 0;
+                    if (!n) continue;
+                    ov.append('rect').attr('x', sg.n.x0).attr('y', sg.y0).attr('width', NODE_W).attr('height', Math.max(1, Math.min(n, sg.died ? sg.count : sg.part.count) * ky))
+                        .attr('fill', sg.died ? ORANGE : sg.part.children.length > 1 ? SLATE_LIGHT : SLATE).attr('stroke', '#fff').attr('stroke-width', 0.75);
+                }
+                lines.push(`in every file (core): ${doc.core}`, `only in this file: ${F.only_here}`);
+                if ((F.top_shared || []).length) lines.push('most shared with: ' + F.top_shared.map(([g, c]) => `${name.get(g)} ${c}`).join(', '));
+            }
+            showTip(ev, lines.join('\n'));
+        };
+        fileHit.on('mouseenter', fileHover).on('mousemove', ev => tip.style('left', `${ev.clientX + 12}px`).style('top', `${ev.clientY + 12}px`))
+            .on('mouseleave', () => { undim(); hideTip(); }).on('click', (ev, n) => onPick({ node: n }));
+        return { svg: s.node(), byId: new Map(L.files.map(n => [n.id, n])), name };
     }
 
-    function legend() {
+    function legend(doc) {
         const box = el('div', { style: 'display:flex;flex-wrap:wrap;gap:14px;font-size:0.8rem;padding:6px 0;align-items:center' });
         const item = (fill, text, hatch) => {
             const w = el('span', { style: 'display:inline-flex;align-items:center;gap:5px' });
@@ -208,24 +318,36 @@
             w.append(el('span', { style: `display:inline-block;width:16px;height:10px;${bg}border:1px solid ${fill}` }), el('span', {}, text));
             return w;
         };
-        box.append(item(GREY, 'shared'), item(BLUE, 'born'), item(ORANGE, 'died'),
-            item(GREY, 'hatched: likely a matcher miss (blue in born, orange in died)', true),
-            el('span', { class: 'dim' }, 'One scale: ribbon width and node height are in functions. A file is as tall as max(its functions, flow in, flow out). Feature weight is not returned by the API.'));
+        box.append(item(GREY, 'shared'), item(GREY_DARK, 'kept by several children (forks)'), item(BLUE, 'born'), item(ORANGE, 'died: kept by no child'),
+            item(GREY, 'hatched: likely a matcher miss', true),
+            el('span', { class: 'dim' }, 'One scale: every file is exactly its function count, split into the parts its children keep. Dashed outline = in every file. Hover a file to follow its code through the whole chart.'));
+        if (doc.by_file_skipped) box.append(el('span', { class: 'nway-note warn' }, 'More than 60 files: per-file highlight is off, hover shows the file’s own edges only.'));
         return box;
     }
 
-    function detail(box, pick, byId) {
+    function detail(box, pick, names) {
         box.replaceChildren();
         const line = t => box.append(el('div', {}, t));
+        const nm = id => names.get(id) || id;
+        if (pick.part) {
+            const p = pick.part;
+            box.append(el('b', {}, `${nm(p.parent)}: kept by ${p.folded ? 'several children (folded)' : p.children.map(nm).join(' + ')}`));
+            line(`${p.count} functions`);
+            if (p.per_child) for (const [c, n] of Object.entries(p.per_child)) line(`  ${nm(c)}: ${n}`);
+        }
         if (pick.node) {
-            box.append(el('b', {}, pick.node.file_name || pick.node.id));
-            line(`${pick.node.functions} functions${pick.node.root ? ' (root)' : ''}`);
-            line(pick.node.id);
+            const n = pick.node;
+            box.append(el('b', {}, n.file_name || n.id));
+            line(`${n.functions} functions${n.root ? ' (root)' : ''}`);
+            if (n.died_all != null) line(`kept by no child: ${n.died_all}`);
+            line(`only in this file: ${n.only_here}`);
+            line(n.id);
         } else if (pick.edge) {
-            const e = pick.edge, nm = id => (byId.get(id) || {}).file_name || id;
+            const e = pick.edge;
+            if (pick.part) box.append(el('hr'));
             box.append(el('b', {}, `${nm(e.parent)} → ${nm(e.child)}`));
             line(`similarity ${e.similarity}`);
-            line(`shared ${e.shared}, gained ${e.gained}, lost ${e.lost}`);
+            line(`shared ${e.shared}, born ${e.gained}, lost ${e.lost}`);
             line(`recall suspect ${e.recall_suspect}`);
             const ev = e.recall_evidence || {};
             line(`  below the floor: ${ev.edge_below_floor}`);
@@ -260,7 +382,7 @@
         body.replaceChildren();
         for (const w of doc.warnings || []) body.append(el('div', { class: 'nway-note warn' }, w));
         const side = el('div', { style: 'min-width:220px;max-width:300px;font-size:0.85rem;padding:0 12px' }, 'Click a file or an edge.');
-        const { svg: tree, byId } = draw(doc, pick => detail(side, pick, byId), body.clientWidth - 260);
+        const { svg: tree, name } = draw(doc, pick => detail(side, pick, name), body.clientWidth - 260);
         st.cleanup = tree._cleanup;
         // scroll inside a bounded box; zoom rescales the SVG (its viewBox keeps the drawing)
         const scroller = el('div', { style: 'overflow:auto;flex:1;max-height:75vh;min-width:0' });
@@ -287,7 +409,7 @@
         wrap.append(scroller, side);
         zoom(st.zoom || 1);
         body.append(bar);
-        body.append(legend(), wrap);
+        body.append(legend(doc), wrap);
     }
 
     function mount(panel) {

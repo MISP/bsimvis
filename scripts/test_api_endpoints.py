@@ -5176,6 +5176,17 @@ def test_nway_lineage():
         "nway lineage: the three orders share one edge shape",
         len({tuple(sorted(e)) for t in got.values() for e in t.get("edges", [])}) == 1,
     )
+    try:
+        for t in got.values():
+            nway_lineage_service.check_invariants(t)
+        ok = all(t["partitions"] and "core" in t for t in got.values())
+    except (AssertionError, KeyError, TypeError) as e:
+        ok = repr(e)
+    check(
+        "nway lineage: partitions and by_file add up for every order",
+        ok is True,
+        str(ok),
+    )
     r = requests.get(url, params={**base, "root": file_md5_2}, timeout=60)
     check(
         "nway lineage: root= picks the root",

@@ -30,6 +30,9 @@ import numpy as np
 from bsimvis.app.services.nway_match import PairEdges
 
 ORDERS = ("tree", "chain", "star")
+MAX_KIDS = 4  # more children than this: keep the biggest subsets, fold the rest
+KEEP_SUBSETS = 6
+BY_FILE_MAX = 60  # beyond this many files by_file is skipped
 CHAIN_MAX = 200  # 2-opt is O(N^2) per pass
 TWO_OPT_PASSES = 20
 
@@ -138,6 +141,45 @@ def _recall(lost, gained, e, min_edge, name_of):
     return ev
 
 
+def _partitions(parent, kids, counts, by_file):
+    """Disjoint parts of a parent's kept code: one per exact subset of children holding it.
+
+    `counts` {subset tuple: n}; more than MAX_KIDS children keeps the KEEP_SUBSETS
+    biggest subsets and folds the rest into one `folded` part, whose `per_child`
+    says how much of it each child holds.
+    """
+    items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    keep, rest = items, []
+    if len(kids) > MAX_KIDS and len(items) > KEEP_SUBSETS:
+        keep, rest = items[:KEEP_SUBSETS], items[KEEP_SUBSETS:]
+    out = [
+        {
+            "parent": parent,
+            "children": list(sub),
+            "count": n,
+            "by_file": dict(by_file[sub]) if by_file.get(sub) else None,
+        }
+        for sub, n in keep
+    ]
+    if rest:
+        per, bf = Counter(), Counter()
+        for sub, n in rest:
+            for c in sub:
+                per[c] += n
+            bf.update(by_file.get(sub) or {})
+        out.append(
+            {
+                "parent": parent,
+                "children": [c for c in kids if per[c]],
+                "count": sum(n for _, n in rest),
+                "folded": True,
+                "per_child": dict(per),
+                "by_file": dict(bf) or None,
+            }
+        )
+    return out
+
+
 def build(columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tree"):
     """Lineage of the files `columns` (dicts with id, file_name, functions) over `rows`.
 
@@ -174,8 +216,16 @@ def build(columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tre
     shared = [0] * len(pairs)
     lost = [[] for _ in pairs]
     gained = [[] for _ in pairs]
+    classes = (
+        {}
+    )  # presence mask -> [rows, file ids]: every per-file count derives from this
+    fbit = {i: 1 << n for n, i in enumerate(ids)}
     for row in rows:
         cells = row["cells"]
+        m = 0
+        for f in cells:
+            m |= fbit.get(f, 0)
+        classes.setdefault(m, [0, tuple(cells)])[0] += 1
         for f in cells:
             for k, is_parent in adj.get(f, ()):
                 p, c = ids[pairs[k][0]], ids[pairs[k][1]]
@@ -185,6 +235,43 @@ def build(columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tre
                     lost[k].append(cells[p])
                 else:
                     gained[k].append(cells[c])
+
+    kids = {}
+    for p, c in pairs:
+        kids.setdefault(ids[p], []).append(ids[c])
+    want = len(ids) <= BY_FILE_MAX
+    part_n, part_bf, born_bf = {}, {}, {}
+    core, only_here, co = 0, Counter(), {}
+    for cnt, keys in classes.values():
+        present = set(keys)
+        if len(keys) == len(ids):
+            core += cnt
+        if len(keys) == 1:
+            only_here[keys[0]] += cnt
+        for f in keys:
+            for k, is_parent in adj.get(f, ()):
+                if want and not is_parent and ids[pairs[k][0]] not in present:
+                    born_bf.setdefault(k, Counter()).update({g: cnt for g in keys})
+            if f in kids:
+                sub = tuple(c for c in kids[f] if c in present)
+                part_n.setdefault(f, Counter())[sub] += cnt
+                if want:
+                    part_bf.setdefault((f, sub), Counter()).update(
+                        {g: cnt for g in keys}
+                    )
+        if want:
+            for f in keys:
+                row_co = co.setdefault(f, Counter())
+                for g in keys:
+                    if g != f:
+                        row_co[g] += cnt
+    partitions, died_all, died_bf = [], {}, {}
+    for f, counts in part_n.items():
+        died_all[f] = counts.pop((), 0)
+        died_bf[f] = part_bf.pop((f, ()), None)
+        partitions += _partitions(
+            f, kids[f], counts, {s: part_bf.get((f, s)) for s in counts}
+        )
 
     out = []
     for k, (p, c) in enumerate(pairs):
@@ -202,6 +289,7 @@ def build(columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tre
                 "shared": shared[k],
                 "recall_suspect": sum(ev.values()),
                 "recall_evidence": ev,
+                "born_by_file": dict(born_bf[k]) if k in born_bf else None,
             }
         )
     nodes = [
@@ -210,10 +298,60 @@ def build(columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tre
             "file_name": c.get("file_name"),
             "functions": c["functions"],
             "root": i == r,
+            "died_all": died_all.get(c["id"]),
+            "died_by_file": dict(died_bf[c["id"]]) if died_bf.get(c["id"]) else None,
+            "only_here": only_here[c["id"]],
+            "top_shared": (
+                [[g, n] for g, n in co.get(c["id"], Counter()).most_common(3)]
+                if want
+                else None
+            ),
         }
         for i, c in enumerate(columns)
     ]
-    return {"order": order, "root": ids[r], "nodes": nodes, "edges": out}
+    return {
+        "order": order,
+        "root": ids[r],
+        "nodes": nodes,
+        "edges": out,
+        "partitions": partitions,
+        "core": core,
+        "by_file_skipped": not want,
+    }
+
+
+def check_invariants(doc):
+    """Assert the partition / by_file bookkeeping of a `build` result adds up."""
+    n = {x["id"]: x for x in doc["nodes"]}
+    parts = {}
+    for p in doc["partitions"]:
+        parts.setdefault(p["parent"], []).append(p)
+    for pid, ps in parts.items():
+        assert sum(p["count"] for p in ps) + n[pid]["died_all"] == n[pid]["functions"]
+    for e in doc["edges"]:
+        got = sum(
+            p.get("per_child", {}).get(e["child"], p["count"])
+            for p in parts.get(e["parent"], [])
+            if e["child"] in p["children"]
+        )
+        assert got == e["shared"], (got, e)
+    if doc["by_file_skipped"]:
+        return
+    for p in doc["partitions"]:
+        bf = p["by_file"] or {}
+        assert all(v <= p["count"] for v in bf.values())
+        if not p.get("folded"):
+            assert bf[p["parent"]] == p["count"]
+            assert all(bf[c] == p["count"] for c in p["children"])
+    for e in doc["edges"]:
+        if e["gained"]:
+            bf = e["born_by_file"]
+            assert bf[e["child"]] == e["gained"] and e["parent"] not in bf
+    for x in doc["nodes"]:
+        if x["died_all"]:
+            assert x["died_by_file"][x["id"]] == x["died_all"]
+        assert x["only_here"] <= x["functions"]
+    assert doc["core"] <= min(x["functions"] for x in doc["nodes"])
 
 
 def demo():
@@ -270,6 +408,33 @@ def demo():
             raise AssertionError("expected BadParams")
         except BadParams:
             pass
+    for g in got.values():
+        check_invariants(g)
+    # C keeps 2 functions in B and D, 1 in B only, and 3 in no child
+    cp = {
+        tuple(p["children"]): p["count"] for p in t["partitions"] if p["parent"] == "C"
+    }
+    assert cp == {("B", "D"): 2, ("B",): 1} and t["nodes"][2]["died_all"] == 3
+    assert (
+        t["core"] == 2
+        and t["nodes"][0]["only_here"] == 0
+        and t["nodes"][3]["only_here"] == 1
+    )
+    # a star with many children folds its small subsets and still sums up
+    kids = "ABCDE"
+    cols5 = [{"id": "R", "file_name": "R", "functions": 8}] + [
+        {"id": k, "file_name": k, "functions": 1 + (k in "AB")} for k in kids
+    ]
+    subs = [("A",), ("B",), ("C",), ("D",), ("E",), ("A", "B"), ("C", "D"), ("A", "E")]
+    rows5 = [
+        {"cells": {"R": f"r{i}", **{k: f"{k}{i}" for k in s5}}}
+        for i, s5 in enumerate(subs)
+    ]
+    star = build(cols5, rows5, {}, 0.5, lambda f: None, root="R", order="star")
+    pr = [p for p in star["partitions"] if p["parent"] == "R"]
+    assert len(pr) == KEEP_SUBSETS + 1 and pr[-1]["folded"]
+    assert sum(p["count"] for p in pr) == 8 and star["nodes"][0]["died_all"] == 0
+    check_invariants(star)
     print("nway_lineage demo ok")
 
 

@@ -1162,6 +1162,9 @@ def get_nway_lineage():
     cols = doc["columns"]
     if root and ":" not in root:
         root = next((c["id"] for c in cols if c["md5"] == root), root)
+    file = (request.args.get("file") or "").strip().lower() or None
+    if file and ":" not in file:
+        file = next((c["id"] for c in cols if c["md5"] == file), file)
     fmeta = doc["fmeta"]
 
     def name_of(fid):
@@ -1170,7 +1173,14 @@ def get_nway_lineage():
 
     try:
         out = nway_lineage_service.build(
-            cols, doc["rows"], doc["edges"], doc["min_edge"], name_of, root, order
+            cols,
+            doc["rows"],
+            doc["edges"],
+            doc["min_edge"],
+            name_of,
+            root,
+            order,
+            file,
         )
     except nway_lineage_service.BadParams as e:
         abort(400, str(e))

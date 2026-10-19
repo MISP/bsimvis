@@ -379,7 +379,7 @@
             const sc = d.shared_cluster;
             const shared = sc && sc.cluster_uuid ? `<a href="#" class="nway-chip" data-open-shared="${escapeAttr(sc.cluster_uuid)}" title="The smallest stored cluster holding all of these files. Open it as an N-way to keep its cluster context."><i class="fa-solid fa-bullseye"></i> Shared cluster <span class="dim">${escapeHtml(sc.cluster_name || sc.cluster_uuid)} &middot; ${Number(sc.member_count)} files</span></a>` : '';
             return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${search}</div>
-                <div class="nway-bar">${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}${shared}<button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-stats-toggle title="Hide or show the Span, Features, Support, Cohesion and Cluster columns, to focus on the matrix."><i class="fa-solid fa-table-columns"></i> Stats <span class="dim">${this._statsOff() ? 'hidden' : 'shown'}</span></button></span></div>${this._groupCard()}`;
+                <div class="nway-bar">${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}${shared}<button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-lineage title="Open the lineage of these files as a full page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button><button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-stats-toggle title="Hide or show the Span, Features, Support, Cohesion and Cluster columns, to focus on the matrix."><i class="fa-solid fa-table-columns"></i> Stats <span class="dim">${this._statsOff() ? 'hidden' : 'shown'}</span></button></span></div>${this._groupCard()}`;
         }
 
         // The Group bar: one line read left to right - group by, merge functions, merge files, order.
@@ -2047,7 +2047,6 @@
             this._mark(this.el.querySelector('#nway-table'));
             this._watch();
             this._scrollRestore();
-            if (window.NwayLineage) window.NwayLineage.mount(this);
         }
 
         // Scroll mode: load the next batch when the sentinel nears the viewport.
@@ -2075,8 +2074,12 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared],[data-lineage]');
             if (!t) return;
+            if (t.dataset.lineage !== undefined) {
+                this._scrollSave();
+                return window.Nav.openPath(`/diff/nway/lineage?${this._docQs().toString()}`, e, { title: 'Lineage', type: 'bin_sim' });
+            }
             if (t.dataset.mergeDiff) {
                 const group = this.data.groups[t.dataset.mergeDiff];
                 if (!group) return;

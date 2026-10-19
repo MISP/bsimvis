@@ -2678,6 +2678,7 @@ class BinSimNwayLineage(Resource):
         params={
             "md5s": "Same file set / scope params as /nway (collection, pool, mode, min_edge, ...)",
             "root": "Root file, md5 or collection:md5 (default: the file with most functions)",
+            "file": "Big sets (more than 60 files): file id (or md5) whose per-file overlay (by_file) to include",
             "order": "tree (maximum spanning tree, default), chain (seriation, at most 200 files) or star (every file vs root)",
         }
     )

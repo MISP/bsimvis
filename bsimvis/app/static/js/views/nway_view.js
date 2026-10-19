@@ -20,6 +20,8 @@ window.NwayView = {
         this._panel = null;
         if (this._functionPanel) this._functionPanel.destroy();
         this._functionPanel = null;
+        if (this._lin) this._lin.destroy();
+        this._lin = null;
         if (this._renamedFn) document.removeEventListener('function-renamed', this._renamedFn);
         this._renamedFn = null;
     },
@@ -27,6 +29,7 @@ window.NwayView = {
     async init(params, containerId) {
         this._container = document.getElementById(containerId);
         if (!this._container) return;
+        if (window.location.pathname.endsWith('/nway/lineage')) { this._lin = window.NwayLineageView; return this._lin.init(params, containerId); }
         if (window.location.pathname.endsWith('/nway/graph')) return this._initFunction();
         if (window.location.pathname.endsWith('/nway/function')) return this._initFunction();
         const q = new URLSearchParams(window.location.search);

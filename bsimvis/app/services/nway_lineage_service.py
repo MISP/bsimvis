@@ -32,7 +32,9 @@ from bsimvis.app.services.nway_match import PairEdges
 ORDERS = ("tree", "chain", "star")
 MAX_KIDS = 4  # more children than this: keep the biggest subsets, fold the rest
 KEEP_SUBSETS = 6
-BY_FILE_MAX = 60  # beyond this many files by_file is skipped
+REUSE_TOP = 12  # reuse classes returned; the rest fold into one entry
+BY_FILE_MAX = 60  # beyond this many files by_file is served for one file= at a time
+REUSE_MAX = 300  # reuse classes are skipped beyond this many files
 CHAIN_MAX = 200  # 2-opt is O(N^2) per pass
 TWO_OPT_PASSES = 20
 
@@ -180,7 +182,28 @@ def _partitions(parent, kids, counts, by_file):
     return out
 
 
-def build(columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tree"):
+def _components(keys, tedges):
+    """Connected components of the tree edges induced on the file set `keys`."""
+    root = {k: k for k in keys}
+
+    def find(x):
+        while root[x] != x:
+            root[x] = root[root[x]]
+            x = root[x]
+        return x
+
+    for a, b in tedges:
+        if a in root and b in root:
+            root[find(a)] = find(b)
+    comps = {}
+    for k in keys:
+        comps.setdefault(find(k), []).append(k)
+    return list(comps.values())
+
+
+def build(
+    columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tree", file=None
+):
     """Lineage of the files `columns` (dicts with id, file_name, functions) over `rows`.
 
     `rows` have `cells` {column id: fid}; `edges_by_pair` is the N-way pair edges
@@ -239,7 +262,10 @@ def build(columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tre
     kids = {}
     for p, c in pairs:
         kids.setdefault(ids[p], []).append(ids[c])
-    want = len(ids) <= BY_FILE_MAX
+    big = len(ids) > BY_FILE_MAX
+    sel = file if big and file in ids else None  # big sets: by_file for one file
+    want = not big or sel is not None
+    reuse_ok = len(ids) <= REUSE_MAX
     part_n, part_bf, born_bf = {}, {}, {}
     core, only_here, co = 0, Counter(), {}
     for cnt, keys in classes.values():
@@ -251,20 +277,62 @@ def build(columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tre
         for f in keys:
             for k, is_parent in adj.get(f, ()):
                 if want and not is_parent and ids[pairs[k][0]] not in present:
-                    born_bf.setdefault(k, Counter()).update({g: cnt for g in keys})
+                    born_bf.setdefault(k, Counter()).update(
+                        {g: cnt for g in keys if sel is None or g == sel}
+                    )
             if f in kids:
                 sub = tuple(c for c in kids[f] if c in present)
                 part_n.setdefault(f, Counter())[sub] += cnt
                 if want:
                     part_bf.setdefault((f, sub), Counter()).update(
-                        {g: cnt for g in keys}
+                        {g: cnt for g in keys if sel is None or g == sel}
                     )
         if want:
             for f in keys:
+                if sel is not None and f != sel:
+                    continue
                 row_co = co.setdefault(f, Counter())
                 for g in keys:
                     if g != f:
                         row_co[g] += cnt
+    # reuse: a presence mask whose files are not connected in the tree
+    depth = {ids[r]: 0}
+    for p, c in pairs:
+        depth[ids[c]] = depth[ids[p]] + 1
+    pos = {i: n for n, i in enumerate(ids)}
+    reuse, reuse_in, reuse_total = [], Counter(), 0
+    if reuse_ok:
+        tedges = [(ids[p], ids[c]) for p, c in pairs]
+        for cnt, keys in classes.values():
+            comps = _components(keys, tedges) if len(keys) > 1 else []
+            if len(comps) < 2:
+                continue
+            reuse_total += cnt
+            reuse_in.update({f: cnt for f in keys})
+            ds = [depth[f] for f in keys]
+            reuse.append(
+                {
+                    "files": sorted(keys, key=pos.get),
+                    "components": sorted(
+                        (sorted(c, key=pos.get) for c in comps),
+                        key=lambda c: (min(depth[f] for f in c), pos[c[0]]),
+                    ),
+                    "count": cnt,
+                    "depth_span": max(ds) - min(ds),
+                    "same_level": max(ds) == min(ds),
+                }
+            )
+        reuse.sort(key=lambda x: (-x["count"], x["files"]))
+        rest = reuse[REUSE_TOP:]
+        reuse = reuse[:REUSE_TOP]
+        if rest:
+            reuse.append(
+                {
+                    "folded": True,
+                    "count": sum(x["count"] for x in rest),
+                    "classes": len(rest),
+                }
+            )
     partitions, died_all, died_bf = [], {}, {}
     for f, counts in part_n.items():
         died_all[f] = counts.pop((), 0)
@@ -301,6 +369,8 @@ def build(columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tre
             "died_all": died_all.get(c["id"]),
             "died_by_file": dict(died_bf[c["id"]]) if died_bf.get(c["id"]) else None,
             "only_here": only_here[c["id"]],
+            "reuse_in": reuse_in[c["id"]] if reuse_ok else None,
+            "depth": depth[c["id"]],
             "top_shared": (
                 [[g, n] for g, n in co.get(c["id"], Counter()).most_common(3)]
                 if want
@@ -317,6 +387,10 @@ def build(columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tre
         "partitions": partitions,
         "core": core,
         "by_file_skipped": not want,
+        "reuse": reuse,
+        "reuse_total": reuse_total,
+        "reuse_skipped": not reuse_ok,
+        "by_file_for": sel,
     }
 
 
@@ -335,7 +409,8 @@ def check_invariants(doc):
             if e["child"] in p["children"]
         )
         assert got == e["shared"], (got, e)
-    if doc["by_file_skipped"]:
+    check_reuse(doc, n)
+    if doc["by_file_skipped"] or doc["by_file_for"]:
         return
     for p in doc["partitions"]:
         bf = p["by_file"] or {}
@@ -352,6 +427,148 @@ def check_invariants(doc):
             assert x["died_by_file"][x["id"]] == x["died_all"]
         assert x["only_here"] <= x["functions"]
     assert doc["core"] <= min(x["functions"] for x in doc["nodes"])
+
+
+def check_reuse(doc, n):
+    """Reuse classes: real nodes, never a tree-connected set, counts add up."""
+    if doc["reuse_skipped"]:
+        assert not doc["reuse"] and doc["reuse_total"] == 0
+        return
+    root = {i: i for i in n}
+
+    def find(x):
+        while root[x] != x:
+            x = root[x]
+        return x
+
+    for e in doc["edges"]:
+        root[find(e["parent"])] = find(e["child"])
+    tree = [(e["parent"], e["child"]) for e in doc["edges"]]
+    got = 0
+    for r in doc["reuse"]:
+        got += r["count"]
+        if r.get("folded"):
+            continue
+        assert set(r["files"]) <= set(n) and len(r["files"]) > 1
+        comps = _components(r["files"], tree)
+        assert len(comps) == len(r["components"]) > 1  # never a connected set
+        assert sorted(sum(r["components"], [])) == sorted(r["files"])
+        assert r["same_level"] == (r["depth_span"] == 0)
+    assert got == doc["reuse_total"]
+    for x in doc["nodes"]:
+        assert x["reuse_in"] <= x["functions"]
+    assert sum(x["reuse_in"] for x in doc["nodes"]) >= sum(
+        r["count"] * len(r["files"]) for r in doc["reuse"] if not r.get("folded")
+    )
+
+
+def _reuse_demo():
+    ids = ["R", "A", "B", "X", "Y"]  # tree R-A, R-B, A-X, B-Y; X, Y are cousins
+    cols = [{"id": i, "file_name": i, "functions": 0} for i in ids]
+    sets = (
+        ["RAXBY"] * 2  # core: connected
+        + ["RAX"] * 3  # connected
+        + ["RX"] * 4  # grandparent -> grandchild skip
+        + ["XY"] * 5  # cousins
+        + ["AB"] * 6  # siblings without the parent
+        + ["RXY"] * 1  # three components
+        + ["A"] * 2
+    )
+    rows = [{"cells": {f: f"{f}{i}" for f in s}} for i, s in enumerate(sets)]
+    for c in cols:
+        c["functions"] = sum(c["id"] in s for s in sets)
+    e = {}
+    for a, b in (("R", "A"), ("R", "B"), ("A", "X"), ("B", "Y")):
+        e[(a, b)] = [
+            (r["cells"][a], r["cells"][b], 0.9)
+            for r in rows
+            if a in r["cells"] and b in r["cells"]
+        ]
+    t = build(cols, rows, e, 0.5, lambda f: None, root="R")
+    assert {frozenset((x["parent"], x["child"])) for x in t["edges"]} == {
+        frozenset(p) for p in ("RA", "RB", "AX", "BY")
+    }
+    got = {"".join(r["files"]): r for r in t["reuse"]}
+    assert set(got) == {"RX", "XY", "AB", "RXY"}, set(got)
+    assert (got["RX"]["count"], got["RX"]["depth_span"], got["RX"]["same_level"]) == (
+        4,
+        2,
+        False,
+    )
+    assert (got["XY"]["count"], got["XY"]["same_level"]) == (5, True)
+    assert (got["AB"]["count"], got["AB"]["same_level"]) == (6, True)
+    assert got["RXY"]["components"] == [["R"], ["X"], ["Y"]]
+    assert t["reuse_total"] == 4 + 5 + 6 + 1 == sum(r["count"] for r in t["reuse"])
+    assert [r["count"] for r in t["reuse"]] == [6, 5, 4, 1]
+    assert {x["id"]: x["reuse_in"] for x in t["nodes"]} == {
+        "R": 5,
+        "A": 6,
+        "B": 6,
+        "X": 10,
+        "Y": 6,
+    }
+    check_invariants(t)
+    # chain A-B-C-D: A and C are reuse unless B holds the code too
+    cc = [{"id": i, "file_name": i, "functions": 0} for i in "ABCD"]
+    cs = ["ABCD"] * 3 + ["AC"] * 2 + ["ABC"] * 4 + ["AD"] * 1 + ["BC"] * 5
+    cr = [{"cells": {f: f"{f}{i}" for f in s}} for i, s in enumerate(cs)]
+    for c in cc:
+        c["functions"] = sum(c["id"] in s for s in cs)
+    ce = {
+        (a, b): [
+            (r["cells"][a], r["cells"][b], 0.9)
+            for r in cr
+            if a in r["cells"] and b in r["cells"]
+        ]
+        for a, b in ("AB", "BC", "CD")
+    }
+    ch = build(cc, cr, ce, 0.5, lambda f: None, root="A", order="chain")
+    assert {"".join(r["files"]) for r in ch["reuse"]} == {"AC", "AD"}
+    assert ch["reuse_total"] == 3
+    check_invariants(ch)
+    st = build(cols, rows, {}, 0.5, lambda f: None, root="R", order="star")
+    assert "XY" in {
+        "".join(r["files"]) for r in st["reuse"]
+    }  # leaves are never adjacent
+    assert not any(set(r["files"]) <= {"R", "A"} for r in st["reuse"])
+    check_invariants(st)
+
+
+def synthetic(n, shape="tree", seed=1, base=60):
+    """n files in a made-up family (tree or star) with some cross-branch reuse."""
+    import random
+
+    rng = random.Random(seed)
+    ids = [f"F{i}" for i in range(n)]
+    held = {0: [(0, k) for k in range(base * 3)]}  # file -> [(birth file, k)]
+    parent = {0: None}
+    for i in range(1, n):
+        parent[i] = 0 if shape == "star" else rng.randrange(i)
+        keep = rng.uniform(0.5, 0.9)
+        mine = [f for f in held[parent[i]] if rng.random() < keep]
+        mine += [(i, k) for k in range(rng.randint(2, base))]
+        if i > 2 and rng.random() < 0.3:  # reuse from a file outside the tree path
+            other = rng.randrange(1, i)
+            mine += rng.sample(held[other], min(len(held[other]), rng.randint(1, 8)))
+        held[i] = list(dict.fromkeys(mine))
+    rows = {}
+    for i in range(n):
+        for f in held[i]:
+            rows.setdefault(f, {})[ids[i]] = f"{ids[i]}:{f[0]}:{f[1]}"
+    rows = [{"cells": c} for c in rows.values()]
+    cols = [
+        {"id": ids[i], "file_name": f"bin_{i}.exe", "functions": len(held[i])}
+        for i in range(n)
+    ]
+    edges = {
+        (ids[parent[i]], ids[i]): [
+            (c[ids[parent[i]]], c[ids[i]], 0.9)
+            for c in (r["cells"] for r in rows)
+            if ids[parent[i]] in c and ids[i] in c
+        ]
+        for i in range(1, n)
+    }
+    return cols, rows, edges
 
 
 def demo():
@@ -434,6 +651,23 @@ def demo():
     pr = [p for p in star["partitions"] if p["parent"] == "R"]
     assert len(pr) == KEEP_SUBSETS + 1 and pr[-1]["folded"]
     assert sum(p["count"] for p in pr) == 8 and star["nodes"][0]["died_all"] == 0
+    check_invariants(star)
+    _reuse_demo()
+    cols, rows, edges = synthetic(100)
+    big = build(cols, rows, edges, 0.5, lambda f: None, root="F0")
+    assert big["by_file_skipped"] and big["reuse"] and not big["reuse_skipped"]
+    check_invariants(big)
+    one = build(cols, rows, edges, 0.5, lambda f: None, root="F0", file="F7")
+    assert one["by_file_for"] == "F7" and not one["by_file_skipped"]
+    assert one["partitions"] == [
+        {**p, "by_file": q["by_file"]}
+        for p, q in zip(big["partitions"], one["partitions"])
+    ]
+    check_invariants(one)
+    cols, rows, edges = synthetic(100, "star")
+    star = build(cols, rows, edges, 0.5, lambda f: None, root="F0", order="star")
+    pr = [p for p in star["partitions"] if p["parent"] == "F0"]
+    assert len(pr) == KEEP_SUBSETS + 1 and pr[-1]["folded"]
     check_invariants(star)
     print("nway_lineage demo ok")
 

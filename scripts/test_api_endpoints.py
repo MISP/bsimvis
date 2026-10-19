@@ -5187,6 +5187,18 @@ def test_nway_lineage():
         ok is True,
         str(ok),
     )
+    check(
+        "nway lineage: reuse classes present (none for 2 files: always tree-connected)",
+        all(
+            "reuse" in t and t["reuse_total"] == 0 and not t["reuse_skipped"]
+            for t in got.values()
+        ),
+    )
+    r = requests.get(url, params={**base, "file": file_md5}, timeout=60)
+    check(
+        "nway lineage: file= is accepted",
+        r.status_code == 200 and "by_file_for" in r.json(),
+    )
     r = requests.get(url, params={**base, "root": file_md5_2}, timeout=60)
     check(
         "nway lineage: root= picks the root",

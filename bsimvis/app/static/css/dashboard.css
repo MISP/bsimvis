@@ -2848,7 +2848,7 @@ a.home-card:hover,
 .nway-fill { display: flex; flex-direction: column; overflow-y: hidden; min-height: 0; }
 .nway-fill > #nway-file-hero { flex: none; padding-top: 0; }
 .nway-fill > .nway-edit { flex: none; }
-.nway-fill > #nway-panel { flex: 1; display: flex; flex-direction: column; }
+.nway-fill > #nway-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .nway-fill .nway-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .nway-fill .nway-card { flex: 1; min-height: 360px; display: flex; flex-direction: column; }
 .nway-fill .nway-body { flex: 1; min-height: 0; align-items: stretch; }

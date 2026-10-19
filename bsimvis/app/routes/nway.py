@@ -458,6 +458,7 @@ def _page(doc, args, r=None, pool_id=None):
         "file_columns": doc["file_columns"],
         "functions_metadata": {f: fmeta[f] for f in page_fids if f in fmeta},
         "fallback_pairs": doc["fallback_pairs"],
+        "pair_stats": doc.get("pair_stats"),
         "min_edge": doc["min_edge"],
         "mode": doc["mode"],
         "algo": doc["algo"],

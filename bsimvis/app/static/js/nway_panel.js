@@ -111,6 +111,7 @@
             this.onOpenCluster = opts.onOpenCluster || null;
             this.cgInit = opts.cg || null;
             this.onCg = opts.onCg || null;
+            this.onData = opts.onData || null;
             this.data = null;
             this.error = null;
             this._gen = 0;
@@ -262,6 +263,7 @@
                 } else {
                     this.error = null;
                     this.data = body;
+                    if (this.onData) this.onData(body);
                 }
             } catch (e) {
                 done();

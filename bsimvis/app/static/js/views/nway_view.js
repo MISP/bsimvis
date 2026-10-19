@@ -415,6 +415,7 @@ window.NwayView = {
                     <h2><i class="fa-solid fa-table-columns"></i> N-way File Diff <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></h2>
                     <p>Functions shared across several files, and the ones unique to a single file.</p>
                 </div>
+                <div id="nway-file-hero" class="nway-hero" hidden></div>
                 <details id="nway-edit" class="nway-edit" ${this._set.cluster_uuid ? 'hidden' : this._hasSet() ? '' : 'open'}>
                     <summary>Edit set (${this._set.md5s.length} files${this._set.batch ? ' + 1 batch' : ''})</summary>
                     <div id="nway-set"></div>
@@ -439,8 +440,42 @@ window.NwayView = {
                 this._state = { ...s };
                 this._writeUrl(s);
             },
+            onData: d => this._renderFileHero(d),
         });
         this._panel.load();
+    },
+
+    // Header for the file set: where it came from, size, shared-code split, file-pair cohesion.
+    _renderFileHero(d) {
+        const el = document.getElementById('nway-file-hero');
+        if (!el || !d) return;
+        const files = d.file_columns || d.columns.filter(c => !c.kind);
+        const s = this._set, st = d.pair_stats, cnt = d.counts || {};
+        const plural = (n, w) => `${Number(n)} ${w}${n === 1 ? '' : 's'}`;
+        const kind = s.cluster_uuid ? 'Binary cluster' : s.batch ? 'Batch' : 'File set';
+        const where = s.cluster_uuid ? `cluster ${s.cluster_uuid.slice(0, 8)}` : s.batch ? `batch ${s.batch.slice(0, 8)}` : 'your selection';
+        const colls = [...new Set(files.map(f => f.collection).filter(Boolean))];
+        const archs = [...new Set(files.map(f => (f.language_id || '').split(':')[0]).filter(Boolean))];
+        const funcs = files.reduce((n, f) => n + (Number(f.functions) || 0), 0);
+        const tot = t => (cnt[t] ? cnt[t].code + cnt[t].library : 0);
+        const core = tot('core'), part = tot('partial'), uniq = tot('unique'), all = core + part + uniq;
+        const seg = (n, c) => (all ? `<b style="display:block;height:100%;width:${(n / all) * 100}%;background:${c}"></b>` : '');
+        const comp = all ? `<span style="display:inline-flex;height:8px;width:160px;border-radius:4px;overflow:hidden;background:rgba(127,127,127,.2)" title="${escapeAttr(`core ${core} · partial ${part} · unique ${uniq}`)}">${seg(core, 'var(--success)')}${seg(part, 'var(--accent)')}${seg(uniq, 'var(--token-address)')}</span> core ${core} · partial ${part} · unique ${uniq}` : '';
+        let coh = '';
+        if (st) {
+            const color = st.median >= 0.7 ? 'var(--success)' : st.median >= 0.4 ? 'var(--token-warning)' : 'var(--token-instruction)';
+            const pc = v => (v * 100).toFixed(0);
+            const tip = escapeAttr(`${st.scored} of ${st.total} file pairs scored`);
+            coh = `<span style="display:inline-flex;align-items:center;gap:8px" title="${tip}">cohesion<span class="nway-hbar"><i style="left:${pc(st.min)}%;right:${pc(1 - st.max)}%;background:${color}"></i><u style="left:${pc(st.median)}%"></u></span>min ${st.min.toFixed(2)} · <b style="color:${color}">median ${st.median.toFixed(2)}</b> · max ${st.max.toFixed(2)}</span>`;
+        }
+        const warns = [];
+        if (st && st.median < 0.4) warns.push('weak: files may be unrelated');
+        if (st && st.scored < st.total) warns.push(`${st.total - st.scored} pairs unscored`);
+        const parts = [plural(files.length, 'file'), `${funcs.toLocaleString()} functions`, plural(colls.length, 'collection'), archs.join(' · ')].filter(Boolean);
+        el.hidden = false;
+        el.innerHTML = `<div class="nway-hero-top"><span class="nway-hkind ${kind === 'File set' ? 'set' : ''}">${kind}</span><span class="dim">${escapeHtml(where)}</span></div>
+            <div class="nway-hero-meta dim">${comp}</div>
+            <div class="nway-hero-meta dim">${[...parts.map(escapeHtml), coh].join(' · ')}${warns.map(w => `<span class="nway-hpill warn">${escapeHtml(w)}</span>`).join('')}</div>`;
     },
 
     // `coll:md5` (or a bare md5) -> its collection and md5.

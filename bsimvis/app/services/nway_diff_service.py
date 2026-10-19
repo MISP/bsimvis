@@ -415,6 +415,18 @@ def _stored_edges(r, scope, members, columns, algo, fid_sets, fids, ix, sample):
         ]
 
     sampled = None
+    stats = None
+    if not (sample and len(members) > sample[0]):
+        sc = _pair_scores(r, scope, members, algo, pairs, sids)
+        found = sorted(v for v in sc[np.triu_indices(len(members), 1)] if v >= 0)
+        if found:
+            stats = {
+                "min": found[0],
+                "median": found[len(found) // 2],
+                "max": found[-1],
+                "scored": len(found),
+                "total": len(pairs),
+            }
     if sample and len(members) > sample[0]:
         # ponytail: k nearest + a few random partners per file, not every pair;
         # a row still forms through any chain of read pairs, but a function only
@@ -479,7 +491,7 @@ def _stored_edges(r, scope, members, columns, algo, fid_sets, fids, ix, sample):
             edges[(columns[i]["id"], columns[j]["id"])] = PairEdges(
                 fids, ix, ((x, y, float(s)) for x, y, s in greedy_match(found)[0])
             )
-    return edges, len(missing), sampled
+    return edges, len(missing), sampled, stats
 
 
 def _fn_meta(meta):
@@ -564,9 +576,9 @@ def _load_base(r, scope, members, vparams, labels, warnings, sample=None):
     sampled = None
     if vparams:
         edges = _virtual_edges(r, columns, fid_sets, vparams, all_fids, ix)
-        fallback = 0
+        fallback, stats = 0, None
     else:
-        edges, fallback, sampled = _stored_edges(
+        edges, fallback, sampled, stats = _stored_edges(
             r, scope, members, columns, algo, fid_sets, all_fids, ix, sample
         )
     if sampled:
@@ -587,6 +599,7 @@ def _load_base(r, scope, members, vparams, labels, warnings, sample=None):
         "edges": edges,
         "fallback_pairs": fallback,
         "pairs_read": sampled,
+        "pair_stats": stats,
         "warnings": warnings,
     }
 
@@ -1073,6 +1086,7 @@ def compute(r, scope, members, params=None):
         "rows": rows,
         "fmeta": base["fmeta"],
         "fallback_pairs": base["fallback_pairs"],
+        "pair_stats": base.get("pair_stats"),
         "warnings": base["warnings"],
         # Read by nway_facets_service (cache key, pair scores); never sent to clients.
         "key": hashlib.md5(repr(doc_key).encode()).hexdigest(),

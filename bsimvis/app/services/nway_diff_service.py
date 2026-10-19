@@ -123,11 +123,14 @@ class _LRU:
 # tens of MB at most under the caps; the Redis-backed job cache replaces this.
 _BASE_CACHE = _LRU(2)
 _DOC_CACHE = _LRU(8)
+# Matched rows per (base, min_edge): twins, column folds, focus and presence only
+# re-project them, so those toggles skip the match (99% of a doc build).
+_MATCH_CACHE = _LRU(4)
 
 
 def invalidate():
     """Drop cached docs: function names are not part of their revision key."""
-    for c in (_BASE_CACHE, _DOC_CACHE):
+    for c in (_BASE_CACHE, _DOC_CACHE, _MATCH_CACHE):
         with c.lock:
             c.data.clear()
 
@@ -896,7 +899,12 @@ def compute(r, scope, members, params=None):
     if base is None:
         base = _load_base(r, scope, members, vparams, labels, warnings)
         _BASE_CACHE.put(base_key, base)
-    rows = _match(base, min_edge)
+    rows = _MATCH_CACHE.get(base_key + (min_edge,))
+    if rows is None:
+        rows = _match(base, min_edge)
+        _MATCH_CACHE.put(base_key + (min_edge,), rows)
+    # the page renames rows in place (cluster names): each doc gets its own copies
+    rows = [dict(row) for row in rows]
     cov = coverage(rows, [c["id"] for c in base["columns"]])
     file_columns = [{**c, "coverage": cov[c["id"]]} for c in base["columns"]]
     names = {c["id"]: c.get("file_name") or c["md5"] for c in base["columns"]}

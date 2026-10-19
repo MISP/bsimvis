@@ -1134,9 +1134,10 @@
             for (const el of [this.el, this._dw]) if (el) el.classList.toggle('nway-hue', on);
         }
 
+        // i is a column index (data.columns), not an index into file_columns.
         _fileHue(i) {
-            const t = this._tree();
-            return t.grouped ? t.colors[i].h : Math.round((i * 137.508 + 215) % 360);
+            const t = this._tree(), c = t.grouped && t.colors[i];
+            return c ? c.h : Math.round((i * 137.508 + 215) % 360);
         }
 
         // The column tree rebuilt from the columns' paths: each top-level group or column gets a hue, and what is
@@ -1205,7 +1206,7 @@
                 const coll = c.collection || '';
                 const data = { md5: c.md5, fileId: `${coll}:file:${c.md5}`, name: c.file_name || c.md5, file_name: c.file_name || '', collection: coll };
                 const tip = [c.file_name, c.md5, coll, on[i] ? 'function present' : 'function absent', edge && edge[i] ? 'called from the focus function here' : ''].filter(Boolean).join('\n');
-                return `<i class="${on[i] ? 'on' : ''}${edge && edge[i] ? ' edge' : ''}"${total <= 16 ? ` style="--h:${this._fileHue(i)}"` : ''} title="${escapeAttr(tip)}" data-entity-data='${escapeAttr(JSON.stringify(data))}'
+                return `<i class="${on[i] ? 'on' : ''}${edge && edge[i] ? ' edge' : ''}"${total <= 16 ? ` style="--h:${this._fileHue(this.data.columns.findIndex(x => x.id === c.id))}"` : ''} title="${escapeAttr(tip)}" data-entity-data='${escapeAttr(JSON.stringify(data))}'
                     onclick="event.stopPropagation(); openFileDetails(${escapeAttr(jsString(coll))}, ${escapeAttr(jsString(c.md5))}, ${escapeAttr(jsString(c.file_name || c.md5))}, event)"
                     oncontextmenu='event.stopPropagation(); EntityRenderer.handleContextMenu(event, "file", this)'></i>`;
             }).join('');

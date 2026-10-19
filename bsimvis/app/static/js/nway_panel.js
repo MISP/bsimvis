@@ -201,6 +201,9 @@
             if (scroll) qs.set('offset', append ? this.data.items.length : 0);
             if (!this.data) this.el.innerHTML = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> <span class="nway-busy-txt"></span></div>';
             const t0 = Date.now(), usual = NwayPanel._lastMs;
+            const pid = Math.random().toString(36).slice(2, 12) + t0.toString(36);
+            qs.set('progress_id', pid);
+            let prog = null, polling = false;
             // Elapsed time plus the last run's duration as the estimate; the panel stays usable while it ticks.
             const tick = () => {
                 if (!this.el.querySelector('.nway-busy-txt') && !this.el.querySelector('.nway-busy')) {
@@ -210,7 +213,17 @@
                     this.el.appendChild(b);
                 }
                 const t = this.el.querySelector('.nway-busy-txt');
-                if (t) t.textContent = `Matching functions... ${Math.round((Date.now() - t0) / 1000)}s` + (usual ? ` (usually ~${Math.max(1, Math.round(usual / 1000))}s)` : '') + ` - times out at ${NWAY_TIMEOUT_MS / 1000}s`;
+                const el = (Date.now() - t0) / 1000;
+                let txt = `Matching functions... ${Math.round(el)}s`;
+                if (prog && prog.fraction > 0) {
+                    txt = `Matching functions: ${prog.label} (${Math.round(prog.fraction * 100)}%), ${Math.round(el)}s`;
+                    if (prog.fraction > 0.1 && el > 2) txt += `, ~${Math.max(1, Math.round(el * (1 - prog.fraction) / prog.fraction))}s left`;
+                } else if (usual) txt += ` (usually ~${Math.max(1, Math.round(usual / 1000))}s)`;
+                if (t) t.textContent = txt + ` - times out at ${NWAY_TIMEOUT_MS / 1000}s`;
+                if (!polling) {
+                    polling = true;
+                    fetch(`/api/bin_sim/nway/progress?id=${pid}`).then(r => r.json()).then(p => { if (p.label) prog = p; }).catch(() => { }).finally(() => { polling = false; });
+                }
             };
             tick();
             const timer = setInterval(tick, 500);

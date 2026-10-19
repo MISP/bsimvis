@@ -51,6 +51,20 @@ _DEFAULT_NAME = re.compile(r"^(FUN_|sub_|thunk_)", re.I)
 MAX_COLUMNS = 400  # a column tree stops expanding past this many columns
 
 
+_progress = threading.local()
+
+
+def set_progress(fn):
+    """Per-thread callback `fn(fraction, label)` for the slow base load; None clears it."""
+    _progress.fn = fn
+
+
+def _report(frac, label):
+    fn = getattr(_progress, "fn", None)
+    if fn:
+        fn(frac, label)
+
+
 class TooLarge(Exception):
     def __init__(self, members, functions=None):
         super().__init__(f"{members} members, {functions} functions")
@@ -278,6 +292,7 @@ def virtual_params(scope, members, params):
 def _virtual_edges(r, columns, fid_sets, p):
     """Pairwise-greedy edges per column pair, as a fresh collection would build them."""
     all_fids = set().union(*fid_sets.values())
+    _report(0.1, "loading vectors")
     vectors = load_vectors(r, all_fids)
     small = {f for f in all_fids if len(vectors.get(f, ())) < p["min_features"]}
 
@@ -293,7 +308,9 @@ def _virtual_edges(r, columns, fid_sets, p):
             by_hash[h.decode() if isinstance(h, bytes) else h][owner[fid]].append(fid)
 
     edges = {}
-    for a, b in combinations(columns, 2):
+    pairs = list(combinations(columns, 2))
+    for n, (a, b) in enumerate(pairs):
+        _report(0.3 + 0.65 * n / len(pairs), f"matching file pair {n + 1}/{len(pairs)}")
         fa, fb = fid_sets[a["id"]], fid_sets[b["id"]]
         found = discover_edges(
             vectors, fa - small, fb - small, p["algo"], p["min_score"]
@@ -322,7 +339,9 @@ def _stored_edges(r, scope, members, columns, algo):
     # below it cannot recover their weaker edges; pairs with a stored doc are exact.
     fallback_floor = float(config_service.get("similarity.discovery_min_score", 0.5))
     edges, fallback = {}, 0
-    for (i, a), (j, b) in combinations(enumerate(members), 2):
+    pairs = list(combinations(enumerate(members), 2))
+    for n, ((i, a), (j, b)) in enumerate(pairs):
+        _report(0.1 + 0.85 * n / len(pairs), f"reading file pair {n + 1}/{len(pairs)}")
         (coll_a, md5_a), (coll_b, md5_b) = a, b
         _, doc = bin_sim_service.load_pair(
             coll_a, md5_a, md5_b, coll_b if pool_id else None, pool_id, algo
@@ -374,6 +393,7 @@ def _load_base(r, scope, members, vparams, labels, warnings):
     `vparams` is None for stored mode, else the virtual-mode parameters.
     """
     algo = vparams["algo"] if vparams else _algo(scope, members)
+    _report(0.02, "reading files")
 
     pipe = r.pipeline(transaction=False)
     for coll, md5 in members:

@@ -5009,6 +5009,18 @@ def test_nway_function_meta():
     if not file_md5 or not file_md5_2:
         print(_color("\n[SKIP] Need two binaries – meta checks skipped.", YELLOW))
         return
+    # a fresh min_features forces a base load, which reports its progress
+    st, _ = _nway(mode="virtual", min_features=7, progress_id="progtest00001")
+    pr = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/progress",
+        params={"id": "progtest00001"},
+        timeout=60,
+    ).json()
+    check(
+        "nway progress: a base load reports fraction and label",
+        st == 200 and 0 <= pr.get("fraction", -1) <= 1 and bool(pr.get("label")),
+        f"status={st} progress={pr}",
+    )
     _, core = _nway(tab="core", scope="all", limit=1000)
     row = next(iter((core or {}).get("items", [])), None)
     if not row:

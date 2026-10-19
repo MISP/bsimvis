@@ -2672,6 +2672,16 @@ class BinSimNwaySummaries(Resource):
         return get_nway_summaries()
 
 
+@ns_bin_sim.route("/nway/progress")
+class BinSimNwayProgress(Resource):
+    @ns_bin_sim.doc(params={"id": "The `progress_id` sent with a running /nway call"})
+    def get(self):
+        """Progress (`fraction` 0-1, `label`) of a running /nway computation; {} when none is reported."""
+        from bsimvis.app.routes.nway import get_nway_progress
+
+        return get_nway_progress()
+
+
 @ns_bin_sim.route("/nway")
 class BinSimNway(Resource):
     @ns_bin_sim.doc(
@@ -2716,6 +2726,7 @@ class BinSimNway(Resource):
             "group_flip": "JSON list of group ids whose state differs from group_open",
             "limit": "Page size",
             "offset": "Pagination offset",
+            "progress_id": "Client-chosen token; poll /nway/progress?id= for the base load's progress",
         }
     )
     def get(self):

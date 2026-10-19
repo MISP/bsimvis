@@ -21,6 +21,7 @@ from bsimvis.app.services.tag_taxonomy import tag_in_scope
 CLUSTER_NAME_MIN_COHESION = 0.8
 TABS = ("all", "core", "partial", "unique")
 _MD5 = re.compile(r"^[0-9a-f]{32}$")
+_PROGRESS_ID = re.compile(r"^[\w-]{8,40}$")
 
 
 def _members(collection, pool_id):
@@ -500,6 +501,16 @@ def _load_doc():
 
     r = get_redis()
     children, groups = [], None
+    pid = request.args.get("progress_id", "")
+    if _PROGRESS_ID.match(pid):
+        q, last = get_queue_redis(), [-1]
+
+        def report(frac, label):
+            if int(frac * 100) != last[0]:
+                last[0] = int(frac * 100)
+                q.setex(f"nway:progress:{pid}", 120, json.dumps([frac, label]))
+
+        nway_diff_service.set_progress(report)
     try:
         if cluster_uuid:
             scope, members, node_groups, children = _cluster_node(
@@ -556,7 +567,23 @@ def _load_doc():
         raise _Reply(({"error": "unknown_batch"}, 404))
     except nway_diff_service.MemberMissing as e:
         raise _Reply(({"error": "unknown_files", "missing": e.missing}, 404))
+    finally:
+        nway_diff_service.set_progress(None)
     return doc, r, pool_id
+
+
+def get_nway_progress():
+    """Fraction and label of a running `/nway` call that was sent with `progress_id`."""
+    pid = request.args.get("id", "")
+    raw = (
+        get_queue_redis().get(f"nway:progress:{pid}")
+        if _PROGRESS_ID.match(pid)
+        else None
+    )
+    if not raw:
+        return {}
+    frac, label = json.loads(raw)
+    return {"fraction": frac, "label": label}
 
 
 def get_nway():

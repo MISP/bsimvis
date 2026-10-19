@@ -209,10 +209,15 @@
         });
         const stroke = l => l.kind === 'shared' ? l.grad : l.hatch ? `url(#hatch-${l.kind}-${uid})` : l.kind === 'born' ? BLUE : ORANGE;
         const full = l => l.kind === 'shared' ? (l.overlap ? GREY_DARK : GREY) : stroke(l);
-        const path = d3.sankeyLinkHorizontal();
+        // filled band with a vertical thickness equal to its width at both ends, so
+        // ribbons stacked on a node edge sit side by side on the curve instead of overlapping
+        const ribbon = (x0, x1, y0, y1, w) => {
+            const m = (x0 + x1) / 2, a = y0 - w / 2, b = y1 - w / 2;
+            return `M${x0},${a}C${m},${a} ${m},${b} ${x1},${b}L${x1},${b + w}C${m},${b + w} ${m},${a + w} ${x0},${a + w}Z`;
+        };
         const ribbons = s.append('g').selectAll('path').data(links).join('path')
-            .attr('d', path).attr('fill', 'none').attr('stroke', stroke)
-            .attr('stroke-width', l => l.width).attr('stroke-opacity', l => l.kind === 'shared' ? 1 : 0.85).style('cursor', 'pointer');
+            .attr('d', l => ribbon(l.source.x1, l.target.x0, l.y0, l.y1, l.width)).attr('fill', stroke).attr('stroke', 'none')
+            .attr('fill-opacity', l => l.kind === 'shared' ? 1 : 0.85).style('cursor', 'pointer');
         const ov = s.append('g').style('pointer-events', 'none');
 
         // parent segments drawn on the node; leaves are plain boxes
@@ -291,8 +296,8 @@
                     const n = Math.max(0, Math.min(l.value, ((l.bf || {})[F.id] || 0) - l.before));
                     if (!n) continue;
                     const w = Math.max(1, n * ky), top = l.y0 - l.width / 2;
-                    ov.append('path').attr('d', path({ source: l.source, target: l.target, y0: top + w / 2, y1: l.y1 - l.width / 2 + w / 2, width: w }))
-                        .attr('fill', 'none').attr('stroke', full(l)).attr('stroke-width', w).attr('stroke-opacity', l.kind === 'shared' ? 0.95 : 1);
+                    ov.append('path').attr('d', ribbon(l.source.x1, l.target.x0, top + w / 2, l.y1 - l.width / 2 + w / 2, w))
+                        .attr('fill', full(l)).attr('fill-opacity', l.kind === 'shared' ? 0.95 : 1);
                 }
                 for (const sg of segs) {
                     const n = sg.died ? (F.id === sg.n.id ? sg.count : (sg.n.died_by_file || {})[F.id] || 0) : (sg.part.by_file || {})[F.id] || 0;

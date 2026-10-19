@@ -2,25 +2,51 @@
  * Lineage Sankey of the N-way panel's files (GET /api/bin_sim/nway/lineage).
  *
  * NwayLineage.mount(panel) is called after every panel render: it adds a
- * "Lineage" toggle and, when on, a Sankey above the table. One node per file
- * (height = function count); per parent -> child edge three separate bands:
- * shared (grey, between the nodes), born (blue, from the top lane into the
- * child) and died (orange, from the parent into the bottom lane). The part of
- * born/died that looks like a matcher miss (recall_suspect) is a hatched
- * sub-band of the same colour. d3.sankey builds the graph (born sources and
- * died sinks are real nodes), d3.sankeyLinkHorizontal draws the ribbons. Click an edge or node for numbers.
+ * "Lineage" toggle and, when on, a Sankey above the table. One node per file,
+ * drawn at exactly its function count and cut into segments by which children
+ * keep the code; flows are born (blue, from the top lane), shared (grey) and
+ * died (orange, into the bottom lane), all on one px-per-function scale. The
+ * part of born/died that looks like a matcher miss (recall_suspect) is a hatched
+ * sub-band of the same colour. Ribbons are filled polygons offset from one
+ * centre curve per bundle, so their width is constant and neighbours never
+ * overlap. Hover a file to follow its code through the whole chart.
  * Everything from a sample (file names, md5s) is set with textContent / SVG
- * attributes, never innerHTML.
+ * attributes, never innerHTML. Colours come from the app's theme variables.
  */
 (function () {
     const NS = 'http://www.w3.org/2000/svg';
     const ORDERS = [['tree', 'Tree'], ['chain', 'Chain'], ['star', 'Star']];
-    const NODE_W = 110, BAND_W = 12, GAP = 230, PAD = 30, PADDING = 28, BAND_PAD = 6;
-    const LANE_PAD = 34, BAND_H = 200, FILE_H = 420, KY_MAX = 1.5;
-    // colour-blind-safe pair (Okabe-Ito): blue is only born, orange only died
-    const BLUE = '#0072B2', ORANGE = '#D55E00', GREY = '#8a8f98';
-    const SLATE = '#475569', SLATE_LIGHT = '#64748b', GREY_DARK = '#5b6472';
+    const NODE_W = 110, BAND_W = 12, GAP = 230, PAD = 30, PADDING = 36, BAND_PAD = 6;
+    const LANE_PAD = 44, BAND_H = 200, FILE_H = 420, KY_MAX = 1.5;
+    const V = { born: 'var(--lin-born)', died: 'var(--lin-died)', shared: 'var(--lin-grey)', fork: 'var(--lin-grey-d)', slate: 'var(--lin-slate)', slateHi: 'var(--lin-slate-hi)' };
     let uid = 0;
+    const fmt = n => Number(n).toLocaleString();
+
+    const CSS = `
+.lin{--lin-slate:#3d4a5f;--lin-slate-hi:#52617a;--lin-edge:rgba(255,255,255,.16);--lin-grey:#8b95a5;--lin-grey-d:#5d6a7e;--lin-born:#3d9be0;--lin-died:#f08a3c;--lin-card:var(--card-bg,#1e1e1e);--lin-line:var(--border,#3e3d32);--lin-halo:var(--bg,#121212);font:12.5px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums;color:var(--text,#f8f8f2)}
+html.light-theme .lin{--lin-slate:#4a5870;--lin-slate-hi:#66758f;--lin-edge:rgba(0,0,0,.2);--lin-grey:#8892a3;--lin-grey-d:#5f6b7f;--lin-born:#0072B2;--lin-died:#D55E00}
+.lin-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:4px 0 8px}
+.lin-seg{display:inline-flex;border:1px solid var(--lin-line);border-radius:8px;overflow:hidden;background:var(--lin-card)}
+.lin-seg button{background:transparent;border:0;border-left:1px solid var(--lin-line);color:inherit;padding:5px 9px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;font:inherit}
+.lin-seg button:first-child{border-left:0}
+.lin-seg button:hover{background:var(--hover,#2d2d2d)}
+.lin-chip{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border:1px solid var(--lin-line);border-radius:999px;background:var(--lin-card);font-size:12px}
+.lin-sw{width:12px;height:8px;border-radius:2px;display:inline-block}
+.lin-main{display:flex;gap:12px;align-items:flex-start}
+.lin-scroll{overflow:auto;flex:1;max-height:75vh;min-width:0;border:1px solid var(--lin-line);border-radius:12px;background:var(--lin-card)}
+.lin-side{width:250px;flex:none;border:1px solid var(--lin-line);border-radius:12px;background:var(--lin-card);padding:12px 14px}
+.lin-side h4{margin:0 0 8px;font-size:13px;word-break:break-all}
+.lin-kv{display:grid;grid-template-columns:1fr auto;gap:2px 14px}
+.lin-kv .k{opacity:.7}
+.lin-note{opacity:.72;font-size:12px}
+.lin-tip{position:fixed;pointer-events:none;display:none;z-index:50;min-width:200px;max-width:340px;padding:9px 11px;border-radius:10px;background:var(--lin-card);color:var(--text,#f8f8f2);border:1px solid var(--lin-line);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.lin-tip:before{content:"";position:absolute;left:-5px;top:12px;width:8px;height:8px;background:var(--lin-card);border-left:1px solid var(--lin-line);border-bottom:1px solid var(--lin-line);transform:rotate(45deg)}
+.lin-tip .t{display:flex;align-items:center;gap:7px;font-weight:600;margin-bottom:5px}
+.lin-dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none}
+.lin svg text{font-family:inherit}
+.lin-halo{paint-order:stroke;stroke:var(--lin-halo);stroke-width:3.5px;stroke-linejoin:round}
+.lin button:focus-visible,.lin select:focus-visible{outline:2px solid var(--accent,#66d9ef);outline-offset:2px}
+`;
 
     function el(tag, attrs = {}, text) {
         const e = document.createElement(tag);
@@ -33,6 +59,11 @@
         for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
         if (text !== undefined) e.textContent = text;
         return e;
+    }
+    function icon(d) {
+        const s = svg('svg', { width: 14, height: 14, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' });
+        s.append(svg('path', { d }));
+        return s;
     }
 
     // File depth from the root; a file's layer is 2 * depth, the gaps between
@@ -161,203 +192,280 @@
         return { nodes, files, links, segs, W, H, ky, filesBottom, diedTop, fileTop, edgeOf };
     }
 
+    // ---- ribbon geometry ----
+    // One centre cubic per bundle (horizontal tangents at both nodes), sampled with
+    // unit normals. A piece is the strip between normal offsets o and o + w, so its
+    // perpendicular width is w along the whole curve and neighbours never overlap.
+    function sampleCurve(x0, x1, yc0, yc1) {
+        const n = Math.max(36, Math.min(96, Math.round((x1 - x0 + Math.abs(yc1 - yc0)) / 12)));
+        const m = (x0 + x1) / 2, h = x1 - m, dy = yc1 - yc0;
+        const pts = [];
+        let kmax = 0;
+        for (let i = 0; i <= n; i++) {
+            const t = i / n, u = 1 - t;
+            const x = u * u * u * x0 + 3 * u * u * t * m + 3 * u * t * t * m + t * t * t * x1;
+            const y = u * u * u * yc0 + 3 * u * u * t * yc0 + 3 * u * t * t * yc1 + t * t * t * yc1;
+            const vx = 3 * (u * u * (m - x0) + t * t * (x1 - m)), vy = 6 * u * t * dy;
+            const ax = 6 * h * (t - u), ay = 6 * dy * (u - t);
+            const len = Math.hypot(vx, vy) || 1;
+            kmax = Math.max(kmax, Math.abs(vx * ay - vy * ax) / (len * len * len));
+            pts.push([x, y, -vy / len, vx / len]);
+        }
+        return { pts, kmax };
+    }
+    function strip(pts, o, w) {
+        const a = pts.map(([x, y, nx, ny]) => `${(x + nx * o).toFixed(1)},${(y + ny * o).toFixed(1)}`);
+        const b = pts.map(([x, y, nx, ny]) => `${(x + nx * (o + w)).toFixed(1)},${(y + ny * (o + w)).toFixed(1)}`).reverse();
+        return `M${a.join('L')}L${b.join('L')}Z`;
+    }
+    // previous shape: constant vertical thickness; used where a bundle cannot be offset
+    function band(x0, x1, y0, y1, w) {
+        const m = (x0 + x1) / 2, a = y0 - w / 2, b = y1 - w / 2;
+        return `M${x0},${a}C${m},${a} ${m},${b} ${x1},${b}L${x1},${b + w}C${m},${b + w} ${m},${a + w} ${x0},${a + w}Z`;
+    }
+    // Group links by (source, target); a bundle is offset-able when its pieces touch at both ends.
+    function bundle(links) {
+        const groups = new Map();
+        for (const l of links) {
+            const k = groups.get(l.source) || groups.set(l.source, new Map()).get(l.source);
+            (k.get(l.target) || k.set(l.target, []).get(l.target)).push(l);
+        }
+        for (const byTarget of groups.values()) for (const ls of byTarget.values()) {
+            ls.sort((a, b) => a.y0 - b.y0);
+            const W = ls.reduce((a, l) => a + l.width, 0);
+            let ok = true;
+            for (let i = 1; i < ls.length; i++) {
+                const p = ls[i - 1], c = ls[i];
+                if (Math.abs((c.y0 - c.width / 2) - (p.y0 + p.width / 2)) > 1.5 || Math.abs((c.y1 - c.width / 2) - (p.y1 + p.width / 2)) > 1.5) ok = false;
+            }
+            const x0 = ls[0].source.x1, x1 = ls[0].target.x0;
+            const yc0 = ls[0].y0 - ls[0].width / 2 + W / 2, yc1 = ls[0].y1 - ls[0].width / 2 + W / 2;
+            const curve = ok ? sampleCurve(x0, x1, yc0, yc1) : null;
+            ok = ok && curve.kmax * (W / 2) < 0.85;
+            let cum = 0;
+            for (const l of ls) {
+                l.pts = ok ? curve.pts : null;
+                l.o = cum - W / 2;
+                l.d = ok ? strip(curve.pts, l.o, l.width) : band(x0, x1, l.y0, l.y1, l.width);
+                cum += l.width;
+            }
+        }
+    }
+
     function draw(doc, onPick, width) {
         uid++;
         const L = layout(doc, width);
         const { links, segs, W, H, ky } = L;
+        bundle(links);
         const nFiles = doc.nodes.length;
         const name = new Map(L.files.map(n => [n.id, n.file_name || n.id]));
         const names = ids => ids.map(i => name.get(i)).join(', ');
         const s = d3.create('svg').attr('width', W).attr('height', H).attr('viewBox', `0 0 ${W} ${H}`)
-            .attr('role', 'img').attr('aria-label', 'Lineage of the files: shared, born and died code');
+            .attr('role', 'img').attr('aria-label', 'Lineage of the files: shared, born and died code').style('opacity', 0);
+        s.transition().duration(250).ease(d3.easeCubicOut).style('opacity', 1);
         const defs = s.append('defs');
-        for (const [kind, col] of [['born', BLUE], ['died', ORANGE]]) {
+        for (const kind of ['born', 'died']) {
             const p = defs.append('pattern').attr('id', `hatch-${kind}-${uid}`).attr('width', 6).attr('height', 6)
                 .attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
-            p.append('rect').attr('width', 6).attr('height', 6).attr('fill', col).attr('fill-opacity', 0.25);
-            p.append('rect').attr('width', 3).attr('height', 6).attr('fill', col);
+            p.append('rect').attr('width', 6).attr('height', 6).style('fill', V[kind]).attr('fill-opacity', 0.22);
+            p.append('rect').attr('width', 3).attr('height', 6).style('fill', V[kind]);
         }
         const stripe = defs.append('pattern').attr('id', `ovl-${uid}`).attr('width', 6).attr('height', 6)
             .attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
-        stripe.append('rect').attr('width', 6).attr('height', 6).attr('fill', SLATE_LIGHT);
-        stripe.append('rect').attr('width', 2).attr('height', 6).attr('fill', '#cbd5e1');
-        const bandTotal = k => doc.edges.reduce((a, e) => a + e[k], 0);
-        const lane = (y, h, col, label) => {
-            s.append('rect').attr('x', 0).attr('y', y).attr('width', W).attr('height', h).attr('fill', col).attr('fill-opacity', 0.08);
-            s.append('text').attr('x', 8).attr('y', y + 16).attr('font-size', 12).attr('font-weight', 600).attr('fill', 'currentColor').text(label);
+        stripe.append('rect').attr('width', 6).attr('height', 6).style('fill', V.slateHi);
+        stripe.append('rect').attr('width', 2).attr('height', 6).attr('fill', '#fff').attr('fill-opacity', 0.28);
+        const sh = defs.append('filter').attr('id', `shadow-${uid}`).attr('x', '-10%').attr('y', '-10%').attr('width', '120%').attr('height', '130%');
+        sh.append('feDropShadow').attr('dx', 0).attr('dy', 1.5).attr('stdDeviation', 2.5).attr('flood-color', '#000').attr('flood-opacity', 0.3);
+        for (const kind of ['born', 'died']) {
+            const g = defs.append('linearGradient').attr('id', `lane-${kind}-${uid}`).attr('x1', 0).attr('x2', 0)
+                .attr('y1', kind === 'born' ? 0 : 1).attr('y2', kind === 'born' ? 1 : 0);
+            g.append('stop').attr('offset', 0).style('stop-color', V[kind]).attr('stop-opacity', 0.2);
+            g.append('stop').attr('offset', 1).style('stop-color', V[kind]).attr('stop-opacity', 0.03);
+        }
+        const lane = (y, h, kind, label, total) => {
+            s.append('rect').attr('x', 0).attr('y', y).attr('width', W).attr('height', h).attr('fill', `url(#lane-${kind}-${uid})`);
+            const txt = `${label} ${fmt(total)} fn`, pw = 7.2 * txt.length + 26, py = kind === 'born' ? y + 10 : y + h - 32;
+            s.append('rect').attr('x', 12).attr('y', py).attr('width', pw).attr('height', 22).attr('rx', 11)
+                .style('fill', 'var(--lin-card)').style('stroke', V[kind]).attr('stroke-opacity', 0.6);
+            s.append('circle').attr('cx', 24).attr('cy', py + 11).attr('r', 4).style('fill', V[kind]);
+            s.append('text').attr('x', 34).attr('y', py + 15).attr('font-size', 12).attr('font-weight', 600).style('fill', 'var(--text)').text(txt);
         };
-        lane(0, LANE_PAD + BAND_H + 30, BLUE, `BORN: ${bandTotal('gained')} functions`);
-        lane(L.diedTop - 30, H - L.diedTop + 30, ORANGE, `DIED (kept by no child): ${L.files.reduce((a, n) => a + (n.died_all || 0), 0)} functions`);
-        s.append('text').attr('x', 8).attr('y', L.fileTop - 14).attr('font-size', 12).attr('font-weight', 600).attr('fill', 'currentColor')
-            .text('SHARED (kept from parent to child)');
+        const bornTotal = doc.edges.reduce((a, e) => a + e.gained, 0);
+        const diedTotal = L.files.reduce((a, n) => a + (n.died_all || 0), 0);
+        lane(0, LANE_PAD + BAND_H + 30, 'born', 'Born', bornTotal);
+        lane(L.diedTop - 30, H - L.diedTop + 30, 'died', 'Died (kept by no child)', diedTotal);
+        s.append('text').attr('x', 14).attr('y', L.fileTop - 34).attr('font-size', 11.5).attr('fill-opacity', 0.7).style('fill', 'var(--text)').text('Shared: kept from parent to child');
 
-        const tip = d3.select(document.body).append('div')
-            .style('position', 'fixed').style('pointer-events', 'none').style('display', 'none').style('z-index', 50)
-            .style('padding', '6px 8px').style('border-radius', '4px').style('background', '#1f2328').style('color', '#fff')
-            .style('font-size', '12px').style('line-height', 1.4).style('white-space', 'pre');
+        const tip = d3.select(document.body).append('div').attr('class', 'lin lin-tip');
         s.node()._cleanup = () => tip.remove();
-        const showTip = (ev, t) => tip.text(t).style('display', 'block').style('left', `${ev.clientX + 12}px`).style('top', `${ev.clientY + 12}px`);
+        const showTip = (ev, title, dot, rows) => {
+            tip.selectAll('*').remove();
+            const t = tip.append('div').attr('class', 't');
+            t.append('span').attr('class', 'lin-dot').style('background', dot);
+            t.append('span').text(title);
+            const kv = tip.append('div').attr('class', 'lin-kv');
+            for (const [k, v] of rows) { kv.append('span').attr('class', 'k').text(k); kv.append('span').text(v); }
+            tip.style('display', 'block').style('left', `${ev.clientX + 14}px`).style('top', `${ev.clientY + 10}px`);
+        };
+        const moveTip = ev => tip.style('left', `${ev.clientX + 14}px`).style('top', `${ev.clientY + 10}px`);
         const hideTip = () => tip.style('display', 'none');
 
-        links.filter(l => l.kind === 'shared').forEach((l, i) => {
-            const g = defs.append('linearGradient').attr('id', `sh-${uid}-${i}`).attr('gradientUnits', 'userSpaceOnUse')
+        links.filter(l => l.kind === 'shared').concat(links.filter(l => l.kind !== 'shared')).forEach((l, i) => {
+            const col = l.kind === 'shared' ? (l.overlap ? V.fork : V.shared) : V[l.kind];
+            const g = defs.append('linearGradient').attr('id', `g-${uid}-${i}`).attr('gradientUnits', 'userSpaceOnUse')
                 .attr('x1', l.source.x1).attr('x2', l.target.x0);
-            const col = l.overlap ? GREY_DARK : GREY;
-            g.append('stop').attr('offset', 0).attr('stop-color', col).attr('stop-opacity', 0.7);
-            g.append('stop').attr('offset', 1).attr('stop-color', col).attr('stop-opacity', 0.3);
-            l.grad = `url(#sh-${uid}-${i})`;
+            g.append('stop').attr('offset', 0).style('stop-color', col).attr('stop-opacity', l.kind === 'shared' ? 0.8 : 0.95);
+            g.append('stop').attr('offset', 1).style('stop-color', col).attr('stop-opacity', l.kind === 'shared' ? 0.45 : 0.75);
+            l.fill = l.hatch ? `url(#hatch-${l.kind}-${uid})` : `url(#g-${uid}-${i})`;
+            l.col = col;
         });
-        const stroke = l => l.kind === 'shared' ? l.grad : l.hatch ? `url(#hatch-${l.kind}-${uid})` : l.kind === 'born' ? BLUE : ORANGE;
-        const full = l => l.kind === 'shared' ? (l.overlap ? GREY_DARK : GREY) : stroke(l);
-        // filled band with a vertical thickness equal to its width at both ends, so
-        // ribbons stacked on a node edge sit side by side on the curve instead of overlapping
-        const ribbon = (x0, x1, y0, y1, w) => {
-            const m = (x0 + x1) / 2, a = y0 - w / 2, b = y1 - w / 2;
-            return `M${x0},${a}C${m},${a} ${m},${b} ${x1},${b}L${x1},${b + w}C${m},${b + w} ${m},${a + w} ${x0},${a + w}Z`;
-        };
-        const ribbons = s.append('g').selectAll('path').data(links).join('path')
-            .attr('d', l => ribbon(l.source.x1, l.target.x0, l.y0, l.y1, l.width)).attr('fill', stroke).attr('stroke', 'none')
-            .attr('fill-opacity', l => l.kind === 'shared' ? 1 : 0.85).style('cursor', 'pointer');
+        const ribbons = s.append('g').selectAll('path').data(links).join('path').attr('class', 'lin-rib')
+            .attr('d', l => l.d).style('fill', l => l.fill).attr('fill-opacity', 0.9).attr('stroke', 'none').attr('stroke-linejoin', 'round').style('cursor', 'pointer');
         const ov = s.append('g').style('pointer-events', 'none');
 
-        // parent segments drawn on the node; leaves are plain boxes
+        // ---- nodes: rounded, shadowed, segments clipped to the box ----
         const nodeG = s.append('g');
-        const segRect = nodeG.selectAll('rect.seg').data(segs).join('rect').attr('class', 'seg')
+        const clipId = n => `clip-${uid}-${n.idx}`;
+        for (const n of L.files) defs.append('clipPath').attr('id', clipId(n)).append('rect').attr('x', n.x0).attr('y', n.y0).attr('width', NODE_W).attr('height', Math.max(2, n.y1 - n.y0)).attr('rx', 6);
+        nodeG.selectAll('rect.base').data(L.files).join('rect').attr('class', 'base')
+            .attr('x', n => n.x0).attr('y', n => n.y0).attr('width', NODE_W).attr('height', n => Math.max(2, n.y1 - n.y0)).attr('rx', 6)
+            .style('fill', V.slate).attr('filter', `url(#shadow-${uid})`);
+        const clipped = nodeG.selectAll('g.clip').data(L.files).join('g').attr('class', 'clip').attr('clip-path', n => `url(#${clipId(n)})`);
+        const segRect = clipped.selectAll('rect.seg').data(n => segs.filter(g => g.n === n)).join('rect').attr('class', 'seg')
             .attr('x', d => d.n.x0).attr('y', d => d.y0).attr('width', NODE_W).attr('height', d => Math.max(1, d.y1 - d.y0))
-            .attr('fill', d => d.died ? ORANGE : d.part.children.length > 1 ? SLATE_LIGHT : SLATE)
-            .attr('stroke', '#fff').attr('stroke-width', 0.75).style('cursor', 'pointer');
-        // overlap segments carry a stripe; a core segment (in every file) gets a dashed inset outline
-        nodeG.selectAll('rect.stripe').data(segs.filter(d => !d.died && d.part.children.length > 1)).join('rect').attr('class', 'stripe')
+            .style('fill', d => d.died ? V.died : d.part.children.length > 1 ? V.slateHi : V.slate)
+            .style('stroke', 'var(--lin-edge)').attr('stroke-width', 0.75).style('cursor', 'pointer');
+        clipped.selectAll('rect.stripe').data(n => segs.filter(g => g.n === n && !g.died && g.part.children.length > 1)).join('rect').attr('class', 'stripe')
             .attr('x', d => d.n.x0).attr('y', d => d.y0).attr('width', NODE_W).attr('height', d => Math.max(1, d.y1 - d.y0))
             .attr('fill', `url(#ovl-${uid})`).style('pointer-events', 'none');
         const isCore = d => !d.died && !doc.by_file_skipped && d.part.by_file && Object.keys(d.part.by_file).length === nFiles
             && Object.values(d.part.by_file).every(v => v === d.part.count);
-        nodeG.selectAll('rect.core').data(segs.filter(isCore)).join('rect').attr('class', 'core')
-            .attr('x', d => d.n.x0 + 2).attr('y', d => d.y0 + 1).attr('width', NODE_W - 4).attr('height', d => Math.max(1, d.y1 - d.y0 - 2))
-            .attr('fill', 'none').attr('stroke', '#fff').attr('stroke-dasharray', '3 2').style('pointer-events', 'none');
-        const leaf = L.files.filter(n => !segs.some(g => g.n === n));
-        const fileBox = nodeG.selectAll('rect.leaf').data(leaf).join('rect').attr('class', 'leaf')
-            .attr('x', n => n.x0).attr('y', n => n.y0).attr('width', NODE_W).attr('height', n => Math.max(2, n.y1 - n.y0))
-            .attr('fill', SLATE).attr('rx', 2);
-        const bandNodes = L.nodes.filter(n => n.kind !== 'file');
-        nodeG.selectAll('rect.band').data(bandNodes).join('rect').attr('class', 'band')
-            .attr('x', n => n.x0).attr('y', n => n.y0).attr('width', BAND_W).attr('height', n => Math.max(2, n.y1 - n.y0))
-            .attr('fill', n => n.kind === 'born' ? BLUE : ORANGE);
-        const label = n => { const f = name.get(n.id); return f.length > 16 ? `${f.slice(0, 15)}…` : f; };
-        const tall = n => n.y1 - n.y0 >= 32;
-        const fileHit = nodeG.selectAll('g.file').data(L.files).join('g').attr('class', 'file').style('cursor', 'pointer');
-        fileHit.append('rect').attr('x', n => n.x0).attr('y', n => n.y0).attr('width', 22).attr('height', n => Math.max(2, n.y1 - n.y0)).attr('fill', 'transparent');
-        fileHit.append('title').text(n => `${name.get(n.id)} (${n.functions} functions)`);
-        fileHit.append('text').attr('x', n => n.x0 + (tall(n) ? 6 : 0)).attr('y', n => tall(n) ? n.y0 + 15 : n.y0 - 5)
-            .attr('font-size', 11).attr('fill', n => tall(n) ? '#fff' : 'currentColor').style('pointer-events', 'none')
-            .text(n => tall(n) ? label(n) : `${label(n)} (${n.functions} fn)`);
-        fileHit.filter(tall).append('text').attr('x', n => n.x0 + 6).attr('y', n => n.y0 + 28).attr('font-size', 10)
-            .attr('fill', '#fff').style('pointer-events', 'none').text(n => `${n.functions} fn`);
-        nodeG.selectAll('text.seg').data(segs.filter(d => !d.died && d.part.children.length > 1 && d.y1 - d.y0 >= 14 && d.y0 >= d.n.y0 + 32)).join('text')
-            .attr('class', 'seg').attr('x', d => d.n.x0 + 6).attr('y', d => d.y0 + 11).attr('font-size', 10).attr('fill', '#fff')
-            .style('pointer-events', 'none').text(d => `kept by ${d.part.children.map(c => name.get(c)).join(' + ')}: ${d.part.count}`.slice(0, 24));
+        clipped.selectAll('rect.core').data(n => segs.filter(g => g.n === n && isCore(g))).join('rect').attr('class', 'core')
+            .attr('x', d => d.n.x0 + 3).attr('y', d => d.y0 + 1.5).attr('width', NODE_W - 6).attr('height', d => Math.max(1, d.y1 - d.y0 - 3))
+            .attr('fill', 'none').attr('stroke', '#fff').attr('stroke-opacity', 0.7).attr('stroke-dasharray', '3 2').style('pointer-events', 'none');
+        const rim = nodeG.selectAll('rect.rim').data(L.files).join('rect').attr('class', 'rim')
+            .attr('x', n => n.x0 + 0.5).attr('y', n => n.y0 + 0.5).attr('width', NODE_W - 1).attr('height', n => Math.max(1, n.y1 - n.y0 - 1)).attr('rx', 6)
+            .attr('fill', 'none').style('stroke', 'var(--lin-edge)').style('pointer-events', 'none');
+        const leafBox = clipped.filter(n => !segs.some(g => g.n === n));
+        nodeG.selectAll('rect.band').data(L.nodes.filter(n => n.kind !== 'file')).join('rect').attr('class', 'band')
+            .attr('x', n => n.x0).attr('y', n => n.y0).attr('width', BAND_W).attr('height', n => Math.max(2, n.y1 - n.y0)).attr('rx', 3)
+            .style('fill', n => n.kind === 'born' ? V.born : V.died);
+        // labels sit above the box with a halo, never on a stripe
+        const fileHit = nodeG.selectAll('g.file').data(L.files).join('g').attr('class', 'file').style('cursor', 'pointer')
+            .attr('tabindex', 0).attr('role', 'button').attr('aria-label', n => `${name.get(n.id)}, ${n.functions} functions`);
+        fileHit.append('rect').attr('x', n => n.x0).attr('y', n => n.y0).attr('width', 24).attr('height', n => Math.max(2, n.y1 - n.y0)).attr('fill', 'transparent');
+        const lab = fileHit.append('text').attr('class', 'lin-halo').attr('x', n => n.x0).attr('y', n => n.y0 - 9).attr('font-size', 12.5).attr('font-weight', 600)
+            .style('fill', 'var(--text)').style('pointer-events', 'none');
+        lab.append('tspan').text(n => { const f = name.get(n.id); return f.length > 18 ? `${f.slice(0, 17)}…` : f; });
+        lab.append('tspan').attr('dx', 6).attr('font-weight', 400).attr('font-size', 11.5).attr('fill-opacity', 0.7).style('fill', 'var(--text)').text(n => `${fmt(n.functions)} fn`);
+        fileHit.append('title').text(n => `${name.get(n.id)} (${fmt(n.functions)} functions)`);
 
-        // ---- hover ----
-        const edgeText = e => `${name.get(e.parent)} → ${name.get(e.child)}\nborn ${e.gained}   died ${e.lost}   shared ${e.shared}\nrecall suspect ${e.recall_suspect}`;
-        const partText = (p, par) => `${name.get(par)}: kept by ${p.folded ? 'several children (folded)' : names(p.children)}: ${p.count}`;
+        // ---- interaction ----
+        const kindDot = l => l.kind === 'shared' ? V.shared : V[l.kind];
+        const partRows = (p) => [['Kept by', p.folded ? 'several children (folded)' : names(p.children)], ['Functions', fmt(p.count)]];
+        const edgeRows = e => [['Born', fmt(e.gained)], ['Died', fmt(e.lost)], ['Shared', fmt(e.shared)], ['Recall suspect', fmt(e.recall_suspect)]];
+        let sel = null;
+        const applySel = () => {
+            ribbons.style('stroke', d => sel && sel.edge && d.edge === sel.edge ? 'var(--accent)' : 'none').attr('stroke-width', 1.2);
+            rim.style('stroke', n => sel && sel.node === n ? 'var(--accent)' : 'var(--lin-edge)').attr('stroke-width', n => sel && sel.node === n ? 2.5 : 1);
+        };
+        const pick = (p) => { sel = p; applySel(); onPick(p); };
         const dim = pred => {
-            ribbons.transition().duration(120).style('opacity', d => pred(d) ? 1 : 0.1);
+            ribbons.transition().duration(180).ease(d3.easeCubicOut).style('opacity', d => pred(d) ? 1 : 0.1);
             ribbons.filter(pred).raise();
         };
         const undim = () => {
-            ribbons.transition().duration(120).style('opacity', 1);
-            segRect.transition().duration(120).style('opacity', 1);
-            fileBox.transition().duration(120).style('opacity', 1);
-            ov.selectAll('*').remove();
+            ribbons.transition().duration(180).ease(d3.easeCubicOut).style('opacity', 1);
+            segRect.transition().duration(180).style('opacity', 1);
+            ov.selectAll('*').interrupt().remove();
         };
         ribbons.on('mouseenter', (ev, l) => {
             dim(d => l.kind === 'died' ? d.kind === 'died' && d.pnode === l.pnode : d.edge === l.edge);
-            showTip(ev, l.kind === 'died' ? `kept by no child of ${name.get(l.pnode.id)}: ${l.pnode.died_all}` : edgeText(l.edge) + (l.part ? `\n${partText(l.part, l.part.parent)}` : ''));
-        }).on('mousemove', ev => tip.style('left', `${ev.clientX + 12}px`).style('top', `${ev.clientY + 12}px`))
-            .on('mouseleave', () => { undim(); hideTip(); })
-            .on('click', (ev, l) => onPick(l.kind === 'died' ? { node: l.pnode } : { edge: l.edge, part: l.part }));
+            if (l.kind === 'died') showTip(ev, `${name.get(l.pnode.id)}: died`, V.died, [['Kept by no child', fmt(l.pnode.died_all)]]);
+            else showTip(ev, `${name.get(l.edge.parent)} → ${name.get(l.edge.child)}`, kindDot(l), [...edgeRows(l.edge), ...(l.part ? partRows(l.part) : [])]);
+        }).on('mousemove', moveTip).on('mouseleave', () => { undim(); hideTip(); })
+            .on('click', (ev, l) => pick(l.kind === 'died' ? { node: l.pnode } : { edge: l.edge, part: l.part }));
         segRect.on('mouseenter', (ev, d) => {
             dim(l => d.died ? l.kind === 'died' && l.pnode === d.n : l.part === d.part);
-            showTip(ev, d.died ? `${name.get(d.n.id)}: kept by no child: ${d.count}` : partText(d.part, d.n.id));
-        }).on('mousemove', ev => tip.style('left', `${ev.clientX + 12}px`).style('top', `${ev.clientY + 12}px`))
-            .on('mouseleave', () => { undim(); hideTip(); })
-            .on('click', (ev, d) => onPick(d.died ? { node: d.n } : { part: d.part, parent: d.n.id }));
+            if (d.died) showTip(ev, `${name.get(d.n.id)}: died`, V.died, [['Kept by no child', fmt(d.count)]]);
+            else showTip(ev, `${name.get(d.n.id)}: kept by`, d.part.children.length > 1 ? V.fork : V.shared, partRows(d.part));
+        }).on('mousemove', moveTip).on('mouseleave', () => { undim(); hideTip(); })
+            .on('click', (ev, d) => pick(d.died ? { node: d.n } : { part: d.part, parent: d.n.id }));
 
         // file hover: that file's functions through the whole chart, same scale, anchored at each ribbon's top edge
         const fileHover = (ev, F) => {
-            const lines = [`${name.get(F.id)}: ${F.functions} functions`];
+            const rows = [['Functions', fmt(F.functions)]];
             if (doc.by_file_skipped) {
-                dim(l => l.edge && (l.edge.parent === F.id || l.edge.child === F.id) || (l.pnode === F));
-                lines.push('(per-file highlight skipped: more than 60 files)');
+                dim(l => (l.edge && (l.edge.parent === F.id || l.edge.child === F.id)) || l.pnode === F);
+                rows.push(['Note', 'per-file highlight is off (more than 60 files)']);
             } else {
-                ribbons.transition().duration(120).style('opacity', 0.1);
-                segRect.transition().duration(120).style('opacity', 0.3);
+                ribbons.transition().duration(180).style('opacity', 0.1);
+                segRect.transition().duration(180).style('opacity', 0.3);
                 for (const l of links) {
                     const n = Math.max(0, Math.min(l.value, ((l.bf || {})[F.id] || 0) - l.before));
                     if (!n) continue;
-                    const w = Math.max(1, n * ky), top = l.y0 - l.width / 2;
-                    ov.append('path').attr('d', ribbon(l.source.x1, l.target.x0, top + w / 2, l.y1 - l.width / 2 + w / 2, w))
-                        .attr('fill', full(l)).attr('fill-opacity', l.kind === 'shared' ? 0.95 : 1);
+                    const w = Math.max(1, n * ky);
+                    ov.append('path').attr('d', l.pts ? strip(l.pts, l.o, w) : band(l.source.x1, l.target.x0, l.y0 - l.width / 2 + w / 2, l.y1 - l.width / 2 + w / 2, w))
+                        .style('fill', l.col).attr('fill-opacity', 0).transition().duration(160).attr('fill-opacity', 1);
                 }
                 for (const sg of segs) {
                     const n = sg.died ? (F.id === sg.n.id ? sg.count : (sg.n.died_by_file || {})[F.id] || 0) : (sg.part.by_file || {})[F.id] || 0;
                     if (!n) continue;
-                    ov.append('rect').attr('x', sg.n.x0).attr('y', sg.y0).attr('width', NODE_W).attr('height', Math.max(1, Math.min(n, sg.died ? sg.count : sg.part.count) * ky))
-                        .attr('fill', sg.died ? ORANGE : sg.part.children.length > 1 ? SLATE_LIGHT : SLATE).attr('stroke', '#fff').attr('stroke-width', 0.75);
+                    ov.append('path').attr('clip-path', `url(#${clipId(sg.n)})`)
+                        .attr('d', `M${sg.n.x0},${sg.y0}h${NODE_W}v${Math.max(1, Math.min(n, sg.died ? sg.count : sg.part.count) * ky)}h${-NODE_W}Z`)
+                        .style('fill', sg.died ? V.died : sg.part.children.length > 1 ? V.slateHi : V.slate).style('stroke', 'var(--lin-edge)').attr('stroke-width', 0.75);
                 }
-                lines.push(`in every file (core): ${doc.core}`, `only in this file: ${F.only_here}`);
-                if ((F.top_shared || []).length) lines.push('most shared with: ' + F.top_shared.map(([g, c]) => `${name.get(g)} ${c}`).join(', '));
+                rows.push(['In every file (core)', fmt(doc.core)], ['Only in this file', fmt(F.only_here)]);
+                for (const [g, c] of F.top_shared || []) rows.push([`Shared with ${name.get(g)}`, fmt(c)]);
             }
-            showTip(ev, lines.join('\n'));
+            showTip(ev, name.get(F.id), V.slate, rows);
         };
-        fileHit.on('mouseenter', fileHover).on('mousemove', ev => tip.style('left', `${ev.clientX + 12}px`).style('top', `${ev.clientY + 12}px`))
-            .on('mouseleave', () => { undim(); hideTip(); }).on('click', (ev, n) => onPick({ node: n }));
-        return { svg: s.node(), byId: new Map(L.files.map(n => [n.id, n])), name };
+        fileHit.on('mouseenter', fileHover).on('mousemove', moveTip).on('mouseleave', () => { undim(); hideTip(); })
+            .on('click', (ev, n) => pick({ node: n }))
+            .on('keydown', (ev, n) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); pick({ node: n }); } });
+        void leafBox;
+        return { svg: s.node(), name };
     }
 
+    function chip(color, text, hatch) {
+        const c = el('span', { class: 'lin-chip' });
+        const sw = el('span', { class: 'lin-sw' });
+        sw.style.background = hatch ? `repeating-linear-gradient(45deg,${color} 0 2px,transparent 2px 4px)` : color;
+        c.append(sw, el('span', {}, text));
+        return c;
+    }
     function legend(doc) {
-        const box = el('div', { style: 'display:flex;flex-wrap:wrap;gap:14px;font-size:0.8rem;padding:6px 0;align-items:center' });
-        const item = (fill, text, hatch) => {
-            const w = el('span', { style: 'display:inline-flex;align-items:center;gap:5px' });
-            const bg = hatch ? `background:repeating-linear-gradient(45deg,${fill} 0 2px,transparent 2px 4px);` : `background:${fill};`;
-            w.append(el('span', { style: `display:inline-block;width:16px;height:10px;${bg}border:1px solid ${fill}` }), el('span', {}, text));
-            return w;
-        };
-        box.append(item(GREY, 'shared'), item(GREY_DARK, 'kept by several children (forks)'), item(BLUE, 'born'), item(ORANGE, 'died: kept by no child'),
-            item(GREY, 'hatched: likely a matcher miss', true),
-            el('span', { class: 'dim' }, 'One scale: every file is exactly its function count, split into the parts its children keep. Dashed outline = in every file. Hover a file to follow its code through the whole chart.'));
-        if (doc.by_file_skipped) box.append(el('span', { class: 'nway-note warn' }, 'More than 60 files: per-file highlight is off, hover shows the file’s own edges only.'));
+        const box = el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center' });
+        box.append(chip(V.shared, 'shared'), chip(V.fork, 'kept by several children (forks)'), chip(V.born, 'born'), chip(V.died, 'died: kept by no child'),
+            chip(V.born, 'hatched: likely a matcher miss', true));
+        if (doc.by_file_skipped) box.append(el('span', { class: 'lin-note' }, 'More than 60 files: per-file highlight is off.'));
         return box;
     }
 
     function detail(box, pick, names) {
         box.replaceChildren();
-        const line = t => box.append(el('div', {}, t));
         const nm = id => names.get(id) || id;
+        const kv = rows => {
+            const g = el('div', { class: 'lin-kv' });
+            for (const [k, v] of rows) { g.append(el('span', { class: 'k' }, k), el('span', {}, String(v))); }
+            box.append(g);
+        };
         if (pick.part) {
             const p = pick.part;
-            box.append(el('b', {}, `${nm(p.parent)}: kept by ${p.folded ? 'several children (folded)' : p.children.map(nm).join(' + ')}`));
-            line(`${p.count} functions`);
-            if (p.per_child) for (const [c, n] of Object.entries(p.per_child)) line(`  ${nm(c)}: ${n}`);
+            box.append(el('h4', {}, `${nm(p.parent)}: kept by ${p.folded ? 'several children (folded)' : p.children.map(nm).join(' + ')}`));
+            kv([['Functions', fmt(p.count)], ...Object.entries(p.per_child || {}).map(([c, n]) => [nm(c), fmt(n)])]);
         }
         if (pick.node) {
             const n = pick.node;
-            box.append(el('b', {}, n.file_name || n.id));
-            line(`${n.functions} functions${n.root ? ' (root)' : ''}`);
-            if (n.died_all != null) line(`kept by no child: ${n.died_all}`);
-            line(`only in this file: ${n.only_here}`);
-            line(n.id);
+            box.append(el('h4', {}, n.file_name || n.id));
+            kv([['Functions', fmt(n.functions) + (n.root ? ' (root)' : '')], ...(n.died_all != null ? [['Kept by no child', fmt(n.died_all)]] : []), ['Only in this file', fmt(n.only_here)]]);
+            box.append(el('div', { class: 'lin-note', style: 'margin-top:8px;word-break:break-all' }, n.id));
         } else if (pick.edge) {
-            const e = pick.edge;
-            if (pick.part) box.append(el('hr'));
-            box.append(el('b', {}, `${nm(e.parent)} → ${nm(e.child)}`));
-            line(`similarity ${e.similarity}`);
-            line(`shared ${e.shared}, born ${e.gained}, lost ${e.lost}`);
-            line(`recall suspect ${e.recall_suspect}`);
-            const ev = e.recall_evidence || {};
-            line(`  below the floor: ${ev.edge_below_floor}`);
-            line(`  refused by one-per-file: ${ev.edge_refused}`);
-            line(`  same name: ${ev.name}`);
+            const e = pick.edge, ev = e.recall_evidence || {};
+            if (pick.part) box.append(el('div', { style: 'height:10px' }));
+            box.append(el('h4', {}, `${nm(e.parent)} → ${nm(e.child)}`));
+            kv([['Similarity', e.similarity], ['Shared', fmt(e.shared)], ['Born', fmt(e.gained)], ['Lost', fmt(e.lost)], ['Recall suspect', fmt(e.recall_suspect)],
+                ['  below the floor', fmt(ev.edge_below_floor)], ['  refused by one-per-file', fmt(ev.edge_refused)], ['  same name', fmt(ev.name)]]);
         }
     }
 
@@ -369,7 +477,7 @@
             body.replaceChildren(el('div', { class: 'nway-note err' }, 'd3 / d3-sankey are not loaded.'));
             return;
         }
-        body.replaceChildren(el('div', { class: 'dim' }, 'Loading lineage...'));
+        body.replaceChildren(el('div', { class: 'lin-note' }, 'Loading lineage...'));
         const qs = panel._listQs();
         qs.delete('offset');
         qs.set('columns', 'files');
@@ -386,11 +494,11 @@
         }
         body.replaceChildren();
         for (const w of doc.warnings || []) body.append(el('div', { class: 'nway-note warn' }, w));
-        const side = el('div', { style: 'min-width:220px;max-width:300px;font-size:0.85rem;padding:0 12px' }, 'Click a file or an edge.');
-        const { svg: tree, name } = draw(doc, pick => detail(side, pick, name), body.clientWidth - 260);
+        const side = el('div', { class: 'lin-side' });
+        side.append(el('div', { class: 'lin-note' }, 'Click a file, a ribbon or a segment.'));
+        const { svg: tree, name } = draw(doc, pick => detail(side, pick, name), body.clientWidth - 290);
         st.cleanup = tree._cleanup;
-        // scroll inside a bounded box; zoom rescales the SVG (its viewBox keeps the drawing)
-        const scroller = el('div', { style: 'overflow:auto;flex:1;max-height:75vh;min-width:0' });
+        const scroller = el('div', { class: 'lin-scroll' });
         scroller.append(tree);
         const w0 = Number(tree.getAttribute('width')), h0 = Number(tree.getAttribute('height'));
         const zoom = z => {
@@ -399,44 +507,57 @@
             tree.setAttribute('height', h0 * st.zoom);
         };
         const fit = () => zoom(Math.min(1, (scroller.clientWidth || w0) / w0));
-        const bar = el('div', { style: 'display:flex;gap:6px;align-items:center;padding:4px 0' });
-        for (const [t, f] of [['\u2212', () => zoom((st.zoom || 1) / 1.25)], ['+', () => zoom((st.zoom || 1) * 1.25)], ['Fit', fit], ['100%', () => zoom(1)]]) {
-            const b = el('button', { class: 'view-btn', type: 'button' }, t);
+        const seg = el('div', { class: 'lin-seg', role: 'group', 'aria-label': 'Zoom' });
+        const btns = [
+            ['Zoom out', 'M3 8h10', () => zoom((st.zoom || 1) / 1.25)],
+            ['Zoom in', 'M3 8h10M8 3v10', () => zoom((st.zoom || 1) * 1.25)],
+            ['Fit to width', 'M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4', fit],
+            ['Actual size (100%)', 'M4 3v10M4 3L2.5 4.5M9 3h5v10H9Z', () => zoom(1)],
+        ];
+        for (const [label, d, f] of btns) {
+            const b = el('button', { type: 'button', 'aria-label': label, title: label });
+            b.append(icon(d));
             b.addEventListener('click', f);
-            bar.append(b);
+            seg.append(b);
         }
         scroller.addEventListener('wheel', ev => {
             if (!ev.ctrlKey && !ev.metaKey) return;
             ev.preventDefault();
             zoom((st.zoom || 1) * (ev.deltaY < 0 ? 1.1 : 1 / 1.1));
         }, { passive: false });
-        const wrap = el('div', { style: 'display:flex' });
-        wrap.append(scroller, side);
+        const bar = el('div', { class: 'lin-bar' });
+        bar.append(seg, legend(doc));
+        const main = el('div', { class: 'lin-main' });
+        main.append(scroller, side);
         zoom(st.zoom || 1);
-        body.append(bar);
-        body.append(legend(doc), wrap);
+        body.append(bar, main);
     }
 
     function mount(panel) {
+        if (!document.getElementById('nway-lineage-css')) {
+            const css = el('style', { id: 'nway-lineage-css' });
+            css.textContent = CSS;
+            document.head.append(css);
+        }
         const st = panel._lineage || (panel._lineage = { on: false, order: 'tree', root: '' });
         const host = panel.el.querySelector('.nway-panel');
         if (!host) return;
         const bar = el('div', { class: 'nway-note', style: 'display:flex;gap:8px;align-items:center' });
-        const toggle = el('button', { class: `view-btn${st.on ? ' active' : ''}` }, 'Lineage');
+        const toggle = el('button', { class: `view-btn${st.on ? ' active' : ''}`, 'aria-pressed': String(!!st.on) }, 'Lineage');
         bar.append(toggle);
-        const body = el('div', { class: 'nway-card' });
+        const body = el('div', { class: 'nway-card lin' });
         body.style.display = st.on ? '' : 'none';
         const card = host.querySelector('.nway-card');
         const draw_ = () => render(panel, body);
         if (st.on) {
-            const order = el('select', { class: 'view-btn' });
+            const order = el('select', { class: 'view-btn', 'aria-label': 'Lineage order' });
             for (const [v, t] of ORDERS) {
                 const o = el('option', { value: v }, t);
                 if (v === st.order) o.selected = true;
                 order.append(o);
             }
             order.addEventListener('change', () => { st.order = order.value; draw_(); });
-            const root = el('select', { class: 'view-btn' });
+            const root = el('select', { class: 'view-btn', 'aria-label': 'Lineage root file' });
             root.append(el('option', { value: '' }, 'root: largest file'));
             const cols = (panel.data && (panel.data.file_columns || panel.data.columns)) || [];
             for (const c of cols) {

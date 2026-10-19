@@ -3043,14 +3043,19 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .nway-bar label.nway-ctl, .nway-gcard label.nway-ctl { font-size: 0.8rem; }
 
 /* Group rows card: step 1 merges rows that are one function, step 2 groups what is left */
-.nway-gcard { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 10px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); }
+.nway-gcard { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; margin: 8px 0 10px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); font-size: 0.82rem; }
 .nway-gcard.active { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
-.nway-ghead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.nway-gacts { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
-.nway-gline { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; min-height: 28px; }
-.nway-gstep { display: inline-grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--hover); color: var(--accent); font: 600 0.72rem 'Consolas', monospace; }
-.nway-gmain { min-width: 280px; }
-.nway-gtitle { font-size: 0.88rem; font-weight: 600; color: var(--text); }
+.nway-bgrp { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.nway-bend { margin-left: auto; }
+.nway-blbl { color: var(--dim); font-weight: 600; cursor: help; }
+.nway-bsep { width: 1px; height: 22px; background: var(--border); }
+.nway-bchev { color: var(--dim); }
+.nway-bnote { font: 0.72rem 'Consolas', monospace; }
+.nway-blink { all: unset; cursor: pointer; color: var(--dim); font-size: 0.76rem; text-decoration: underline; padding: 0 2px; }
+.nway-blink:hover, .nway-blink:focus-visible { color: var(--text); }
+.nway-gtog { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.nway-gtog.on { border-color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.nway-gtog input { margin: 0; }
 .nway-gpicks { display: inline-flex; gap: 6px; }
 .nway-gpick { display: inline-flex; align-items: center; gap: 6px; padding: 4px 14px; border: 1px solid var(--border); border-radius: 14px; background: transparent; color: var(--text); font: inherit; font-size: 0.82rem; cursor: pointer; }
 .nway-gpick:hover { background: var(--hover); }
@@ -3085,7 +3090,14 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-legend.off { width: auto; }
 .nway-busy-cancel { margin-left: auto; pointer-events: auto; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 6px; font-weight: 600; font-size: 0.78rem; color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent); border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 55%, transparent); }
 .nway-busy-cancel:hover { background: color-mix(in srgb, var(--danger, #ef4444) 24%, transparent); }
-.nway-olacts { display: flex; gap: 4px; padding: 2px 4px 6px; }
+.nway-depth { display: flex; align-items: center; gap: 4px; padding: 0 4px 8px; color: var(--dim); font-size: 0.7rem; }
+.nway-depth span { margin-right: 4px; }
+.nway-depth i { width: 8px; height: 2px; background: var(--border); }
+.nway-ddot { width: 12px; height: 12px; padding: 0; border-radius: 50%; border: 1px solid var(--dim); background: transparent; cursor: pointer; }
+.nway-ddot.on { border-color: var(--accent); background: var(--accent); }
+.nway-ddot:hover, .nway-ddot:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: 1px; }
+.nway-dall { all: unset; cursor: pointer; padding: 0 3px; color: var(--dim); font-size: 0.9rem; line-height: 1; }
+.nway-dall.on, .nway-dall:hover { color: var(--accent); }
 .nway-legend summary { cursor: pointer; padding: 4px; color: var(--dim); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.68rem; }
 .nway-legend em, .nway-ol em { font-style: normal; font: 600 0.62rem 'Consolas', monospace; background: var(--hover); border-radius: 8px; padding: 0 5px; color: var(--dim); }
 .nway-ol { display: flex; align-items: center; gap: 6px; padding: 2px 4px 2px calc(var(--dep) * 14px + 2px); border-radius: 4px; font-family: 'Consolas', monospace; }

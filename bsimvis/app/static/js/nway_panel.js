@@ -466,6 +466,11 @@
         }
 
         // Right-click on a column group (band, outline row or numbered group head): copy / fold / focus its files.
+        // The file a column stands for: itself, or the single file of an expanded twin / cluster leaf.
+        _colFile(c) {
+            return c.kind === 'file' ? c.members[0] : c.kind ? '' : c.id;
+        }
+
         // The N-way tab of a stored cluster, for this panel's pool or collection.
         _clusterUrl(uuid) {
             const pool = this.source.pool, out = new URLSearchParams({ tab: 'functions' });
@@ -1968,7 +1973,7 @@
             } else {
                 tip = `${c.file_name} (${c.collection})\n${c.md5}\n${Number(c.functions)} fn\nright-click: focus / filter`;
             }
-            return `<th class="col sq nway-numcol${c.expandable ? ' expandable' : ''}"${c.kind ? '' : ` data-col="${escapeAttr(c.id)}"`}${c.expandable ? ` data-colx="${escapeAttr(c.id)}"` : ''} title="${escapeAttr(tip)}"><i class="nway-num${Number(c.member_count) > 1 ? ' grp' : ''}" style="${this._sqStyle(ci)}">${ci + 1}</i></th>`;
+            return `<th class="col sq nway-numcol${c.expandable ? ' expandable' : ''}"${c.kind ? (this._colFile(c) ? ` data-lfile="${escapeAttr(this._colFile(c))}"` : '') : ` data-col="${escapeAttr(c.id)}"`}${c.expandable ? ` data-colx="${escapeAttr(c.id)}"` : ''} title="${escapeAttr(tip)}"><i class="nway-num${Number(c.member_count) > 1 ? ' grp' : ''}" style="${this._sqStyle(ci)}">${ci + 1}</i></th>`;
         }
 
         // The column outline: every group and column with its number range, and the button that opens or folds it.
@@ -1979,7 +1984,7 @@
                 const open = n.kids.length > 0, toggle = open || n.expandable;
                 const range = n.lo === n.hi ? `${n.lo + 1}` : `${n.lo + 1}–${n.hi + 1}`;
                 const tip = `${n.label}${n.count > 1 ? ` (${n.count} files)` : ''}${toggle ? (open ? '\nclick to fold' : '\nclick to show the files') : ''}`;
-                return `<div class="nway-ol${toggle ? ' expandable' : ''}" style="--dep:${dep}"${toggle ? ` data-colx="${escapeAttr(n.id)}"` : ''}${n.col !== undefined && !this.data.columns[n.col].kind ? ` data-lfile="${escapeAttr(n.id)}"` : ''} title="${escapeAttr(tip)}">`
+                return `<div class="nway-ol${toggle ? ' expandable' : ''}" style="--dep:${dep}"${toggle ? ` data-colx="${escapeAttr(n.id)}"` : ''}${n.col !== undefined && this._colFile(this.data.columns[n.col]) ? ` data-lfile="${escapeAttr(this._colFile(this.data.columns[n.col]))}"` : ''} title="${escapeAttr(tip)}">`
                     + (toggle ? `<button type="button" class="nway-tg" data-colx="${escapeAttr(n.id)}" aria-label="${open ? 'Fold' : 'Open'} ${escapeAttr(n.label)}">${open ? '&#9662;' : '&#9656;'}</button>` : '<span class="nway-tg"></span>')
                     + `<i class="nway-sq on${n.count > 1 ? ' grp' : ''}" style="--h:${n.h};--l:${n.l}%;--ll:${n.l - 8}%"></i><span class="nway-olb">${escapeHtml(n.label)}</span>`
                     + (n.count > 1 ? `<em>${n.count}</em>` : '') + `<b class="nway-rg">${range}</b></div>`

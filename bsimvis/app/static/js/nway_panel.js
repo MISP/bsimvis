@@ -1757,7 +1757,9 @@
         }
 
         _colToggle(id, openOnly) {
-            const open = this._colOpen();
+            let open = this._colOpen();
+            // Folding one node after "expand all": spell the wildcard out as the nodes now open.
+            if (open.has('*')) open = new Set([...this._tree().byId.values()].filter(n => n.kids.length).map(n => n.id));
             if (openOnly) open.add(id); else if (!open.delete(id)) open.add(id);
             this._scrollSave();
             this._set({ col_open: open.size ? JSON.stringify([...open]) : '', offset: 0 });
@@ -1837,7 +1839,7 @@
                     + (n.count > 1 ? `<em>${n.count}</em>` : '') + `<b class="nway-rg">${range}</b></div>`
                     + n.kids.map(k => row(k, dep + 1)).join('');
             };
-            return `<aside class="nway-legend${this._legOff ? ' off' : ''}"><details${this._legOff ? '' : ' open'} ontoggle="NwayPanel.legend(this)"><summary>Columns <em>${this.data.columns.length}</em></summary>${t.root.kids.map(k => row(k, 0)).join('')}</details></aside>`;
+            return `<aside class="nway-legend${this._legOff ? ' off' : ''}"><details${this._legOff ? '' : ' open'} ontoggle="NwayPanel.legend(this)"><summary>Columns <em>${this.data.columns.length}</em></summary><div class="nway-olacts"><button type="button" class="view-btn" data-colall="open">Expand all</button><button type="button" class="view-btn" data-colall="close">Collapse all</button></div>${t.root.kids.map(k => row(k, 0)).join('')}</details></aside>`;
         }
 
         render() {
@@ -1898,13 +1900,17 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-gall],[data-gpick],[data-colx],[data-stats-toggle]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-gall],[data-gpick],[data-colx],[data-colall],[data-stats-toggle]');
             if (!t) return;
             if (t.dataset.statsToggle !== undefined) {
                 this._so = !this._statsOff();
                 try { localStorage.setItem('nway.stats', this._so ? '0' : '1'); } catch (err) { /* storage blocked */ }
                 this._scrollSave();
                 return this.render();
+            }
+            if (t.dataset.colall) {
+                this._scrollSave();
+                return this._set({ col_open: t.dataset.colall === 'open' ? '["*"]' : '', offset: 0 });
             }
             // A header dot only opens its column; the outline folds it again.
             if (t.dataset.colx) return this._colToggle(t.dataset.colx, !!t.closest('th') && !t.closest('.nway-band'));

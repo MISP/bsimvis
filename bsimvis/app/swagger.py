@@ -2672,6 +2672,22 @@ class BinSimNwaySummaries(Resource):
         return get_nway_summaries()
 
 
+@ns_bin_sim.route("/nway/lineage")
+class BinSimNwayLineage(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "md5s": "Same file set / scope params as /nway (collection, pool, mode, min_edge, ...)",
+            "root": "Root file, md5 or collection:md5 (default: the file with most functions)",
+            "order": "tree (maximum spanning tree, default), chain (seriation, at most 200 files) or star (every file vs root)",
+        }
+    )
+    def get(self):
+        """Lineage tree of the files: parent -> child edges with gained, lost, shared and recall_suspect counts."""
+        from bsimvis.app.routes.nway import get_nway_lineage
+
+        return get_nway_lineage()
+
+
 @ns_bin_sim.route("/nway/progress")
 class BinSimNwayProgress(Resource):
     @ns_bin_sim.doc(params={"id": "The `progress_id` sent with a running /nway call"})

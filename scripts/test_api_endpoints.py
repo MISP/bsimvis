@@ -5134,6 +5134,64 @@ def test_nway_function_meta():
     )
 
 
+def test_nway_lineage():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-quater – N-way lineage tree", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    # The pure part (3+ files, MST, recall evidence) runs on synthetic input.
+    from bsimvis.app.services import nway_lineage_service
+
+    try:
+        nway_lineage_service.demo()
+        check("nway lineage: pure service demo", True)
+    except AssertionError as e:
+        check("nway lineage: pure service demo", False, repr(e))
+
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – lineage endpoint skipped.", YELLOW))
+        return
+    base = {"collection": COLLECTION, "md5s": f"{file_md5},{file_md5_2}"}
+    url = f"{BASE_URL}/api/bin_sim/nway/lineage"
+    got = {}
+    for order in ("tree", "chain", "star"):
+        r = requests.get(url, params={**base, "order": order}, timeout=60)
+        got[order] = r.json() if r.status_code == 200 else {}
+        t = got[order]
+        n = {x["id"]: x["functions"] for x in t.get("nodes", [])}
+        check(
+            f"nway lineage {order}: N-1 edges, connected, counts match nodes",
+            r.status_code == 200
+            and len(t["edges"]) == len(n) - 1 == 1
+            and {e["child"] for e in t["edges"]} | {t["root"]} == set(n)
+            and all(
+                n[e["child"]] == e["shared"] + e["gained"]
+                and n[e["parent"]] == e["shared"] + e["lost"]
+                and e["recall_suspect"] <= e["gained"] + e["lost"]
+                for e in t["edges"]
+            ),
+            f"HTTP {r.status_code} {str(t)[:200]}",
+        )
+    check(
+        "nway lineage: the three orders share one edge shape",
+        len({tuple(sorted(e)) for t in got.values() for e in t.get("edges", [])}) == 1,
+    )
+    r = requests.get(url, params={**base, "root": file_md5_2}, timeout=60)
+    check(
+        "nway lineage: root= picks the root",
+        r.status_code == 200 and r.json()["root"] == f"{COLLECTION}:{file_md5_2}",
+    )
+    r = requests.get(url, params={**base, "order": "bogus"}, timeout=60)
+    check("nway lineage: bad order is a 400", r.status_code == 400)
+    r = requests.get(url, params={**base, "root": "0" * 32}, timeout=60)
+    check("nway lineage: unknown root is a 400", r.status_code == 400)
+    r = requests.get(url, params={**base, "order": "tree"}, timeout=60)
+    check(
+        "nway lineage: read-only, repeat call answers the same",
+        r.status_code == 200 and r.json() == got["tree"],
+    )
+
+
 def test_nway_diff():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-ter – N-way file diff (stored path)", BOLD))
@@ -9662,6 +9720,7 @@ if __name__ == "__main__":
         test_bin_sim_diff_cache,
         test_nway_diff,
         test_nway_function_meta,
+        test_nway_lineage,
         test_nway_cluster_entry,
         test_llm_pair_analysis_job,
         test_search_job,
@@ -9693,6 +9752,7 @@ if __name__ == "__main__":
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
         "test_nway_diff": ["test_search_filters_and_sorting"],
         "test_nway_function_meta": ["test_search_filters_and_sorting"],
+        "test_nway_lineage": ["test_search_filters_and_sorting"],
         "test_nway_cluster_entry": ["test_search_filters_and_sorting"],
         "test_llm_pair_analysis_job": ["test_search_filters_and_sorting"],
         "test_search_job": ["test_search_filters_and_sorting"],

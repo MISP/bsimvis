@@ -11,6 +11,7 @@ from bsimvis.app.services import (
     nway_diff_service,
     nway_facets_service,
     nway_group_service,
+    nway_lineage_service,
 )
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME
 from bsimvis.app.services.bin_sim_service import _origin_coll
@@ -1142,4 +1143,37 @@ def get_function_meta():
     except nway_diff_service.MemberMissing as e:
         return {"error": "unknown_functions", "missing": e.missing}, 404
     out["ref"] = ref_arg
+    return out
+
+
+def get_nway_lineage():
+    """Lineage tree of the files of a set (same params as `/nway`, plus `root`, `order`).
+
+    Read-only: it annotates the rows and pair edges `/nway` already computes.
+    """
+    order = request.args.get("order", "tree")
+    root = (request.args.get("root") or "").strip().lower() or None
+    try:
+        doc, _, _ = _load_doc()
+    except _Reply as e:
+        return e.args[0]
+    if doc["columns_mode"] != "files":
+        abort(400, "lineage needs file columns: use columns=files")
+    cols = doc["columns"]
+    if root and ":" not in root:
+        root = next((c["id"] for c in cols if c["md5"] == root), root)
+    fmeta = doc["fmeta"]
+
+    def name_of(fid):
+        n = (fmeta.get(fid) or {}).get("name")
+        return n if n and not _DEFAULT_NAME.match(n) else None
+
+    try:
+        out = nway_lineage_service.build(
+            cols, doc["rows"], doc["edges"], doc["min_edge"], name_of, root, order
+        )
+    except nway_lineage_service.BadParams as e:
+        abort(400, str(e))
+    out["min_edge"] = doc["min_edge"]
+    out["warnings"] = doc["warnings"]
     return out

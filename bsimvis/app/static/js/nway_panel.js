@@ -204,13 +204,18 @@
             const pid = Math.random().toString(36).slice(2, 12) + t0.toString(36);
             qs.set('progress_id', pid);
             let prog = null, polling = false;
+            const stop = new AbortController();
             // Progress card: server fraction when reported, else elapsed time against the last run's duration.
             const tick = () => {
                 let b = this.el.querySelector('.nway-busy');
                 if (!b) {
                     b = document.createElement('div');
-                    b.innerHTML = '<div class="nway-busy-head"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions</div><div class="nway-bar-track"><div class="nway-bar-fill"></div></div><div class="nway-busy-foot"><span class="nway-busy-l"></span><span class="nway-busy-r"></span></div>';
+                    b.innerHTML = '<div class="nway-busy-head"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions<button type="button" class="view-btn nway-busy-cancel">Cancel</button></div><div class="nway-bar-track"><div class="nway-bar-fill"></div></div><div class="nway-busy-foot"><span class="nway-busy-l"></span><span class="nway-busy-r"></span></div>';
                     (this.data ? this.el : this.el.querySelector('.nway-state') || this.el).appendChild(b);
+                    b.querySelector('.nway-busy-cancel').onclick = () => {
+                        fetch(`/api/bin_sim/nway/cancel?id=${pid}`, { method: 'POST' }).catch(() => { });
+                        stop.abort();
+                    };
                 }
                 b.className = 'nway-busy' + (this.data ? '' : ' inline');
                 const el = (Date.now() - t0) / 1000, f = prog && prog.fraction > 0 ? prog.fraction : 0;
@@ -231,7 +236,7 @@
             const timer = setInterval(tick, 500);
             const done = () => { clearInterval(timer); this.el.querySelector('.nway-busy')?.remove(); };
             try {
-                const res = await fetch(`/api/bin_sim/nway?${qs.toString()}`, { signal: AbortSignal.timeout(NWAY_TIMEOUT_MS) });
+                const res = await fetch(`/api/bin_sim/nway?${qs.toString()}`, { signal: AbortSignal.any([stop.signal, AbortSignal.timeout(NWAY_TIMEOUT_MS)]) });
                 const body = await res.json().catch(() => ({}));
                 done();
                 if (gen !== this._gen) return;
@@ -252,7 +257,9 @@
                 this._loading = false;
                 if (append) return;
                 const timedOut = e.name === 'TimeoutError';
-                this.error = { status: 0, message: timedOut ? `Timed out after ${NWAY_TIMEOUT_MS / 1000}s matching functions. Try fewer files, a higher Min edge, or a narrower search.` : String(e) };
+                // Cancelled with a table on screen: keep it.
+                if (stop.signal.aborted && this.data) return this.render();
+                this.error = { status: 0, message: stop.signal.aborted ? 'Cancelled. Change a setting or reload the page to run it again.' : timedOut ? `Timed out after ${NWAY_TIMEOUT_MS / 1000}s matching functions. Try fewer files, a higher Min edge, or a narrower search.` : String(e) };
                 this.data = null;
             }
             if (this.cgInit) {

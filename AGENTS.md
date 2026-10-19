@@ -191,6 +191,7 @@ job keys.
 | `scan:{id}:meta` / `scan:{id}:chunk:{n}` | **String** | Cached Ghidra output, one chunk per 100 functions. |
 | `scan:{id}:rows:{coll}:{md5}` | **String** | One scored pair's diff rows, served paged. |
 | `scans:recent` | **ZSET** | Scan id -> creation time, trimmed to 1000. The listing index; the docs expire on their own. |
+| `nway:progress:{pid}` / `nway:cancel:{pid}` | **String** | A running `/nway` call's progress, and its cancel flag (checked at each progress step). 120 s TTL. |
 | `nway:titles:{sha1}` | **String** | LLM titles of an N-way row's reference blocks (JSON), 30 day TTL. Written by a background thread in the app, never by a job. |
 
 ## Worktree testing

@@ -2807,7 +2807,7 @@ a.home-card:hover,
 .nway-state { padding: 40px 20px; text-align: center; color: var(--dim); }
 .nway-busy { position: fixed; right: 20px; bottom: 20px; z-index: 50; width: 340px; padding: 12px 14px; border-radius: 10px; background: var(--card-bg, #222); border: 1px solid var(--border); box-shadow: 0 4px 16px rgba(0,0,0,.35); pointer-events: none; }
 .nway-busy.inline { position: static; margin: 0 auto; box-shadow: none; }
-.nway-busy-head { font-size: 0.9rem; font-weight: 600; margin-bottom: 8px; }
+.nway-busy-head { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; font-weight: 600; margin-bottom: 8px; }
 .nway-bar-track { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
 .nway-bar-fill { height: 100%; border-radius: 3px; background: var(--info, #3b82f6); transition: width .4s ease; }
 .nway-bar-fill.indet { width: 35%; animation: nway-indet 1.2s ease-in-out infinite; }
@@ -3083,6 +3083,7 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-legend { flex: none; width: 250px; max-height: calc(100vh - 180px); overflow: auto; position: sticky; top: 0; border-right: 1px solid var(--border); padding: 4px 6px 8px; font-size: 0.76rem; }
 #cluster-tab-functions .nway-legend { max-height: none; }
 .nway-legend.off { width: auto; }
+.nway-busy-cancel { margin-left: auto; }
 .nway-olacts { display: flex; gap: 4px; padding: 2px 4px 6px; }
 .nway-legend summary { cursor: pointer; padding: 4px; color: var(--dim); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.68rem; }
 .nway-legend em, .nway-ol em { font-style: normal; font: 600 0.62rem 'Consolas', monospace; background: var(--hover); border-radius: 8px; padding: 0 5px; color: var(--dim); }

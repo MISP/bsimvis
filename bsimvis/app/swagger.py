@@ -2682,6 +2682,16 @@ class BinSimNwayProgress(Resource):
         return get_nway_progress()
 
 
+@ns_bin_sim.route("/nway/cancel")
+class BinSimNwayCancel(Resource):
+    @ns_bin_sim.doc(params={"id": "The `progress_id` sent with a running /nway call"})
+    def post(self):
+        """Cancel a running /nway computation; it stops at its next progress step."""
+        from bsimvis.app.routes.nway import cancel_nway
+
+        return cancel_nway()
+
+
 @ns_bin_sim.route("/nway")
 class BinSimNway(Resource):
     @ns_bin_sim.doc(

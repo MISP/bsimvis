@@ -461,6 +461,10 @@ def _page(doc, args, r=None, pool_id=None):
     }
 
 
+class _Cancelled(Exception):
+    pass
+
+
 class _Reply(Exception):
     """An early (body, status) answer from _load_doc."""
 
@@ -508,6 +512,8 @@ def _load_doc():
         def report(frac, label):
             if int(frac * 100) != last[0]:
                 last[0] = int(frac * 100)
+                if q.exists(f"nway:cancel:{pid}"):
+                    raise _Cancelled()
                 q.setex(f"nway:progress:{pid}", 120, json.dumps([frac, label]))
 
         nway_diff_service.set_progress(report)
@@ -565,6 +571,8 @@ def _load_doc():
         )
     except _UnknownBatch:
         raise _Reply(({"error": "unknown_batch"}, 404))
+    except _Cancelled:
+        raise _Reply(({"error": "cancelled"}, 409))
     except nway_diff_service.MemberMissing as e:
         raise _Reply(({"error": "unknown_files", "missing": e.missing}, 404))
     finally:
@@ -584,6 +592,15 @@ def get_nway_progress():
         return {}
     frac, label = json.loads(raw)
     return {"fraction": frac, "label": label}
+
+
+def cancel_nway():
+    """Stop a running `/nway` call at its next progress step (it answers 409)."""
+    pid = request.args.get("id", "")
+    if not _PROGRESS_ID.match(pid):
+        abort(400, "id must be the progress_id of the call")
+    get_queue_redis().setex(f"nway:cancel:{pid}", 120, 1)
+    return {"status": "cancelling"}
 
 
 def get_nway():

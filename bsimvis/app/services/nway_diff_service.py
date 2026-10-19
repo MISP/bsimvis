@@ -20,6 +20,8 @@ import json
 import re
 import statistics
 import threading
+
+import numpy as np
 from collections import Counter, OrderedDict, defaultdict
 from itertools import combinations
 
@@ -44,12 +46,13 @@ from bsimvis.app.services.collection_config import (
     resolve_collection_algo,
 )
 from bsimvis.app.services.config_service import config_service
-from bsimvis.app.services.nway_match import nway_match
+from bsimvis.app.services.nway_match import PairEdges, nway_match
 
 _MD5 = re.compile(r"^[0-9a-f]{32}$")
 _DEFAULT_NAME = re.compile(r"^(FUN_|sub_|thunk_)", re.I)
 MAX_COLUMNS = 400  # a column tree stops expanding past this many columns
 PAIR_CHUNK = 100  # pair docs fetched per pipeline; a doc can be megabytes
+SCORE_CHUNK = 5000  # pair scores fetched per ZMSCORE
 
 
 _progress = threading.local()
@@ -293,7 +296,7 @@ def virtual_params(scope, members, params):
     return out, warnings
 
 
-def _virtual_edges(r, columns, fid_sets, p):
+def _virtual_edges(r, columns, fid_sets, p, fids, ix):
     """Pairwise-greedy edges per column pair, as a fresh collection would build them."""
     all_fids = set().union(*fid_sets.values())
     _report(0.1, "loading vectors")
@@ -331,13 +334,60 @@ def _virtual_edges(r, columns, fid_sets, p):
             found += discover_edges(
                 vectors, fa - done_a, fb - done_b, p["algo"], min_score, max_df=max_df
             )
-        edges[(a["id"], b["id"])] = [
-            (x, y, float(s)) for x, y, s in greedy_match(found)[0]
-        ]
+        edges[(a["id"], b["id"])] = PairEdges(
+            fids, ix, ((x, y, float(s)) for x, y, s in greedy_match(found)[0])
+        )
     return edges
 
 
-def _stored_edges(r, scope, members, columns, algo, fid_sets):
+def pair_sample():
+    """(files above which pairs are sampled, nearest partners, random partners)."""
+    return (
+        int(config_service.get("nway.sample_above", 100)),
+        int(config_service.get("nway.pair_k", 16)),
+        int(config_service.get("nway.pair_random", 4)),
+    )
+
+
+def nearest_pairs(scores, k, extra, seed):
+    """Pairs to read for a large set -> sorted [(i, j)], i < j.
+
+    Each file keeps its `k` best-scored partners plus `extra` seeded random
+    ones, so two sub-families inside one cluster stay linked. `scores` is an
+    N x N array, -1 where a pair has no stored score.
+    """
+    n = len(scores)
+    s = np.array(scores, np.float64)
+    np.fill_diagonal(s, -np.inf)
+    best = np.argsort(-s, axis=1, kind="stable")[:, :k].tolist()
+    out = {(min(i, j), max(i, j)) for i in range(n) for j in best[i]}
+    rng = np.random.default_rng(seed)
+    for i in range(n):
+        for j in rng.choice(n - 1, size=min(extra, n - 1), replace=False).tolist():
+            j += j >= i
+            out.add((min(i, j), max(i, j)))
+    return sorted(out)
+
+
+def _pair_scores(r, scope, members, algo, pairs, sids):
+    """N x N stored file-pair scores (-1 where none), read from the scoreboard ZSET."""
+    pool_id = scope.get("pool")
+    key = (
+        f"global:pool:{pool_id}:bin_sim:score:{algo}"
+        if pool_id
+        else f"{members[0][0]}:bin_sim:score:{algo}"
+    )
+    scores = np.full((len(members), len(members)), -1.0)
+    known = [(p, sid) for p, sid in zip(pairs, sids) if sid]
+    for start in range(0, len(known), SCORE_CHUNK):
+        chunk = known[start : start + SCORE_CHUNK]
+        for ((i, j), _), v in zip(chunk, r.zmscore(key, [sid for _, sid in chunk])):
+            if v is not None:
+                scores[i, j] = scores[j, i] = float(v)
+    return scores
+
+
+def _stored_edges(r, scope, members, columns, algo, fid_sets, fids, ix, sample):
     pool_id = scope.get("pool")
     # ponytail: fallback pairs use a fixed discovery floor, so lowering min_edge
     # below it cannot recover their weaker edges; pairs with a stored doc are exact.
@@ -364,6 +414,19 @@ def _stored_edges(r, scope, members, columns, algo, fid_sets):
             for i, j in pairs
         ]
 
+    sampled = None
+    if sample and len(members) > sample[0]:
+        # ponytail: k nearest + a few random partners per file, not every pair;
+        # a row still forms through any chain of read pairs, but a function only
+        # matched between two unread files is missed. pair_k=0 reads every pair.
+        _report(0.05, "picking file pairs")
+        scores = _pair_scores(r, scope, members, algo, pairs, sids)
+        seed = int(hashlib.md5(json.dumps(members).encode()).hexdigest()[:8], 16)
+        keep = set(nearest_pairs(scores, sample[1], sample[2], seed))
+        sampled = (len(keep), len(pairs))
+        sids = [sid for p, sid in zip(pairs, sids) if p in keep]
+        pairs = [p for p in pairs if p in keep]
+
     edges, missing = {}, []
     for start in range(0, len(pairs), PAIR_CHUNK):
         _report(
@@ -376,10 +439,14 @@ def _stored_edges(r, scope, members, columns, algo, fid_sets):
         chunk = zip(pairs[start : start + PAIR_CHUNK], pipe.execute())
         for (i, j), raw in chunk:
             doc = _decode(raw)
-            edges[(columns[i]["id"], columns[j]["id"])] = [
-                (m["func_a"], m["func_b"], float(m["similarity"]))
-                for m in (doc.get("diff") or {}).get("matched") or []
-            ]
+            edges[(columns[i]["id"], columns[j]["id"])] = PairEdges(
+                fids,
+                ix,
+                (
+                    (m["func_a"], m["func_b"], float(m["similarity"]))
+                    for m in (doc.get("diff") or {}).get("matched") or []
+                ),
+            )
             if not doc:
                 missing.append((i, j))
 
@@ -409,10 +476,10 @@ def _stored_edges(r, scope, members, columns, algo, fid_sets):
                 fid_sets=files,
                 vectors=vectors,
             )
-            edges[(columns[i]["id"], columns[j]["id"])] = [
-                (x, y, float(s)) for x, y, s in greedy_match(found)[0]
-            ]
-    return edges, len(missing)
+            edges[(columns[i]["id"], columns[j]["id"])] = PairEdges(
+                fids, ix, ((x, y, float(s)) for x, y, s in greedy_match(found)[0])
+            )
+    return edges, len(missing), sampled
 
 
 def _fn_meta(meta):
@@ -438,7 +505,7 @@ def _fn_meta(meta):
     return out
 
 
-def _load_base(r, scope, members, vparams, labels, warnings):
+def _load_base(r, scope, members, vparams, labels, warnings, sample=None):
     """Everything min_edge-independent: columns, function weights, metadata, edges.
 
     `vparams` is None for stored mode, else the virtual-mode parameters.
@@ -493,10 +560,20 @@ def _load_base(r, scope, members, vparams, labels, warnings):
     ]
     fid_sets = {col["id"]: fids for col, fids in zip(columns, fid_sets)}
 
+    ix = {fid: i for i, fid in enumerate(all_fids)}
+    sampled = None
     if vparams:
-        edges, fallback = _virtual_edges(r, columns, fid_sets, vparams), 0
+        edges = _virtual_edges(r, columns, fid_sets, vparams, all_fids, ix)
+        fallback = 0
     else:
-        edges, fallback = _stored_edges(r, scope, members, columns, algo, fid_sets)
+        edges, fallback, sampled = _stored_edges(
+            r, scope, members, columns, algo, fid_sets, all_fids, ix, sample
+        )
+    if sampled:
+        warnings = warnings + [
+            f"Large set: read each file's closest partners only ({sampled[0]:,} of "
+            f"{sampled[1]:,} file pairs). Support counts the pairs read."
+        ]
 
     columns = seriate(columns, edges, default_min_edge())
     return {
@@ -509,6 +586,7 @@ def _load_base(r, scope, members, vparams, labels, warnings):
         "library": library,
         "edges": edges,
         "fallback_pairs": fallback,
+        "pairs_read": sampled,
         "warnings": warnings,
     }
 
@@ -582,7 +660,11 @@ def seriate(columns, edges, min_edge):
     size = {c["id"]: max(1, c["functions"]) for c in columns}
     aff = {i: {} for i in ids}
     for (a, b), found in edges.items():
-        n = sum(1 for _, _, sc in found if sc >= min_edge) / min(size[a], size[b])
+        if isinstance(found, PairEdges):
+            hits = int((found.s >= min_edge).sum())
+        else:
+            hits = sum(1 for _, _, sc in found if sc >= min_edge)
+        n = hits / min(size[a], size[b])
         aff[a][b] = aff[b][a] = n
     left = set(ids)
     cur = max(ids, key=lambda i: sum(aff[i].values()))
@@ -750,6 +832,9 @@ def demo():
     got = [c["id"] for c in seriate(cols, ed, 0.5)]
     assert abs(got.index("a") - got.index("c")) == 1, got
     assert abs(got.index("b") - got.index("d")) == 1, got
+    fx = [1, 2]
+    packed = {k: PairEdges(fx, {1: 0, 2: 1}, v) for k, v in ed.items()}
+    assert [c["id"] for c in seriate(cols, packed, 0.5)] == got
     cov_rows = [
         {"span": 3, "weight": 6.0, "cells": {"a": 1, "b": 2, "c": 3}},
         {"span": 2, "weight": 2.0, "cells": {"a": 4, "b": 5}},
@@ -856,6 +941,14 @@ def demo():
         )
         is None
     )
+    # two tight families: nearest partners stay inside, random ones bridge them
+    fam = [i % 2 for i in range(20)]
+    sc = [[0.9 if fam[i] == fam[j] else 0.2 for j in range(20)] for i in range(20)]
+    pairs = nearest_pairs(sc, 3, 2, seed=1)
+    assert pairs == nearest_pairs(sc, 3, 2, seed=1)
+    assert all(i < j for i, j in pairs) and len(pairs) < 190
+    assert any(fam[i] != fam[j] for i, j in pairs)
+    assert all(sum(i == x or j == x for i, j in pairs) >= 3 for x in range(20))
     print("nway_diff_service demo ok")
 
 
@@ -883,6 +976,11 @@ def compute(r, scope, members, params=None):
     min_edge = params.get("min_edge")
     min_edge = default_min_edge() if min_edge is None else float(min_edge)
 
+    sample = pair_sample()
+    if params.get("pair_k") is not None:
+        sample = (sample[0], int(params["pair_k"]), sample[2])
+    sample = sample if sample[1] > 0 else None
+
     vparams = None
     if mode == "virtual":
         vparams, vwarnings = virtual_params(scope, members, params)
@@ -897,6 +995,7 @@ def compute(r, scope, members, params=None):
         json.dumps(revs),
         mode,
         json.dumps(vparams, sort_keys=True),
+        sample,
     )
     groups = params.get("groups")
     presence = float(params.get("child_presence", 0.5))
@@ -939,7 +1038,7 @@ def compute(r, scope, members, params=None):
 
     base = _BASE_CACHE.get(base_key)
     if base is None:
-        base = _load_base(r, scope, members, vparams, labels, warnings)
+        base = _load_base(r, scope, members, vparams, labels, warnings, sample)
         _BASE_CACHE.put(base_key, base)
     rows = _MATCH_CACHE.get(base_key + (min_edge,))
     if rows is None:

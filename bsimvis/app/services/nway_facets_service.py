@@ -29,6 +29,7 @@ from statistics import median
 
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME, _LRU, _col_id
+from bsimvis.app.services.nway_match import edge_score
 
 try:
     from bsimvis.app.services.string_service import function_strings
@@ -180,10 +181,10 @@ def pair_scores(doc, fids):
         return out
     for i, j in combinations(range(n), 2):
         for key in ((cols[i], cols[j]), (cols[j], cols[i])):
-            for a, b, s in doc["edges"].get(key, ()):
-                if {a, b} == {fids[i], fids[j]}:
-                    out[i][j] = out[j][i] = round(float(s), 4)
-                    break
+            s = edge_score(doc["edges"].get(key, ()), fids[i], fids[j])
+            if s is not None:
+                out[i][j] = out[j][i] = round(float(s), 4)
+                break
     return out
 
 

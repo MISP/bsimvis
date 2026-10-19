@@ -154,6 +154,12 @@
 # endpoint answers 413 and the UI points at smaller clusters.
 max_members = 1000
 max_functions = 1000000
+# Above sample_above files, stored mode reads each file's pair_k best-scored
+# partners plus pair_random random ones instead of every file pair (pair_k = 0
+# reads them all). Rows still chain across partners; support counts pairs read.
+sample_above = 100
+pair_k = 16
+pair_random = 4
 
 [llm]
     ollama_url = "http://localhost:11434"

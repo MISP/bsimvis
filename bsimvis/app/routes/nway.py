@@ -500,6 +500,7 @@ def _load_doc():
         min_score = request.args.get("min_score", type=float)
         min_features = request.args.get("min_features", type=int)
         presence = float(request.args.get("child_presence", 0.5))
+        pair_k = request.args.get("pair_k", type=int)
     except ValueError:
         abort(400, "min_edge and child_presence must be numbers between 0 and 1")
 
@@ -553,6 +554,7 @@ def _load_doc():
                 "focus": focus,
                 "focus_rule": focus_rule,
                 "child_presence": max(0.0, min(1.0, presence)),
+                "pair_k": None if pair_k is None else max(0, pair_k),
             },
         )
     except nway_diff_service.BadParams as e:

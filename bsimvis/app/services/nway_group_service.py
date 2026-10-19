@@ -29,8 +29,11 @@ import re
 from collections import Counter, defaultdict
 from itertools import combinations
 
+import numpy as np
+
 from bsimvis.app.services.bin_sim_tags import AXES, merge_tag_fields, tag_axis
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME, _LRU, BadParams
+from bsimvis.app.services.nway_match import PairEdges, concat_edges
 from bsimvis.app.services.tag_taxonomy import tag_body, tag_prefixes
 
 MODES = ("tag", "lane", "prefix")
@@ -305,6 +308,26 @@ def name_key(row):
 
 def _best_links(edges, row_of):
     """{(row, row): best edge score} between functions of different rows."""
+    shared = {id(e.fids): e for e in edges.values() if isinstance(e, PairEdges)}
+    if len(shared) == 1 and all(isinstance(e, PairEdges) for e in edges.values()):
+        # one numpy pass over every edge instead of tens of millions of tuples
+        e = next(iter(shared.values()))
+        a, b, s = concat_edges(edges, e.fids, e.ix)
+        row = np.array([row_of.get(f, -1) for f in e.fids], np.int64)
+        ra, rb = row[a], row[b]
+        keep = (ra >= 0) & (rb >= 0) & (ra != rb) & (s > 0)
+        lo, hi, s = np.minimum(ra, rb)[keep], np.maximum(ra, rb)[keep], s[keep]
+        width = int(row.max()) + 1 if len(row) else 1
+        key = lo * width + hi
+        order = np.lexsort((-s, key))
+        key, s = key[order], s[order]
+        uniq, first = np.unique(key, return_index=True)
+        return dict(
+            zip(
+                zip((uniq // width).tolist(), (uniq % width).tolist()),
+                s[first].tolist(),
+            )
+        )
     best = {}
     for pair_edges in edges.values():
         for fa, fb, score in pair_edges:

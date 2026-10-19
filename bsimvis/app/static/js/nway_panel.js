@@ -462,9 +462,7 @@
         }
 
         // Right-click on a column group (band, outline row or numbered group head): copy / fold / focus its files.
-        _groupMenu(e, id) {
-            e.preventDefault();
-            e.stopPropagation();
+        _groupIds(id) {
             const ids = new Set();
             let label = id;
             for (const c of this.data.columns) {
@@ -473,6 +471,13 @@
                 if (g) label = g.label;
                 if (g || c.id === id) (c.kind ? c.members || [] : [c.id]).forEach(m => ids.add(m));
             }
+            return { ids, label };
+        }
+
+        _groupMenu(e, id) {
+            e.preventDefault();
+            e.stopPropagation();
+            const { ids, label } = this._groupIds(id);
             const files = this._files().filter(f => ids.has(f.id));
             const n = this._tree().byId.get(id);
             const items = [
@@ -1774,9 +1779,13 @@
 
         // Hover a group header: the lane tooltip of the files the group covers. A child-cluster column stands for its member files.
         _gTip(e, show) {
-            const t = e.target.closest('[data-gmask]');
+            const t = e.target.closest('[data-gmask], [data-colx]');
             if (!t || t.contains(e.relatedTarget)) return;
             if (!show) return this._cgTipLater();
+            if (t.dataset.colx) {
+                const { ids } = this._groupIds(t.dataset.colx);
+                return ids.size && this._cgLaneTip(t, this._cgFiles().map(f => ids.has(f.id)));
+            }
             const cols = this.data.columns, mask = t.dataset.gmask;
             this._cgLaneTip(t, this._cgFiles().map(f => [...mask].some((b, i) => b === '1' && cols[i] && (cols[i].kind ? cols[i].members.includes(f.id) : cols[i].id === f.id))));
         }

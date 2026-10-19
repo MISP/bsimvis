@@ -755,7 +755,7 @@ window.ClusterDetailView = {
         const url = new URLSearchParams(window.location.search);
         const keys = ['scope', 'k', 'min_edge', 'mode', 'columns', 'child_presence', 'q', 'tags', 'offset', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open'];
         const state = {};
-        keys.forEach(k => { if (url.get(k)) state[k] = url.get(k); });
+        keys.forEach(k => { if (url.has(k)) state[k] = url.get(k); });
         if (url.get('ntab')) state.tab = url.get('ntab');
         const source = { cluster_uuid: this.selectedClusterUuid, axis: this.axis };
         if (this.params && this.params.pool) source.pool = this.params.pool;
@@ -767,7 +767,8 @@ window.ClusterDetailView = {
                 const u = new URL(window.location.href);
                 u.searchParams.set('tab', 'functions');
                 u.searchParams.set('ntab', s.tab);
-                keys.forEach(k => (s[k] === '' || s[k] == null ? u.searchParams.delete(k) : u.searchParams.set(k, s[k])));
+                // Only what differs from the panel default; an emptied default (group off) is kept as `key=`.
+                keys.forEach(k => (s[k] == null || String(s[k]) === String(window.NwayPanel.DEFAULTS[k] ?? '') ? u.searchParams.delete(k) : u.searchParams.set(k, s[k])));
                 window.history.replaceState({ path: u.pathname + u.search }, '', u.pathname + u.search);
             },
             onOpenCluster: uuid => this.selectNode(uuid),

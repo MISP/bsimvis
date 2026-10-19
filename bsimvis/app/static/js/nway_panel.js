@@ -28,11 +28,11 @@
     const NWAY_TIMEOUT_MS = 180000;
     const SORTS = [['name', 'Function'], ['span', 'Span'], ['weight', 'Features'], ['support', 'Support'], ['cohesion', 'Cohesion']];
     const DEFAULTS = {
-        tab: 'core', scope: 'code', k: 2, min_edge: '', mode: 'stored',
+        tab: 'all', scope: 'code', k: 2, min_edge: '', mode: 'stored',
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
-        columns: 'auto', child_presence: 0.5,
+        columns: 'twins', child_presence: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
-        group: '', group_axis: '', group_axis_b: '', group_merge: '', group_min_link: '', group_sort: '', group_lane_min: '', group_lane_fit: '', group_prefix_min: '', col_open: '',
+        group: 'lane', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_prefix_min: '', col_open: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
     const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open'];
@@ -2005,6 +2005,8 @@
             if (label) label.textContent = t.dataset.range === 'k' ? t.value : Number(t.value).toFixed(2);
         }
     }
+
+    NwayPanel.DEFAULTS = DEFAULTS;
 
     // Function page URL from a function id (the inline diff's header cards).
     NwayPanel.fnUrl = (fid, pool) => {

@@ -3083,7 +3083,7 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-legend { flex: none; width: 250px; max-height: calc(100vh - 180px); overflow: auto; position: sticky; top: 0; border-right: 1px solid var(--border); padding: 4px 6px 8px; font-size: 0.76rem; }
 #cluster-tab-functions .nway-legend { max-height: none; }
 .nway-legend.off { width: auto; }
-.nway-busy-cancel { margin-left: auto; pointer-events: auto; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 6px; font: 600 0.78rem inherit; color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent); border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 55%, transparent); }
+.nway-busy-cancel { margin-left: auto; pointer-events: auto; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 6px; font-weight: 600; font-size: 0.78rem; color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent); border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 55%, transparent); }
 .nway-busy-cancel:hover { background: color-mix(in srgb, var(--danger, #ef4444) 24%, transparent); }
 .nway-olacts { display: flex; gap: 4px; padding: 2px 4px 6px; }
 .nway-legend summary { cursor: pointer; padding: 4px; color: var(--dim); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.68rem; }

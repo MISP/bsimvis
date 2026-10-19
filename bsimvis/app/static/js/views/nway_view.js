@@ -397,7 +397,9 @@ window.NwayView = {
 
     _writeUrl(extra) {
         const next = new URLSearchParams(this._source());
-        for (const [k, v] of Object.entries(extra || {})) if (v !== '' && v !== null && v !== undefined) next.set(k, v);
+        // Only what differs from the panel default; an emptied default (group off) is kept as `key=`.
+        const def = window.NwayPanel ? NwayPanel.DEFAULTS : {};
+        for (const [k, v] of Object.entries(extra || {})) if (v !== null && v !== undefined && String(v) !== String(def[k] ?? '')) next.set(k, v);
         history.replaceState(null, '', `${window.location.pathname}?${next.toString()}`);
     },
 

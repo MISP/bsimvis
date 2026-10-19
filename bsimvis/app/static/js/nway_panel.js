@@ -156,7 +156,7 @@
                     return file ? this._menu(e, file) : this._groupMenu(e, gid);
                 }
                 // A right-click on a function cell's empty space opens the function menu, not the plain cell one.
-                const fn = !e.target.closest('[data-entity-data], button, a') && e.target.closest('td.col')?.querySelector('[data-etype="function"]');
+                const fn = !e.target.closest('[data-entity-data], button, a') && e.target.closest('td.col, td[data-fn-open]')?.querySelector('[data-entity-data]');
                 if (fn) window.EntityRenderer.handleContextMenu(e, 'function', fn);
             }, true);
             this.el.addEventListener('keydown', e => {
@@ -261,6 +261,15 @@
                     this.error = { status: res.status, ...body };
                     this.data = null;
                 } else {
+                    const axes = TAG_AXES.filter(([key]) => Number(body.tag_axis_counts?.[key]) > 0).map(([key]) => key);
+                    if ((this.state.group || '').split(',').includes('tag') && axes.length) {
+                        const primary = axes.includes(this.state.group_axis || 'origin') ? (this.state.group_axis || 'origin') : axes[0];
+                        const secondary = axes.includes(this.state.group_axis_b) && this.state.group_axis_b !== primary ? this.state.group_axis_b : '';
+                        if (primary !== this.state.group_axis || secondary !== this.state.group_axis_b) {
+                            this._set({ group_axis: primary, group_axis_b: secondary, offset: 0 });
+                            return;
+                        }
+                    }
                     this.error = null;
                     this.data = body;
                     if (this.onData) this.onData(body);
@@ -375,7 +384,9 @@
 
         // The Group bar: one line read left to right - group by, merge functions, merge files, order.
         _groupCard() {
-            const d = this.data, s = this.state, lv = (s.group || '').split(',').filter(Boolean), axis = s.group_axis || 'origin';
+            const d = this.data, s = this.state, lv = (s.group || '').split(',').filter(Boolean);
+            const tagAxes = TAG_AXES.filter(([key]) => Number(d.tag_axis_counts?.[key]) > 0).map(([key, label]) => [key, `${label} (${d.tag_axis_counts[key]})`]);
+            const axis = tagAxes.some(([key]) => key === s.group_axis) ? s.group_axis : tagAxes[0]?.[0] || '';
             const merge = new Set((s.group_merge || '').split(',').filter(Boolean)), active = merge.size > 0 || lv.length > 0;
             const sel = (key, cur, opts, none) => `<select class="view-btn" data-select="${key}">${none ? '<option value="">none</option>' : ''}${opts.map(([v, t]) => `<option value="${escapeAttr(v)}"${v === cur ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('')}</select>`;
             const box = (k, text, tip) => `<label class="nway-gtog${merge.has(k) ? ' on' : ''}" title="${escapeAttr(tip)}"><input type="checkbox" data-ev="${k}"${merge.has(k) ? ' checked' : ''}> ${text}</label>`;
@@ -388,7 +399,7 @@
                 const i = lv.indexOf(v);
                 return `${j ? '<span class="nway-bchev">›</span>' : ''}<button class="nway-gpick${i >= 0 ? ' on' : ''}" data-gpick="${v}" aria-pressed="${i >= 0}" title="${escapeAttr(tip)}">${i >= 0 ? `<b>${i + 1}</b>` : ''}${escapeHtml(t)}</button>`;
             }).join('');
-            const axes = lv.includes('tag') ? `${sel('group_axis', axis, TAG_AXES)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, TAG_AXES.filter(([k]) => k !== axis), true)}` : '';
+            const axes = lv.includes('tag') ? tagAxes.length ? `${sel('group_axis', axis, tagAxes)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, tagAxes.filter(([k]) => k !== axis), true)}` : '<span class="nway-lbl">No tags in these functions</span>' : '';
             const minLink = merge.has('call') ? this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.') : '';
             // Merge files by: None = one column per file, Cluster = child clusters (a cluster node only), Same code = twins.
             const fileOpts = [['files', 'None', 'One column per file.'], ...(this.source.cluster_uuid || d.shared_cluster ? [['children', 'Cluster', 'One column per child cluster; open a column to show its own children, down to files.']] : []), ['twins', 'Same code', "Files that hold a function in exactly the same shared rows become one column. Click a column's count to show its files; a function only some of them hold shows as a partly filled square."]];
@@ -1853,7 +1864,9 @@
                 const full = all ? have === all : b === '1', some = all ? have > 0 : b === '1';
                 return `<td class="col sq"><i class="nway-sq${some ? (full ? ' on' : ' part') : ''}" style="${this._sqStyle(i)}" title="${escapeAttr(this._colLabel(cols[i]) + (some ? (all > 1 ? `: ${have} of ${all} files` : '') : ': not in this group'))}">${all > 1 && some && !full ? have : ''}</i></td>`;
             }).join('');
-            return `<tr class="nway-grow d${depth}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><button class="nway-gh" data-gtoggle="${escapeAttr(g.id)}" aria-expanded="${!closed}" style="padding-left:${10 + depth * 20}px"><b class="nway-gchev">${closed ? '&#9656;' : '&#9662;'}</b><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span></button></td>${sq}</tr>`;
+            const diff = g.kind === 'same' && g.fids?.length >= 2
+                ? `<button class="nway-gchip ev-n nway-merge-diff" data-merge-diff="${escapeAttr(g.id)}" title="N-way diff of all ${g.fids.length} functions in this merge" aria-label="N-way diff of all ${g.fids.length} functions in this merge, ${pct(g.cohesion)} cohesion">${pct(g.cohesion)}</button>` : '';
+            return `<tr class="nway-grow d${depth}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px"><button class="nway-gchev" data-gtoggle="${escapeAttr(g.id)}" aria-label="${closed ? 'Expand' : 'Collapse'} group" aria-expanded="${!closed}">${closed ? '&#9656;' : '&#9662;'}</button><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}${diff}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span></div></td>${sq}</tr>`;
         }
 
         // Rows, with a header printed whenever a row's group path leaves the one printed last.
@@ -2059,8 +2072,15 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared]');
             if (!t) return;
+            if (t.dataset.mergeDiff) {
+                const group = this.data.groups[t.dataset.mergeDiff];
+                if (!group) return;
+                e.preventDefault();
+                this._scrollSave();
+                return window.Nav.openPath(NwayPanel.urlForFunctions(group.fids), e, { title: 'N-way diff', type: 'bin_sim' });
+            }
             if (t.dataset.statsToggle !== undefined) {
                 this._so = !this._statsOff();
                 try { localStorage.setItem('nway.stats', this._so ? '0' : '1'); } catch (err) { /* storage blocked */ }

@@ -687,7 +687,12 @@
             // Same renderer as the function search table, fed the guessed signature.
             const fn = window.EntityRenderer.renderFunction({ ...f, user_name: '', function_name: row.name, return_type: sig.ret, parameters: sig.params }, { hideNote: true, showActions: false, ...opts });
             // Tags land on the best candidate, the function the preview shows.
-            const tags = window.EntityRenderer.renderTag('function', f.function_id, row.tags || f.tags, row.tags ? [] : f.user_tags, { maxTags: 4 });
+            // Pooled row tags carry bare user tags as `user:<tag>` (merge_tag_fields); unwrap them so bookmark/ignore still light up.
+            const bareUser = t => /^user:[^:]+$/.test(t);
+            const tags = window.EntityRenderer.renderTag('function', f.function_id,
+                row.tags ? row.tags.filter(t => !bareUser(t)) : f.tags,
+                row.tags ? row.tags.filter(bareUser).map(t => t.slice(5)) : f.user_tags,
+                { maxTags: 4 });
             return `<div class="nway-namerow">${fn}${this._renameBtn(row)}</div><div class="nway-tags" title="${row.tags ? 'tags pooled over the row' : 'tags of the best candidate'}: ${escapeAttr(f.entrypoint_address)}">${tags}</div>`;
         }
 

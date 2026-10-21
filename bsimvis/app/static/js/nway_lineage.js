@@ -342,6 +342,24 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
         }
     }
 
+    // dev guard: boxes of one column never intersect; warn once with the two names
+    let warned = false;
+    function warnOverlap(L) {
+        if (warned) return;
+        const cols = new Map();
+        for (const n of L.vis) (cols.get(n.d) || cols.set(n.d, []).get(n.d)).push(n);
+        for (const list of cols.values()) {
+            list.sort((a, b) => a.y0 - b.y0);
+            for (let i = 1; i < list.length; i++) {
+                if (list[i].y0 < list[i - 1].y1) {
+                    warned = true;
+                    console.warn('lineage: overlapping boxes', list[i - 1].file_name || list[i - 1].id, list[i].file_name || list[i].id);
+                    return;
+                }
+            }
+        }
+    }
+
     // ---------------------------------------------------------------- mount
     function mount(container, opts = {}) {
         if (!document.getElementById('nway-lineage-css')) {
@@ -422,6 +440,7 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
             bundle(L.links);
             st.names = new Map(st.doc.nodes.map(n => [n.id, n.file_name || n.id]));
             for (const n of L.vis) if (n.agg) st.names.set(n.id, n.file_name);
+            warnOverlap(L);
             drawStatic();
             drawMini();
             note();
@@ -460,7 +479,8 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
         let ribs, arcSel, nodeBase, rim, strSel;
         function drawStatic() {
             const L = st.L;
-            defs.selectAll('*').remove();
+            // a relayout starts from an empty scene: joins would keep the old boxes and arcs
+            for (const g of [defs, gRib, gArc, gNode, gStr, gDet, gOv, gLab]) g.selectAll('*').remove();
             for (const [k, c] of [['born', V.born]]) {
                 const p = defs.append('pattern').attr('id', `hatch-${k}-${id}`).attr('width', 6).attr('height', 6).attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
                 p.append('rect').attr('width', 6).attr('height', 6).style('fill', c).attr('fill-opacity', 0.22);
@@ -821,5 +841,5 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
         }
     }
 
-    window.NwayLineage = { mount };
+    window.NwayLineage = { mount, _layout: { buildModel, layout, autoCollapse } }; // _layout: for the layout check
 })();

@@ -758,20 +758,35 @@ def grow_columns(groups, open_ids, children_of, limit=MAX_COLUMNS):
     each `{id, label, member_count}`, so a header can draw a collapse band over
     its children), and `expandable`: more than one file. A group is left closed
     when expanding would pass `limit` columns. `"*"` in `open_ids` opens every group,
-    `"*N"` every group less than N levels deep, `"*fit:N"` as many levels as keep
-    the total at N columns or fewer.
+    `"*N"` every group less than N levels deep, `"*fit:N"` opens the biggest groups first (deeper where there are more files) while the total stays at N columns or fewer.
     """
     fit = next(
         (int(i[5:]) for i in open_ids if i[:5] == "*fit:" and i[5:].isdigit()), 0
     )
     if fit:
-        best, prev = None, -1
-        for d in range(1, 9):
-            cur = grow_columns(groups, {f"*{d}"}, children_of, min(limit, fit))
-            if len(cur) == prev:
-                break
-            best, prev = cur, len(cur)
-        return best
+        # biggest group first, so crowded groups open deeper than small ones
+        cols = [{**g, "path": [], "expandable": g["member_count"] > 1} for g in groups]
+        stuck = set()
+        while True:
+            cand = [
+                i
+                for i, g in enumerate(cols)
+                if g["expandable"] and g["id"] not in stuck
+            ]
+            if not cand:
+                return cols
+            i = max(cand, key=lambda i: cols[i]["member_count"])
+            g = cols[i]
+            sub = children_of(g)
+            if not sub or len(cols) + len(sub) - 1 > min(limit, fit):
+                stuck.add(g["id"])
+                continue
+            here = g["path"] + [
+                {"id": g["id"], "label": g["label"], "member_count": g["member_count"]}
+            ]
+            cols[i : i + 1] = [
+                {**c, "path": here, "expandable": c["member_count"] > 1} for c in sub
+            ]
     depth = max(
         (
             float("inf") if i == "*" else int(i[1:])

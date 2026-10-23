@@ -2930,6 +2930,14 @@ a.home-card:hover,
 .nway-chip button { background: none; border: none; padding: 0; cursor: pointer; color: var(--dim); }
 .nway-chip button:hover { color: var(--token-instruction); }
 .nway-msg { margin-top: 6px; min-height: 1em; font-size: 0.8rem; color: var(--token-instruction); }
+.nway-ddl { position: relative; display: inline-block; }
+.nway-ddl > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.nway-ddl > summary::-webkit-details-marker { display: none; }
+.nway-ddl > summary .bsim-tag-pill { cursor: pointer; }
+.nway-ddc { font-size: 0.6rem; color: var(--dim, #888); }
+.nway-ddl[open] .nway-ddc { transform: rotate(180deg); }
+.nway-ddl-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); min-width: 100%; white-space: nowrap; }
+.nway-ddl-menu .bsim-tag-pill { cursor: pointer; }
 .nway-top { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 24px; margin-bottom: 10px; }
 .nway-top-left { flex: 1 1 420px; min-width: 0; }
 .nway-top-left:empty { display: none; }

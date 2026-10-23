@@ -5798,6 +5798,23 @@ def test_nway_diff():
         == {g["id"] for g in _l2["groups"].values()},
         f"{_ld and len(_ld['groups'])} vs {_l2 and len(_l2['groups'])}",
     )
+    _, _lk = _nway(
+        tab="all",
+        scope="all",
+        limit=1000,
+        group="lane",
+        group_lane_depth=3,
+        group_lane_link=0.2,
+        group_open="all",
+    )
+    check(
+        "nway group: group_lane_link keeps every row",
+        _lk and _ld and _lk["total"] == _ld["total"],
+    )
+    check(
+        "nway group: group_lane_link=2 is a 400",
+        _nway(group="lane", group_lane_link=2)[0] == 400,
+    )
     check(
         "nway group: group_lane_depth=x is a 400",
         _nway(group="lane", group_lane_depth="x")[0] == 400,

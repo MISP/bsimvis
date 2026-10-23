@@ -324,7 +324,8 @@ def _attach_clusters(r, rows, fmeta, pool_id, args):
     per_row, cards = _row_clusters(r, rows, fmeta, pool_id, args)
     for row, uuids in zip(rows, per_row):
         row["clusters"] = uuids
-        if _DEFAULT_NAME.match(row["name"]):
+        # a tag-carried name is only a fallback: a real cluster name beats it
+        if _DEFAULT_NAME.match(row["name"]) or row.get("name_from") == "tag":
             for u in uuids:
                 c = cards[u]
                 n = c.get("cluster_name") or ""

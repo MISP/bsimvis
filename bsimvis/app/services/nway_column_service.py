@@ -107,19 +107,24 @@ def meta_groups(members, metas, names, key, multi="first"):
 
 
 def query_groups(colset, names):
-    """Groups of a saved query set (see `routes.nway.post_column_set`)."""
-    return _finish(
-        [
+    """Groups of a saved query set (see `routes.nway.post_column_set`).
+
+    They keep the order and labels they were given (A is the first column, even
+    when it holds one file).
+    """
+    out = []
+    for i, g in enumerate(colset["groups"]):
+        members = [m for m in g["members"] if m in names]
+        out.append(
             {
                 "id": f"q:{i}",
                 "kind": "query",
                 "label": g["label"],
-                "members": [m for m in g["members"] if m in names],
+                "members": members,
+                "member_count": len(members),
             }
-            for i, g in enumerate(colset["groups"])
-        ],
-        names,
-    )
+        )
+    return out
 
 
 def axes(members, metas):

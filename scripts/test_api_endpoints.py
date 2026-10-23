@@ -5114,6 +5114,12 @@ def test_nway_column_groups():
         st == 200 and body["columns_mode"] == "by" and len(body["columns"]) == 2,
         f"HTTP {st}",
     )
+    check(
+        "nway col_set: groups keep their order and labels",
+        [c["label"] for c in body["columns"]] == ["A", "B"]
+        and all(c["kind"] == "query" for c in body["columns"]),
+        str([(c["label"], c["kind"]) for c in body["columns"]]),
+    )
     _, only_a = _nway_set(sid, tab="unique", side="a", limit=1000)
     _, only_b = _nway_set(sid, tab="unique", side="b", limit=1000)
     _, both = _nway_set(sid, tab="core", limit=1000)

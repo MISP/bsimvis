@@ -2346,6 +2346,8 @@ class BinClusterList(Resource):
             "min_stability": "Min cluster stability",
             "min_count": "Min member count",
             "min_cohesion": "Min cohesion score",
+            "min_avg_funcs": "Min average functions per member file",
+            "max_avg_funcs": "Max average functions per member file",
             "sort_by": "Sort field (count, stability, cohesion)",
             "sort_order": "Sort order (asc/desc)",
             "format": "Output format (json/csv)",

@@ -156,7 +156,6 @@
             this.el.addEventListener('toggle', e => {
                 if (e.target.matches('details.nway-focus')) this._focusOpen = e.target.open;
                 if (e.target.matches('details.nway-compare')) this._cmpOpen = e.target.open;
-                if (e.target.matches('details.nway-more')) this._moreOpen = e.target.open;
                 if (e.target.matches('details.nway-cmp-more')) { (this._cmpMore ||= new Set())[e.target.open ? 'add' : 'delete'](e.target.dataset.key); }
                 if (e.target.matches('details.nway-match')) this._matchOpen = e.target.open;
                 if (e.target.matches('details.nway-adv')) this._advOpen = e.target.open;
@@ -421,10 +420,11 @@
             const stats = `<button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-stats-toggle title="Hide or show the Span, Features, Support, Cohesion and Cluster columns, to focus on the matrix."><i class="fa-solid fa-table-columns"></i> Stats <span class="dim">${this._statsOff() ? 'hidden' : 'shown'}</span></button>`;
             const lineage = `<button type="button" class="nway-chip" data-lineage title="Open the lineage of these files as a full page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button>`;
             const sec = (title, body) => `<div class="nway-more-sec"><span class="nway-sech">${title}</span><div class="nway-more-row">${body}</div></div>`;
-            const more = `<details class="nway-more"${this._moreOpen ? ' open' : ''}><summary class="nway-chip"><i class="fa-solid fa-sliders"></i> More options <span class="dim">${escapeHtml(moreSum)}</span></summary><div class="nway-more-body">
-                ${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div></details>`;
-            return `<div class="nway-tabrow">${search}${this._columnChip()}</div>
-                <div class="nway-bar">${filter}${this._tabPills(focus, tabTip)}${parts.files}<span class="nway-pops">${this._compareBox()}${lineage}</span></div>${parts.byRow}${more}`;
+            const moreBtn = `<button type="button" class="nway-chip${this._moreOpen ? ' on' : ''}" data-more-toggle title="Matching, row groups, focus, stats and the file set"><i class="fa-solid fa-sliders"></i> More options <span class="dim">${escapeHtml(moreSum)}</span> <i class="fa-solid fa-chevron-${this._moreOpen ? 'up' : 'down'}"></i></button>`;
+            const more = !this._moreOpen ? '' : `<div class="nway-more-body">
+                ${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div>`;
+            return `<div class="nway-tabrow">${search}${this._columnChip()}${moreBtn}</div>
+                <div class="nway-bar">${filter}${this._tabPills(focus, tabTip)}${parts.files}<span class="nway-pops" data-actions>${this._compareBox()}${lineage}</span></div>${parts.byRow}${more}`;
         }
 
         // The group controls in three parts: merge files (always shown), the metadata controls
@@ -2200,7 +2200,12 @@
                 const coverage = c.coverage == null ? '' : ` · ${(Number(c.coverage) * 100).toFixed(0)}% of the shared weight`;
                 return `<th class="col sq" data-col="${escapeAttr(c.id)}" title="${escapeAttr(`${c.file_name} (${c.collection})\n${c.md5}\n${Number(c.functions)} fn${coverage}\nright-click: focus / filter`)}"><i class="nway-sq on" style="${this._sqStyle(ci)}"></i><div class="nway-vname">${name}</div></th>`;
             };
-            const lead = this._statsOff() ? th(SORTS[0]) : SORTS.map(th).join('') + '<th>Cluster</th>';
+            // Fold or unfold every row group, from the head of the column they sit in.
+            const foldBtns = s.group || s.group_merge
+                ? '<span class="nway-fold"><button type="button" data-gall="open" title="Expand every group"><i class="fa-solid fa-angles-down"></i></button><button type="button" data-gall="close" title="Collapse every group"><i class="fa-solid fa-angles-up"></i></button></span>'
+                : '';
+            const th0 = c => th(c).replace('</th>', `${foldBtns}</th>`);
+            const lead = this._statsOff() ? th0(SORTS[0]) : th0(SORTS[0]) + SORTS.slice(1).map(th).join('') + '<th>Cluster</th>';
             if (this._tree().grouped) {
                 const bands = this._bands();
                 return `${bands.html}<tr style="--bt:${bands.n * BAND_H}px">${lead}${this.data.columns.map((c, ci) => this._numHead(c, ci)).join('')}</tr>`;
@@ -2261,13 +2266,13 @@
                     + (n.count > 1 ? `<em>${n.count}</em>` : '') + `<b class="nway-rg">${range}</b></div>`
                     + n.kids.map(k => row(k, dep + 1)).join('');
             };
-            return `<aside class="nway-legend${this._legOff ? ' off' : ''}"><details${this._legOff ? '' : ' open'} ontoggle="NwayPanel.legend(this)"><summary>Columns <em>${this.data.columns.length}</em></summary>${this._colDepth()}${t.root.kids.map(k => row(k, 0)).join('')}</details></aside>`;
+            return `<aside class="nway-legend${this._legOff ? ' off' : ''}"><details${this._legOff ? '' : ' open'} ontoggle="NwayPanel.legend(this)"><summary>Columns <em>${this.data.columns.length}</em><span class="nway-fold"><button type="button" data-coldepth="all" title="Expand every column group"><i class="fa-solid fa-angles-down"></i></button><button type="button" data-coldepth="0" title="Collapse every column group"><i class="fa-solid fa-angles-up"></i></button></span></summary>${this._colDepth()}${t.root.kids.map(k => row(k, 0)).join('')}</details></aside>`;
         }
 
         // The host (the N-way page) can park its own controls in the More section.
         render() {
             this._renderPanel();
-            if (this.onSlot) this.onSlot(this.el.querySelector('[data-more-slot]'));
+            if (this.onSlot) this.onSlot(this.el.querySelector('[data-more-slot]'), this.el.querySelector('[data-actions]'));
         }
 
         _renderPanel() {
@@ -2329,7 +2334,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-colpick],[data-colpick-clear]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-colpick],[data-colpick-clear],[data-more-toggle]');
             if (!t) return;
             if (t.dataset.lineage !== undefined) {
                 this._scrollSave();
@@ -2353,6 +2358,7 @@
                 return window.Nav.openPath(this._clusterUrl(t.dataset.openShared), e, { title: 'Cluster', type: 'cluster' });
             }
             if (t.dataset.coldepth) {
+                e.preventDefault();
                 const n = t.dataset.coldepth;
                 if (Number(n) > (this._dlim || 5)) this._dlim = Number(n);
                 this._scrollSave();
@@ -2399,6 +2405,7 @@
             }
             if (t.dataset.preset) return this._set({ ...PRESETS.find(p => p[0] === t.dataset.preset)[2], offset: 0 });
             if (t.dataset.pickBy !== undefined) return this._pickBy();
+            if (t.dataset.moreToggle !== undefined) { this._moreOpen = !this._moreOpen; this._scrollSave(); return this.render(); }
             if (t.dataset.colpick !== undefined) {
                 const list = this._pickList(), v = t.dataset.colpick, i = list.indexOf(v);
                 if (i >= 0) list.splice(i, 1); else list.push(v);

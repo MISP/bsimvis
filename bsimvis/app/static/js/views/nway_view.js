@@ -445,10 +445,16 @@ window.NwayView = {
                 this._writeUrl(s);
             },
             onData: d => this._renderFileHero(d),
-            onSlot: slot => {
+            onSlot: (slot, actions) => {
+                // Compare and Lineage sit at the right of the file-set header
+                const home = document.querySelector('[data-hero-actions]');
+                if (home && actions) home.replaceChildren(actions);
                 const edit = this._editEl;
                 if (!edit) return;
-                (slot || document.getElementById('nway-edit-home'))?.appendChild(edit);
+                // a panel with a table keeps the editor in More (closed = out of the page); otherwise it shows above
+                if (slot) slot.appendChild(edit);
+                else if (actions) edit.remove();
+                else document.getElementById('nway-edit-home')?.appendChild(edit);
                 edit.classList.toggle('in-more', !!slot);
                 if (slot) edit.open = true;
             },
@@ -484,7 +490,7 @@ window.NwayView = {
         if (st && st.scored < st.total) warns.push(`${st.total - st.scored} pairs unscored`);
         const parts = [plural(files.length, 'file'), `${funcs.toLocaleString()} functions`, plural(colls.length, 'collection'), archs.join(' · ')].filter(Boolean);
         el.hidden = false;
-        el.innerHTML = `<div class="nway-hero-top"><span class="nway-hkind ${kind === 'File set' ? 'set' : ''}">${kind}</span><span class="dim">${escapeHtml(where)}</span></div>
+        el.innerHTML = `<div class="nway-hero-top"><span class="nway-hkind ${kind === 'File set' ? 'set' : ''}">${kind}</span><span class="dim">${escapeHtml(where)}</span><span class="nway-hero-actions" data-hero-actions></span></div>
             <div class="nway-hero-meta dim">${comp}</div>
             <div class="nway-hero-meta dim">${[...parts.map(escapeHtml), coh].join(' · ')}${warns.map(w => `<span class="nway-hpill warn">${escapeHtml(w)}</span>`).join('')}</div>`;
     },

@@ -27,15 +27,17 @@
     const PAGE = 50;
     const NWAY_TIMEOUT_MS = 180000;
     const SORTS = [['name', 'Function'], ['span', 'Span'], ['weight', 'Features'], ['support', 'Support'], ['cohesion', 'Cohesion']];
+    // Sliders whose value is a whole number.
+    const INT_RANGES = ['k', 'twin_depth', 'group_lane_depth'];
     const DEFAULTS = {
         tab: 'all', scope: 'code', k: 2, min_edge: '', mode: 'stored',
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
         columns: 'twins', child_presence: 0.5, twin_depth: 3, twin_link: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
-        group: 'lane', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_prefix_min: '', col_open: '',
+        group: 'lane', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 3, group_prefix_min: '', col_open: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open'];
+    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_prefix_min', 'col_open'];
     // Group by: rows bundled by file set, nested under one tag axis, or joined as one probable function.
     const GROUPS = [
         ['lane', 'Lane', 'Bundles of rows that appear in exactly the same files, biggest bundle first. With the merge on, a merged function is bundled by all the files it covers together. A set of files only one function has gets no lane and stays a plain row beside the lanes, unless it is a bundle minus a file or two (90% or more of its files), which joins it with a chip.'],
@@ -340,7 +342,7 @@
         }
 
         _slider(label, key, value, min, max, step, tip) {
-            const shown = key === 'k' || key === 'twin_depth' ? String(value) : Number(value).toFixed(2);
+            const shown = INT_RANGES.includes(key) ? String(value) : Number(value).toFixed(2);
             return `<span class="nway-ctlwrap"><label class="nway-ctl"><span class="nway-lbl">${escapeHtml(label)}</span><b>${shown}</b><input type="range" min="${min}" max="${max}"${step ? ` step="${step}"` : ''} value="${Number(value)}" data-range="${key}"></label>${this._tip(tip)}</span>`;
         }
 
@@ -401,13 +403,14 @@
                 const i = lv.indexOf(v);
                 return `${j ? '<span class="nway-bchev">›</span>' : ''}<button class="nway-gpick${i >= 0 ? ' on' : ''}" data-gpick="${v}" aria-pressed="${i >= 0}" title="${escapeAttr(tip)}">${i >= 0 ? `<b>${i + 1}</b>` : ''}${escapeHtml(t)}</button>`;
             }).join('');
+            const laneDepth = lv.includes('lane') ? this._slider('Lane levels', 'group_lane_depth', Number(s.group_lane_depth), 1, 6, 1, 'Lanes nest by file set: a lane sits under the smallest lane that holds all its files. 1 keeps every lane flat; higher allows that many nested levels.') : '';
             const axes = lv.includes('tag') ? tagAxes.length ? `${sel('group_axis', axis, tagAxes)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, tagAxes.filter(([k]) => k !== axis), true)}` : '<span class="nway-lbl">No tags in these functions</span>' : '';
             const minLink = merge.has('call') ? this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.') : '';
             // Merge files by: None = one column per file, Cluster = child clusters (a cluster node only), Same code = twins.
             const fileOpts = [['files', 'None', 'One column per file.'], ...(this.source.cluster_uuid || d.shared_cluster ? [['children', 'Cluster', 'One column per child cluster; open a column to show its own children, down to files.']] : []), ['twins', 'Same code', "Files that hold a function in exactly the same shared rows become one column. Click a column's count to show its files; a function only some of them hold shows as a partly filled square."]];
             const fileBtns = fileOpts.map(([v, text, tip]) => `<button class="view-btn${fileMode === v ? ' active' : ''}" data-set="columns:${v}" title="${escapeAttr(tip)}">${text}</button>`).join('');
             return `<div class="nway-gcard${active ? ' active' : ''}">
-                <span class="nway-bgrp">${lbl('Group by', 'Click order is nesting order: each group is split again by the next level. The column sort still orders the rows inside each group.')}${picks}${axes}</span>${sep}
+                <span class="nway-bgrp">${lbl('Group by', 'Click order is nesting order: each group is split again by the next level. The column sort still orders the rows inside each group.')}${picks}${axes}${laneDepth}</span>${sep}
                 <span class="nway-bgrp">${lbl('Merge functions', 'Join rows that are probably one function: rows the matcher kept apart (another decompilation, architecture or version) show as one, with their rows under it.')}${box('name', 'Name', 'Rows with the same function name. Auto names (FUN_, sub_) and compiler suffixes (.part.0) are ignored.')}${box('call', 'Call position', 'Rows under the same caller, in different files, with a weak edge between them. Needs the callers of every function.')}${minLink}</span>${sep}
                 <span class="nway-bgrp">${lbl('Merge files', 'How files share a column.')}<span class="view-toggle">${fileBtns}</span>${twinNote ? `<span class="dim nway-bnote">${twinNote}</span>` : ''}</span>
                 <span class="nway-bgrp nway-bend">${lbl('Order', 'How groups are ordered.')}${sel('group_sort', s.group_sort || 'files', GROUP_SORTS)}${active ? '<button class="nway-blink" data-gall="open">open all</button><button class="nway-blink" data-gall="close">close all</button>' : ''}</span>
@@ -2171,7 +2174,7 @@
         _onInput(e) {
             const t = e.target;
             const label = t.dataset.range && t.closest('label') && t.closest('label').querySelector('b');
-            if (label) label.textContent = t.dataset.range === 'k' ? t.value : Number(t.value).toFixed(2);
+            if (label) label.textContent = INT_RANGES.includes(t.dataset.range) ? t.value : Number(t.value).toFixed(2);
         }
     }
 

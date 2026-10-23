@@ -153,6 +153,64 @@ def lane_groups(rows, n, sort, min_size=LANE_MIN, fit=LANE_FIT):
     return out
 
 
+def lane_forest(rows, n, sort, min_size=LANE_MIN, fit=LANE_FIT, depth=2):
+    """Lanes nested by file containment: a lane sits under the smallest lane holding all its files.
+
+    -> (roots, loose). A root is `{"g", "items", "kids"}`: the lane's group meta
+    (counting its sub-lanes), its own `(unit, extra)` pairs and its sub-lane
+    roots. Lanes deeper than `depth` levels move up to sit beside their
+    ancestor at `depth`. Units without a lane join one the way `lane_groups`
+    does, and `loose` is what is left.
+    """
+    count = Counter(r["mask"] for r in rows)
+    bundles = [m for m, c in count.items() if c >= min_size]
+    parent = {}
+    for m in bundles:
+        sup = [b for b in bundles if b != m and not m & ~b]
+        parent[m] = min(sup, key=lambda b: (_pop(b), b)) if sup else None
+    up = dict(parent)
+    for m in bundles:
+        chain = []
+        p = parent[m]
+        while p is not None:
+            chain.append(p)
+            p = parent[p]
+        if len(chain) + 1 > depth:
+            up[m] = chain[::-1][depth - 2] if depth >= 2 else None
+    nodes = {m: {"mask": m, "items": [], "kids": []} for m in bundles}
+    loose = []
+    for r in rows:
+        mask = r["mask"]
+        if mask in nodes:
+            nodes[mask]["items"].append((r, {}))
+            continue
+        holds = [m for m in bundles if not mask & ~m]
+        near = min(holds, key=lambda b: (_pop(b), b)) if holds else None
+        if near is not None and _pop(mask) / _pop(near) >= fit:
+            extra = {"sub": _pop(near) - _pop(mask), "miss": _bits(near & ~mask, n)}
+            nodes[near]["items"].append((r, extra))
+        else:
+            loose.append(r)
+    roots = []
+    for m, node in nodes.items():
+        (nodes[up[m]]["kids"] if up[m] is not None else roots).append(node)
+
+    def finish(node):
+        units = [u for u, _ in node["items"]]
+        for k in node["kids"]:
+            units += finish(k)
+        g = _meta(units, n)
+        g.update(id=f"lane:{_bits(node['mask'], n)}", kind="lane")
+        g.update(mask=_bits(node["mask"], n), path=[g["id"]])
+        node["g"] = g
+        node["kids"] = _by_rank(node["kids"], sort, lambda k: k["g"])
+        return units
+
+    for node in roots:
+        finish(node)
+    return _by_rank(roots, sort, lambda k: k["g"]), loose
+
+
 def name_prefix(name):
     """The first word of a function name -> (word, separator) or None.
 
@@ -579,6 +637,8 @@ def _nodes(units, levels, ctx, parent_id, parent_path, carried):
     """
     if not levels:
         return _expand(units, ctx, parent_id, parent_path, carried)
+    if levels[0] == "lane" and ctx.get("lane_depth", 1) > 1:
+        return _lane_nodes(units, levels, ctx, parent_id, parent_path, carried)
     nodes = []
     for g, items in _level(levels[0], units, ctx):
         extras = {id(u): {**carried.get(id(u), {}), **extra} for u, extra in items}
@@ -605,6 +665,39 @@ def _nodes(units, levels, ctx, parent_id, parent_path, carried):
             }
         )
     return nodes
+
+
+def _lane_nodes(units, levels, ctx, parent_id, parent_path, carried):
+    """The `lane` level with sub-lanes: each lane lists its own rows, then its sub-lanes."""
+    roots, loose = lane_forest(
+        units,
+        ctx["n"],
+        ctx["sort"],
+        ctx["lane_min"],
+        ctx["lane_fit"],
+        ctx["lane_depth"],
+    )
+
+    def build(node, pid, ppath):
+        g, own = _graft(node["g"], pid, ppath), node["items"]
+        extras = {id(u): {**carried.get(id(u), {}), **e} for u, e in own}
+        kids = [build(k, g["id"], g["path"]) for k in node["kids"]]
+        if len(levels) == 1 and not ctx["merge"]:
+            pairs = [(g, [(u, extras[id(u)]) for u, _ in own])] + _flat(kids, ctx)
+        else:
+            inner = _nodes(
+                [u for u, _ in own], levels[1:], ctx, g["id"], g["path"], extras
+            )
+            pairs = [(g, [])] + _flat(inner + kids, ctx)
+        return {
+            "container": True,
+            "rank": _rank(g, ctx["sort"]),
+            "id": g["id"],
+            "pairs": pairs,
+        }
+
+    nodes = [build(root, parent_id, parent_path) for root in roots]
+    return nodes + _nodes(loose, levels[1:], ctx, parent_id, parent_path, carried)
 
 
 def _flat(nodes, ctx):
@@ -682,6 +775,7 @@ def group_rows(rows, doc, r, mode, params):
         "prefix_min": PREFIX_MIN,
         "lane_min": LANE_MIN,
         "lane_fit": LANE_FIT,
+        "lane_depth": 1,
         "sort_col": (
             params.get("sort_col") if params.get("sort_col") in SORT_COLS else ""
         ),
@@ -700,6 +794,11 @@ def group_rows(rows, doc, r, mode, params):
             ctx["lane_min"] = max(1, int(params["group_lane_min"]))
         except ValueError:
             raise BadParams("group_lane_min must be an integer")
+    if params.get("group_lane_depth"):
+        try:
+            ctx["lane_depth"] = max(1, min(6, int(params["group_lane_depth"])))
+        except ValueError:
+            raise BadParams("group_lane_depth must be an integer")
     if params.get("group_prefix_min"):
         try:
             ctx["prefix_min"] = max(2, int(params["group_prefix_min"]))
@@ -988,6 +1087,40 @@ def demo():
         ("c", None),
         ("c", "r4"),
     ]
+    # nested lanes: 1111 holds 0011, which holds 0001; a row missing a file of 1111 joins it
+    tree = [row(15, 4, "a"), row(15, 4, "b"), row(3, 2, "c"), row(3, 2, "d")]
+    tree += [row(1, 1, "e"), row(1, 1, "f"), row(7, 1, "g")]
+    roots, loose = lane_forest(tree, 4, "files", 2, 0.7, 3)
+    assert [r["g"]["id"] for r in roots] == ["lane:1111"] and not loose
+    sub = roots[0]["kids"]
+    assert [k["g"]["id"] for k in sub] == ["lane:1100"], sub
+    assert [k["g"]["id"] for k in sub[0]["kids"]] == ["lane:1000"]
+    assert roots[0]["g"]["rows"] == 7 and sub[0]["g"]["rows"] == 4
+    assert [u["name"] for u, e in roots[0]["items"] if e] == ["g"]
+    # depth 2 lifts the deepest lane beside its grandparent's child
+    shallow, _ = lane_forest(tree, 4, "files", 2, 0.7, 2)
+    assert [k["g"]["id"] for k in shallow[0]["kids"]] == ["lane:1100", "lane:1000"]
+    assert [r["g"]["id"] for r in lane_forest(tree, 4, "files", 2, 0.7, 1)[0]] == [
+        "lane:1111",
+        "lane:1100",
+        "lane:1000",
+    ]
+    lctx = {
+        **nest_ctx,
+        "lane_min": 2,
+        "lane_fit": 0.7,
+        "lane_depth": 3,
+        "sort": "files",
+    }
+    lt = _nest(tree, ["lane"], lctx, "", [], {})
+    heads = [g["id"] for g, _ in lt]
+    assert heads == [
+        "lane:1111",
+        "lane:1111/lane:1100",
+        "lane:1111/lane:1100/lane:1000",
+    ], heads
+    assert lt[2][0]["path"] == heads
+    assert sum(len(items) for _, items in lt) == 7
     print("nway_group_service demo ok")
 
 

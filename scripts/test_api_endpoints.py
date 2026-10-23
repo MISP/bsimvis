@@ -5779,6 +5779,29 @@ def test_nway_diff():
         and all("subset" not in m for m in _l1["groups"].values()),
         f"{len(_l1['groups'])} vs {len(_l2['groups'])}",
     )
+    # group_lane_depth nests lanes by containment; depth 1 is the flat lanes above.
+    _, _ld = _nway(
+        tab="all",
+        scope="all",
+        limit=1000,
+        group="lane",
+        group_lane_depth=3,
+        group_open="all",
+    )
+    _, _l2 = _nway(tab="all", scope="all", limit=1000, group="lane", group_open="all")
+    check(
+        "nway group: group_lane_depth keeps every row and the same lane ids",
+        _ld
+        and _l2
+        and _ld["total"] == _l2["total"]
+        and {g["id"].rsplit("/", 1)[-1] for g in _ld["groups"].values()}
+        == {g["id"] for g in _l2["groups"].values()},
+        f"{_ld and len(_ld['groups'])} vs {_l2 and len(_l2['groups'])}",
+    )
+    check(
+        "nway group: group_lane_depth=x is a 400",
+        _nway(group="lane", group_lane_depth="x")[0] == 400,
+    )
     # A unit missing a file of a bundle joins it when it has enough of its files (lane_fit).
     _, _near = _nway(
         tab="all",

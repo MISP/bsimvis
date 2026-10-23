@@ -2744,7 +2744,7 @@ a.home-card:hover,
 .nway-ctl .nway-lbl { margin-right: 0; }
 .nway-tabrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 8px; position: relative; z-index: 11; }
 .nway-tabrow .bsim-tabbar { margin-bottom: 0; }
-.nway-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; position: relative; z-index: 10; }
+.nway-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; position: relative; z-index: 10; }
 .nway-ctlwrap { display: inline-flex; align-items: center; gap: 8px; }
 .nway-search { flex: 1 1 320px; max-width: 560px; }
 .nway-bar { margin-bottom: 8px; }

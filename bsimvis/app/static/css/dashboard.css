@@ -2930,6 +2930,18 @@ a.home-card:hover,
 .nway-chip button { background: none; border: none; padding: 0; cursor: pointer; color: var(--dim); }
 .nway-chip button:hover { color: var(--token-instruction); }
 .nway-msg { margin-top: 6px; min-height: 1em; font-size: 0.8rem; color: var(--token-instruction); }
+.nway-more { margin: 4px 0 10px; }
+.nway-more > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; }
+.nway-more > summary::-webkit-details-marker { display: none; }
+.nway-more[open] > summary { border-color: var(--accent); color: var(--text); }
+.nway-more-body { margin-top: 8px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); display: flex; flex-direction: column; gap: 12px; }
+.nway-more-sec { display: flex; flex-direction: column; gap: 6px; }
+.nway-sech { font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim, #888); }
+.nway-more-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+.nway-more-row .nway-gcard { margin: 0; flex: 1; }
+.nway-more-row .nway-match-body, .nway-more-row .nway-focus-body { min-width: 0; }
+.nway-edit.in-more > summary { display: none; }
+.nway-byrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 8px; padding: 6px 10px; border: 1px dashed var(--border); border-radius: 6px; font-size: 0.82rem; }
 .nway-bvals { display: flex; flex-wrap: wrap; gap: 4px; flex-basis: 100%; max-height: 96px; overflow-y: auto; }
 .nway-cmp-send { display: inline-flex; align-items: center; gap: 6px; margin-left: 12px; flex-wrap: wrap; }
 .nway-basket { display: inline-flex; align-items: center; gap: 8px; }

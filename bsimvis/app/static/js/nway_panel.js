@@ -125,6 +125,7 @@
             this.cgInit = opts.cg || null;
             this.onCg = opts.onCg || null;
             this.onData = opts.onData || null;
+            this.onSlot = opts.onSlot || null;
             this.data = null;
             this.error = null;
             this._gen = 0;
@@ -155,6 +156,7 @@
             this.el.addEventListener('toggle', e => {
                 if (e.target.matches('details.nway-focus')) this._focusOpen = e.target.open;
                 if (e.target.matches('details.nway-compare')) this._cmpOpen = e.target.open;
+                if (e.target.matches('details.nway-more')) this._moreOpen = e.target.open;
                 if (e.target.matches('details.nway-cmp-more')) { (this._cmpMore ||= new Set())[e.target.open ? 'add' : 'delete'](e.target.dataset.key); }
                 if (e.target.matches('details.nway-match')) this._matchOpen = e.target.open;
                 if (e.target.matches('details.nway-adv')) this._advOpen = e.target.open;
@@ -337,7 +339,17 @@
 
         _count(tab) {
             const c = (this.data.counts || {})[tab] || { code: 0, library: 0 };
-            return `${c.code} / ${c.library}`;
+            const sc = this.state.scope;
+            return sc === 'library' ? c.library : sc === 'all' ? c.code + c.library : c.code;
+        }
+
+        // All / Core / Partial / Unique as the same pill switch as the code axis; one count, for that axis.
+        _tabPills(focus, tip) {
+            const style = { all: ['fa-solid fa-layer-group', 'var(--info, #3b82f6)'], core: ['fa-solid fa-bullseye', 'var(--success)'], partial: ['fa-solid fa-circle-half-stroke', 'var(--warning, #d97706)'], unique: ['fa-solid fa-fingerprint', 'var(--token-instruction, #e11d48)'] };
+            const pills = TABS.filter(([key]) => !(focus && key === 'partial')).map(([key, label]) =>
+                `<span class="bsim-tag-pill" data-tab="${key}" style="${window.binSimPillStyle(this.state.tab === key, style[key][1])} padding:4px 10px; font-size:0.78rem;"><i class="${style[key][0]}"></i>${label} <span class="nway-count">${this._count(key)}</span></span>`
+            ).join('');
+            return `<span class="nway-ctlwrap"><div class="nway-pills"><span class="nway-lbl">Functions</span>${pills}</div>${this._tip(tip)}</span>`;
         }
 
         // The shared (i) hover hint (`.home-tip`, as on the home page).
@@ -378,18 +390,14 @@
             const n = d.columns_mode === 'twins' ? (d.file_columns || []).length : d.columns.length;
             const focus = d.columns_mode === 'focus' || this._ab();
             const isNode = !!this.source.cluster_uuid;
-            const tabs = TABS.filter(([key]) => !(focus && key === 'partial')).map(([key, label]) =>
-                `<button class="bsim-tab${s.tab === key ? ' active' : ''}" data-tab="${key}">${label}<span class="nway-count" title="code / library">${this._count(key)}</span></button>`
-            ).join('');
             const tabTip = this._ab()
-                ? 'All: every function. Core: in both groups. Unique: in one group only. Counts are code / library.'
+                ? 'All: every function. Core: in both groups. Unique: in one group only. Counts follow the code axis.'
                 : focus
-                ? 'All: every function. Core: on both the focus and the rest side. Unique: on one side only. Counts are code / library.'
-                : `All: every function group. Core: present in all ${n} columns. Partial: present in at least k columns. Unique: present in exactly one file. Counts are code / library.`;
+                ? 'All: every function. Core: on both the focus and the rest side. Unique: on one side only. Counts follow the code axis.'
+                : `All: every function group. Core: present in all ${n} columns. Partial: present in at least k columns. Unique: present in exactly one file. Counts follow the code axis.`;
             const search = `<div class="search-input-wrapper nway-search"><i class="fa-solid fa-magnifying-glass"></i><input type="text" data-text="q" placeholder="Search name, address, tags, cluster..." value="${escapeAttr(s.q)}"></div>`;
             const filter = [
-                this._pills('Show', 'scope', [['code', 'Code', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['library', 'Library', 'fa-solid fa-cubes', 'var(--warning, #d97706)'], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']], 'Code: functions of the program itself. Library: functions recognised as library code (stdlib, statically linked). All: both.'),
-                this._columnChip(),
+                this._pills('Code axis', 'scope', [['code', 'Code', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['library', 'Library', 'fa-solid fa-cubes', 'var(--warning, #d97706)'], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']], 'Code: functions of the program itself. Library: functions recognised as library code (stdlib, statically linked). All: both.'),
             ].join('');
             const cur = PRESETS.find(([, , v]) => String(v.min_edge) === String(s.min_edge) && Number(v.child_presence) === Number(s.child_presence));
             const preset = `<span class="nway-ctlwrap"><div class="view-toggle"><span class="nway-lbl">Match</span>${PRESETS.map(([k, text, , t]) => `<button class="view-btn${cur && cur[0] === k ? ' active' : ''}" data-preset="${k}" title="${escapeAttr(t)}">${text}</button>`).join('')}${cur ? '' : '<span class="dim" style="margin-left:6px">Custom</span>'}</div>${this._tip('Strict, Balanced or Loose set Min edge and Child presence together. Open Advanced to set them by hand.')}</span>`;
@@ -407,12 +415,21 @@
             ].join('');
             const sc = d.shared_cluster;
             const shared = sc && sc.cluster_uuid ? `<a href="#" class="nway-chip" data-open-shared="${escapeAttr(sc.cluster_uuid)}" title="The smallest stored cluster holding all of these files. Open it as an N-way to keep its cluster context."><i class="fa-solid fa-bullseye"></i> Shared cluster <span class="dim">${escapeHtml(sc.cluster_name || sc.cluster_uuid)} &middot; ${Number(sc.member_count)} files</span></a>` : '';
-            return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${search}</div>
-                <div class="nway-bar">${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}${this._compareBox()}${shared}<button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-lineage title="Open the lineage of these files as a full page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button><button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-stats-toggle title="Hide or show the Span, Features, Support, Cohesion and Cluster columns, to focus on the matrix."><i class="fa-solid fa-table-columns"></i> Stats <span class="dim">${this._statsOff() ? 'hidden' : 'shown'}</span></button></span></div>${this._groupCard()}`;
+            const parts = this._groupParts();
+            const lv = (s.group || '').split(',').filter(Boolean);
+            const moreSum = [`edge ${Number(d.min_edge).toFixed(2)}`, d.mode, lv.length ? lv.join(' > ') : '', d.columns_mode === 'focus' ? 'focus' : ''].filter(Boolean).join(' · ');
+            const stats = `<button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-stats-toggle title="Hide or show the Span, Features, Support, Cohesion and Cluster columns, to focus on the matrix."><i class="fa-solid fa-table-columns"></i> Stats <span class="dim">${this._statsOff() ? 'hidden' : 'shown'}</span></button>`;
+            const lineage = `<button type="button" class="nway-chip" data-lineage title="Open the lineage of these files as a full page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button>`;
+            const sec = (title, body) => `<div class="nway-more-sec"><span class="nway-sech">${title}</span><div class="nway-more-row">${body}</div></div>`;
+            const more = `<details class="nway-more"${this._moreOpen ? ' open' : ''}><summary class="nway-chip"><i class="fa-solid fa-sliders"></i> More options <span class="dim">${escapeHtml(moreSum)}</span></summary><div class="nway-more-body">
+                ${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div></details>`;
+            return `<div class="nway-tabrow">${search}${this._columnChip()}</div>
+                <div class="nway-bar">${filter}${this._tabPills(focus, tabTip)}${parts.files}<span class="nway-pops">${this._compareBox()}${lineage}</span></div>${parts.byRow}${more}`;
         }
 
-        // The Group bar: one line read left to right - group by, merge functions, merge files, order.
-        _groupCard() {
+        // The group controls in three parts: merge files (always shown), the metadata controls
+        // under it, and the row grouping (group by, merge functions, order), which lives under More.
+        _groupParts() {
             const d = this.data, s = this.state, lv = (s.group || '').split(',').filter(Boolean);
             const tagAxes = TAG_AXES.filter(([key]) => Number(d.tag_axis_counts?.[key]) > 0).map(([key, label]) => [key, `${label} (${d.tag_axis_counts[key]})`]);
             const axis = tagAxes.some(([key]) => key === s.group_axis) ? s.group_axis : tagAxes[0]?.[0] || '';
@@ -444,12 +461,15 @@
             const pickCtl = picked.length ? `${this._seg('Others', 'col_rest', [['', 'Merged'], ['drop', 'Hidden']], 'The files whose value was not picked: merged into one "other" column, or left out of the table.')}<button class="nway-blink" data-colpick-clear>clear picks</button>` : '';
             const abCtl = by && !s.col_set && this._ab() && s.tab === 'unique' ? this._seg('Unique to', 'side', [['', 'Both'], ['a', d.columns[0].label], ['b', d.columns[1].label]], 'Unique tab only: functions in one column and not the other.') : '';
             const byCtl = !by ? '' : s.col_set ? '<span class="dim nway-bnote">compared queries</span><button class="nway-blink" data-cmp-clear>clear</button>' : `${sel('col_by', s.col_by, axisOpts)}${s.col_by.startsWith('tag:') ? sel('col_by_multi', s.col_by_multi || 'first', [['first', 'Most shared tag'], ['all', 'Every tag']]) : ''}${this._seg('Holds when', 'col_presence', [['', 'Half'], ['any', 'Any'], ['all', 'All']], 'A column holds a function when this share of its files do: any one, half (default) or all.')}${pickCtl}${abCtl}`;
-            return `<div class="nway-gcard${active ? ' active' : ''}">
+            return {
+                files: `<span class="nway-ctlwrap"><span class="nway-lbl" title="How files share a column.">Merge files</span><span class="view-toggle">${fileBtns}</span>${twinNote ? `<span class="dim nway-bnote">${twinNote}</span>` : ''}</span>`,
+                byRow: by || this._byErr ? `<div class="nway-byrow">${byCtl}${valueChips}${this._byErr ? `<span class="dim nway-bnote">${escapeHtml(this._byErr)}</span>` : ''}</div>` : '',
+                rows: `<div class="nway-gcard${active ? ' active' : ''}">
                 <span class="nway-bgrp">${lbl('Group by', 'Click order is nesting order: each group is split again by the next level. The column sort still orders the rows inside each group.')}${picks}${axes}${laneDepth}${laneLink}</span>${sep}
                 <span class="nway-bgrp">${lbl('Merge functions', 'Join rows that are probably one function: rows the matcher kept apart (another decompilation, architecture or version) show as one, with their rows under it.')}${box('name', 'Name', 'Rows with the same function name. Auto names (FUN_, sub_) and compiler suffixes (.part.0) are ignored.')}${box('call', 'Call position', 'Rows under the same caller, in different files, with a weak edge between them. Needs the callers of every function.')}${minLink}</span>${sep}
-                <span class="nway-bgrp">${lbl('Merge files', 'How files share a column.')}<span class="view-toggle">${fileBtns}</span>${twinNote ? `<span class="dim nway-bnote">${twinNote}</span>` : ''}${byCtl}${valueChips}${this._byErr ? `<span class="dim nway-bnote">${escapeHtml(this._byErr)}</span>` : ''}</span>
                 <span class="nway-bgrp nway-bend">${lbl('Order', 'How groups are ordered.')}${sel('group_sort', s.group_sort || 'files', GROUP_SORTS)}${active ? '<button class="nway-blink" data-gall="open">open all</button><button class="nway-blink" data-gall="close">close all</button>' : ''}</span>
-            </div>`;
+            </div>`,
+            };
         }
 
         // Depth dots over the column outline: 0 folds everything, n opens n levels, the last one opens all.
@@ -460,13 +480,6 @@
             const lim = this._dlim = Math.max(this._dlim || 5, 5 * Math.ceil((Number.isFinite(cur) ? cur : 0) / 5));
             const dot = n => `<button type="button" class="nway-ddot${n <= cur ? ' on' : ''}" data-coldepth="${n}" aria-label="${n ? `Open ${n} level${n === 1 ? '' : 's'}` : 'Fold all'}" title="${n ? `Open ${n} level${n === 1 ? '' : 's'}` : 'Fold all'}"></button>`;
             return `<div class="nway-depth"><span>Depth</span>${[...Array(lim + 1).keys()].map(dot).join('<i></i>')}<button type="button" class="nway-dall" data-coldepth="${lim + 5}" title="Open ${lim + 5} levels">+5</button><button type="button" class="nway-dall${all ? ' on' : ''}" data-coldepth="all" aria-label="Open all levels" title="Open all levels">&infin;</button></div>`;
-        }
-
-        // Match settings live in a popover; the summary shows what is set, so the bar stays one line.
-        _matchMenu(body) {
-            const d = this.data, s = this.state;
-            const sum = [`edge ${Number(d.min_edge).toFixed(2)}`, d.mode, d.columns_mode === 'children' ? 'children' : '', s.tab === 'partial' && d.columns_mode !== 'focus' ? `k ${s.k}` : ''].filter(Boolean).join(' · ');
-            return `<details class="nway-match nway-pop"${this._matchOpen ? ' open' : ''}><summary class="nway-chip"><i class="fa-solid fa-sliders"></i> Match <span class="dim">${escapeHtml(sum)}</span></summary><div class="nway-match-body">${body}</div></details>`;
         }
 
         _files() {
@@ -507,7 +520,7 @@
         async _pickBy() {
             await this._loadAxes();
             const first = (this._axes || [])[0];
-            this._byErr = first ? '' : 'These files share every value: nothing to merge on.';
+            this._byErr = first ? '' : 'No field splits these files into groups: each value is either shared by all or unique to one.';
             if (!first) return this.render();
             this._set({ columns: 'by', col_by: first.key, col_set: '', col_open: '', offset: 0 });
         }
@@ -2251,7 +2264,13 @@
             return `<aside class="nway-legend${this._legOff ? ' off' : ''}"><details${this._legOff ? '' : ' open'} ontoggle="NwayPanel.legend(this)"><summary>Columns <em>${this.data.columns.length}</em></summary>${this._colDepth()}${t.root.kids.map(k => row(k, 0)).join('')}</details></aside>`;
         }
 
+        // The host (the N-way page) can park its own controls in the More section.
         render() {
+            this._renderPanel();
+            if (this.onSlot) this.onSlot(this.el.querySelector('[data-more-slot]'));
+        }
+
+        _renderPanel() {
             if (this.error) {
                 this.el.innerHTML = `<div class="nway-panel">${this._renderError()}</div>`;
                 return;

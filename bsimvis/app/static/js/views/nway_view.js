@@ -415,12 +415,17 @@ window.NwayView = {
         this._container.innerHTML = `
             <div class="nway-view nway-fill">
                 <div id="nway-file-hero" class="nway-hero" hidden></div>
-                <details id="nway-edit" class="nway-edit" ${this._set.cluster_uuid ? 'hidden' : this._hasSet() ? '' : 'open'}>
-                    <summary>Edit set (${this._set.md5s.length} files${this._set.batch ? ' + 1 batch' : ''})</summary>
-                    <div id="nway-set"></div>
-                </details>
+                <div id="nway-edit-home"></div>
                 <div id="nway-panel"></div>
             </div>`;
+        // The set editor sits above the panel until it has a table; then it moves into its More section.
+        const edit = this._editEl = document.createElement('details');
+        edit.id = 'nway-edit';
+        edit.className = 'nway-edit';
+        edit.hidden = !!this._set.cluster_uuid;
+        edit.open = !this._hasSet();
+        edit.innerHTML = `<summary>Edit set (${this._set.md5s.length} files${this._set.batch ? ' + 1 batch' : ''})</summary><div id="nway-set"></div>`;
+        document.getElementById('nway-edit-home').appendChild(edit);
         this._renderSet();
         this._mount();
     },
@@ -440,6 +445,13 @@ window.NwayView = {
                 this._writeUrl(s);
             },
             onData: d => this._renderFileHero(d),
+            onSlot: slot => {
+                const edit = this._editEl;
+                if (!edit) return;
+                (slot || document.getElementById('nway-edit-home'))?.appendChild(edit);
+                edit.classList.toggle('in-more', !!slot);
+                if (slot) edit.open = true;
+            },
         });
         this._panel.load();
     },

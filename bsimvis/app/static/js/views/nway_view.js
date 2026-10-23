@@ -444,6 +444,7 @@ window.NwayView = {
                 this._state = { ...s };
                 this._writeUrl(s);
             },
+            onSource: ids => { this._set.md5s = ids.split(','); this._set.batch = ''; this._set.cluster_uuid = ''; this._renderSet(); },
             onData: d => this._renderFileHero(d),
             onSlot: (slot, actions) => {
                 // Compare and Lineage sit at the right of the file-set header

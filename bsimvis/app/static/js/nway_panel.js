@@ -121,6 +121,7 @@
             this.el = container;
             this._applyHue();
             this.source = opts.source || {};
+            this.onSource = opts.onSource;
             this.state = { ...DEFAULTS, ...(opts.state || {}) };
             this.onState = opts.onState || null;
             this.onOpenCluster = opts.onOpenCluster || null;
@@ -528,6 +529,7 @@
             const first = (this._axes || [])[0];
             this._byErr = first ? '' : 'No field splits these files into groups: each value is either shared by all or unique to one.';
             if (!first) return this.render();
+            this._pin();
             this._set({ columns: 'by', col_by: first.key, col_set: '', col_open: '', offset: 0 });
         }
 
@@ -539,6 +541,15 @@
             for (const [k, v] of new URLSearchParams(t)) (out[k] ||= []).push(v);
             for (const k of Object.keys(out)) if (out[k].length === 1) out[k] = out[k][0];
             return out;
+        }
+
+        // A compare's files only live in its saved col_set (1 h); before leaving it, make them the source set so any grouping can follow.
+        _pin() {
+            if (!this.state.col_set || !this.data) return;
+            const ids = this._files().map(f => f.id).join(',');
+            delete this.source.batch_uuid; delete this.source.cluster_uuid;
+            this.source.md5s = ids;
+            if (this.onSource) this.onSource(ids);
         }
 
         _pickList() {
@@ -2462,10 +2473,11 @@
                 return this._cmpPreviewSoon();
             }
             if (t.dataset.cmpWithin !== undefined) { this._draft.within = Number(t.dataset.cmpWithin); this.render(); return this._cmpPreviewSoon(); }
-            if (t.dataset.cmpClear !== undefined) return this._set({ cmp: '', col_set: '', col_by: '', side: '', col_open: '', offset: 0 });
+            if (t.dataset.cmpClear !== undefined) { this._pin(); return this._set({ cmp: '', col_set: '', col_by: '', side: '', col_open: '', offset: 0 }); }
             if (t.dataset.set) {
                 const i = t.dataset.set.indexOf(':'), key = t.dataset.set.slice(0, i);
                 // leaving the metadata merge: the server keeps columns=by while col_by / col_set are set
+                if (key === 'columns') this._pin();
                 return this._set({ [key]: t.dataset.set.slice(i + 1), ...(key === 'columns' ? { col_by: '', col_set: '', col_pick: '', col_rest: '' } : {}), offset: 0 });
             }
             if (t.dataset.tab) return this._set({ tab: t.dataset.tab, offset: 0, sort_col: '' });

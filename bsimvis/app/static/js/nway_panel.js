@@ -2324,8 +2324,8 @@
             // Header and notes fold away once the table scrolls; they return at the top.
             const sc = this.el.querySelector('.nway-scroll'), view = this.el.closest('.nway-view');
             if (sc && view) sc.addEventListener('scroll', () => {
-                if (sc.scrollTop > 20) view.classList.add('nway-compact');
-                else if (sc.scrollTop === 0) view.classList.remove('nway-compact');
+                if (sc.scrollTop > 30) view.classList.add('nway-compact');
+                else view.classList.remove('nway-compact');
             }, { passive: true });
         }
 

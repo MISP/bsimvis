@@ -156,7 +156,6 @@
             this.el.addEventListener('toggle', e => {
                 if (e.target.matches('details.nway-focus')) this._focusOpen = e.target.open;
                 if (e.target.matches('details.nway-compare')) this._cmpOpen = e.target.open;
-                if (e.target.matches('details.nway-more')) this._moreOpen = e.target.open;
                 if (e.target.matches('details.nway-cmp-more')) { (this._cmpMore ||= new Set())[e.target.open ? 'add' : 'delete'](e.target.dataset.key); }
                 if (e.target.matches('details.nway-match')) this._matchOpen = e.target.open;
                 if (e.target.matches('details.nway-adv')) this._advOpen = e.target.open;
@@ -343,13 +342,10 @@
             return sc === 'library' ? c.library : sc === 'all' ? c.code + c.library : c.code;
         }
 
-        // All / Core / Partial / Unique as the same pill switch as the code axis; one count, for that axis.
-        _tabPills(focus, tip) {
-            const style = { all: ['fa-solid fa-layer-group', 'var(--info, #3b82f6)'], core: ['fa-solid fa-bullseye', 'var(--success)'], partial: ['fa-solid fa-circle-half-stroke', 'var(--warning, #d97706)'], unique: ['fa-solid fa-fingerprint', 'var(--token-instruction, #e11d48)'] };
-            const pills = TABS.filter(([key]) => !(focus && key === 'partial')).map(([key, label]) =>
-                `<span class="bsim-tag-pill" data-tab="${key}" style="${window.binSimPillStyle(this.state.tab === key, style[key][1])} padding:4px 10px; font-size:0.78rem;"><i class="${style[key][0]}"></i>${label} <span class="nway-count">${this._count(key)}</span></span>`
-            ).join('');
-            return `<span class="nway-ctlwrap"><div class="nway-pills"><span class="nway-lbl">Functions</span>${pills}</div>${this._tip(tip)}</span>`;
+        // A labelled selection list: `attr` is the data attribute the change handler reads.
+        _list(label, attr, options, cur, tip) {
+            const opts = options.map(([v, t]) => `<option value="${escapeAttr(v)}"${String(v) === String(cur) ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('');
+            return `<span class="nway-ctlwrap"><label class="nway-ctl"><span class="nway-lbl">${escapeHtml(label)}</span><select class="view-btn" ${attr}>${opts}</select></label>${this._tip(tip)}</span>`;
         }
 
         // The shared (i) hover hint (`.home-tip`, as on the home page).
@@ -364,16 +360,6 @@
                 `<button class="view-btn${cur === v ? ' active' : ''}" data-set="${escapeAttr(`${key}:${v}`)}"${t ? ` title="${escapeAttr(t)}"` : ''}>${escapeHtml(text)}</button>`
             ).join('');
             return `<span class="nway-ctlwrap"><div class="view-toggle"><span class="nway-lbl">${escapeHtml(label)}</span>${btns}</div>${this._tip(tip)}</span>`;
-        }
-
-        // Coloured icon pills, the same look as the other Code / Library / Overall
-        // score-axis pickers (`binSimPillStyle`); `data-set` goes through _onClick.
-        _pills(label, key, options, tip) {
-            const cur = String(this.state[key]);
-            const pills = options.map(([v, text, icon, color]) =>
-                `<span class="bsim-tag-pill" data-set="${escapeAttr(`${key}:${v}`)}" style="${window.binSimPillStyle(cur === v, color)} padding:4px 10px; font-size:0.78rem;"><i class="${escapeAttr(icon)}"></i>${escapeHtml(text)}</span>`
-            ).join('');
-            return `<span class="nway-ctlwrap"><div class="nway-pills"><span class="nway-lbl">${escapeHtml(label)}</span>${pills}</div>${this._tip(tip)}</span>`;
         }
 
         _slider(label, key, value, min, max, step, tip) {
@@ -396,9 +382,8 @@
                 ? 'All: every function. Core: on both the focus and the rest side. Unique: on one side only. Counts follow the code axis.'
                 : `All: every function group. Core: present in all ${n} columns. Partial: present in at least k columns. Unique: present in exactly one file. Counts follow the code axis.`;
             const search = `<div class="search-input-wrapper nway-search"><i class="fa-solid fa-magnifying-glass"></i><input type="text" data-text="q" placeholder="Search name, address, tags, cluster..." value="${escapeAttr(s.q)}"></div>`;
-            const filter = [
-                this._pills('Code axis', 'scope', [['code', 'Code', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['library', 'Library', 'fa-solid fa-cubes', 'var(--warning, #d97706)'], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']], 'Code: functions of the program itself. Library: functions recognised as library code (stdlib, statically linked). All: both.'),
-            ].join('');
+            const axisList = this._list('Code axis', 'data-select="scope"', [['code', 'Code'], ['library', 'Library'], ['all', 'All']], s.scope, 'Code: functions of the program itself. Library: functions recognised as library code (stdlib, statically linked). All: both.');
+            const tabList = this._list('Functions', 'data-select="tab"', TABS.filter(([key]) => !(focus && key === 'partial')).map(([key, label]) => [key, `${label} \u00b7 ${this._count(key)}`]), s.tab, tabTip);
             const cur = PRESETS.find(([, , v]) => String(v.min_edge) === String(s.min_edge) && Number(v.child_presence) === Number(s.child_presence));
             const preset = `<span class="nway-ctlwrap"><div class="view-toggle"><span class="nway-lbl">Match</span>${PRESETS.map(([k, text, , t]) => `<button class="view-btn${cur && cur[0] === k ? ' active' : ''}" data-preset="${k}" title="${escapeAttr(t)}">${text}</button>`).join('')}${cur ? '' : '<span class="dim" style="margin-left:6px">Custom</span>'}</div>${this._tip('Strict, Balanced or Loose set Min edge and Child presence together. Open Advanced to set them by hand.')}</span>`;
             const advanced = `<details class="nway-adv"${this._advOpen ? ' open' : ''}><summary class="nway-lbl">Advanced</summary>${[
@@ -421,10 +406,11 @@
             const stats = `<button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-stats-toggle title="Hide or show the Span, Features, Support, Cohesion and Cluster columns, to focus on the matrix."><i class="fa-solid fa-table-columns"></i> Stats <span class="dim">${this._statsOff() ? 'hidden' : 'shown'}</span></button>`;
             const lineage = `<button type="button" class="nway-chip" data-lineage title="Open the lineage of these files as a full page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button>`;
             const sec = (title, body) => `<div class="nway-more-sec"><span class="nway-sech">${title}</span><div class="nway-more-row">${body}</div></div>`;
-            const more = `<details class="nway-more"${this._moreOpen ? ' open' : ''}><summary class="nway-chip"><i class="fa-solid fa-sliders"></i> More options <span class="dim">${escapeHtml(moreSum)}</span></summary><div class="nway-more-body">
-                ${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div></details>`;
-            return `<div class="nway-tabrow">${search}${this._columnChip()}</div>
-                <div class="nway-bar">${filter}${this._tabPills(focus, tabTip)}${parts.files}<span class="nway-pops">${this._compareBox()}${lineage}</span></div>${parts.byRow}${more}`;
+            const moreBtn = `<button type="button" class="nway-chip${this._moreOpen ? ' on' : ''}" data-more-toggle title="Matching, row groups, focus, stats and the file set"><i class="fa-solid fa-sliders"></i> More options <span class="dim">${escapeHtml(moreSum)}</span> <i class="fa-solid fa-chevron-${this._moreOpen ? 'up' : 'down'}"></i></button>`;
+            const more = !this._moreOpen ? '' : `<div class="nway-more-body">
+                ${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div>`;
+            return `<div class="nway-top"><div class="nway-top-left" data-top-slot></div><div class="nway-top-right">${search}<div class="nway-top-row">${this._columnChip()}${moreBtn}</div></div></div>
+                <div class="nway-bar">${axisList}${tabList}${parts.files}<span class="nway-pops">${this._compareBox()}${lineage}</span></div>${parts.byRow}${more}`;
         }
 
         // The group controls in three parts: merge files (always shown), the metadata controls
@@ -453,7 +439,7 @@
             const minLink = merge.has('call') ? this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.') : '';
             // Merge files by: None = one column per file, Cluster = child clusters (a cluster node only), Same code = twins.
             const fileOpts = [['files', 'None', 'One column per file.'], ...(this.source.cluster_uuid || d.shared_cluster ? [['children', 'Cluster', 'One column per child cluster; open a column to show its own children, down to files.']] : []), ['twins', 'Same code', "Files that hold a function in exactly the same shared rows become one column. Click a column's count to show its files; a function only some of them hold shows as a partly filled square."], ['by', 'Metadata', 'One column per value of a file field or tag namespace (collection, batch, architecture, a tag family...). Click a column to show its files.']];
-            const fileBtns = fileOpts.map(([v, text, tip]) => `<button class="view-btn${fileMode === v ? ' active' : ''}" ${v === 'by' ? 'data-pick-by' : `data-set="columns:${v}"`} title="${escapeAttr(tip)}">${text}</button>`).join('');
+            const fileList = `<select class="view-btn" data-mergefiles title="${escapeAttr(fileOpts.map(([, text, tip]) => `${text}: ${tip}`).join('\n'))}">${fileOpts.map(([v, text]) => `<option value="${v}"${fileMode === v ? ' selected' : ''}>${text}</option>`).join('')}</select>`;
             const axisOpts = (this._axes || []).map(a => [a.key, a.values ? `${a.key} (${a.values})` : a.key]);
             if (s.col_by && !axisOpts.some(([k]) => k === s.col_by)) axisOpts.push([s.col_by, s.col_by]);
             const entry = (this._axes || []).find(a => a.key === s.col_by), picked = this._pickList();
@@ -462,7 +448,7 @@
             const abCtl = by && !s.col_set && this._ab() && s.tab === 'unique' ? this._seg('Unique to', 'side', [['', 'Both'], ['a', d.columns[0].label], ['b', d.columns[1].label]], 'Unique tab only: functions in one column and not the other.') : '';
             const byCtl = !by ? '' : s.col_set ? '<span class="dim nway-bnote">compared queries</span><button class="nway-blink" data-cmp-clear>clear</button>' : `${sel('col_by', s.col_by, axisOpts)}${s.col_by.startsWith('tag:') ? sel('col_by_multi', s.col_by_multi || 'first', [['first', 'Most shared tag'], ['all', 'Every tag']]) : ''}${this._seg('Holds when', 'col_presence', [['', 'Half'], ['any', 'Any'], ['all', 'All']], 'A column holds a function when this share of its files do: any one, half (default) or all.')}${pickCtl}${abCtl}`;
             return {
-                files: `<span class="nway-ctlwrap"><span class="nway-lbl" title="How files share a column.">Merge files</span><span class="view-toggle">${fileBtns}</span>${twinNote ? `<span class="dim nway-bnote">${twinNote}</span>` : ''}</span>`,
+                files: `<span class="nway-ctlwrap"><span class="nway-lbl" title="How files share a column.">Merge files</span>${fileList}${twinNote ? `<span class="dim nway-bnote">${twinNote}</span>` : ''}</span>`,
                 byRow: by || this._byErr ? `<div class="nway-byrow">${byCtl}${valueChips}${this._byErr ? `<span class="dim nway-bnote">${escapeHtml(this._byErr)}</span>` : ''}</div>` : '',
                 rows: `<div class="nway-gcard${active ? ' active' : ''}">
                 <span class="nway-bgrp">${lbl('Group by', 'Click order is nesting order: each group is split again by the next level. The column sort still orders the rows inside each group.')}${picks}${axes}${laneDepth}${laneLink}</span>${sep}
@@ -2267,7 +2253,7 @@
         // The host (the N-way page) can park its own controls in the More section.
         render() {
             this._renderPanel();
-            if (this.onSlot) this.onSlot(this.el.querySelector('[data-more-slot]'));
+            if (this.onSlot) this.onSlot(this.el.querySelector('[data-more-slot]'), this.el.querySelector('[data-top-slot]'));
         }
 
         _renderPanel() {
@@ -2329,7 +2315,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-colpick],[data-colpick-clear]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-colpick],[data-colpick-clear],[data-more-toggle]');
             if (!t) return;
             if (t.dataset.lineage !== undefined) {
                 this._scrollSave();
@@ -2399,6 +2385,7 @@
             }
             if (t.dataset.preset) return this._set({ ...PRESETS.find(p => p[0] === t.dataset.preset)[2], offset: 0 });
             if (t.dataset.pickBy !== undefined) return this._pickBy();
+            if (t.dataset.moreToggle !== undefined) { this._moreOpen = !this._moreOpen; this._scrollSave(); return this.render(); }
             if (t.dataset.colpick !== undefined) {
                 const list = this._pickList(), v = t.dataset.colpick, i = list.indexOf(v);
                 if (i >= 0) list.splice(i, 1); else list.push(v);
@@ -2445,6 +2432,10 @@
                 const ev = new Set((this.state.group_merge || '').split(',').filter(Boolean));
                 if (t.checked) ev.add(t.dataset.ev); else ev.delete(t.dataset.ev);
                 this._set({ group_merge: [...ev].join(','), offset: 0 });
+            } else if (t.dataset.select === 'tab') this._set({ tab: t.value, offset: 0, sort_col: '' });
+            else if (t.dataset.mergefiles !== undefined) {
+                if (t.value === 'by') this._pickBy();
+                else this._set({ columns: t.value, col_by: '', col_set: '', col_pick: '', col_rest: '', offset: 0 });
             } else if (t.dataset.select) this._set({ [t.dataset.select]: t.value, ...(t.dataset.select === 'col_by' ? { col_pick: '', col_rest: '', side: '' } : {}), offset: 0 });
             else if (t.dataset.range) this._set({ [t.dataset.range]: t.value, offset: 0 });
             else if (t.dataset.text) this._set({ [t.dataset.text]: t.value.trim(), offset: 0 });

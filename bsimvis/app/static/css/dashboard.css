@@ -2930,11 +2930,14 @@ a.home-card:hover,
 .nway-chip button { background: none; border: none; padding: 0; cursor: pointer; color: var(--dim); }
 .nway-chip button:hover { color: var(--token-instruction); }
 .nway-msg { margin-top: 6px; min-height: 1em; font-size: 0.8rem; color: var(--token-instruction); }
-.nway-more { margin: 4px 0 10px; }
-.nway-more > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; }
-.nway-more > summary::-webkit-details-marker { display: none; }
-.nway-more[open] > summary { border-color: var(--accent); color: var(--text); }
-.nway-more-body { margin-top: 8px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); display: flex; flex-direction: column; gap: 12px; }
+.nway-top { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 24px; margin-bottom: 10px; }
+.nway-top-left { flex: 1 1 420px; min-width: 0; }
+.nway-top-left:empty { display: none; }
+.nway-top-left .nway-hero { margin: 0; padding: 0; border: 0; gap: 4px; }
+.nway-top-right { flex: 1 1 380px; max-width: 640px; margin-left: auto; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.nway-top-right .nway-search { flex: none; width: 100%; max-width: none; }
+.nway-top-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.nway-more-body { margin: 0 0 10px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); display: flex; flex-direction: column; gap: 12px; }
 .nway-more-sec { display: flex; flex-direction: column; gap: 6px; }
 .nway-sech { font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim, #888); }
 .nway-more-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }

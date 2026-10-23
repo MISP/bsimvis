@@ -2229,8 +2229,7 @@
             for (let k = 0; k < n; k++) {
                 if (cut && k >= 2 && k < n - 2) continue;
                 const lead = this._lead().length;
-                const btn = n > 4 && !shown ? `<button type="button" class="nway-blink" data-bandall title="${cut ? `Show all ${n} levels` : 'Show only the top 2 and last 2 levels'}">${cut ? `+${n - 4} levels` : 'fewer'}</button>` : '';
-                let cells = `<th>${btn}</th>${lead > 1 ? `<th colspan="${lead - 1}"></th>` : ''}`;
+                let cells = `<th></th>${lead > 1 ? `<th colspan="${lead - 1}"></th>` : ''}`;
                 for (let i = 0; i < cols.length;) {
                     const g = (cols[i].path || [])[k];
                     let j = i + 1;
@@ -2244,6 +2243,11 @@
                     i = j;
                 }
                 html += `<tr class="nway-bandrow" style="--bt:${shown++ * BAND_H}px">${cells}</tr>`;
+                // Marker row between the top 2 and the rest; it carries the expand / collapse button.
+                if (n > 4 && k === 1) {
+                    const label = cut ? `&hellip; ${n - 4} more levels &mdash; show all` : 'hide middle levels';
+                    html += `<tr class="nway-bandrow" style="--bt:${shown++ * BAND_H}px"><th colspan="${this._lead().length + cols.length}"><button type="button" class="nway-blink" data-bandall>${label}</button></th></tr>`;
+                }
             }
             return { html, n: shown };
         }

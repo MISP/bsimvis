@@ -2701,6 +2701,8 @@ class BinSimNway(Resource):
             "cluster_uuid": "Binary cluster (file node) to diff instead of `md5s`; with `collection` or `pool`, optional `axis`/`algo`",
             "columns": "auto (default), files, children (cluster_uuid only: one column per child cluster + direct files) or twins (any set: files that hold a function in exactly the same shared rows share one column; tabs still count files)",
             "col_open": 'JSON list of column ids to expand: with columns=children a child cluster shows its own child clusters (recursively) and a leaf one column per file; with columns=twins a twin column shows its files; `["*"]` expands every column, `["*5"]` the first 5 levels (within the column limit). Columns come back with `path` (the groups they were expanded out of) and `expandable`',
+            "twin_depth": "columns=twins: group levels above the files (default 1 = exact twins only). Above 1, twin columns nest under looser groups of files whose shared rows overlap",
+            "twin_link": "columns=twins with twin_depth > 1: average Jaccard of two files' shared rows below which they are not grouped (default 0.5)",
             "pair_k": "stored mode, sets over nway.sample_above files (default 100): file pairs read per file, its k best-scored partners plus nway.pair_random random ones (default nway.pair_k = 16; 0 reads every pair)",
             "child_presence": "children columns: share of a child's files that must hold a function for it to count as present (default 0.5)",
             "collection": "Collection for bare md5s",

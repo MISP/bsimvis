@@ -30,12 +30,12 @@
     const DEFAULTS = {
         tab: 'all', scope: 'code', k: 2, min_edge: '', mode: 'stored',
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
-        columns: 'twins', child_presence: 0.5,
+        columns: 'twins', child_presence: 0.5, twin_depth: 3, twin_link: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
         group: 'lane', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_prefix_min: '', col_open: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open'];
+    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open'];
     // Group by: rows bundled by file set, nested under one tag axis, or joined as one probable function.
     const GROUPS = [
         ['lane', 'Lane', 'Bundles of rows that appear in exactly the same files, biggest bundle first. With the merge on, a merged function is bundled by all the files it covers together. A set of files only one function has gets no lane and stays a plain row beside the lanes, unless it is a bundle minus a file or two (90% or more of its files), which joins it with a chip.'],
@@ -58,7 +58,7 @@
         ['balanced', 'Balanced', { min_edge: '', child_presence: 0.5 }, 'The collection default edge; half of a child cluster must hold a function.'],
         ['loose', 'Loose', { min_edge: 0.3, child_presence: 0.3 }, 'Weaker matches group together; a third of a child cluster is enough.'],
     ];
-    const DOC_KEYS = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule'];
+    const DOC_KEYS = ['mode', 'min_edge', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'focus', 'focus_rule'];
 
     function fnParts(fid) {
         // `{coll}:func:{md5}:{addr}` -- the collection can contain colons.
@@ -340,7 +340,7 @@
         }
 
         _slider(label, key, value, min, max, step, tip) {
-            const shown = key === 'k' ? String(value) : Number(value).toFixed(2);
+            const shown = key === 'k' || key === 'twin_depth' ? String(value) : Number(value).toFixed(2);
             return `<span class="nway-ctlwrap"><label class="nway-ctl"><span class="nway-lbl">${escapeHtml(label)}</span><b>${shown}</b><input type="range" min="${min}" max="${max}"${step ? ` step="${step}"` : ''} value="${Number(value)}" data-range="${key}"></label>${this._tip(tip)}</span>`;
         }
 
@@ -373,6 +373,8 @@
             const match = [
                 preset,
                 this._seg('Mode', 'mode', [['stored', 'Stored', 'reads built pair docs'], ['virtual', 'Virtual', 'recomputes from vectors']], 'Stored reads the similarity pairs already built. Virtual recomputes the matches from the function vectors, as a fresh collection of just these files would.'),
+                d.columns_mode === 'twins' || (s.columns === 'twins' && !focus) ? this._slider('Column levels', 'twin_depth', Number(s.twin_depth), 1, 6, 1, 'Same code columns: 1 groups only files with identical shared rows. Higher nests them under looser groups of files whose shared rows overlap.') : '',
+                (d.columns_mode === 'twins' || s.columns === 'twins') && Number(s.twin_depth) > 1 && !focus ? this._slider('Column overlap', 'twin_link', Number(s.twin_link), 0, 1, 0.05, 'Outermost column group: files must share at least this much of their rows (average Jaccard) to be grouped.') : '',
                 s.tab === 'partial' && !focus ? this._slider(`In at least (of ${n})`, 'k', s.k, 2, Math.max(2, n), 1, 'Partial tab: keep functions present in at least this many columns.') : '',
                 advanced,
             ].join('');
@@ -2219,7 +2221,7 @@
         const pool = q.get('pool');
         const base = pool ? `/pools/${encodeURIComponent(pool)}/files/clusters/${encodeURIComponent(uuid)}` : window.Nav.buildUIUrl(q.get('collection'), ['files', 'clusters', uuid]);
         const out = new URLSearchParams({ tab: 'functions' });
-        for (const k of ['axis', 'scope', 'min_edge', 'mode', 'columns', 'child_presence']) if (q.has(k)) out.set(k, q.get(k));
+        for (const k of ['axis', 'scope', 'min_edge', 'mode', 'columns', 'child_presence', 'twin_depth', 'twin_link']) if (q.has(k)) out.set(k, q.get(k));
         return `${base}?${out.toString()}`;
     };
 

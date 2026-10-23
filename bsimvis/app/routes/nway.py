@@ -520,6 +520,8 @@ def _load_doc():
         min_features = request.args.get("min_features", type=int)
         presence = float(request.args.get("child_presence", 0.5))
         pair_k = request.args.get("pair_k", type=int)
+        twin_depth = request.args.get("twin_depth", 1, type=int)
+        twin_link = float(request.args.get("twin_link", 0.5))
     except ValueError:
         abort(400, "min_edge and child_presence must be numbers between 0 and 1")
 
@@ -584,6 +586,8 @@ def _load_doc():
                 "min_features": min_features,
                 "groups": groups,
                 "twins": columns == "twins",
+                "twin_depth": twin_depth,
+                "twin_link": twin_link,
                 "open": open_ids,
                 "focus": focus,
                 "focus_rule": focus_rule,

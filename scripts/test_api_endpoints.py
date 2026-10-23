@@ -5531,6 +5531,16 @@ def test_nway_diff():
     )
     _st, _bad = _nway(columns="twins", col_open="not json")
     check("nway twins: a bad col_open is a 400", _st == 400)
+    _, tw_deep = _nway(
+        tab="core", scope="all", limit=1000, columns="twins", twin_depth=3
+    )
+    check(
+        "nway twins: twin_depth keeps a lone twin column and the rows",
+        tw_deep
+        and tw_deep["columns_mode"] == "twins"
+        and len(tw_deep["columns"]) == len(tw["columns"])
+        and tw_deep["total"] == tw["total"],
+    )
     _, _grp = _nway(
         tab="all",
         scope="all",

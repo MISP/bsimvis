@@ -177,6 +177,11 @@ def axes(members, metas):
     keys -= {"tags", "user_tags"}
     out = []
     for key in sorted(keys):
+        # counts and sizes (function_count...) never group files: each file has its own
+        if not key.startswith("tag:") and key != "collection":
+            nums = [m.get(key) for m in metas if m.get(key) is not None]
+            if nums and all(isinstance(v, (int, float)) for v in nums):
+                continue
         count = Counter(
             v for (c, _), m in zip(members, metas) for v in values(m, c, key)
         )
@@ -207,6 +212,8 @@ def demo():
     )
     g = meta_groups(members, metas, names, "tag:family", "all")
     assert sum(x["member_count"] for x in g) == 5
+    big = [dict(m, size=i) for i, m in enumerate(metas)]
+    assert "size" not in {a["key"] for a in axes(members, big)}
     assert {a["key"] for a in axes(members, metas)} >= {
         "collection",
         "arch",

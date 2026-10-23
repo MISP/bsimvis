@@ -64,6 +64,14 @@
     const DOC_KEYS = ['mode', 'min_edge', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'focus', 'focus_rule', 'col_by', 'col_by_multi', 'col_set', 'col_presence'];
     // Keys the metadata column merge offers when the server cannot count values.
     const BY_KEYS = ['collection', 'batch_uuid', 'architecture', 'executable_format'];
+    // Compare groups filter files with the Files page parameters (/api/file/search).
+    const FILE_FIELDS = [['q', 'Search', 'keywords'], ['file_tag', 'Tag', 'family:mirai, lib:*'], ['file_name', 'File name', 'bot*'], ['batch_uuid', 'Batch', 'uuid'], ['language_id', 'Language', 'x86:LE:64']];
+    const FILE_MORE = [['filetype', 'File type'], ['status', 'Status'], ['inferred_tags', 'Inferred tags'], ['bin_cluster_uuid', 'Cluster'], ['min_function_count', 'Min functions'], ['max_function_count', 'Max functions'], ['min_entry_date', 'From date'], ['max_entry_date', 'To date']];
+    const FILE_MULTI = new Set(['file_tag']);
+    const FILE_KNOWN = new Set([...FILE_FIELDS, ...FILE_MORE].map(f => f[0]));
+    const GROUP_MAX = 8;
+    const letter = i => String.fromCharCode(65 + i);
+    const fileCount = n => `${Number(n)} ${Number(n) === 1 ? 'file' : 'files'}`;
 
     function fnParts(fid) {
         // `{coll}:func:{md5}:{addr}` -- the collection can contain colons.
@@ -147,6 +155,7 @@
             this.el.addEventListener('toggle', e => {
                 if (e.target.matches('details.nway-focus')) this._focusOpen = e.target.open;
                 if (e.target.matches('details.nway-compare')) this._cmpOpen = e.target.open;
+                if (e.target.matches('details.nway-cmp-more')) { (this._cmpMore ||= new Set())[e.target.open ? 'add' : 'delete'](e.target.dataset.key); }
                 if (e.target.matches('details.nway-match')) this._matchOpen = e.target.open;
                 if (e.target.matches('details.nway-adv')) this._advOpen = e.target.open;
             }, true);
@@ -167,7 +176,7 @@
             }, true);
             this.el.addEventListener('keydown', e => {
                 if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-nway-file]')) this._onClick(e);
-                else if (e.key === 'Enter' && e.target.dataset.cmp) this._runCompare();
+                else if (e.key === 'Enter' && e.target.dataset.cf) this._runCompare();
                 else if (e.key === 'Enter' && e.target.dataset.text) this._set({ [e.target.dataset.text]: e.target.value.trim(), offset: 0 });
             });
         }
@@ -551,14 +560,73 @@
             }
         }
 
+        _qsToObj(str) {
+            const o = {};
+            for (const [k, v] of new URLSearchParams(str)) o[k] = o[k] ? `${o[k]},${v}` : v;
+            return o;
+        }
+
+        _objToQs(o) {
+            const p = new URLSearchParams();
+            for (const [k, v] of Object.entries(o)) {
+                const val = String(v ?? '').trim();
+                if (!val) continue;
+                if (FILE_MULTI.has(k)) val.split(',').map(x => x.trim()).filter(Boolean).forEach(x => p.append(k, x));
+                else p.set(k, val);
+            }
+            return p.toString();
+        }
+
+        // The editable form of the compare: one object of filters per search, as typed.
+        _draftInit() {
+            const saved = this._cmpState();
+            const groups = (saved && saved.groups.length ? saved.groups : [{ label: 'A', queries: [] }, { label: 'B', queries: [] }])
+                .map(g => ({ label: g.label, queries: (g.queries.length ? g.queries : ['']).map(q => this._qsToObj(q)) }));
+            return { groups, within: saved && saved.within ? 1 : 0 };
+        }
+
+        // The draft in its URL form: {groups: [{label, queries: ["k=v&..."]}], within}.
+        _draftCmp() {
+            const d = this._draft;
+            return { groups: d.groups.map((g, i) => ({ label: g.label.trim() || letter(i), queries: g.queries.map(q => this._objToQs(q)).filter(Boolean) })), within: d.within };
+        }
+
+        _cfSet(path, value) {
+            const [gi, qi, key] = path.split('.'), g = this._draft.groups[Number(gi)];
+            if (qi === 'label') { g.label = value; return; }
+            const q = g.queries[Number(qi)];
+            if (key === '_raw') {
+                for (const k of Object.keys(q)) if (!FILE_KNOWN.has(k)) delete q[k];
+                Object.assign(q, this._qsToObj(value));
+            } else q[key] = value;
+        }
+
+        // Counts under each group while typing: a preview call, nothing saved.
+        _cmpPreviewSoon() {
+            clearTimeout(this._cmpTimer);
+            this._cmpTimer = setTimeout(async () => {
+                const cmp = this._draftCmp(), msg = this.el.querySelector('[data-cmp-msg]');
+                try {
+                    const out = await this._postCmp({ ...cmp, groups: cmp.groups.map(g => ({ ...g, queries: g.queries })) }, true);
+                    this._cmpCounts = out;
+                    out.groups.forEach((g, i) => { const el = this.el.querySelector(`[data-cnt="${i}"]`); if (el) el.textContent = cmp.groups[i].queries.length ? fileCount(g.files) : ''; });
+                    const ov = this.el.querySelector('[data-overlap]');
+                    if (ov) ov.textContent = out.overlap ? `${Number(out.overlap)} files match more than one group` : '';
+                    if (msg) msg.textContent = '';
+                } catch (err) {
+                    if (msg) msg.textContent = String(err.message || err);
+                }
+            }, 450);
+        }
+
         async _runCompare() {
-            const c = this._cmp, groups = ['a', 'b'].map(k => ({ label: c[k].label.trim() || k.toUpperCase(), queries: c[k].q.trim() ? [c[k].q.trim()] : [] }));
+            const cmp = this._draftCmp();
             this._cmpErr = '';
-            if (groups.some(g => !g.queries.length)) {
-                this._cmpErr = 'Give both groups a file query.';
+            const empty = cmp.groups.findIndex(g => !g.queries.length);
+            if (empty >= 0) {
+                this._cmpErr = `Give group ${letter(empty)} at least one filter.`;
                 return this.render();
             }
-            const cmp = { groups, within: this._cmpState()?.within || 0 };
             try {
                 const out = await this._postCmp(cmp);
                 this._cmpInfo = out.groups;
@@ -570,20 +638,36 @@
             }
         }
 
-        // Compare: two file searches become two columns; Core = in both, Unique = in one.
+        // Compare: file searches become columns; with two groups Core = in both, Unique = in one.
         _compareBox() {
             const s = this.state, on = !!s.col_set, ab = this._ab();
-            const saved = this._cmpState();
-            const c = this._cmp || (this._cmp = ['a', 'b'].reduce((o, k, i) => ({ ...o, [k]: { label: saved?.groups[i]?.label || k.toUpperCase(), q: (saved?.groups[i]?.queries || []).join(' ') } }), {}));
-            const row = k => `<div class="nway-cmp-row"><input type="text" class="nway-cmp-label" data-cmp="${k}.label" value="${escapeAttr(c[k].label)}" maxlength="30" aria-label="Name of group ${k.toUpperCase()}"><input type="text" class="nway-cmp-q" data-cmp="${k}.q" value="${escapeAttr(c[k].q)}" placeholder="file search, e.g. tag=family:mirai&file_name=bot" aria-label="File query of group ${k.toUpperCase()}"></div>`;
-            const info = on && this._cmpInfo ? `<span class="dim">${this._cmpInfo.map(g => `${escapeHtml(g.label)} ${Number(g.files)}`).join(' · ')} files</span>` : '';
+            const dr = this._draft || (this._draft = this._draftInit());
+            const counts = this._cmpCounts || (this._cmpInfo ? { groups: this._cmpInfo } : null);
+            const field = (gi, qi, key, label, ph, val) => `<label class="nway-cf"><span>${escapeHtml(label)}</span><input type="text" data-cf="${gi}.${qi}.${key}" value="${escapeAttr(val)}" placeholder="${escapeAttr(ph || '')}"></label>`;
+            const groups = dr.groups.map((g, gi) => {
+                const qs = g.queries.map((q, qi) => {
+                    const main = FILE_FIELDS.map(([k, l, ph]) => field(gi, qi, k, l, ph, q[k] || '')).join('');
+                    const other = this._objToQs(Object.fromEntries(Object.entries(q).filter(([k]) => !FILE_KNOWN.has(k))));
+                    const more = FILE_MORE.map(([k, l]) => field(gi, qi, k, l, '', q[k] || '')).join('') + field(gi, qi, '_raw', 'Other params', 'key=value&key=value', other);
+                    const key = `${gi}.${qi}`;
+                    return `<div class="nway-cq">${qi ? '<span class="dim nway-cor">or</span>' : ''}<div class="nway-cfs">${main}</div>
+                        <details class="nway-cmp-more" data-key="${key}"${this._cmpMore && this._cmpMore.has(key) ? ' open' : ''}><summary class="dim">more filters</summary><div class="nway-cfs">${more}</div></details>
+                        ${g.queries.length > 1 ? `<button type="button" class="nway-blink" data-cmp-rmq="${key}" title="Remove this search">&times; remove search</button>` : ''}</div>`;
+                }).join('');
+                const n = counts && counts.groups[gi] ? fileCount(counts.groups[gi].files) : '';
+                return `<div class="nway-cg nway-cg-${gi % 2 ? 'b' : 'a'}"><div class="nway-cgh"><b class="nway-cgn">${letter(gi)}</b><input type="text" class="nway-cmp-label" data-cf="${gi}.label" value="${escapeAttr(g.label)}" maxlength="30" aria-label="Name of group ${letter(gi)}"><span class="dim" data-cnt="${gi}">${n}</span>${dr.groups.length > 2 ? `<button type="button" class="nway-blink" data-cmp-rmg="${gi}" title="Remove group ${letter(gi)}">&times; remove group</button>` : ''}</div>${qs}<button type="button" class="nway-blink" data-cmp-addq="${gi}" title="Files matching this search or the ones above count in group ${letter(gi)}">+ add a search to ${letter(gi)}</button></div>`;
+            }).join('');
+            const ids = this._sourceIds();
+            const scope = ids.length ? `<div class="nway-cmp-scope"><span class="nway-lbl">Search in</span><span class="view-toggle"><button type="button" class="view-btn${dr.within ? '' : ' active'}" data-cmp-within="0">the whole collection</button><button type="button" class="view-btn${dr.within ? ' active' : ''}" data-cmp-within="1">only the ${ids.length} files open</button></span></div>` : '';
             const ctl = ab ? [
                 this._seg('Holds when', 'col_presence', [['', 'Half'], ['any', 'Any'], ['all', 'All']], 'A group holds a function when this share of its files do: any one, half (default) or all.'),
-                s.tab === 'unique' ? this._seg('Unique to', 'side', [['', 'Both'], ['a', c.a.label || 'A'], ['b', c.b.label || 'B']], 'Unique tab only: functions in one group and not the other.') : '',
+                s.tab === 'unique' ? this._seg('Unique to', 'side', [['', 'Both'], ['a', dr.groups[0].label || 'A'], ['b', dr.groups[1].label || 'B']], 'Unique tab only: functions in one group and not the other.') : '',
             ].join('') : '';
-            const tip = 'Compare two file searches (same parameters as the Files page: tag=, file_name=, batch_uuid=, q=...). Each becomes a column; Core is in both, Unique in one.';
-            return `<details class="nway-compare nway-pop"${this._cmpOpen ? ' open' : ''}><summary class="nway-chip${on ? ' on' : ''}" title="${escapeAttr(tip)}"><i class="fa-solid fa-code-compare"></i> Compare <span class="dim">${on ? 'A vs B' : 'off'}</span></summary>
-                <div class="nway-focus-body nway-match-body">${row('a')}${row('b')}<div class="nway-chips"><button type="button" class="nway-chip on" data-cmp-run>Compare</button>${on ? '<button type="button" class="nway-chip" data-cmp-clear>&times; clear</button>' : ''}${info}</div>${this._cmpErr ? `<div class="nway-note warn">${escapeHtml(this._cmpErr)}</div>` : ''}${ctl}</div></details>`;
+            const tip = 'Compare file searches. Each group takes the same filters as the Files page; Core is in every group, Unique in one.';
+            return `<details class="nway-compare nway-pop"${this._cmpOpen ? ' open' : ''}><summary class="nway-chip${on ? ' on' : ''}" title="${escapeAttr(tip)}"><i class="fa-solid fa-code-compare"></i> Compare <span class="dim">${on ? `${(this._cmpState() || { groups: [] }).groups.length || 2} groups` : 'off'}</span></summary>
+                <div class="nway-focus-body nway-match-body nway-cmp-body">${scope}${groups}
+                <div class="nway-chips">${dr.groups.length < GROUP_MAX ? '<button type="button" class="nway-chip" data-cmp-addg>+ add group</button>' : ''}<button type="button" class="nway-chip on" data-cmp-run>Compare</button>${on ? '<button type="button" class="nway-chip" data-cmp-clear>&times; clear</button>' : ''}<span class="dim" data-overlap>${counts && counts.overlap ? `${Number(counts.overlap)} files match more than one group` : ''}</span></div>
+                <div class="nway-note warn" data-cmp-msg${this._cmpErr ? '' : ' hidden'}>${escapeHtml(this._cmpErr || '')}</div>${ctl}</div></details>`;
         }
 
         // Focus: pick files to compare against all the others. A collapsible box so
@@ -2215,7 +2299,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within]');
             if (!t) return;
             if (t.dataset.lineage !== undefined) {
                 this._scrollSave();
@@ -2286,6 +2370,22 @@
             if (t.dataset.preset) return this._set({ ...PRESETS.find(p => p[0] === t.dataset.preset)[2], offset: 0 });
             if (t.dataset.pickBy !== undefined) return this._pickBy();
             if (t.dataset.cmpRun !== undefined) return this._runCompare();
+            if (t.dataset.cmpAddq !== undefined) { this._draft.groups[Number(t.dataset.cmpAddq)].queries.push({}); this._cmpMore = this._cmpMore || new Set(); return this.render(); }
+            if (t.dataset.cmpRmq !== undefined) {
+                const [gi, qi] = t.dataset.cmpRmq.split('.').map(Number);
+                this._draft.groups[gi].queries.splice(qi, 1);
+                this._cmpMore = new Set();
+                this.render();
+                return this._cmpPreviewSoon();
+            }
+            if (t.dataset.cmpAddg !== undefined) { if (this._draft.groups.length < GROUP_MAX) this._draft.groups.push({ label: letter(this._draft.groups.length), queries: [{}] }); return this.render(); }
+            if (t.dataset.cmpRmg !== undefined) {
+                if (this._draft.groups.length > 2) this._draft.groups.splice(Number(t.dataset.cmpRmg), 1);
+                this._cmpMore = new Set();
+                this.render();
+                return this._cmpPreviewSoon();
+            }
+            if (t.dataset.cmpWithin !== undefined) { this._draft.within = Number(t.dataset.cmpWithin); this.render(); return this._cmpPreviewSoon(); }
             if (t.dataset.cmpClear !== undefined) return this._set({ cmp: '', col_set: '', col_by: '', side: '', col_open: '', offset: 0 });
             if (t.dataset.set) {
                 const i = t.dataset.set.indexOf(':'), key = t.dataset.set.slice(0, i);
@@ -2317,9 +2417,9 @@
         // Sliders recompute on release (change), not on every drag step.
         _onInput(e) {
             const t = e.target;
-            if (t.dataset.cmp) {
-                const [k, f] = t.dataset.cmp.split('.');
-                this._cmp[k][f] = t.value;
+            if (t.dataset.cf) {
+                this._cfSet(t.dataset.cf, t.value);
+                this._cmpPreviewSoon();
                 return;
             }
             const label = t.dataset.range && t.closest('label') && t.closest('label').querySelector('b');

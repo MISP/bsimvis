@@ -2772,7 +2772,18 @@ a.home-card:hover,
 .nway-focus-body .nway-chips { max-height: 140px; overflow: auto; margin: 0; }
 .nway-cmp-row { display: flex; gap: 6px; margin-bottom: 8px; }
 .nway-cmp-row input { min-width: 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary, transparent); color: inherit; font: inherit; }
-.nway-cmp-label { width: 90px; flex: none; }
+.nway-cmp-label { width: 90px; flex: none; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary, transparent); color: inherit; font: inherit; }
+.nway-cmp-body { min-width: min(640px, 92vw); max-width: 760px; max-height: 72vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.nway-cmp-scope { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nway-cg { border: 1px solid var(--border); border-left: 3px solid var(--info, #3b82f6); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.nway-cg-b { border-left-color: var(--warning, #d97706); }
+.nway-cgh { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nway-cgn { font-size: 0.85rem; }
+.nway-cq { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; border-top: 1px dashed var(--border); }
+.nway-cq:first-of-type { border-top: 0; }
+.nway-cfs { display: flex; flex-wrap: wrap; gap: 6px; }
+.nway-cf { display: flex; flex-direction: column; gap: 1px; font-size: 0.65rem; color: var(--dim, #888); }
+.nway-cf input { width: 120px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-secondary, transparent); color: var(--text, inherit); font-size: 0.75rem; box-sizing: border-box; }
 .nway-cmp-q { flex: 1; font-family: var(--font-mono, monospace); }
 .nway-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; }
 .nway-chip {

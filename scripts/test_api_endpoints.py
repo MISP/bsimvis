@@ -5001,6 +5001,103 @@ def _nway_rows(body):
     return {frozenset((r.get("files") or r["cells"]).values()) for r in rows}
 
 
+def test_nway_column_groups():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-quinquies – N-way column groups (col_by / col_set)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(
+            _color("\n[SKIP] Need two binaries – column group checks skipped.", YELLOW)
+        )
+        return
+    ax = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/column_axes",
+        params={"collection": COLLECTION, "md5s": f"{file_md5},{file_md5_2}"},
+        timeout=60,
+    )
+    check(
+        "nway column_axes: lists keys",
+        ax.status_code == 200 and isinstance(ax.json().get("axes"), list),
+        f"HTTP {ax.status_code} {ax.text[:200]}",
+    )
+
+    st, _ = _nway(col_by="collection")
+    check("nway col_by: one shared value is rejected", st == 400, f"HTTP {st}")
+    st, body = _nway(col_by="file_name", tab="all")
+    check(
+        "nway col_by: a field with a value per file keeps the files as columns",
+        st == 200 and body["columns_mode"] == "by" and len(body["columns"]) == 2,
+        f"HTTP {st} {str((body or {}).get('columns_mode'))}",
+    )
+    st, _ = _nway(col_by="file_name", col_presence="bogus")
+    check("nway col_presence: bad value is rejected", st == 400, f"HTTP {st}")
+
+    post = lambda groups: requests.post(
+        f"{BASE_URL}/api/bin_sim/nway/columns",
+        json={"collection": COLLECTION, "groups": groups},
+        timeout=60,
+    )
+    check(
+        "nway columns: one group is rejected",
+        post([{"label": "A", "query": {"md5": file_md5}}]).status_code == 400,
+    )
+    check(
+        "nway columns: an empty query is rejected",
+        post(
+            [
+                {"label": "A", "query": {"md5": file_md5}},
+                {"label": "B", "query": {"md5": "0" * 32}},
+            ]
+        ).status_code
+        == 400,
+    )
+    res = post(
+        [
+            {"label": "A", "query": {"md5": file_md5}},
+            {"label": "B", "query": {"md5": file_md5_2}},
+        ]
+    )
+    ok = res.status_code == 200 and res.json().get("files") == 2
+    check(
+        "nway columns: two queries are saved",
+        ok,
+        f"HTTP {res.status_code} {res.text[:200]}",
+    )
+    if not ok:
+        return
+    sid = res.json()["id"]
+    st, body = _nway_set(sid, tab="all", limit=1000)
+    check(
+        "nway col_set: two columns compared",
+        st == 200 and body["columns_mode"] == "by" and len(body["columns"]) == 2,
+        f"HTTP {st}",
+    )
+    _, only_a = _nway_set(sid, tab="unique", side="a", limit=1000)
+    _, only_b = _nway_set(sid, tab="unique", side="b", limit=1000)
+    _, both = _nway_set(sid, tab="core", limit=1000)
+    total = len(only_a["items"]) + len(only_b["items"]) + len(both["items"])
+    check(
+        "nway col_set: both + A only + B only cover every row",
+        total == body["total"],
+        f"{total} vs {body['total']}",
+    )
+    st, _ = _nway_set("deadbeef0000")
+    check("nway col_set: unknown id is 404", st == 404, f"HTTP {st}")
+
+
+def _nway_set(sid, **params):
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway",
+        params={"col_set": sid, **params},
+        timeout=60,
+    )
+    try:
+        return resp.status_code, resp.json()
+    except ValueError:
+        return resp.status_code, None
+
+
 def test_nway_function_meta():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-quater – N-way function set hero (meta endpoint)", BOLD))
@@ -9711,6 +9808,7 @@ if __name__ == "__main__":
         test_llm_agentic_analysis,
         test_bin_sim_diff_cache,
         test_nway_diff,
+        test_nway_column_groups,
         test_nway_function_meta,
         test_nway_cluster_entry,
         test_llm_pair_analysis_job,
@@ -9742,6 +9840,7 @@ if __name__ == "__main__":
         # Issues the /api/bin_sim/build whose doc the diff cache step reads.
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
         "test_nway_diff": ["test_search_filters_and_sorting"],
+        "test_nway_column_groups": ["test_search_filters_and_sorting"],
         "test_nway_function_meta": ["test_search_filters_and_sorting"],
         "test_nway_cluster_entry": ["test_search_filters_and_sorting"],
         "test_llm_pair_analysis_job": ["test_search_filters_and_sorting"],

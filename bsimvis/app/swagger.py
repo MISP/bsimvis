@@ -2699,10 +2699,14 @@ class BinSimNway(Resource):
             "md5s": "Comma-separated files, each `<collection>:<md5>` or a bare md5 with `collection` (2 or more); or use cluster_uuid",
             "batch_uuid": "Upload batch whose files are added to `md5s` (with `collection`, or searched in every collection); unknown batch -> 404",
             "cluster_uuid": "Binary cluster (file node) to diff instead of `md5s`; with `collection` or `pool`, optional `axis`/`algo`",
-            "columns": "auto (default), files, children (cluster_uuid only: one column per child cluster + direct files) or twins (any set: files that hold a function in exactly the same shared rows share one column; tabs still count files)",
+            "columns": "auto (default), by (see col_by), files, children (cluster_uuid only: one column per child cluster + direct files) or twins (any set: files that hold a function in exactly the same shared rows share one column; tabs still count files)",
             "col_open": 'JSON list of column ids to expand: with columns=children a child cluster shows its own child clusters (recursively) and a leaf one column per file; with columns=twins a twin column shows its files; `["*"]` expands every column, `["*5"]` the first 5 levels (within the column limit). Columns come back with `path` (the groups they were expanded out of) and `expandable`',
             "twin_depth": "columns=twins: group levels above the files (default 1 = exact twins only). Above 1, twin columns nest under looser groups of files whose shared rows overlap",
             "twin_link": "columns=twins with twin_depth > 1: average Jaccard of two files' shared rows below which they are not grouped (default 0.5)",
+            "col_by": "Merge files into one column per value of a key (sets columns=by): `collection`, `tag:<namespace>` (value = the tag after the namespace), or any scalar file field (`batch_uuid`, `architecture`, `executable_format`...). Files without a value go to `(none)`; a group of one file stays a file column. `col_open` expands a group to its files. `/nway/column_axes` lists the usable keys. With exactly two top-level groups the tabs work like focus (core = both, unique = one group) and `side` takes a / b",
+            "col_by_multi": "col_by with several values per file (tags, lists): first (default; the file goes under its most shared value) or all (listed under each)",
+            "col_set": "Column groups saved by POST /nway/columns (replaces md5s; sets columns=by)",
+            "col_presence": "columns=by: a group holds a function when any (default 0.5 child_presence otherwise), half or all of its files do",
             "pair_k": "stored mode, sets over nway.sample_above files (default 100): file pairs read per file, its k best-scored partners plus nway.pair_random random ones (default nway.pair_k = 16; 0 reads every pair)",
             "child_presence": "children columns: share of a child's files that must hold a function for it to count as present (default 0.5)",
             "collection": "Collection for bare md5s",
@@ -2716,7 +2720,7 @@ class BinSimNway(Resource):
             "k": "Minimum files for the partial tab (default 2)",
             "focus": "Comma-separated file column ids (`<collection>:<md5>`) to compare against the rest: two columns, Focus and Rest (core = both, unique = one side); must leave a file out",
             "focus_rule": "focus: a row is in Focus when any (default) or all of the focus files hold a function; Rest uses child_presence",
-            "side": "focus only: keep rows present on the focus or rest side",
+            "side": "focus (or two col_by groups) only: keep rows present on the focus or rest side (a / b for the first / second group)",
             "scope": "code (default), library or all",
             "column": "Only rows that have a function in this file (`<collection>:<md5>`)",
             "q": "Search function names, addresses and tags",
@@ -4031,6 +4035,44 @@ class NwayFunctionMeta(Resource):
         from bsimvis.app.routes.nway import get_function_meta
 
         return get_function_meta()
+
+
+@ns_bin_sim.route("/nway/column_axes")
+class BinSimNwayColumnAxes(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "md5s": "Files, as for /nway",
+            "collection": "Collection for bare md5s",
+        }
+    )
+    def get(self):
+        """Keys `col_by` can merge these files on, each with its distinct value count and top values."""
+        from bsimvis.app.routes.nway import get_column_axes
+
+        return get_column_axes()
+
+
+@ns_bin_sim.route("/nway/columns")
+class BinSimNwayColumns(Resource):
+    @ns_bin_sim.expect(
+        api.model(
+            "NwayColumnSet",
+            {
+                "collection": fields.String,
+                "pool": fields.String,
+                "groups": fields.List(
+                    fields.Raw,
+                    required=True,
+                    description="2 to 8 of {label, query}; query = /files/search parameters",
+                ),
+            },
+        )
+    )
+    def post(self):
+        """Resolve file queries into compared column groups (an hour in Redis); returns `id` for /nway `col_set`, with the file count of each group."""
+        from bsimvis.app.routes.nway import post_column_set
+
+        return post_column_set()
 
 
 @ns_nway.route("/function/set")

@@ -1070,6 +1070,7 @@ def compute(r, scope, members, params=None):
     child-cluster columns; see `project_rows`. `focus` (column ids) +
     `focus_rule` (`any` | `all`) instead split the files into Focus vs Rest
     groups: Rest uses `child_presence`, Focus needs any / all of its files.
+    `groups_mode` names `columns_mode` when `groups` are not child clusters (`by`).
     """
     params = params or {}
     mode = params.get("mode") or "stored"
@@ -1180,7 +1181,11 @@ def compute(r, scope, members, params=None):
         "columns_mode": (
             "focus"
             if focus
-            else "twins" if twins else "children" if groups else "files"
+            else (
+                "twins"
+                if twins
+                else params.get("groups_mode", "children") if groups else "files"
+            )
         ),
         "file_columns": file_columns if groups else None,
         "rows": rows,

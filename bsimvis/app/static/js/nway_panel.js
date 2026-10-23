@@ -70,6 +70,8 @@
     const FILE_MULTI = new Set(['file_tag']);
     const FILE_KNOWN = new Set([...FILE_FIELDS, ...FILE_MORE].map(f => f[0]));
     const GROUP_MAX = 8;
+    // Merge files options: icon, and the colour the dropdown form uses.
+    const FILE_ICONS = { files: 'fa-regular fa-square', children: 'fa-solid fa-sitemap', twins: 'fa-solid fa-clone', by: 'fa-solid fa-tags' };
     const letter = i => String.fromCharCode(65 + i);
     const fileCount = n => `${Number(n)} ${Number(n) === 1 ? 'file' : 'files'}`;
 
@@ -453,7 +455,7 @@
             const minLink = merge.has('call') ? this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.') : '';
             // Merge files by: None = one column per file, Cluster = child clusters (a cluster node only), Same code = twins.
             const fileOpts = [['files', 'None', 'One column per file.'], ...(this.source.cluster_uuid || d.shared_cluster ? [['children', 'Cluster', 'One column per child cluster; open a column to show its own children, down to files.']] : []), ['twins', 'Same code', "Files that hold a function in exactly the same shared rows become one column. Click a column's count to show its files; a function only some of them hold shows as a partly filled square."], ['by', 'Metadata', 'One column per value of a file field or tag namespace (collection, batch, architecture, a tag family...). Click a column to show its files.']];
-            const fileBtns = fileOpts.map(([v, text, tip]) => `<button class="view-btn${fileMode === v ? ' active' : ''}" ${v === 'by' ? 'data-pick-by' : `data-set="columns:${v}"`} title="${escapeAttr(tip)}">${text}</button>`).join('');
+            const fileBtns = fileOpts.map(([v, text, tip]) => `<button class="view-btn${fileMode === v ? ' active' : ''}" ${v === 'by' ? 'data-pick-by' : `data-set="columns:${v}"`} title="${escapeAttr(tip)}"><i class="${FILE_ICONS[v]}"></i> ${text}</button>`).join('');
             const axisOpts = (this._axes || []).map(a => [a.key, a.values ? `${a.key} (${a.values})` : a.key]);
             if (s.col_by && !axisOpts.some(([k]) => k === s.col_by)) axisOpts.push([s.col_by, s.col_by]);
             const entry = (this._axes || []).find(a => a.key === s.col_by), picked = this._pickList();

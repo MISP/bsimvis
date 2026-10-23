@@ -832,6 +832,21 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
             box.append(el('h4', {}, n.file_name || n.id));
             kv([['Functions', fmt(n.functions) + (n.root ? ' (root)' : '')], ...(n.died_all != null ? [['Kept by no child', fmt(n.died_all)]] : []), ['Only in this file', fmt(n.only_here)], ['In reuse classes', n.reuse_in == null ? 'n/a' : fmt(n.reuse_in)]]);
             box.append(el('div', { class: 'lin-dim', style: 'margin-top:8px;word-break:break-all' }, n.id));
+            if (!n.agg && window.Nav) {
+                // pivots: file page, its functions, its similar functions, the N-way table filtered to it
+                const [col, , md5] = n.id.split(':'), m = encodeURIComponent(md5);
+                const q = new URLSearchParams(location.search);
+                q.delete('order'); q.delete('root'); q.set('column', n.id);
+                const go = (txt, url, type) => {
+                    const b = el('button', { type: 'button', class: 'lin-btn', style: 'margin:6px 6px 0 0' }, txt);
+                    b.addEventListener('click', ev => window.Nav.openPath(url, ev, { title: txt, type }));
+                    box.append(b);
+                };
+                go('File', window.Nav.buildUIUrl(col, ['files', md5]), 'file');
+                go('Functions', `${window.Nav.buildUIUrl(col, ['functions'])}?file_md5=${m}`, 'functions');
+                go('Similar functions', `${window.Nav.buildUIUrl(col, ['functions', 'similarities'])}?md5=${m}`, 'functions');
+                go('N-way: only this file', `/diff/nway?${q}`, 'bin_sim');
+            }
         } else if (pick.edge) {
             const e = pick.edge, ev = e.recall_evidence || {};
             if (pick.part) box.append(el('div', { style: 'height:10px' }));

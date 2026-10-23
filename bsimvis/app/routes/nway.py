@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+from collections import Counter
 
 from flask import request
 from flask_restx import abort
@@ -533,40 +534,64 @@ def _by_groups(r, members, colset, args, open_ids):
     )
 
 
+def _group_queries(spec):
+    """A group's searches: `queries` (a list) or the single `query`, as dicts of search_files params."""
+    qs = spec.get("queries") if "queries" in spec else [spec.get("query")]
+    if not isinstance(qs, list) or not all(isinstance(q, dict) for q in qs):
+        return None
+    return qs
+
+
 def post_column_set():
-    """Resolve file queries into column groups: one saved set, read back by `col_set`."""
+    """Resolve file queries into column groups: one saved set, read back by `col_set`.
+
+    A group holds one or more searches and is their union. `within` (file ids,
+    `<collection>:<md5>`) keeps only matches inside that set. With `preview` nothing
+    is saved and empty groups are fine: it only reports the counts.
+    """
     from bsimvis.app.routes.home import _call
     from bsimvis.app.routes.search_file import search_files
 
     body = request.get_json(silent=True) or {}
-    specs = body.get("groups")
+    specs, preview = body.get("groups"), bool(body.get("preview"))
+    low = 1 if preview else 2
     if (
         not isinstance(specs, list)
-        or not 2 <= len(specs) <= COLSET_MAX_GROUPS
-        or not all(
-            isinstance(g, dict) and isinstance(g.get("query"), dict) for g in specs
-        )
+        or not low <= len(specs) <= COLSET_MAX_GROUPS
+        or not all(isinstance(g, dict) and _group_queries(g) is not None for g in specs)
     ):
-        abort(400, f"groups: 2 to {COLSET_MAX_GROUPS} of {{label, query}}")
+        abort(400, f"groups: {low} to {COLSET_MAX_GROUPS} of {{label, queries}}")
     scope = {k: body[k] for k in ("collection", "pool") if body.get(k)}
+    within = body.get("within")
+    if within is not None:
+        within = {
+            (_origin_coll(c), m.lower())
+            for c, m in (str(t).rsplit(":", 1) for t in within if ":" in str(t))
+        }
     cap = nway_diff_service.caps()[0]
     groups, members = [], []
     for i, spec in enumerate(specs):
         label = str(spec.get("label") or f"Group {i + 1}")[:60]
-        try:
-            res = _call(search_files, **{**scope, **spec["query"], "limit": cap + 1})
-        except (TypeError, ValueError):
-            abort(400, f"{label}: query must be search_files parameters")
-        if res.get("error"):
-            abort(400, f"{label}: {res['error']}")
-        found = [
-            (
-                _origin_coll(f["file_id"].split(":file:")[0]),
-                f["file_id"].rsplit(":", 1)[1],
-            )
-            for f in res.get("files") or []
-        ]
-        if not found:
+        found = []
+        # an empty search would list the whole collection: a group needs a filter
+        for query in filter(None, _group_queries(spec)):
+            try:
+                res = _call(search_files, **{**scope, **query, "limit": cap + 1})
+            except (TypeError, ValueError):
+                abort(400, f"{label}: query must be search_files parameters")
+            if res.get("error"):
+                abort(400, f"{label}: {res['error']}")
+            found += [
+                (
+                    _origin_coll(f["file_id"].split(":file:")[0]),
+                    f["file_id"].rsplit(":", 1)[1],
+                )
+                for f in res.get("files") or []
+            ]
+        found = list(dict.fromkeys(found))
+        if within is not None:
+            found = [m for m in found if m in within]
+        if not found and not preview:
             abort(400, f"{label}: the query matches no file")
         if len(found) > cap:
             abort(400, f"{label}: matches more than {cap} files: narrow the query")
@@ -575,16 +600,19 @@ def post_column_set():
             {"label": label, "members": [nway_diff_service._col_id(*m) for m in found]}
         )
     members = list(dict.fromkeys(members))
+    seen = Counter(m for g in groups for m in g["members"])
+    out = {
+        "files": len(members),
+        "overlap": sum(1 for n in seen.values() if n > 1),
+        "groups": [{"label": g["label"], "files": len(g["members"])} for g in groups],
+    }
+    if preview:
+        return out
     colset = {**scope, "members": members, "groups": groups}
     raw = json.dumps(colset)
     sid = hashlib.sha1(raw.encode()).hexdigest()[:12]
     get_queue_redis().setex(f"nway:colset:{sid}", COLSET_TTL, raw)
-    return {
-        "id": sid,
-        "ttl": COLSET_TTL,
-        "files": len(members),
-        "groups": [{"label": g["label"], "files": len(g["members"])} for g in groups],
-    }
+    return {"id": sid, "ttl": COLSET_TTL, **out}
 
 
 def get_column_axes():

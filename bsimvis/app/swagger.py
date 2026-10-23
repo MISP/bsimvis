@@ -2754,7 +2754,7 @@ class BinSimNway(Resource):
             "group_lane_fit": "group=lane: a unit whose files all lie inside a bundle and make up at least this share of the bundle's files (default 0.9) joins it, with `sub` (files missing) and `miss` set; 1 turns it off",
             "group_lane_link": "group=lane with group_lane_depth > 1: sibling lanes whose files overlap by at least this Jaccard share (0-1, default 0 = off) get a synthetic parent `mix:<files>` covering their union, with `core` (files all its lanes share) and `lanes`",
             "group_lane_depth": "group=lane: levels of nested lanes (default 1 = flat). Above 1 a lane sits under the smallest lane holding all its files, and its group counts include the sub-lanes",
-            "group_lane_min":"group=lane: units that must share a set of files before it makes a lane (default 2); the others stay plain rows",
+            "group_lane_min": "group=lane: units that must share a set of files before it makes a lane (default 2); the others stay plain rows",
             "group_prefix_min": "group=prefix: functions that must share a prefix before it makes a group (default 2)",
             "group_min_link": "group_merge=call: a shared caller joins two rows only when an edge between them scores at least this (default 0.3; 0 = no edge needed)",
             "group_sort": "Order of the groups, every kind side by side at one level: files (default: groups covering more files first, features then rows break ties, plain rows mixed in), lanes (groups first, widest file coverage first, plain rows after), weight (features) or rows",
@@ -4086,16 +4086,23 @@ class BinSimNwayColumns(Resource):
             {
                 "collection": fields.String,
                 "pool": fields.String,
+                "preview": fields.Boolean(
+                    description="Only count: save nothing, allow 1 group and empty groups"
+                ),
+                "within": fields.List(
+                    fields.String,
+                    description="File ids `<collection>:<md5>`; keep only matches inside this set",
+                ),
                 "groups": fields.List(
                     fields.Raw,
                     required=True,
-                    description="2 to 8 of {label, query}; query = /files/search parameters",
+                    description="2 to 8 of {label, queries: [...]} (or one `query`); each query = /files/search parameters; a group is the union of its queries",
                 ),
             },
         )
     )
     def post(self):
-        """Resolve file queries into compared column groups (an hour in Redis); returns `id` for /nway `col_set`, with the file count of each group."""
+        """Resolve file queries into compared column groups (an hour in Redis); returns `id` for /nway `col_set`, with the file count of each group and how many files match several."""
         from bsimvis.app.routes.nway import post_column_set
 
         return post_column_set()

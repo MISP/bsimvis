@@ -5050,6 +5050,35 @@ def test_nway_column_groups():
         json={"collection": COLLECTION, "groups": groups},
         timeout=60,
     )
+    pv = requests.post(
+        f"{BASE_URL}/api/bin_sim/nway/columns",
+        json={
+            "collection": COLLECTION,
+            "preview": True,
+            "groups": [
+                {
+                    "label": "A",
+                    "queries": [
+                        {"md5": file_md5},
+                        {"md5": file_md5_2},
+                        {"md5": file_md5},
+                    ],
+                },
+                {"label": "B", "queries": [{}]},
+            ],
+            "within": [f"{COLLECTION}:{file_md5}"],
+        },
+        timeout=60,
+    )
+    pvj = pv.json() if pv.status_code == 200 else {}
+    check(
+        "nway columns: preview unions queries, honours within, saves nothing",
+        pv.status_code == 200
+        and pvj.get("groups")
+        == [{"label": "A", "files": 1}, {"label": "B", "files": 0}]
+        and "id" not in pvj,
+        f"HTTP {pv.status_code} {pv.text[:200]}",
+    )
     check(
         "nway columns: one group is rejected",
         post([{"label": "A", "query": {"md5": file_md5}}]).status_code == 400,

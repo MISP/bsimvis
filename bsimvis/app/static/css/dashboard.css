@@ -3131,7 +3131,8 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-body { display: flex; align-items: flex-start; }
 .nway-body > .nway-scroll { flex: 1; min-width: 0; }
 #cluster-tab-functions .nway-body { flex: 1; min-height: 0; align-items: stretch; }
-.nway-legend { flex: none; width: 250px; max-height: calc(100vh - 180px); overflow: auto; position: sticky; top: 0; border-right: 1px solid var(--border); padding: 4px 6px 8px; font-size: 0.76rem; }
+.nway-compact > .nway-hero, .nway-compact .nway-note { display: none; }
+.nway-legend { flex: none; width: 250px; min-width: 160px; max-width: 60vw; resize: horizontal; max-height: calc(100vh - 180px); overflow: auto; position: sticky; top: 0; border-right: 1px solid var(--border); padding: 4px 6px 8px; font-size: 0.76rem; }
 #cluster-tab-functions .nway-legend { max-height: none; }
 .nway-legend.off { width: auto; }
 .nway-busy-cancel { margin-left: auto; pointer-events: auto; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 6px; font-weight: 600; font-size: 0.78rem; color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent); border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 55%, transparent); }

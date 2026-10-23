@@ -2321,6 +2321,12 @@
             this._mark(this.el.querySelector('#nway-table'));
             this._watch();
             this._scrollRestore();
+            // Header and notes fold away once the table scrolls; they return at the top.
+            const sc = this.el.querySelector('.nway-scroll'), view = this.el.closest('.nway-view');
+            if (sc && view) sc.addEventListener('scroll', () => {
+                if (sc.scrollTop > 20) view.classList.add('nway-compact');
+                else if (sc.scrollTop === 0) view.classList.remove('nway-compact');
+            }, { passive: true });
         }
 
         // Scroll mode: load the next batch when the sentinel nears the viewport.

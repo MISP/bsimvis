@@ -2859,6 +2859,9 @@ a.home-card:hover,
 .nway-bandrow th.nway-band { cursor: pointer; }
 .nway-bandrow th.nway-band::after { content: ''; position: absolute; left: 2px; right: 2px; bottom: 2px; height: 6px; border: 2px solid hsl(var(--h, 195) 62% var(--l, 52%)); border-bottom: 0; border-radius: 4px 4px 0 0; }
 .nway-bandrow th.nway-band:hover { background: var(--hover); }
+.nway-bandmore th { text-align: center; }
+.nway-bandmore button { display: inline-flex; align-items: center; gap: 4px; height: 14px; padding: 0 10px; font-size: 10px; line-height: 1; color: var(--text-dim, inherit); background: transparent; border: 1px dashed currentColor; border-radius: 7px; opacity: .7; cursor: pointer; }
+.nway-bandmore button:hover { opacity: 1; background: var(--hover); }
 /* Compare view: the card fills what is left of the viewport, so the table is the only vertical scroll and its header stays pinned. */
 .nway-fill { display: flex; flex-direction: column; overflow-y: hidden; min-height: 0; }
 .nway-fill > #nway-file-hero { flex: none; padding-top: 0; }

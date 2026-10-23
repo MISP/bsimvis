@@ -2245,8 +2245,8 @@
                 html += `<tr class="nway-bandrow" style="--bt:${shown++ * BAND_H}px">${cells}</tr>`;
                 // Marker row between the top 2 and the rest; it carries the expand / collapse button.
                 if (n > 4 && k === 1) {
-                    const label = cut ? `&hellip; ${n - 4} more levels &mdash; show all` : 'hide middle levels';
-                    html += `<tr class="nway-bandrow" style="--bt:${shown++ * BAND_H}px"><th colspan="${this._lead().length + cols.length}"><button type="button" class="nway-blink" data-bandall>${label}</button></th></tr>`;
+                    const label = cut ? `<i class="fa-solid fa-ellipsis"></i> ${n - 4}` : '<i class="fa-solid fa-angles-up"></i>';
+                    html += `<tr class="nway-bandrow nway-bandmore" style="--bt:${shown++ * BAND_H}px"><th colspan="${this._lead().length + cols.length}"><button type="button" data-bandall title="${cut ? `Show the ${n - 4} hidden levels` : 'Hide the middle levels'}">${label}</button></th></tr>`;
                 }
             }
             return { html, n: shown };

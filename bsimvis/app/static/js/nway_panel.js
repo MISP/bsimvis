@@ -2223,10 +2223,14 @@
         _bands() {
             const cols = this.data.columns, byId = this._tree().byId;
             const n = Math.max(0, ...cols.map(c => (c.path || []).length));
-            let html = '';
+            let html = '', shown = 0;
+            // Deep trees: keep the top 2 and last 2 levels until the user expands.
+            const cut = n > 4 && !this._bandsAll;
             for (let k = 0; k < n; k++) {
+                if (cut && k >= 2 && k < n - 2) continue;
                 const lead = this._lead().length;
-                let cells = `<th></th>${lead > 1 ? `<th colspan="${lead - 1}"></th>` : ''}`;
+                const btn = n > 4 && !shown ? `<button type="button" class="nway-blink" data-bandall title="${cut ? `Show all ${n} levels` : 'Show only the top 2 and last 2 levels'}">${cut ? `+${n - 4} levels` : 'fewer'}</button>` : '';
+                let cells = `<th>${btn}</th>${lead > 1 ? `<th colspan="${lead - 1}"></th>` : ''}`;
                 for (let i = 0; i < cols.length;) {
                     const g = (cols[i].path || [])[k];
                     let j = i + 1;
@@ -2239,9 +2243,9 @@
                     }
                     i = j;
                 }
-                html += `<tr class="nway-bandrow" style="--bt:${k * BAND_H}px">${cells}</tr>`;
+                html += `<tr class="nway-bandrow" style="--bt:${shown++ * BAND_H}px">${cells}</tr>`;
             }
-            return { html, n };
+            return { html, n: shown };
         }
 
         // With grouped columns the header is a numbered dot in the cluster's colour; names live in the legend.
@@ -2340,7 +2344,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-colpick],[data-colpick-clear],[data-more-toggle]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-colpick],[data-colpick-clear],[data-more-toggle]');
             if (!t) return;
             if (t.dataset.lineage !== undefined) {
                 this._scrollSave();
@@ -2352,6 +2356,10 @@
                 e.preventDefault();
                 this._scrollSave();
                 return window.Nav.openPath(NwayPanel.urlForFunctions(group.fids), e, { title: 'N-way diff', type: 'bin_sim' });
+            }
+            if (t.dataset.bandall !== undefined) {
+                this._bandsAll = !this._bandsAll;
+                return this.render();
             }
             if (t.dataset.statsToggle !== undefined) {
                 this._so = !this._statsOff();

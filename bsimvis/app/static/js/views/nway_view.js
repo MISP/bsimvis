@@ -414,7 +414,7 @@ window.NwayView = {
         this.destroy();
         this._container.innerHTML = `
             <div class="nway-view nway-fill">
-                <div id="nway-hero-home"><div id="nway-file-hero" class="nway-hero" hidden></div></div>
+                <div id="nway-file-hero" class="nway-hero" hidden></div>
                 <div id="nway-edit-home"></div>
                 <div id="nway-panel"></div>
             </div>`;
@@ -445,14 +445,10 @@ window.NwayView = {
                 this._writeUrl(s);
             },
             onData: d => this._renderFileHero(d),
-            onSlot: (slot, top) => {
-                const edit = this._editEl, hero = document.getElementById('nway-file-hero');
-                if (hero) (top || document.getElementById('nway-hero-home'))?.appendChild(hero);
+            onSlot: slot => {
+                const edit = this._editEl;
                 if (!edit) return;
-                // a panel with a table keeps the editor in More (closed = out of the page); otherwise it shows above
-                if (slot) slot.appendChild(edit);
-                else if (top) edit.remove();
-                else document.getElementById('nway-edit-home')?.appendChild(edit);
+                (slot || document.getElementById('nway-edit-home'))?.appendChild(edit);
                 edit.classList.toggle('in-more', !!slot);
                 if (slot) edit.open = true;
             },

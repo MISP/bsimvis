@@ -20,6 +20,7 @@ from bsimvis.app.services.nway_diff_service import BadParams, _col_id, _decode
 KEY = re.compile(r"^[\w.:-]{1,64}$")
 NONE_LABEL = "(none)"
 MAX_VALUES = 200  # distinct values `axes` still offers for one key
+MAX_LISTED = 60  # values listed per key, most files first
 MAX_VALUE_LEN = 80
 PRESENCE = {"any": 1e-9, "half": 0.5, "all": 1.0}
 
@@ -68,11 +69,46 @@ def _finish(groups, names):
     return out
 
 
-def meta_groups(members, metas, names, key, multi="first"):
+def _picked(by, key, pick, drop):
+    """Columns for the picked values, in the order given, plus the unpicked files as `other`."""
+    groups = [
+        {
+            "id": _gid(key, v),
+            "kind": "meta",
+            "by": key,
+            "value": v,
+            "label": v,
+            "members": by[v],
+        }
+        for v in dict.fromkeys(pick)
+        if v in by
+    ]
+    rest = [m for v, ids in by.items() if v not in pick for m in ids]
+    if rest and not drop:
+        groups.append(
+            {
+                "id": _gid(key, "\0other"),
+                "kind": "meta",
+                "by": key,
+                "value": None,
+                "label": "other",
+                "members": list(dict.fromkeys(rest)),
+            }
+        )
+    if len(groups) < 2:
+        raise BadParams(f"pick at least two {key} values that some files have")
+    for g in groups:
+        g["member_count"] = len(g["members"])
+    return groups
+
+
+def meta_groups(members, metas, names, key, multi="first", pick=None, drop=False):
     """Group files by `key`; raises BadParams when it leaves a single group.
 
     `multi=first` puts a file with several values (a tag namespace, a list) under
-    its most shared one; `all` lists it under each.
+    its most shared one; `all` lists it under each. `pick` (a list of values) makes
+    only those values columns, in that order, and the rest one `other` column, or
+    nothing with `drop` (the other files then leave the set).
     """
     if not KEY.match(key or ""):
         raise BadParams("col_by must be collection, tag:NAMESPACE or a file field")
@@ -88,6 +124,8 @@ def meta_groups(members, metas, names, key, multi="first"):
             vs = [max(vs, key=lambda v: (shared[v], v))]
         for v in vs:
             by.setdefault(v, []).append(_col_id(coll, md5))
+    if pick:
+        return _picked(by, key, pick, drop)
     if len(by) < 2:
         raise BadParams(f"every file has the same {key}: nothing to split")
     return _finish(
@@ -146,7 +184,8 @@ def axes(members, metas):
             len(v) <= MAX_VALUE_LEN for v in count
         ):
             top = [[v, c] for v, c in count.most_common(3)]
-            out.append({"key": key, "values": len(count), "top": top})
+            every = [[v, c] for v, c in count.most_common(MAX_LISTED)]
+            out.append({"key": key, "values": len(count), "top": top, "all": every})
     return sorted(out, key=lambda a: (a["values"], a["key"]))
 
 
@@ -173,6 +212,16 @@ def demo():
         "arch",
         "tag:family",
     }
+    g = meta_groups(members, metas, names, "arch", pick=["arm"])
+    assert [x["label"] for x in g] == ["arm", "other"] and g[0]["member_count"] == 2
+    g = meta_groups(members, metas, names, "arch", pick=["x86", "arm"], drop=True)
+    assert [x["label"] for x in g] == ["x86", "arm"]
+    try:
+        meta_groups(members, metas, names, "arch", pick=["arm"], drop=True)
+    except BadParams:
+        pass
+    else:
+        raise AssertionError("one picked value must raise")
     try:
         meta_groups(members, metas, names, "nope")
     except BadParams:

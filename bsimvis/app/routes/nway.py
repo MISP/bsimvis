@@ -513,6 +513,16 @@ def _load_colset():
     return colset
 
 
+def _col_pick(args):
+    try:
+        pick = json.loads(args.get("col_pick") or "[]")
+    except ValueError:
+        pick = None
+    if not isinstance(pick, list) or not all(isinstance(v, str) for v in pick):
+        abort(400, "col_pick must be a JSON list of values")
+    return pick
+
+
 def _by_groups(r, members, colset, args, open_ids):
     """Metadata or saved-query column groups, with `col_open` groups opened to files."""
     names = nway_diff_service._file_names(r, members)
@@ -526,12 +536,18 @@ def _by_groups(r, members, colset, args, open_ids):
                 names,
                 args["col_by"],
                 args.get("col_by_multi", "first"),
+                _col_pick(args),
+                args.get("col_rest") == "drop",
             )
     except nway_diff_service.BadParams as e:
         abort(400, str(e))
-    return nway_diff_service.grow_columns(
+    # unpicked files left out of every group leave the set
+    kept = {m for g in groups for m in g["members"]}
+    members = [m for m in members if nway_diff_service._col_id(*m) in kept]
+    groups = nway_diff_service.grow_columns(
         groups, set(open_ids), lambda g: nway_diff_service.file_groups(g, names)
     )
+    return groups, members
 
 
 def _group_queries(spec):
@@ -729,7 +745,7 @@ def _load_doc():
         if len(members) < (1 if request.args.get("solo") else 2):
             abort(400, "need at least two distinct files")
         if columns == "by":
-            groups = _by_groups(r, members, colset, request.args, open_ids)
+            groups, members = _by_groups(r, members, colset, request.args, open_ids)
             if col_presence:
                 presence = nway_column_service.PRESENCE[col_presence]
         doc = nway_diff_service.compute(

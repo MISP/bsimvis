@@ -2722,6 +2722,8 @@ class BinSimNway(Resource):
             "twin_link": "columns=twins with twin_depth > 1: average Jaccard of two files' shared rows below which they are not grouped (default 0.5)",
             "col_by": "Merge files into one column per value of a key (sets columns=by): `collection`, `tag:<namespace>` (value = the tag after the namespace), or any scalar file field (`batch_uuid`, `architecture`, `executable_format`...). Files without a value go to `(none)`; a group of one file stays a file column. `col_open` expands a group to its files. `/nway/column_axes` lists the usable keys. With exactly two top-level groups the tabs work like focus (core = both, unique = one group) and `side` takes a / b",
             "col_by_multi": "col_by with several values per file (tags, lists): first (default; the file goes under its most shared value) or all (listed under each)",
+            "col_pick": 'col_by: JSON list of values (`["lockbit","conti"]`) that become the columns, in that order; the other files are merged as one `other` column (or left out with col_rest=drop). With exactly two columns the tabs compare them like A / B',
+            "col_rest": "col_pick: other (default, the unpicked files are one `other` column) or drop (they leave the set)",
             "col_set": "Column groups saved by POST /nway/columns (replaces md5s; sets columns=by)",
             "col_presence": "columns=by: a group holds a function when any (default 0.5 child_presence otherwise), half or all of its files do",
             "pair_k": "stored mode, sets over nway.sample_above files (default 100): file pairs read per file, its k best-scored partners plus nway.pair_random random ones (default nway.pair_k = 16; 0 reads every pair)",

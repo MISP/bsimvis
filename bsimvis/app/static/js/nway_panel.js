@@ -34,11 +34,11 @@
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
         columns: 'twins', child_presence: 0.5, twin_depth: 3, twin_link: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
-        col_by: '', col_by_multi: '', col_set: '', col_presence: '', cmp: '',
+        col_by: '', col_by_multi: '', col_set: '', col_presence: '', cmp: '', col_pick: '', col_rest: '',
         group: 'lane', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 3, group_lane_link: 0.5, group_prefix_min: '', col_open: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_prefix_min', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence'];
+    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_prefix_min', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest'];
     // Group by: rows bundled by file set, nested under one tag axis, or joined as one probable function.
     const GROUPS = [
         ['lane', 'Lane', 'Bundles of rows that appear in exactly the same files, biggest bundle first. With the merge on, a merged function is bundled by all the files it covers together. A set of files only one function has gets no lane and stays a plain row beside the lanes, unless it is a bundle minus a file or two (90% or more of its files), which joins it with a chip.'],
@@ -61,7 +61,7 @@
         ['balanced', 'Balanced', { min_edge: '', child_presence: 0.5 }, 'The collection default edge; half of a child cluster must hold a function.'],
         ['loose', 'Loose', { min_edge: 0.3, child_presence: 0.3 }, 'Weaker matches group together; a third of a child cluster is enough.'],
     ];
-    const DOC_KEYS = ['mode', 'min_edge', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'focus', 'focus_rule', 'col_by', 'col_by_multi', 'col_set', 'col_presence'];
+    const DOC_KEYS = ['mode', 'min_edge', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'focus', 'focus_rule', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest'];
     // Keys the metadata column merge offers when the server cannot count values.
     const BY_KEYS = ['collection', 'batch_uuid', 'architecture', 'executable_format'];
     // Compare groups filter files with the Files page parameters (/api/file/search).
@@ -439,11 +439,15 @@
             const fileBtns = fileOpts.map(([v, text, tip]) => `<button class="view-btn${fileMode === v ? ' active' : ''}" ${v === 'by' ? 'data-pick-by' : `data-set="columns:${v}"`} title="${escapeAttr(tip)}">${text}</button>`).join('');
             const axisOpts = (this._axes || []).map(a => [a.key, a.values ? `${a.key} (${a.values})` : a.key]);
             if (s.col_by && !axisOpts.some(([k]) => k === s.col_by)) axisOpts.push([s.col_by, s.col_by]);
-            const byCtl = !by ? '' : s.col_set ? '<span class="dim nway-bnote">compared queries</span><button class="nway-blink" data-cmp-clear>clear</button>' : `${sel('col_by', s.col_by, axisOpts)}${s.col_by.startsWith('tag:') ? sel('col_by_multi', s.col_by_multi || 'first', [['first', 'Most shared tag'], ['all', 'Every tag']]) : ''}${this._seg('Holds when', 'col_presence', [['', 'Half'], ['any', 'Any'], ['all', 'All']], 'A column holds a function when this share of its files do: any one, half (default) or all.')}`;
+            const entry = (this._axes || []).find(a => a.key === s.col_by), picked = this._pickList();
+            const valueChips = !by || s.col_set || !entry || !entry.all ? '' : `<span class="nway-bvals" title="Click values to make them the only columns, in click order">${entry.all.map(([v, n]) => `<button type="button" class="nway-chip${picked.includes(v) ? ' on' : ''}" data-colpick="${escapeAttr(v)}">${escapeHtml(v)} <span class="dim">${Number(n)}</span></button>`).join('')}${entry.values > entry.all.length ? `<span class="dim">+${entry.values - entry.all.length} more</span>` : ''}</span>`;
+            const pickCtl = picked.length ? `${this._seg('Others', 'col_rest', [['', 'Merged'], ['drop', 'Hidden']], 'The files whose value was not picked: merged into one "other" column, or left out of the table.')}<button class="nway-blink" data-colpick-clear>clear picks</button>` : '';
+            const abCtl = by && !s.col_set && this._ab() && s.tab === 'unique' ? this._seg('Unique to', 'side', [['', 'Both'], ['a', d.columns[0].label], ['b', d.columns[1].label]], 'Unique tab only: functions in one column and not the other.') : '';
+            const byCtl = !by ? '' : s.col_set ? '<span class="dim nway-bnote">compared queries</span><button class="nway-blink" data-cmp-clear>clear</button>' : `${sel('col_by', s.col_by, axisOpts)}${s.col_by.startsWith('tag:') ? sel('col_by_multi', s.col_by_multi || 'first', [['first', 'Most shared tag'], ['all', 'Every tag']]) : ''}${this._seg('Holds when', 'col_presence', [['', 'Half'], ['any', 'Any'], ['all', 'All']], 'A column holds a function when this share of its files do: any one, half (default) or all.')}${pickCtl}${abCtl}`;
             return `<div class="nway-gcard${active ? ' active' : ''}">
                 <span class="nway-bgrp">${lbl('Group by', 'Click order is nesting order: each group is split again by the next level. The column sort still orders the rows inside each group.')}${picks}${axes}${laneDepth}${laneLink}</span>${sep}
                 <span class="nway-bgrp">${lbl('Merge functions', 'Join rows that are probably one function: rows the matcher kept apart (another decompilation, architecture or version) show as one, with their rows under it.')}${box('name', 'Name', 'Rows with the same function name. Auto names (FUN_, sub_) and compiler suffixes (.part.0) are ignored.')}${box('call', 'Call position', 'Rows under the same caller, in different files, with a weak edge between them. Needs the callers of every function.')}${minLink}</span>${sep}
-                <span class="nway-bgrp">${lbl('Merge files', 'How files share a column.')}<span class="view-toggle">${fileBtns}</span>${twinNote ? `<span class="dim nway-bnote">${twinNote}</span>` : ''}${byCtl}${this._byErr ? `<span class="dim nway-bnote">${escapeHtml(this._byErr)}</span>` : ''}</span>
+                <span class="nway-bgrp">${lbl('Merge files', 'How files share a column.')}<span class="view-toggle">${fileBtns}</span>${twinNote ? `<span class="dim nway-bnote">${twinNote}</span>` : ''}${byCtl}${valueChips}${this._byErr ? `<span class="dim nway-bnote">${escapeHtml(this._byErr)}</span>` : ''}</span>
                 <span class="nway-bgrp nway-bend">${lbl('Order', 'How groups are ordered.')}${sel('group_sort', s.group_sort || 'files', GROUP_SORTS)}${active ? '<button class="nway-blink" data-gall="open">open all</button><button class="nway-blink" data-gall="close">close all</button>' : ''}</span>
             </div>`;
         }
@@ -516,6 +520,13 @@
             for (const [k, v] of new URLSearchParams(t)) (out[k] ||= []).push(v);
             for (const k of Object.keys(out)) if (out[k].length === 1) out[k] = out[k][0];
             return out;
+        }
+
+        _pickList() {
+            try {
+                const l = JSON.parse(this.state.col_pick || '[]');
+                return Array.isArray(l) ? l.map(String) : [];
+            } catch (e) { return []; }
         }
 
         _cmpState() {
@@ -2299,7 +2310,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-colpick],[data-colpick-clear]');
             if (!t) return;
             if (t.dataset.lineage !== undefined) {
                 this._scrollSave();
@@ -2369,6 +2380,12 @@
             }
             if (t.dataset.preset) return this._set({ ...PRESETS.find(p => p[0] === t.dataset.preset)[2], offset: 0 });
             if (t.dataset.pickBy !== undefined) return this._pickBy();
+            if (t.dataset.colpick !== undefined) {
+                const list = this._pickList(), v = t.dataset.colpick, i = list.indexOf(v);
+                if (i >= 0) list.splice(i, 1); else list.push(v);
+                return this._set({ col_pick: list.length ? JSON.stringify(list) : '', col_rest: list.length ? this.state.col_rest : '', side: '', col_open: '', offset: 0 });
+            }
+            if (t.dataset.colpickClear !== undefined) return this._set({ col_pick: '', col_rest: '', side: '', offset: 0 });
             if (t.dataset.cmpRun !== undefined) return this._runCompare();
             if (t.dataset.cmpAddq !== undefined) { this._draft.groups[Number(t.dataset.cmpAddq)].queries.push({}); this._cmpMore = this._cmpMore || new Set(); return this.render(); }
             if (t.dataset.cmpRmq !== undefined) {
@@ -2390,7 +2407,7 @@
             if (t.dataset.set) {
                 const i = t.dataset.set.indexOf(':'), key = t.dataset.set.slice(0, i);
                 // leaving the metadata merge: the server keeps columns=by while col_by / col_set are set
-                return this._set({ [key]: t.dataset.set.slice(i + 1), ...(key === 'columns' ? { col_by: '', col_set: '' } : {}), offset: 0 });
+                return this._set({ [key]: t.dataset.set.slice(i + 1), ...(key === 'columns' ? { col_by: '', col_set: '', col_pick: '', col_rest: '' } : {}), offset: 0 });
             }
             if (t.dataset.tab) return this._set({ tab: t.dataset.tab, offset: 0, sort_col: '' });
             if (t.dataset.sort) {
@@ -2409,7 +2426,7 @@
                 const ev = new Set((this.state.group_merge || '').split(',').filter(Boolean));
                 if (t.checked) ev.add(t.dataset.ev); else ev.delete(t.dataset.ev);
                 this._set({ group_merge: [...ev].join(','), offset: 0 });
-            } else if (t.dataset.select) this._set({ [t.dataset.select]: t.value, offset: 0 });
+            } else if (t.dataset.select) this._set({ [t.dataset.select]: t.value, ...(t.dataset.select === 'col_by' ? { col_pick: '', col_rest: '', side: '' } : {}), offset: 0 });
             else if (t.dataset.range) this._set({ [t.dataset.range]: t.value, offset: 0 });
             else if (t.dataset.text) this._set({ [t.dataset.text]: t.value.trim(), offset: 0 });
         }

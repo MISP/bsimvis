@@ -5042,6 +5042,27 @@ def test_nway_column_groups():
         st == 200 and body["columns_mode"] == "by" and len(body["columns"]) == 2,
         f"HTTP {st} {str((body or {}).get('columns_mode'))}",
     )
+    n1, n2 = (c["label"] for c in body["columns"])
+    st, pk = _nway(col_by="file_name", col_pick=json.dumps([n2]), tab="all")
+    check(
+        "nway col_pick: one picked value + the rest as other",
+        st == 200 and [c["label"] for c in pk["columns"]] == [n2, "other"],
+        f"HTTP {st} {[c['label'] for c in (pk or {}).get('columns', [])]}",
+    )
+    st, pk = _nway(col_by="file_name", col_pick=json.dumps([n2, n1]), tab="all")
+    check(
+        "nway col_pick: picked values keep the order given",
+        st == 200 and [c["label"] for c in pk["columns"]] == [n2, n1],
+        f"HTTP {st}",
+    )
+    st, _ = _nway(col_by="file_name", col_pick=json.dumps([n2]), col_rest="drop")
+    check(
+        "nway col_pick: one value with the rest dropped is rejected",
+        st == 400,
+        f"HTTP {st}",
+    )
+    st, _ = _nway(col_by="file_name", col_pick="not json")
+    check("nway col_pick: bad JSON is rejected", st == 400, f"HTTP {st}")
     st, _ = _nway(col_by="file_name", col_presence="bogus")
     check("nway col_presence: bad value is rejected", st == 400, f"HTTP {st}")
 

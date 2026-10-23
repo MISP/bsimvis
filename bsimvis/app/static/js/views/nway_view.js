@@ -42,7 +42,7 @@ window.NwayView = {
             axis: q.get('axis') || '',
         };
         this._state = {};
-        for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'column', 'focus', 'focus_rule', 'side', 'columns', 'child_presence', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence']) {
+        for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'column', 'focus', 'focus_rule', 'side', 'columns', 'child_presence', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'cmp']) {
             if (q.has(k)) this._state[k] = q.get(k);
         }
         this._collections = null;
@@ -407,7 +407,7 @@ window.NwayView = {
     },
 
     _hasSet() {
-        return this._set.cluster_uuid || this._set.batch || this._set.md5s.length >= 2 || this._state.col_set;
+        return this._set.cluster_uuid || this._set.batch || this._set.md5s.length >= 2 || this._state.col_set || this._state.cmp;
     },
 
     _render() {

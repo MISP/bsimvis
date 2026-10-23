@@ -34,7 +34,7 @@
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
         columns: 'twins', child_presence: 0.5, twin_depth: 3, twin_link: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
-        col_by: '', col_by_multi: '', col_set: '', col_presence: '',
+        col_by: '', col_by_multi: '', col_set: '', col_presence: '', cmp: '',
         group: 'lane', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 3, group_lane_link: 0.5, group_prefix_min: '', col_open: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
@@ -214,6 +214,9 @@
             if (append && (this._loading || !this.data)) return;
             const gen = ++this._gen;
             this._loading = append;
+            // The compare lives in the URL as `cmp`; its saved set (col_set) only caches it.
+            if (!append && this.state.cmp && !this.state.col_set && !(await this._resolveCmp())) return;
+            if (gen !== this._gen) return;
             const qs = this._listQs();
             // After opening or closing a group, reload as many rows as were on screen.
             qs.set('limit', this.cgInit ? 1 : (this._keep || PAGE));
@@ -264,6 +267,11 @@
                 if (res.ok) NwayPanel._lastMs = Date.now() - t0;
                 if (append && res.ok) return this._append(body);
                 if (append) return;
+                if (!res.ok && body.error === 'col_set_expired' && this.state.cmp && !this._retried) {
+                    this._retried = true;
+                    this.state.col_set = '';
+                    return this.load();
+                }
                 if (!res.ok) {
                     this.error = { status: res.status, ...body };
                     this.data = null;
@@ -278,6 +286,7 @@
                         }
                     }
                     this.error = null;
+                    this._retried = false;
                     this.data = body;
                     if (this.onData) this.onData(body);
                 }
@@ -500,26 +509,61 @@
             return out;
         }
 
+        _cmpState() {
+            try {
+                const c = JSON.parse(this.state.cmp || 'null');
+                return c && Array.isArray(c.groups) ? c : null;
+            } catch (e) { return null; }
+        }
+
+        // The files the panel was opened on, as `<collection>:<md5>`.
+        _sourceIds() {
+            return String(this.source.md5s || '').split(',').map(t => t.trim()).filter(Boolean)
+                .map(t => (t.includes(':') ? t : `${this.source.collection || ''}:${t}`));
+        }
+
+        // Save the compare's groups on the server: {id, files, overlap, groups}; `preview` only counts.
+        async _postCmp(cmp, preview = false) {
+            const body = { groups: cmp.groups.map(g => ({ label: g.label, queries: g.queries.map(q => this._parseQuery(q)) })) };
+            if (this.source.pool) body.pool = this.source.pool;
+            else body.collection = this.source.collection || ((this._sourceIds()[0] || '').split(':')[0]) || (this.data ? (this._files()[0] || {}).collection : '');
+            const within = this._sourceIds();
+            if (cmp.within && within.length) body.within = within;
+            if (preview) body.preview = true;
+            const res = await fetch('/api/bin_sim/nway/columns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const out = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(out.message || out.error || `HTTP ${res.status}`);
+            return out;
+        }
+
+        async _resolveCmp() {
+            try {
+                const out = await this._postCmp(this._cmpState());
+                this._cmpInfo = out.groups;
+                this.state.col_set = out.id;
+                if (this.onState) this.onState({ ...this.state });
+                return true;
+            } catch (err) {
+                this.error = { status: 400, message: String(err.message || err) };
+                this.data = null;
+                this.render();
+                return false;
+            }
+        }
+
         async _runCompare() {
-            const c = this._cmp, groups = ['a', 'b'].map(k => ({ label: c[k].label.trim() || k.toUpperCase(), query: this._parseQuery(c[k].q) }));
+            const c = this._cmp, groups = ['a', 'b'].map(k => ({ label: c[k].label.trim() || k.toUpperCase(), queries: c[k].q.trim() ? [c[k].q.trim()] : [] }));
             this._cmpErr = '';
-            if (groups.some(g => !Object.keys(g.query).length)) {
+            if (groups.some(g => !g.queries.length)) {
                 this._cmpErr = 'Give both groups a file query.';
                 return this.render();
             }
-            const body = { groups };
-            if (this.source.pool) body.pool = this.source.pool;
-            else body.collection = this.source.collection || (this._files()[0] || {}).collection;
+            const cmp = { groups, within: this._cmpState()?.within || 0 };
             try {
-                const res = await fetch('/api/bin_sim/nway/columns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-                const out = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                    this._cmpErr = out.message || out.error || `HTTP ${res.status}`;
-                    return this.render();
-                }
+                const out = await this._postCmp(cmp);
                 this._cmpInfo = out.groups;
                 this._scrollSave();
-                this._set({ col_set: out.id, col_by: '', col_open: '', side: '', sort_col: '', tab: this.state.tab === 'partial' ? 'core' : this.state.tab, offset: 0 });
+                this._set({ cmp: JSON.stringify(cmp), col_set: out.id, col_by: '', col_open: '', side: '', sort_col: '', tab: this.state.tab === 'partial' ? 'core' : this.state.tab, offset: 0 });
             } catch (err) {
                 this._cmpErr = String(err.message || err);
                 this.render();
@@ -529,7 +573,8 @@
         // Compare: two file searches become two columns; Core = in both, Unique = in one.
         _compareBox() {
             const s = this.state, on = !!s.col_set, ab = this._ab();
-            const c = this._cmp || (this._cmp = { a: { label: 'A', q: '' }, b: { label: 'B', q: '' } });
+            const saved = this._cmpState();
+            const c = this._cmp || (this._cmp = ['a', 'b'].reduce((o, k, i) => ({ ...o, [k]: { label: saved?.groups[i]?.label || k.toUpperCase(), q: (saved?.groups[i]?.queries || []).join(' ') } }), {}));
             const row = k => `<div class="nway-cmp-row"><input type="text" class="nway-cmp-label" data-cmp="${k}.label" value="${escapeAttr(c[k].label)}" maxlength="30" aria-label="Name of group ${k.toUpperCase()}"><input type="text" class="nway-cmp-q" data-cmp="${k}.q" value="${escapeAttr(c[k].q)}" placeholder="file search, e.g. tag=family:mirai&file_name=bot" aria-label="File query of group ${k.toUpperCase()}"></div>`;
             const info = on && this._cmpInfo ? `<span class="dim">${this._cmpInfo.map(g => `${escapeHtml(g.label)} ${Number(g.files)}`).join(' · ')} files</span>` : '';
             const ctl = ab ? [
@@ -2241,7 +2286,7 @@
             if (t.dataset.preset) return this._set({ ...PRESETS.find(p => p[0] === t.dataset.preset)[2], offset: 0 });
             if (t.dataset.pickBy !== undefined) return this._pickBy();
             if (t.dataset.cmpRun !== undefined) return this._runCompare();
-            if (t.dataset.cmpClear !== undefined) return this._set({ col_set: '', col_by: '', side: '', col_open: '', offset: 0 });
+            if (t.dataset.cmpClear !== undefined) return this._set({ cmp: '', col_set: '', col_by: '', side: '', col_open: '', offset: 0 });
             if (t.dataset.set) {
                 const i = t.dataset.set.indexOf(':'), key = t.dataset.set.slice(0, i);
                 // leaving the metadata merge: the server keeps columns=by while col_by / col_set are set

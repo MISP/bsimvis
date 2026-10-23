@@ -137,6 +137,8 @@
             // Groups start closed. `_gflip` holds the ids that differ from the `_gdef` default; the server drops closed groups' rows.
             this._gdef = 'none';
             this._gflip = new Set();
+            // Auto depth: groups open when they fit the window, columns open as deep as the width allows.
+            this._rowAuto = true;
             if (window.Paging.mode() === 'scroll') this.state.offset = 0;
             NwayPanel.current = this;
             this._onKey = e => this._cgKey(e);
@@ -199,7 +201,7 @@
         }
 
         _set(patch) {
-            if (Object.keys(patch).some(k => k.startsWith('group'))) { this._gdef = 'none'; this._gflip.clear(); }
+            if (Object.keys(patch).some(k => k.startsWith('group'))) { this._gdef = 'none'; this._gflip.clear(); this._rowAuto = true; }
             Object.assign(this.state, patch);
             const s = { ...this.state };
             // Scroll mode keeps the offset out of the URL (and out of the state).
@@ -216,8 +218,9 @@
                 const v = this.state[k];
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
+            if (!this.state.col_open) qs.set('col_open', JSON.stringify([`*fit:${Math.max(1, Math.floor((window.innerWidth - 560 - DATA_COLS.reduce((a, b) => a + b, 0)) / SQ_COL))}`]));
             if (this.state.group || this.state.group_merge) {
-                qs.set('group_open', this._gdef);
+                qs.set('group_open', this._rowAuto ? 'all' : this._gdef);
                 if (this._gflip.size) qs.set('group_flip', JSON.stringify([...this._gflip]));
             }
             return qs;
@@ -299,6 +302,12 @@
                             this._set({ group_axis: primary, group_axis_b: secondary, offset: 0 });
                             return;
                         }
+                    }
+                    if (this._rowAuto && (this.state.group || this.state.group_merge)) {
+                        this._rowAuto = false;
+                        // Everything open must fit about one screen of rows, else keep groups closed.
+                        if (body.total > Math.floor(window.innerHeight / 30)) { this._gdef = 'none'; return this.load(); }
+                        this._gdef = 'all';
                     }
                     this.error = null;
                     this._retried = false;
@@ -2181,7 +2190,7 @@
             if ([...open].some(i => i[0] === '*')) open = new Set([...this._tree().byId.values()].filter(n => n.kids.length).map(n => n.id));
             if (openOnly) open.add(id); else if (!open.delete(id)) open.add(id);
             this._scrollSave();
-            this._set({ col_open: open.size ? JSON.stringify([...open]) : '', offset: 0 });
+            this._set({ col_open: JSON.stringify([...open]), offset: 0 });
         }
 
         _head() {
@@ -2359,7 +2368,7 @@
                 const n = t.dataset.coldepth;
                 if (Number(n) > (this._dlim || 5)) this._dlim = Number(n);
                 this._scrollSave();
-                return this._set({ col_open: n === 'all' ? '["*"]' : n === '0' ? '' : JSON.stringify([`*${n}`]), offset: 0 });
+                return this._set({ col_open: n === 'all' ? '["*"]' : n === '0' ? '[]' : JSON.stringify([`*${n}`]), offset: 0 });
             }
             // A header dot only opens its column; the outline folds it again.
             if (t.dataset.colx) return this._colToggle(t.dataset.colx, !!t.closest('th') && !t.closest('.nway-band'));
@@ -2370,7 +2379,7 @@
             }
             if (t.dataset.gtoggle !== undefined && !t.dataset.gall) return this._gSplice(t.dataset.gtoggle);
             if (t.dataset.gall) {
-                return this._gChange(() => { this._gdef = t.dataset.gall === 'open' ? 'all' : 'none'; this._gflip.clear(); });
+                return this._gChange(() => { this._rowAuto = false; this._gdef = t.dataset.gall === 'open' ? 'all' : 'none'; this._gflip.clear(); });
             }
             if (t.dataset.nwayFile) {
                 e.preventDefault(); e.stopPropagation();

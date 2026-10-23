@@ -758,8 +758,20 @@ def grow_columns(groups, open_ids, children_of, limit=MAX_COLUMNS):
     each `{id, label, member_count}`, so a header can draw a collapse band over
     its children), and `expandable`: more than one file. A group is left closed
     when expanding would pass `limit` columns. `"*"` in `open_ids` opens every group,
-    `"*N"` every group less than N levels deep.
+    `"*N"` every group less than N levels deep, `"*fit:N"` as many levels as keep
+    the total at N columns or fewer.
     """
+    fit = next(
+        (int(i[5:]) for i in open_ids if i[:5] == "*fit:" and i[5:].isdigit()), 0
+    )
+    if fit:
+        best, prev = None, -1
+        for d in range(1, 9):
+            cur = grow_columns(groups, {f"*{d}"}, children_of, min(limit, fit))
+            if len(cur) == prev:
+                break
+            best, prev = cur, len(cur)
+        return best
     depth = max(
         (
             float("inf") if i == "*" else int(i[1:])
@@ -1013,6 +1025,9 @@ def demo():
         "a",
         "b",
     ]  # one file: not expandable
+    assert ids(grow_columns(g0, {"*fit:3"}, of)) == ["a1", "a:direct", "b"]
+    assert ids(grow_columns(g0, {"*fit:9"}, of)) == ["a1/f1", "a1/f2", "a:direct", "b"]
+    assert ids(grow_columns(g0, {"*fit:1"}, of)) == ["a", "b"]
     assert twin_groups(shared[:1], cols) is not None
     # hierarchical twins: A,B hold the same rows, C overlaps them, D is apart
     cols4 = [{"id": i, "md5": i, "file_name": i.lower()} for i in "ABCD"]

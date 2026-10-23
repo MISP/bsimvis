@@ -62,7 +62,7 @@
         ['loose', 'Loose', { min_edge: 0.3, child_presence: 0.3 }, 'Weaker matches group together; a third of a child cluster is enough.'],
     ];
     const DOC_KEYS = ['mode', 'min_edge', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'focus', 'focus_rule', 'col_by', 'col_by_multi', 'col_set', 'col_presence'];
-    // Keys the metadata column merge offers when the server cannot count values (large sets).
+    // Keys the metadata column merge offers when the server cannot count values.
     const BY_KEYS = ['collection', 'batch_uuid', 'architecture', 'executable_format'];
 
     function fnParts(fid) {
@@ -476,7 +476,7 @@
             if (this._axesFor !== key) {
                 this._axesFor = key;
                 const fallback = () => BY_KEYS.map(k => ({ key: k }));
-                this._axesP = (ids.length > 150 ? Promise.resolve(null) : fetch(`/api/bin_sim/nway/column_axes?${new URLSearchParams({ md5s: key })}`))
+                this._axesP = fetch('/api/bin_sim/nway/column_axes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ md5s: ids }) })
                     .then(r => (r && r.ok ? r.json() : null)).then(b => { this._axes = b && b.axes ? b.axes : fallback(); }).catch(() => { this._axes = fallback(); });
             }
             return this._axesP;

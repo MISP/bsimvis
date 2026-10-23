@@ -4051,6 +4051,15 @@ class BinSimNwayColumnAxes(Resource):
 
         return get_column_axes()
 
+    @ns_bin_sim.doc(
+        description="Same as GET, with the files as a JSON body `{md5s: [...]}` for sets too long for a URL."
+    )
+    def post(self):
+        """Keys `col_by` can merge these files on (files in the JSON body)."""
+        from bsimvis.app.routes.nway import get_column_axes
+
+        return get_column_axes()
+
 
 @ns_bin_sim.route("/nway/columns")
 class BinSimNwayColumns(Resource):

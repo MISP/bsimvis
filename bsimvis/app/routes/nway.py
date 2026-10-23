@@ -26,9 +26,9 @@ _MD5 = re.compile(r"^[0-9a-f]{32}$")
 _PROGRESS_ID = re.compile(r"^[\w-]{8,40}$")
 
 
-def _members(collection, pool_id):
+def _members(collection, pool_id, tokens=None):
     """`md5s=` tokens (`coll:md5`, or bare md5 with `collection=`) -> [(coll, md5)]."""
-    tokens = [t.strip() for t in (request.args.get("md5s") or "").split(",")]
+    tokens = tokens or [t.strip() for t in (request.args.get("md5s") or "").split(",")]
     members = []
     for token in filter(None, tokens):
         coll, _, md5 = token.rpartition(":")
@@ -588,7 +588,10 @@ def post_column_set():
 
 def get_column_axes():
     """Keys `col_by` can split the given files on, with their value counts."""
-    members = _members(request.args.get("collection"), request.args.get("pool"))
+    # a POST body carries a set too long for a URL
+    body = request.get_json(silent=True) or {}
+    tokens = [str(t) for t in body.get("md5s") or []]
+    members = _members(request.args.get("collection"), request.args.get("pool"), tokens)
     if len(members) < 2:
         abort(400, "need at least two distinct files")
     r = get_redis()

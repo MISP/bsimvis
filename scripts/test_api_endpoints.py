@@ -5022,6 +5022,18 @@ def test_nway_column_groups():
         f"HTTP {ax.status_code} {ax.text[:200]}",
     )
 
+    axp = requests.post(
+        f"{BASE_URL}/api/bin_sim/nway/column_axes",
+        json={"md5s": [f"{COLLECTION}:{file_md5}", f"{COLLECTION}:{file_md5_2}"]},
+        timeout=60,
+    )
+    check(
+        "nway column_axes: POST body works and never offers a one-value key",
+        axp.status_code == 200
+        and "collection" not in [a["key"] for a in axp.json().get("axes", [])],
+        f"HTTP {axp.status_code} {axp.text[:200]}",
+    )
+
     st, _ = _nway(col_by="collection")
     check("nway col_by: one shared value is rejected", st == 400, f"HTTP {st}")
     st, body = _nway(col_by="file_name", tab="all")

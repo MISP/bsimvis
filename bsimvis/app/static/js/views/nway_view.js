@@ -403,7 +403,15 @@ window.NwayView = {
         // Only what differs from the panel default; an emptied default (group off) is kept as `key=`.
         const def = window.NwayPanel ? NwayPanel.DEFAULTS : {};
         for (const [k, v] of Object.entries(extra || {})) if (v !== null && v !== undefined && String(v) !== String(def[k] ?? '')) next.set(k, v);
-        history.replaceState(null, '', `${window.location.pathname}?${next.toString()}`);
+        // Control changes push a history entry so Back undoes them. Paging, the resolved col_set id
+        // and changes within 800 ms of the last push (typing, sliders) replace it instead.
+        const url = `${window.location.pathname}?${next.toString()}`;
+        if (url === window.location.pathname + window.location.search) return;
+        const strip = u => { const p = new URLSearchParams(u.split('?')[1] || ''); p.delete('offset'); p.delete('col_set'); return p.toString(); };
+        const now = Date.now();
+        const quiet = strip(url) === strip(window.location.pathname + window.location.search) || now - (this._lastPush || 0) < 800;
+        if (quiet) history.replaceState(null, '', url);
+        else { history.pushState(null, '', url); this._lastPush = now; }
     },
 
     _hasSet() {

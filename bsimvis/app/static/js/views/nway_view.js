@@ -42,7 +42,7 @@ window.NwayView = {
             axis: q.get('axis') || '',
         };
         this._state = {};
-        for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'column', 'focus', 'focus_rule', 'side', 'columns', 'child_presence', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open']) {
+        for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'column', 'focus', 'focus_rule', 'side', 'columns', 'child_presence', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence']) {
             if (q.has(k)) this._state[k] = q.get(k);
         }
         this._collections = null;
@@ -52,7 +52,7 @@ window.NwayView = {
     // Graph and comparison tabs share the focused family and URL state.
     async _initFunction() {
         const q = new URLSearchParams(window.location.search);
-        const CTL = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule'];
+        const CTL = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule', 'col_by', 'col_by_multi', 'col_set', 'col_presence'];
         const source = {}, doc = {}, fx = {}, cg = {};
         for (const [k, v] of q) {
             if (k.startsWith('fx_')) fx[k.slice(3)] = v;
@@ -407,7 +407,7 @@ window.NwayView = {
     },
 
     _hasSet() {
-        return this._set.cluster_uuid || this._set.batch || this._set.md5s.length >= 2;
+        return this._set.cluster_uuid || this._set.batch || this._set.md5s.length >= 2 || this._state.col_set;
     },
 
     _render() {

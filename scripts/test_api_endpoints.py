@@ -5001,6 +5001,115 @@ def _nway_rows(body):
     return {frozenset((r.get("files") or r["cells"]).values()) for r in rows}
 
 
+def test_nway_column_groups():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-quinquies – N-way column groups (col_by / col_set)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(
+            _color("\n[SKIP] Need two binaries – column group checks skipped.", YELLOW)
+        )
+        return
+    ax = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/column_axes",
+        params={"collection": COLLECTION, "md5s": f"{file_md5},{file_md5_2}"},
+        timeout=60,
+    )
+    check(
+        "nway column_axes: lists keys",
+        ax.status_code == 200 and isinstance(ax.json().get("axes"), list),
+        f"HTTP {ax.status_code} {ax.text[:200]}",
+    )
+
+    axp = requests.post(
+        f"{BASE_URL}/api/bin_sim/nway/column_axes",
+        json={"md5s": [f"{COLLECTION}:{file_md5}", f"{COLLECTION}:{file_md5_2}"]},
+        timeout=60,
+    )
+    check(
+        "nway column_axes: POST body works and never offers a one-value key",
+        axp.status_code == 200
+        and "collection" not in [a["key"] for a in axp.json().get("axes", [])],
+        f"HTTP {axp.status_code} {axp.text[:200]}",
+    )
+
+    st, _ = _nway(col_by="collection")
+    check("nway col_by: one shared value is rejected", st == 400, f"HTTP {st}")
+    st, body = _nway(col_by="file_name", tab="all")
+    check(
+        "nway col_by: a field with a value per file keeps the files as columns",
+        st == 200 and body["columns_mode"] == "by" and len(body["columns"]) == 2,
+        f"HTTP {st} {str((body or {}).get('columns_mode'))}",
+    )
+    st, _ = _nway(col_by="file_name", col_presence="bogus")
+    check("nway col_presence: bad value is rejected", st == 400, f"HTTP {st}")
+
+    post = lambda groups: requests.post(
+        f"{BASE_URL}/api/bin_sim/nway/columns",
+        json={"collection": COLLECTION, "groups": groups},
+        timeout=60,
+    )
+    check(
+        "nway columns: one group is rejected",
+        post([{"label": "A", "query": {"md5": file_md5}}]).status_code == 400,
+    )
+    check(
+        "nway columns: an empty query is rejected",
+        post(
+            [
+                {"label": "A", "query": {"md5": file_md5}},
+                {"label": "B", "query": {"md5": "0" * 32}},
+            ]
+        ).status_code
+        == 400,
+    )
+    res = post(
+        [
+            {"label": "A", "query": {"md5": file_md5}},
+            {"label": "B", "query": {"md5": file_md5_2}},
+        ]
+    )
+    ok = res.status_code == 200 and res.json().get("files") == 2
+    check(
+        "nway columns: two queries are saved",
+        ok,
+        f"HTTP {res.status_code} {res.text[:200]}",
+    )
+    if not ok:
+        return
+    sid = res.json()["id"]
+    st, body = _nway_set(sid, tab="all", limit=1000)
+    check(
+        "nway col_set: two columns compared",
+        st == 200 and body["columns_mode"] == "by" and len(body["columns"]) == 2,
+        f"HTTP {st}",
+    )
+    _, only_a = _nway_set(sid, tab="unique", side="a", limit=1000)
+    _, only_b = _nway_set(sid, tab="unique", side="b", limit=1000)
+    _, both = _nway_set(sid, tab="core", limit=1000)
+    total = len(only_a["items"]) + len(only_b["items"]) + len(both["items"])
+    check(
+        "nway col_set: both + A only + B only cover every row",
+        total == body["total"],
+        f"{total} vs {body['total']}",
+    )
+    st, _ = _nway_set("deadbeef0000")
+    check("nway col_set: unknown id is 404", st == 404, f"HTTP {st}")
+
+
+def _nway_set(sid, **params):
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway",
+        params={"col_set": sid, **params},
+        timeout=60,
+    )
+    try:
+        return resp.status_code, resp.json()
+    except ValueError:
+        return resp.status_code, None
+
+
 def test_nway_function_meta():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-quater – N-way function set hero (meta endpoint)", BOLD))
@@ -5612,6 +5721,16 @@ def test_nway_diff():
     )
     _st, _bad = _nway(columns="twins", col_open="not json")
     check("nway twins: a bad col_open is a 400", _st == 400)
+    _, tw_deep = _nway(
+        tab="core", scope="all", limit=1000, columns="twins", twin_depth=3
+    )
+    check(
+        "nway twins: twin_depth keeps a lone twin column and the rows",
+        tw_deep
+        and tw_deep["columns_mode"] == "twins"
+        and len(tw_deep["columns"]) == len(tw["columns"])
+        and tw_deep["total"] == tw["total"],
+    )
     _, _grp = _nway(
         tab="all",
         scope="all",
@@ -5849,6 +5968,46 @@ def test_nway_diff():
         and len(_l1["groups"]) >= len(_l2["groups"])
         and all("subset" not in m for m in _l1["groups"].values()),
         f"{len(_l1['groups'])} vs {len(_l2['groups'])}",
+    )
+    # group_lane_depth nests lanes by containment; depth 1 is the flat lanes above.
+    _, _ld = _nway(
+        tab="all",
+        scope="all",
+        limit=1000,
+        group="lane",
+        group_lane_depth=3,
+        group_open="all",
+    )
+    _, _l2 = _nway(tab="all", scope="all", limit=1000, group="lane", group_open="all")
+    check(
+        "nway group: group_lane_depth keeps every row and the same lane ids",
+        _ld
+        and _l2
+        and _ld["total"] == _l2["total"]
+        and {g["id"].rsplit("/", 1)[-1] for g in _ld["groups"].values()}
+        == {g["id"] for g in _l2["groups"].values()},
+        f"{_ld and len(_ld['groups'])} vs {_l2 and len(_l2['groups'])}",
+    )
+    _, _lk = _nway(
+        tab="all",
+        scope="all",
+        limit=1000,
+        group="lane",
+        group_lane_depth=3,
+        group_lane_link=0.2,
+        group_open="all",
+    )
+    check(
+        "nway group: group_lane_link keeps every row",
+        _lk and _ld and _lk["total"] == _ld["total"],
+    )
+    check(
+        "nway group: group_lane_link=2 is a 400",
+        _nway(group="lane", group_lane_link=2)[0] == 400,
+    )
+    check(
+        "nway group: group_lane_depth=x is a 400",
+        _nway(group="lane", group_lane_depth="x")[0] == 400,
     )
     # A unit missing a file of a bundle joins it when it has enough of its files (lane_fit).
     _, _near = _nway(
@@ -9742,6 +9901,7 @@ if __name__ == "__main__":
         test_llm_agentic_analysis,
         test_bin_sim_diff_cache,
         test_nway_diff,
+        test_nway_column_groups,
         test_nway_function_meta,
         test_nway_lineage,
         test_nway_cluster_entry,
@@ -9774,6 +9934,7 @@ if __name__ == "__main__":
         # Issues the /api/bin_sim/build whose doc the diff cache step reads.
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
         "test_nway_diff": ["test_search_filters_and_sorting"],
+        "test_nway_column_groups": ["test_search_filters_and_sorting"],
         "test_nway_function_meta": ["test_search_filters_and_sorting"],
         "test_nway_lineage": ["test_search_filters_and_sorting"],
         "test_nway_cluster_entry": ["test_search_filters_and_sorting"],

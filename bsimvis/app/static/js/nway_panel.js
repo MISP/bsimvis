@@ -27,15 +27,18 @@
     const PAGE = 50;
     const NWAY_TIMEOUT_MS = 180000;
     const SORTS = [['name', 'Function'], ['span', 'Span'], ['weight', 'Features'], ['support', 'Support'], ['cohesion', 'Cohesion']];
+    // Sliders whose value is a whole number.
+    const INT_RANGES = ['k', 'twin_depth', 'group_lane_depth'];
     const DEFAULTS = {
         tab: 'all', scope: 'code', k: 2, min_edge: '', mode: 'stored',
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
-        columns: 'twins', child_presence: 0.5,
+        columns: 'twins', child_presence: 0.5, twin_depth: 3, twin_link: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
-        group: 'lane', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_prefix_min: '', col_open: '',
+        col_by: '', col_by_multi: '', col_set: '', col_presence: '',
+        group: 'lane', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 3, group_lane_link: 0.5, group_prefix_min: '', col_open: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open'];
+    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_prefix_min', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence'];
     // Group by: rows bundled by file set, nested under one tag axis, or joined as one probable function.
     const GROUPS = [
         ['lane', 'Lane', 'Bundles of rows that appear in exactly the same files, biggest bundle first. With the merge on, a merged function is bundled by all the files it covers together. A set of files only one function has gets no lane and stays a plain row beside the lanes, unless it is a bundle minus a file or two (90% or more of its files), which joins it with a chip.'],
@@ -58,7 +61,9 @@
         ['balanced', 'Balanced', { min_edge: '', child_presence: 0.5 }, 'The collection default edge; half of a child cluster must hold a function.'],
         ['loose', 'Loose', { min_edge: 0.3, child_presence: 0.3 }, 'Weaker matches group together; a third of a child cluster is enough.'],
     ];
-    const DOC_KEYS = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule'];
+    const DOC_KEYS = ['mode', 'min_edge', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'focus', 'focus_rule', 'col_by', 'col_by_multi', 'col_set', 'col_presence'];
+    // Keys the metadata column merge offers when the server cannot count values.
+    const BY_KEYS = ['collection', 'batch_uuid', 'architecture', 'executable_format'];
 
     function fnParts(fid) {
         // `{coll}:func:{md5}:{addr}` -- the collection can contain colons.
@@ -141,6 +146,7 @@
             window.Paging.bind(this.el, () => ({ offset: Number(this.state.offset) || 0, total: Number(this.data && this.data.total) || 0, size: PAGE }), off => this._set({ offset: off }));
             this.el.addEventListener('toggle', e => {
                 if (e.target.matches('details.nway-focus')) this._focusOpen = e.target.open;
+                if (e.target.matches('details.nway-compare')) this._cmpOpen = e.target.open;
                 if (e.target.matches('details.nway-match')) this._matchOpen = e.target.open;
                 if (e.target.matches('details.nway-adv')) this._advOpen = e.target.open;
             }, true);
@@ -161,6 +167,7 @@
             }, true);
             this.el.addEventListener('keydown', e => {
                 if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-nway-file]')) this._onClick(e);
+                else if (e.key === 'Enter' && e.target.dataset.cmp) this._runCompare();
                 else if (e.key === 'Enter' && e.target.dataset.text) this._set({ [e.target.dataset.text]: e.target.value.trim(), offset: 0 });
             });
         }
@@ -340,7 +347,7 @@
         }
 
         _slider(label, key, value, min, max, step, tip) {
-            const shown = key === 'k' ? String(value) : Number(value).toFixed(2);
+            const shown = INT_RANGES.includes(key) ? String(value) : Number(value).toFixed(2);
             return `<span class="nway-ctlwrap"><label class="nway-ctl"><span class="nway-lbl">${escapeHtml(label)}</span><b>${shown}</b><input type="range" min="${min}" max="${max}"${step ? ` step="${step}"` : ''} value="${Number(value)}" data-range="${key}"></label>${this._tip(tip)}</span>`;
         }
 
@@ -351,12 +358,14 @@
         _controls() {
             const s = this.state, d = this.data;
             const n = d.columns_mode === 'twins' ? (d.file_columns || []).length : d.columns.length;
-            const focus = d.columns_mode === 'focus';
+            const focus = d.columns_mode === 'focus' || this._ab();
             const isNode = !!this.source.cluster_uuid;
             const tabs = TABS.filter(([key]) => !(focus && key === 'partial')).map(([key, label]) =>
                 `<button class="bsim-tab${s.tab === key ? ' active' : ''}" data-tab="${key}">${label}<span class="nway-count" title="code / library">${this._count(key)}</span></button>`
             ).join('');
-            const tabTip = focus
+            const tabTip = this._ab()
+                ? 'All: every function. Core: in both groups. Unique: in one group only. Counts are code / library.'
+                : focus
                 ? 'All: every function. Core: on both the focus and the rest side. Unique: on one side only. Counts are code / library.'
                 : `All: every function group. Core: present in all ${n} columns. Partial: present in at least k columns. Unique: present in exactly one file. Counts are code / library.`;
             const search = `<div class="search-input-wrapper nway-search"><i class="fa-solid fa-magnifying-glass"></i><input type="text" data-text="q" placeholder="Search name, address, tags, cluster..." value="${escapeAttr(s.q)}"></div>`;
@@ -373,13 +382,15 @@
             const match = [
                 preset,
                 this._seg('Mode', 'mode', [['stored', 'Stored', 'reads built pair docs'], ['virtual', 'Virtual', 'recomputes from vectors']], 'Stored reads the similarity pairs already built. Virtual recomputes the matches from the function vectors, as a fresh collection of just these files would.'),
+                d.columns_mode === 'twins' || (s.columns === 'twins' && !focus && d.columns_mode !== 'by') ? this._slider('Column levels', 'twin_depth', Number(s.twin_depth), 1, 6, 1, 'Same code columns: 1 groups only files with identical shared rows. Higher nests them under looser groups of files whose shared rows overlap.') : '',
+                (d.columns_mode === 'twins' || (s.columns === 'twins' && d.columns_mode !== 'by')) && Number(s.twin_depth) > 1 && !focus ? this._slider('Column overlap', 'twin_link', Number(s.twin_link), 0, 1, 0.05, 'Outermost column group: files must share at least this much of their rows (average Jaccard) to be grouped.') : '',
                 s.tab === 'partial' && !focus ? this._slider(`In at least (of ${n})`, 'k', s.k, 2, Math.max(2, n), 1, 'Partial tab: keep functions present in at least this many columns.') : '',
                 advanced,
             ].join('');
             const sc = d.shared_cluster;
             const shared = sc && sc.cluster_uuid ? `<a href="#" class="nway-chip" data-open-shared="${escapeAttr(sc.cluster_uuid)}" title="The smallest stored cluster holding all of these files. Open it as an N-way to keep its cluster context."><i class="fa-solid fa-bullseye"></i> Shared cluster <span class="dim">${escapeHtml(sc.cluster_name || sc.cluster_uuid)} &middot; ${Number(sc.member_count)} files</span></a>` : '';
             return `<div class="nway-tabrow"><div class="bsim-tabbar">${tabs}</div>${this._tip(tabTip)}${search}</div>
-                <div class="nway-bar">${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}${shared}<button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-lineage title="Open the lineage of these files as a full page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button><button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-stats-toggle title="Hide or show the Span, Features, Support, Cohesion and Cluster columns, to focus on the matrix."><i class="fa-solid fa-table-columns"></i> Stats <span class="dim">${this._statsOff() ? 'hidden' : 'shown'}</span></button></span></div>${this._groupCard()}`;
+                <div class="nway-bar">${filter}<span class="nway-pops">${this._matchMenu(match)}${this._focusBox()}${this._compareBox()}${shared}<button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-lineage title="Open the lineage of these files as a full page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button><button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-stats-toggle title="Hide or show the Span, Features, Support, Cohesion and Cluster columns, to focus on the matrix."><i class="fa-solid fa-table-columns"></i> Stats <span class="dim">${this._statsOff() ? 'hidden' : 'shown'}</span></button></span></div>${this._groupCard()}`;
         }
 
         // The Group bar: one line read left to right - group by, merge functions, merge files, order.
@@ -393,21 +404,28 @@
             const lbl = (text, tip) => `<span class="nway-blbl" title="${escapeAttr(tip)}">${text}</span>`;
             const sep = '<span class="nway-bsep"></span>';
             const twin = s.columns === 'twins', files = (d.file_columns || d.columns).length;
-            const fileMode = twin || d.columns_mode === 'twins' ? 'twins' : d.columns_mode === 'children' ? 'children' : 'files';
+            const by = d.columns_mode === 'by';
+            const fileMode = by ? 'by' : twin || d.columns_mode === 'twins' ? 'twins' : d.columns_mode === 'children' ? 'children' : 'files';
+            if (by && !this._axes) this._loadAxes().then(() => { if (this.data) { this._scrollSave(); this.render(); } });
             const twinNote = fileMode !== 'twins' ? '' : d.columns_mode === 'twins' ? `${files} → ${d.columns.length}` : 'no twins';
             const picks = GROUPS.map(([v, t, tip], j) => {
                 const i = lv.indexOf(v);
                 return `${j ? '<span class="nway-bchev">›</span>' : ''}<button class="nway-gpick${i >= 0 ? ' on' : ''}" data-gpick="${v}" aria-pressed="${i >= 0}" title="${escapeAttr(tip)}">${i >= 0 ? `<b>${i + 1}</b>` : ''}${escapeHtml(t)}</button>`;
             }).join('');
+            const laneDepth = lv.includes('lane') ? this._slider('Lane levels', 'group_lane_depth', Number(s.group_lane_depth), 1, 6, 1, 'Lanes nest by file set: a lane sits under the smallest lane that holds all its files. 1 keeps every lane flat; higher allows that many nested levels.') : '';
+            const laneLink = lv.includes('lane') && Number(s.group_lane_depth) > 1 ? this._slider('Lane overlap', 'group_lane_link', Number(s.group_lane_link), 0, 1, 0.05, 'Sibling lanes whose files overlap by at least this share (Jaccard) get a parent covering both, marked with a chip. 0 turns it off.') : '';
             const axes = lv.includes('tag') ? tagAxes.length ? `${sel('group_axis', axis, tagAxes)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, tagAxes.filter(([k]) => k !== axis), true)}` : '<span class="nway-lbl">No tags in these functions</span>' : '';
             const minLink = merge.has('call') ? this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.') : '';
             // Merge files by: None = one column per file, Cluster = child clusters (a cluster node only), Same code = twins.
-            const fileOpts = [['files', 'None', 'One column per file.'], ...(this.source.cluster_uuid || d.shared_cluster ? [['children', 'Cluster', 'One column per child cluster; open a column to show its own children, down to files.']] : []), ['twins', 'Same code', "Files that hold a function in exactly the same shared rows become one column. Click a column's count to show its files; a function only some of them hold shows as a partly filled square."]];
-            const fileBtns = fileOpts.map(([v, text, tip]) => `<button class="view-btn${fileMode === v ? ' active' : ''}" data-set="columns:${v}" title="${escapeAttr(tip)}">${text}</button>`).join('');
+            const fileOpts = [['files', 'None', 'One column per file.'], ...(this.source.cluster_uuid || d.shared_cluster ? [['children', 'Cluster', 'One column per child cluster; open a column to show its own children, down to files.']] : []), ['twins', 'Same code', "Files that hold a function in exactly the same shared rows become one column. Click a column's count to show its files; a function only some of them hold shows as a partly filled square."], ['by', 'Metadata', 'One column per value of a file field or tag namespace (collection, batch, architecture, a tag family...). Click a column to show its files.']];
+            const fileBtns = fileOpts.map(([v, text, tip]) => `<button class="view-btn${fileMode === v ? ' active' : ''}" ${v === 'by' ? 'data-pick-by' : `data-set="columns:${v}"`} title="${escapeAttr(tip)}">${text}</button>`).join('');
+            const axisOpts = (this._axes || []).map(a => [a.key, a.values ? `${a.key} (${a.values})` : a.key]);
+            if (s.col_by && !axisOpts.some(([k]) => k === s.col_by)) axisOpts.push([s.col_by, s.col_by]);
+            const byCtl = !by ? '' : s.col_set ? '<span class="dim nway-bnote">compared queries</span><button class="nway-blink" data-cmp-clear>clear</button>' : `${sel('col_by', s.col_by, axisOpts)}${s.col_by.startsWith('tag:') ? sel('col_by_multi', s.col_by_multi || 'first', [['first', 'Most shared tag'], ['all', 'Every tag']]) : ''}${this._seg('Holds when', 'col_presence', [['', 'Half'], ['any', 'Any'], ['all', 'All']], 'A column holds a function when this share of its files do: any one, half (default) or all.')}`;
             return `<div class="nway-gcard${active ? ' active' : ''}">
-                <span class="nway-bgrp">${lbl('Group by', 'Click order is nesting order: each group is split again by the next level. The column sort still orders the rows inside each group.')}${picks}${axes}</span>${sep}
+                <span class="nway-bgrp">${lbl('Group by', 'Click order is nesting order: each group is split again by the next level. The column sort still orders the rows inside each group.')}${picks}${axes}${laneDepth}${laneLink}</span>${sep}
                 <span class="nway-bgrp">${lbl('Merge functions', 'Join rows that are probably one function: rows the matcher kept apart (another decompilation, architecture or version) show as one, with their rows under it.')}${box('name', 'Name', 'Rows with the same function name. Auto names (FUN_, sub_) and compiler suffixes (.part.0) are ignored.')}${box('call', 'Call position', 'Rows under the same caller, in different files, with a weak edge between them. Needs the callers of every function.')}${minLink}</span>${sep}
-                <span class="nway-bgrp">${lbl('Merge files', 'How files share a column.')}<span class="view-toggle">${fileBtns}</span>${twinNote ? `<span class="dim nway-bnote">${twinNote}</span>` : ''}</span>
+                <span class="nway-bgrp">${lbl('Merge files', 'How files share a column.')}<span class="view-toggle">${fileBtns}</span>${twinNote ? `<span class="dim nway-bnote">${twinNote}</span>` : ''}${byCtl}${this._byErr ? `<span class="dim nway-bnote">${escapeHtml(this._byErr)}</span>` : ''}</span>
                 <span class="nway-bgrp nway-bend">${lbl('Order', 'How groups are ordered.')}${sel('group_sort', s.group_sort || 'files', GROUP_SORTS)}${active ? '<button class="nway-blink" data-gall="open">open all</button><button class="nway-blink" data-gall="close">close all</button>' : ''}</span>
             </div>`;
         }
@@ -444,6 +462,83 @@
         _columnChip() {
             const only = this.state.column && this._files().find(f => f.id === this.state.column);
             return only ? `<button class="nway-chip on" data-clear="column" title="drop the file filter">Only ${this._fileNameLink(only)} &times;</button>` : '';
+        }
+
+        // Two top-level merged columns compare like Focus and Rest: Core = both, Unique = one group.
+        _ab() {
+            const d = this.data;
+            return !!d && d.columns_mode === 'by' && d.columns.length === 2 && !d.columns.some(c => (c.path || []).length);
+        }
+
+        // Keys the files can be merged on, counted by the server (once per file set).
+        _loadAxes() {
+            const ids = this._files().map(f => f.id), key = ids.join(',');
+            if (this._axesFor !== key) {
+                this._axesFor = key;
+                const fallback = () => BY_KEYS.map(k => ({ key: k }));
+                this._axesP = fetch('/api/bin_sim/nway/column_axes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ md5s: ids }) })
+                    .then(r => (r && r.ok ? r.json() : null)).then(b => { this._axes = b && b.axes ? b.axes : fallback(); }).catch(() => { this._axes = fallback(); });
+            }
+            return this._axesP;
+        }
+
+        async _pickBy() {
+            await this._loadAxes();
+            const first = (this._axes || [])[0];
+            this._byErr = first ? '' : 'These files share every value: nothing to merge on.';
+            if (!first) return this.render();
+            this._set({ columns: 'by', col_by: first.key, col_set: '', col_open: '', offset: 0 });
+        }
+
+        // "tag=family:mirai&file_name=bot" -> search_files params; text without '=' is a plain search.
+        _parseQuery(text) {
+            const t = text.trim(), out = {};
+            if (!t) return out;
+            if (!t.includes('=')) return { q: t };
+            for (const [k, v] of new URLSearchParams(t)) (out[k] ||= []).push(v);
+            for (const k of Object.keys(out)) if (out[k].length === 1) out[k] = out[k][0];
+            return out;
+        }
+
+        async _runCompare() {
+            const c = this._cmp, groups = ['a', 'b'].map(k => ({ label: c[k].label.trim() || k.toUpperCase(), query: this._parseQuery(c[k].q) }));
+            this._cmpErr = '';
+            if (groups.some(g => !Object.keys(g.query).length)) {
+                this._cmpErr = 'Give both groups a file query.';
+                return this.render();
+            }
+            const body = { groups };
+            if (this.source.pool) body.pool = this.source.pool;
+            else body.collection = this.source.collection || (this._files()[0] || {}).collection;
+            try {
+                const res = await fetch('/api/bin_sim/nway/columns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                const out = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    this._cmpErr = out.message || out.error || `HTTP ${res.status}`;
+                    return this.render();
+                }
+                this._cmpInfo = out.groups;
+                this._scrollSave();
+                this._set({ col_set: out.id, col_by: '', col_open: '', side: '', sort_col: '', tab: this.state.tab === 'partial' ? 'core' : this.state.tab, offset: 0 });
+            } catch (err) {
+                this._cmpErr = String(err.message || err);
+                this.render();
+            }
+        }
+
+        // Compare: two file searches become two columns; Core = in both, Unique = in one.
+        _compareBox() {
+            const s = this.state, on = !!s.col_set, ab = this._ab();
+            const c = this._cmp || (this._cmp = { a: { label: 'A', q: '' }, b: { label: 'B', q: '' } });
+            const row = k => `<div class="nway-cmp-row"><input type="text" class="nway-cmp-label" data-cmp="${k}.label" value="${escapeAttr(c[k].label)}" maxlength="30" aria-label="Name of group ${k.toUpperCase()}"><input type="text" class="nway-cmp-q" data-cmp="${k}.q" value="${escapeAttr(c[k].q)}" placeholder="file search, e.g. tag=family:mirai&file_name=bot" aria-label="File query of group ${k.toUpperCase()}"></div>`;
+            const info = on && this._cmpInfo ? `<span class="dim">${this._cmpInfo.map(g => `${escapeHtml(g.label)} ${Number(g.files)}`).join(' · ')} files</span>` : '';
+            const ctl = ab ? [
+                this._seg('Holds when', 'col_presence', [['', 'Half'], ['any', 'Any'], ['all', 'All']], 'A group holds a function when this share of its files do: any one, half (default) or all.'),
+                s.tab === 'unique' ? this._seg('Unique to', 'side', [['', 'Both'], ['a', c.a.label || 'A'], ['b', c.b.label || 'B']], 'Unique tab only: functions in one group and not the other.') : '',
+            ].join('') : '';
+            const tip = 'Compare two file searches (same parameters as the Files page: tag=, file_name=, batch_uuid=, q=...). Each becomes a column; Core is in both, Unique in one.';
+            return `<details class="nway-compare nway-pop"${this._cmpOpen ? ' open' : ''}><summary class="nway-chip${on ? ' on' : ''}" title="${escapeAttr(tip)}"><i class="fa-solid fa-code-compare"></i> Compare <span class="dim">${on ? 'A vs B' : 'off'}</span></summary>
+                <div class="nway-focus-body nway-match-body">${row('a')}${row('b')}<div class="nway-chips"><button type="button" class="nway-chip on" data-cmp-run>Compare</button>${on ? '<button type="button" class="nway-chip" data-cmp-clear>&times; clear</button>' : ''}${info}</div>${this._cmpErr ? `<div class="nway-note warn">${escapeHtml(this._cmpErr)}</div>` : ''}${ctl}</div></details>`;
         }
 
         // Focus: pick files to compare against all the others. A collapsible box so
@@ -1851,7 +1946,8 @@
                 title = `<span class="nway-gtag" style="color:${escapeAttr(window.TagColor.forTag(g.label))}">${escapeHtml(g.label)}</span>`;
             } else if (g.kind === 'lane') {
                 const cov = g.fcover || g.mask;
-                title = `<b>${cov.split('1').length - 1} of ${cov.length} files</b>`;
+                const mix = g.core ? chip('also', `${Number(g.lanes)} lanes · ${g.core.split('1').length - 1} shared`, 'Not a real set of files: related lanes grouped under the files they cover together. The count is the files every lane in it holds.') : '';
+                title = `<b>${cov.split('1').length - 1} of ${cov.length} files</b>${mix}`;
             } else if (g.kind === 'same') {
                 const ev = (g.evidence || []).map(k => k === 'name' ? chip('ev-n', 'name', 'The rows share a function name') : chip('ev-c', 'call position', 'The rows share a caller and a weak edge links them')).join('');
                 const more = `${this._missChip(g.sub, g.miss)}${g.also > 1 ? chip('also', `\u00d7${Number(g.also)}`, 'Listed under several tags on this axis.') : ''}`;
@@ -1987,7 +2083,7 @@
         // With grouped columns the header is a numbered dot in the cluster's colour; names live in the legend.
         _numHead(c, ci) {
             const fname = new Map((this.data.file_columns || []).map(f => [f.id, f.file_name || f.md5]));
-            const kindNote = { child: 'child cluster', direct: 'files at this node, in no child cluster', twin: 'files that hold the same shared functions' };
+            const kindNote = { child: 'child cluster', direct: 'files at this node, in no child cluster', twin: 'files that hold the same shared functions', meta: 'files that share this value', query: 'files the query matched' };
             let tip;
             if (c.kind) {
                 const members = (c.members || []).map(m => fname.get(m) || m);
@@ -2074,7 +2170,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared],[data-lineage]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-stats-toggle],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear]');
             if (!t) return;
             if (t.dataset.lineage !== undefined) {
                 this._scrollSave();
@@ -2143,9 +2239,13 @@
                 return next.length ? this._setFocus(next, this._files().length) : this._set({ focus: '', side: '', offset: 0 });
             }
             if (t.dataset.preset) return this._set({ ...PRESETS.find(p => p[0] === t.dataset.preset)[2], offset: 0 });
+            if (t.dataset.pickBy !== undefined) return this._pickBy();
+            if (t.dataset.cmpRun !== undefined) return this._runCompare();
+            if (t.dataset.cmpClear !== undefined) return this._set({ col_set: '', col_by: '', side: '', col_open: '', offset: 0 });
             if (t.dataset.set) {
-                const i = t.dataset.set.indexOf(':');
-                return this._set({ [t.dataset.set.slice(0, i)]: t.dataset.set.slice(i + 1), offset: 0 });
+                const i = t.dataset.set.indexOf(':'), key = t.dataset.set.slice(0, i);
+                // leaving the metadata merge: the server keeps columns=by while col_by / col_set are set
+                return this._set({ [key]: t.dataset.set.slice(i + 1), ...(key === 'columns' ? { col_by: '', col_set: '' } : {}), offset: 0 });
             }
             if (t.dataset.tab) return this._set({ tab: t.dataset.tab, offset: 0, sort_col: '' });
             if (t.dataset.sort) {
@@ -2172,8 +2272,13 @@
         // Sliders recompute on release (change), not on every drag step.
         _onInput(e) {
             const t = e.target;
+            if (t.dataset.cmp) {
+                const [k, f] = t.dataset.cmp.split('.');
+                this._cmp[k][f] = t.value;
+                return;
+            }
             const label = t.dataset.range && t.closest('label') && t.closest('label').querySelector('b');
-            if (label) label.textContent = t.dataset.range === 'k' ? t.value : Number(t.value).toFixed(2);
+            if (label) label.textContent = INT_RANGES.includes(t.dataset.range) ? t.value : Number(t.value).toFixed(2);
         }
     }
 
@@ -2223,7 +2328,7 @@
         const pool = q.get('pool');
         const base = pool ? `/pools/${encodeURIComponent(pool)}/files/clusters/${encodeURIComponent(uuid)}` : window.Nav.buildUIUrl(q.get('collection'), ['files', 'clusters', uuid]);
         const out = new URLSearchParams({ tab: 'functions' });
-        for (const k of ['axis', 'scope', 'min_edge', 'mode', 'columns', 'child_presence']) if (q.has(k)) out.set(k, q.get(k));
+        for (const k of ['axis', 'scope', 'min_edge', 'mode', 'columns', 'child_presence', 'twin_depth', 'twin_link']) if (q.has(k)) out.set(k, q.get(k));
         return `${base}?${out.toString()}`;
     };
 

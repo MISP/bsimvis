@@ -786,12 +786,89 @@ def grow_columns(groups, open_ids, children_of, limit=MAX_COLUMNS):
     return [x for g in groups for x in grow(g, [])]
 
 
-def twin_groups(rows, columns):
+def _twin_group(files, gid=None):
+    ids = [f["id"] for f in files]
+    return {
+        "id": gid or "twin:" + hashlib.md5("|".join(ids).encode()).hexdigest()[:8],
+        "kind": "twin",
+        "label": files[0].get("file_name") or files[0]["md5"],
+        "members": ids,
+        "member_count": len(files),
+        "presence": 1e-9,
+    }
+
+
+def _jaccard(a, b):
+    u = (a | b).bit_count()
+    return (a & b).bit_count() / u if u else 1.0
+
+
+def _twin_tree(units, held, depth, link):
+    """Average-linkage tree over the twin units -> (top groups, {group id: sub-groups}).
+
+    `units` are lists of twin files (each file has `_pos`, its column position),
+    `held` their shared-row bitsets. Level k of `depth - 1` nests the units whose
+    average Jaccard is at least a cut between `link` (outermost) and 1; the twin
+    units themselves are the last level.
+    """
+    m = len(units)
+    sim = np.array([[_jaccard(held[a], held[b]) for b in range(m)] for a in range(m)])
+    np.fill_diagonal(sim, -1.0)
+    nodes = {i: {"units": [i], "sim": 1.0, "kids": []} for i in range(m)}
+    while len(nodes) > 1:
+        live = list(nodes)
+        sub = sim[np.ix_(live, live)]
+        a, b = divmod(int(sub.argmax()), len(live))
+        if sub[a, b] < link:
+            break
+        i, j = live[a], live[b]
+        wi, wj = len(nodes[i]["units"]), len(nodes[j]["units"])
+        sim[i] = sim[:, i] = (sim[i] * wi + sim[j] * wj) / (wi + wj)
+        sim[i, i] = -1.0
+        nodes[i] = {
+            "units": nodes[i]["units"] + nodes[j]["units"],
+            "sim": float(sub[a, b]),
+            "kids": [nodes[i], nodes[j]],
+        }
+        del nodes[j]
+    cuts = [link + (1 - link) * k / (depth - 1) for k in range(depth - 1)]
+    kids = {}
+
+    def group(unit_ids):
+        files = [f for u in unit_ids for f in units[u]]
+        return _twin_group(sorted(files, key=lambda f: f["_pos"]))
+
+    def first(g):
+        return min(pos[x] for x in g["members"])
+
+    def split(node, level):
+        if len(node["units"]) == 1:
+            return [group(node["units"])]
+        if level < len(cuts) and node["sim"] < cuts[level]:
+            return [g for k in node["kids"] for g in split(k, level)]
+        g = group(node["units"])
+        if level >= len(cuts):
+            sub = [group([u]) for u in node["units"]]
+        else:
+            sub = [x for k in node["kids"] for x in split(k, level + 1)]
+        if len(sub) > 1:
+            kids[g["id"]] = sorted(sub, key=first)
+        return [g]
+
+    pos = {f["id"]: f["_pos"] for us in units for f in us}
+    top = [g for n in nodes.values() for g in split(n, 0)]
+    return sorted(top, key=first), kids
+
+
+def twin_groups(rows, columns, depth=1, link=0.5, kids=None):
     """Files that hold a function in exactly the same shared rows (span >= 2): one column each.
 
     -> groups for `project_rows` (a group of one file for a file with no twin),
     or None when no two files are twins. A group counts as holding a function
     when any of its files does, so a function only one twin has shows as partial.
+    With `depth` > 1, twin columns also nest under looser groups of files whose
+    shared rows overlap (average Jaccard >= `link`); `kids` is filled with each
+    group's sub-groups for `grow_columns`.
     """
     held = {c["id"]: 0 for c in columns}
     k = 0
@@ -802,24 +879,15 @@ def twin_groups(rows, columns):
             held[cid] |= 1 << k
         k += 1
     by = {}
-    for c in columns:
-        by.setdefault(held[c["id"]], []).append(c)
-    if len(by) == len(columns):
-        return None
-    groups = []
-    for files in by.values():
-        ids = [f["id"] for f in files]
-        groups.append(
-            {
-                "id": "twin:" + hashlib.md5("|".join(ids).encode()).hexdigest()[:8],
-                "kind": "twin",
-                "label": files[0].get("file_name") or files[0]["md5"],
-                "members": ids,
-                "member_count": len(files),
-                "presence": 1e-9,
-            }
-        )
-    return groups
+    for pos, c in enumerate(columns):
+        by.setdefault(held[c["id"]], []).append({**c, "_pos": pos})
+    if depth > 1 and len(by) > 1:
+        groups, tree = _twin_tree(list(by.values()), list(by), depth, link)
+        if kids is not None:
+            kids.update(tree)
+    else:
+        groups = [_twin_group(files) for files in by.values()]
+    return None if len(groups) == len(columns) else groups
 
 
 def coverage(rows, column_ids):
@@ -946,6 +1014,30 @@ def demo():
         "b",
     ]  # one file: not expandable
     assert twin_groups(shared[:1], cols) is not None
+    # hierarchical twins: A,B hold the same rows, C overlaps them, D is apart
+    cols4 = [{"id": i, "md5": i, "file_name": i.lower()} for i in "ABCD"]
+    rows4 = [
+        {"span": 3, "cells": {"A": 1, "B": 2, "C": 3}},
+        {"span": 3, "cells": {"A": 1, "B": 2, "C": 3}},
+        {"span": 2, "cells": {"A": 4, "B": 5}},
+        {"span": 2, "cells": {"A": 4, "B": 5}},
+        {"span": 2, "cells": {"A": 4, "B": 5}},
+        {"span": 2, "cells": {"D": 6, "C": 7}},
+    ]
+    sub = {}
+    deep = twin_groups(rows4, cols4, 2, 0.3, sub)
+    assert [g["members"] for g in deep] == [["A", "B", "C"], ["D"]], deep
+    assert [g["members"] for g in sub[deep[0]["id"]]] == [["A", "B"], ["C"]]
+    assert [g["members"] for g in twin_groups(rows4, cols4, 2, 0.95)] == [
+        ["A", "B"],
+        ["C"],
+        ["D"],
+    ]
+    assert [g["members"] for g in twin_groups(rows4, cols4)] == [
+        ["A", "B"],
+        ["C"],
+        ["D"],
+    ]
     assert (
         twin_groups(
             [
@@ -978,6 +1070,7 @@ def compute(r, scope, members, params=None):
     child-cluster columns; see `project_rows`. `focus` (column ids) +
     `focus_rule` (`any` | `all`) instead split the files into Focus vs Rest
     groups: Rest uses `child_presence`, Focus needs any / all of its files.
+    `groups_mode` names `columns_mode` when `groups` are not child clusters (`by`).
     """
     params = params or {}
     mode = params.get("mode") or "stored"
@@ -1020,6 +1113,8 @@ def compute(r, scope, members, params=None):
     if twins:
         groups = None
     open_ids = set(params.get("open") or [])
+    twin_depth = max(1, min(6, int(params.get("twin_depth") or 1)))
+    twin_link = max(0.0, min(1.0, float(params.get("twin_link", 0.5))))
     if focus:
         ids = [_col_id(c, m) for c, m in members]
         if [f for f in focus if f not in ids]:
@@ -1044,6 +1139,7 @@ def compute(r, scope, members, params=None):
         min_edge,
         presence,
         twins,
+        (twin_depth, twin_link) if twins else (),
         tuple(sorted(open_ids)) if twins else (),
         hashlib.md5(json.dumps(groups, sort_keys=True).encode()).hexdigest(),
     )
@@ -1065,10 +1161,13 @@ def compute(r, scope, members, params=None):
     file_columns = [{**c, "coverage": cov[c["id"]]} for c in base["columns"]]
     names = {c["id"]: c.get("file_name") or c["md5"] for c in base["columns"]}
     if twins:
-        groups = twin_groups(rows, base["columns"])
+        sub = {}
+        groups = twin_groups(rows, base["columns"], twin_depth, twin_link, sub)
         twins = groups is not None
         if twins:
-            groups = grow_columns(groups, open_ids, lambda g: file_groups(g, names))
+            groups = grow_columns(
+                groups, open_ids, lambda g: sub.get(g["id"]) or file_groups(g, names)
+            )
     for g in groups or []:
         if g.get("kind") == "file":
             g["label"] = names.get(g["members"][0], g["label"])
@@ -1082,7 +1181,11 @@ def compute(r, scope, members, params=None):
         "columns_mode": (
             "focus"
             if focus
-            else "twins" if twins else "children" if groups else "files"
+            else (
+                "twins"
+                if twins
+                else params.get("groups_mode", "children") if groups else "files"
+            )
         ),
         "file_columns": file_columns if groups else None,
         "rows": rows,

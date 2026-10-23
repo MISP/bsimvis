@@ -8,6 +8,7 @@ from flask_restx import abort
 from bsimvis.app.routes._list_query import fnum, in_bounds
 from bsimvis.app.routes.bin_sim import _fids_tags, _fn_haystack
 from bsimvis.app.services import (
+    nway_column_service,
     nway_diff_service,
     nway_facets_service,
     nway_group_service,
@@ -26,9 +27,9 @@ _MD5 = re.compile(r"^[0-9a-f]{32}$")
 _PROGRESS_ID = re.compile(r"^[\w-]{8,40}$")
 
 
-def _members(collection, pool_id):
+def _members(collection, pool_id, tokens=None):
     """`md5s=` tokens (`coll:md5`, or bare md5 with `collection=`) -> [(coll, md5)]."""
-    tokens = [t.strip() for t in (request.args.get("md5s") or "").split(",")]
+    tokens = tokens or [t.strip() for t in (request.args.get("md5s") or "").split(",")]
     members = []
     for token in filter(None, tokens):
         coll, _, md5 = token.rpartition(":")
@@ -339,7 +340,13 @@ def _attach_clusters(r, rows, fmeta, pool_id, args):
 def _page(doc, args, r=None, pool_id=None):
     """Tab counts, then filter + sort + slice one tab of the rows."""
     rows, fmeta = doc["rows"], doc["fmeta"]
-    focus = doc["columns_mode"] == "focus"
+    cols = doc["columns"]
+    # two top-level `by` groups compare like Focus / Rest (side a = first group)
+    focus = doc["columns_mode"] == "focus" or (
+        doc["columns_mode"] == "by"
+        and len(cols) == 2
+        and not any(c.get("path") for c in cols)
+    )
     twin = doc["columns_mode"] == "twins"
     n = len(doc["file_columns"] if twin else doc["columns"])
     tab = args.get("tab", "core")
@@ -350,8 +357,9 @@ def _page(doc, args, r=None, pool_id=None):
     except ValueError:
         abort(400, "k must be an integer")
     side = args.get("side", "")
+    side = {"a": "focus", "b": "rest"}.get(side, side)
     if side not in ("", "focus", "rest"):
-        abort(400, "side must be focus or rest")
+        abort(400, "side must be focus, rest, a or b")
     scope = args.get("scope", "code")
     if scope not in ("code", "library", "all"):
         abort(400, "scope must be code, library or all")
@@ -491,14 +499,127 @@ class _Reply(Exception):
     """An early (body, status) answer from _load_doc."""
 
 
+COLSET_TTL = 3600
+COLSET_MAX_GROUPS = 8
+
+
+def _load_colset():
+    raw = get_queue_redis().get(f"nway:colset:{request.args['col_set']}")
+    if not raw:
+        raise _Reply(({"error": "col_set_expired"}, 404))
+    colset = json.loads(raw)
+    colset["members"] = [tuple(m) for m in colset["members"]]
+    return colset
+
+
+def _by_groups(r, members, colset, args, open_ids):
+    """Metadata or saved-query column groups, with `col_open` groups opened to files."""
+    names = nway_diff_service._file_names(r, members)
+    try:
+        if colset:
+            groups = nway_column_service.query_groups(colset, names)
+        else:
+            groups = nway_column_service.meta_groups(
+                members,
+                nway_column_service.read_metas(r, members),
+                names,
+                args["col_by"],
+                args.get("col_by_multi", "first"),
+            )
+    except nway_diff_service.BadParams as e:
+        abort(400, str(e))
+    return nway_diff_service.grow_columns(
+        groups, set(open_ids), lambda g: nway_diff_service.file_groups(g, names)
+    )
+
+
+def post_column_set():
+    """Resolve file queries into column groups: one saved set, read back by `col_set`."""
+    from bsimvis.app.routes.home import _call
+    from bsimvis.app.routes.search_file import search_files
+
+    body = request.get_json(silent=True) or {}
+    specs = body.get("groups")
+    if (
+        not isinstance(specs, list)
+        or not 2 <= len(specs) <= COLSET_MAX_GROUPS
+        or not all(
+            isinstance(g, dict) and isinstance(g.get("query"), dict) for g in specs
+        )
+    ):
+        abort(400, f"groups: 2 to {COLSET_MAX_GROUPS} of {{label, query}}")
+    scope = {k: body[k] for k in ("collection", "pool") if body.get(k)}
+    cap = nway_diff_service.caps()[0]
+    groups, members = [], []
+    for i, spec in enumerate(specs):
+        label = str(spec.get("label") or f"Group {i + 1}")[:60]
+        try:
+            res = _call(search_files, **{**scope, **spec["query"], "limit": cap + 1})
+        except (TypeError, ValueError):
+            abort(400, f"{label}: query must be search_files parameters")
+        if res.get("error"):
+            abort(400, f"{label}: {res['error']}")
+        found = [
+            (
+                _origin_coll(f["file_id"].split(":file:")[0]),
+                f["file_id"].rsplit(":", 1)[1],
+            )
+            for f in res.get("files") or []
+        ]
+        if not found:
+            abort(400, f"{label}: the query matches no file")
+        if len(found) > cap:
+            abort(400, f"{label}: matches more than {cap} files: narrow the query")
+        members += found
+        groups.append(
+            {"label": label, "members": [nway_diff_service._col_id(*m) for m in found]}
+        )
+    members = list(dict.fromkeys(members))
+    colset = {**scope, "members": members, "groups": groups}
+    raw = json.dumps(colset)
+    sid = hashlib.sha1(raw.encode()).hexdigest()[:12]
+    get_queue_redis().setex(f"nway:colset:{sid}", COLSET_TTL, raw)
+    return {
+        "id": sid,
+        "ttl": COLSET_TTL,
+        "files": len(members),
+        "groups": [{"label": g["label"], "files": len(g["members"])} for g in groups],
+    }
+
+
+def get_column_axes():
+    """Keys `col_by` can split the given files on, with their value counts."""
+    # a POST body carries a set too long for a URL
+    body = request.get_json(silent=True) or {}
+    tokens = [str(t) for t in body.get("md5s") or []]
+    members = _members(request.args.get("collection"), request.args.get("pool"), tokens)
+    if len(members) < 2:
+        abort(400, "need at least two distinct files")
+    r = get_redis()
+    return {
+        "axes": nway_column_service.axes(
+            members, nway_column_service.read_metas(r, members)
+        )
+    }
+
+
 def _load_doc():
     """Parse the shared N-way params and compute the doc: (doc, redis, pool_id)."""
     pool_id = request.args.get("pool")
     collection = request.args.get("collection")
     cluster_uuid = (request.args.get("cluster_uuid") or "").strip().lower()
     columns = request.args.get("columns", "auto")
-    if columns not in ("auto", "files", "children", "twins"):
-        abort(400, "columns must be auto, files, children or twins")
+    colset = _load_colset() if request.args.get("col_set") else None
+    col_by = request.args.get("col_by", "")
+    if colset or col_by:
+        columns = "by"
+    if columns not in ("auto", "files", "children", "twins", "by"):
+        abort(400, "columns must be auto, files, children, twins or by")
+    if columns == "by" and not (colset or col_by):
+        abort(400, "columns=by needs col_by or col_set")
+    col_presence = request.args.get("col_presence")
+    if col_presence and col_presence not in nway_column_service.PRESENCE:
+        abort(400, "col_presence must be any, half or all")
     focus = [
         t.strip() for t in (request.args.get("focus") or "").split(",") if t.strip()
     ]
@@ -521,6 +642,8 @@ def _load_doc():
         min_features = request.args.get("min_features", type=int)
         presence = float(request.args.get("child_presence", 0.5))
         pair_k = request.args.get("pair_k", type=int)
+        twin_depth = request.args.get("twin_depth", 1, type=int)
+        twin_link = float(request.args.get("twin_link", 0.5))
     except ValueError:
         abort(400, "min_edge and child_presence must be numbers between 0 and 1")
 
@@ -548,7 +671,11 @@ def _load_doc():
             ):
                 groups = node_groups if len(node_groups) > 1 else None
         else:
-            members = _members(collection, pool_id)
+            if colset:
+                members = colset["members"]
+                pool_id = pool_id or colset.get("pool")
+            else:
+                members = _members(collection, pool_id)
             if columns == "children":
                 # a file set grouped by the clusters it spans, under their smallest shared one
                 sc = not pool_id and _shared_cluster(r, members, request.args)
@@ -573,6 +700,10 @@ def _load_doc():
         # `solo` lets the function view graph a set that sits in one file.
         if len(members) < (1 if request.args.get("solo") else 2):
             abort(400, "need at least two distinct files")
+        if columns == "by":
+            groups = _by_groups(r, members, colset, request.args, open_ids)
+            if col_presence:
+                presence = nway_column_service.PRESENCE[col_presence]
         doc = nway_diff_service.compute(
             r,
             scope,
@@ -585,11 +716,14 @@ def _load_doc():
                 "min_features": min_features,
                 "groups": groups,
                 "twins": columns == "twins",
+                "twin_depth": twin_depth,
+                "twin_link": twin_link,
                 "open": open_ids,
                 "focus": focus,
                 "focus_rule": focus_rule,
                 "child_presence": max(0.0, min(1.0, presence)),
                 "pair_k": None if pair_k is None else max(0, pair_k),
+                "groups_mode": "by" if columns == "by" else "children",
             },
         )
     except nway_diff_service.BadParams as e:

@@ -2770,6 +2770,10 @@ a.home-card:hover,
 }
 .nway-focus-body { min-width: 360px; max-width: 520px; }
 .nway-focus-body .nway-chips { max-height: 140px; overflow: auto; margin: 0; }
+.nway-cmp-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.nway-cmp-row input { min-width: 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary, transparent); color: inherit; font: inherit; }
+.nway-cmp-label { width: 90px; flex: none; }
+.nway-cmp-q { flex: 1; font-family: var(--font-mono, monospace); }
 .nway-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; }
 .nway-chip {
     background: var(--card-bg);

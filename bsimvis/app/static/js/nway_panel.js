@@ -2286,7 +2286,16 @@
         // The host (the N-way page) can park its own controls in the More section.
         render() {
             this._renderPanel();
-            if (this.onSlot) this.onSlot(this.el.querySelector('[data-more-slot]'), this.el.querySelector('[data-actions]'));
+            if (this.onSlot) {
+                const actions = this.el.querySelector('[data-actions]');
+                this.onSlot(this.el.querySelector('[data-more-slot]'), actions);
+                // the host may move the actions out of this.el, where the delegated listeners no longer reach
+                if (actions && !this.el.contains(actions)) {
+                    actions.addEventListener('click', e => this._onClick(e));
+                    actions.addEventListener('change', e => this._onChange(e));
+                    actions.addEventListener('input', e => this._onInput(e));
+                }
+            }
         }
 
         _renderPanel() {

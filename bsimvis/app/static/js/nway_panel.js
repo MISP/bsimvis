@@ -1152,6 +1152,16 @@
                 this._dockEl = document.createElement('aside');
                 this._dockEl.className = 'nway-dock';
                 this._dockEl.addEventListener('click', e => this._onDockClick(e));
+                // drag the left edge to resize, like the columns tree
+                this._dockEl.addEventListener('pointerdown', e => {
+                    if (!e.target.closest('.nway-dock-grip')) return;
+                    e.preventDefault();
+                    const el = this._dockEl, x0 = e.clientX, w0 = el.offsetWidth;
+                    const move = ev => { el.style.width = `${Math.max(280, w0 + x0 - ev.clientX)}px`; };
+                    const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); };
+                    document.addEventListener('pointermove', move);
+                    document.addEventListener('pointerup', up);
+                });
             }
             this._dockTab = this._dockTab || 'graph';
             this.el.querySelector('.nway-body')?.appendChild(this._dockEl);
@@ -1161,7 +1171,7 @@
         // Right-hand dock in the table's own panel: simple function preview or a lean call graph.
         _dockDraw() {
             const { row, cells } = this._dockRow, tab = this._dockTab;
-            this._dockEl.innerHTML = `<div class="nway-dock-head"><b class="nway-dock-name" title="${escapeAttr(row.name)}">${escapeHtml(row.name)}</b>
+            this._dockEl.innerHTML = `<div class="nway-dock-grip" title="Drag to resize"></div><div class="nway-dock-head"><b class="nway-dock-name" title="${escapeAttr(row.name)}">${escapeHtml(row.name)}</b>
                 <div class="view-toggle" style="margin:0">${[['preview', 'Function'], ['graph', 'Call graph']].map(([v, t]) => `<button class="view-btn${tab === v ? ' active' : ''}" data-dock-tab="${v}">${t}</button>`).join('')}</div>
                 <button class="nway-chip" data-dock-full title="Open the detailed N-way function view"><i class="fa-solid fa-up-right-from-square"></i></button>
                 <button class="nway-chip" data-dock-close title="Close">&times;</button></div>

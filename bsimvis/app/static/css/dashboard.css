@@ -3568,9 +3568,11 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .xp-uvars { margin: 0 0 8px 14px; padding-left: 10px; border-left: 2px solid var(--border); min-width: 0; }
 
 /* N-way row dock: function preview / call graph beside the table */
-.nway-dock { flex: none; width: 460px; min-width: 280px; max-width: 70vw; overflow: hidden; display: flex; flex-direction: column; border-left: 1px solid var(--border); max-height: calc(100vh - 180px); position: sticky; top: 0; }
+.nway-dock { position: relative; flex: none; width: 460px; min-width: 280px; max-width: 70vw; overflow: hidden; display: flex; flex-direction: column; border-left: 1px solid var(--border); max-height: calc(100vh - 180px); }
 .nway-dock-head { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1px solid var(--border); }
 .nway-dock-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nway-dock-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 .nway-dock-files { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 6px; }
 .nway-dock-code { overflow: auto; flex: 1; min-height: 0; font-size: 0.75rem; }
+.nway-dock-grip { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; }
+.nway-dock-grip:hover { background: var(--accent); opacity: .4; }

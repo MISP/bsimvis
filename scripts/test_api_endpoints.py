@@ -6087,6 +6087,30 @@ def test_nway_diff():
         "nway group: group_lane_link=2 is a 400",
         _nway(group="lane", group_lane_link=2)[0] == 400,
     )
+    # tiers and folds only regroup: every row stays, tiers start open, folds closed
+    _, _lt = _nway(
+        tab="all",
+        scope="all",
+        limit=1000,
+        group="lane",
+        group_lane_depth=3,
+        group_lane_tier=0.5,
+        group_lane_fold=0.25,
+        group_open="all",
+    )
+    check(
+        "nway group: group_lane_tier wraps lanes in tier groups",
+        _lt and {g.get("kind") for g in _lt["groups"].values()} >= {"tier", "lane"},
+        f"{_lt and {g.get('kind') for g in _lt['groups'].values()}}",
+    )
+    check(
+        "nway group: group_lane_tier=2 is a 400",
+        _nway(group="lane", group_lane_tier=2)[0] == 400,
+    )
+    check(
+        "nway group: group_lane_fold=x is a 400",
+        _nway(group="lane", group_lane_fold="x")[0] == 400,
+    )
     check(
         "nway group: group_lane_depth=x is a 400",
         _nway(group="lane", group_lane_depth="x")[0] == 400,

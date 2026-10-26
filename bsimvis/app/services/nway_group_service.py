@@ -25,6 +25,7 @@ sees a big int.
 """
 
 import json
+import math
 import re
 from collections import Counter, defaultdict
 from itertools import combinations
@@ -675,7 +676,9 @@ def _nodes(units, levels, ctx, parent_id, parent_path, carried):
     """
     if not levels:
         return _expand(units, ctx, parent_id, parent_path, carried)
-    if levels[0] == "lane" and ctx.get("lane_depth", 1) > 1:
+    if levels[0] == "lane" and (
+        ctx.get("lane_depth", 1) > 1 or ctx.get("lane_tier") or ctx.get("lane_fold")
+    ):
         return _lane_nodes(units, levels, ctx, parent_id, parent_path, carried)
     nodes = []
     for g, items in _level(levels[0], units, ctx):
@@ -705,8 +708,69 @@ def _nodes(units, levels, ctx, parent_id, parent_path, carried):
     return nodes
 
 
+TIERS = (("core", "Core"), ("common", "Common"), ("rare", "Rare"))
+FOLD_RANK = (-1, -1, -1)  # a fold sorts after its sibling lanes
+
+
+def _gpop(node):
+    return node["g"]["mask"].count("1")
+
+
+def _node_units(node):
+    units = [u for u, _ in node["items"]]
+    for k in node["kids"]:
+        units += _node_units(k)
+    return units
+
+
+def _unit_span(u):
+    if "_rows" in u:
+        return u["_fspan"]
+    return u.get("file_span", u.get("span", _pop(u["mask"])))
+
+
+def _lane_tiers(roots, loose, ctx):
+    """Split lanes and loose units into core / common / rare bands by file count.
+
+    -> (bands, bounds): per band the lane roots and loose units. A lane whose
+    parent falls in a stronger band leaves it and heads its own band, with
+    `under` (the parent's file count) for a chip; the parent's counts shrink.
+    """
+    n = ctx["n"]
+    core = max(2, math.ceil(ctx["lane_tier"] * n))
+    common = max(2, math.ceil(core / 2))
+    tier = lambda p: 0 if p >= core else 1 if p >= common else 2
+    bands = [{"lanes": [], "rows": []} for _ in TIERS]
+
+    def split(node, t):
+        keep = []
+        for k in node["kids"]:
+            kt = tier(_gpop(k))
+            if kt == t:
+                keep.append(k)
+            else:
+                k["g"]["under"] = _gpop(node)
+                bands[kt]["lanes"].append(k)
+            split(k, kt)
+        node["kids"] = keep
+        node["g"].update(_meta(_node_units(node), n))
+
+    for r in roots:
+        t = tier(_gpop(r))
+        bands[t]["lanes"].append(r)
+        split(r, t)
+    for u in loose:
+        bands[tier(_unit_span(u))]["rows"].append(u)
+    return bands, [(core, n), (common, core - 1), (0, common - 1)]
+
+
 def _lane_nodes(units, levels, ctx, parent_id, parent_path, carried):
-    """The `lane` level with sub-lanes: each lane lists its own rows, then its sub-lanes."""
+    """The `lane` level with sub-lanes: each lane lists its own rows, then its sub-lanes.
+
+    `lane_tier` wraps the lanes in core / common / rare bands; `lane_fold`
+    gathers the sub-lanes covering fewer files than the share into one
+    collapsed `fold:` group under their parent.
+    """
     roots, loose = lane_forest(
         units,
         ctx["n"],
@@ -716,11 +780,29 @@ def _lane_nodes(units, levels, ctx, parent_id, parent_path, carried):
         ctx["lane_depth"],
         ctx.get("lane_link", 0.0),
     )
+    n = ctx["n"]
+    fold_min = math.ceil(ctx["lane_fold"] * n) if ctx.get("lane_fold") else 0
 
     def build(node, pid, ppath):
         g, own = _graft(node["g"], pid, ppath), node["items"]
         extras = {id(u): {**carried.get(id(u), {}), **e} for u, e in own}
-        kids = [build(k, g["id"], g["path"]) for k in node["kids"]]
+        keep = [k for k in node["kids"] if _gpop(k) >= fold_min]
+        cut = [k for k in node["kids"] if _gpop(k) < fold_min]
+        kids = [build(k, g["id"], g["path"]) for k in keep]
+        if cut:
+            fg = _meta([u for k in cut for u in _node_units(k)], n)
+            fg.update(id=f"fold:{g['mask']}", kind="fold", lanes=len(cut))
+            fg["path"] = [fg["id"]]
+            _graft(fg, g["id"], g["path"])
+            sub = [build(k, fg["id"], fg["path"]) for k in cut]
+            kids.append(
+                {
+                    "container": True,
+                    "rank": FOLD_RANK,
+                    "id": fg["id"],
+                    "pairs": [(fg, [])] + _flat(sub, ctx),
+                }
+            )
         if len(levels) == 1 and not ctx["merge"]:
             pairs = [(g, [(u, extras[id(u)]) for u, _ in own])] + _flat(kids, ctx)
         else:
@@ -735,8 +817,32 @@ def _lane_nodes(units, levels, ctx, parent_id, parent_path, carried):
             "pairs": pairs,
         }
 
-    nodes = [build(root, parent_id, parent_path) for root in roots]
-    return nodes + _nodes(loose, levels[1:], ctx, parent_id, parent_path, carried)
+    if not ctx.get("lane_tier"):
+        nodes = [build(root, parent_id, parent_path) for root in roots]
+        return nodes + _nodes(loose, levels[1:], ctx, parent_id, parent_path, carried)
+    nodes = []
+    bands, bounds = _lane_tiers(roots, loose, ctx)
+    for t, (band, (lo, hi)) in enumerate(zip(bands, bounds)):
+        if not band["lanes"] and not band["rows"]:
+            continue
+        lanes = _by_rank(band["lanes"], ctx["sort"], lambda k: k["g"])
+        held = [u for k in lanes for u in _node_units(k)] + band["rows"]
+        tg = _meta(held, n)
+        key, label = TIERS[t]
+        tg.update(id=f"tier:{key}", kind="tier", label=label, min=lo, max=hi)
+        tg["path"] = [tg["id"]]
+        _graft(tg, parent_id, parent_path)
+        inner = [build(k, tg["id"], tg["path"]) for k in lanes]
+        inner += _nodes(band["rows"], levels[1:], ctx, tg["id"], tg["path"], carried)
+        nodes.append(
+            {
+                "container": True,
+                "rank": (len(TIERS) - t,),
+                "id": tg["id"],
+                "pairs": [(tg, [])] + _flat(inner, ctx),
+            }
+        )
+    return nodes
 
 
 def _flat(nodes, ctx):
@@ -816,6 +922,8 @@ def group_rows(rows, doc, r, mode, params):
         "lane_fit": LANE_FIT,
         "lane_depth": 1,
         "lane_link": 0.0,
+        "lane_tier": 0.0,
+        "lane_fold": 0.0,
         "sort_col": (
             params.get("sort_col") if params.get("sort_col") in SORT_COLS else ""
         ),
@@ -846,6 +954,15 @@ def group_rows(rows, doc, r, mode, params):
             raise BadParams("group_lane_link must be a number between 0 and 1")
         if not 0 <= ctx["lane_link"] <= 1:
             raise BadParams("group_lane_link must be a number between 0 and 1")
+    for key in ("lane_tier", "lane_fold"):
+        raw = params.get("group_" + key)
+        if raw:
+            try:
+                ctx[key] = float(raw)
+            except ValueError:
+                raise BadParams(f"group_{key} must be a number between 0 and 1")
+            if not 0 <= ctx[key] <= 1:
+                raise BadParams(f"group_{key} must be a number between 0 and 1")
     if params.get("group_prefix_min"):
         try:
             ctx["prefix_min"] = max(2, int(params["group_prefix_min"]))
@@ -890,8 +1007,15 @@ def _entries(pairs, params):
         raise BadParams("group_flip must be a JSON list of group ids")
     flip = set(flip)
 
+    # a tier starts open and a fold closed, whatever the default
+    start = {
+        g["id"]: kind == "tier"
+        for g, _ in pairs
+        if (kind := g.get("kind")) in ("tier", "fold")
+    }
+
     def is_open(gid):
-        return (default == "all") != (gid in flip)
+        return start.get(gid, default == "all") != (gid in flip)
 
     entries = []
     for g, items in pairs:
@@ -1181,6 +1305,28 @@ def demo():
     ], heads
     assert lt[2][0]["path"] == heads
     assert sum(len(items) for _, items in lt) == 7
+    # tiers wrap lanes by file count; a lane in a weaker band than its parent heads its own band
+    tt = _nest(tree, ["lane"], {**lctx, "lane_tier": 0.75}, "", [], {})
+    theads = [g["id"] for g, _ in tt]
+    assert theads == [
+        "tier:core",
+        "tier:core/lane:1111",
+        "tier:common",
+        "tier:common/lane:1100",
+        "tier:rare",
+        "tier:rare/lane:1000",
+    ], theads
+    assert tt[3][0]["under"] == 4 and sum(len(i) for _, i in tt) == 7
+    # a fold gathers sub-lanes under the share into one group under their parent
+    ft = _nest(tree, ["lane"], {**lctx, "lane_fold": 0.5}, "", [], {})
+    fheads = [g["id"] for g, _ in ft]
+    assert fheads == [
+        "lane:1111",
+        "lane:1111/lane:1100",
+        "lane:1111/lane:1100/fold:1100",
+        "lane:1111/lane:1100/fold:1100/lane:1000",
+    ], fheads
+    assert ft[2][0]["kind"] == "fold" and sum(len(i) for _, i in ft) == 7
     print("nway_group_service demo ok")
 
 

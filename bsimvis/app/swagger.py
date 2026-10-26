@@ -2758,6 +2758,8 @@ class BinSimNway(Resource):
             "group_lane_fit": "group=lane: a unit whose files all lie inside a bundle and make up at least this share of the bundle's files (default 0.9) joins it, with `sub` (files missing) and `miss` set; 1 turns it off",
             "group_lane_link": "group=lane with group_lane_depth > 1: sibling lanes whose files overlap by at least this Jaccard share (0-1, default 0 = off) get a synthetic parent `mix:<files>` covering their union, with `core` (files all its lanes share) and `lanes`",
             "group_lane_depth": "group=lane: levels of nested lanes (default 1 = flat). Above 1 a lane sits under the smallest lane holding all its files, and its group counts include the sub-lanes",
+            "group_lane_tier": "group=lane: share of the files (0-1, default 0 = off) a lane must cover to be Core; lanes covering half that many files or more are Common, the rest Rare. Lanes and loose rows are wrapped in `tier:` groups (kind `tier`, open by default); a sub-lane in a weaker band than its parent heads its own band with `under` (the parent's file count)",
+            "group_lane_fold": "group=lane: sub-lanes covering less than this share of the files (0-1, default 0 = off) are gathered under their parent in one `fold:` group (kind `fold`, closed by default, `lanes` = how many)",
             "group_lane_min": "group=lane: units that must share a set of files before it makes a lane (default 2); the others stay plain rows",
             "group_prefix_min": "group=prefix: functions that must share a prefix before it makes a group (default 2)",
             "group_min_link": "group_merge=call: a shared caller joins two rows only when an edge between them scores at least this (default 0.3; 0 = no edge needed)",

@@ -2321,7 +2321,7 @@
             // Rows are indented one step past the header of the group they sit in, so a row with no partner lines up with the merged functions beside it.
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
             return `<tr${depth ? ` class="nway-in" style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}>
-                <td class="nway-open" data-fn-open title="Compare this row's functions: strings, APIs, callees, constants and code" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
+                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
                 ${this._statsOff() ? '' : `<td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
@@ -2593,7 +2593,10 @@
                 if (e.target.closest('button, a, input, .bsim-tag-pill, .entity-actions')) return;
                 // The n-th row cell is the n-th non-header item (group splices shift indexes, so none is stored).
                 const at = [...this.el.querySelectorAll('#nway-table td[data-fn-open]')].indexOf(t);
-                const url = this._fnUrl(this.data.items.filter(x => !x.header)[at]);
+                const row = this.data.items.filter(x => !x.header)[at];
+                // Plain click: the call-graph side panel. Ctrl / Shift / middle click: the full function-family page.
+                if (!e.ctrlKey && !e.metaKey && !e.shiftKey && row && !this.cgInit) return this._cgOpen(row);
+                const url = this._fnUrl(row);
                 if (!url) return;
                 e.preventDefault();
                 this._scrollSave();

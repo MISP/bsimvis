@@ -68,6 +68,7 @@
     const FILE_FIELDS = [['q', 'Search', 'keywords'], ['file_tag', 'Tag', 'family:mirai, lib:*'], ['file_name', 'File name', 'bot*'], ['batch_uuid', 'Batch', 'uuid'], ['language_id', 'Language', 'x86:LE:64']];
     const FILE_MORE = [['filetype', 'File type'], ['status', 'Status'], ['inferred_tags', 'Inferred tags'], ['bin_cluster_uuid', 'Cluster'], ['min_function_count', 'Min functions'], ['max_function_count', 'Max functions'], ['min_entry_date', 'From date'], ['max_entry_date', 'To date']];
     const FILE_MULTI = new Set(['file_tag']);
+    const FILE_LABELS = Object.fromEntries([...FILE_FIELDS, ...FILE_MORE].map(f => [f[0], f[1]]));
     const FILE_KNOWN = new Set([...FILE_FIELDS, ...FILE_MORE].map(f => f[0]));
     const GROUP_MAX = 8;
     // Merge files options: icon, and the colour the dropdown form uses.
@@ -159,11 +160,10 @@
             this.el.addEventListener('mouseout', e => this._gTip(e, false));
             this.el.addEventListener('change', e => this._onChange(e));
             this.el.addEventListener('input', e => this._onInput(e));
+            this._bindCmp(this.el);
             window.Paging.bind(this.el, () => ({ offset: Number(this.state.offset) || 0, total: Number(this.data && this.data.total) || 0, size: PAGE }), off => this._set({ offset: off }));
             this.el.addEventListener('toggle', e => {
                 if (e.target.matches('details.nway-focus')) this._focusOpen = e.target.open;
-                if (e.target.matches('details.nway-compare')) this._cmpOpen = e.target.open;
-                if (e.target.matches('details.nway-cmp-more')) { (this._cmpMore ||= new Set())[e.target.open ? 'add' : 'delete'](e.target.dataset.key); }
                 if (e.target.matches('details.nway-match')) this._matchOpen = e.target.open;
                 if (e.target.matches('details.nway-adv')) this._advOpen = e.target.open;
             }, true);
@@ -184,7 +184,6 @@
             }, true);
             this.el.addEventListener('keydown', e => {
                 if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-nway-file]')) this._onClick(e);
-                else if (e.key === 'Enter' && e.target.dataset.cf) this._runCompare();
                 else if (e.key === 'Enter' && e.target.dataset.text) this._set({ [e.target.dataset.text]: e.target.value.trim(), offset: 0 });
             });
         }
@@ -646,16 +645,14 @@
         _cmpPreviewSoon() {
             clearTimeout(this._cmpTimer);
             this._cmpTimer = setTimeout(async () => {
-                const cmp = this._draftCmp(), msg = this.el.querySelector('[data-cmp-msg]');
+                const cmp = this._draftCmp(), msg = document.querySelector('[data-cmp-msg]');
                 try {
                     const out = await this._postCmp({ ...cmp, groups: cmp.groups.map(g => ({ ...g, queries: g.queries })) }, true);
                     this._cmpCounts = out;
-                    out.groups.forEach((g, i) => { const el = this.el.querySelector(`[data-cnt="${i}"]`); if (el) el.textContent = cmp.groups[i].queries.length ? fileCount(g.files) : ''; });
-                    const ov = this.el.querySelector('[data-overlap]');
-                    if (ov) ov.textContent = out.overlap ? `${Number(out.overlap)} files match more than one group` : '';
-                    if (msg) msg.textContent = '';
+                    this._cmpRefreshResult();
+                    if (msg) msg.hidden = true;
                 } catch (err) {
-                    if (msg) msg.textContent = String(err.message || err);
+                    if (msg) { msg.textContent = String(err.message || err); msg.hidden = false; }
                 }
             }, 450);
         }
@@ -681,22 +678,24 @@
 
         // Compare: file searches become columns; with two groups Core = in both, Unique = in one.
         _compareBox() {
-            const s = this.state, on = !!s.col_set, ab = this._ab();
-            const dr = this._draft || (this._draft = this._draftInit());
+            const s = this.state, on = !!s.col_set;
+            this._draft = this._draft || this._draftInit();
+            const tip = 'Compare file searches. Each group takes the same filters as the Files page; Core is in every group, Unique in one.';
+            return `<details class="nway-compare nway-pop"${this._cmpOpen ? ' open' : ''}><summary class="nway-chip${on ? ' on' : ''}" title="${escapeAttr(tip)}"><i class="fa-solid fa-code-compare"></i> Compare <span class="dim">${on ? `${(this._cmpState() || { groups: [] }).groups.length || 2} groups` : 'off'}</span></summary>
+                <div class="nway-focus-body nway-match-body nway-cmp-body">${this._cmpBodyHtml()}</div></details>`;
+        }
+
+        _cmpBodyHtml() {
+            const s = this.state, on = !!s.col_set, ab = this._ab(), dr = this._draft;
             const counts = this._cmpCounts || (this._cmpInfo ? { groups: this._cmpInfo } : null);
-            const field = (gi, qi, key, label, ph, val) => `<label class="nway-cf"><span>${escapeHtml(label)}</span><input type="text" data-cf="${gi}.${qi}.${key}" value="${escapeAttr(val)}" placeholder="${escapeAttr(ph || '')}"></label>`;
             const groups = dr.groups.map((g, gi) => {
                 const qs = g.queries.map((q, qi) => {
-                    const main = FILE_FIELDS.map(([k, l, ph]) => field(gi, qi, k, l, ph, q[k] || '')).join('');
-                    const other = this._objToQs(Object.fromEntries(Object.entries(q).filter(([k]) => !FILE_KNOWN.has(k))));
-                    const more = FILE_MORE.map(([k, l]) => field(gi, qi, k, l, '', q[k] || '')).join('') + field(gi, qi, '_raw', 'Other params', 'key=value&key=value', other);
                     const key = `${gi}.${qi}`;
-                    return `<div class="nway-cq">${qi ? '<span class="dim nway-cor">or</span>' : ''}<div class="nway-cfs">${main}</div>
-                        <details class="nway-cmp-more" data-key="${key}"${this._cmpMore && this._cmpMore.has(key) ? ' open' : ''}><summary class="dim">more filters</summary><div class="nway-cfs">${more}</div></details>
+                    const chips = this._qChips(q).map(c => `<span class="nway-tok"><b>${escapeHtml(FILE_LABELS[c.k] || c.k)}</b> ${escapeHtml(c.v)}<button type="button" data-tok-rm="${key}" data-k="${escapeAttr(c.k)}" data-v="${escapeAttr(c.v)}" aria-label="Remove filter">&times;</button></span>`).join('');
+                    return `<div class="nway-cq">${qi ? '<span class="dim nway-cor">or</span>' : ''}<div class="nway-toks">${chips}<div class="nway-tokin"><input type="text" data-tok="${key}" placeholder="${chips ? 'add another filter' : 'tag, file name, batch, language... or key=value'}" autocomplete="off" spellcheck="false"><div class="nway-sug" hidden onmousedown="event.preventDefault()"></div></div></div>
                         ${g.queries.length > 1 ? `<button type="button" class="nway-blink" data-cmp-rmq="${key}" title="Remove this search">&times; remove search</button>` : ''}</div>`;
                 }).join('');
-                const n = counts && counts.groups[gi] ? fileCount(counts.groups[gi].files) : '';
-                return `<div class="nway-cg nway-cg-${gi % 2 ? 'b' : 'a'}"><div class="nway-cgh"><b class="nway-cgn">${letter(gi)}</b><input type="text" class="nway-cmp-label" data-cf="${gi}.label" value="${escapeAttr(g.label)}" maxlength="30" aria-label="Name of group ${letter(gi)}"><span class="dim" data-cnt="${gi}">${n}</span>${dr.groups.length > 2 ? `<button type="button" class="nway-blink" data-cmp-rmg="${gi}" title="Remove group ${letter(gi)}">&times; remove group</button>` : ''}</div>${qs}<button type="button" class="nway-blink" data-cmp-addq="${gi}" title="Files matching this search or the ones above count in group ${letter(gi)}">+ add a search to ${letter(gi)}</button></div>`;
+                return `<div class="nway-cg nway-cg-${gi % 2 ? 'b' : 'a'}"><div class="nway-cgh"><b class="nway-cgn">${letter(gi)}</b><input type="text" class="nway-cmp-label" data-cf="${gi}.label" value="${escapeAttr(g.label)}" maxlength="30" aria-label="Name of group ${letter(gi)}"><span class="dim" data-cnt="${gi}">${this._cmpCount(counts, gi, g)}</span>${dr.groups.length > 2 ? `<button type="button" class="nway-blink" data-cmp-rmg="${gi}" title="Remove group ${letter(gi)}">&times; remove group</button>` : ''}</div>${qs}<button type="button" class="nway-blink" data-cmp-addq="${gi}" title="Files matching this search or the ones above count in group ${letter(gi)}">+ or another search</button></div>`;
             }).join('');
             const ids = this._sourceIds();
             const scope = ids.length ? `<div class="nway-cmp-scope"><span class="nway-lbl">Search in</span><span class="view-toggle"><button type="button" class="view-btn${dr.within ? '' : ' active'}" data-cmp-within="0">the whole collection</button><button type="button" class="view-btn${dr.within ? ' active' : ''}" data-cmp-within="1">only the ${ids.length} files open</button></span></div>` : '';
@@ -704,11 +703,174 @@
                 this._seg('Holds when', 'col_presence', [['', 'Half'], ['any', 'Any'], ['all', 'All']], 'A group holds a function when this share of its files do: any one, half (default) or all.'),
                 s.tab === 'unique' ? this._seg('Unique to', 'side', [['', 'Both'], ['a', dr.groups[0].label || 'A'], ['b', dr.groups[1].label || 'B']], 'Unique tab only: functions in one group and not the other.') : '',
             ].join('') : '';
-            const tip = 'Compare file searches. Each group takes the same filters as the Files page; Core is in every group, Unique in one.';
-            return `<details class="nway-compare nway-pop"${this._cmpOpen ? ' open' : ''}><summary class="nway-chip${on ? ' on' : ''}" title="${escapeAttr(tip)}"><i class="fa-solid fa-code-compare"></i> Compare <span class="dim">${on ? `${(this._cmpState() || { groups: [] }).groups.length || 2} groups` : 'off'}</span></summary>
-                <div class="nway-focus-body nway-match-body nway-cmp-body">${scope}${groups}
-                <div class="nway-chips">${dr.groups.length < GROUP_MAX ? '<button type="button" class="nway-chip" data-cmp-addg>+ add group</button>' : ''}<button type="button" class="nway-chip on" data-cmp-run>Compare</button>${on ? '<button type="button" class="nway-chip" data-cmp-clear>&times; clear</button>' : ''}<span class="dim" data-overlap>${counts && counts.overlap ? `${Number(counts.overlap)} files match more than one group` : ''}</span></div>
-                <div class="nway-note warn" data-cmp-msg${this._cmpErr ? '' : ' hidden'}>${escapeHtml(this._cmpErr || '')}</div>${ctl}</div></details>`;
+            return `${scope}<div data-cmp-bar>${this._cmpBar()}</div>
+                <div class="nway-cmp-split"><div class="nway-cmp-left">${groups}</div><div class="nway-cmp-right" data-cmp-right>${this._cmpRight()}</div></div>
+                <div class="nway-chips">${dr.groups.length < GROUP_MAX ? '<button type="button" class="nway-chip" data-cmp-addg>+ add group</button>' : ''}<button type="button" class="nway-chip on" data-cmp-run>Compare${counts && counts.files ? ` ${Number(counts.files)} files` : ''}</button>${on ? '<button type="button" class="nway-chip" data-cmp-clear>&times; clear</button>' : ''}</div>
+                <div class="nway-note warn" data-cmp-msg${this._cmpErr ? '' : ' hidden'}>${escapeHtml(this._cmpErr || '')}</div>${ctl}`;
+        }
+
+        _cmpCount(counts, gi, g) {
+            if (counts && counts.groups[gi] && g.queries.some(q => this._qChips(q).length)) return fileCount(counts.groups[gi].files);
+            return '';
+        }
+
+        // Overlap bar for two groups: A only, both, B only.
+        _cmpBar() {
+            const c = this._cmpCounts;
+            if (!c || c.groups.length !== 2) return '';
+            const [a, b] = c.groups.map(g => Number(g.files)), both = Number(c.overlap) || 0, tot = Math.max(1, a + b - both);
+            const w = n => (n / tot * 100).toFixed(1);
+            const warn = both && both >= tot / 2 ? `<span class="nway-cmp-warn">${both} files match both groups: the filters barely differ.</span>` : '';
+            return `<div class="nway-cmp-bar" title="A only / in both / B only"><i class="ga" style="width:${w(a - both)}%"></i><i class="gab" style="width:${w(both)}%"></i><i class="gb" style="width:${w(b - both)}%"></i></div>
+                <div class="nway-cmp-leg"><span class="ga">${letter(0)} only ${a - both}</span><span class="gab">both ${both}</span><span class="gb">${letter(1)} only ${b - both}</span>${warn}</div>`;
+        }
+
+        // The files the filters match now, tagged with the groups that hold each.
+        _cmpRight() {
+            const c = this._cmpCounts, dr = this._draft;
+            if (!c || !c.sample) return '<div class="dim nway-cmp-empty">Add a filter to a group to see the files it matches.</div>';
+            const show = this._cmpShow || 'all';
+            const opts = [['all', 'All']].concat(dr.groups.map((g, i) => [String(i), letter(i)]), dr.groups.length > 1 ? [['both', 'In several']] : []);
+            const rows = c.sample.filter(f => show === 'all' || (show === 'both' ? f.groups.length > 1 : f.groups.includes(Number(show))));
+            const mk = f => f.groups.map(i => `<b class="nway-mk nway-mk-${i % 2 ? 'b' : 'a'}">${letter(i)}</b>`).join('');
+            const body = rows.map(f => `<tr><td>${mk(f)}</td><td class="nway-cmp-fn">${escapeHtml(f.name)}</td><td class="dim">${escapeHtml(f.language)}</td><td>${f.tags.slice(0, 3).map(t => `<span class="nway-cmp-tag">${escapeHtml(t)}</span>`).join(' ')}</td></tr>`).join('');
+            const cut = c.files > c.sample.length ? `<div class="dim">Showing ${c.sample.length} of ${Number(c.files)} files.</div>` : '';
+            return `<div class="nway-cmp-tabs">${opts.map(([v, t]) => `<button type="button" class="nway-chip${show === v ? ' on' : ''}" data-cmp-show="${v}">${escapeHtml(t)}</button>`).join('')}</div>
+                <div class="nway-cmp-files">${rows.length ? `<table><tr><th></th><th>File</th><th>Language</th><th>Tags</th></tr>${body}</table>` : '<div class="dim nway-cmp-empty">No file in this view.</div>'}</div>${cut}`;
+        }
+
+        // Re-draw the compare form in place; the popover stays open and filters keep their state.
+        _cmpRefresh() {
+            const body = document.querySelector('.nway-cmp-body');
+            if (body) body.innerHTML = this._cmpBodyHtml();
+        }
+
+        // Counts, bar and file list only: the filter boxes keep focus while the preview answers.
+        _cmpRefreshResult() {
+            const bar = document.querySelector('[data-cmp-bar]'), right = document.querySelector('[data-cmp-right]');
+            if (bar) bar.innerHTML = this._cmpBar();
+            if (right) right.innerHTML = this._cmpRight();
+            const counts = this._cmpCounts;
+            this._draft.groups.forEach((g, i) => { const el = document.querySelector(`[data-cnt="${i}"]`); if (el) el.textContent = this._cmpCount(counts, i, g); });
+            const run = document.querySelector('[data-cmp-run]');
+            if (run && counts) run.textContent = `Compare${counts.files ? ` ${Number(counts.files)} files` : ''}`;
+        }
+
+        // A search's filters as chips: one per tag, one per other value.
+        _qChips(q) {
+            const out = [];
+            for (const [k, v] of Object.entries(q)) {
+                const val = String(v ?? '').trim();
+                if (!val) continue;
+                if (FILE_MULTI.has(k)) val.split(',').map(x => x.trim()).filter(Boolean).forEach(x => out.push({ k, v: x }));
+                else out.push({ k, v: val });
+            }
+            return out;
+        }
+
+        _tokAdd(path, k, v) {
+            const [gi, qi] = path.split('.').map(Number), q = this._draft.groups[gi].queries[qi];
+            if (FILE_MULTI.has(k)) {
+                const list = (q[k] || '').split(',').map(x => x.trim()).filter(Boolean);
+                if (!list.includes(v)) list.push(v);
+                q[k] = list.join(',');
+            } else q[k] = v;
+            this._sug = null;
+            this._cmpRefresh();
+            const inp = document.querySelector(`[data-tok="${path}"]`);
+            if (inp) inp.focus();
+            this._cmpPreviewSoon();
+        }
+
+        _tokRemove(path, k, v) {
+            const [gi, qi] = path.split('.').map(Number), q = this._draft.groups[gi].queries[qi];
+            if (FILE_MULTI.has(k)) {
+                const list = (q[k] || '').split(',').map(x => x.trim()).filter(x => x && x !== v);
+                if (list.length) q[k] = list.join(','); else delete q[k];
+            } else delete q[k];
+            this._cmpRefresh();
+            const inp = document.querySelector(`[data-tok="${path}"]`);
+            if (inp) inp.focus();
+            this._cmpPreviewSoon();
+        }
+
+        _cmpCollection() {
+            return this.source.collection || ((this._sourceIds()[0] || '').split(':')[0]) || (this.data ? (this._files()[0] || {}).collection : '');
+        }
+
+        // Suggestions for the text typed in a filter box: the matching values of each file field, with file counts.
+        async _tokSuggest(input) {
+            const path = input.dataset.tok, text = input.value.trim(), box = input.parentElement.querySelector('.nway-sug');
+            const tag = this._sugTag = (this._sugTag || 0) + 1;
+            const items = [];
+            const eq = text.indexOf('=');
+            if (eq > 0) items.push({ k: text.slice(0, eq).trim(), v: text.slice(eq + 1).trim(), hint: 'raw parameter' });
+            else if (text) {
+                items.push({ k: 'q', v: text, hint: 'keyword search' });
+                if (text.includes('*')) FILE_FIELDS.filter(f => f[0] === 'file_tag' || f[0] === 'file_name').forEach(f => items.push({ k: f[0], v: text, hint: 'pattern' }));
+            }
+            const coll = this._cmpCollection();
+            if (coll && eq < 0) {
+                const fields = [['file_tag', 'tag'], ['file_name', 'file_name'], ['batch_uuid', 'batch_uuid'], ['language_id', 'language_id'], ['filetype', 'filetype']];
+                const got = await Promise.all(fields.map(async ([k, f]) => {
+                    if (!text && f === 'file_name') return [];
+                    try {
+                        const res = await fetch(`/api/bin_sim/nway/values?collection=${encodeURIComponent(coll)}&field=${f}&q=${encodeURIComponent(text)}&limit=${text ? 5 : 4}`);
+                        const out = res.ok ? await res.json() : { values: [] };
+                        return out.values.map(x => ({ k, v: x.value, n: x.files }));
+                    } catch (e) { return []; }
+                }));
+                if (tag !== this._sugTag) return;
+                got.forEach(g => items.push(...g));
+            }
+            this._sug = { path, items, idx: 0 };
+            this._tokSugDraw(box);
+        }
+
+        _tokSugDraw(box) {
+            const sug = this._sug;
+            if (!box) return;
+            box.hidden = !sug || !sug.items.length;
+            if (box.hidden) return;
+            box.innerHTML = sug.items.map((x, i) => `<div class="nway-sug-i${i === sug.idx ? ' on' : ''}" data-sug-i="${i}"><b>${escapeHtml(FILE_LABELS[x.k] || x.k)}</b> <span class="nway-sug-v">${escapeHtml(x.v)}</span><small>${x.n != null ? fileCount(x.n) : escapeHtml(x.hint || '')}</small></div>`).join('');
+        }
+
+        _tokKey(e) {
+            const t = e.target;
+            if (!t.dataset || !t.dataset.tok) return false;
+            const sug = this._sug && this._sug.path === t.dataset.tok ? this._sug : null, box = t.parentElement.querySelector('.nway-sug');
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                if (!sug) return this._tokSuggest(t), true;
+                sug.idx = (sug.idx + (e.key === 'ArrowDown' ? 1 : sug.items.length - 1)) % sug.items.length;
+                this._tokSugDraw(box);
+                e.preventDefault();
+            } else if (e.key === 'Enter') {
+                const x = sug && sug.items[sug.idx];
+                if (x) this._tokAdd(t.dataset.tok, x.k, x.v);
+                else if (!t.value.trim()) this._runCompare();
+                e.preventDefault();
+            } else if (e.key === 'Escape') {
+                this._sug = null;
+                if (box) box.hidden = true;
+            } else if (e.key === 'Backspace' && !t.value) {
+                const [gi, qi] = t.dataset.tok.split('.').map(Number), chips = this._qChips(this._draft.groups[gi].queries[qi]);
+                if (chips.length) this._tokRemove(t.dataset.tok, chips[chips.length - 1].k, chips[chips.length - 1].v);
+            } else return false;
+            return true;
+        }
+
+        // keydown / focus / toggle do not reach the actions once the host moves them out of this.el
+        _bindCmp(node) {
+            node.addEventListener('keydown', e => { if (!this._tokKey(e) && e.key === 'Enter' && e.target.dataset && e.target.dataset.cf) this._runCompare(); });
+            node.addEventListener('focusin', e => { if (e.target.dataset && e.target.dataset.tok) this._tokSuggest(e.target); });
+            node.addEventListener('focusout', e => { if (e.target.dataset && e.target.dataset.tok) { const b = e.target.parentElement.querySelector('.nway-sug'); this._sug = null; if (b) b.hidden = true; } });
+            node.addEventListener('toggle', e => {
+                if (e.target.matches('details.nway-focus')) this._focusOpen = e.target.open;
+                if (e.target.matches('details.nway-compare')) {
+                    this._cmpOpen = e.target.open;
+                    if (e.target.open && !this._cmpCounts) this._cmpPreviewSoon();
+                }
+            }, true);
         }
 
         // Focus: pick files to compare against all the others. A collapsible box so
@@ -2305,6 +2467,7 @@
                     actions.addEventListener('click', e => this._onClick(e));
                     actions.addEventListener('change', e => this._onChange(e));
                     actions.addEventListener('input', e => this._onInput(e));
+                    this._bindCmp(actions);
                 }
             }
         }
@@ -2374,7 +2537,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-colpick],[data-colpick-clear],[data-more-toggle]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-tok-rm],[data-sug-i],[data-cmp-show],[data-colpick],[data-colpick-clear],[data-more-toggle]');
             if (!t) return;
             if (t.dataset.lineage !== undefined) {
                 this._scrollSave();
@@ -2457,22 +2620,23 @@
             }
             if (t.dataset.colpickClear !== undefined) return this._set({ col_pick: '', col_rest: '', side: '', offset: 0 });
             if (t.dataset.cmpRun !== undefined) return this._runCompare();
-            if (t.dataset.cmpAddq !== undefined) { this._draft.groups[Number(t.dataset.cmpAddq)].queries.push({}); this._cmpMore = this._cmpMore || new Set(); return this.render(); }
+            if (t.dataset.tokRm !== undefined) return this._tokRemove(t.dataset.tokRm, t.dataset.k, t.dataset.v);
+            if (t.dataset.sugI !== undefined && this._sug) { const x = this._sug.items[Number(t.dataset.sugI)]; return x && this._tokAdd(this._sug.path, x.k, x.v); }
+            if (t.dataset.cmpShow !== undefined) { this._cmpShow = t.dataset.cmpShow; return this._cmpRefreshResult(); }
+            if (t.dataset.cmpAddq !== undefined) { this._draft.groups[Number(t.dataset.cmpAddq)].queries.push({}); return this._cmpRefresh(); }
             if (t.dataset.cmpRmq !== undefined) {
                 const [gi, qi] = t.dataset.cmpRmq.split('.').map(Number);
                 this._draft.groups[gi].queries.splice(qi, 1);
-                this._cmpMore = new Set();
-                this.render();
+                this._cmpRefresh();
                 return this._cmpPreviewSoon();
             }
-            if (t.dataset.cmpAddg !== undefined) { if (this._draft.groups.length < GROUP_MAX) this._draft.groups.push({ label: letter(this._draft.groups.length), queries: [{}] }); return this.render(); }
+            if (t.dataset.cmpAddg !== undefined) { if (this._draft.groups.length < GROUP_MAX) this._draft.groups.push({ label: letter(this._draft.groups.length), queries: [{}] }); return this._cmpRefresh(); }
             if (t.dataset.cmpRmg !== undefined) {
                 if (this._draft.groups.length > 2) this._draft.groups.splice(Number(t.dataset.cmpRmg), 1);
-                this._cmpMore = new Set();
-                this.render();
+                this._cmpRefresh();
                 return this._cmpPreviewSoon();
             }
-            if (t.dataset.cmpWithin !== undefined) { this._draft.within = Number(t.dataset.cmpWithin); this.render(); return this._cmpPreviewSoon(); }
+            if (t.dataset.cmpWithin !== undefined) { this._draft.within = Number(t.dataset.cmpWithin); this._cmpRefresh(); return this._cmpPreviewSoon(); }
             if (t.dataset.cmpClear !== undefined) { this._pin(); return this._set({ cmp: '', col_set: '', col_by: '', side: '', col_open: '', offset: 0 }); }
             if (t.dataset.set) {
                 const i = t.dataset.set.indexOf(':'), key = t.dataset.set.slice(0, i);
@@ -2508,6 +2672,11 @@
             if (t.dataset.cf) {
                 this._cfSet(t.dataset.cf, t.value);
                 this._cmpPreviewSoon();
+                return;
+            }
+            if (t.dataset.tok) {
+                clearTimeout(this._sugTimer);
+                this._sugTimer = setTimeout(() => this._tokSuggest(t), 150);
                 return;
             }
             const label = t.dataset.range && t.closest('label') && t.closest('label').querySelector('b');

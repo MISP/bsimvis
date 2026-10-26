@@ -4112,6 +4112,23 @@ class BinSimNwayColumns(Resource):
         return post_column_set()
 
 
+@ns_bin_sim.route("/nway/values")
+class BinSimNwayValues(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "collection": "Collection",
+            "field": "tag, file_name, batch_uuid, language_id or filetype",
+            "q": "Substring to match",
+            "limit": "Max values (default 12, cap 50)",
+        }
+    )
+    def get(self):
+        """Values of one file field with their file counts, for Compare filter autocomplete."""
+        from bsimvis.app.routes.nway import get_filter_values
+
+        return get_filter_values()
+
+
 @ns_nway.route("/function/set")
 class NwayFunctionSet(Resource):
     @ns_nway.expect(

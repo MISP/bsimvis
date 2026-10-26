@@ -5100,6 +5100,32 @@ def test_nway_column_groups():
         and "id" not in pvj,
         f"HTTP {pv.status_code} {pv.text[:200]}",
     )
+    smp = pvj.get("sample") or []
+    check(
+        "nway columns: preview lists the matched files with their groups",
+        len(smp) == 1 and smp[0].get("groups") == [0] and smp[0].get("name"),
+        str(smp)[:200],
+    )
+    vr = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/values",
+        params={"collection": COLLECTION, "field": "tag", "limit": 5},
+        timeout=60,
+    )
+    vals = vr.json().get("values") if vr.status_code == 200 else None
+    check(
+        "nway values: tag autocomplete returns value/files rows",
+        isinstance(vals, list) and all({"value", "files"} <= set(v) for v in vals),
+        f"HTTP {vr.status_code} {vr.text[:200]}",
+    )
+    check(
+        "nway values: unknown field is rejected",
+        requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/values",
+            params={"collection": COLLECTION, "field": "bogus"},
+            timeout=60,
+        ).status_code
+        == 400,
+    )
     check(
         "nway columns: one group is rejected",
         post([{"label": "A", "query": {"md5": file_md5}}]).status_code == 400,

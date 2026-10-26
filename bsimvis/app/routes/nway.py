@@ -559,6 +559,74 @@ def _group_queries(spec):
     return qs
 
 
+PREVIEW_SAMPLE = 200
+
+
+def _preview_sample(groups, meta):
+    """The files the groups matched, for the Compare panel's live list: one row per
+    file with the indexes of the groups holding it. Capped; `shown` < `files` means cut.
+    """
+    held = {}
+    for gi, g in enumerate(groups):
+        for m in g["members"]:
+            held.setdefault(m, []).append(gi)
+    rows = []
+    for m, gs in list(held.items())[:PREVIEW_SAMPLE]:
+        f = meta.get(m) or {}
+        rows.append(
+            {
+                "id": m,
+                "name": f.get("file_name") or f.get("name") or m.rsplit(":", 1)[-1],
+                "language": f.get("language_id") or "",
+                "batch": f.get("batch_uuid") or "",
+                "tags": list(f.get("tags") or [])[:6],
+                "groups": gs,
+            }
+        )
+    return rows
+
+
+# file index fields the Compare filters can suggest values for
+VALUE_FIELDS = {
+    "tag": ("tags", "user_tags"),
+    "file_name": ("file_name",),
+    "batch_uuid": ("batch_uuid",),
+    "language_id": ("language_id",),
+    "filetype": ("filetype",),
+}
+
+
+def get_filter_values():
+    """Type-ahead for the Compare filters: `{field, values: [{value, files}]}` from the
+    file index registries of one collection, most used first."""
+    collection = request.args.get("collection")
+    fields = VALUE_FIELDS.get(request.args.get("field", ""))
+    if not collection or not fields:
+        abort(400, "collection and field (%s) required" % ", ".join(VALUE_FIELDS))
+    q = request.args.get("q", "").strip().lower()
+    limit = min(int(request.args.get("limit", 12)), 50)
+    r = get_redis()
+    buckets = {}
+    for field in fields:
+        prefix = f"{collection}:idx:file:{field}:"
+        for b in r.sscan_iter(
+            f"{collection}:reg:file:{field}", match=f"*{q}*" if q else "*", count=1000
+        ):
+            b = b.decode() if isinstance(b, bytes) else b
+            if b.startswith(prefix) and q in b[len(prefix) :].lower():
+                buckets[b[len(prefix) :]] = b
+            if len(buckets) >= 400:
+                break
+    pipe = r.pipeline(transaction=False)
+    for b in buckets.values():
+        pipe.scard(b)
+    rows = sorted(zip(buckets, pipe.execute()), key=lambda x: (-x[1], x[0]))
+    return {
+        "field": request.args["field"],
+        "values": [{"value": v, "files": n} for v, n in rows[:limit]],
+    }
+
+
 def post_column_set():
     """Resolve file queries into column groups: one saved set, read back by `col_set`.
 
@@ -586,7 +654,7 @@ def post_column_set():
             for c, m in (str(t).rsplit(":", 1) for t in within if ":" in str(t))
         }
     cap = nway_diff_service.caps()[0]
-    groups, members = [], []
+    groups, members, meta = [], [], {}
     for i, spec in enumerate(specs):
         label = str(spec.get("label") or f"Group {i + 1}")[:60]
         found = []
@@ -598,13 +666,13 @@ def post_column_set():
                 abort(400, f"{label}: query must be search_files parameters")
             if res.get("error"):
                 abort(400, f"{label}: {res['error']}")
-            found += [
-                (
+            for f in res.get("files") or []:
+                key = (
                     _origin_coll(f["file_id"].split(":file:")[0]),
                     f["file_id"].rsplit(":", 1)[1],
                 )
-                for f in res.get("files") or []
-            ]
+                found.append(key)
+                meta[nway_diff_service._col_id(*key)] = f
         found = list(dict.fromkeys(found))
         if within is not None:
             found = [m for m in found if m in within]
@@ -624,6 +692,7 @@ def post_column_set():
         "groups": [{"label": g["label"], "files": len(g["members"])} for g in groups],
     }
     if preview:
+        out["sample"] = _preview_sample(groups, meta)
         return out
     colset = {**scope, "members": members, "groups": groups}
     raw = json.dumps(colset)

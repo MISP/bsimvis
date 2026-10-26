@@ -2781,6 +2781,39 @@ a.home-card:hover,
 .nway-cgn { font-size: 0.85rem; }
 .nway-cq { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; border-top: 1px dashed var(--border); }
 .nway-cq:first-of-type { border-top: 0; }
+.nway-cmp-body { min-width: min(900px, 94vw); max-width: min(1040px, 94vw); }
+.nway-cmp-split { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(0, 1.3fr); gap: 12px; align-items: start; }
+.nway-cmp-left { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.nway-cmp-right { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.nway-cmp-tabs { display: flex; flex-wrap: wrap; gap: 5px; }
+.nway-cmp-files { max-height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.nway-cmp-files table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+.nway-cmp-files th, .nway-cmp-files td { text-align: left; padding: 3px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.nway-cmp-files th { position: sticky; top: 0; background: var(--card-bg); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--subtle); }
+.nway-cmp-fn { font-family: var(--font-mono, monospace); max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.nway-cmp-tag { font-family: var(--font-mono, monospace); font-size: 0.68rem; padding: 0 5px; border-radius: 4px; background: rgba(128, 128, 128, 0.15); }
+.nway-cmp-empty { padding: 14px 8px; font-size: 0.8rem; }
+.nway-mk { display: inline-block; min-width: 14px; text-align: center; margin-right: 2px; font-size: 0.68rem; border-radius: 3px; color: #fff; }
+.nway-mk-a, .nway-cmp-bar .ga { background: var(--info, #3b82f6); }
+.nway-mk-b, .nway-cmp-bar .gb { background: var(--warning, #d97706); }
+.nway-cmp-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: rgba(128, 128, 128, 0.15); }
+.nway-cmp-bar i { display: block; height: 100%; }
+.nway-cmp-bar .gab { background: var(--accent); }
+.nway-cmp-leg { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.75rem; }
+.nway-cmp-warn { color: var(--warning, #d97706); }
+.nway-toks { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.nway-tok { display: inline-flex; align-items: center; gap: 4px; padding: 1px 3px 1px 8px; border: 1px solid var(--border); border-radius: 12px; font-size: 0.75rem; font-family: var(--font-mono, monospace); background: rgba(128, 128, 128, 0.1); }
+.nway-tok b { color: var(--accent); font-weight: 600; }
+.nway-tok button { border: 0; background: none; color: var(--subtle); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 3px; }
+.nway-tok button:hover { color: var(--accent); }
+.nway-tokin { position: relative; flex: 1; min-width: 150px; }
+.nway-tokin input { width: 100%; box-sizing: border-box; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary, transparent); color: inherit; font-size: 0.78rem; }
+.nway-sug { position: absolute; z-index: 60; left: 0; top: calc(100% + 3px); min-width: 260px; max-height: 240px; overflow: auto; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35); }
+.nway-sug-i { display: flex; gap: 8px; align-items: baseline; padding: 4px 10px; cursor: pointer; font-size: 0.78rem; white-space: nowrap; }
+.nway-sug-i.on, .nway-sug-i:hover { background: var(--hover, rgba(128, 128, 128, 0.15)); }
+.nway-sug-i b { color: var(--accent); font-weight: 600; font-size: 0.7rem; }
+.nway-sug-i small { margin-left: auto; color: var(--subtle); }
+@media (max-width: 760px) { .nway-cmp-split { grid-template-columns: 1fr; } }
 .nway-cfs { display: flex; flex-wrap: wrap; gap: 6px; }
 .nway-cf { display: flex; flex-direction: column; gap: 1px; font-size: 0.65rem; color: var(--dim, #888); }
 .nway-cf input { width: 120px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-secondary, transparent); color: var(--text, inherit); font-size: 0.75rem; box-sizing: border-box; }

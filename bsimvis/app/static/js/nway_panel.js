@@ -1146,7 +1146,61 @@
         _cgOpen(row) {
             const cells = {};
             for (const [k, v] of Object.entries(row.files || row.cells)) if (typeof v === 'string') cells[k] = v;
-            this._cgStart(row.name, cells, { name_from: row.name_from }, window.openCallsPanel());
+            this._dockRow = { row, cells };
+            this._dockFid = null;
+            if (!this._dockEl) {
+                this._dockEl = document.createElement('aside');
+                this._dockEl.className = 'nway-dock';
+                this._dockEl.addEventListener('click', e => this._onDockClick(e));
+            }
+            this._dockTab = this._dockTab || 'graph';
+            this.el.querySelector('.nway-body')?.appendChild(this._dockEl);
+            this._dockDraw();
+        }
+
+        // Right-hand dock in the table's own panel: simple function preview or a lean call graph.
+        _dockDraw() {
+            const { row, cells } = this._dockRow, tab = this._dockTab;
+            this._dockEl.innerHTML = `<div class="nway-dock-head"><b class="nway-dock-name" title="${escapeAttr(row.name)}">${escapeHtml(row.name)}</b>
+                <div class="view-toggle" style="margin:0">${[['preview', 'Function'], ['graph', 'Call graph']].map(([v, t]) => `<button class="view-btn${tab === v ? ' active' : ''}" data-dock-tab="${v}">${t}</button>`).join('')}</div>
+                <button class="nway-chip" data-dock-full title="Open the detailed N-way function view"><i class="fa-solid fa-up-right-from-square"></i></button>
+                <button class="nway-chip" data-dock-close title="Close">&times;</button></div>
+                <div class="nway-dock-body"></div>`;
+            const body = this._dockEl.querySelector('.nway-dock-body');
+            if (tab === 'graph') {
+                // the graph follows the table's code axis
+                this._cgStart(row.name, cells, { name_from: row.name_from, scope: this.state.scope, lean: true }, body);
+                return;
+            }
+            this._cg = null;
+            this._dw = null;
+            const files = this._cgFiles().filter(c => cells[c.id]);
+            if (!this._dockFid || !Object.values(cells).includes(this._dockFid)) this._dockFid = files.length ? cells[files[0].id] : Object.values(cells)[0];
+            const chips = files.map(c => `<button class="nway-chip${cells[c.id] === this._dockFid ? ' on' : ''}" data-dock-fid="${escapeAttr(cells[c.id])}">${escapeHtml(c.file_name || c.label || c.md5 || c.id)}</button>`).join('');
+            body.innerHTML = `<div class="nway-dock-files">${chips}</div><div class="c-code-container nway-dock-code"><div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i></div></div>`;
+            const fid = this._dockFid;
+            fetch(`/api/function/code?id=${encodeURIComponent(fid)}`).then(r => { if (!r.ok) throw new Error(`Function not found (${r.status})`); return r.json(); }).then(d => {
+                const box = this._dockEl && this._dockFid === fid && this._dockEl.querySelector('.nway-dock-code');
+                if (!box) return;
+                box.innerHTML = (d.rows || []).map(r => `<div class="code-line"><div class="gutter"><div class="line-num">${Number(r.line_idx)}</div></div><div class="line-content">${(r.tokens || []).map(t => `<span class="token token-${escapeAttr(t.type)}">${escapeHtml(t.text)}</span>`).join('')}</div></div>`).join('') || 'No code available.';
+            }).catch(err => {
+                const box = this._dockEl && this._dockEl.querySelector('.nway-dock-code');
+                if (box) box.textContent = err.message;
+            });
+        }
+
+        _onDockClick(e) {
+            const t = e.target.closest('[data-dock-tab],[data-dock-fid],[data-dock-full],[data-dock-close]');
+            if (!t) return;
+            if (t.dataset.dockTab) { this._dockTab = t.dataset.dockTab; return this._dockDraw(); }
+            if (t.dataset.dockFid) { this._dockFid = t.dataset.dockFid; return this._dockDraw(); }
+            if (t.dataset.dockClose !== undefined) {
+                this._dockEl.remove();
+                this._dockRow = this._dockEl = this._cg = this._dw = null;
+                return;
+            }
+            const url = this._fnUrl(this._dockRow.row);
+            if (url) { this._scrollSave(); window.Nav.openPath(url, e); }
         }
 
         // Draws into `host`: the side panel's body, or the standalone page's container.
@@ -1164,6 +1218,7 @@
                 hints: init.co === '1' || init.hints === '1' || init.co === true || (init.co === undefined && init.hints === undefined && !!prev.hints),
                 suggest: prev.suggest === undefined ? 'comp' : prev.suggest,
                 nb: null,
+                lean: !!init.lean,
             };
             this._dw = host;
             this._applyHue();
@@ -2072,7 +2127,11 @@
             if (err) body = `<div style="color:#f92672;">${escapeHtml(err)}</div>`;
             else if (!st.nb) body = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Reading call graph...</div>';
             else body = `<div class="dim nway-cg-legend"><i class="fa-solid fa-file-code"></i> files that have the function (color: how many) &middot; dot: the focus function there calls it &middot; <i class="fa-solid fa-link"></i> calls from the focus${st.view === 'graph' ? ' (edge width)' : ''}. Click to recenter.${st.co ? ' Dashed lines: other callers of the same callee.' : ''}${st.depth > 1 ? (st.view === 'graph' ? ' Further hops show in-scope rows only.' : ' The list shows the first hop; depth applies to the graph.') : ''}</div>` + (st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files));
-            this._dw.innerHTML = `<div class="nway-cg-head"><div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${depthCtl}${suggestCtl}${detailsCtl}${hueCtl}${selCtl}<div class="view-toggle" style="margin:0">${toggle}</div>${this.cgInit ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
+            // The dock keeps the essentials: the axis is the table's, the rest lives in the full view.
+            const head = st.lean
+                ? `<div class="nway-cg-crumbs">${crumbs}</div>${depthCtl}<div class="view-toggle" style="margin:0">${toggle.replace(/<button[^>]*data-cg-view="lanes"[^>]*>.*?<\/button>/, '')}</div>`
+                : `<div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${depthCtl}${suggestCtl}${detailsCtl}${hueCtl}${selCtl}<div class="view-toggle" style="margin:0">${toggle}</div>`;
+            this._dw.innerHTML = `<div class="nway-cg-head">${head}${this.cgInit || st.lean ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
                 ${st.view === 'list' ? `<div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells, name_from: focus.name_from }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>` : ''}
                 <div class="nway-cg-selbar" hidden></div>
                 <div class="nway-cg-body${st.selMode ? ' selmode' : ''}">${body}</div>`;
@@ -2501,6 +2560,11 @@
             // The shared grid selection: it reads the function entities in the
             // selected cells, so the bulk actions of the function menu apply.
             if (window.TableSelection) new window.TableSelection('nway-table');
+            if (this._dockEl) {
+                this.el.querySelector('.nway-body').appendChild(this._dockEl);
+                // the code axis changed in the table: the dock graph follows it
+                if (this._cg && this._cg.lean && this._cg.scope !== this.state.scope) { this._cg.scope = this.state.scope; this._cgShow(); }
+            }
             this._mark(this.el.querySelector('#nway-table'));
             this._watch();
             this._scrollRestore();

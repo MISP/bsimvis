@@ -2647,6 +2647,26 @@ class BinSimNwayBlockTitles(Resource):
         return get_nway_block_titles()
 
 
+@ns_bin_sim.route("/nway/lane_names")
+class BinSimNwayLaneNames(Resource):
+    @ns_bin_sim.doc(
+        body=ns_bin_sim.model(
+            "NwayLaneNames",
+            {
+                "lanes": fields.List(
+                    fields.Raw,
+                    description="Lane groups: id, files, total, rows, sample (function names), hint (shared prefix)",
+                )
+            },
+        )
+    )
+    def post(self):
+        """LLM names of lane groups: cached, or started in the background (status pending, poll again)."""
+        from bsimvis.app.routes.nway import post_nway_lane_names
+
+        return post_nway_lane_names()
+
+
 @ns_bin_sim.route("/nway/facets/explain")
 class BinSimNwayBlockExplain(Resource):
     @ns_bin_sim.doc(
@@ -2759,7 +2779,7 @@ class BinSimNway(Resource):
             "group_lane_link": "group=lane with group_lane_depth > 1: sibling lanes whose files overlap by at least this Jaccard share (0-1, default 0 = off) get a synthetic parent `mix:<files>` covering their union, with `core` (files all its lanes share) and `lanes`",
             "group_lane_depth": "group=lane: levels of nested lanes (default 1 = flat). Above 1 a lane sits under the smallest lane holding all its files, and its group counts include the sub-lanes",
             "group_lane_tier": "group=lane: share of the files (0-1, default 0 = off) a lane must cover to be Core; lanes covering half that many files or more are Common, the rest Rare. Lanes and loose rows are wrapped in `tier:` groups (kind `tier`, open by default); a sub-lane in a weaker band than its parent heads its own band with `under` (the parent's file count)",
-            "group_lane_fold": "group=lane: sub-lanes covering less than this share of the files (0-1, default 0 = off) are gathered under their parent in one `fold:` group (kind `fold`, closed by default, `lanes` = how many)",
+            "group_lane_fold": "group=lane: sibling lanes holding fewer rows than this (integer, default 0 = off; needs two such lanes) are gathered in one closed `fold:` group (kind `fold`, `lanes` = how many). Lane, tier and fold groups also carry `sample` (heaviest function names) and `hint` (a shared name prefix)",
             "group_lane_min": "group=lane: units that must share a set of files before it makes a lane (default 2); the others stay plain rows",
             "group_prefix_min": "group=prefix: functions that must share a prefix before it makes a group (default 2)",
             "group_min_link": "group_merge=call: a shared caller joins two rows only when an edge between them scores at least this (default 0.3; 0 = no edge needed)",

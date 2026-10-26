@@ -1283,6 +1283,23 @@ def get_nway_block_titles():
     return nway_facets_service.block_titles(out["consensus"])
 
 
+def post_nway_lane_names():
+    """LLM names for lane groups (JSON body `{"lanes": [...]}`, each as the lane group meta plus `total`).
+
+    Never waits for the model: `status` is off (no LLM configured), pending
+    (poll again), ready or failed; `names` maps lane id to name.
+    """
+    if not nway_facets_service.llm_configured():
+        return {"status": "off", "names": {}}
+    lanes = (request.get_json(silent=True) or {}).get("lanes")
+    if not isinstance(lanes, list) or not all(
+        isinstance(l, dict) and {"id", "files", "total", "rows"} <= set(l)
+        for l in lanes
+    ):
+        abort(400, "lanes must be a list of {id, files, total, rows, sample, hint}")
+    return nway_group_service.lane_names(lanes)
+
+
 def get_nway_block_explain():
     """LLM explanation of one block's change in one function (`/nway/facets` params plus `block` and `fn`).
 

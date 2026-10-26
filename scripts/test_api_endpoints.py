@@ -6095,13 +6095,29 @@ def test_nway_diff():
         group="lane",
         group_lane_depth=3,
         group_lane_tier=0.5,
-        group_lane_fold=0.25,
+        group_lane_fold=3,
         group_open="all",
     )
     check(
         "nway group: group_lane_tier wraps lanes in tier groups",
         _lt and {g.get("kind") for g in _lt["groups"].values()} >= {"tier", "lane"},
         f"{_lt and {g.get('kind') for g in _lt['groups'].values()}}",
+    )
+    check(
+        "nway group: lane groups carry a sample of function names",
+        _lt
+        and all(
+            "sample" in g for g in _lt["groups"].values() if g.get("kind") == "lane"
+        ),
+    )
+    check(
+        "nway lane_names: bad body is a 400 (or off without an LLM)",
+        requests.post(
+            f"{BASE_URL}/api/bin_sim/nway/lane_names",
+            json={"lanes": [{"id": "x"}]},
+            timeout=30,
+        ).status_code
+        in (200, 400),
     )
     check(
         "nway group: group_lane_tier=2 is a 400",

@@ -310,6 +310,73 @@ class LLMService:
                     out.setdefault(item["id"], title)
         return out, None
 
+    def name_lanes(self, lanes):
+        """Short names for lanes of an N-way table, in one call.
+
+        `lanes` is [{"id", "files", "total", "rows", "sample", "hint"}]: a lane
+        is a set of functions present in the same `files` of `total` files.
+        Returns ({id: name}, error).
+        """
+        self._load_config()
+        ids = [l["id"] for l in lanes]
+        body = "\n\n".join(
+            f"=== LANE {l['id']} ===\n{l['rows']} functions in {l['files']} of {l['total']} files"
+            + (f"\nshared name prefix: {l['hint']}" if l.get("hint") else "")
+            + "\nfunction names: "
+            + (", ".join(l["sample"]) or "(auto names only)")
+            for l in lanes
+        )
+        prompt = (
+            "Each lane below is a group of functions found together in the same "
+            "files of a malware family. Name every lane in at most five words by "
+            "what its functions have in common (for example 'network scanning', "
+            "'string helpers', 'attack flood methods', 'standard C library'). "
+            "Use only what the names show; if they show nothing, answer 'unnamed "
+            "code'. Use each id exactly as given.\n\n" + body
+        )
+        fmt = {
+            "type": "object",
+            "properties": {
+                "names": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "enum": ids},
+                            "name": {"type": "string"},
+                        },
+                        "required": ["id", "name"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["names"],
+            "additionalProperties": False,
+        }
+        try:
+            response = Client(host=self.ollama_url, timeout=150).chat(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                stream=False,
+                think=False,
+                format=fmt,
+                options={"num_predict": 24 * len(ids) + 64, "temperature": 0.1},
+            )
+            msg = response.get("message", {})
+            value = json.loads(
+                msg.get("content", "") or msg.get("thinking", "") or "{}"
+            )
+        except Exception as e:
+            logging.error(f"LLMService name_lanes error: {e}")
+            return {}, str(e)
+        out = {}
+        for item in value.get("names") or []:
+            if isinstance(item, dict) and item.get("id") in ids:
+                name = " ".join(str(item.get("name") or "").split())[:60]
+                if name:
+                    out.setdefault(item["id"], name)
+        return out, None
+
     def explain_block_change(self, ctx):
         """How one block of the reference function differs in another function.
 

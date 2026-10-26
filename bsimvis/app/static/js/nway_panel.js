@@ -28,14 +28,14 @@
     const NWAY_TIMEOUT_MS = 180000;
     const SORTS = [['name', 'Function'], ['span', 'Span'], ['weight', 'Features'], ['support', 'Support'], ['cohesion', 'Cohesion']];
     // Sliders whose value is a whole number.
-    const INT_RANGES = ['k', 'twin_depth', 'group_lane_depth'];
+    const INT_RANGES = ['k', 'twin_depth', 'group_lane_depth', 'group_lane_fold'];
     const DEFAULTS = {
         tab: 'all', scope: 'code', k: 2, min_edge: '', mode: 'stored',
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
         columns: 'twins', child_presence: 0.5, twin_depth: 3, twin_link: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
         col_by: '', col_by_multi: '', col_set: '', col_presence: '', cmp: '', col_pick: '', col_rest: '',
-        group: 'lane', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 3, group_lane_link: 0.5, group_lane_tier: 0.5, group_lane_fold: 0.25, group_prefix_min: '', col_open: '',
+        group: 'lane', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 3, group_lane_link: 0.5, group_lane_tier: 0.5, group_lane_fold: 3, lane_names: 'on', group_prefix_min: '', col_open: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
     const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_prefix_min', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest'];
@@ -455,7 +455,8 @@
             const laneDepth = lv.includes('lane') ? this._slider('Lane levels', 'group_lane_depth', Number(s.group_lane_depth), 1, 6, 1, 'Lanes nest by file set: a lane sits under the smallest lane that holds all its files. 1 keeps every lane flat; higher allows that many nested levels.') : '';
             const laneLink = lv.includes('lane') && Number(s.group_lane_depth) > 1 ? this._slider('Lane overlap', 'group_lane_link', Number(s.group_lane_link), 0, 1, 0.05, 'Sibling lanes whose files overlap by at least this share (Jaccard) get a parent covering both, marked with a chip. 0 turns it off.') : '';
             const laneTier = lv.includes('lane') ? this._slider('Lane tiers', 'group_lane_tier', Number(s.group_lane_tier), 0, 1, 0.05, 'Bands by file count: a lane covering this share of the files is Core, half that share Common, fewer Rare. A sub-lane in a lower band than its parent heads its own band, with a chip naming the parent. 0 turns the bands off.') : '';
-            const laneFold = lv.includes('lane') ? this._slider('Fold rare lanes', 'group_lane_fold', Number(s.group_lane_fold), 0, 1, 0.05, 'Sub-lanes covering less than this share of the files are folded into one closed group under their parent. 0 turns the fold off.') : '';
+            const laneFold = lv.includes('lane') ? this._slider('Fold small lanes', 'group_lane_fold', Number(s.group_lane_fold), 0, 10, 1, 'Sibling lanes holding fewer rows than this are folded into one closed group, so a lane of two functions does not cost a header each. 0 turns the fold off; it needs two such lanes.') : '';
+            const laneNames = lv.includes('lane') && d.llm_names !== false ? `<span class="nway-ctlwrap"><label class="nway-gtog${s.lane_names !== 'off' ? ' on' : ''}" title="Ask the language model to name each lane by what its functions have in common (needs the LLM set in the config; names are cached)."><input type="checkbox" data-lnames${s.lane_names !== 'off' ? ' checked' : ''}> Lane names</label></span>` : '';
             const axes = lv.includes('tag') ? tagAxes.length ? `${sel('group_axis', axis, tagAxes)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, tagAxes.filter(([k]) => k !== axis), true)}` : '<span class="nway-lbl">No tags in these functions</span>' : '';
             const minLink = merge.has('call') ? this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.') : '';
             // Merge files by: None = one column per file, Cluster = child clusters (a cluster node only), Same code = twins.
@@ -473,7 +474,7 @@
                 files: `${fileDd}${twinNote ? `<span class="dim nway-bnote">${twinNote}</span>` : ''}`,
                 byRow: by || this._byErr ? `<div class="nway-byrow">${byCtl}${valueChips}${this._byErr ? `<span class="dim nway-bnote">${escapeHtml(this._byErr)}</span>` : ''}</div>` : '',
                 rows: `<div class="nway-gcard${active ? ' active' : ''}">
-                <span class="nway-bgrp">${lbl('Group by', 'Click order is nesting order: each group is split again by the next level. The column sort still orders the rows inside each group.')}${picks}${axes}${laneDepth}${laneLink}${laneTier}${laneFold}</span>${sep}
+                <span class="nway-bgrp">${lbl('Group by', 'Click order is nesting order: each group is split again by the next level. The column sort still orders the rows inside each group.')}${picks}${axes}${laneDepth}${laneLink}${laneTier}${laneFold}${laneNames}</span>${sep}
                 <span class="nway-bgrp">${lbl('Merge functions', 'Join rows that are probably one function: rows the matcher kept apart (another decompilation, architecture or version) show as one, with their rows under it.')}${box('name', 'Name', 'Rows with the same function name. Auto names (FUN_, sub_) and compiler suffixes (.part.0) are ignored.')}${box('call', 'Call position', 'Rows under the same caller, in different files, with a weak edge between them. Needs the callers of every function.')}${minLink}</span>${sep}
                 <span class="nway-bgrp nway-bend">${lbl('Order', 'How groups are ordered.')}${sel('group_sort', s.group_sort || 'files', GROUP_SORTS)}${active ? '<button class="nway-blink" data-gall="open">open all</button><button class="nway-blink" data-gall="close">close all</button>' : ''}</span>
             </div>`,
@@ -2342,6 +2343,38 @@
             return [col.members.filter(m => g.fcover[d._fidx.get(m)] === '1').length, col.members.length];
         }
 
+        // The lane's shared name prefix and, once the model has answered, its name.
+        _laneName(g) {
+            const name = (this._laneNames || {})[g.id] || '';
+            return `${g.hint ? `<span class="nway-gchip ev-n" title="Most of this lane's functions share this name prefix">${escapeHtml(g.hint)}</span>` : ''}<span class="nway-lname" data-lname="${escapeAttr(g.id)}">${escapeHtml(name)}</span>`;
+        }
+
+        // Names for the lane groups on screen: asked in the background, cached by the server, shown when ready.
+        async _nameLanes() {
+            const d = this.data, groups = d && this.state.lane_names !== 'off' ? Object.values(d.groups || {}) : [];
+            const lanes = groups.filter(g => g.kind === 'lane' && ((g.sample || []).length || g.hint)).slice(0, 40)
+                .map(g => ({ id: g.id, files: g.mask.split('1').length - 1, total: g.mask.length, rows: g.rows, sample: g.sample || [], hint: g.hint || '' }));
+            const sig = lanes.map(l => `${l.id}:${l.rows}`).join('|');
+            if (sig === this._lnSig) return;
+            this._lnSig = sig;
+            if (!lanes.length) { this._laneNames = {}; return; }
+            for (let i = 0; i < 40 && this._lnSig === sig && this.el.isConnected; i++) {
+                let body = null;
+                try {
+                    const res = await fetch('/api/bin_sim/nway/lane_names', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lanes }) });
+                    body = res.ok ? await res.json() : null;
+                } catch (e) { body = null; }
+                if (this._lnSig !== sig) return;
+                if (body && body.names) {
+                    this._laneNames = { ...this._laneNames, ...body.names };
+                    this.el.querySelectorAll('[data-lname]').forEach(el => { el.textContent = this._laneNames[el.dataset.lname] || ''; });
+                }
+                if (body && body.status === 'pending') { await new Promise(r => setTimeout(r, 2500)); continue; }
+                if (body && body.status === 'off') this.data.llm_names = false;
+                break;
+            }
+        }
+
         _groupHead(g, depth) {
             const n = g.union.length, closed = !this._gOpen(g.id);
             const chip = (cls, text, tip) => `<span class="nway-gchip ${cls}" title="${escapeAttr(tip)}">${escapeHtml(text)}</span>`;
@@ -2354,12 +2387,12 @@
                 const cov = g.fcover || g.mask;
                 const mix = g.core ? chip('also', `${Number(g.lanes)} lanes · ${g.core.split('1').length - 1} shared`, 'Not a real set of files: related lanes grouped under the files they cover together. The count is the files every lane in it holds.') : '';
                 const under = g.under ? chip('also', `\u2282 ${Number(g.under)}-file lane`, 'Inside a lane in a stronger band: its files are all in that lane.') : '';
-                title = `<b>${cov.split('1').length - 1} of ${cov.length} files</b>${mix}${under}`;
+                title = `<b>${cov.split('1').length - 1} of ${cov.length} files</b>${mix}${under}${this._laneName(g)}`;
             } else if (g.kind === 'tier') {
                 const hi = Number(g.max), lo = Number(g.min);
                 title = `<b>${escapeHtml(g.label)}</b> <span class="dim">${lo ? (hi > lo ? `${lo}\u2013${hi}` : `${lo}`) : `up to ${hi}`} files</span>`;
             } else if (g.kind === 'fold') {
-                title = `<b>${Number(g.lanes)} rarer lane${g.lanes === 1 ? '' : 's'}</b>`;
+                title = `<b>${Number(g.lanes)} small lanes</b> <span class="dim">${Number(this.state.group_lane_fold) > 1 ? `under ${Number(this.state.group_lane_fold)} rows each` : ''}</span>`;
             } else if (g.kind === 'same') {
                 const ev = (g.evidence || []).map(k => k === 'name' ? chip('ev-n', 'name', 'The rows share a function name') : chip('ev-c', 'call position', 'The rows share a caller and a weak edge links them')).join('');
                 const more = `${this._missChip(g.sub, g.miss)}${g.also > 1 ? chip('also', `\u00d7${Number(g.also)}`, 'Listed under several tags on this axis.') : ''}`;
@@ -2539,6 +2572,7 @@
         // The host (the N-way page) can park its own controls in the More section.
         render() {
             this._renderPanel();
+            this._nameLanes();
             if (this.onSlot) {
                 const actions = this.el.querySelector('[data-actions]');
                 this.onSlot(this.el.querySelector('[data-more-slot]'), actions);
@@ -2745,7 +2779,13 @@
 
         _onChange(e) {
             const t = e.target;
-            if (t.dataset.ev) {
+            if (t.dataset.lnames !== undefined) {
+                this.state.lane_names = t.checked ? 'on' : 'off';
+                this._lnSig = null;
+                if (!t.checked) this._laneNames = {};
+                if (this.onState) this.onState({ ...this.state });
+                this.render();
+            } else if (t.dataset.ev) {
                 const ev = new Set((this.state.group_merge || '').split(',').filter(Boolean));
                 if (t.checked) ev.add(t.dataset.ev); else ev.delete(t.dataset.ev);
                 this._set({ group_merge: [...ev].join(','), offset: 0 });

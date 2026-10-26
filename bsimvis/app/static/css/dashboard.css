@@ -3132,7 +3132,7 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-body > .nway-scroll { flex: 1; min-width: 0; }
 #cluster-tab-functions .nway-body { flex: 1; min-height: 0; align-items: stretch; }
 .nway-view > .nway-hero, .nway-panel .nway-note { transition: max-height 0.3s ease, opacity 0.3s ease, margin 0.3s ease, padding 0.3s ease; max-height: 400px; opacity: 1; }
-.nway-view > .nway-hero { overflow: hidden; }
+.nway-view > .nway-hero { overflow: visible; position: relative; z-index: 12; }
 .nway-compact > .nway-hero, .nway-compact .nway-panel .nway-note { max-height: 0; opacity: 0; overflow: hidden; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; border-width: 0; pointer-events: none; }
 .nway-legend { flex: none; width: 250px; min-width: 160px; max-width: 60vw; resize: horizontal; max-height: calc(100vh - 180px); overflow: auto; position: sticky; top: 0; border-right: 1px solid var(--border); padding: 4px 6px 8px; font-size: 0.76rem; }
 #cluster-tab-functions .nway-legend { max-height: none; }

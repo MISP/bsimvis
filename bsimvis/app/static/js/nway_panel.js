@@ -1055,6 +1055,7 @@
         // It opens the first of those functions; the hover lists the addresses.
         _groupCell(row, col, ci) {
             const cell = row.cells[col.id];
+            if (!cell) return `<td class="col sq"><i class="nway-sq" title="${escapeAttr(`${this._colLabel(col)}: no function in this row`)}"></i></td>`;
             const pool = this.source.pool || null;
             const hits = [];
             for (const f of this.data.file_columns || []) {

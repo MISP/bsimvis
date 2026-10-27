@@ -181,7 +181,9 @@ class TableSelection {
         const not = SECONDARY.map(cls => `:not(.${cls})`).join('');
         const selector = `a[href]${not}, [onclick]${not}`;
         const cell = this.cellAt(r, c);
-        const inCell = cell ? Array.from(cell.querySelectorAll(selector)) : [];
+        // The hidden overflow tag list has inline onclick handlers that stop propagation, so it
+        // would eat the click of any cell with more tags than fit.
+        const inCell = cell ? Array.from(cell.querySelectorAll(selector)).filter(el => !el.closest('.tag-overflow-dropdown')) : [];
         if (inCell.length) {
             // A pair row stacks both sides in one cell, so the first link in the
             // DOM is only right half the time. Activate the one the click landed

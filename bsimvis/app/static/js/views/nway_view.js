@@ -20,6 +20,8 @@ window.NwayView = {
         this._panel = null;
         if (this._functionPanel) this._functionPanel.destroy();
         this._functionPanel = null;
+        if (this._lin) this._lin.destroy();
+        this._lin = null;
         if (this._renamedFn) document.removeEventListener('function-renamed', this._renamedFn);
         this._renamedFn = null;
     },
@@ -27,6 +29,7 @@ window.NwayView = {
     async init(params, containerId) {
         this._container = document.getElementById(containerId);
         if (!this._container) return;
+        if (window.location.pathname.endsWith('/nway/lineage')) { this._lin = window.NwayLineageView; return this._lin.init(params, containerId); }
         if (window.location.pathname.endsWith('/nway/graph')) return this._initFunction();
         if (window.location.pathname.endsWith('/nway/function')) return this._initFunction();
         const q = new URLSearchParams(window.location.search);
@@ -39,7 +42,7 @@ window.NwayView = {
             axis: q.get('axis') || '',
         };
         this._state = {};
-        for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'column', 'focus', 'focus_rule', 'side', 'columns', 'child_presence', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open']) {
+        for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'column', 'focus', 'focus_rule', 'side', 'columns', 'child_presence', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'cmp', 'col_pick', 'col_rest']) {
             if (q.has(k)) this._state[k] = q.get(k);
         }
         this._collections = null;
@@ -49,7 +52,7 @@ window.NwayView = {
     // Graph and comparison tabs share the focused family and URL state.
     async _initFunction() {
         const q = new URLSearchParams(window.location.search);
-        const CTL = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule'];
+        const CTL = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule', 'col_by', 'col_by_multi', 'col_set', 'col_presence'];
         const source = {}, doc = {}, fx = {}, cg = {};
         for (const [k, v] of q) {
             if (k.startsWith('fx_')) fx[k.slice(3)] = v;
@@ -400,11 +403,19 @@ window.NwayView = {
         // Only what differs from the panel default; an emptied default (group off) is kept as `key=`.
         const def = window.NwayPanel ? NwayPanel.DEFAULTS : {};
         for (const [k, v] of Object.entries(extra || {})) if (v !== null && v !== undefined && String(v) !== String(def[k] ?? '')) next.set(k, v);
-        history.replaceState(null, '', `${window.location.pathname}?${next.toString()}`);
+        // Control changes push a history entry so Back undoes them. Paging, the resolved col_set id
+        // and changes within 800 ms of the last push (typing, sliders) replace it instead.
+        const url = `${window.location.pathname}?${next.toString()}`;
+        if (url === window.location.pathname + window.location.search) return;
+        const strip = u => { const p = new URLSearchParams(u.split('?')[1] || ''); p.delete('offset'); p.delete('col_set'); return p.toString(); };
+        const now = Date.now();
+        const quiet = strip(url) === strip(window.location.pathname + window.location.search) || now - (this._lastPush || 0) < 800;
+        if (quiet) history.replaceState(null, '', url);
+        else { history.pushState(null, '', url); this._lastPush = now; }
     },
 
     _hasSet() {
-        return this._set.cluster_uuid || this._set.batch || this._set.md5s.length >= 2;
+        return this._set.cluster_uuid || this._set.batch || this._set.md5s.length >= 2 || this._state.col_set || this._state.cmp;
     },
 
     _render() {
@@ -412,12 +423,17 @@ window.NwayView = {
         this._container.innerHTML = `
             <div class="nway-view nway-fill">
                 <div id="nway-file-hero" class="nway-hero" hidden></div>
-                <details id="nway-edit" class="nway-edit" ${this._set.cluster_uuid ? 'hidden' : this._hasSet() ? '' : 'open'}>
-                    <summary>Edit set (${this._set.md5s.length} files${this._set.batch ? ' + 1 batch' : ''})</summary>
-                    <div id="nway-set"></div>
-                </details>
+                <div id="nway-edit-home"></div>
                 <div id="nway-panel"></div>
             </div>`;
+        // The set editor sits above the panel until it has a table; then it moves into its More section.
+        const edit = this._editEl = document.createElement('details');
+        edit.id = 'nway-edit';
+        edit.className = 'nway-edit';
+        edit.hidden = !!this._set.cluster_uuid;
+        edit.open = !this._hasSet();
+        edit.innerHTML = `<summary>Edit set (${this._set.md5s.length} files${this._set.batch ? ' + 1 batch' : ''})</summary><div id="nway-set"></div>`;
+        document.getElementById('nway-edit-home').appendChild(edit);
         this._renderSet();
         this._mount();
     },
@@ -436,7 +452,21 @@ window.NwayView = {
                 this._state = { ...s };
                 this._writeUrl(s);
             },
+            onSource: ids => { this._set.md5s = ids.split(','); this._set.batch = ''; this._set.cluster_uuid = ''; this._renderSet(); },
             onData: d => this._renderFileHero(d),
+            onSlot: (slot, actions) => {
+                // Compare and Lineage sit at the right of the file-set header
+                const home = document.querySelector('[data-hero-actions]');
+                if (home && actions) home.replaceChildren(actions);
+                const edit = this._editEl;
+                if (!edit) return;
+                // a panel with a table keeps the editor in More (closed = out of the page); otherwise it shows above
+                if (slot) slot.appendChild(edit);
+                else if (actions) edit.remove();
+                else document.getElementById('nway-edit-home')?.appendChild(edit);
+                edit.classList.toggle('in-more', !!slot);
+                if (slot) edit.open = true;
+            },
         });
         this._panel.load();
     },
@@ -469,7 +499,7 @@ window.NwayView = {
         if (st && st.scored < st.total) warns.push(`${st.total - st.scored} pairs unscored`);
         const parts = [plural(files.length, 'file'), `${funcs.toLocaleString()} functions`, plural(colls.length, 'collection'), archs.join(' · ')].filter(Boolean);
         el.hidden = false;
-        el.innerHTML = `<div class="nway-hero-top"><span class="nway-hkind ${kind === 'File set' ? 'set' : ''}">${kind}</span><span class="dim">${escapeHtml(where)}</span></div>
+        el.innerHTML = `<div class="nway-hero-top"><span class="nway-hkind ${kind === 'File set' ? 'set' : ''}">${kind}</span><span class="dim">${escapeHtml(where)}</span><span class="nway-hero-actions" data-hero-actions></span></div>
             <div class="nway-hero-meta dim">${comp}</div>
             <div class="nway-hero-meta dim">${[...parts.map(escapeHtml), coh].join(' · ')}${warns.map(w => `<span class="nway-hpill warn">${escapeHtml(w)}</span>`).join('')}</div>`;
     },

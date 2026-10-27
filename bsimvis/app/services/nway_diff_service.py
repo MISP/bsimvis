@@ -758,8 +758,35 @@ def grow_columns(groups, open_ids, children_of, limit=MAX_COLUMNS):
     each `{id, label, member_count}`, so a header can draw a collapse band over
     its children), and `expandable`: more than one file. A group is left closed
     when expanding would pass `limit` columns. `"*"` in `open_ids` opens every group,
-    `"*N"` every group less than N levels deep.
+    `"*N"` every group less than N levels deep, `"*fit:N"` opens the biggest groups first (deeper where there are more files) while the total stays at N columns or fewer.
     """
+    fit = next(
+        (int(i[5:]) for i in open_ids if i[:5] == "*fit:" and i[5:].isdigit()), 0
+    )
+    if fit:
+        # biggest group first, so crowded groups open deeper than small ones
+        cols = [{**g, "path": [], "expandable": g["member_count"] > 1} for g in groups]
+        stuck = set()
+        while True:
+            cand = [
+                i
+                for i, g in enumerate(cols)
+                if g["expandable"] and g["id"] not in stuck
+            ]
+            if not cand:
+                return cols
+            i = max(cand, key=lambda i: cols[i]["member_count"])
+            g = cols[i]
+            sub = children_of(g)
+            if not sub or len(cols) + len(sub) - 1 > min(limit, fit):
+                stuck.add(g["id"])
+                continue
+            here = g["path"] + [
+                {"id": g["id"], "label": g["label"], "member_count": g["member_count"]}
+            ]
+            cols[i : i + 1] = [
+                {**c, "path": here, "expandable": c["member_count"] > 1} for c in sub
+            ]
     depth = max(
         (
             float("inf") if i == "*" else int(i[1:])
@@ -1013,6 +1040,9 @@ def demo():
         "a",
         "b",
     ]  # one file: not expandable
+    assert ids(grow_columns(g0, {"*fit:3"}, of)) == ["a1", "a:direct", "b"]
+    assert ids(grow_columns(g0, {"*fit:9"}, of)) == ["a1/f1", "a1/f2", "a:direct", "b"]
+    assert ids(grow_columns(g0, {"*fit:1"}, of)) == ["a", "b"]
     assert twin_groups(shared[:1], cols) is not None
     # hierarchical twins: A,B hold the same rows, C overlaps them, D is apart
     cols4 = [{"id": i, "md5": i, "file_name": i.lower()} for i in "ABCD"]
@@ -1070,6 +1100,7 @@ def compute(r, scope, members, params=None):
     child-cluster columns; see `project_rows`. `focus` (column ids) +
     `focus_rule` (`any` | `all`) instead split the files into Focus vs Rest
     groups: Rest uses `child_presence`, Focus needs any / all of its files.
+    `groups_mode` names `columns_mode` when `groups` are not child clusters (`by`).
     """
     params = params or {}
     mode = params.get("mode") or "stored"
@@ -1180,7 +1211,11 @@ def compute(r, scope, members, params=None):
         "columns_mode": (
             "focus"
             if focus
-            else "twins" if twins else "children" if groups else "files"
+            else (
+                "twins"
+                if twins
+                else params.get("groups_mode", "children") if groups else "files"
+            )
         ),
         "file_columns": file_columns if groups else None,
         "rows": rows,

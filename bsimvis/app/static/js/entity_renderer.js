@@ -192,7 +192,7 @@ window.EntityRenderer = {
             if (firstChild?.dataset?.filterValue) {
                 value = firstChild.dataset.filterValue.trim();
             } else {
-                value = (td.dataset?.filterValue || td.innerText || '').trim();
+                value = (td.dataset?.filterValue || td.textContent || '').trim();
             }
         }
         if (!value) return null;

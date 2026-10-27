@@ -2770,6 +2770,54 @@ a.home-card:hover,
 }
 .nway-focus-body { min-width: 360px; max-width: 520px; }
 .nway-focus-body .nway-chips { max-height: 140px; overflow: auto; margin: 0; }
+.nway-cmp-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.nway-cmp-row input { min-width: 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary, transparent); color: inherit; font: inherit; }
+.nway-cmp-label { width: 90px; flex: none; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary, transparent); color: inherit; font: inherit; }
+.nway-cmp-body { min-width: min(640px, 92vw); max-width: 760px; max-height: 72vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.nway-cmp-scope { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nway-cg { border: 1px solid var(--border); border-left: 3px solid var(--info, #3b82f6); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.nway-cg-b { border-left-color: var(--warning, #d97706); }
+.nway-cgh { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nway-cgn { font-size: 0.85rem; }
+.nway-cq { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; border-top: 1px dashed var(--border); }
+.nway-cq:first-of-type { border-top: 0; }
+.nway-cmp-body { min-width: min(900px, 94vw); max-width: min(1040px, 94vw); }
+.nway-cmp-split { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(0, 1.3fr); gap: 12px; align-items: start; }
+.nway-cmp-left { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.nway-cmp-right { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.nway-cmp-tabs { display: flex; flex-wrap: wrap; gap: 5px; }
+.nway-cmp-files { max-height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.nway-cmp-files table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+.nway-cmp-files th, .nway-cmp-files td { text-align: left; padding: 3px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.nway-cmp-files th { position: sticky; top: 0; background: var(--card-bg); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--subtle); }
+.nway-cmp-fn { font-family: var(--font-mono, monospace); max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.nway-cmp-tag { font-family: var(--font-mono, monospace); font-size: 0.68rem; padding: 0 5px; border-radius: 4px; background: rgba(128, 128, 128, 0.15); }
+.nway-cmp-empty { padding: 14px 8px; font-size: 0.8rem; }
+.nway-mk { display: inline-block; min-width: 14px; text-align: center; margin-right: 2px; font-size: 0.68rem; border-radius: 3px; color: #fff; }
+.nway-mk-a, .nway-cmp-bar .ga { background: var(--info, #3b82f6); }
+.nway-mk-b, .nway-cmp-bar .gb { background: var(--warning, #d97706); }
+.nway-cmp-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: rgba(128, 128, 128, 0.15); }
+.nway-cmp-bar i { display: block; height: 100%; }
+.nway-cmp-bar .gab { background: var(--accent); }
+.nway-cmp-leg { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.75rem; }
+.nway-cmp-warn { color: var(--warning, #d97706); }
+.nway-toks { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.nway-tok { display: inline-flex; align-items: center; gap: 4px; padding: 1px 3px 1px 8px; border: 1px solid var(--border); border-radius: 12px; font-size: 0.75rem; font-family: var(--font-mono, monospace); background: rgba(128, 128, 128, 0.1); }
+.nway-tok b { color: var(--accent); font-weight: 600; }
+.nway-tok button { border: 0; background: none; color: var(--subtle); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 3px; }
+.nway-tok button:hover { color: var(--accent); }
+.nway-tokin { position: relative; flex: 1; min-width: 150px; }
+.nway-tokin input { width: 100%; box-sizing: border-box; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary, transparent); color: inherit; font-size: 0.78rem; }
+.nway-sug { position: absolute; z-index: 60; left: 0; top: calc(100% + 3px); min-width: 260px; max-height: 240px; overflow: auto; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35); }
+.nway-sug-i { display: flex; gap: 8px; align-items: baseline; padding: 4px 10px; cursor: pointer; font-size: 0.78rem; white-space: nowrap; }
+.nway-sug-i.on, .nway-sug-i:hover { background: var(--hover, rgba(128, 128, 128, 0.15)); }
+.nway-sug-i b { color: var(--accent); font-weight: 600; font-size: 0.7rem; }
+.nway-sug-i small { margin-left: auto; color: var(--subtle); }
+@media (max-width: 760px) { .nway-cmp-split { grid-template-columns: 1fr; } }
+.nway-cfs { display: flex; flex-wrap: wrap; gap: 6px; }
+.nway-cf { display: flex; flex-direction: column; gap: 1px; font-size: 0.65rem; color: var(--dim, #888); }
+.nway-cf input { width: 120px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-secondary, transparent); color: var(--text, inherit); font-size: 0.75rem; box-sizing: border-box; }
+.nway-cmp-q { flex: 1; font-family: var(--font-mono, monospace); }
 .nway-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; }
 .nway-chip {
     background: var(--card-bg);
@@ -2844,6 +2892,9 @@ a.home-card:hover,
 .nway-bandrow th.nway-band { cursor: pointer; }
 .nway-bandrow th.nway-band::after { content: ''; position: absolute; left: 2px; right: 2px; bottom: 2px; height: 6px; border: 2px solid hsl(var(--h, 195) 62% var(--l, 52%)); border-bottom: 0; border-radius: 4px 4px 0 0; }
 .nway-bandrow th.nway-band:hover { background: var(--hover); }
+.nway-bandmore th { text-align: left; }
+.nway-bandmore button { position: sticky; left: 8px; display: inline-flex; align-items: center; gap: 4px; height: 14px; padding: 0 10px; font-size: 10px; line-height: 1; color: var(--text-dim, inherit); background: transparent; border: 1px dashed currentColor; border-radius: 7px; opacity: .7; cursor: pointer; }
+.nway-bandmore button:hover { opacity: 1; background: var(--hover); }
 /* Compare view: the card fills what is left of the viewport, so the table is the only vertical scroll and its header stays pinned. */
 .nway-fill { display: flex; flex-direction: column; overflow-y: hidden; min-height: 0; }
 .nway-fill > #nway-file-hero { flex: none; padding-top: 0; }
@@ -2915,6 +2966,28 @@ a.home-card:hover,
 .nway-chip button { background: none; border: none; padding: 0; cursor: pointer; color: var(--dim); }
 .nway-chip button:hover { color: var(--token-instruction); }
 .nway-msg { margin-top: 6px; min-height: 1em; font-size: 0.8rem; color: var(--token-instruction); }
+.nway-ddl { position: relative; display: inline-block; }
+.nway-ddl > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.nway-ddl > summary::-webkit-details-marker { display: none; }
+.nway-ddl > summary .bsim-tag-pill, .nway-ddl-menu .bsim-tag-pill { cursor: pointer; }
+.nway-ddc { font-size: 0.6rem; color: var(--dim, #888); }
+.nway-ddl[open] .nway-ddc { transform: rotate(180deg); }
+.nway-ddl-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); min-width: 100%; white-space: nowrap; }
+.nway-tabrow .nway-search { flex: 1 1 320px; max-width: none; }
+.nway-tabrow { flex-wrap: nowrap; }
+.nway-fold { display: inline-flex; gap: 3px; margin-left: 8px; vertical-align: middle; }
+.nway-fold button { background: none; border: 1px solid var(--border); border-radius: 5px; color: var(--dim, #888); cursor: pointer; padding: 1px 6px; font-size: 0.68rem; line-height: 1.3; }
+.nway-fold button:hover { color: var(--accent); border-color: var(--accent); }
+.nway-more-body { margin: 0 0 10px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); display: flex; flex-direction: column; gap: 12px; }
+.nway-more-sec { display: flex; flex-direction: column; gap: 6px; }
+.nway-sech { font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim, #888); }
+.nway-more-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+.nway-more-row .nway-gcard { margin: 0; flex: 1; }
+.nway-more-row .nway-match-body, .nway-more-row .nway-focus-body { min-width: 0; }
+.nway-edit.in-more > summary { display: none; }
+.nway-byrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 8px; padding: 6px 10px; border: 1px dashed var(--border); border-radius: 6px; font-size: 0.82rem; }
+.nway-bvals { display: flex; flex-wrap: wrap; gap: 4px; flex-basis: 100%; max-height: 96px; overflow-y: auto; }
+.nway-cmp-send { display: inline-flex; align-items: center; gap: 6px; margin-left: 12px; flex-wrap: wrap; }
 .nway-basket { display: inline-flex; align-items: center; gap: 8px; }
 .nway-basket button { background: none; border: none; padding: 0 2px; cursor: pointer; color: var(--subtle); font-size: inherit; }
 .nway-basket button:hover { color: var(--accent); }
@@ -2925,8 +2998,20 @@ a.home-card:hover,
 .nway-cgp { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; background: var(--card-bg); }
 .nway-cgp[hidden] { display: none; }
 .nway-cg-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
-.nway-cg-crumbs { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; font-size: 0.78rem; }
-.nway-crumb { background: none; border: none; padding: 0 2px; color: var(--accent); cursor: pointer; font: inherit; }
+.nway-cg-title { flex: 0 0 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.86rem; }
+.nway-cg-title > * { max-width: 100%; }
+.nway-dock-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nway-cg-crumbs { flex: 1; min-width: 0; display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; font-size: 0.76rem; overflow-x: auto; scrollbar-width: thin; }
+.nway-cg-crumbs.lean { overflow: visible; flex: 0 0 100%; }
+.nway-cg-crumbs.lean .nway-crumb { max-width: 120px; }
+.nway-crumb { flex: none; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; border: 1px solid var(--border); border-radius: 10px; padding: 0 8px; color: var(--dim); cursor: pointer; font: inherit; }
+.nway-crumb:hover { color: var(--accent); border-color: var(--accent); }
+.nway-crumb.cur { color: var(--text); border-color: color-mix(in srgb, var(--text) 40%, var(--border)); cursor: default; }
+.nway-crumb-more { position: relative; flex: none; }
+.nway-crumb-more summary { cursor: pointer; list-style: none; border: 1px solid var(--border); border-radius: 10px; padding: 0 8px; color: var(--dim); }
+.nway-crumb-more summary::-webkit-details-marker { display: none; }
+.nway-crumb-menu { position: absolute; z-index: 20; top: 100%; left: 0; margin-top: 4px; display: flex; flex-direction: column; gap: 3px; padding: 6px; max-height: 240px; overflow: auto; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); }
+.nway-crumb-menu .nway-crumb { max-width: 260px; text-align: left; }
 .nway-cg-focus { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .nway-cg-body { flex: 1; overflow: auto; padding: 8px 14px 20px; }
 .nway-cg-body:has(.nway-graph) { cursor: grab; }
@@ -3091,7 +3176,10 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-body { display: flex; align-items: flex-start; }
 .nway-body > .nway-scroll { flex: 1; min-width: 0; }
 #cluster-tab-functions .nway-body { flex: 1; min-height: 0; align-items: stretch; }
-.nway-legend { flex: none; width: 250px; max-height: calc(100vh - 180px); overflow: auto; position: sticky; top: 0; border-right: 1px solid var(--border); padding: 4px 6px 8px; font-size: 0.76rem; }
+.nway-view > .nway-hero, .nway-panel .nway-note { transition: max-height 0.3s ease, opacity 0.3s ease, margin 0.3s ease, padding 0.3s ease; max-height: 400px; opacity: 1; }
+.nway-view > .nway-hero { overflow: visible; position: relative; z-index: 12; }
+.nway-compact > .nway-hero, .nway-compact .nway-panel .nway-note { max-height: 0; opacity: 0; overflow: hidden; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; border-width: 0; pointer-events: none; }
+.nway-legend { flex: none; width: 250px; min-width: 160px; max-width: 60vw; resize: horizontal; max-height: calc(100vh - 180px); overflow: auto; position: sticky; top: 0; border-right: 1px solid var(--border); padding: 4px 6px 8px; font-size: 0.76rem; }
 #cluster-tab-functions .nway-legend { max-height: none; }
 .nway-legend.off { width: auto; }
 .nway-busy-cancel { margin-left: auto; pointer-events: auto; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 6px; font-weight: 600; font-size: 0.78rem; color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent); border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 55%, transparent); }
@@ -3118,6 +3206,23 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-gchip { display: inline-block; font-size: 0.66rem; font-weight: 400; line-height: 1.5; padding: 0 6px; margin-left: 5px; border-radius: 9px; border: 1px solid var(--border); color: var(--dim); }
 .nway-gchip.ev-n { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .nway-gchip.ev-c, .nway-gchip.also { color: var(--info); border-color: color-mix(in srgb, var(--info) 55%, transparent); }
+/* Lane headers: the name in the table's own font and size, the evidence chips on a second line. */
+.nway-lname { font-weight: 600; color: var(--text); }
+.nway-lname:empty { display: none; }
+.nway-lname.fb { color: var(--dim); font-weight: 400; }
+.nway-lname.wait:empty { display: inline-block; width: 90px; height: 0.7rem; border-radius: 4px; background: linear-gradient(90deg, var(--border) 25%, var(--hover) 50%, var(--border) 75%); background-size: 200% 100%; animation: nway-shimmer 1.2s linear infinite; }
+@keyframes nway-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .nway-lname.wait:empty { animation: none; } }
+.nway-lcount { color: var(--dim); font-weight: 400; }
+.nway-lcount b { color: var(--text); font-weight: 600; }
+.nway-table tr.nway-grow.k-lane td:first-child { box-shadow: inset 3px 0 0 var(--lane-c), 1px 0 0 var(--border); }
+.nway-ltag { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.66rem; padding: 0 6px; border-radius: 9px; border: 1px solid; }
+.nway-lev { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 4px; padding-left: 18px; }
+.nway-lev:empty { display: none; }
+.nway-lev .nway-gchip { margin: 0; }
+.nway-gchip.str { font-family: 'Consolas', monospace; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nway-colgrip { position: absolute; top: 0; right: -3px; bottom: 0; width: 7px; cursor: col-resize; z-index: 6; }
+.nway-colgrip:hover, .nway-colgrip:active { background: color-mix(in srgb, var(--accent) 50%, transparent); }
 .nway-gchip.sub { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .nway-lane-lbl { position: sticky; left: 14px; display: inline-flex; align-items: center; gap: 8px; padding: 2px 8px; background: var(--card-bg); border-radius: 0 0 6px 6px; }
 .nway-lane-focus { z-index: 1; align-self: center; }
@@ -3490,3 +3595,29 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .xp-ubody .xp-fcode.st-restr { background: color-mix(in srgb, var(--token-instruction) 8%, transparent); }
 .xp-ubody .xp-fcode.st-extra { background: color-mix(in srgb, var(--success) 8%, transparent); }
 .xp-uvars { margin: 0 0 8px 14px; padding-left: 10px; border-left: 2px solid var(--border); min-width: 0; }
+
+/* N-way row dock: function preview / call graph beside the table */
+.nway-dock { position: relative; flex: none; width: 460px; min-width: 280px; max-width: 70vw; overflow: hidden; display: flex; flex-direction: column; border-left: 1px solid var(--border); max-height: calc(100vh - 180px); }
+.nway-dock-head { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.nway-dock-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nway-dock-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.nway-dock-files { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 6px; }
+.nway-dock-code { overflow: auto; flex: 1; min-height: 0; font-size: 0.75rem; }
+.nway-dock-grip { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; }
+.nway-dock-grip:hover { background: var(--accent); opacity: .4; }
+
+/* Squares by how many files hold the row (the graph view's scheme) */
+.nway-sqlane tbody .nway-sq.on { background: var(--rc, var(--dim)); border-color: transparent; color: #111; }
+.nway-sqlane tbody .nway-sq.part { background: color-mix(in srgb, var(--rc, var(--dim)) 30%, transparent); border-color: var(--rc, var(--dim)); }
+.nway-fold button.on { color: var(--accent); }
+.nway-lanegraph { cursor: pointer; background: none; font: inherit; font-size: 0.66rem; }
+.nway-lanegraph:hover { color: var(--accent); border-color: var(--accent); }
+.nway-node.band { width: auto; flex-direction: row; gap: 56px; align-items: center; padding: 8px; }
+.nway-tier { display: flex; flex-direction: column; gap: 8px; }
+.nway-member { box-sizing: border-box; width: 200px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); display: flex; flex-direction: column; gap: 4px; }
+.nway-member.more { cursor: pointer; justify-content: center; }
+.nway-member.more:hover { border-color: var(--accent); }
+.nway-graph.hl .nway-member:not(.hl-on) { opacity: 0.12; }
+.nway-member { cursor: pointer; }
+.nway-member:hover, .nway-member:focus-visible { border-color: var(--accent); outline: none; }
+.nway-edge.lane { stroke-width: 2px; opacity: 0.8; }

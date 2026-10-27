@@ -25,7 +25,10 @@ sees a big int.
 """
 
 import json
+import math
 import re
+import threading
+import time
 from collections import Counter, defaultdict
 from itertools import combinations
 
@@ -165,6 +168,8 @@ def _mix_siblings(sibs, link):
         for i, a in enumerate(sibs):
             for b in sibs[i + 1 :]:
                 core, union = a["mask"] & b["mask"], a["mask"] | b["mask"]
+                if union in (a["mask"], b["mask"]):
+                    continue  # one holds the other: a parent would repeat its mask
                 j = _pop(core) / _pop(union)
                 if core and j >= link and (best is None or j > best[0]):
                     best = (j, a, b)
@@ -400,6 +405,34 @@ def name_key(row):
     while m := _SUFFIX.search(name):
         name = name[: m.start()]
     return name.lower() or None
+
+
+def best_name(members, fmeta):
+    """The name a merged function goes by -> (name, name_from), over its member rows.
+
+    Best source first: a name an analyst or the LLM gave, a real symbol, a
+    cluster name, a tag name, an auto name. Ties go to the name most members
+    carry (compiler suffixes ignored), then to the heaviest row.
+    """
+
+    def source(row):
+        name = row.get("name") or ""
+        if any((fmeta.get(f) or {}).get("user_name") == name for f in _fids(row)):
+            return 4
+        if _DEFAULT_NAME.match(name):
+            return 0
+        return {"cluster": 2, "tag": 1}.get(row.get("name_from"), 3)
+
+    votes = Counter(name_key(row) or row.get("name") for row in members)
+    best = max(
+        members,
+        key=lambda row: (
+            source(row),
+            votes[name_key(row) or row.get("name")],
+            row.get("weight", 0),
+        ),
+    )
+    return best["name"], best.get("name_from")
 
 
 def _best_links(edges, row_of):
@@ -649,6 +682,9 @@ def _expand(units, ctx, parent_id, parent_path, carried):
                 cohesion=sum(row.get("cohesion", 1.0) for row in members)
                 / len(members),
             )
+            best, m["name_from"] = best_name(members, ctx["fmeta"])
+            m["names"] = [best] + [x for x in m["names"] if x != best][:3]
+            m["name"] = best
             extra = carried.get(id(u), {})
             if extra.get("also", 0) > 1:
                 m["also"] = extra["also"]
@@ -675,7 +711,9 @@ def _nodes(units, levels, ctx, parent_id, parent_path, carried):
     """
     if not levels:
         return _expand(units, ctx, parent_id, parent_path, carried)
-    if levels[0] == "lane" and ctx.get("lane_depth", 1) > 1:
+    if levels[0] == "lane" and (
+        ctx.get("lane_depth", 1) > 1 or ctx.get("lane_tier") or ctx.get("lane_fold")
+    ):
         return _lane_nodes(units, levels, ctx, parent_id, parent_path, carried)
     nodes = []
     for g, items in _level(levels[0], units, ctx):
@@ -705,8 +743,70 @@ def _nodes(units, levels, ctx, parent_id, parent_path, carried):
     return nodes
 
 
+TIERS = (("core", "Core"), ("common", "Common"), ("rare", "Rare"))
+FOLD_RANK = (-1, -1, -1)  # a fold sorts after its sibling lanes
+
+
+def _gpop(node):
+    return node["g"]["mask"].count("1")
+
+
+def _node_units(node):
+    units = [u for u, _ in node["items"]]
+    for k in node["kids"]:
+        units += _node_units(k)
+    return units
+
+
+def _unit_span(u):
+    if "_rows" in u:
+        return u["_fspan"]
+    return u.get("file_span", u.get("span", _pop(u["mask"])))
+
+
+def _lane_tiers(roots, loose, ctx):
+    """Split lanes and loose units into core / common / rare bands by file count.
+
+    -> (bands, bounds): per band the lane roots and loose units. A lane whose
+    parent falls in a stronger band leaves it and heads its own band, with
+    `under` (the parent's file count) for a chip; the parent's counts shrink.
+    """
+    n = ctx["n"]
+    core = max(2, math.ceil(ctx["lane_tier"] * n))
+    common = max(2, math.ceil(core / 2))
+    tier = lambda p: 0 if p >= core else 1 if p >= common else 2
+    bands = [{"lanes": [], "rows": []} for _ in TIERS]
+
+    def split(node, t):
+        keep = []
+        for k in node["kids"]:
+            kt = tier(_gpop(k))
+            if kt == t:
+                keep.append(k)
+            else:
+                k["g"]["under"] = _gpop(node)
+                k["g"]["under_mask"] = node["g"]["mask"]
+                bands[kt]["lanes"].append(k)
+            split(k, kt)
+        node["kids"] = keep
+        node["g"].update(_meta(_node_units(node), n))
+
+    for r in roots:
+        t = tier(_gpop(r))
+        bands[t]["lanes"].append(r)
+        split(r, t)
+    for u in loose:
+        bands[tier(_unit_span(u))]["rows"].append(u)
+    return bands, [(core, n), (common, core - 1), (0, common - 1)]
+
+
 def _lane_nodes(units, levels, ctx, parent_id, parent_path, carried):
-    """The `lane` level with sub-lanes: each lane lists its own rows, then its sub-lanes."""
+    """The `lane` level with sub-lanes: each lane lists its own rows, then its sub-lanes.
+
+    `lane_tier` wraps the lanes in core / common / rare bands; `lane_fold`
+    gathers sibling lanes holding fewer rows than it into one collapsed
+    `fold:` group.
+    """
     roots, loose = lane_forest(
         units,
         ctx["n"],
@@ -716,11 +816,35 @@ def _lane_nodes(units, levels, ctx, parent_id, parent_path, carried):
         ctx["lane_depth"],
         ctx.get("lane_link", 0.0),
     )
+    n = ctx["n"]
+    fold_min = ctx.get("lane_fold", 0)
+
+    def with_fold(lanes, parent, key):
+        """Built nodes of sibling lanes; two or more lanes under `fold_min` rows share one closed fold."""
+        cut = [k for k in lanes if k["g"]["rows"] < fold_min]
+        if len(cut) < 2:
+            cut = []
+        out = [build(k, parent["id"], parent["path"]) for k in lanes if k not in cut]
+        if cut:
+            fg = _meta([u for k in cut for u in _node_units(k)], n)
+            fg.update(id=f"fold:{key}", kind="fold", lanes=len(cut))
+            fg["path"] = [fg["id"]]
+            _graft(fg, parent["id"], parent["path"])
+            sub = [build(k, fg["id"], fg["path"]) for k in cut]
+            out.append(
+                {
+                    "container": True,
+                    "rank": FOLD_RANK,
+                    "id": fg["id"],
+                    "pairs": [(fg, [])] + _flat(sub, ctx),
+                }
+            )
+        return out
 
     def build(node, pid, ppath):
         g, own = _graft(node["g"], pid, ppath), node["items"]
         extras = {id(u): {**carried.get(id(u), {}), **e} for u, e in own}
-        kids = [build(k, g["id"], g["path"]) for k in node["kids"]]
+        kids = with_fold(node["kids"], g, g["mask"])
         if len(levels) == 1 and not ctx["merge"]:
             pairs = [(g, [(u, extras[id(u)]) for u, _ in own])] + _flat(kids, ctx)
         else:
@@ -735,8 +859,34 @@ def _lane_nodes(units, levels, ctx, parent_id, parent_path, carried):
             "pairs": pairs,
         }
 
-    nodes = [build(root, parent_id, parent_path) for root in roots]
-    return nodes + _nodes(loose, levels[1:], ctx, parent_id, parent_path, carried)
+    if not ctx.get("lane_tier"):
+        top = {"id": parent_id, "path": parent_path}
+        nodes = with_fold(roots, top, "top")
+        return nodes + _nodes(loose, levels[1:], ctx, parent_id, parent_path, carried)
+    nodes = []
+    bands, bounds = _lane_tiers(roots, loose, ctx)
+    for t, (band, (lo, hi)) in enumerate(zip(bands, bounds)):
+        if not band["lanes"] and not band["rows"]:
+            continue
+        lanes = _by_rank(band["lanes"], ctx["sort"], lambda k: k["g"])
+        held = [u for k in lanes for u in _node_units(k)] + band["rows"]
+        tg = _meta(held, n)
+        key, label = TIERS[t]
+        tg.update(id=f"tier:{key}", kind="tier", label=label, min=lo, max=hi)
+        tg["path"] = [tg["id"]]
+        _graft(tg, parent_id, parent_path)
+        inner = with_fold(lanes, tg, key)
+        inner += _nodes(band["rows"], levels[1:], ctx, tg["id"], tg["path"], carried)
+        nodes.append(
+            {
+                "container": True,
+                "rank": (len(TIERS) - t,),
+                "id": tg["id"],
+                # inside a band a lone function ranks with the lanes, by the same measure
+                "pairs": [(tg, [])] + _flat(inner, {**ctx, "sort": "files"}),
+            }
+        )
+    return nodes
 
 
 def _flat(nodes, ctx):
@@ -767,6 +917,223 @@ def _nest(units, levels, ctx, parent_id, parent_path, carried):
     sub-groups follow it. `carried` holds the per-unit extras of outer levels.
     """
     return _flat(_nodes(units, levels, ctx, parent_id, parent_path, carried), ctx)
+
+
+def _annotate(pairs, fmeta):
+    """Lane groups get what names them: `sample` (heaviest names), `hint` (shared name prefix), `tags` (capa / yara findings) and `fids` (heaviest functions)."""
+    rows = defaultdict(list)
+    for g, items in pairs:
+        for gid in g["path"]:
+            rows[gid] += [r for r, _ in items]
+    by_mask = {g["mask"]: g["id"] for g, _ in pairs if g.get("kind") == "lane"}
+    for g, _ in pairs:
+        if g.get("under_mask"):
+            g["under_id"] = by_mask.get(g["under_mask"])
+        if g.get("kind") not in ("lane", "tier", "fold"):
+            continue
+        best = {}
+        for r in rows[g["id"]]:
+            if k := name_key(r):
+                best[k] = max(best.get(k, 0), r["weight"])
+        g["sample"] = sorted(best, key=best.get, reverse=True)[:10]
+        if g["kind"] == "lane":
+
+            def finds(r):
+                return [
+                    t.split("#")[0]
+                    for f in _fids(r)
+                    for t in (fmeta.get(f) or {}).get("tags") or []
+                    if t.startswith(("capa:", "yara:"))
+                ]
+
+            # rows with a capa / yara finding first, then the heaviest
+            ranked = sorted(
+                ((bool(finds(r)), r["weight"], r) for r in rows[g["id"]]),
+                key=lambda x: x[:2],
+                reverse=True,
+            )
+            g["fids"] = [f for _, _, r in ranked[:LANE_FIDS] for f in _fids(r)[:1]]
+            found = Counter(t for _, _, r in ranked for t in set(finds(r)))
+            g["tags"] = [t for t, _ in found.most_common(5)]
+        pre = Counter(p[0] + p[1] for k in best if (p := name_prefix(k)))
+        if pre:
+            top, c = pre.most_common(1)[0]
+            if c >= 2 and c >= 0.4 * len(best):
+                g["hint"] = top + "*"
+
+
+LANE_NAMES_MAX = 40  # lanes named per request
+LANE_FIDS = 6  # heaviest functions of a lane the model reads findings and strings from
+LANE_CODE_FNS = 2  # ... and code from
+_DECL = re.compile(r"^\s*[A-Za-z_][\w ]*[ *]\**\w+(\[\d+\])?;\s*$")
+LANE_NAME_TTL = 30 * 86400
+LANE_NAME_RETRY = 120  # seconds before a lane that failed is tried again
+_LANE_POOL = None
+_LANE_STATE = {}  # content key -> {"status": "pending"|"failed", "at": time}
+_LANE_LOCK = threading.Lock()
+
+
+def _lane_evidence(l):
+    """(text, tags, strings, calls): the text the model names a lane from (names, findings, strings, library calls and callers of its functions, a little decompiled code) and the findings, strings and library calls it saw."""
+    from bsimvis.app.routes.llm import get_code_for_llm
+    from bsimvis.app.services import llm_tools, string_service
+    from bsimvis.app.services.function_service import fetch_function_data
+    from bsimvis.app.services.redis_client import get_redis
+
+    out = [
+        f"{l['rows']} functions found together in {l['files']} of {l['total']} files of a malware family."
+    ]
+    if l["sample"]:
+        out.append("Function names: " + ", ".join(l["sample"]))
+    tags, strings, code = list(l["tags"]), [], []
+    libs, inner, callers = Counter(), Counter(), Counter()
+    for fid in l["fids"][:LANE_FIDS]:
+        try:
+            coll, md5, addr = llm_tools.parse_func_id(fid)
+            _, _, meta, _ = fetch_function_data(coll, md5, addr, meta_only=True)
+            for t in (meta or {}).get("tags") or []:
+                t = t.split("#")[0]
+                if t.startswith(("capa:", "yara:")) and t not in tags:
+                    tags.append(t)
+            graph = llm_tools.get_call_graph(fid)
+            for c in graph.get("callees") or []:
+                if c.get("name") and not _DEFAULT_NAME.match(c["name"]):
+                    (libs if c.get("is_external") else inner)[c["name"]] += 1
+            for c in graph.get("callers") or []:
+                if c.get("name") and not _DEFAULT_NAME.match(c["name"]):
+                    callers[c["name"]] += 1
+            for rec in string_service.function_strings(get_redis(), coll, md5, addr):
+                v = " ".join(str(rec.get("value") or "").split())[:60]
+                if len(v) >= 4 and v not in strings:
+                    strings.append(v)
+            if len(code) < LANE_CODE_FNS:
+                src, _ = get_code_for_llm(fid)
+                # the signature and body, without the block of variable declarations
+                lines = [
+                    x
+                    for x in (src or {}).get("code", "").splitlines()
+                    if x.strip()
+                    and not x.lstrip().startswith("/*")
+                    and not _DECL.match(x)
+                ]
+                if lines:
+                    code.append("\n".join(lines[:14])[:600])
+        except Exception:
+            pass
+    if libs:
+        out.append("Library calls: " + ", ".join(k for k, _ in libs.most_common(12)))
+    if inner:
+        out.append("Named callees: " + ", ".join(k for k, _ in inner.most_common(6)))
+    if callers:
+        out.append("Called from: " + ", ".join(k for k, _ in callers.most_common(6)))
+    if tags:
+        out.append("Findings: " + ", ".join(tags[:8]))
+    if strings:
+        out.append("Strings: " + " | ".join(strings[:10]))
+    out += [f"Function {i + 1} code:\n{c}" for i, c in enumerate(code)]
+    calls = [k for k, _ in libs.most_common(6)]
+    return "\n".join(out)[:2600], tags, strings, calls
+
+
+def _name_lane(l, red):
+    """Worker: name one lane and cache it."""
+    from bsimvis.app.services.llm_service import llm_service
+
+    text, tags, strings, calls = _lane_evidence(l)
+    name, _ = llm_service.name_lane(text)
+    with _LANE_LOCK:
+        if name:
+            try:
+                value = {
+                    "name": name,
+                    "tags": tags[:4],
+                    "strings": strings[:4],
+                    "calls": calls,
+                }
+                red.set(f"nway:lane:{l['key']}", json.dumps(value), ex=LANE_NAME_TTL)
+            except Exception:
+                pass
+            _LANE_STATE.pop(l["key"], None)
+        else:
+            _LANE_STATE[l["key"]] = {"status": "failed", "at": time.time()}
+
+
+def lane_names(lanes):
+    """{'status': off|pending|ready, 'names': {lane id: name}, 'evidence': {lane id: {tags, strings}}} for lane groups.
+
+    `lanes` is the lane group meta: id, files, total, rows, sample, hint, tags,
+    fids. A name is cached by the lane's content (30 days). Lanes not seen yet
+    are named by a small pool of workers, one short model call each, the
+    biggest lane first; the answer lists the names ready so far and stays
+    `pending` until every lane has one (or failed). Never waits for the model.
+    """
+    global _LANE_POOL
+    import hashlib
+    from concurrent.futures import ThreadPoolExecutor
+
+    from bsimvis.app.services.config_service import config_service
+    from bsimvis.app.services.redis_client import get_queue_redis
+
+    clean = {}
+    for l in lanes[:LANE_NAMES_MAX]:
+        sample = [str(x)[:80] for x in (l.get("sample") or [])[:10]]
+        hint = str(l.get("hint") or "")[:40]
+        tags = [str(x)[:80] for x in (l.get("tags") or [])[:5]]
+        fids = [str(x) for x in (l.get("fids") or [])[:LANE_FIDS]]
+        if not (sample or hint or tags or fids):
+            continue
+        item = {
+            "files": int(l["files"]),
+            "total": int(l["total"]),
+            "sample": sample,
+            "hint": hint,
+            "tags": tags,
+            "fids": fids,
+            "v": 6,  # bump when the prompt changes, so cached names are redone
+        }
+        key = hashlib.sha1(json.dumps(item, sort_keys=True).encode()).hexdigest()
+        clean[str(l["id"])] = {**item, "rows": int(l["rows"]), "key": key}
+    red = get_queue_redis()
+    names, evidence, pending = {}, {}, False
+    todo = []
+    for lid, l in clean.items():
+        try:
+            hit = red.get(f"nway:lane:{l['key']}")
+        except Exception:
+            hit = None
+        if hit:
+            value = json.loads(hit)
+            names[lid] = value["name"]
+            evidence[lid] = {
+                "tags": value["tags"],
+                "strings": value["strings"],
+                "calls": value.get("calls", []),
+            }
+            continue
+        with _LANE_LOCK:
+            st = _LANE_STATE.get(l["key"])
+            if st and st["status"] == "pending" and time.time() - st["at"] < 180:
+                pending = True
+            elif (
+                st
+                and st["status"] == "failed"
+                and time.time() - st["at"] < LANE_NAME_RETRY
+            ):
+                pass
+            else:
+                _LANE_STATE[l["key"]] = {"status": "pending", "at": time.time()}
+                todo.append(l)
+                pending = True
+    if todo and not _LANE_POOL:
+        workers = int(config_service.get("llm.lane_parallel", 4))
+        _LANE_POOL = ThreadPoolExecutor(max_workers=max(1, workers))
+    for l in sorted(todo, key=lambda x: x["rows"], reverse=True):
+        _LANE_POOL.submit(_name_lane, l, red)
+    return {
+        "status": "pending" if pending else "ready",
+        "names": names,
+        "evidence": evidence,
+    }
 
 
 def group_rows(rows, doc, r, mode, params):
@@ -816,6 +1183,8 @@ def group_rows(rows, doc, r, mode, params):
         "lane_fit": LANE_FIT,
         "lane_depth": 1,
         "lane_link": 0.0,
+        "lane_tier": 0.0,
+        "lane_fold": 0,
         "sort_col": (
             params.get("sort_col") if params.get("sort_col") in SORT_COLS else ""
         ),
@@ -846,6 +1215,18 @@ def group_rows(rows, doc, r, mode, params):
             raise BadParams("group_lane_link must be a number between 0 and 1")
         if not 0 <= ctx["lane_link"] <= 1:
             raise BadParams("group_lane_link must be a number between 0 and 1")
+    if params.get("group_lane_tier"):
+        try:
+            ctx["lane_tier"] = float(params["group_lane_tier"])
+        except ValueError:
+            raise BadParams("group_lane_tier must be a number between 0 and 1")
+        if not 0 <= ctx["lane_tier"] <= 1:
+            raise BadParams("group_lane_tier must be a number between 0 and 1")
+    if params.get("group_lane_fold"):
+        try:
+            ctx["lane_fold"] = max(0, int(params["group_lane_fold"]))
+        except ValueError:
+            raise BadParams("group_lane_fold must be an integer")
     if params.get("group_prefix_min"):
         try:
             ctx["prefix_min"] = max(2, int(params["group_prefix_min"]))
@@ -859,6 +1240,7 @@ def group_rows(rows, doc, r, mode, params):
             raise BadParams("group_min_link must be a number")
         units, ctx["note"] = merge_units(rows, doc, r, evidence, min_link)
     pairs = _nest(units, levels, ctx, "", [], {})
+    _annotate(pairs, doc["fmeta"])
     # `fcover`: the files the group holds, one 0/1 per file column. Child and twin columns stand for
     # several files, so the column-level `union` alone would show a half-covered column as full.
     fids = [c["id"] for c in doc.get("file_columns") or doc["columns"]]
@@ -890,8 +1272,15 @@ def _entries(pairs, params):
         raise BadParams("group_flip must be a JSON list of group ids")
     flip = set(flip)
 
+    # a tier starts open and a fold closed, whatever the default
+    start = {
+        g["id"]: kind == "tier"
+        for g, _ in pairs
+        if (kind := g.get("kind")) in ("tier", "fold")
+    }
+
     def is_open(gid):
-        return (default == "all") != (gid in flip)
+        return start.get(gid, default == "all") != (gid in flip)
 
     entries = []
     for g, items in pairs:
@@ -917,6 +1306,24 @@ def demo():
             "cells": cells or {"A": f"f{mask}{name}"},
         }
 
+    # merged name: a real symbol beats a cluster name, a cluster name beats a tag name, an auto name loses
+    mem = lambda name, frm=None, w=1: {
+        "name": name,
+        "name_from": frm,
+        "weight": w,
+        "cells": {"A": name},
+    }
+    assert best_name(
+        [mem("FUN_1"), mem("tagged", "tag"), mem("clus", "cluster")], {}
+    ) == ("clus", "cluster")
+    assert best_name([mem("clus", "cluster"), mem("sym_1.cold"), mem("FUN_2")], {}) == (
+        "sym_1.cold",
+        None,
+    )
+    assert best_name([mem("a"), mem("b"), mem("b.cold")], {}) == ("b", None)
+    assert best_name(
+        [mem("a", None, 9), mem("b", None, 1)], {"nameb": {"user_name": "b"}}
+    ) == ("a", None)
     # lanes: a set of files shared by 2+ rows is a lane; the other rows are plain, not forced into one
     rows = [row(3, 10), row(3, 5), row(3, 1), row(1, 4), row(12, 2)]
     lanes = lane_groups(rows, 4, "weight")
@@ -1181,6 +1588,49 @@ def demo():
     ], heads
     assert lt[2][0]["path"] == heads
     assert sum(len(items) for _, items in lt) == 7
+    # tiers wrap lanes by file count; a lane in a weaker band than its parent heads its own band
+    tt = _nest(tree, ["lane"], {**lctx, "lane_tier": 0.75}, "", [], {})
+    theads = [g["id"] for g, _ in tt]
+    assert theads == [
+        "tier:core",
+        "tier:core/lane:1111",
+        "tier:common",
+        "tier:common/lane:1100",
+        "tier:rare",
+        "tier:rare/lane:1000",
+    ], theads
+    assert tt[3][0]["under"] == 4 and sum(len(i) for _, i in tt) == 7
+    # a fold gathers sibling lanes under `lane_fold` rows into one closed group
+    small = [row(15, 4, n) for n in "abc"] + [
+        row(m, 2, n) for m, n in zip((3, 3, 12, 12), "defg")
+    ]
+    ft = _nest(small, ["lane"], {**lctx, "lane_fold": 3}, "", [], {})
+    fheads = [g["id"] for g, _ in ft]
+    assert fheads[:2] == ["lane:1111", "lane:1111/fold:1111"], fheads
+    assert sorted(fheads[2:]) == [
+        "lane:1111/fold:1111/lane:0011",
+        "lane:1111/fold:1111/lane:1100",
+    ], fheads
+    assert ft[1][0]["kind"] == "fold" and ft[1][0]["lanes"] == 2
+    assert sum(len(i) for _, i in ft) == 7
+    # one small lane alone is not worth a fold
+    assert "fold" not in str(
+        _nest(small[:5], ["lane"], {**lctx, "lane_fold": 3}, "", [], {})
+    )
+    # in a band a lone function ranks with the lanes, not after them
+    lone = small + [row(7, 9, "h")]
+    bt = _nest(lone, ["lane"], {**lctx, "lane_tier": 0.5, "sort": "lanes"}, "", [], {})
+    ids = [g["id"] for g, _ in bt if not g.get("headless")]
+    assert ids[0] == "tier:core" and ids.index("tier:core/lane:1111") == 1, ids
+    # annotate: a shared prefix becomes the lane's hint
+    named = [row(15, 4, n) for n in ("attack_a", "attack_b", "attack_c", "main")]
+    nt = _nest(named, ["lane"], {**lctx, "lane_depth": 1}, "", [], {})
+    fm = {"fattack_a": {"tags": ["capa:network#send", "yara:x", "origin:lib"]}}
+    named[0]["cells"] = {"A": "fattack_a"}
+    _annotate(nt, fm)
+    assert nt[0][0]["tags"] == ["capa:network", "yara:x"], nt[0][0]
+    assert len(nt[0][0]["fids"]) == 4, nt[0][0]
+    assert nt[0][0]["hint"] == "attack_*" and "main" in nt[0][0]["sample"], nt[0][0]
     print("nway_group_service demo ok")
 
 

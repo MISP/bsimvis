@@ -295,6 +295,13 @@ window.Breadcrumbs = {
                     });
                     break;
                 }
+                if (window.location.pathname.endsWith('/nway/lineage') && window.NwayPanel) {
+                    const q = new URLSearchParams(window.location.search);
+                    q.delete('order'); q.delete('root');
+                    segments.push({ label: 'N-way diff', url: window.NwayPanel.backUrl(q), icon: 'fa-solid fa-code-compare' });
+                    segments.push({ label: 'Lineage', url: window.location.pathname + window.location.search, icon: 'fa-solid fa-sitemap' });
+                    break;
+                }
                 if (window.location.pathname.endsWith('/nway/graph') && window.NwayPanel) {
                     const q = new URLSearchParams(window.location.search);
                     segments.push({

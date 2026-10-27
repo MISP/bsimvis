@@ -1,16 +1,19 @@
 import hashlib
 import json
 import re
+from collections import Counter
 
-from flask import request
+from flask import current_app, request
 from flask_restx import abort
 
 from bsimvis.app.routes._list_query import fnum, in_bounds
 from bsimvis.app.routes.bin_sim import _fids_tags, _fn_haystack
 from bsimvis.app.services import (
+    nway_column_service,
     nway_diff_service,
     nway_facets_service,
     nway_group_service,
+    nway_lineage_service,
 )
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME
 from bsimvis.app.services.bin_sim_service import _origin_coll
@@ -25,9 +28,9 @@ _MD5 = re.compile(r"^[0-9a-f]{32}$")
 _PROGRESS_ID = re.compile(r"^[\w-]{8,40}$")
 
 
-def _members(collection, pool_id):
+def _members(collection, pool_id, tokens=None):
     """`md5s=` tokens (`coll:md5`, or bare md5 with `collection=`) -> [(coll, md5)]."""
-    tokens = [t.strip() for t in (request.args.get("md5s") or "").split(",")]
+    tokens = tokens or [t.strip() for t in (request.args.get("md5s") or "").split(",")]
     members = []
     for token in filter(None, tokens):
         coll, _, md5 = token.rpartition(":")
@@ -321,7 +324,8 @@ def _attach_clusters(r, rows, fmeta, pool_id, args):
     per_row, cards = _row_clusters(r, rows, fmeta, pool_id, args)
     for row, uuids in zip(rows, per_row):
         row["clusters"] = uuids
-        if _DEFAULT_NAME.match(row["name"]):
+        # a tag-carried name is only a fallback: a real cluster name beats it
+        if _DEFAULT_NAME.match(row["name"]) or row.get("name_from") == "tag":
             for u in uuids:
                 c = cards[u]
                 n = c.get("cluster_name") or ""
@@ -338,7 +342,13 @@ def _attach_clusters(r, rows, fmeta, pool_id, args):
 def _page(doc, args, r=None, pool_id=None):
     """Tab counts, then filter + sort + slice one tab of the rows."""
     rows, fmeta = doc["rows"], doc["fmeta"]
-    focus = doc["columns_mode"] == "focus"
+    cols = doc["columns"]
+    # two top-level `by` groups compare like Focus / Rest (side a = first group)
+    focus = doc["columns_mode"] == "focus" or (
+        doc["columns_mode"] == "by"
+        and len(cols) == 2
+        and not any(c.get("path") for c in cols)
+    )
     twin = doc["columns_mode"] == "twins"
     n = len(doc["file_columns"] if twin else doc["columns"])
     tab = args.get("tab", "core")
@@ -349,8 +359,9 @@ def _page(doc, args, r=None, pool_id=None):
     except ValueError:
         abort(400, "k must be an integer")
     side = args.get("side", "")
+    side = {"a": "focus", "b": "rest"}.get(side, side)
     if side not in ("", "focus", "rest"):
-        abort(400, "side must be focus or rest")
+        abort(400, "side must be focus, rest, a or b")
     scope = args.get("scope", "code")
     if scope not in ("code", "library", "all"):
         abort(400, "scope must be code, library or all")
@@ -446,6 +457,8 @@ def _page(doc, args, r=None, pool_id=None):
             for gid, row, extra in part
         ]
         needed = {p for gid, _, _ in part if gid in groups for p in groups[gid]["path"]}
+        # a sub-lane that left its parent's band names the parent, which may be closed
+        needed |= {groups[gid].get("under_id") for gid, _, _ in part if gid in groups}
         shown_groups = {g: m for g, m in groups.items() if g in needed}
         total = len(entries)
     else:
@@ -490,14 +503,239 @@ class _Reply(Exception):
     """An early (body, status) answer from _load_doc."""
 
 
+COLSET_TTL = 3600
+COLSET_MAX_GROUPS = 8
+
+
+def _load_colset():
+    raw = get_queue_redis().get(f"nway:colset:{request.args['col_set']}")
+    if not raw:
+        raise _Reply(({"error": "col_set_expired"}, 404))
+    colset = json.loads(raw)
+    colset["members"] = [tuple(m) for m in colset["members"]]
+    return colset
+
+
+def _col_pick(args):
+    try:
+        pick = json.loads(args.get("col_pick") or "[]")
+    except ValueError:
+        pick = None
+    if not isinstance(pick, list) or not all(isinstance(v, str) for v in pick):
+        abort(400, "col_pick must be a JSON list of values")
+    return pick
+
+
+def _by_groups(r, members, colset, args, open_ids):
+    """Metadata or saved-query column groups, with `col_open` groups opened to files."""
+    names = nway_diff_service._file_names(r, members)
+    try:
+        if colset:
+            groups = nway_column_service.query_groups(colset, names)
+        else:
+            groups = nway_column_service.meta_groups(
+                members,
+                nway_column_service.read_metas(r, members),
+                names,
+                args["col_by"],
+                args.get("col_by_multi", "first"),
+                _col_pick(args),
+                args.get("col_rest") == "drop",
+            )
+    except nway_diff_service.BadParams as e:
+        abort(400, str(e))
+    # unpicked files left out of every group leave the set
+    kept = {m for g in groups for m in g["members"]}
+    members = [m for m in members if nway_diff_service._col_id(*m) in kept]
+    groups = nway_diff_service.grow_columns(
+        groups, set(open_ids), lambda g: nway_diff_service.file_groups(g, names)
+    )
+    return groups, members
+
+
+def _group_queries(spec):
+    """A group's searches: `queries` (a list) or the single `query`, as dicts of search_files params."""
+    qs = spec.get("queries") if "queries" in spec else [spec.get("query")]
+    if not isinstance(qs, list) or not all(isinstance(q, dict) for q in qs):
+        return None
+    return qs
+
+
+PREVIEW_SAMPLE = 200
+
+
+def _preview_sample(groups, meta):
+    """The files the groups matched, for the Compare panel's live list: one row per
+    file with the indexes of the groups holding it. Capped; `shown` < `files` means cut.
+    """
+    held = {}
+    for gi, g in enumerate(groups):
+        for m in g["members"]:
+            held.setdefault(m, []).append(gi)
+    rows = []
+    for m, gs in list(held.items())[:PREVIEW_SAMPLE]:
+        f = meta.get(m) or {}
+        rows.append(
+            {
+                "id": m,
+                "name": f.get("file_name") or f.get("name") or m.rsplit(":", 1)[-1],
+                "language": f.get("language_id") or "",
+                "batch": f.get("batch_uuid") or "",
+                "tags": list(f.get("tags") or [])[:6],
+                "groups": gs,
+            }
+        )
+    return rows
+
+
+# file index fields the Compare filters can suggest values for
+VALUE_FIELDS = {
+    "tag": ("tags", "user_tags"),
+    "file_name": ("file_name",),
+    "batch_uuid": ("batch_uuid",),
+    "language_id": ("language_id",),
+    "filetype": ("filetype",),
+}
+
+
+def get_filter_values():
+    """Type-ahead for the Compare filters: `{field, values: [{value, files}]}` from the
+    file index registries of one collection, most used first."""
+    collection = request.args.get("collection")
+    fields = VALUE_FIELDS.get(request.args.get("field", ""))
+    if not collection or not fields:
+        abort(400, "collection and field (%s) required" % ", ".join(VALUE_FIELDS))
+    q = request.args.get("q", "").strip().lower()
+    limit = min(int(request.args.get("limit", 12)), 50)
+    r = get_redis()
+    buckets = {}
+    for field in fields:
+        prefix = f"{collection}:idx:file:{field}:"
+        for b in r.sscan_iter(
+            f"{collection}:reg:file:{field}", match=f"*{q}*" if q else "*", count=1000
+        ):
+            b = b.decode() if isinstance(b, bytes) else b
+            if b.startswith(prefix) and q in b[len(prefix) :].lower():
+                buckets[b[len(prefix) :]] = b
+            if len(buckets) >= 400:
+                break
+    pipe = r.pipeline(transaction=False)
+    for b in buckets.values():
+        pipe.scard(b)
+    rows = sorted(zip(buckets, pipe.execute()), key=lambda x: (-x[1], x[0]))
+    return {
+        "field": request.args["field"],
+        "values": [{"value": v, "files": n} for v, n in rows[:limit]],
+    }
+
+
+def post_column_set():
+    """Resolve file queries into column groups: one saved set, read back by `col_set`.
+
+    A group holds one or more searches and is their union. `within` (file ids,
+    `<collection>:<md5>`) keeps only matches inside that set. With `preview` nothing
+    is saved and empty groups are fine: it only reports the counts.
+    """
+    from bsimvis.app.routes.home import _call
+    from bsimvis.app.routes.search_file import search_files
+
+    body = request.get_json(silent=True) or {}
+    specs, preview = body.get("groups"), bool(body.get("preview"))
+    low = 1 if preview else 2
+    if (
+        not isinstance(specs, list)
+        or not low <= len(specs) <= COLSET_MAX_GROUPS
+        or not all(isinstance(g, dict) and _group_queries(g) is not None for g in specs)
+    ):
+        abort(400, f"groups: {low} to {COLSET_MAX_GROUPS} of {{label, queries}}")
+    scope = {k: body[k] for k in ("collection", "pool") if body.get(k)}
+    within = body.get("within")
+    if within is not None:
+        within = {
+            (_origin_coll(c), m.lower())
+            for c, m in (str(t).rsplit(":", 1) for t in within if ":" in str(t))
+        }
+    cap = nway_diff_service.caps()[0]
+    groups, members, meta = [], [], {}
+    for i, spec in enumerate(specs):
+        label = str(spec.get("label") or f"Group {i + 1}")[:60]
+        found = []
+        # an empty search would list the whole collection: a group needs a filter
+        for query in filter(None, _group_queries(spec)):
+            try:
+                res = _call(search_files, **{**scope, **query, "limit": cap + 1})
+            except (TypeError, ValueError):
+                abort(400, f"{label}: query must be search_files parameters")
+            if res.get("error"):
+                abort(400, f"{label}: {res['error']}")
+            for f in res.get("files") or []:
+                key = (
+                    _origin_coll(f["file_id"].split(":file:")[0]),
+                    f["file_id"].rsplit(":", 1)[1],
+                )
+                found.append(key)
+                meta[nway_diff_service._col_id(*key)] = f
+        found = list(dict.fromkeys(found))
+        if within is not None:
+            found = [m for m in found if m in within]
+        if not found and not preview:
+            abort(400, f"{label}: the query matches no file")
+        if len(found) > cap:
+            abort(400, f"{label}: matches more than {cap} files: narrow the query")
+        members += found
+        groups.append(
+            {"label": label, "members": [nway_diff_service._col_id(*m) for m in found]}
+        )
+    members = list(dict.fromkeys(members))
+    seen = Counter(m for g in groups for m in g["members"])
+    out = {
+        "files": len(members),
+        "overlap": sum(1 for n in seen.values() if n > 1),
+        "groups": [{"label": g["label"], "files": len(g["members"])} for g in groups],
+    }
+    if preview:
+        out["sample"] = _preview_sample(groups, meta)
+        return out
+    colset = {**scope, "members": members, "groups": groups}
+    raw = json.dumps(colset)
+    sid = hashlib.sha1(raw.encode()).hexdigest()[:12]
+    get_queue_redis().setex(f"nway:colset:{sid}", COLSET_TTL, raw)
+    return {"id": sid, "ttl": COLSET_TTL, **out}
+
+
+def get_column_axes():
+    """Keys `col_by` can split the given files on, with their value counts."""
+    # a POST body carries a set too long for a URL
+    body = request.get_json(silent=True) or {}
+    tokens = [str(t) for t in body.get("md5s") or []]
+    members = _members(request.args.get("collection"), request.args.get("pool"), tokens)
+    if len(members) < 2:
+        abort(400, "need at least two distinct files")
+    r = get_redis()
+    return {
+        "axes": nway_column_service.axes(
+            members, nway_column_service.read_metas(r, members)
+        )
+    }
+
+
 def _load_doc():
     """Parse the shared N-way params and compute the doc: (doc, redis, pool_id)."""
     pool_id = request.args.get("pool")
     collection = request.args.get("collection")
     cluster_uuid = (request.args.get("cluster_uuid") or "").strip().lower()
     columns = request.args.get("columns", "auto")
-    if columns not in ("auto", "files", "children", "twins"):
-        abort(400, "columns must be auto, files, children or twins")
+    colset = _load_colset() if request.args.get("col_set") else None
+    col_by = request.args.get("col_by", "")
+    if colset or col_by:
+        columns = "by"
+    if columns not in ("auto", "files", "children", "twins", "by"):
+        abort(400, "columns must be auto, files, children, twins or by")
+    if columns == "by" and not (colset or col_by):
+        abort(400, "columns=by needs col_by or col_set")
+    col_presence = request.args.get("col_presence")
+    if col_presence and col_presence not in nway_column_service.PRESENCE:
+        abort(400, "col_presence must be any, half or all")
     focus = [
         t.strip() for t in (request.args.get("focus") or "").split(",") if t.strip()
     ]
@@ -549,7 +787,11 @@ def _load_doc():
             ):
                 groups = node_groups if len(node_groups) > 1 else None
         else:
-            members = _members(collection, pool_id)
+            if colset:
+                members = colset["members"]
+                pool_id = pool_id or colset.get("pool")
+            else:
+                members = _members(collection, pool_id)
             if columns == "children":
                 # a file set grouped by the clusters it spans, under their smallest shared one
                 sc = not pool_id and _shared_cluster(r, members, request.args)
@@ -574,6 +816,10 @@ def _load_doc():
         # `solo` lets the function view graph a set that sits in one file.
         if len(members) < (1 if request.args.get("solo") else 2):
             abort(400, "need at least two distinct files")
+        if columns == "by":
+            groups, members = _by_groups(r, members, colset, request.args, open_ids)
+            if col_presence:
+                presence = nway_column_service.PRESENCE[col_presence]
         doc = nway_diff_service.compute(
             r,
             scope,
@@ -593,6 +839,7 @@ def _load_doc():
                 "focus_rule": focus_rule,
                 "child_presence": max(0.0, min(1.0, presence)),
                 "pair_k": None if pair_k is None else max(0, pair_k),
+                "groups_mode": "by" if columns == "by" else "children",
             },
         )
     except nway_diff_service.BadParams as e:
@@ -718,11 +965,12 @@ DEEP_CAP = 8  # neighbors kept per expanded row, from depth 2 on
 MAX_NODES = 60  # all levels together
 
 
-def _group_neighbors(r, doc, fids, role, row_of):
+def _group_neighbors(r, doc, fids, role, row_of, skip=()):
     """Callers/callees of `fids` regrouped into the doc's rows.
 
     Each item is one neighbor row (or an imported symbol, or a function outside
-    every row) with the source functions that reach it.
+    every row) with the source functions that reach it. `skip`: function ids
+    left out (the other members of a lane, which the graph draws itself).
     """
     fmeta = doc["fmeta"]
     pipe = r.pipeline(transaction=False)
@@ -732,6 +980,8 @@ def _group_neighbors(r, doc, fids, role, row_of):
     for src, members in zip(fids, pipe.execute()):
         for n in members:
             n = n.decode() if isinstance(n, bytes) else n
+            if n in skip:
+                continue
             if n.startswith("ext:"):
                 key = ("ext", n)
             elif n in row_of:
@@ -766,9 +1016,9 @@ HUB_CALLERS = 25  # a callee with more callers than this is skipped by `cocaller
 CALLEE_CAP = 20  # callee rows `cocallers` looks through
 
 
-def _walk(r, doc, fids, role, row_of, scope, depth):
+def _walk(r, doc, fids, role, row_of, scope, depth, skip=()):
     """Rows reached from `fids` hop by hop: (levels, truncated, visited keys, last frontier)."""
-    first = _group_neighbors(r, doc, fids, role, row_of)
+    first = _group_neighbors(r, doc, fids, role, row_of, skip)
     for item in first:
         item["parents"] = ["focus"]
     levels = [first]
@@ -787,7 +1037,7 @@ def _walk(r, doc, fids, role, row_of, scope, depth):
         nxt = {}
         for parent in frontier:
             src = [f for f in parent["cells"].values() if isinstance(f, str)]
-            for item in _group_neighbors(r, doc, src, role, row_of)[:DEEP_CAP]:
+            for item in _group_neighbors(r, doc, src, role, row_of, skip)[:DEEP_CAP]:
                 if item["key"] in visited:
                     continue
                 if item["key"] in nxt:
@@ -884,6 +1134,64 @@ def _cocallers(r, doc, fids, row_of, scope, depth):
     }
 
 
+def _lane_rows(group_id):
+    """The function ids of each row in one group of the table (a lane with its sub-lanes), [[fid, ...]].
+
+    Returns `(rows, info)`; `info` is each row's name and file cells, for drawing it.
+
+    Runs the list with the request's own table params, every group open and no
+    page limit, so the lane is the one the user sees. Aborts when the group is unknown.
+    """
+    args = {k: v for k, v in request.args.items() if k not in ("lane", "fids")}
+    args.update(group_open="all", group_flip="[]", limit=0, offset=0)
+    # `scope` of a neighbors call is the graph's; the lane belongs to the table's
+    if "lane_scope" in args:
+        args["scope"] = args.pop("lane_scope")
+    with current_app.test_request_context(query_string=args):
+        out = get_nway()
+    if isinstance(out, tuple):
+        abort(out[1] if len(out) > 1 else 400, "the table could not be listed")
+    groups = out.get("groups") or {}
+    if group_id not in groups:
+        abort(404, "unknown group")
+    rows, info = [], []
+    for it in out["items"]:
+        g = groups.get(it.get("g"))
+        if it.get("header") or not g or group_id not in g["path"]:
+            continue
+        rows.append([f for f in _row_fids(it) if isinstance(f, str)])
+        info.append(
+            {k: it.get(k) for k in ("name", "name_from")}
+            | {"cells": dict(it.get("files") or it["cells"])}
+        )
+    return rows, info
+
+
+def _lane_edges(r, rows):
+    """Calls between the members of a lane: [[caller row, callee row, n functions], ...]."""
+    member = {f: i for i, row in enumerate(rows) for f in row}
+    fids = list(member)
+    pipe = r.pipeline(transaction=False)
+    for f in fids:
+        pipe.smembers(f"{f}:callees")
+    count = {}
+    for f, callees in zip(fids, pipe.execute()):
+        for n in callees:
+            n = n.decode() if isinstance(n, bytes) else n
+            if n in member and member[n] != member[f]:
+                k = (member[f], member[n])
+                count[k] = count.get(k, 0) + 1
+    return [[a, b, n] for (a, b), n in sorted(count.items())]
+
+
+def get_nway_lane_fids():
+    """Function ids of every row of one lane (`lane` = its group id) of the table described by the same params as `/nway`."""
+    if not request.args.get("lane"):
+        abort(400, "lane is required")
+    rows, _ = _lane_rows(request.args["lane"])
+    return {"rows": rows, "fids": [f for row in rows for f in row]}
+
+
 def get_nway_neighbors():
     """Call-graph neighbors of one N-way row, regrouped into the doc's rows.
 
@@ -901,8 +1209,12 @@ def get_nway_neighbors():
     if role not in ("callers", "callees", "cocallers"):
         abort(400, "role must be callers, callees or cocallers")
     fids = [t for t in (request.args.get("fids") or "").split(",") if t]
+    lane = []
+    if not fids and request.args.get("lane"):
+        lane, lane_info = _lane_rows(request.args["lane"])
+        fids = [f for row in lane for f in row]
     if not fids:
-        abort(400, "fids is required")
+        abort(400, "fids or lane is required")
     try:
         depth = int(request.args.get("depth", 1))
     except ValueError:
@@ -921,8 +1233,9 @@ def get_nway_neighbors():
     if role == "cocallers":
         return _cocallers(r, doc, fids, row_of, scope, depth)
 
+    skip = frozenset(fids) if lane else frozenset()
     levels, truncated, visited, frontier = _walk(
-        r, doc, fids, role, row_of, scope, depth
+        r, doc, fids, role, row_of, scope, depth, skip
     )
 
     # Every expandable row says how many neighbors are not on screen: past the
@@ -944,12 +1257,12 @@ def get_nway_neighbors():
                 # a function outside every row is never expanded: all its edges are hidden
                 src, expands = [parent["key"].split(":", 1)[1]], True
             if expands:
-                nbrs = _group_neighbors(r, doc, src, role, row_of)
+                nbrs = _group_neighbors(r, doc, src, role, row_of, skip)
                 parent["beyond"] = sum(1 for i in nbrs if i["key"] not in visited)
                 parent["back"] = [i["key"] for i in nbrs if lvl.get(i["key"], n) < n]
             parent["other"] = sum(
                 1
-                for i in _group_neighbors(r, doc, src, opposite, row_of)
+                for i in _group_neighbors(r, doc, src, opposite, row_of, skip)
                 if i["key"] != focus_key
             )
 
@@ -959,7 +1272,7 @@ def get_nway_neighbors():
             shown.update(
                 f for f in item.get("cells", {}).values() if isinstance(f, str)
             )
-    return {
+    out = {
         "role": role,
         "of": len(fids),
         "depth": depth,
@@ -968,6 +1281,10 @@ def get_nway_neighbors():
         "truncated": truncated,
         "functions_metadata": {f: fmeta[f] for f in shown if f in fmeta},
     }
+    if lane and role == "callees":
+        out["lane_edges"] = _lane_edges(r, lane)
+        out["lane_rows"] = lane_info
+    return out
 
 
 def get_nway_facets():
@@ -1036,6 +1353,23 @@ def get_nway_block_titles():
     if not out.get("consensus"):
         return {"status": "off", "titles": {}}
     return nway_facets_service.block_titles(out["consensus"])
+
+
+def post_nway_lane_names():
+    """LLM names for lane groups (JSON body `{"lanes": [...]}`, each as the lane group meta plus `total`).
+
+    Never waits for the model: `status` is off (no LLM configured), pending
+    (poll again), ready or failed; `names` maps lane id to name.
+    """
+    if not nway_facets_service.llm_configured():
+        return {"status": "off", "names": {}}
+    lanes = (request.get_json(silent=True) or {}).get("lanes")
+    if not isinstance(lanes, list) or not all(
+        isinstance(l, dict) and {"id", "files", "total", "rows"} <= set(l)
+        for l in lanes
+    ):
+        abort(400, "lanes must be a list of lane groups (id, files, total, rows, ...)")
+    return nway_group_service.lane_names(lanes)
 
 
 def get_nway_block_explain():
@@ -1146,4 +1480,47 @@ def get_function_meta():
     except nway_diff_service.MemberMissing as e:
         return {"error": "unknown_functions", "missing": e.missing}, 404
     out["ref"] = ref_arg
+    return out
+
+
+def get_nway_lineage():
+    """Lineage tree of the files of a set (same params as `/nway`, plus `root`, `order`).
+
+    Read-only: it annotates the rows and pair edges `/nway` already computes.
+    """
+    order = request.args.get("order", "tree")
+    root = (request.args.get("root") or "").strip().lower() or None
+    try:
+        doc, _, _ = _load_doc()
+    except _Reply as e:
+        return e.args[0]
+    if doc["columns_mode"] != "files":
+        abort(400, "lineage needs file columns: use columns=files")
+    cols = doc["columns"]
+    if root and ":" not in root:
+        root = next((c["id"] for c in cols if c["md5"] == root), root)
+    file = (request.args.get("file") or "").strip().lower() or None
+    if file and ":" not in file:
+        file = next((c["id"] for c in cols if c["md5"] == file), file)
+    fmeta = doc["fmeta"]
+
+    def name_of(fid):
+        n = (fmeta.get(fid) or {}).get("name")
+        return n if n and not _DEFAULT_NAME.match(n) else None
+
+    try:
+        out = nway_lineage_service.build(
+            cols,
+            doc["rows"],
+            doc["edges"],
+            doc["min_edge"],
+            name_of,
+            root,
+            order,
+            file,
+        )
+    except nway_lineage_service.BadParams as e:
+        abort(400, str(e))
+    out["min_edge"] = doc["min_edge"]
+    out["warnings"] = doc["warnings"]
     return out

@@ -5001,6 +5001,197 @@ def _nway_rows(body):
     return {frozenset((r.get("files") or r["cells"]).values()) for r in rows}
 
 
+def test_nway_column_groups():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-quinquies – N-way column groups (col_by / col_set)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(
+            _color("\n[SKIP] Need two binaries – column group checks skipped.", YELLOW)
+        )
+        return
+    ax = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/column_axes",
+        params={"collection": COLLECTION, "md5s": f"{file_md5},{file_md5_2}"},
+        timeout=60,
+    )
+    check(
+        "nway column_axes: lists keys",
+        ax.status_code == 200 and isinstance(ax.json().get("axes"), list),
+        f"HTTP {ax.status_code} {ax.text[:200]}",
+    )
+
+    axp = requests.post(
+        f"{BASE_URL}/api/bin_sim/nway/column_axes",
+        json={"md5s": [f"{COLLECTION}:{file_md5}", f"{COLLECTION}:{file_md5_2}"]},
+        timeout=60,
+    )
+    check(
+        "nway column_axes: POST body works and never offers a one-value key",
+        axp.status_code == 200
+        and "collection" not in [a["key"] for a in axp.json().get("axes", [])],
+        f"HTTP {axp.status_code} {axp.text[:200]}",
+    )
+
+    st, _ = _nway(col_by="collection")
+    check("nway col_by: one shared value is rejected", st == 400, f"HTTP {st}")
+    st, body = _nway(col_by="file_name", tab="all")
+    check(
+        "nway col_by: a field with a value per file keeps the files as columns",
+        st == 200 and body["columns_mode"] == "by" and len(body["columns"]) == 2,
+        f"HTTP {st} {str((body or {}).get('columns_mode'))}",
+    )
+    n1, n2 = (c["label"] for c in body["columns"])
+    st, pk = _nway(col_by="file_name", col_pick=json.dumps([n2]), tab="all")
+    check(
+        "nway col_pick: one picked value + the rest as other",
+        st == 200 and [c["label"] for c in pk["columns"]] == [n2, "other"],
+        f"HTTP {st} {[c['label'] for c in (pk or {}).get('columns', [])]}",
+    )
+    st, pk = _nway(col_by="file_name", col_pick=json.dumps([n2, n1]), tab="all")
+    check(
+        "nway col_pick: picked values keep the order given",
+        st == 200 and [c["label"] for c in pk["columns"]] == [n2, n1],
+        f"HTTP {st}",
+    )
+    st, _ = _nway(col_by="file_name", col_pick=json.dumps([n2]), col_rest="drop")
+    check(
+        "nway col_pick: one value with the rest dropped is rejected",
+        st == 400,
+        f"HTTP {st}",
+    )
+    st, _ = _nway(col_by="file_name", col_pick="not json")
+    check("nway col_pick: bad JSON is rejected", st == 400, f"HTTP {st}")
+    st, _ = _nway(col_by="file_name", col_presence="bogus")
+    check("nway col_presence: bad value is rejected", st == 400, f"HTTP {st}")
+
+    post = lambda groups: requests.post(
+        f"{BASE_URL}/api/bin_sim/nway/columns",
+        json={"collection": COLLECTION, "groups": groups},
+        timeout=60,
+    )
+    pv = requests.post(
+        f"{BASE_URL}/api/bin_sim/nway/columns",
+        json={
+            "collection": COLLECTION,
+            "preview": True,
+            "groups": [
+                {
+                    "label": "A",
+                    "queries": [
+                        {"md5": file_md5},
+                        {"md5": file_md5_2},
+                        {"md5": file_md5},
+                    ],
+                },
+                {"label": "B", "queries": [{}]},
+            ],
+            "within": [f"{COLLECTION}:{file_md5}"],
+        },
+        timeout=60,
+    )
+    pvj = pv.json() if pv.status_code == 200 else {}
+    check(
+        "nway columns: preview unions queries, honours within, saves nothing",
+        pv.status_code == 200
+        and pvj.get("groups")
+        == [{"label": "A", "files": 1}, {"label": "B", "files": 0}]
+        and "id" not in pvj,
+        f"HTTP {pv.status_code} {pv.text[:200]}",
+    )
+    smp = pvj.get("sample") or []
+    check(
+        "nway columns: preview lists the matched files with their groups",
+        len(smp) == 1 and smp[0].get("groups") == [0] and smp[0].get("name"),
+        str(smp)[:200],
+    )
+    vr = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/values",
+        params={"collection": COLLECTION, "field": "tag", "limit": 5},
+        timeout=60,
+    )
+    vals = vr.json().get("values") if vr.status_code == 200 else None
+    check(
+        "nway values: tag autocomplete returns value/files rows",
+        isinstance(vals, list) and all({"value", "files"} <= set(v) for v in vals),
+        f"HTTP {vr.status_code} {vr.text[:200]}",
+    )
+    check(
+        "nway values: unknown field is rejected",
+        requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/values",
+            params={"collection": COLLECTION, "field": "bogus"},
+            timeout=60,
+        ).status_code
+        == 400,
+    )
+    check(
+        "nway columns: one group is rejected",
+        post([{"label": "A", "query": {"md5": file_md5}}]).status_code == 400,
+    )
+    check(
+        "nway columns: an empty query is rejected",
+        post(
+            [
+                {"label": "A", "query": {"md5": file_md5}},
+                {"label": "B", "query": {"md5": "0" * 32}},
+            ]
+        ).status_code
+        == 400,
+    )
+    res = post(
+        [
+            {"label": "A", "query": {"md5": file_md5}},
+            {"label": "B", "query": {"md5": file_md5_2}},
+        ]
+    )
+    ok = res.status_code == 200 and res.json().get("files") == 2
+    check(
+        "nway columns: two queries are saved",
+        ok,
+        f"HTTP {res.status_code} {res.text[:200]}",
+    )
+    if not ok:
+        return
+    sid = res.json()["id"]
+    st, body = _nway_set(sid, tab="all", limit=1000)
+    check(
+        "nway col_set: two columns compared",
+        st == 200 and body["columns_mode"] == "by" and len(body["columns"]) == 2,
+        f"HTTP {st}",
+    )
+    check(
+        "nway col_set: groups keep their order and labels",
+        [c["label"] for c in body["columns"]] == ["A", "B"]
+        and all(c["kind"] == "query" for c in body["columns"]),
+        str([(c["label"], c["kind"]) for c in body["columns"]]),
+    )
+    _, only_a = _nway_set(sid, tab="unique", side="a", limit=1000)
+    _, only_b = _nway_set(sid, tab="unique", side="b", limit=1000)
+    _, both = _nway_set(sid, tab="core", limit=1000)
+    total = len(only_a["items"]) + len(only_b["items"]) + len(both["items"])
+    check(
+        "nway col_set: both + A only + B only cover every row",
+        total == body["total"],
+        f"{total} vs {body['total']}",
+    )
+    st, _ = _nway_set("deadbeef0000")
+    check("nway col_set: unknown id is 404", st == 404, f"HTTP {st}")
+
+
+def _nway_set(sid, **params):
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway",
+        params={"col_set": sid, **params},
+        timeout=60,
+    )
+    try:
+        return resp.status_code, resp.json()
+    except ValueError:
+        return resp.status_code, None
+
+
 def test_nway_function_meta():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-quater – N-way function set hero (meta endpoint)", BOLD))
@@ -5131,6 +5322,87 @@ def test_nway_function_meta():
         "nway neighbors: solo=1 graphs a set in one file",
         r.status_code == 200 and "items" in r.json(),
         f"HTTP {r.status_code} {r.text[:120]}",
+    )
+
+
+def test_nway_lineage():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-quater – N-way lineage tree", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    # The pure part (3+ files, MST, recall evidence) runs on synthetic input.
+    from bsimvis.app.services import nway_lineage_service
+
+    try:
+        nway_lineage_service.demo()
+        check("nway lineage: pure service demo", True)
+    except AssertionError as e:
+        check("nway lineage: pure service demo", False, repr(e))
+
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – lineage endpoint skipped.", YELLOW))
+        return
+    base = {"collection": COLLECTION, "md5s": f"{file_md5},{file_md5_2}"}
+    url = f"{BASE_URL}/api/bin_sim/nway/lineage"
+    got = {}
+    for order in ("tree", "chain", "star"):
+        r = requests.get(url, params={**base, "order": order}, timeout=60)
+        got[order] = r.json() if r.status_code == 200 else {}
+        t = got[order]
+        n = {x["id"]: x["functions"] for x in t.get("nodes", [])}
+        check(
+            f"nway lineage {order}: N-1 edges, connected, counts match nodes",
+            r.status_code == 200
+            and len(t["edges"]) == len(n) - 1 == 1
+            and {e["child"] for e in t["edges"]} | {t["root"]} == set(n)
+            and all(
+                n[e["child"]] == e["shared"] + e["gained"]
+                and n[e["parent"]] == e["shared"] + e["lost"]
+                and e["recall_suspect"] <= e["gained"] + e["lost"]
+                for e in t["edges"]
+            ),
+            f"HTTP {r.status_code} {str(t)[:200]}",
+        )
+    check(
+        "nway lineage: the three orders share one edge shape",
+        len({tuple(sorted(e)) for t in got.values() for e in t.get("edges", [])}) == 1,
+    )
+    try:
+        for t in got.values():
+            nway_lineage_service.check_invariants(t)
+        ok = all(t["partitions"] and "core" in t for t in got.values())
+    except (AssertionError, KeyError, TypeError) as e:
+        ok = repr(e)
+    check(
+        "nway lineage: partitions and by_file add up for every order",
+        ok is True,
+        str(ok),
+    )
+    check(
+        "nway lineage: reuse classes present (none for 2 files: always tree-connected)",
+        all(
+            "reuse" in t and t["reuse_total"] == 0 and not t["reuse_skipped"]
+            for t in got.values()
+        ),
+    )
+    r = requests.get(url, params={**base, "file": file_md5}, timeout=60)
+    check(
+        "nway lineage: file= is accepted",
+        r.status_code == 200 and "by_file_for" in r.json(),
+    )
+    r = requests.get(url, params={**base, "root": file_md5_2}, timeout=60)
+    check(
+        "nway lineage: root= picks the root",
+        r.status_code == 200 and r.json()["root"] == f"{COLLECTION}:{file_md5_2}",
+    )
+    r = requests.get(url, params={**base, "order": "bogus"}, timeout=60)
+    check("nway lineage: bad order is a 400", r.status_code == 400)
+    r = requests.get(url, params={**base, "root": "0" * 32}, timeout=60)
+    check("nway lineage: unknown root is a 400", r.status_code == 400)
+    r = requests.get(url, params={**base, "order": "tree"}, timeout=60)
+    check(
+        "nway lineage: read-only, repeat call answers the same",
+        r.status_code == 200 and r.json() == got["tree"],
     )
 
 
@@ -5798,6 +6070,65 @@ def test_nway_diff():
         == {g["id"] for g in _l2["groups"].values()},
         f"{_ld and len(_ld['groups'])} vs {_l2 and len(_l2['groups'])}",
     )
+    # lane_fids: the functions of one lane of the table, and its call graph as one focus
+    _lane_id = next(
+        (
+            g
+            for g, m in (_ld or {"groups": {}})["groups"].items()
+            if m.get("kind") == "lane"
+        ),
+        None,
+    )
+    check("nway lane_fids: the sample has a lane", _lane_id is not None)
+    if _lane_id:
+        _lp = {
+            "collection": COLLECTION,
+            "md5s": f"{file_md5},{file_md5_2}",
+            "tab": "all",
+            "scope": "all",
+            "group": "lane",
+            "group_lane_depth": 3,
+            "lane": _lane_id,
+        }
+        _lf = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/lane_fids", params=_lp, timeout=60
+        )
+        _lj = _lf.json() if _lf.status_code == 200 else {}
+        check(
+            "nway lane_fids: a lane's rows come back as function ids",
+            _lf.status_code == 200
+            and _lj.get("fids")
+            and len(_lj["fids"]) == sum(map(len, _lj["rows"])),
+            f"HTTP {_lf.status_code}",
+        )
+        _ln = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/neighbors",
+            params={**_lp, "role": "callees"},
+            timeout=60,
+        )
+        check(
+            "nway neighbors: lane= takes the lane's functions as the focus",
+            _ln.status_code == 200 and _ln.json().get("of") == len(_lj.get("fids", [])),
+            f"HTTP {_ln.status_code}",
+        )
+        check(
+            "nway neighbors: a lane answers its members and the calls between them",
+            _ln.status_code == 200
+            and len(_ln.json().get("lane_rows", [])) == len(_lj.get("rows", []))
+            and all(
+                a != b and 0 <= a < len(_lj["rows"]) and 0 <= b < len(_lj["rows"])
+                for a, b, _n in _ln.json().get("lane_edges", [])
+            ),
+        )
+        check(
+            "nway lane_fids: an unknown lane is a 404",
+            requests.get(
+                f"{BASE_URL}/api/bin_sim/nway/lane_fids",
+                params={**_lp, "lane": "lane:nope"},
+                timeout=60,
+            ).status_code
+            == 404,
+        )
     _, _lk = _nway(
         tab="all",
         scope="all",
@@ -5814,6 +6145,48 @@ def test_nway_diff():
     check(
         "nway group: group_lane_link=2 is a 400",
         _nway(group="lane", group_lane_link=2)[0] == 400,
+    )
+    # tiers and folds only regroup: every row stays, tiers start open, folds closed
+    _, _lt = _nway(
+        tab="all",
+        scope="all",
+        limit=1000,
+        group="lane",
+        group_lane_depth=3,
+        group_lane_tier=0.5,
+        group_lane_fold=3,
+        group_open="all",
+    )
+    check(
+        "nway group: group_lane_tier wraps lanes in tier groups",
+        _lt and {g.get("kind") for g in _lt["groups"].values()} >= {"tier", "lane"},
+        f"{_lt and {g.get('kind') for g in _lt['groups'].values()}}",
+    )
+    check(
+        "nway group: lane groups carry what names them (sample, fids, tags)",
+        _lt
+        and all(
+            {"sample", "fids", "tags"} <= set(g)
+            for g in _lt["groups"].values()
+            if g.get("kind") == "lane"
+        ),
+    )
+    check(
+        "nway lane_names: bad body is a 400 (or off without an LLM)",
+        requests.post(
+            f"{BASE_URL}/api/bin_sim/nway/lane_names",
+            json={"lanes": [{"id": "x"}]},
+            timeout=30,
+        ).status_code
+        in (200, 400),
+    )
+    check(
+        "nway group: group_lane_tier=2 is a 400",
+        _nway(group="lane", group_lane_tier=2)[0] == 400,
+    )
+    check(
+        "nway group: group_lane_fold=x is a 400",
+        _nway(group="lane", group_lane_fold="x")[0] == 400,
     )
     check(
         "nway group: group_lane_depth=x is a 400",
@@ -9711,7 +10084,9 @@ if __name__ == "__main__":
         test_llm_agentic_analysis,
         test_bin_sim_diff_cache,
         test_nway_diff,
+        test_nway_column_groups,
         test_nway_function_meta,
+        test_nway_lineage,
         test_nway_cluster_entry,
         test_llm_pair_analysis_job,
         test_search_job,
@@ -9742,7 +10117,9 @@ if __name__ == "__main__":
         # Issues the /api/bin_sim/build whose doc the diff cache step reads.
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
         "test_nway_diff": ["test_search_filters_and_sorting"],
+        "test_nway_column_groups": ["test_search_filters_and_sorting"],
         "test_nway_function_meta": ["test_search_filters_and_sorting"],
+        "test_nway_lineage": ["test_search_filters_and_sorting"],
         "test_nway_cluster_entry": ["test_search_filters_and_sorting"],
         "test_llm_pair_analysis_job": ["test_search_filters_and_sorting"],
         "test_search_job": ["test_search_filters_and_sorting"],

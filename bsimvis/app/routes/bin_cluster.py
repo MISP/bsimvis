@@ -360,6 +360,8 @@ def list_bin_clusters():
         max_count = int(request.args.get("max_count") or 0)
         min_cohesion = float(request.args.get("min_cohesion") or 0)
         max_cohesion = float(request.args.get("max_cohesion") or 0)
+        min_avg_funcs = float(request.args.get("min_avg_funcs") or 0)
+        max_avg_funcs = float(request.args.get("max_avg_funcs") or 0)
         show_parents = request.args.get("show_parents", "false").lower() == "true"
         show_children = request.args.get("show_children", "false").lower() == "true"
         show_members = request.args.get("show_members", "false").lower() == "true"
@@ -550,6 +552,11 @@ def list_bin_clusters():
             if min_cohesion > 0 and m.get("cohesion_score", 0) < min_cohesion:
                 continue
             if max_cohesion > 0 and m.get("cohesion_score", 0) > max_cohesion:
+                continue
+            avg_funcs = _avg_function_count(m)
+            if min_avg_funcs > 0 and avg_funcs < min_avg_funcs:
+                continue
+            if max_avg_funcs > 0 and avg_funcs > max_avg_funcs:
                 continue
 
             valid_nodes.add(cid)

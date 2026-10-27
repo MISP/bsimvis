@@ -1129,13 +1129,20 @@
             return `${mark}<button class="nway-rename" data-rename-fids="${escapeAttr(fids.join(','))}" data-rename-name="${escapeAttr(row.name)}" title="Rename this function"><i class="fa-solid fa-pen"></i></button>`;
         }
 
+        // The coloured return type + name, drawn by the same renderer as the function search table.
+        _fnSig(row, opts = {}) {
+            const sig = this._rowSig(row);
+            if (!sig) return escapeHtml(row.name);
+            const f = this._fnData(sig.best.fid, sig.best.col);
+            return window.EntityRenderer.renderFunction({ ...f, user_name: '', function_name: row.name, return_type: sig.ret, parameters: sig.params }, { hideNote: true, showActions: false, ...opts });
+        }
+
         _nameSig(row, opts = {}) {
             const sig = this._rowSig(row);
             const name = escapeHtml(row.name);
             if (!sig) return `<div class="nway-namerow"><span>${name}</span>${this._renameBtn(row)}</div>`;
             const f = this._fnData(sig.best.fid, sig.best.col);
-            // Same renderer as the function search table, fed the guessed signature.
-            const fn = window.EntityRenderer.renderFunction({ ...f, user_name: '', function_name: row.name, return_type: sig.ret, parameters: sig.params }, { hideNote: true, showActions: false, ...opts });
+            const fn = this._fnSig(row, opts);
             // Tags land on the best candidate, the function the preview shows.
             // Pooled row tags carry bare user tags as `user:<tag>` (merge_tag_fields); unwrap them so bookmark/ignore still light up.
             const bareUser = t => /^user:[^:]+$/.test(t);
@@ -1183,7 +1190,7 @@
         // Right-hand dock in the table's own panel: simple function preview or a lean call graph.
         _dockDraw() {
             const { row, cells } = this._dockRow, tab = this._dockTab;
-            this._dockEl.innerHTML = `<div class="nway-dock-grip" title="Drag to resize"></div><div class="nway-dock-head"><b class="nway-dock-name" title="${escapeAttr(row.name)}">${escapeHtml(row.name)}</b>
+            this._dockEl.innerHTML = `<div class="nway-dock-grip" title="Drag to resize"></div><div class="nway-dock-head"><b class="nway-dock-name" title="${escapeAttr(row.name)}">${this._fnSig(row, { noClick: true })}</b>
                 <div class="view-toggle" style="margin:0">${[['preview', 'Function'], ['graph', 'Call graph']].map(([v, t]) => `<button class="view-btn${tab === v ? ' active' : ''}" data-dock-tab="${v}">${t}</button>`).join('')}</div>
                 <button class="nway-chip" data-dock-full title="Open the detailed N-way function view"><i class="fa-solid fa-up-right-from-square"></i></button>
                 <button class="nway-chip" data-dock-close title="Close">&times;</button></div>
@@ -2134,7 +2141,14 @@
             if (!this._dw || !this._cg) return;
             if (this.onCg) this.onCg(this._cgUrl());
             const st = this._cg, focus = this._cgFocus(), files = this._cgFiles();
-            const crumbs = st.stack.length < 2 ? '' : st.stack.map((f, i) => `<button class="nway-crumb" data-cg-crumb="${i}">${escapeHtml(f.name)}</button>`).join('<span class="dim">/</span>');
+            // The path walked so far: the panel keeps the last two steps and folds the rest into a menu, the full view lists every step.
+            const last = st.stack.length - 1;
+            const crumbBtn = i => `<button class="nway-crumb${i === last ? ' cur' : ''}" data-cg-crumb="${i}" title="${escapeAttr(st.stack[i].name)}">${escapeHtml(st.stack[i].name)}</button>`;
+            const keep = st.lean ? 2 : st.stack.length, early = Math.max(0, st.stack.length - keep);
+            const crumbs = st.stack.length < 2 ? '' : (early ? `<details class="nway-crumb-more"><summary title="Earlier steps">\u2026${early}</summary><div class="nway-crumb-menu">${st.stack.slice(0, early).map((_, i) => crumbBtn(i)).join('')}</div></details>` : '')
+                + st.stack.slice(early).map((_, i) => crumbBtn(early + i)).join('<span class="dim">\u203a</span>');
+            // Graph view: the focus function in the header, return type and name coloured as in the table (the panel's own header already has the row's).
+            const title = st.view === 'graph' && (!st.lean || st.stack.length > 1) ? `<div class="nway-cg-title">${this._fnSig({ name: focus.name, cells: focus.cells, name_from: focus.name_from }, { noClick: true })}</div>` : '';
             const scopeToggle = [['code', 'Code', AXIS.code.icon, AXIS.code.color], ['library', 'Library', AXIS.library.icon, AXIS.library.color], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']].map(([v, text, icon, color]) => `<span class="bsim-tag-pill" data-cg-scope="${v}" style="${window.binSimPillStyle(st.scope === v, color)} padding:4px 10px; font-size:0.78rem;"><i class="${icon}"></i>${text}</span>`).join('');
             const depthCtl = st.view === 'graph' ? `<label class="nway-ctl" title="How many hops to walk. Beyond the first, only rows in the selected scope are expanded (8 per row, 60 nodes)."><span class="nway-lbl">Depth</span><b>${st.depth}</b><input type="range" min="1" max="5" value="${st.depth}" data-cg-depth></label>` : '';
             const suggestCtl = st.view === 'graph' && st.suggest !== 'lanes' ? `<span class="nway-lbl" title="Auto: suggest merging cards on one side whose files barely overlap and that share a parent, probably one function split across files.">Group</span><div class="view-toggle" style="margin:0">${[['off', 'Off'], ['comp', 'Auto']].map(([v, t]) => `<button class="view-btn${(st.suggest || 'off') === v ? ' active' : ''}" data-cg-suggest="${v}">${t}</button>`).join('')}</div>` : '';
@@ -2151,12 +2165,14 @@
             else body = `<div class="dim nway-cg-legend"><i class="fa-solid fa-file-code"></i> files that have the function (color: how many) &middot; dot: the focus function there calls it &middot; <i class="fa-solid fa-link"></i> calls from the focus${st.view === 'graph' ? ' (edge width)' : ''}. Click to recenter.${st.co ? ' Dashed lines: other callers of the same callee.' : ''}${st.depth > 1 ? (st.view === 'graph' ? ' Further hops show in-scope rows only.' : ' The list shows the first hop; depth applies to the graph.') : ''}</div>` + (st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files));
             // The dock keeps the essentials: the axis is the table's, the rest lives in the full view.
             const head = st.lean
-                ? `<div class="nway-cg-crumbs">${crumbs}</div>${depthCtl}<div class="view-toggle" style="margin:0">${toggle.replace(/<button[^>]*data-cg-view="lanes"[^>]*>.*?<\/button>/, '')}</div>`
-                : `<div class="nway-cg-crumbs">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${depthCtl}${suggestCtl}${detailsCtl}${hueCtl}${selCtl}<div class="view-toggle" style="margin:0">${toggle}</div>`;
-            this._dw.innerHTML = `<div class="nway-cg-head">${head}${this.cgInit || st.lean ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
+                ? `<div class="nway-cg-crumbs${st.lean ? ' lean' : ''}">${crumbs}</div>${depthCtl}<div class="view-toggle" style="margin:0">${toggle.replace(/<button[^>]*data-cg-view="lanes"[^>]*>.*?<\/button>/, '')}</div>`
+                : `<div class="nway-cg-crumbs${st.lean ? ' lean' : ''}">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${depthCtl}${suggestCtl}${detailsCtl}${hueCtl}${selCtl}<div class="view-toggle" style="margin:0">${toggle}</div>`;
+            this._dw.innerHTML = `<div class="nway-cg-head">${title}${head}${this.cgInit || st.lean ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
                 ${st.view === 'list' ? `<div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells, name_from: focus.name_from }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>` : ''}
                 <div class="nway-cg-selbar" hidden></div>
                 <div class="nway-cg-body${st.selMode ? ' selmode' : ''}">${body}</div>`;
+            const cr = this._dw.querySelector('.nway-cg-crumbs');
+            if (cr) cr.scrollLeft = cr.scrollWidth;
             this._cgFillSims();
             this._cgSelSync();
             if (!err && st.nb && st.view === 'graph') {
@@ -2489,7 +2505,7 @@
             }).join('');
             const diff = g.kind === 'same' && g.fids?.length >= 2
                 ? `<button class="nway-gchip ev-n nway-merge-diff" data-merge-diff="${escapeAttr(g.id)}" title="N-way diff of all ${g.fids.length} functions in this merge" aria-label="N-way diff of all ${g.fids.length} functions in this merge, ${pct(g.cohesion)} cohesion">${pct(g.cohesion)}</button>` : '';
-            return `<tr class="nway-grow d${depth} k-${escapeAttr(g.kind || 'tag')} ${this._ratioCls(files.split('1').length - 1)}" style="--lane-c:${g.kind === 'lane' ? escapeAttr(this._laneColor(g) || 'var(--border)') : 'var(--border)'}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px"><button class="nway-gchev" data-gtoggle="${escapeAttr(g.id)}" aria-label="${closed ? 'Expand' : 'Collapse'} group" aria-expanded="${!closed}">${closed ? '&#9656;' : '&#9662;'}</button><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}${diff}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span>${g.kind === 'lane' ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${sq}</tr>`;
+            return `<tr class="nway-grow d${depth} k-${escapeAttr(g.kind || 'tag')} ${g.kind === 'tier' || g.kind === 'fold' ? '' : this._ratioCls((g.fcover || files).split('1').length - 1)}" style="--lane-c:${g.kind === 'lane' ? escapeAttr(this._laneColor(g) || 'var(--border)') : 'var(--border)'}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px"><button class="nway-gchev" data-gtoggle="${escapeAttr(g.id)}" aria-label="${closed ? 'Expand' : 'Collapse'} group" aria-expanded="${!closed}">${closed ? '&#9656;' : '&#9662;'}</button><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}${diff}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span>${g.kind === 'lane' ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${sq}</tr>`;
         }
 
         // Rows, with a header printed whenever a row's group path leaves the one printed last.
@@ -2545,7 +2561,8 @@
 
         // r-hi: every file, r-mid: half or more, r-low: fewer; the same classes the graph view colours its slots with.
         _ratioCls(n) {
-            const total = (this.data.file_columns || this.data.columns).length;
+            // files, not columns: twin / cluster columns stand for several files each
+            const total = (this.data.file_columns || this.data.columns.filter(c => !c.kind)).length;
             return n >= total ? 'r-hi' : n * 2 >= total ? 'r-mid' : 'r-low';
         }
 

@@ -2998,8 +2998,20 @@ a.home-card:hover,
 .nway-cgp { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; background: var(--card-bg); }
 .nway-cgp[hidden] { display: none; }
 .nway-cg-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
-.nway-cg-crumbs { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; font-size: 0.78rem; }
-.nway-crumb { background: none; border: none; padding: 0 2px; color: var(--accent); cursor: pointer; font: inherit; }
+.nway-cg-title { flex: 0 0 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.86rem; }
+.nway-cg-title > * { max-width: 100%; }
+.nway-dock-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nway-cg-crumbs { flex: 1; min-width: 0; display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; font-size: 0.76rem; overflow-x: auto; scrollbar-width: thin; }
+.nway-cg-crumbs.lean { overflow: visible; flex: 0 0 100%; }
+.nway-cg-crumbs.lean .nway-crumb { max-width: 120px; }
+.nway-crumb { flex: none; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; border: 1px solid var(--border); border-radius: 10px; padding: 0 8px; color: var(--dim); cursor: pointer; font: inherit; }
+.nway-crumb:hover { color: var(--accent); border-color: var(--accent); }
+.nway-crumb.cur { color: var(--text); border-color: color-mix(in srgb, var(--text) 40%, var(--border)); cursor: default; }
+.nway-crumb-more { position: relative; flex: none; }
+.nway-crumb-more summary { cursor: pointer; list-style: none; border: 1px solid var(--border); border-radius: 10px; padding: 0 8px; color: var(--dim); }
+.nway-crumb-more summary::-webkit-details-marker { display: none; }
+.nway-crumb-menu { position: absolute; z-index: 20; top: 100%; left: 0; margin-top: 4px; display: flex; flex-direction: column; gap: 3px; padding: 6px; max-height: 240px; overflow: auto; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); }
+.nway-crumb-menu .nway-crumb { max-width: 260px; text-align: left; }
 .nway-cg-focus { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .nway-cg-body { flex: 1; overflow: auto; padding: 8px 14px 20px; }
 .nway-cg-body:has(.nway-graph) { cursor: grab; }

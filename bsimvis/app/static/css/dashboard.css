@@ -3194,7 +3194,23 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-gchip { display: inline-block; font-size: 0.66rem; font-weight: 400; line-height: 1.5; padding: 0 6px; margin-left: 5px; border-radius: 9px; border: 1px solid var(--border); color: var(--dim); }
 .nway-gchip.ev-n { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .nway-gchip.ev-c, .nway-gchip.also { color: var(--info); border-color: color-mix(in srgb, var(--info) 55%, transparent); }
-.nway-lname { margin-left: 8px; font-weight: 400; font-style: italic; color: var(--dim); }
+/* Lane headers: what the lane is comes first, then how widely it is shared. */
+.nway-lname { font-size: 0.95rem; font-weight: 700; color: var(--accent); letter-spacing: 0.01em; }
+.nway-lname:empty { display: none; }
+.nway-lname.wait:empty { display: inline-block; width: 110px; height: 0.8rem; border-radius: 4px; background: linear-gradient(90deg, var(--border) 25%, var(--hover) 50%, var(--border) 75%); background-size: 200% 100%; animation: nway-shimmer 1.2s linear infinite; }
+@keyframes nway-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .nway-lname.wait:empty { animation: none; } }
+.nway-lcount { color: var(--dim); font-weight: 400; font-size: 0.78rem; }
+.nway-lcount b { color: var(--text); font-weight: 600; }
+.nway-table tr.nway-grow.k-lane td { border-top-width: 1px; }
+.nway-table tr.nway-grow.k-tier td { background: color-mix(in srgb, var(--accent) 9%, var(--bg)); border-top: 2px solid color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.nway-table tr.nway-grow.k-tier td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.nway-table tr.nway-grow.k-tier .nway-gt { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.74rem; }
+.nway-table tr.nway-grow.k-fold .nway-gt { font-weight: 400; color: var(--dim); font-style: italic; }
+.nway-table tr.nway-grow.k-fold td { background: var(--bg); }
+.nway-table tr.nway-grow.k-lane .nway-gchip.also { opacity: 0.75; }
+.nway-colgrip { position: absolute; top: 0; right: -3px; bottom: 0; width: 7px; cursor: col-resize; z-index: 6; }
+.nway-colgrip:hover, .nway-colgrip:active { background: color-mix(in srgb, var(--accent) 50%, transparent); }
 .nway-gchip.sub { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .nway-lane-lbl { position: sticky; left: 14px; display: inline-flex; align-items: center; gap: 8px; padding: 2px 8px; background: var(--card-bg); border-radius: 0 0 6px 6px; }
 .nway-lane-focus { z-index: 1; align-self: center; }

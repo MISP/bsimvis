@@ -323,9 +323,11 @@ class LLMService:
             "Name this lane in at most five words by what its functions have in "
             "common (for example 'network scanning', 'string helpers', 'UDP flood "
             "attack'). Function names that carry a rule or family prefix (for example "
-            "linux_trojan_x) are evidence of the family. Use only the evidence; if "
-            "it shows nothing, answer 'unnamed code'. Answer with the name "
-            "only.\n\n" + evidence
+            "linux_trojan_x) are evidence of the family. Library calls are "
+            "strong evidence of what the code does (socket and connect: network "
+            "client). Use only the evidence. When it is thin, say what the calls "
+            "or code show in five words; answer 'unnamed code' only when there is "
+            "nothing at all. Answer with the name only.\n\n" + evidence
         )
         try:
             response = Client(host=self.ollama_url, timeout=120).chat(

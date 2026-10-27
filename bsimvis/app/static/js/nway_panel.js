@@ -2412,7 +2412,17 @@
             const name = this._shownName((this._laneNames || {})[g.id]);
             const wait = this._lnBusy && !name && ((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length);
             const off = this.state.lane_names === 'off' || this.data.llm_names === false;
-            return `<span class="nway-lname${wait ? ' wait' : ''}${off ? ' off' : ''}" data-lname="${escapeAttr(g.id)}">${escapeHtml(name)}</span>`;
+            const fb = !name && !wait && !off ? this._laneFallback(g) : '';
+            return `<span class="nway-lname${wait ? ' wait' : ''}${off ? ' off' : ''}${fb ? ' fb' : ''}" data-lname="${escapeAttr(g.id)}"${fb ? ' title="The model found nothing to name this lane by; this is what it is made of."' : ''}>${escapeHtml(name || fb)}</span>`;
+        }
+
+        // A lane the model could not name: its main library calls, else its first function and how many more.
+        _laneFallback(g) {
+            const calls = (((this._laneEvid || {})[g.id] || {}).calls || []).slice(0, 3);
+            if (calls.length) return `calls ${calls.join(', ')}`;
+            const first = (g.fids || [])[0];
+            const rows = Number(g.rows) || 0;
+            return first ? `fn ${first.split(':').pop()}${rows > 1 ? ` +${rows - 1}` : ''}` : '';
         }
 
         // The nearest lane above this one: a sub-lane holds only files that are also in it.
@@ -2486,8 +2496,10 @@
                     this._laneEvid = { ...this._laneEvid, ...body.evidence };
                     const groups = this.data.groups || {};
                     this.el.querySelectorAll('[data-lname]').forEach(el => {
-                        el.textContent = this._shownName(this._laneNames[el.dataset.lname]);
-                        if (el.textContent) el.classList.remove('wait');
+                        const g = groups[el.dataset.lname], name = this._shownName(this._laneNames[el.dataset.lname]);
+                        el.classList.remove('wait');
+                        el.classList.toggle('fb', !name && !!g);
+                        el.textContent = name || (g ? this._laneFallback(g) : '');
                     });
                     this.el.querySelectorAll('[data-lpar]').forEach(el => {
                         const g = groups[el.dataset.lpar];

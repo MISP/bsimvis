@@ -943,7 +943,7 @@ _LANE_LOCK = threading.Lock()
 
 
 def _lane_evidence(l):
-    """(text, tags, strings): the text the model names a lane from (names, findings, strings and a little decompiled code of its heaviest functions) and the findings and strings it saw."""
+    """(text, tags, strings, calls): the text the model names a lane from (names, findings, strings, library calls and callers of its functions, a little decompiled code) and the findings, strings and library calls it saw."""
     from bsimvis.app.routes.llm import get_code_for_llm
     from bsimvis.app.services import llm_tools, string_service
     from bsimvis.app.services.function_service import fetch_function_data
@@ -955,6 +955,7 @@ def _lane_evidence(l):
     if l["sample"]:
         out.append("Function names: " + ", ".join(l["sample"]))
     tags, strings, code = list(l["tags"]), [], []
+    libs, inner, callers = Counter(), Counter(), Counter()
     for fid in l["fids"][:LANE_FIDS]:
         try:
             coll, md5, addr = llm_tools.parse_func_id(fid)
@@ -963,6 +964,13 @@ def _lane_evidence(l):
                 t = t.split("#")[0]
                 if t.startswith(("capa:", "yara:")) and t not in tags:
                     tags.append(t)
+            graph = llm_tools.get_call_graph(fid)
+            for c in graph.get("callees") or []:
+                if c.get("name") and not _DEFAULT_NAME.match(c["name"]):
+                    (libs if c.get("is_external") else inner)[c["name"]] += 1
+            for c in graph.get("callers") or []:
+                if c.get("name") and not _DEFAULT_NAME.match(c["name"]):
+                    callers[c["name"]] += 1
             for rec in string_service.function_strings(get_redis(), coll, md5, addr):
                 v = " ".join(str(rec.get("value") or "").split())[:60]
                 if len(v) >= 4 and v not in strings:
@@ -973,30 +981,44 @@ def _lane_evidence(l):
                 lines = [
                     x
                     for x in (src or {}).get("code", "").splitlines()
-                    if x.strip() and not _DECL.match(x)
+                    if x.strip()
+                    and not x.lstrip().startswith("/*")
+                    and not _DECL.match(x)
                 ]
                 if lines:
                     code.append("\n".join(lines[:14])[:600])
         except Exception:
             pass
+    if libs:
+        out.append("Library calls: " + ", ".join(k for k, _ in libs.most_common(12)))
+    if inner:
+        out.append("Named callees: " + ", ".join(k for k, _ in inner.most_common(6)))
+    if callers:
+        out.append("Called from: " + ", ".join(k for k, _ in callers.most_common(6)))
     if tags:
         out.append("Findings: " + ", ".join(tags[:8]))
     if strings:
         out.append("Strings: " + " | ".join(strings[:10]))
     out += [f"Function {i + 1} code:\n{c}" for i, c in enumerate(code)]
-    return "\n".join(out)[:2400], tags, strings
+    calls = [k for k, _ in libs.most_common(6)]
+    return "\n".join(out)[:2600], tags, strings, calls
 
 
 def _name_lane(l, red):
     """Worker: name one lane and cache it."""
     from bsimvis.app.services.llm_service import llm_service
 
-    text, tags, strings = _lane_evidence(l)
+    text, tags, strings, calls = _lane_evidence(l)
     name, _ = llm_service.name_lane(text)
     with _LANE_LOCK:
         if name:
             try:
-                value = {"name": name, "tags": tags[:4], "strings": strings[:4]}
+                value = {
+                    "name": name,
+                    "tags": tags[:4],
+                    "strings": strings[:4],
+                    "calls": calls,
+                }
                 red.set(f"nway:lane:{l['key']}", json.dumps(value), ex=LANE_NAME_TTL)
             except Exception:
                 pass
@@ -1036,7 +1058,7 @@ def lane_names(lanes):
             "hint": hint,
             "tags": tags,
             "fids": fids,
-            "v": 3,  # bump when the prompt changes, so cached names are redone
+            "v": 5,  # bump when the prompt changes, so cached names are redone
         }
         key = hashlib.sha1(json.dumps(item, sort_keys=True).encode()).hexdigest()
         clean[str(l["id"])] = {**item, "rows": int(l["rows"]), "key": key}
@@ -1051,7 +1073,11 @@ def lane_names(lanes):
         if hit:
             value = json.loads(hit)
             names[lid] = value["name"]
-            evidence[lid] = {"tags": value["tags"], "strings": value["strings"]}
+            evidence[lid] = {
+                "tags": value["tags"],
+                "strings": value["strings"],
+                "calls": value.get("calls", []),
+            }
             continue
         with _LANE_LOCK:
             st = _LANE_STATE.get(l["key"])

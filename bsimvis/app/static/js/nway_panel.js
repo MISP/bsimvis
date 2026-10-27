@@ -2622,7 +2622,8 @@
             } else if (g.kind === 'same') {
                 const ev = (g.evidence || []).map(k => k === 'name' ? chip('ev-n', 'name', 'The rows share a function name') : chip('ev-c', 'call position', 'The rows share a caller and a weak edge links them')).join('');
                 const more = `${this._missChip(g.sub, g.miss)}${g.also > 1 ? chip('also', `\u00d7${Number(g.also)}`, 'Listed under several tags on this axis.') : ''}`;
-                title = `${(g.names || []).map(x => `<span class="nway-gname">${escapeHtml(x)}</span>`).join(' + ')}${ev}${more}`;
+                const by = g.name_from ? `<span class="nway-by auto" title="Name recovered from a ${escapeAttr(g.name_from)} by automated analysis"><i class="fa-solid ${g.name_from === 'tag' ? 'fa-tag' : 'fa-diagram-project'}"></i></span>` : '';
+                title = `${(g.names || []).map((x, i) => `<span class="nway-gname">${escapeHtml(x)}${i ? '' : by}</span>`).join(' + ')}${ev}${more}`;
                 note = `${g.files} of ${n} files together${g.link ? ` &middot; best link ${Number(g.link).toFixed(2)}, under the edge` : ''}`;
             }
             // The files the group covers, one square per file column: the same grid as the rows below.

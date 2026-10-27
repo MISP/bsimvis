@@ -2139,7 +2139,7 @@
             const depthCtl = st.view === 'graph' ? `<label class="nway-ctl" title="How many hops to walk. Beyond the first, only rows in the selected scope are expanded (8 per row, 60 nodes)."><span class="nway-lbl">Depth</span><b>${st.depth}</b><input type="range" min="1" max="5" value="${st.depth}" data-cg-depth></label>` : '';
             const suggestCtl = st.view === 'graph' && st.suggest !== 'lanes' ? `<span class="nway-lbl" title="Auto: suggest merging cards on one side whose files barely overlap and that share a parent, probably one function split across files.">Group</span><div class="view-toggle" style="margin:0">${[['off', 'Off'], ['comp', 'Auto']].map(([v, t]) => `<button class="view-btn${(st.suggest || 'off') === v ? ' active' : ''}" data-cg-suggest="${v}">${t}</button>`).join('')}</div>` : '';
             const detailsCtl = st.view === 'graph' ? `<button class="view-btn${st.co ? ' active' : ''}" data-cg-details title="Also show the other functions that call what the focus calls (look-alikes and unmatched siblings; callees with more than 25 callers are skipped), and per card on hover its other callers / callees and calls back to earlier hops. Off by default: it can add a lot."><i class="fa-solid fa-diagram-project"></i> Details</button>` : '';
-            const hueCtl = `<button class="view-btn${this._hueOn ? ' active' : ''}" data-cg-hue title="Color each file's slot and column header, to match slots to columns. Off by default: the slots then show how many files have the function."><i class="fa-solid fa-palette"></i> Color files</button>`;
+            const hueCtl = `<button class="view-btn${this._hueOn ? ' active' : ''}" data-cg-hue title="Cluster colors: each file's slot takes the colour of its file or cluster column in the table. Off: the slots show how many files have the function."><i class="fa-solid fa-palette"></i> Cluster colors</button>`;
             const selCtl = st.view === 'graph' ? `<button class="view-btn${st.selMode ? ' active' : ''}" data-cg-select title="Select cards: click to toggle, drag the background to box-select (Shift adds). Ctrl-click works without this mode."><i class="fa-solid fa-object-group"></i> Select</button>` : '';
             const lanes = st.view === 'graph' && st.suggest === 'lanes';
             const toggle = [['list', 'List'], ['graph', 'Graph'], ['lanes', 'Lanes']].map(([v, t]) => `<button class="view-btn${(v === 'lanes' ? lanes : v === 'graph' ? st.view === 'graph' && !lanes : st.view === v) ? ' active' : ''}" data-cg-view="${v}">${t}</button>`).join('');
@@ -2489,7 +2489,7 @@
             }).join('');
             const diff = g.kind === 'same' && g.fids?.length >= 2
                 ? `<button class="nway-gchip ev-n nway-merge-diff" data-merge-diff="${escapeAttr(g.id)}" title="N-way diff of all ${g.fids.length} functions in this merge" aria-label="N-way diff of all ${g.fids.length} functions in this merge, ${pct(g.cohesion)} cohesion">${pct(g.cohesion)}</button>` : '';
-            return `<tr class="nway-grow d${depth} k-${escapeAttr(g.kind || 'tag')}" style="--lane-c:${g.kind === 'lane' ? escapeAttr(this._laneColor(g) || 'var(--border)') : 'var(--border)'}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px"><button class="nway-gchev" data-gtoggle="${escapeAttr(g.id)}" aria-label="${closed ? 'Expand' : 'Collapse'} group" aria-expanded="${!closed}">${closed ? '&#9656;' : '&#9662;'}</button><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}${diff}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span>${g.kind === 'lane' ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${sq}</tr>`;
+            return `<tr class="nway-grow d${depth} k-${escapeAttr(g.kind || 'tag')} ${this._ratioCls(files.split('1').length - 1)}" style="--lane-c:${g.kind === 'lane' ? escapeAttr(this._laneColor(g) || 'var(--border)') : 'var(--border)'}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px"><button class="nway-gchev" data-gtoggle="${escapeAttr(g.id)}" aria-label="${closed ? 'Expand' : 'Collapse'} group" aria-expanded="${!closed}">${closed ? '&#9656;' : '&#9662;'}</button><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}${diff}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span>${g.kind === 'lane' ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${sq}</tr>`;
         }
 
         // Rows, with a header printed whenever a row's group path leaves the one printed last.
@@ -2514,7 +2514,8 @@
             const also = row.also > 1 ? `<span class="nway-gchip also" title="This row has ${Number(row.also)} tags on this axis, so it is listed under each of them">&times;${Number(row.also)}</span>` : '';
             // Rows are indented one step past the header of the group they sit in, so a row with no partner lines up with the merged functions beside it.
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
-            return `<tr${depth ? ` class="nway-in" style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}>
+            const rc = this._ratioCls(Number(row.file_span || row.span) || 0);
+            return `<tr class="${depth ? 'nway-in ' : ''}${rc}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}>
                 <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
                 ${this._statsOff() ? '' : `<td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
@@ -2532,6 +2533,20 @@
                 try { this._so = localStorage.getItem('nway.stats') === '0'; } catch (e) { this._so = false; }
             }
             return this._so;
+        }
+
+        // File squares coloured by how many files hold the row (as in the graph view) instead of one colour per file or cluster.
+        _sqLane() {
+            if (this._sl == null) {
+                try { this._sl = localStorage.getItem('nway.sqlane') === '1'; } catch (e) { this._sl = false; }
+            }
+            return this._sl;
+        }
+
+        // r-hi: every file, r-mid: half or more, r-low: fewer; the same classes the graph view colours its slots with.
+        _ratioCls(n) {
+            const total = (this.data.file_columns || this.data.columns).length;
+            return n >= total ? 'r-hi' : n * 2 >= total ? 'r-mid' : 'r-low';
         }
 
         // The Function column is the one the user can drag wider or narrower; the width is remembered.
@@ -2606,7 +2621,8 @@
             const foldBtns = s.group || s.group_merge
                 ? '<span class="nway-fold"><button type="button" data-gall="open" title="Expand every group"><i class="fa-solid fa-angles-down"></i></button><button type="button" data-gall="close" title="Collapse every group"><i class="fa-solid fa-angles-up"></i></button></span>'
                 : '';
-            const th0 = c => th(c).replace('</th>', `${foldBtns}<span class="nway-colgrip" title="Drag to resize the Function column (double-click to reset)"></span></th>`);
+            const hdrBtns = `<span class="nway-fold"><button type="button" class="${this._statsOff() ? '' : 'on'}" data-stats-toggle title="${this._statsOff() ? 'Show' : 'Hide'} the Span, Features, Support, Cohesion and Cluster columns"><i class="fa-solid fa-table-columns"></i></button><button type="button" class="${this._sqLane() ? 'on' : ''}" data-sqmode title="${this._sqLane() ? 'Squares coloured by how many files have the function. Click for one colour per file or cluster.' : 'Squares coloured per file or cluster. Click to colour by how many files have the function.'}"><i class="fa-solid fa-palette"></i></button></span>`;
+            const th0 = c => th(c).replace('</th>', `${hdrBtns}${foldBtns}<span class="nway-colgrip" title="Drag to resize the Function column (double-click to reset)"></span></th>`);
             const lead = this._statsOff() ? th0(SORTS[0]) : th0(SORTS[0]) + SORTS.slice(1).map(th).join('') + '<th>Cluster</th>';
             if (this._tree().grouped) {
                 const bands = this._bands();
@@ -2709,7 +2725,7 @@
                 <div class="nway-card table-scope">
                     <div class="nway-body">${this._legend()}
                     <div class="nway-scroll">
-                        <table id="nway-table" class="nway-table" style="width:${this._tableWidth()}px">${this._colgroup()}
+                        <table id="nway-table" class="nway-table${this._sqLane() ? ' nway-sqlane' : ''}" style="width:${this._tableWidth()}px">${this._colgroup()}
                             <thead>${this._head()}</thead>
                             <tbody>${rows || `<tr><td colspan="${d.columns.length + 7}" class="gap">No rows in this tab.</td></tr>`}</tbody>
                             ${scroll ? `<tfoot><tr><td class="nway-sentinel" colspan="${d.columns.length + 7}"></td></tr></tfoot>` : ''}
@@ -2767,7 +2783,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-tok-rm],[data-sug-i],[data-cmp-show],[data-colpick],[data-colpick-clear],[data-more-toggle]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-sqmode],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-tok-rm],[data-sug-i],[data-cmp-show],[data-colpick],[data-colpick-clear],[data-more-toggle]');
             if (!t) return;
             if (t.dataset.lineage !== undefined) {
                 this._scrollSave();
@@ -2782,6 +2798,12 @@
             }
             if (t.dataset.bandall !== undefined) {
                 this._bandsAll = !this._bandsAll;
+                return this.render();
+            }
+            if (t.dataset.sqmode !== undefined) {
+                this._sl = !this._sqLane();
+                try { localStorage.setItem('nway.sqlane', this._sl ? '1' : '0'); } catch (err) { /* storage blocked */ }
+                this._scrollSave();
                 return this.render();
             }
             if (t.dataset.statsToggle !== undefined) {

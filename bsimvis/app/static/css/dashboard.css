@@ -3594,3 +3594,8 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-dock-code { overflow: auto; flex: 1; min-height: 0; font-size: 0.75rem; }
 .nway-dock-grip { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; }
 .nway-dock-grip:hover { background: var(--accent); opacity: .4; }
+
+/* Squares by how many files hold the row (the graph view's scheme) */
+.nway-sqlane tbody .nway-sq.on { background: var(--rc, var(--dim)); border-color: transparent; color: #111; }
+.nway-sqlane tbody .nway-sq.part { background: color-mix(in srgb, var(--rc, var(--dim)) 30%, transparent); border-color: var(--rc, var(--dim)); }
+.nway-fold button.on { color: var(--accent); }

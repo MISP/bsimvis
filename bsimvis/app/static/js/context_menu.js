@@ -1331,7 +1331,7 @@
         if (valueEl?.dataset.filterValue) return valueEl.dataset.filterValue.trim();
         const firstChild = cell.querySelector('[data-filter-value]');
         if (firstChild?.dataset.filterValue) return firstChild.dataset.filterValue.trim();
-        return (cell.dataset.filterValue || cell.innerText || '').trim();
+        return (cell.dataset.filterValue || cell.textContent || '').trim();
     };
 
     const cellFilter = (cell) => {
@@ -1385,7 +1385,7 @@
 
         const filterCell = cellFilter(cell);
         const table = cell.closest('table');
-        const header = (table?.id === 'data-table' ? document.getElementById('header-table') : table)?.querySelector('thead tr:not(.filter-row)')?.cells[cell.cellIndex]?.innerText.trim() || 'column';
+        const header = (table?.id === 'data-table' ? document.getElementById('header-table') : table)?.querySelector('thead tr:not(.filter-row)')?.cells[cell.cellIndex]?.textContent.trim() || 'column';
         const menu = document.createElement('div');
         menu.id = 'table-cell-context-menu';
         menu.className = 'context-menu';

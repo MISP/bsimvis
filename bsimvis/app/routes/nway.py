@@ -1161,7 +1161,8 @@ def _lane_rows(group_id):
             continue
         rows.append([f for f in _row_fids(it) if isinstance(f, str)])
         info.append(
-            {k: it.get(k) for k in ("name", "name_from")} | {"cells": dict(it["cells"])}
+            {k: it.get(k) for k in ("name", "name_from")}
+            | {"cells": dict(it.get("files") or it["cells"])}
         )
     return rows, info
 

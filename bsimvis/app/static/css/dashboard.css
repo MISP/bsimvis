@@ -3617,4 +3617,7 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-member { box-sizing: border-box; width: 200px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); display: flex; flex-direction: column; gap: 4px; }
 .nway-member.more { cursor: pointer; justify-content: center; }
 .nway-member.more:hover { border-color: var(--accent); }
+.nway-graph.hl .nway-member:not(.hl-on) { opacity: 0.12; }
+.nway-member { cursor: pointer; }
+.nway-member:hover, .nway-member:focus-visible { border-color: var(--accent); outline: none; }
 .nway-edge.lane { stroke-width: 2px; opacity: 0.8; }

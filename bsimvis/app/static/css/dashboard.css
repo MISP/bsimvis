@@ -3202,6 +3202,11 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 @media (prefers-reduced-motion: reduce) { .nway-lname.wait:empty { animation: none; } }
 .nway-lcount { color: var(--dim); font-weight: 400; }
 .nway-lcount b { color: var(--text); font-weight: 600; }
+.nway-lbar { width: 46px; height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; flex: none; }
+.nway-lbar i { display: block; height: 100%; background: var(--dim); }
+.nway-table tr.nway-grow.k-lane td { background: color-mix(in srgb, var(--lane-c) 6%, var(--card-bg)); }
+.nway-table tr.nway-grow.k-lane td:first-child { box-shadow: inset 3px 0 0 var(--lane-c), 1px 0 0 var(--border); }
+.nway-ltag { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.66rem; padding: 0 6px; border-radius: 9px; border: 1px solid; }
 .nway-lev { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 4px; padding-left: 18px; }
 .nway-lev:empty { display: none; }
 .nway-lev .nway-gchip { margin: 0; }

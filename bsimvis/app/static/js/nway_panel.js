@@ -2555,7 +2555,7 @@
             // real file counts: in a grouped-columns table a mask bit is a column group, not a file
             const nFiles = d ? (d.file_columns || d.columns.filter(c => !c.kind)).length : 0;
             const lanes = groups.filter(g => g.kind === 'lane' && ((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length)).slice(0, 40)
-                .map(g => ({ id: g.id, files: g.files || g.mask.split('1').length - 1, total: nFiles || g.mask.length, rows: g.rows, sample: g.sample || [], hint: g.hint || '', tags: g.tags || [], fids: g.fids || [] }));
+                .map(g => ({ id: g.id, files: g.files || g.mask.split('1').length - 1, total: nFiles || g.mask.length, rows: g.rows, sample: g.sample || [], hint: g.hint || '', tags: g.tags || [], fids: g.fids || [], name_fids: g.name_fids || [], tag_rows: g.tag_rows || 0 }));
             const sig = lanes.map(l => `${l.id}:${l.rows}`).join('|');
             if (sig === this._lnSig) return;
             this._lnSig = sig;

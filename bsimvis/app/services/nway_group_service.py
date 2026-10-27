@@ -407,6 +407,34 @@ def name_key(row):
     return name.lower() or None
 
 
+def best_name(members, fmeta):
+    """The name a merged function goes by -> (name, name_from), over its member rows.
+
+    Best source first: a name an analyst or the LLM gave, a real symbol, a
+    cluster name, a tag name, an auto name. Ties go to the name most members
+    carry (compiler suffixes ignored), then to the heaviest row.
+    """
+
+    def source(row):
+        name = row.get("name") or ""
+        if any((fmeta.get(f) or {}).get("user_name") == name for f in _fids(row)):
+            return 4
+        if _DEFAULT_NAME.match(name):
+            return 0
+        return {"cluster": 2, "tag": 1}.get(row.get("name_from"), 3)
+
+    votes = Counter(name_key(row) or row.get("name") for row in members)
+    best = max(
+        members,
+        key=lambda row: (
+            source(row),
+            votes[name_key(row) or row.get("name")],
+            row.get("weight", 0),
+        ),
+    )
+    return best["name"], best.get("name_from")
+
+
 def _best_links(edges, row_of):
     """{(row, row): best edge score} between functions of different rows."""
     shared = {id(e.fids): e for e in edges.values() if isinstance(e, PairEdges)}
@@ -654,6 +682,9 @@ def _expand(units, ctx, parent_id, parent_path, carried):
                 cohesion=sum(row.get("cohesion", 1.0) for row in members)
                 / len(members),
             )
+            best, m["name_from"] = best_name(members, ctx["fmeta"])
+            m["names"] = [best] + [x for x in m["names"] if x != best][:3]
+            m["name"] = best
             extra = carried.get(id(u), {})
             if extra.get("also", 0) > 1:
                 m["also"] = extra["also"]
@@ -1275,6 +1306,24 @@ def demo():
             "cells": cells or {"A": f"f{mask}{name}"},
         }
 
+    # merged name: a real symbol beats a cluster name, a cluster name beats a tag name, an auto name loses
+    mem = lambda name, frm=None, w=1: {
+        "name": name,
+        "name_from": frm,
+        "weight": w,
+        "cells": {"A": name},
+    }
+    assert best_name(
+        [mem("FUN_1"), mem("tagged", "tag"), mem("clus", "cluster")], {}
+    ) == ("clus", "cluster")
+    assert best_name([mem("clus", "cluster"), mem("sym_1.cold"), mem("FUN_2")], {}) == (
+        "sym_1.cold",
+        None,
+    )
+    assert best_name([mem("a"), mem("b"), mem("b.cold")], {}) == ("b", None)
+    assert best_name(
+        [mem("a", None, 9), mem("b", None, 1)], {"nameb": {"user_name": "b"}}
+    ) == ("a", None)
     # lanes: a set of files shared by 2+ rows is a lane; the other rows are plain, not forced into one
     rows = [row(3, 10), row(3, 5), row(3, 1), row(1, 4), row(12, 2)]
     lanes = lane_groups(rows, 4, "weight")

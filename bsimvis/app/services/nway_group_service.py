@@ -902,15 +902,23 @@ def _annotate(pairs, fmeta):
                 best[k] = max(best.get(k, 0), r["weight"])
         g["sample"] = sorted(best, key=best.get, reverse=True)[:10]
         if g["kind"] == "lane":
-            heavy = sorted(rows[g["id"]], key=lambda r: r["weight"], reverse=True)
-            g["fids"] = [f for r in heavy[:LANE_FIDS] for f in _fids(r)[:1]]
-            found = Counter(
-                t.split("#")[0]
-                for r in rows[g["id"]]
-                for f in _fids(r)[:1]
-                for t in (fmeta.get(f) or {}).get("tags") or []
-                if t.startswith(("capa:", "yara:"))
+
+            def finds(r):
+                return [
+                    t.split("#")[0]
+                    for f in _fids(r)
+                    for t in (fmeta.get(f) or {}).get("tags") or []
+                    if t.startswith(("capa:", "yara:"))
+                ]
+
+            # rows with a capa / yara finding first, then the heaviest
+            ranked = sorted(
+                ((bool(finds(r)), r["weight"], r) for r in rows[g["id"]]),
+                key=lambda x: x[:2],
+                reverse=True,
             )
+            g["fids"] = [f for _, _, r in ranked[:LANE_FIDS] for f in _fids(r)[:1]]
+            found = Counter(t for _, _, r in ranked for t in set(finds(r)))
             g["tags"] = [t for t, _ in found.most_common(5)]
         pre = Counter(p[0] + p[1] for k in best if (p := name_prefix(k)))
         if pre:
@@ -931,7 +939,7 @@ _LANE_LOCK = threading.Lock()
 
 
 def _lane_evidence(l):
-    """The text the model names a lane from: names, findings, strings and a little decompiled code of its heaviest functions."""
+    """(text, tags, strings): the text the model names a lane from (names, findings, strings and a little decompiled code of its heaviest functions) and the findings and strings it saw."""
     from bsimvis.app.routes.llm import get_code_for_llm
     from bsimvis.app.services import llm_tools, string_service
     from bsimvis.app.services.function_service import fetch_function_data
@@ -972,18 +980,20 @@ def _lane_evidence(l):
     if strings:
         out.append("Strings: " + " | ".join(strings[:10]))
     out += [f"Function {i + 1} code:\n{c}" for i, c in enumerate(code)]
-    return "\n".join(out)[:2400]
+    return "\n".join(out)[:2400], tags, strings
 
 
 def _name_lane(l, red):
     """Worker: name one lane and cache it."""
     from bsimvis.app.services.llm_service import llm_service
 
-    name, _ = llm_service.name_lane(_lane_evidence(l))
+    text, tags, strings = _lane_evidence(l)
+    name, _ = llm_service.name_lane(text)
     with _LANE_LOCK:
         if name:
             try:
-                red.set(f"nway:lane:{l['key']}", name, ex=LANE_NAME_TTL)
+                value = {"name": name, "tags": tags[:4], "strings": strings[:4]}
+                red.set(f"nway:lane:{l['key']}", json.dumps(value), ex=LANE_NAME_TTL)
             except Exception:
                 pass
             _LANE_STATE.pop(l["key"], None)
@@ -992,7 +1002,7 @@ def _name_lane(l, red):
 
 
 def lane_names(lanes):
-    """{'status': off|pending|ready, 'names': {lane id: name}} for lane groups.
+    """{'status': off|pending|ready, 'names': {lane id: name}, 'evidence': {lane id: {tags, strings}}} for lane groups.
 
     `lanes` is the lane group meta: id, files, total, rows, sample, hint, tags,
     fids. A name is cached by the lane's content (30 days). Lanes not seen yet
@@ -1022,12 +1032,12 @@ def lane_names(lanes):
             "hint": hint,
             "tags": tags,
             "fids": fids,
-            "v": 2,  # bump when the prompt changes, so cached names are redone
+            "v": 3,  # bump when the prompt changes, so cached names are redone
         }
         key = hashlib.sha1(json.dumps(item, sort_keys=True).encode()).hexdigest()
         clean[str(l["id"])] = {**item, "rows": int(l["rows"]), "key": key}
     red = get_queue_redis()
-    names, pending = {}, False
+    names, evidence, pending = {}, {}, False
     todo = []
     for lid, l in clean.items():
         try:
@@ -1035,7 +1045,9 @@ def lane_names(lanes):
         except Exception:
             hit = None
         if hit:
-            names[lid] = hit if isinstance(hit, str) else hit.decode()
+            value = json.loads(hit)
+            names[lid] = value["name"]
+            evidence[lid] = {"tags": value["tags"], "strings": value["strings"]}
             continue
         with _LANE_LOCK:
             st = _LANE_STATE.get(l["key"])
@@ -1056,7 +1068,11 @@ def lane_names(lanes):
         _LANE_POOL = ThreadPoolExecutor(max_workers=max(1, workers))
     for l in sorted(todo, key=lambda x: x["rows"], reverse=True):
         _LANE_POOL.submit(_name_lane, l, red)
-    return {"status": "pending" if pending else "ready", "names": names}
+    return {
+        "status": "pending" if pending else "ready",
+        "names": names,
+        "evidence": evidence,
+    }
 
 
 def group_rows(rows, doc, r, mode, params):

@@ -2352,10 +2352,21 @@
             return [col.members.filter(m => g.fcover[d._fidx.get(m)] === '1').length, col.members.length];
         }
 
-        // The lane's shared name prefix and, once the model has answered, its name.
+        // The lane's name once the model has answered; a placeholder while it is still working.
         _laneName(g) {
             const name = this._shownName((this._laneNames || {})[g.id]);
-            return `${g.hint ? `<span class="nway-gchip ev-n" title="Most of this lane's functions share this name prefix">${escapeHtml(g.hint)}</span>` : ''}<span class="nway-lname" data-lname="${escapeAttr(g.id)}">${escapeHtml(name)}</span>`;
+            const wait = this._lnBusy && !name && ((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length);
+            return `<span class="nway-lname${wait ? ' wait' : ''}" data-lname="${escapeAttr(g.id)}">${escapeHtml(name)}</span>`;
+        }
+
+        // What backs the name: the shared prefix, capa / yara findings and a few strings the lane's functions use.
+        _laneEv(g) {
+            const ev = (this._laneEvid || {})[g.id] || {};
+            const tags = [...new Set([...(g.tags || []), ...(ev.tags || [])].map(t => t.split('#')[0]))].slice(0, 4);
+            const chip = (text, title, cls) => `<span class="nway-gchip${cls ? ` ${cls}` : ''}" title="${escapeAttr(title)}">${escapeHtml(text)}</span>`;
+            return (g.hint ? chip(g.hint, "Most of this lane's functions share this name prefix") : '')
+                + tags.map(t => chip(t.startsWith('yara:') ? `yara ${t.split(':').pop()}` : t, `${t}: a finding on this lane's functions`)).join('')
+                + (ev.strings || []).map(t => chip(`"${t}"`, 'A string the lane\'s functions use', 'str')).join('');
         }
 
         _shownName(name) { return !name || /^unnamed/i.test(name) ? '' : name; }
@@ -2369,6 +2380,7 @@
             if (sig === this._lnSig) return;
             this._lnSig = sig;
             if (!lanes.length) { this._laneNames = {}; return; }
+            this._lnBusy = true;
             for (let i = 0; i < 120 && this._lnSig === sig && this.el.isConnected; i++) {
                 let body = null;
                 try {
@@ -2378,11 +2390,21 @@
                 if (this._lnSig !== sig) return;
                 if (body && body.names) {
                     this._laneNames = { ...this._laneNames, ...body.names };
-                    this.el.querySelectorAll('[data-lname]').forEach(el => { el.textContent = this._shownName(this._laneNames[el.dataset.lname]); });
+                    this._laneEvid = { ...this._laneEvid, ...body.evidence };
+                    const groups = this.data.groups || {};
+                    this.el.querySelectorAll('[data-lname]').forEach(el => {
+                        el.textContent = this._shownName(this._laneNames[el.dataset.lname]);
+                        if (el.textContent) el.classList.remove('wait');
+                    });
+                    this.el.querySelectorAll('[data-lev]').forEach(el => { if (groups[el.dataset.lev]) el.innerHTML = this._laneEv(groups[el.dataset.lev]); });
                 }
                 if (body && body.status === 'pending') { await new Promise(r => setTimeout(r, 1000)); continue; }
                 if (body && body.status === 'off') this.data.llm_names = false;
                 break;
+            }
+            if (this._lnSig === sig) {
+                this._lnBusy = false;
+                this.el.querySelectorAll('.nway-lname.wait').forEach(el => el.classList.remove('wait'));
             }
         }
 
@@ -2397,8 +2419,8 @@
             } else if (g.kind === 'lane') {
                 const cov = g.fcover || g.mask;
                 const mix = g.core ? chip('also', `${Number(g.lanes)} lanes · ${g.core.split('1').length - 1} shared`, 'Not a real set of files: related lanes grouped under the files they cover together. The count is the files every lane in it holds.') : '';
-                const under = g.under ? chip('also', `\u2282 ${Number(g.under)}-file lane`, 'Inside a lane in a stronger band: its files are all in that lane.') : '';
-                title = `<b>${cov.split('1').length - 1} of ${cov.length} files</b>${mix}${under}${this._laneName(g)}`;
+                const under = g.under ? chip('', `\u2282 ${Number(g.under)}-file lane`, 'Inside a lane in a stronger band: its files are all in that lane.') : '';
+                title = `${this._laneName(g)}<span class="nway-lcount"><b>${cov.split('1').length - 1}</b> of ${cov.length} files</span>${mix}${under}`;
             } else if (g.kind === 'tier') {
                 const hi = Number(g.max), lo = Number(g.min);
                 title = `<b>${escapeHtml(g.label)}</b> <span class="dim">${lo ? (hi > lo ? `${lo}\u2013${hi}` : `${lo}`) : `up to ${hi}`} files</span>`;
@@ -2419,7 +2441,7 @@
             }).join('');
             const diff = g.kind === 'same' && g.fids?.length >= 2
                 ? `<button class="nway-gchip ev-n nway-merge-diff" data-merge-diff="${escapeAttr(g.id)}" title="N-way diff of all ${g.fids.length} functions in this merge" aria-label="N-way diff of all ${g.fids.length} functions in this merge, ${pct(g.cohesion)} cohesion">${pct(g.cohesion)}</button>` : '';
-            return `<tr class="nway-grow d${depth}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px"><button class="nway-gchev" data-gtoggle="${escapeAttr(g.id)}" aria-label="${closed ? 'Expand' : 'Collapse'} group" aria-expanded="${!closed}">${closed ? '&#9656;' : '&#9662;'}</button><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}${diff}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span></div></td>${sq}</tr>`;
+            return `<tr class="nway-grow d${depth}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px"><button class="nway-gchev" data-gtoggle="${escapeAttr(g.id)}" aria-label="${closed ? 'Expand' : 'Collapse'} group" aria-expanded="${!closed}">${closed ? '&#9656;' : '&#9662;'}</button><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}${diff}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span>${g.kind === 'lane' ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${sq}</tr>`;
         }
 
         // Rows, with a header printed whenever a row's group path leaves the one printed last.
@@ -2822,7 +2844,7 @@
             if (t.dataset.lnames !== undefined) {
                 this.state.lane_names = t.checked ? 'on' : 'off';
                 this._lnSig = null;
-                if (!t.checked) this._laneNames = {};
+                if (!t.checked) { this._laneNames = {}; this._laneEvid = {}; }
                 if (this.onState) this.onState({ ...this.state });
                 this.render();
             } else if (t.dataset.ev) {

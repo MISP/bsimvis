@@ -3194,7 +3194,18 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-gchip { display: inline-block; font-size: 0.66rem; font-weight: 400; line-height: 1.5; padding: 0 6px; margin-left: 5px; border-radius: 9px; border: 1px solid var(--border); color: var(--dim); }
 .nway-gchip.ev-n { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .nway-gchip.ev-c, .nway-gchip.also { color: var(--info); border-color: color-mix(in srgb, var(--info) 55%, transparent); }
-.nway-lname { margin-left: 8px; font-weight: 400; font-style: italic; color: var(--dim); }
+/* Lane headers: the name in the table's own font and size, the evidence chips on a second line. */
+.nway-lname { font-weight: 600; color: var(--text); }
+.nway-lname:empty { display: none; }
+.nway-lname.wait:empty { display: inline-block; width: 90px; height: 0.7rem; border-radius: 4px; background: linear-gradient(90deg, var(--border) 25%, var(--hover) 50%, var(--border) 75%); background-size: 200% 100%; animation: nway-shimmer 1.2s linear infinite; }
+@keyframes nway-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .nway-lname.wait:empty { animation: none; } }
+.nway-lcount { color: var(--dim); font-weight: 400; }
+.nway-lcount b { color: var(--text); font-weight: 600; }
+.nway-lev { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 4px; padding-left: 18px; }
+.nway-lev:empty { display: none; }
+.nway-lev .nway-gchip { margin: 0; }
+.nway-gchip.str { font-family: 'Consolas', monospace; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nway-colgrip { position: absolute; top: 0; right: -3px; bottom: 0; width: 7px; cursor: col-resize; z-index: 6; }
 .nway-colgrip:hover, .nway-colgrip:active { background: color-mix(in srgb, var(--accent) 50%, transparent); }
 .nway-gchip.sub { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }

@@ -326,9 +326,17 @@ class LLMService:
             "attack', 'low-level byte utilities'). Function names that carry a "
             "rule or family prefix (for example linux_trojan_x) are evidence of "
             "the family. Library calls are strong evidence of what the code does "
-            "(socket and connect: network client). Always give a description: when "
+            "(socket and connect: network client). Strings (paths, commands, "
+            "messages, credentials) are strong evidence. Rule findings are "
+            "automatic matches and can be wrong. Name only what the evidence "
+            "lines show: no API, system or technology none of them mentions. The "
+            "platform line is context; never describe the platform itself. "
+            "Say what the code does: the lane's malware family is already known, so "
+            "a family name alone is not a description. "
+            "Always give a description: when "
             "the evidence is thin, describe the general kind of code it looks like. "
-            "Never answer 'unknown' or 'unnamed'. Answer with the description only."
+            "Never answer 'unknown' or 'unnamed', and never answer with code, a "
+            "signature or a FUN_ name. Answer with the description only."
         )
         tries = (
             {"think": False, "options": {"num_predict": 20, "num_ctx": 2560}},
@@ -358,8 +366,10 @@ class LLMService:
                 error = str(e)
                 continue
             name = " ".join(text.strip().strip("\"'`*.").split())[:60]
+            # a refusal, or code echoed back (a FUN_ name, a signature), gets the second try
             if name and not re.match(r"(?i)(unnamed|unknown|unclear)", name):
-                return name, None
+                if not re.search(r"FUN_|undefined\d|\w\(", name):
+                    return name, None
         return "", error
 
     def explain_block_change(self, ctx):

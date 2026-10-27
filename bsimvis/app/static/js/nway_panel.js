@@ -49,6 +49,8 @@
     // Widths in px: Function, Span, Features, Support, Cohesion, Cluster, then one square column per file.
     const DATA_COLS = [380, 64, 90, 90, 90, 210];
     const SQ_COL = 28;
+    // Names a lane focus in the call graph: not one function, so no signature and no rename.
+    const LANE_MARK = '\u29c9 ';
     const BAND_H = 18;
     const GROUP_SORTS = [['files', 'File coverage'], ['lanes', 'Lanes first'], ['weight', 'Features'], ['rows', 'Rows']];
     const LOW_SUPPORT = 0.5;
@@ -1089,6 +1091,7 @@
         // list over its functions. The best function carries that signature (ties
         // broken by feature count) and feeds the hover preview.
         _rowSig(row) {
+            if (String(row.name).startsWith(LANE_MARK)) return null;
             const src = row.files || row.cells;
             const sigOf = m => formatSigComponent('', m.return_type, '', m.parameters);
             const items = [];
@@ -1114,6 +1117,7 @@
 
         // Pencil beside a row's name: opens the rename dialog for every function of the row.
         _renameBtn(row) {
+            if (String(row.name).startsWith(LANE_MARK)) return '';
             const fids = Object.values(row.files || row.cells || {}).filter(v => typeof v === 'string');
             if (!fids.length) return '';
             // Graph cards and drill-down focuses only carry name + cells: read the source off the function metadata.
@@ -1187,6 +1191,30 @@
             this._dockDraw();
         }
 
+        // The call graph of a whole lane: the dock's graph with the lane's functions as one focus.
+        // The server resolves the lane's functions (`lane` + the table's params); each lane function keeps its own callers and callees,
+        // so functions that never call each other still show what they share.
+        async _laneGraph(id) {
+            const g = (this.data.groups || {})[id];
+            if (!g) return;
+            const qs = this._listQs();
+            qs.set('lane', id);
+            let body = null;
+            try {
+                const res = await fetch(`/api/bin_sim/nway/lane_fids?${qs.toString()}`);
+                body = res.ok ? await res.json() : null;
+            } catch (e) { body = null; }
+            if (!body || !body.rows.length) return;
+            const laneRow = { n: body.rows.length };
+            body.rows.forEach((fids, i) => fids.forEach(f => { laneRow[f] = i; }));
+            // one function per file stands for the lane in the file strip
+            const cells = {};
+            for (const c of this._cgFiles()) { const f = body.fids.find(x => x.includes(`:func:${c.md5}:`)); if (f) cells[c.id] = f; }
+            const name = LANE_MARK + (this._shownName((this._laneNames || {})[id]) || `${g.mask.split('1').length - 1}-file lane`);
+            this._dockTab = 'graph';
+            this._cgOpen({ name, cells, lane: id, laneRow });
+        }
+
         // Right-hand dock in the table's own panel: simple function preview or a lean call graph.
         _dockDraw() {
             const { row, cells } = this._dockRow, tab = this._dockTab;
@@ -1198,7 +1226,7 @@
             const body = this._dockEl.querySelector('.nway-dock-body');
             if (tab === 'graph') {
                 // the graph follows the table's code axis
-                this._cgStart(row.name, cells, { name_from: row.name_from, scope: this.state.scope, lean: true }, body);
+                this._cgStart(row.name, cells, { name_from: row.name_from, scope: this.state.scope, lean: true, lane: row.lane, laneRow: row.laneRow }, body);
                 return;
             }
             this._cg = null;
@@ -1236,7 +1264,7 @@
         _cgStart(name, cells, init, host) {
             const prev = this._cg || {};
             this._cg = {
-                stack: [{ name, cells, pieces: init.pieces, name_from: init.name_from, row: init.row }],
+                stack: [{ name, cells, pieces: init.pieces, name_from: init.name_from, row: init.row, lane: init.lane, laneRow: init.laneRow }],
                 view: init.view || prev.view || 'graph',
                 scope: init.scope || prev.scope || this.state.scope || 'code',
                 outside: init.outside || prev.outside || 'merge',
@@ -1499,7 +1527,12 @@
 
         async _cgFetch(focus, role) {
             const qs = this._docQs();
-            qs.set('fids', Object.values(focus.cells).join(','));
+            if (focus.lane) {
+                // the lane's functions are resolved on the server from the table's own params
+                for (const [k, v] of this._listQs()) qs.set(k, v);
+                qs.set('lane', focus.lane);
+                qs.set('lane_scope', this.state.scope);
+            } else qs.set('fids', Object.values(focus.cells).join(','));
             qs.set('role', role);
             qs.set('depth', this._cg.depth);
             qs.set('scope', this._cg.scope);
@@ -1735,6 +1768,11 @@
 
         _cgChips(m, st, it, files) {
             const pres = it.kind === 'row' ? `<span class="nway-reach ${st.cls}" title="the function exists in ${m.np} of ${files.length} files"><i class="fa-solid fa-file-code"></i> ${m.np}/${files.length}</span>` : '';
+            const lr = this._cgFocus().laneRow;
+            if (lr) {
+                const k = new Set(Object.keys(it.sources || {}).map(f => lr[f]).filter(v => v !== undefined)).size;
+                return `${pres}<span class="nway-edgecnt" title="linked with ${k} of ${lr.n} lane functions (in ${m.ne} files)"><i class="fa-solid fa-link"></i> ${k}/${lr.n} fn</span>`;
+            }
             return `${pres}<span class="nway-edgecnt" title="called from ${m.ne} of ${Number(it.of)} focus functions"><i class="fa-solid fa-link"></i> ${m.ne}/${Number(it.of)}</span>`;
         }
 
@@ -2416,8 +2454,9 @@
         // What backs the name: the shared prefix, findings and a few strings the lane's functions use.
         _laneEv(g) {
             const ev = (this._laneEvid || {})[g.id] || {};
+            const graphBtn = `<button type="button" class="nway-gchip nway-lanegraph" data-lane-graph="${escapeAttr(g.id)}" title="Open the call graph of this lane's functions together: who calls them, what they call, and whether they are called together"><i class="fa-solid fa-diagram-project"></i> call graph</button>`;
             const chip = (text, title, cls) => `<span class="nway-gchip${cls ? ` ${cls}` : ''}" title="${escapeAttr(title)}">${escapeHtml(text)}</span>`;
-            return (g.hint ? chip(g.hint, "Most of this lane's functions share this name prefix") : '')
+            return graphBtn + (g.hint ? chip(g.hint, "Most of this lane's functions share this name prefix") : '')
                 + this._laneTags(g).map(t => this._tagBadge(t)).join('')
                 + (ev.strings || []).map(t => chip(`"${t}"`, 'A string the lane\'s functions use', 'str')).join('');
         }
@@ -2800,7 +2839,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-sqmode],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-tok-rm],[data-sug-i],[data-cmp-show],[data-colpick],[data-colpick-clear],[data-more-toggle]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-tok-rm],[data-sug-i],[data-cmp-show],[data-colpick],[data-colpick-clear],[data-more-toggle]');
             if (!t) return;
             if (t.dataset.lineage !== undefined) {
                 this._scrollSave();
@@ -2817,6 +2856,7 @@
                 this._bandsAll = !this._bandsAll;
                 return this.render();
             }
+            if (t.dataset.laneGraph) return this._laneGraph(t.dataset.laneGraph);
             if (t.dataset.sqmode !== undefined) {
                 this._sl = !this._sqLane();
                 try { localStorage.setItem('nway.sqlane', this._sl ? '1' : '0'); } catch (err) { /* storage blocked */ }

@@ -3,7 +3,7 @@ import json
 import re
 from collections import Counter
 
-from flask import request
+from flask import current_app, request
 from flask_restx import abort
 
 from bsimvis.app.routes._list_query import fnum, in_bounds
@@ -1131,6 +1131,41 @@ def _cocallers(r, doc, fids, row_of, scope, depth):
     }
 
 
+def _lane_rows(group_id):
+    """The function ids of each row in one group of the table (a lane with its sub-lanes), [[fid, ...]].
+
+    Runs the list with the request's own table params, every group open and no
+    page limit, so the lane is the one the user sees. Aborts when the group is unknown.
+    """
+    args = {k: v for k, v in request.args.items() if k not in ("lane", "fids")}
+    args.update(group_open="all", group_flip="[]", limit=0, offset=0)
+    # `scope` of a neighbors call is the graph's; the lane belongs to the table's
+    if "lane_scope" in args:
+        args["scope"] = args.pop("lane_scope")
+    with current_app.test_request_context(query_string=args):
+        out = get_nway()
+    if isinstance(out, tuple):
+        abort(out[1] if len(out) > 1 else 400, "the table could not be listed")
+    groups = out.get("groups") or {}
+    if group_id not in groups:
+        abort(404, "unknown group")
+    rows = []
+    for it in out["items"]:
+        g = groups.get(it.get("g"))
+        if it.get("header") or not g or group_id not in g["path"]:
+            continue
+        rows.append([f for f in _row_fids(it) if isinstance(f, str)])
+    return rows
+
+
+def get_nway_lane_fids():
+    """Function ids of every row of one lane (`lane` = its group id) of the table described by the same params as `/nway`."""
+    if not request.args.get("lane"):
+        abort(400, "lane is required")
+    rows = _lane_rows(request.args["lane"])
+    return {"rows": rows, "fids": [f for row in rows for f in row]}
+
+
 def get_nway_neighbors():
     """Call-graph neighbors of one N-way row, regrouped into the doc's rows.
 
@@ -1148,8 +1183,10 @@ def get_nway_neighbors():
     if role not in ("callers", "callees", "cocallers"):
         abort(400, "role must be callers, callees or cocallers")
     fids = [t for t in (request.args.get("fids") or "").split(",") if t]
+    if not fids and request.args.get("lane"):
+        fids = [f for row in _lane_rows(request.args["lane"]) for f in row]
     if not fids:
-        abort(400, "fids is required")
+        abort(400, "fids or lane is required")
     try:
         depth = int(request.args.get("depth", 1))
     except ValueError:

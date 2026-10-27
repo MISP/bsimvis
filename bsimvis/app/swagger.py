@@ -2597,11 +2597,28 @@ class BinSimDiff(Resource):
         return diff_api()
 
 
+@ns_bin_sim.route("/nway/lane_fids")
+class BinSimNwayLaneFids(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "lane": "Group id of a lane (a key of `groups` in /nway)",
+            "group": "Same table params as /nway (md5s / cluster_uuid, group, group_lane_*, q, tags, ...)",
+        }
+    )
+    def get(self):
+        """Function ids of every row in one lane, as `rows` ([fid, ...] per row) and flat `fids`."""
+        from bsimvis.app.routes.nway import get_nway_lane_fids
+
+        return get_nway_lane_fids()
+
+
 @ns_bin_sim.route("/nway/neighbors")
 class BinSimNwayNeighbors(Resource):
     @ns_bin_sim.doc(
         params={
             "fids": "Comma-separated function ids of one N-way row (its cells)",
+            "lane_scope": "With lane: the table's scope (this call's own scope is the graph's)",
+            "lane": "Instead of fids: the id of a group of the table (a lane) described by the same table params as /nway; its rows' functions are the focus together",
             "role": "callees (default), callers, or cocallers (the other callers of the focus's callees)",
             "depth": "How many hops to walk from the row, 1 (default) to 5; later hops are capped (8 per row, 60 nodes) and return in `levels`",
             "scope": "code, library or all (default): only rows in this scope are expanded past the first hop",

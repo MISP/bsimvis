@@ -6070,6 +6070,56 @@ def test_nway_diff():
         == {g["id"] for g in _l2["groups"].values()},
         f"{_ld and len(_ld['groups'])} vs {_l2 and len(_l2['groups'])}",
     )
+    # lane_fids: the functions of one lane of the table, and its call graph as one focus
+    _lane_id = next(
+        (
+            g
+            for g, m in (_ld or {"groups": {}})["groups"].items()
+            if m.get("kind") == "lane"
+        ),
+        None,
+    )
+    check("nway lane_fids: the sample has a lane", _lane_id is not None)
+    if _lane_id:
+        _lp = {
+            "collection": COLLECTION,
+            "md5s": f"{file_md5},{file_md5_2}",
+            "tab": "all",
+            "scope": "all",
+            "group": "lane",
+            "group_lane_depth": 3,
+            "lane": _lane_id,
+        }
+        _lf = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/lane_fids", params=_lp, timeout=60
+        )
+        _lj = _lf.json() if _lf.status_code == 200 else {}
+        check(
+            "nway lane_fids: a lane's rows come back as function ids",
+            _lf.status_code == 200
+            and _lj.get("fids")
+            and len(_lj["fids"]) == sum(map(len, _lj["rows"])),
+            f"HTTP {_lf.status_code}",
+        )
+        _ln = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/neighbors",
+            params={**_lp, "role": "callees"},
+            timeout=60,
+        )
+        check(
+            "nway neighbors: lane= takes the lane's functions as the focus",
+            _ln.status_code == 200 and _ln.json().get("of") == len(_lj.get("fids", [])),
+            f"HTTP {_ln.status_code}",
+        )
+        check(
+            "nway lane_fids: an unknown lane is a 404",
+            requests.get(
+                f"{BASE_URL}/api/bin_sim/nway/lane_fids",
+                params={**_lp, "lane": "lane:nope"},
+                timeout=60,
+            ).status_code
+            == 404,
+        )
     _, _lk = _nway(
         tab="all",
         scope="all",

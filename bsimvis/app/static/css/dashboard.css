@@ -3611,3 +3611,5 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-sqlane tbody .nway-sq.on { background: var(--rc, var(--dim)); border-color: transparent; color: #111; }
 .nway-sqlane tbody .nway-sq.part { background: color-mix(in srgb, var(--rc, var(--dim)) 30%, transparent); border-color: var(--rc, var(--dim)); }
 .nway-fold button.on { color: var(--accent); }
+.nway-lanegraph { cursor: pointer; background: none; font: inherit; font-size: 0.66rem; }
+.nway-lanegraph:hover { color: var(--accent); border-color: var(--accent); }

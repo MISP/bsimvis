@@ -311,44 +311,56 @@ class LLMService:
         return out, None
 
     def name_lane(self, evidence):
-        """A name of at most five words for one lane of an N-way table, from its `evidence` text.
+        """A description of at most six words for one lane of an N-way table, from its `evidence` text.
 
-        Short plain-text answer on a small context, and the model is kept loaded
-        (`keep_alive`): a warm call takes a fraction of a second. Returns
-        (name, error).
+        The first try is a short plain-text answer on a small context with the
+        model kept loaded (`keep_alive`): a warm call takes a fraction of a
+        second. A refusal or an empty answer gets one slower try that lets the
+        model think and asks for a general description. Returns (name, error).
         """
         self._load_config()
         model = config_service.get("llm.lane_model", self.model)
-        prompt = (
-            "Name this lane in at most five words by what its functions have in "
+        base = (
+            "Describe this lane in at most six words by what its functions have in "
             "common (for example 'network scanning', 'string helpers', 'UDP flood "
-            "attack'). Function names that carry a rule or family prefix (for example "
-            "linux_trojan_x) are evidence of the family. Library calls are "
-            "strong evidence of what the code does (socket and connect: network "
-            "client). Use only the evidence. When it is thin, say what the calls "
-            "or code show in five words; answer 'unnamed code' only when there is "
-            "nothing at all. Answer with the name only.\n\n" + evidence
+            "attack', 'low-level byte utilities'). Function names that carry a "
+            "rule or family prefix (for example linux_trojan_x) are evidence of "
+            "the family. Library calls are strong evidence of what the code does "
+            "(socket and connect: network client). Always give a description: when "
+            "the evidence is thin, describe the general kind of code it looks like. "
+            "Never answer 'unknown' or 'unnamed'. Answer with the description only."
         )
-        try:
-            response = Client(host=self.ollama_url, timeout=120).chat(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                stream=False,
-                think=False,
-                keep_alive="1h",
-                options={
-                    "num_predict": 16,
-                    "num_ctx": 2560,
-                    "temperature": 0,
-                    "stop": ["\n"],
-                },
+        tries = (
+            {"think": False, "options": {"num_predict": 20, "num_ctx": 2560}},
+            {"think": True, "options": {"num_predict": 700, "num_ctx": 4096}},
+        )
+        error = None
+        for i, t in enumerate(tries):
+            hint = (
+                ""
+                if i == 0
+                else "\nBest guess is fine; a general description is expected."
             )
-            text = response.get("message", {}).get("content", "")
-        except Exception as e:
-            logging.error(f"LLMService name_lane error: {e}")
-            return "", str(e)
-        name = " ".join(text.strip().strip("\"'`*.").split())[:60]
-        return name, None
+            try:
+                response = Client(host=self.ollama_url, timeout=180).chat(
+                    model=model,
+                    messages=[
+                        {"role": "user", "content": base + hint + "\n\n" + evidence}
+                    ],
+                    stream=False,
+                    think=t["think"],
+                    keep_alive="1h",
+                    options={**t["options"], "temperature": 0, "stop": ["\n"]},
+                )
+                text = response.get("message", {}).get("content", "")
+            except Exception as e:
+                logging.error(f"LLMService name_lane error: {e}")
+                error = str(e)
+                continue
+            name = " ".join(text.strip().strip("\"'`*.").split())[:60]
+            if name and not re.match(r"(?i)(unnamed|unknown|unclear)", name):
+                return name, None
+        return "", error
 
     def explain_block_change(self, ctx):
         """How one block of the reference function differs in another function.

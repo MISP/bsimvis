@@ -3209,7 +3209,7 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 /* Lane headers: the name in the table's own font and size, the evidence chips on a second line. */
 .nway-lname { font-weight: 600; color: var(--text); }
 .nway-lname:empty { display: none; }
-.nway-lname.fb { color: var(--dim); font-weight: 400; font-style: italic; font-family: 'Consolas', monospace; font-size: 0.8em; }
+.nway-lname.fb { color: var(--dim); font-weight: 400; }
 .nway-lname.wait:empty { display: inline-block; width: 90px; height: 0.7rem; border-radius: 4px; background: linear-gradient(90deg, var(--border) 25%, var(--hover) 50%, var(--border) 75%); background-size: 200% 100%; animation: nway-shimmer 1.2s linear infinite; }
 @keyframes nway-shimmer { to { background-position: -200% 0; } }
 @media (prefers-reduced-motion: reduce) { .nway-lname.wait:empty { animation: none; } }

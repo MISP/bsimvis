@@ -2412,17 +2412,14 @@
             const name = this._shownName((this._laneNames || {})[g.id]);
             const wait = this._lnBusy && !name && ((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length);
             const off = this.state.lane_names === 'off' || this.data.llm_names === false;
-            const fb = !name && !wait && !off ? this._laneFallback(g) : '';
-            return `<span class="nway-lname${wait ? ' wait' : ''}${off ? ' off' : ''}${fb ? ' fb' : ''}" data-lname="${escapeAttr(g.id)}"${fb ? ' title="The model found nothing to name this lane by; this is what it is made of."' : ''}>${escapeHtml(name || fb)}</span>`;
+            const fb = !name && !wait && !off && this._lnDone ? this._laneFallback(g) : '';
+            return `<span class="nway-lname${wait ? ' wait' : ''}${off ? ' off' : ''}${fb ? ' fb' : ''}" data-lname="${escapeAttr(g.id)}"${fb ? ' title="The model could not describe this lane; this is what it is made of."' : ''}>${escapeHtml(name || fb)}</span>`;
         }
 
-        // A lane the model could not name: its main library calls, else its first function and how many more.
+        // A lane the model could not describe (the call failed): its main library calls, else a plain note.
         _laneFallback(g) {
             const calls = (((this._laneEvid || {})[g.id] || {}).calls || []).slice(0, 3);
-            if (calls.length) return `calls ${calls.join(', ')}`;
-            const first = (g.fids || [])[0];
-            const rows = Number(g.rows) || 0;
-            return first ? `fn ${first.split(':').pop()}${rows > 1 ? ` +${rows - 1}` : ''}` : '';
+            return calls.length ? `calls ${calls.join(', ')}` : 'unlabelled';
         }
 
         // The nearest lane above this one: a sub-lane holds only files that are also in it.
@@ -2483,6 +2480,7 @@
             this._lnSig = sig;
             if (!lanes.length) { this._laneNames = {}; return; }
             this._lnBusy = true;
+            this._lnDone = false;
             this.el.querySelectorAll('.nway-lname:empty').forEach(el => el.classList.add('wait'));
             for (let i = 0; i < 120 && this._lnSig === sig && this.el.isConnected; i++) {
                 let body = null;
@@ -2496,10 +2494,10 @@
                     this._laneEvid = { ...this._laneEvid, ...body.evidence };
                     const groups = this.data.groups || {};
                     this.el.querySelectorAll('[data-lname]').forEach(el => {
-                        const g = groups[el.dataset.lname], name = this._shownName(this._laneNames[el.dataset.lname]);
-                        el.classList.remove('wait');
-                        el.classList.toggle('fb', !name && !!g);
-                        el.textContent = name || (g ? this._laneFallback(g) : '');
+                        const name = this._shownName(this._laneNames[el.dataset.lname]);
+                        if (!name) return;
+                        el.classList.remove('wait', 'fb');
+                        el.textContent = name;
                     });
                     this.el.querySelectorAll('[data-lpar]').forEach(el => {
                         const g = groups[el.dataset.lpar];
@@ -2517,8 +2515,17 @@
                 break;
             }
             if (this._lnSig === sig) {
+                // what is still unnamed now has failed: show what the lane is made of
                 this._lnBusy = false;
-                this.el.querySelectorAll('.nway-lname.wait').forEach(el => el.classList.remove('wait'));
+                this._lnDone = true;
+                const groups = this.data.groups || {};
+                this.el.querySelectorAll('.nway-lname.wait').forEach(el => {
+                    el.classList.remove('wait');
+                    const g = groups[el.dataset.lname];
+                    if (!g || el.textContent) return;
+                    el.classList.add('fb');
+                    el.textContent = this._laneFallback(g);
+                });
             }
         }
 

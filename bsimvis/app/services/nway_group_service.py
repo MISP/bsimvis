@@ -1058,7 +1058,7 @@ def lane_names(lanes):
             "hint": hint,
             "tags": tags,
             "fids": fids,
-            "v": 5,  # bump when the prompt changes, so cached names are redone
+            "v": 6,  # bump when the prompt changes, so cached names are redone
         }
         key = hashlib.sha1(json.dumps(item, sort_keys=True).encode()).hexdigest()
         clean[str(l["id"])] = {**item, "rows": int(l["rows"]), "key": key}

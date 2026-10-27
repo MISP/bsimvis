@@ -754,6 +754,7 @@ def _lane_tiers(roots, loose, ctx):
                 keep.append(k)
             else:
                 k["g"]["under"] = _gpop(node)
+                k["g"]["under_mask"] = node["g"]["mask"]
                 bands[kt]["lanes"].append(k)
             split(k, kt)
         node["kids"] = keep
@@ -893,7 +894,10 @@ def _annotate(pairs, fmeta):
     for g, items in pairs:
         for gid in g["path"]:
             rows[gid] += [r for r, _ in items]
+    by_mask = {g["mask"]: g["id"] for g, _ in pairs if g.get("kind") == "lane"}
     for g, _ in pairs:
+        if g.get("under_mask"):
+            g["under_id"] = by_mask.get(g["under_mask"])
         if g.get("kind") not in ("lane", "tier", "fold"):
             continue
         best = {}

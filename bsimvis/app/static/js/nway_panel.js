@@ -2325,6 +2325,7 @@
             head.insertAdjacentHTML('afterend', this._groupHead(groups[id], path.length - 1));
             head.remove();
             this._mark(this.el.querySelector('#nway-table'));
+            this._nameLanes();
             this.el.querySelector('.table-footer-left').innerHTML = window.Paging.footer({ offset: Number(d.offset) || 0, total: Number(d.total), size: PAGE, shown: items.length });
             this._drawn = gen;
             this._watch();
@@ -2356,7 +2357,26 @@
         _laneName(g) {
             const name = this._shownName((this._laneNames || {})[g.id]);
             const wait = this._lnBusy && !name && ((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length);
-            return `<span class="nway-lname${wait ? ' wait' : ''}" data-lname="${escapeAttr(g.id)}">${escapeHtml(name)}</span>`;
+            const off = this.state.lane_names === 'off' || this.data.llm_names === false;
+            return `<span class="nway-lname${wait ? ' wait' : ''}${off ? ' off' : ''}" data-lname="${escapeAttr(g.id)}">${escapeHtml(name)}</span>`;
+        }
+
+        // The nearest lane above this one: a sub-lane holds only files that are also in it.
+        _laneParent(g) {
+            const groups = this.data.groups || {};
+            if (g.under_id) return groups[g.under_id] || null;
+            const path = g.path || [];
+            for (let i = path.length - 2; i >= 0; i--) if ((groups[path[i]] || {}).kind === 'lane') return groups[path[i]];
+            return null;
+        }
+
+        // "⊂ network scanning": which lane this one is a part of, by name once known.
+        _parentChip(g) {
+            const par = this._laneParent(g);
+            const files = par ? par.mask.split('1').length - 1 : Number(g.under) || 0;
+            const label = (par && this._shownName((this._laneNames || {})[par.id])) || (files ? `${files}-file lane` : '');
+            if (!label) return '';
+            return `<span class="nway-gchip" data-lpar="${escapeAttr(g.id)}" title="${escapeAttr(`Sub-lane of ${label}: its files are all in that lane.`)}">\u2282 ${escapeHtml(label)}</span>`;
         }
 
         // The lane's capa / yara findings (group meta plus what the naming call saw), without the rule-detail tail.
@@ -2398,6 +2418,7 @@
             this._lnSig = sig;
             if (!lanes.length) { this._laneNames = {}; return; }
             this._lnBusy = true;
+            this.el.querySelectorAll('.nway-lname:empty').forEach(el => el.classList.add('wait'));
             for (let i = 0; i < 120 && this._lnSig === sig && this.el.isConnected; i++) {
                 let body = null;
                 try {
@@ -2412,6 +2433,10 @@
                     this.el.querySelectorAll('[data-lname]').forEach(el => {
                         el.textContent = this._shownName(this._laneNames[el.dataset.lname]);
                         if (el.textContent) el.classList.remove('wait');
+                    });
+                    this.el.querySelectorAll('[data-lpar]').forEach(el => {
+                        const g = groups[el.dataset.lpar];
+                        if (g) el.outerHTML = this._parentChip(g);
                     });
                     this.el.querySelectorAll('[data-lev]').forEach(el => {
                         const g = groups[el.dataset.lev];
@@ -2441,9 +2466,9 @@
             } else if (g.kind === 'lane') {
                 const cov = g.fcover || g.mask;
                 const mix = g.core ? chip('also', `${Number(g.lanes)} lanes · ${g.core.split('1').length - 1} shared`, 'Not a real set of files: related lanes grouped under the files they cover together. The count is the files every lane in it holds.') : '';
-                const under = g.under ? chip('', `\u2282 ${Number(g.under)}-file lane`, 'Inside a lane in a stronger band: its files are all in that lane.') : '';
+                const under = this._parentChip(g);
                 const have = cov.split('1').length - 1;
-                title = `${this._laneName(g)}<span class="nway-lcount"><b>${have}</b> of ${cov.length} files</span><span class="nway-lbar" title="${have} of ${cov.length} files"><i style="width:${Math.round(100 * have / cov.length)}%"></i></span>${mix}${under}`;
+                title = `${this._laneName(g)}<span class="nway-lcount"><b>${have}</b> of ${cov.length} files</span>${mix}${under}`;
             } else if (g.kind === 'tier') {
                 const hi = Number(g.max), lo = Number(g.min);
                 title = `<b>${escapeHtml(g.label)}</b> <span class="dim">${lo ? (hi > lo ? `${lo}\u2013${hi}` : `${lo}`) : `up to ${hi}`} files</span>`;
@@ -2735,6 +2760,7 @@
             d.items.push(...body.items);
             d.total = body.total;
             this.el.querySelector('#nway-table tbody').insertAdjacentHTML('beforeend', this._rows(body.items, at));
+            this._nameLanes();
             this.el.querySelector('.table-footer-left').innerHTML = window.Paging.footer({ offset: 0, total: Number(d.total), size: PAGE, shown: d.items.length });
             this._mark(this.el.querySelector('#nway-table'));
             this._watch();

@@ -457,6 +457,8 @@ def _page(doc, args, r=None, pool_id=None):
             for gid, row, extra in part
         ]
         needed = {p for gid, _, _ in part if gid in groups for p in groups[gid]["path"]}
+        # a sub-lane that left its parent's band names the parent, which may be closed
+        needed |= {groups[gid].get("under_id") for gid, _, _ in part if gid in groups}
         shown_groups = {g: m for g, m in groups.items() if g in needed}
         total = len(entries)
     else:

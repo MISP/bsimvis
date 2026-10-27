@@ -1860,6 +1860,12 @@
         _cgGraph(nb, focus, files) {
             const CAP = 12, COCAP = 6;
             const st = this._cg, depth = st.depth;
+            // first-hop neighbors of a lane link to the members that reach them, not to the band
+            const laneMem = it => {
+                const lr = focus.laneRow;
+                const mem = lr && it.sources ? [...new Set(Object.keys(it.sources).map(f => lr[f]).filter(v => v !== undefined))] : [];
+                return mem.length ? ` data-members="${mem.join(' ')}"` : '';
+            };
             const node = (role, lv, { it, i, out }) => {
                 const m = this._cgMeasures(it, focus, files);
                 let twin = '';
@@ -1877,7 +1883,7 @@
                 const hub = role === 'callees' && nb.cocallers && nb.cocallers.hub_keys[it.key];
                 if (hub) twin += `<span class="nway-hub" title="Called by ${hub} functions: too widely called to say anything about similarity, so its other callers are not listed"><i class="fa-solid fa-triangle-exclamation"></i> hub &middot; ${hub} callers not shown</span>`;
                 if (it.kind === 'row') this._cgItems[`${role}|${it.key}`] = it;
-                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-sel="${escapeAttr(role + '|' + it.key)}" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}"${beyond}${other}${back} data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}">
+                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-sel="${escapeAttr(role + '|' + it.key)}" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}"${beyond}${other}${back} data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}"${laneMem(it)} data-n="${m.ne}">
                     <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div>${twin}</div>`;
             };
             // Groups form over all `entries`, then `cap` counts a group as one card; the
@@ -2058,7 +2064,7 @@
             const tier = this._cgLaneTiers(shown, edges);
             const tiers = [];
             for (let i = 0; i < shown; i++) (tiers[tier[i]] = tiers[tier[i]] || []).push(i);
-            const card = i => `<div class="nway-member" data-member="${i}"><div class="nway-node-name">${this._nameSig({ name: rows[i].name, cells: rows[i].cells, name_from: rows[i].name_from }, { noClick: true })}</div>${this._cgFocusSub(rows[i], files)}</div>`;
+            const card = i => `<div class="nway-member" tabindex="0" data-member="${i}" data-cg-member="${i}" title="Click to centre the graph on this function"><div class="nway-node-name">${this._nameSig({ name: rows[i].name, cells: rows[i].cells, name_from: rows[i].name_from }, { noClick: true })}</div>${this._cgFocusSub(rows[i], files)}</div>`;
             const more = shown < rows.length ? `<div class="nway-member more" tabindex="0" data-cg-more="lane" title="Show every member of the lane"><b><i class="fa-solid fa-ellipsis"></i> +${rows.length - shown} more</b></div>` : '';
             return `<div class="nway-node center band" data-sel="focus" data-lane-edges="${escapeAttr(JSON.stringify(edges))}">${tiers.filter(Boolean).map(t => `<div class="nway-tier">${t.map(card).join('')}</div>`).join('')}${more ? `<div class="nway-tier">${more}</div>` : ''}</div>`;
         }
@@ -2138,14 +2144,17 @@
                 for (const pk of n.dataset.parents.split(' ')) {
                     const parent = pk === 'focus' ? center : byKey[`${n.dataset.side === 'cocallers' ? 'callees' : n.dataset.side}|${pk}`];
                     if (!parent) continue;
-                    // a callee is called by its parent; a caller calls its parent
-                    const [from, to] = n.dataset.side === 'callees' ? [parent, n] : [n, parent];
-                    const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
-                    const x1 = a.right - gr.left, x2 = b.left - gr.left;
-                    const y1 = a.top + a.height / 2 - gr.top, y2 = b.top + b.height / 2 - gr.top;
-                    const mx = (x1 + x2) / 2;
-                    meta.push([n, parent]);
-                    paths.push(`<path data-i="${meta.length}" class="nway-edge${n.classList.contains('out') ? ' out' : ''}${n.dataset.side === 'cocallers' ? ' co' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${Math.min(1 + Number(n.dataset.n) * 0.8, 8).toFixed(1)}"></path>`);
+                    const mems = pk === 'focus' && n.dataset.members ? n.dataset.members.split(' ').map(i => center.querySelector(`[data-member="${i}"]`)).filter(Boolean) : [];
+                    for (const par of mems.length ? mems : [parent]) {
+                        // a callee is called by its parent; a caller calls its parent
+                        const [from, to] = n.dataset.side === 'callees' ? [par, n] : [n, par];
+                        const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
+                        const x1 = a.right - gr.left, x2 = b.left - gr.left;
+                        const y1 = a.top + a.height / 2 - gr.top, y2 = b.top + b.height / 2 - gr.top;
+                        const mx = (x1 + x2) / 2;
+                        meta.push([n, par]);
+                        paths.push(`<path data-i="${meta.length}" class="nway-edge${n.classList.contains('out') ? ' out' : ''}${n.dataset.side === 'cocallers' ? ' co' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${Math.min(1 + Number(n.dataset.n) * 0.8, 8).toFixed(1)}"></path>`);
+                    }
                 }
             }
             // Calls between the lane's own members, left to right between tiers (a cycle inside one tier loops over the top).
@@ -2157,6 +2166,7 @@
                     const ra = mem[a].getBoundingClientRect(), rb = mem[b].getBoundingClientRect();
                     const y1 = ra.top + ra.height / 2 - gr.top, y2 = rb.top + rb.height / 2 - gr.top;
                     const w = `stroke-width:${Math.min(1 + k * 0.8, 8).toFixed(1)}`;
+                    meta.push([mem[b], mem[a]]);
                     if (Math.abs(ra.left - rb.left) < 4) {
                         const x = ra.right - gr.left;
                         paths.push(`<path class="nway-edge lane" d="M${x},${y1} C${x + 26},${y1} ${x + 26},${y2} ${x},${y2}" style="${w}"></path>`);
@@ -2224,9 +2234,10 @@
                 g.querySelectorAll('.hl-on').forEach(e => e.classList.remove('hl-on'));
             };
             g.onmouseover = e => {
-                const n = e.target.closest('.nway-node');
+                const n = e.target.closest('.nway-member, .nway-node');
                 if (!n) return clear();
                 const on = new Set([n]);
+                if (n.classList.contains('band')) n.querySelectorAll('.nway-member').forEach(m => on.add(m));
                 walk(n, kids, on);
                 walk(n, ups, on);
                 const backOn = backs.map(([o, t], i) => (o === n || t === n ? i : -1)).filter(i => i >= 0);
@@ -2307,7 +2318,7 @@
                 if (!sel.delete(k)) sel.add(k);
                 return this._cgSelSync();
             }
-            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-suggest],[data-cg-details],[data-cg-hue],[data-cg-focusgrp],[data-cg-mergefocus],[data-cg-deeper]');
+            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-member],[data-cg-suggest],[data-cg-details],[data-cg-hue],[data-cg-focusgrp],[data-cg-mergefocus],[data-cg-deeper]');
             if (!t || !this._cg) return;
             if (t.dataset.cgClose !== undefined) return window.closeCallsPanel();
             if (t.dataset.cgPop !== undefined) {
@@ -2363,6 +2374,12 @@
             if (t.dataset.cgScope) { this._cg.scope = t.dataset.cgScope; return this._cg.depth > 1 || this._cg.co ? this._cgShow() : this._cgDraw(); }
             if (t.dataset.cgCrumb) {
                 this._cg.stack = this._cg.stack.slice(0, Number(t.dataset.cgCrumb) + 1);
+                this._cg.more = {};
+                return this._cgShow();
+            }
+            if (t.dataset.cgMember !== undefined) {
+                const m = this._cg.nb.callees.lane_rows[Number(t.dataset.cgMember)];
+                this._cg.stack.push({ name: m.name, cells: m.cells, name_from: m.name_from });
                 this._cg.more = {};
                 return this._cgShow();
             }

@@ -1296,7 +1296,7 @@ def post_nway_lane_names():
         isinstance(l, dict) and {"id", "files", "total", "rows"} <= set(l)
         for l in lanes
     ):
-        abort(400, "lanes must be a list of {id, files, total, rows, sample, hint}")
+        abort(400, "lanes must be a list of lane groups (id, files, total, rows, ...)")
     return nway_group_service.lane_names(lanes)
 
 

@@ -6104,10 +6104,12 @@ def test_nway_diff():
         f"{_lt and {g.get('kind') for g in _lt['groups'].values()}}",
     )
     check(
-        "nway group: lane groups carry a sample of function names",
+        "nway group: lane groups carry what names them (sample, fids, tags)",
         _lt
         and all(
-            "sample" in g for g in _lt["groups"].values() if g.get("kind") == "lane"
+            {"sample", "fids", "tags"} <= set(g)
+            for g in _lt["groups"].values()
+            if g.get("kind") == "lane"
         ),
     )
     check(

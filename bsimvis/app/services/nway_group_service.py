@@ -27,6 +27,8 @@ sees a big int.
 import json
 import math
 import re
+import threading
+import time
 from collections import Counter, defaultdict
 from itertools import combinations
 
@@ -885,8 +887,8 @@ def _nest(units, levels, ctx, parent_id, parent_path, carried):
     return _flat(_nodes(units, levels, ctx, parent_id, parent_path, carried), ctx)
 
 
-def _annotate(pairs):
-    """Lane, tier and fold groups get `sample` (their heaviest names) and `hint` (a shared name prefix)."""
+def _annotate(pairs, fmeta):
+    """Lane groups get what names them: `sample` (heaviest names), `hint` (shared name prefix), `tags` (capa / yara findings) and `fids` (heaviest functions)."""
     rows = defaultdict(list)
     for g, items in pairs:
         for gid in g["path"]:
@@ -899,6 +901,17 @@ def _annotate(pairs):
             if k := name_key(r):
                 best[k] = max(best.get(k, 0), r["weight"])
         g["sample"] = sorted(best, key=best.get, reverse=True)[:10]
+        if g["kind"] == "lane":
+            heavy = sorted(rows[g["id"]], key=lambda r: r["weight"], reverse=True)
+            g["fids"] = [f for r in heavy[:LANE_FIDS] for f in _fids(r)[:1]]
+            found = Counter(
+                t.split("#")[0]
+                for r in rows[g["id"]]
+                for f in _fids(r)[:1]
+                for t in (fmeta.get(f) or {}).get("tags") or []
+                if t.startswith(("capa:", "yara:"))
+            )
+            g["tags"] = [t for t, _ in found.most_common(5)]
         pre = Counter(p[0] + p[1] for k in best if (p := name_prefix(k)))
         if pre:
             top, c = pre.most_common(1)[0]
@@ -907,41 +920,115 @@ def _annotate(pairs):
 
 
 LANE_NAMES_MAX = 40  # lanes named per request
+LANE_FIDS = 6  # heaviest functions of a lane the model reads findings and strings from
+LANE_CODE_FNS = 2  # ... and code from
+_DECL = re.compile(r"^\s*[A-Za-z_][\w ]*[ *]\**\w+(\[\d+\])?;\s*$")
 LANE_NAME_TTL = 30 * 86400
+LANE_NAME_RETRY = 120  # seconds before a lane that failed is tried again
+_LANE_POOL = None
+_LANE_STATE = {}  # content key -> {"status": "pending"|"failed", "at": time}
+_LANE_LOCK = threading.Lock()
+
+
+def _lane_evidence(l):
+    """The text the model names a lane from: names, findings, strings and a little decompiled code of its heaviest functions."""
+    from bsimvis.app.routes.llm import get_code_for_llm
+    from bsimvis.app.services import llm_tools, string_service
+    from bsimvis.app.services.function_service import fetch_function_data
+    from bsimvis.app.services.redis_client import get_redis
+
+    out = [
+        f"{l['rows']} functions found together in {l['files']} of {l['total']} files of a malware family."
+    ]
+    if l["sample"]:
+        out.append("Function names: " + ", ".join(l["sample"]))
+    tags, strings, code = list(l["tags"]), [], []
+    for fid in l["fids"][:LANE_FIDS]:
+        try:
+            coll, md5, addr = llm_tools.parse_func_id(fid)
+            _, _, meta, _ = fetch_function_data(coll, md5, addr, meta_only=True)
+            for t in (meta or {}).get("tags") or []:
+                t = t.split("#")[0]
+                if t.startswith(("capa:", "yara:")) and t not in tags:
+                    tags.append(t)
+            for rec in string_service.function_strings(get_redis(), coll, md5, addr):
+                v = " ".join(str(rec.get("value") or "").split())[:60]
+                if len(v) >= 4 and v not in strings:
+                    strings.append(v)
+            if len(code) < LANE_CODE_FNS:
+                src, _ = get_code_for_llm(fid)
+                # the signature and body, without the block of variable declarations
+                lines = [
+                    x
+                    for x in (src or {}).get("code", "").splitlines()
+                    if x.strip() and not _DECL.match(x)
+                ]
+                if lines:
+                    code.append("\n".join(lines[:14])[:600])
+        except Exception:
+            pass
+    if tags:
+        out.append("Findings: " + ", ".join(tags[:8]))
+    if strings:
+        out.append("Strings: " + " | ".join(strings[:10]))
+    out += [f"Function {i + 1} code:\n{c}" for i, c in enumerate(code)]
+    return "\n".join(out)[:2400]
+
+
+def _name_lane(l, red):
+    """Worker: name one lane and cache it."""
+    from bsimvis.app.services.llm_service import llm_service
+
+    name, _ = llm_service.name_lane(_lane_evidence(l))
+    with _LANE_LOCK:
+        if name:
+            try:
+                red.set(f"nway:lane:{l['key']}", name, ex=LANE_NAME_TTL)
+            except Exception:
+                pass
+            _LANE_STATE.pop(l["key"], None)
+        else:
+            _LANE_STATE[l["key"]] = {"status": "failed", "at": time.time()}
 
 
 def lane_names(lanes):
-    """{'status': off|pending|ready|failed, 'names': {lane id: name}} from the `sample` / `hint` of lane groups.
+    """{'status': off|pending|ready, 'names': {lane id: name}} for lane groups.
 
-    `lanes` is [{"id", "files", "total", "rows", "sample", "hint"}]. A name is
-    cached by the lane's content (30 days), so only lanes not seen before go to
-    the model, in one call. Never waits for it: names already known come back
-    with status `pending` while the rest are named.
+    `lanes` is the lane group meta: id, files, total, rows, sample, hint, tags,
+    fids. A name is cached by the lane's content (30 days). Lanes not seen yet
+    are named by a small pool of workers, one short model call each, the
+    biggest lane first; the answer lists the names ready so far and stays
+    `pending` until every lane has one (or failed). Never waits for the model.
     """
+    global _LANE_POOL
     import hashlib
+    from concurrent.futures import ThreadPoolExecutor
 
-    from bsimvis.app.services import nway_facets_service
-    from bsimvis.app.services.llm_service import llm_service
+    from bsimvis.app.services.config_service import config_service
     from bsimvis.app.services.redis_client import get_queue_redis
 
     clean = {}
     for l in lanes[:LANE_NAMES_MAX]:
         sample = [str(x)[:80] for x in (l.get("sample") or [])[:10]]
         hint = str(l.get("hint") or "")[:40]
-        if not sample and not hint:
+        tags = [str(x)[:80] for x in (l.get("tags") or [])[:5]]
+        fids = [str(x) for x in (l.get("fids") or [])[:LANE_FIDS]]
+        if not (sample or hint or tags or fids):
             continue
         item = {
             "files": int(l["files"]),
             "total": int(l["total"]),
-            "rows": int(l["rows"]),
             "sample": sample,
             "hint": hint,
+            "tags": tags,
+            "fids": fids,
+            "v": 2,  # bump when the prompt changes, so cached names are redone
         }
-        content = {k: item[k] for k in ("files", "total", "sample", "hint")}
-        key = hashlib.sha1(json.dumps(content, sort_keys=True).encode()).hexdigest()
-        clean[str(l["id"])] = {**item, "id": str(l["id"]), "key": key}
+        key = hashlib.sha1(json.dumps(item, sort_keys=True).encode()).hexdigest()
+        clean[str(l["id"])] = {**item, "rows": int(l["rows"]), "key": key}
     red = get_queue_redis()
-    names, missing = {}, []
+    names, pending = {}, False
+    todo = []
     for lid, l in clean.items():
         try:
             hit = red.get(f"nway:lane:{l['key']}")
@@ -949,23 +1036,27 @@ def lane_names(lanes):
             hit = None
         if hit:
             names[lid] = hit if isinstance(hit, str) else hit.decode()
-        else:
-            missing.append(l)
-    if not missing:
-        return {"status": "ready", "names": names}
-
-    def work():
-        got, _ = llm_service.name_lanes(missing)
-        for lid, name in got.items():
-            try:
-                red.set(f"nway:lane:{clean[lid]['key']}", name, ex=LANE_NAME_TTL)
-            except Exception:
+            continue
+        with _LANE_LOCK:
+            st = _LANE_STATE.get(l["key"])
+            if st and st["status"] == "pending" and time.time() - st["at"] < 180:
+                pending = True
+            elif (
+                st
+                and st["status"] == "failed"
+                and time.time() - st["at"] < LANE_NAME_RETRY
+            ):
                 pass
-        return got
-
-    batch = hashlib.sha1("".join(sorted(l["key"] for l in missing)).encode())
-    out = nway_facets_service._cached_llm("nway:lanes", batch.hexdigest(), work)
-    return {"status": out["status"], "names": {**(out.get("value") or {}), **names}}
+            else:
+                _LANE_STATE[l["key"]] = {"status": "pending", "at": time.time()}
+                todo.append(l)
+                pending = True
+    if todo and not _LANE_POOL:
+        workers = int(config_service.get("llm.lane_parallel", 4))
+        _LANE_POOL = ThreadPoolExecutor(max_workers=max(1, workers))
+    for l in sorted(todo, key=lambda x: x["rows"], reverse=True):
+        _LANE_POOL.submit(_name_lane, l, red)
+    return {"status": "pending" if pending else "ready", "names": names}
 
 
 def group_rows(rows, doc, r, mode, params):
@@ -1072,7 +1163,7 @@ def group_rows(rows, doc, r, mode, params):
             raise BadParams("group_min_link must be a number")
         units, ctx["note"] = merge_units(rows, doc, r, evidence, min_link)
     pairs = _nest(units, levels, ctx, "", [], {})
-    _annotate(pairs)
+    _annotate(pairs, doc["fmeta"])
     # `fcover`: the files the group holds, one 0/1 per file column. Child and twin columns stand for
     # several files, so the column-level `union` alone would show a half-covered column as full.
     fids = [c["id"] for c in doc.get("file_columns") or doc["columns"]]
@@ -1439,7 +1530,11 @@ def demo():
     # annotate: a shared prefix becomes the lane's hint
     named = [row(15, 4, n) for n in ("attack_a", "attack_b", "attack_c", "main")]
     nt = _nest(named, ["lane"], {**lctx, "lane_depth": 1}, "", [], {})
-    _annotate(nt)
+    fm = {"fattack_a": {"tags": ["capa:network#send", "yara:x", "origin:lib"]}}
+    named[0]["cells"] = {"A": "fattack_a"}
+    _annotate(nt, fm)
+    assert nt[0][0]["tags"] == ["capa:network", "yara:x"], nt[0][0]
+    assert len(nt[0][0]["fids"]) == 4, nt[0][0]
     assert nt[0][0]["hint"] == "attack_*" and "main" in nt[0][0]["sample"], nt[0][0]
     print("nway_group_service demo ok")
 

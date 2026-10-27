@@ -2345,20 +2345,22 @@
 
         // The lane's shared name prefix and, once the model has answered, its name.
         _laneName(g) {
-            const name = (this._laneNames || {})[g.id] || '';
+            const name = this._shownName((this._laneNames || {})[g.id]);
             return `${g.hint ? `<span class="nway-gchip ev-n" title="Most of this lane's functions share this name prefix">${escapeHtml(g.hint)}</span>` : ''}<span class="nway-lname" data-lname="${escapeAttr(g.id)}">${escapeHtml(name)}</span>`;
         }
+
+        _shownName(name) { return !name || /^unnamed/i.test(name) ? '' : name; }
 
         // Names for the lane groups on screen: asked in the background, cached by the server, shown when ready.
         async _nameLanes() {
             const d = this.data, groups = d && this.state.lane_names !== 'off' ? Object.values(d.groups || {}) : [];
-            const lanes = groups.filter(g => g.kind === 'lane' && ((g.sample || []).length || g.hint)).slice(0, 40)
-                .map(g => ({ id: g.id, files: g.mask.split('1').length - 1, total: g.mask.length, rows: g.rows, sample: g.sample || [], hint: g.hint || '' }));
+            const lanes = groups.filter(g => g.kind === 'lane' && ((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length)).slice(0, 40)
+                .map(g => ({ id: g.id, files: g.mask.split('1').length - 1, total: g.mask.length, rows: g.rows, sample: g.sample || [], hint: g.hint || '', tags: g.tags || [], fids: g.fids || [] }));
             const sig = lanes.map(l => `${l.id}:${l.rows}`).join('|');
             if (sig === this._lnSig) return;
             this._lnSig = sig;
             if (!lanes.length) { this._laneNames = {}; return; }
-            for (let i = 0; i < 40 && this._lnSig === sig && this.el.isConnected; i++) {
+            for (let i = 0; i < 120 && this._lnSig === sig && this.el.isConnected; i++) {
                 let body = null;
                 try {
                     const res = await fetch('/api/bin_sim/nway/lane_names', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lanes }) });
@@ -2367,9 +2369,9 @@
                 if (this._lnSig !== sig) return;
                 if (body && body.names) {
                     this._laneNames = { ...this._laneNames, ...body.names };
-                    this.el.querySelectorAll('[data-lname]').forEach(el => { el.textContent = this._laneNames[el.dataset.lname] || ''; });
+                    this.el.querySelectorAll('[data-lname]').forEach(el => { el.textContent = this._shownName(this._laneNames[el.dataset.lname]); });
                 }
-                if (body && body.status === 'pending') { await new Promise(r => setTimeout(r, 2500)); continue; }
+                if (body && body.status === 'pending') { await new Promise(r => setTimeout(r, 1000)); continue; }
                 if (body && body.status === 'off') this.data.llm_names = false;
                 break;
             }

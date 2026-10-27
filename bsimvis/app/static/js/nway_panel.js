@@ -1676,6 +1676,8 @@
             try { on = localStorage.getItem('nway.hue') === '1'; } catch (e) { /* storage blocked */ }
             this._hueOn = on;
             for (const el of [this.el, this._dw]) if (el) el.classList.toggle('nway-hue', on);
+            // the dock has no colour toggle: its squares follow the table's (per file / cluster, or by coverage)
+            if (this._cg && this._cg.lean && this._dw) this._dw.classList.toggle('nway-hue', !this._sqLane());
         }
 
         // i is a column index (data.columns), not an index into file_columns.
@@ -2948,6 +2950,7 @@
             if (t.dataset.sqmode !== undefined) {
                 this._sl = !this._sqLane();
                 try { localStorage.setItem('nway.sqlane', this._sl ? '1' : '0'); } catch (err) { /* storage blocked */ }
+                this._applyHue();
                 this._scrollSave();
                 return this.render();
             }

@@ -6112,6 +6112,15 @@ def test_nway_diff():
             f"HTTP {_ln.status_code}",
         )
         check(
+            "nway neighbors: a lane answers its members and the calls between them",
+            _ln.status_code == 200
+            and len(_ln.json().get("lane_rows", [])) == len(_lj.get("rows", []))
+            and all(
+                a != b and 0 <= a < len(_lj["rows"]) and 0 <= b < len(_lj["rows"])
+                for a, b, _n in _ln.json().get("lane_edges", [])
+            ),
+        )
+        check(
             "nway lane_fids: an unknown lane is a 404",
             requests.get(
                 f"{BASE_URL}/api/bin_sim/nway/lane_fids",

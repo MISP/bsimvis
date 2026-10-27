@@ -3612,3 +3612,9 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-fold button.on { color: var(--accent); }
 .nway-lanegraph { cursor: pointer; background: none; font: inherit; font-size: 0.66rem; }
 .nway-lanegraph:hover { color: var(--accent); border-color: var(--accent); }
+.nway-node.band { width: auto; flex-direction: row; gap: 56px; align-items: center; padding: 8px; }
+.nway-tier { display: flex; flex-direction: column; gap: 8px; }
+.nway-member { box-sizing: border-box; width: 200px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); display: flex; flex-direction: column; gap: 4px; }
+.nway-member.more { cursor: pointer; justify-content: center; }
+.nway-member.more:hover { border-color: var(--accent); }
+.nway-edge.lane { stroke-width: 2px; opacity: 0.8; }

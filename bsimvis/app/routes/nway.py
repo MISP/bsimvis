@@ -965,11 +965,12 @@ DEEP_CAP = 8  # neighbors kept per expanded row, from depth 2 on
 MAX_NODES = 60  # all levels together
 
 
-def _group_neighbors(r, doc, fids, role, row_of):
+def _group_neighbors(r, doc, fids, role, row_of, skip=()):
     """Callers/callees of `fids` regrouped into the doc's rows.
 
     Each item is one neighbor row (or an imported symbol, or a function outside
-    every row) with the source functions that reach it.
+    every row) with the source functions that reach it. `skip`: function ids
+    left out (the other members of a lane, which the graph draws itself).
     """
     fmeta = doc["fmeta"]
     pipe = r.pipeline(transaction=False)
@@ -979,6 +980,8 @@ def _group_neighbors(r, doc, fids, role, row_of):
     for src, members in zip(fids, pipe.execute()):
         for n in members:
             n = n.decode() if isinstance(n, bytes) else n
+            if n in skip:
+                continue
             if n.startswith("ext:"):
                 key = ("ext", n)
             elif n in row_of:
@@ -1013,9 +1016,9 @@ HUB_CALLERS = 25  # a callee with more callers than this is skipped by `cocaller
 CALLEE_CAP = 20  # callee rows `cocallers` looks through
 
 
-def _walk(r, doc, fids, role, row_of, scope, depth):
+def _walk(r, doc, fids, role, row_of, scope, depth, skip=()):
     """Rows reached from `fids` hop by hop: (levels, truncated, visited keys, last frontier)."""
-    first = _group_neighbors(r, doc, fids, role, row_of)
+    first = _group_neighbors(r, doc, fids, role, row_of, skip)
     for item in first:
         item["parents"] = ["focus"]
     levels = [first]
@@ -1034,7 +1037,7 @@ def _walk(r, doc, fids, role, row_of, scope, depth):
         nxt = {}
         for parent in frontier:
             src = [f for f in parent["cells"].values() if isinstance(f, str)]
-            for item in _group_neighbors(r, doc, src, role, row_of)[:DEEP_CAP]:
+            for item in _group_neighbors(r, doc, src, role, row_of, skip)[:DEEP_CAP]:
                 if item["key"] in visited:
                     continue
                 if item["key"] in nxt:
@@ -1134,6 +1137,8 @@ def _cocallers(r, doc, fids, row_of, scope, depth):
 def _lane_rows(group_id):
     """The function ids of each row in one group of the table (a lane with its sub-lanes), [[fid, ...]].
 
+    Returns `(rows, info)`; `info` is each row's name and file cells, for drawing it.
+
     Runs the list with the request's own table params, every group open and no
     page limit, so the lane is the one the user sees. Aborts when the group is unknown.
     """
@@ -1149,20 +1154,40 @@ def _lane_rows(group_id):
     groups = out.get("groups") or {}
     if group_id not in groups:
         abort(404, "unknown group")
-    rows = []
+    rows, info = [], []
     for it in out["items"]:
         g = groups.get(it.get("g"))
         if it.get("header") or not g or group_id not in g["path"]:
             continue
         rows.append([f for f in _row_fids(it) if isinstance(f, str)])
-    return rows
+        info.append(
+            {k: it.get(k) for k in ("name", "name_from")} | {"cells": dict(it["cells"])}
+        )
+    return rows, info
+
+
+def _lane_edges(r, rows):
+    """Calls between the members of a lane: [[caller row, callee row, n functions], ...]."""
+    member = {f: i for i, row in enumerate(rows) for f in row}
+    fids = list(member)
+    pipe = r.pipeline(transaction=False)
+    for f in fids:
+        pipe.smembers(f"{f}:callees")
+    count = {}
+    for f, callees in zip(fids, pipe.execute()):
+        for n in callees:
+            n = n.decode() if isinstance(n, bytes) else n
+            if n in member and member[n] != member[f]:
+                k = (member[f], member[n])
+                count[k] = count.get(k, 0) + 1
+    return [[a, b, n] for (a, b), n in sorted(count.items())]
 
 
 def get_nway_lane_fids():
     """Function ids of every row of one lane (`lane` = its group id) of the table described by the same params as `/nway`."""
     if not request.args.get("lane"):
         abort(400, "lane is required")
-    rows = _lane_rows(request.args["lane"])
+    rows, _ = _lane_rows(request.args["lane"])
     return {"rows": rows, "fids": [f for row in rows for f in row]}
 
 
@@ -1183,8 +1208,10 @@ def get_nway_neighbors():
     if role not in ("callers", "callees", "cocallers"):
         abort(400, "role must be callers, callees or cocallers")
     fids = [t for t in (request.args.get("fids") or "").split(",") if t]
+    lane = []
     if not fids and request.args.get("lane"):
-        fids = [f for row in _lane_rows(request.args["lane"]) for f in row]
+        lane, lane_info = _lane_rows(request.args["lane"])
+        fids = [f for row in lane for f in row]
     if not fids:
         abort(400, "fids or lane is required")
     try:
@@ -1205,8 +1232,9 @@ def get_nway_neighbors():
     if role == "cocallers":
         return _cocallers(r, doc, fids, row_of, scope, depth)
 
+    skip = frozenset(fids) if lane else frozenset()
     levels, truncated, visited, frontier = _walk(
-        r, doc, fids, role, row_of, scope, depth
+        r, doc, fids, role, row_of, scope, depth, skip
     )
 
     # Every expandable row says how many neighbors are not on screen: past the
@@ -1228,12 +1256,12 @@ def get_nway_neighbors():
                 # a function outside every row is never expanded: all its edges are hidden
                 src, expands = [parent["key"].split(":", 1)[1]], True
             if expands:
-                nbrs = _group_neighbors(r, doc, src, role, row_of)
+                nbrs = _group_neighbors(r, doc, src, role, row_of, skip)
                 parent["beyond"] = sum(1 for i in nbrs if i["key"] not in visited)
                 parent["back"] = [i["key"] for i in nbrs if lvl.get(i["key"], n) < n]
             parent["other"] = sum(
                 1
-                for i in _group_neighbors(r, doc, src, opposite, row_of)
+                for i in _group_neighbors(r, doc, src, opposite, row_of, skip)
                 if i["key"] != focus_key
             )
 
@@ -1243,7 +1271,7 @@ def get_nway_neighbors():
             shown.update(
                 f for f in item.get("cells", {}).values() if isinstance(f, str)
             )
-    return {
+    out = {
         "role": role,
         "of": len(fids),
         "depth": depth,
@@ -1252,6 +1280,10 @@ def get_nway_neighbors():
         "truncated": truncated,
         "functions_metadata": {f: fmeta[f] for f in shown if f in fmeta},
     }
+    if lane and role == "callees":
+        out["lane_edges"] = _lane_edges(r, lane)
+        out["lane_rows"] = lane_info
+    return out
 
 
 def get_nway_facets():

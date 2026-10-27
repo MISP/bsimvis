@@ -2039,11 +2039,61 @@
                 const fc = `<div class="nway-gcol nway-lane-focus" style="grid-row:1 / span ${rows};grid-column:${depth + 1}"><div class="nway-node center${focus.pieces ? ' merged-focus' : ''}" data-sel="focus"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells, name_from: focus.name_from }, { noClick: true })}</div>${this._cgFocusSub(focus, files)}${this._cgPieces(focus, files)}</div>${coHtml}</div>`;
                 return `<div class="nway-graph" data-mid="${depth}" data-lanes="1" style="grid-template-columns:${cols.join(' ')}; column-gap:56px; width:max-content"><svg></svg>${heads.join('')}${body}${fc}</div>`;
             }
-            const grid = depth > 1 ? ` style="grid-template-columns:${cols.join(' ')}; column-gap:56px; width:max-content"` : '';
+            const band = focus.lane && nb.callees && nb.callees.lane_rows ? this._cgLaneBand(nb.callees, files) : '';
+            if (band) cols[depth] = 'max-content';
+            const grid = depth > 1 || band ? ` style="grid-template-columns:${cols.join(' ')}; column-gap:56px; width:max-content"` : '';
             const left = [...columns.callers].reverse().map(col).join(''), right = columns.callees.map(col).join('');
+            const mid = band || `<div class="nway-node center${focus.pieces ? ' merged-focus' : ''}" data-sel="focus"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells, name_from: focus.name_from }, { noClick: true })}</div>${this._cgFocusSub(focus, files)}${this._cgPieces(focus, files)}</div>`;
             return `<div class="nway-graph" data-mid="${depth}"${grid}><svg></svg>${left}
-                <div class="nway-gcol"><div class="nway-node center${focus.pieces ? ' merged-focus' : ''}" data-sel="focus"><div class="nway-node-name">${this._nameSig({ name: focus.name, cells: focus.cells, name_from: focus.name_from }, { noClick: true })}</div>${this._cgFocusSub(focus, files)}${this._cgPieces(focus, files)}</div>${coHtml}</div>
+                <div class="nway-gcol">${mid}${coHtml}</div>
                 ${right}</div>`;
+        }
+
+        // The members of a lane as separate cards, in tiers left to right by who calls whom (a cycle shares a tier);
+        // the calls between them are drawn by _cgEdges from `data-lane-edges`. Capped at 12 cards until expanded.
+        _cgLaneBand(cal, files) {
+            const rows = cal.lane_rows, CAP = 12, all = this._cg.more.lane;
+            const shown = all ? rows.length : Math.min(CAP, rows.length);
+            const edges = (cal.lane_edges || []).filter(([a, b]) => a < shown && b < shown);
+            const tier = this._cgLaneTiers(shown, edges);
+            const tiers = [];
+            for (let i = 0; i < shown; i++) (tiers[tier[i]] = tiers[tier[i]] || []).push(i);
+            const card = i => `<div class="nway-member" data-member="${i}"><div class="nway-node-name">${this._nameSig({ name: rows[i].name, cells: rows[i].cells, name_from: rows[i].name_from }, { noClick: true })}</div>${this._cgFocusSub(rows[i], files)}</div>`;
+            const more = shown < rows.length ? `<div class="nway-member more" tabindex="0" data-cg-more="lane" title="Show every member of the lane"><b><i class="fa-solid fa-ellipsis"></i> +${rows.length - shown} more</b></div>` : '';
+            return `<div class="nway-node center band" data-sel="focus" data-lane-edges="${escapeAttr(JSON.stringify(edges))}">${tiers.filter(Boolean).map(t => `<div class="nway-tier">${t.map(card).join('')}</div>`).join('')}${more ? `<div class="nway-tier">${more}</div>` : ''}</div>`;
+        }
+
+        // Tier of each of n members: the longest chain of callers above it. A cycle (strongly connected set) counts once.
+        _cgLaneTiers(n, edges) {
+            const out = Array.from({ length: n }, () => []);
+            edges.forEach(([a, b]) => out[a].push(b));
+            // Tarjan
+            let idx = 0;
+            const num = new Array(n).fill(-1), low = [], on = [], stack = [], comp = new Array(n).fill(-1);
+            let nc = 0;
+            const dfs = v => {
+                num[v] = low[v] = idx++;
+                stack.push(v);
+                on[v] = true;
+                for (const w of out[v]) {
+                    if (num[w] < 0) { dfs(w); low[v] = Math.min(low[v], low[w]); } else if (on[w]) low[v] = Math.min(low[v], num[w]);
+                }
+                if (low[v] === num[v]) {
+                    let w;
+                    do { w = stack.pop(); on[w] = false; comp[w] = nc; } while (w !== v);
+                    nc++;
+                }
+            };
+            for (let v = 0; v < n; v++) if (num[v] < 0) dfs(v);
+            // Tarjan numbers components callees-first, so walking them downwards visits callers before callees
+            const ct = new Array(nc).fill(0);
+            for (let c = nc - 1; c >= 0; c--) {
+                for (let v = 0; v < n; v++) {
+                    if (comp[v] !== c) continue;
+                    for (const w of out[v]) if (comp[w] !== c) ct[comp[w]] = Math.max(ct[comp[w]], ct[c] + 1);
+                }
+            }
+            return comp.map(c => ct[c]);
         }
 
         // Cards have the height their tags need, so the edges are drawn from where they landed.
@@ -2096,6 +2146,24 @@
                     const mx = (x1 + x2) / 2;
                     meta.push([n, parent]);
                     paths.push(`<path data-i="${meta.length}" class="nway-edge${n.classList.contains('out') ? ' out' : ''}${n.dataset.side === 'cocallers' ? ' co' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="stroke-width:${Math.min(1 + Number(n.dataset.n) * 0.8, 8).toFixed(1)}"></path>`);
+                }
+            }
+            // Calls between the lane's own members, left to right between tiers (a cycle inside one tier loops over the top).
+            if (center && center.dataset.laneEdges) {
+                const mem = {};
+                center.querySelectorAll('[data-member]').forEach(m => { mem[m.dataset.member] = m; });
+                for (const [a, b, k] of JSON.parse(center.dataset.laneEdges)) {
+                    if (!mem[a] || !mem[b]) continue;
+                    const ra = mem[a].getBoundingClientRect(), rb = mem[b].getBoundingClientRect();
+                    const y1 = ra.top + ra.height / 2 - gr.top, y2 = rb.top + rb.height / 2 - gr.top;
+                    const w = `stroke-width:${Math.min(1 + k * 0.8, 8).toFixed(1)}`;
+                    if (Math.abs(ra.left - rb.left) < 4) {
+                        const x = ra.right - gr.left;
+                        paths.push(`<path class="nway-edge lane" d="M${x},${y1} C${x + 26},${y1} ${x + 26},${y2} ${x},${y2}" style="${w}"></path>`);
+                        continue;
+                    }
+                    const x1 = ra.right - gr.left, x2 = rb.left - gr.left, mx = (x1 + x2) / 2;
+                    paths.push(`<path class="nway-edge lane" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" style="${w}"></path>`);
                 }
             }
             // A neighbor past the depth limit: a line that fades away from the card's outer side.

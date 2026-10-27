@@ -415,13 +415,13 @@
             const tabIcons = { all: ['fa-solid fa-layer-group', 'var(--info, #3b82f6)'], core: ['fa-solid fa-bullseye', 'var(--success)'], partial: ['fa-solid fa-circle-half-stroke', 'var(--warning, #d97706)'], unique: ['fa-solid fa-fingerprint', 'var(--token-instruction, #e11d48)'] };
             const tabDd = this._dd('Functions', TABS.filter(([key]) => !(focus && key === 'partial')).map(([key, label]) => [key, label, tabIcons[key][0], tabIcons[key][1], this._count(key)]), s.tab, tabTip, v => `data-tab="${v}"`);
             const cur = PRESETS.find(([, , v]) => String(v.min_edge) === String(s.min_edge) && Number(v.child_presence) === Number(s.child_presence));
-            const preset = `<span class="nway-ctlwrap"><div class="view-toggle"><span class="nway-lbl">Match</span>${PRESETS.map(([k, text, , t]) => `<button class="view-btn${cur && cur[0] === k ? ' active' : ''}" data-preset="${k}" title="${escapeAttr(t)}">${text}</button>`).join('')}${cur ? '' : '<span class="dim" style="margin-left:6px">Custom</span>'}</div>${this._tip('Strict, Balanced or Loose set Min edge and Child presence together. Open Advanced to set them by hand.')}</span>`;
+            const presetLook = { strict: ['fa-solid fa-crosshairs', 'var(--token-instruction, #e11d48)'], balanced: ['fa-solid fa-scale-balanced', 'var(--info, #3b82f6)'], loose: ['fa-solid fa-expand', 'var(--warning, #d97706)'] };
+            const presetDd = this._dd('Match', PRESETS.map(([k, text, , t]) => [k, text, presetLook[k][0], presetLook[k][1], undefined, t]).concat(cur ? [] : [['custom', 'Custom', 'fa-solid fa-sliders', 'var(--dim)', undefined, 'Min edge or Child presence set by hand in Advanced.']]), cur ? cur[0] : 'custom', 'Strict, Balanced or Loose set Min edge and Child presence together. Open Advanced to set them by hand.', v => (v === 'custom' ? '' : `data-preset="${v}"`));
             const advanced = `<details class="nway-adv"${this._advOpen ? ' open' : ''}><summary class="nway-lbl">Advanced</summary>${[
                 this._slider('Min edge', 'min_edge', Number(d.min_edge), 0, 1, 0.05, 'Ignore function matches below this similarity. Higher is stricter: fewer functions get grouped together.'),
                 (isNode || d.shared_cluster) && d.columns_mode === 'children' ? this._slider('Child presence', 'child_presence', s.child_presence, 0.05, 1, 0.05, "Share of a child cluster's files that must hold a function for the child to count as having it.") : '',
             ].join('')}</details>`;
             const match = [
-                preset,
                 this._seg('Mode', 'mode', [['stored', 'Stored', 'reads built pair docs'], ['virtual', 'Virtual', 'recomputes from vectors']], 'Stored reads the similarity pairs already built. Virtual recomputes the matches from the function vectors, as a fresh collection of just these files would.'),
                 d.columns_mode === 'twins' || (s.columns === 'twins' && !focus && d.columns_mode !== 'by') ? this._slider('Column levels', 'twin_depth', Number(s.twin_depth), 1, 6, 1, 'Same code columns: 1 groups only files with identical shared rows. Higher nests them under looser groups of files whose shared rows overlap.') : '',
                 (d.columns_mode === 'twins' || (s.columns === 'twins' && d.columns_mode !== 'by')) && Number(s.twin_depth) > 1 && !focus ? this._slider('Column overlap', 'twin_link', Number(s.twin_link), 0, 1, 0.05, 'Outermost column group: files must share at least this much of their rows (average Jaccard) to be grouped.') : '',
@@ -440,7 +440,7 @@
             const more = !this._moreOpen ? '' : `<div class="nway-more-body">
                 ${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div>`;
             return `<div class="nway-tabrow">${search}${this._columnChip()}${moreBtn}</div>
-                <div class="nway-bar">${axisDd}${tabDd}${parts.files}<span class="nway-pops" data-actions>${this._compareBox()}${lineage}</span></div>${parts.byRow}${more}`;
+                <div class="nway-bar">${axisDd}${tabDd}${presetDd}${parts.files}<span class="nway-pops" data-actions>${this._compareBox()}${lineage}</span></div>${parts.byRow}${more}`;
         }
 
         // The group controls in three parts: merge files (always shown), the metadata controls

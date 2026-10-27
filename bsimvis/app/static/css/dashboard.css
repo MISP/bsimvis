@@ -3214,7 +3214,13 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 @keyframes nway-shimmer { to { background-position: -200% 0; } }
 @media (prefers-reduced-motion: reduce) { .nway-lname.wait:empty { animation: none; } }
 .nway-lcount { color: var(--dim); font-weight: 400; }
-.nway-lcount b { color: var(--text); font-weight: 600; }
+.nway-peek { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 2px 14px; padding-left: 18px; color: var(--dim); font: 0.72rem 'Consolas', monospace; }
+.nway-peek-a { all: unset; cursor: pointer; color: var(--accent); border-bottom: 1px dotted currentColor; }
+.nway-peek-a span { color: var(--dim); }
+.nway-peek-a b { color: var(--text); font-weight: 600; }
+.nway-peek-a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@keyframes nway-hit { from { background: color-mix(in srgb, var(--accent) 30%, transparent); } }
+.nway-table tr.nway-grow.nway-hit td { animation: nway-hit 1.6s ease-out; }
 .nway-table tr.nway-grow.k-lane td:first-child { box-shadow: inset 3px 0 0 var(--lane-c), 1px 0 0 var(--border); }
 .nway-ltag { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.66rem; padding: 0 6px; border-radius: 9px; border: 1px solid; }
 .nway-lev { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 4px; padding-left: 18px; }

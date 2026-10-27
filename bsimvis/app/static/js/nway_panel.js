@@ -2623,7 +2623,7 @@
                 const mix = g.core ? chip('also', `${Number(g.lanes)} lanes · ${g.core.split('1').length - 1} shared`, 'Not a real set of files: related lanes grouped under the files they cover together. The count is the files every lane in it holds.') : '';
                 const under = this._parentChip(g);
                 const have = cov.split('1').length - 1;
-                title = `${this._laneName(g)}<span class="nway-lcount"><b>${have}</b> of ${cov.length} files</span>${mix}${under}`;
+                title = `${this._laneName(g)}<span class="nway-lcount">${have} of ${cov.length} files</span>${mix}${under}`;
             } else if (g.kind === 'tier') {
                 const hi = Number(g.max), lo = Number(g.min);
                 title = `<b>${escapeHtml(g.label)}</b> <span class="dim">${lo ? (hi > lo ? `${lo}\u2013${hi}` : `${lo}`) : `up to ${hi}`} files</span>`;
@@ -2643,9 +2643,13 @@
                 const full = all ? have === all : b === '1', some = all ? have > 0 : b === '1';
                 return `<td class="col sq"><i class="nway-sq${some ? (full ? ' on' : ' part') : ''}" style="${this._sqStyle(i)}" title="${escapeAttr(this._colLabel(cols[i]) + (some ? (all > 1 ? `: ${have} of ${all} files` : '') : ': not in this group'))}">${all > 1 && some && !full ? have : ''}</i></td>`;
             }).join('');
+            // A closed group names its biggest merged functions, each with the functions it holds across the files.
+            const ms = closed ? g.merges || [] : [];
+            const peek = ms.length ? `<div class="nway-peek">${ms.map(([name, k, id]) => `<button type="button" class="nway-peek-a" data-gpeek="${escapeAttr(id)}" data-gpeek-in="${escapeAttr(g.id)}" title="Open the group on this merged function">${escapeHtml(name)} <span><b>${Number(k)}</b> functions</span></button>`).join('')}${g.merge_n > ms.length ? `<span>+${Number(g.merge_n) - ms.length} more</span>` : ''}</div>` : '';
+            const units = Number(g.units ?? g.rows);
             const diff = g.kind === 'same' && g.fids?.length >= 2
                 ? `<button class="nway-gchip ev-n nway-merge-diff" data-merge-diff="${escapeAttr(g.id)}" title="N-way diff of all ${g.fids.length} functions in this merge" aria-label="N-way diff of all ${g.fids.length} functions in this merge, ${pct(g.cohesion)} cohesion">${pct(g.cohesion)}</button>` : '';
-            return `<tr class="nway-grow d${depth} k-${escapeAttr(g.kind || 'tag')} ${g.kind === 'tier' || g.kind === 'fold' ? '' : this._ratioCls((g.fcover || files).split('1').length - 1)}" style="--lane-c:${g.kind === 'lane' ? escapeAttr(this._laneColor(g) || 'var(--border)') : 'var(--border)'}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px"><button class="nway-gchev" data-gtoggle="${escapeAttr(g.id)}" aria-label="${closed ? 'Expand' : 'Collapse'} group" aria-expanded="${!closed}">${closed ? '&#9656;' : '&#9662;'}</button><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}${diff}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} feat</span><span class="nway-gnote">${note}</span>${g.kind === 'lane' ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${sq}</tr>`;
+            return `<tr class="nway-grow d${depth} k-${escapeAttr(g.kind || 'tag')} ${g.kind === 'tier' || g.kind === 'fold' ? '' : this._ratioCls((g.fcover || files).split('1').length - 1)}" style="--lane-c:${g.kind === 'lane' ? escapeAttr(this._laneColor(g) || 'var(--border)') : 'var(--border)'}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px"><button class="nway-gchev" data-gtoggle="${escapeAttr(g.id)}" aria-label="${closed ? 'Expand' : 'Collapse'} group" aria-expanded="${!closed}">${closed ? '&#9656;' : '&#9662;'}</button><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}${diff}</span><span class="nway-gst">${units} function${units === 1 ? '' : 's'}</span><span class="nway-gnote">${note}</span>${peek}${g.kind === 'lane' ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${sq}</tr>`;
         }
 
         // Rows, with a header printed whenever a row's group path leaves the one printed last.
@@ -2906,6 +2910,11 @@
             this._mark(this.el.querySelector('#nway-table'));
             this._watch();
             this._scrollRestore();
+            if (this._gHit) {
+                const hit = this.el.querySelector(`tr.nway-grow[data-gtoggle="${CSS.escape(this._gHit)}"]`);
+                this._gHit = null;
+                if (hit) { hit.scrollIntoView({ block: 'center' }); hit.classList.add('nway-hit'); }
+            }
             // Header and notes fold away once the table scrolls; they return at the top.
             const sc = this.el.querySelector('.nway-scroll'), view = this.el.closest('.nway-view');
             if (sc && view) sc.addEventListener('scroll', () => {
@@ -2940,7 +2949,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-tok-rm],[data-sug-i],[data-cmp-show],[data-colpick],[data-colpick-clear],[data-more-toggle]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gpeek],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-run],[data-cmp-clear],[data-cmp-addq],[data-cmp-rmq],[data-cmp-addg],[data-cmp-rmg],[data-cmp-within],[data-tok-rm],[data-sug-i],[data-cmp-show],[data-colpick],[data-colpick-clear],[data-more-toggle]');
             if (!t) return;
             if (t.dataset.lineage !== undefined) {
                 this._scrollSave();
@@ -2988,6 +2997,11 @@
                 const lv = (this.state.group || '').split(',').filter(Boolean), i = lv.indexOf(t.dataset.gpick);
                 if (i >= 0) lv.splice(i, 1); else lv.push(t.dataset.gpick);
                 return this._set({ group: lv.join(','), offset: 0 });
+            }
+            if (t.dataset.gpeek) {
+                // open the group and the merged function inside it, then bring the merge into view
+                this._gHit = t.dataset.gpeek;
+                return this._gChange(() => [t.dataset.gpeekIn, t.dataset.gpeek].forEach(id => { if (!this._gOpen(id)) { if (!this._gflip.delete(id)) this._gflip.add(id); } }));
             }
             if (t.dataset.gtoggle !== undefined && !t.dataset.gall) return this._gSplice(t.dataset.gtoggle);
             if (t.dataset.gall) {

@@ -92,6 +92,7 @@ def _meta(rows, n):
         held |= _fileset(r)
     return {
         "_held": held,
+        "units": len(rows),
         "rows": sum(len(r["_rows"]) if "_rows" in r else 1 for r in rows),
         "weight": sum(r["weight"] for r in rows),
         "union": _bits(union, n),
@@ -1318,6 +1319,16 @@ def group_rows(rows, doc, r, mode, params):
         held = g.pop("_held", set())
         g["fcover"] = "".join("1" if f in held else "0" for f in fids)
     groups = {g["id"]: g for g, _ in pairs if not g.get("headless")}
+    # every group's biggest merged functions, so a closed header can name what it holds
+    merges = defaultdict(list)
+    for g, _ in pairs:
+        if g.get("kind") == "same":
+            for a in g["path"][:-1]:
+                merges[a].append([g["name"], len(g["fids"]), g["id"]])
+    for gid, ms in merges.items():
+        if gid in groups:
+            groups[gid]["merges"] = sorted(ms, key=lambda m: -m[1])[:3]
+            groups[gid]["merge_n"] = len(ms)
     entries = _entries(pairs, params)
     if key:
         _CACHE.put(key, (pairs, groups, ctx["note"]))
@@ -1553,6 +1564,14 @@ def demo():
     assert order(sort_col="weight", reverse=False) == ["other6", "init7", "same:0"]
     assert order(sort_col="span", reverse=False)[-1] == "same:0"
     assert order(sort_col="name", reverse=False)[0] == "same:0"  # "init" < "other"
+    # a lane names its merged functions, with how many functions each holds
+    _, gs, _ = group_rows(
+        doc["rows"], doc, None, "lane", {"group_merge": "name", "group_lane_min": "1"}
+    )
+    lane = gs["lane:1111"]
+    assert lane["units"] == 1 and lane["merge_n"] == 1, lane
+    assert lane["merges"] == [["init", 4, "lane:1111/same:0"]], lane["merges"]
+    assert "merges" not in gs["lane:0100"]
     for mode in ("lane,lane", "bogus", "same"):
         try:
             group_rows(doc["rows"], doc, None, mode, {})

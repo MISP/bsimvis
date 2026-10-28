@@ -37,7 +37,7 @@ window.YaraView = {
     _timer: null,
     _seq: 0,
     _tab: 'strings', // result tab
-    _dtab: 'groups', // rule data tab
+    _sel: new Set(), // picked suggestion rows
     _suggested: null,
     _suggKey: '',
     _res: null,
@@ -398,7 +398,7 @@ window.YaraView = {
             <div class="yw-errlines">${lines.join('<br>')}</div>${note ? `<div class="yw-errnote">${note}</div>` : ''}</div>`;
     },
 
-    // Two cards: the data (groups, suggested strings), then the results of a Sample test or a Full sweep.
+    // Two cards: the data (suggested strings), then the results of a Sample test or a Full sweep.
     // A rule that does not compile shows its error and "no matching results"; the layout stays.
     _paint() {
         if (!document.getElementById('yara-res')) return;
@@ -406,8 +406,7 @@ window.YaraView = {
             <button aria-pressed="${this._view === 'live'}" onclick="YaraView.setView('live')">Sample test</button>
             <button aria-pressed="${this._view === 'sweep'}" onclick="YaraView.setView('sweep')">Full sweep</button></div>`;
         const live = this._good;
-        const dtabs = [['groups', 'Groups', live ? live.groups.length : ''], ['suggest', 'Suggested', this._suggested ? this._suggested.length : '']];
-        const data = `<h3 class="yw-h">Data</h3>${this._tabsHtml(dtabs, this._dtab, true)}<div class="yw-pane">${this._dataPane(live)}</div>`;
+        const data = this._suggestHtml();
         const none = `<div class="yw-hint">${escapeHtml(this._hint || 'No matching results')}</div>`;
         let body;
         if (this._view === 'sweep') body = this._run ? this._progressHtml() : (this._sweep ? this._resultHtml(this._sweep) : none);
@@ -424,8 +423,8 @@ window.YaraView = {
         put('yara-res', `<h3 class="yw-h">Results ${seg}</h3>${body}`);
     },
 
-    _tabsHtml(tabs, cur, data) {
-        return `<div class="yw-tabs" role="tablist">${tabs.map(([k, l, c, red]) => `<button class="yw-tab" role="tab" aria-selected="${cur === k}" onclick="YaraView.setTab('${k}', ${!!data})">${l}${c !== '' ? `<em class="${red && c ? 'red' : ''}">${c}</em>` : ''}</button>`).join('')}</div>`;
+    _tabsHtml(tabs, cur) {
+        return `<div class="yw-tabs" role="tablist">${tabs.map(([k, l, c, red]) => `<button class="yw-tab" role="tab" aria-selected="${cur === k}" onclick="YaraView.setTab('${k}')">${l}${c !== '' ? `<em class="${red && c ? 'red' : ''}">${c}</em>` : ''}</button>`).join('')}</div>`;
     },
 
     setView(v) {
@@ -471,7 +470,7 @@ window.YaraView = {
                 <div class="yw-m"><small>F1</small><strong>${this._pct(m.f1)}</strong></div>`;
             note = (s.negatives_scanned ? (s.sampled ? `<b>Sampled:</b> ${s.negatives_scanned} of ${s.negatives_available} negatives. Full sweep gives exact numbers.` : `${s.negatives_scanned} negatives scanned.`) : 'No negatives: only recall is measured.') +
                 (s.targets_truncated ? ' Targets truncated.' : '') + (s.unreadable ? ` ${s.unreadable} files have no stored bytes.` : '');
-            tabs = [['strings', 'Strings', res.strings.length], ['true', 'True hits', m.tp], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]];
+            tabs = [['strings', 'Strings', res.strings.length], ['groups', 'Groups', res.groups.length], ['true', 'True hits', m.tp], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]];
         }
         if (!tabs.some(t => t[0] === this._tab)) this._tab = tabs[0][0];
         const conf = m ? `<div class="yw-conf"><span>TP <b>${m.tp}</b></span><span>FN <b>${m.fn}</b></span><span class="${m.fp ? 'bad' : ''}">FP <b>${m.fp}</b></span><span>TN <b>${m.tn}</b></span></div>` : '';
@@ -481,9 +480,8 @@ window.YaraView = {
             <div class="yw-pane">${this._resultPane(res)}</div>`;
     },
 
-    setTab(k, data) {
-        if (data) this._dtab = k;
-        else this._tab = k;
+    setTab(k) {
+        this._tab = k;
         this._paint();
     },
 
@@ -495,6 +493,7 @@ window.YaraView = {
     // Missed / false hits / matches: one table, same look as the data tables.
     _resultPane(res) {
         if (this._tab === 'strings') return this._stringsPane(res);
+        if (this._tab === 'groups') return this._groupsPane(res);
         const m = res.metrics || {};
         const [rows, total, withRules] = this._tab === 'hits' ? [res.hit_files || [], res.hits] : this._tab === 'false' ? [res.false_hits, m.fp, true] : this._tab === 'true' ? [res.true_hits || [], m.tp, true] : [res.missed, m.fn];
         if (!rows.length) return '<div class="yw-hint">none</div>';
@@ -519,10 +518,9 @@ window.YaraView = {
         }).join('');
     },
 
-    _dataPane(res) {
-        if (this._dtab === 'suggest') return this._suggestPane();
-        if (!res) return '<div class="yw-hint">No matching results</div>';
-        return `<table><thead><tr><th>Group</th><th>Role</th><th>Files</th><th>Hits</th><th>Rate</th></tr></thead><tbody>${res.groups.map(g => `<tr>
+    _groupsPane(res) {
+        return `<table class="yw-fixed"><colgroup><col><col style="width:90px"><col style="width:70px"><col style="width:70px"><col style="width:70px"></colgroup>
+            <thead><tr><th>Group</th><th>Role</th><th>Files</th><th>Hits</th><th>Rate</th></tr></thead><tbody>${res.groups.map(g => `<tr>
             <td>${escapeHtml(g.label)}</td><td class="${g.role === 'target' ? 'yw-t' : 'yw-n'}">${escapeHtml(g.role)}</td>
             <td class="yw-mono">${g.files}</td><td class="yw-mono">${g.hits}</td><td class="yw-mono">${this._pct(g.hit_rate)}</td></tr>`).join('')}</tbody></table>`;
     },
@@ -543,18 +541,31 @@ window.YaraView = {
                 <td><div class="yw-bar2"><div class="yw-track"><i style="width:${w}px"></i><i class="n" style="width:${x.neg ? Math.min(30, 3 + x.neg) : 0}px"></i></div>${x.pos}/${s.targets} &middot; <span style="color:${x.neg ? '#ef4444' : 'var(--subtle)'};">${x.neg}</span></div></td>
                 <td>${where[0] || '<span class="yw-dim">no hit</span>'}${more}${l.unmapped ? ` <span class="yw-dim">(${l.unmapped} unmapped)</span>` : ''}</td></tr>`;
         }).join('');
-        return `<table><thead><tr><th>String</th><th>Hits (target &middot; other)</th><th>Lands in</th></tr></thead><tbody>${rows}</tbody></table>`;
+        return `<table class="yw-fixed"><colgroup><col style="width:24%"><col style="width:170px"><col></colgroup>
+            <thead><tr><th>String</th><th>Hits (target &middot; other)</th><th>Lands in</th></tr></thead><tbody>${rows}</tbody></table>`;
     },
 
-    _suggestPane() {
-        if (!this._suggested) return '<div class="yw-hint">Ranking strings...</div>';
-        const rows = this._suggested.map((x, i) => `<tr>
-            <td class="yw-mono">${escapeHtml(x.value)}</td><td class="yw-mono">${x.pos}/${x.of} <span class="yw-dim">${Math.round(100 * x.pos / Math.max(1, x.of))}%</span></td>
-            <td class="yw-mono" style="color:${x.neg ? '#ef4444' : 'inherit'};">${x.neg}</td>
-            <td><button class="yw-btn ghost" onclick="YaraView.addString(${i})">Insert</button></td></tr>`).join('');
-        return rows
-            ? `<table><thead><tr><th>String</th><th>Targets</th><th>Others</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-            : '<div class="yw-hint">No stored strings for the target files.</div>';
+    // The Data card: every string of the target files, best coverage first, with a multi-select insert.
+    _suggestHtml() {
+        const list = this._suggested;
+        const n = this._sel.size;
+        const head = `<h3 class="yw-h">Suggested strings${list ? `<em class="yw-count">${list.length}</em>` : ''}</h3>`;
+        if (!list) return `${head}<div class="yw-hint">Ranking strings...</div>`;
+        if (!list.length) return `${head}<div class="yw-hint">No stored strings for the target files.</div>`;
+        const rows = list.map((x, i) => {
+            const pct = Math.round(100 * x.pos / Math.max(1, x.of));
+            return `<tr class="${this._sel.has(i) ? 'on' : ''}" onclick="YaraView.toggleSug(${i})">
+                <td><input type="checkbox" tabindex="-1" ${this._sel.has(i) ? 'checked' : ''}></td>
+                <td class="yw-sv">${escapeHtml(x.value)}</td>
+                <td><div class="yw-bar2"><div class="yw-track"><i style="width:${pct}%"></i></div><span>${x.pos}/${x.of}</span></div></td>
+                <td class="yw-mono" style="color:${x.neg ? '#ef4444' : 'var(--subtle)'};">${x.neg}</td></tr>`;
+        }).join('');
+        return `${head}<div class="yw-sugbar">
+            <label class="yw-check"><input type="checkbox" ${n && n === list.length ? 'checked' : ''} onchange="YaraView.selAll(this.checked)"> All</label>
+            <span class="yw-dim">${n} selected</span><span class="yw-sp"></span>
+            <button class="yw-btn primary" ${n ? '' : 'disabled'} onclick="YaraView.insertSelected()"><i class="fa-solid fa-plus"></i> Insert${n ? ` ${n} string${n > 1 ? 's' : ''}` : ''}</button></div>
+            <div class="yw-pane"><table class="yw-fixed yw-sug"><colgroup><col style="width:30px"><col><col style="width:140px"><col style="width:64px"></colgroup>
+            <thead><tr><th></th><th>String</th><th>Targets</th><th>Others</th></tr></thead><tbody>${rows}</tbody></table></div>`;
     },
 
     // Suggestions depend on the sets only, so refetch when those change, not per keystroke.
@@ -570,12 +581,43 @@ window.YaraView = {
         } catch (e) { /* an empty tab shows the problem */ }
         if (key !== this._suggKey) return;
         this._suggested = res.strings || [];
+        this._sel = new Set();
         this._paint();
     },
 
-    addString(i) {
-        const v = this._suggested[i].value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        this.insertText(`// $s = "${v}" ascii wide`);
+    toggleSug(i) {
+        if (!this._sel.delete(i)) this._sel.add(i);
+        this._paint();
+    },
+
+    selAll(on) {
+        this._sel = new Set(on ? this._suggested.map((_, i) => i) : []);
+        this._paint();
+    },
+
+    insertSelected() {
+        this.addStrings([...this._sel].sort((a, b) => a - b).map(i => this._suggested[i].value));
+        this._sel = new Set();
+        this._paint();
+    },
+
+    // Add `$sN = "..." ascii wide` lines to the first rule's strings: section (created if missing),
+    // numbered after the highest $sN already in the rule.
+    addStrings(values) {
+        const text = this.getRule();
+        let n = Math.max(0, ...[...text.matchAll(/\$s(\d+)\b/g)].map(m => +m[1]));
+        const esc = v => v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+        const cond = /^([ \t]*)condition[ \t]*:/m.exec(text);
+        if (!cond) { this.insertText(values.map(v => `$s${++n} = "${esc(v)}" ascii wide`).join('\n')); return; }
+        const kw = cond[1], item = `${kw}    `;
+        const lines = values.map(v => `${item}$s${++n} = "${esc(v)}" ascii wide\n`).join('');
+        const before = text.slice(0, cond.index);
+        const ruleAt = Math.max(0, ...[...before.matchAll(/\brule\s+\w+/g)].map(m => m.index));
+        const has = /^[ \t]*strings[ \t]*:/m.test(before.slice(ruleAt));
+        // sit directly under the last string, before any blank line ahead of condition
+        const body = before.replace(/\s*$/, '\n');
+        this.setRule(`${body}${has ? '' : `${kw}strings:\n`}${lines}${text.slice(cond.index)}`);
+        this._status(`inserted ${values.length} string${values.length > 1 ? 's' : ''}`);
     },
 
     async draft() {

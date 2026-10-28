@@ -155,3 +155,14 @@
 .yw-card { border-bottom: 0; }
 .yw-h { display: flex; align-items: center; gap: 12px; margin: 0; padding: 10px 18px 0; font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--subtle); }
 
+.yw-count { font: normal 500 0.66rem monospace; background: var(--hover); border-radius: 99px; padding: 1px 7px; letter-spacing: 0; }
+.yw-pane table.yw-fixed { table-layout: fixed; }
+.yw-fixed td { overflow-wrap: anywhere; }
+.yw-sugbar { display: flex; align-items: center; gap: 10px; padding: 8px 18px; border-bottom: 1px solid var(--border); font-size: 0.74rem; }
+.yw-sugbar .yw-btn[disabled] { opacity: .45; cursor: default; }
+.yw-sug tbody tr { cursor: pointer; }
+.yw-sug tbody tr:hover td { background: var(--hover); }
+.yw-sug tbody tr.on td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.yw-sug td { padding: 7px 6px; }
+.yw-sv { font: 0.76rem/1.45 monospace; word-break: break-all; }
+.yw-sug .yw-track { width: 70px; }
